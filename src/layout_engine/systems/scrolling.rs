@@ -1482,17 +1482,39 @@ impl LayoutSystem for ScrollingLayoutSystem {
     }
 
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+        let niri_navigation = matches!(
+            self.settings.focus_navigation_style,
+            ScrollingFocusNavigationStyle::Niri
+        );
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
         let Some(selected) = state.selected_or_first() else {
             return Vec::new();
         };
-        if state.fullscreen_within_gaps.remove(&selected) {
-            return vec![selected];
+
+        if !state.fullscreen_within_gaps.remove(&selected) {
+            state.fullscreen.remove(&selected);
+            state.fullscreen_within_gaps.insert(selected);
         }
-        state.fullscreen.remove(&selected);
-        state.fullscreen_within_gaps.insert(selected);
+
+        // Rescroll the strip so the resized column is actually visible.
+        //
+        // Previously this mutated the set and returned immediately. Changing a
+        // column's width moves every column start after it, so a window sitting at
+        // the RIGHT EDGE of the viewport grew off-screen and looked like the key
+        // had done nothing — pressing it and then nudging focus sideways (which
+        // does force a reveal) made it snap to full size. That was the reported
+        // symptom exactly.
+        //
+        // The resize path already does this after changing a width, so this brings
+        // the two into line rather than inventing new behaviour.
+        if niri_navigation {
+            state.reveal_selected_without_direction();
+        } else {
+            state.align_scroll_to_selected();
+        }
+
         vec![selected]
     }
 
