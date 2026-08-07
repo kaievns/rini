@@ -708,7 +708,17 @@ impl LayoutSystem for ScrollingLayoutSystem {
         let mut column_widths = Vec::with_capacity(state.columns.len());
         let mut column_ratios = Vec::with_capacity(state.columns.len());
         for col in state.columns.iter() {
-            let ratio = if state.columns.len() == 1 && !col.width_overridden {
+            // A column holding a full-width ("within gaps") window occupies the
+            // whole viewport, so it must be WIDTH 1.0 here as well as in the frame
+            // assignment below. column_widths feeds column_starts, which is what
+            // reserves horizontal space in the strip — without this the strip only
+            // reserves the normal column width and the following column is laid
+            // out on top of the full-width one.
+            let holds_full_width =
+                col.windows.iter().any(|wid| state.fullscreen_within_gaps.contains(wid));
+            let ratio = if holds_full_width {
+                1.0
+            } else if state.columns.len() == 1 && !col.width_overridden {
                 1.0
             } else {
                 self.clamp_ratio(base_ratio + col.width_offset)
@@ -964,7 +974,24 @@ impl LayoutSystem for ScrollingLayoutSystem {
                 if state.fullscreen.contains(wid) {
                     frame = screen;
                 } else if state.fullscreen_within_gaps.contains(wid) {
-                    frame = tiling;
+                    // Full-WIDTH column, not a full-screen frame.
+                    //
+                    // Was `frame = tiling`, which assigned the whole tiling rect
+                    // including its origin.x. That lifted the window out of the
+                    // strip's coordinate space: it stopped scrolling, stayed pinned
+                    // at the viewport's left edge, and other columns slid over the
+                    // top of it. Reproduced by making Slack full-size and then
+                    // moving focus away — Slack stayed at x=4 while the strip moved
+                    // on without it.
+                    //
+                    // Keeping `x` (the strip-relative position computed above as
+                    // anchor_x + start - offset) means the column still travels
+                    // with the strip and simply occupies the full viewport width,
+                    // which is what niri's maximize-column does.
+                    frame = CGRect::new(
+                        CGPoint::new(x.round(), tiling.origin.y.round()),
+                        CGSize::new(tiling.size.width.round(), tiling.size.height.round()),
+                    );
                 } else if let Some(c) = constraints.get(wid).copied() {
                     let c = c.normalized();
                     let desired_w = c
@@ -1557,21 +1584,37 @@ impl LayoutSystem for ScrollingLayoutSystem {
             Some(loc) => loc,
             None => return Vec::new(),
         };
-        let target_col = if col_idx + 1 < state.columns.len() {
-            col_idx + 1
-        } else if col_idx > 0 {
+        let Some(selected) = state.selected else {
+            return Vec::new();
+        };
+
+        // Move the SELECTED window into the PREVIOUS column.
+        //
+        // Was the other way round: it took the NEXT column's windows
+        // (col_idx + 1) and pulled them into the current one, so pressing the
+        // stack key stacked a window you had not chosen underneath the one you
+        // were looking at, and the selection stayed put. Confusing, and the
+        // opposite of niri's consume-window-into-column, which moves the current
+        // window into the column to its left.
+        //
+        // Only fall back to the next column when the selection is already in the
+        // first column, so the key still does something useful at the left edge.
+        let target_col = if col_idx > 0 {
             col_idx - 1
+        } else if col_idx + 1 < state.columns.len() {
+            col_idx + 1
         } else {
             return Vec::new();
         };
-        let moved_windows = state.columns[target_col].windows.clone();
-        if moved_windows.is_empty() {
+
+        // Nothing to do if the selected window is the only one in its column and
+        // that column IS the target (cannot stack a window onto itself).
+        if state.columns[col_idx].windows.len() == 1 && target_col == col_idx {
             return Vec::new();
         }
-        for wid in moved_windows.iter().copied() {
-            state.move_window_to_column_end(wid, col_idx);
-        }
-        moved_windows
+
+        state.move_window_to_column_end(selected, target_col);
+        vec![selected]
     }
 
     fn unstack_parent_of_selection(
