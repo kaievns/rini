@@ -707,6 +707,36 @@ impl LayoutEngine {
         }
     }
 
+    /// Move focus from the floating layer back into the tiled strip.
+    ///
+    /// Extracted so the "fell off the end of the floating set" path and the
+    /// original "floating navigation could not proceed" path share one
+    /// implementation instead of duplicating it.
+    fn move_focus_escape_to_tiled(
+        &mut self,
+        window_store: &mut WindowStore,
+        space: SpaceId,
+        ws_id: VirtualWorkspaceId,
+        layout: LayoutId,
+    ) -> EventResponse {
+        let tiled_windows = self.filter_active_workspace_windows(
+            window_store,
+            space,
+            self.workspace_tree(ws_id).visible_windows_in_layout(layout),
+        );
+        if tiled_windows.is_empty() {
+            return EventResponse::default();
+        }
+        let response = EventResponse {
+            changed: true,
+            focus_window: tiled_windows.first().copied(),
+            raise_windows: tiled_windows,
+            boundary_hit: None,
+        };
+        self.apply_focus_response(window_store, space, ws_id, layout, &response);
+        response
+    }
+
     fn move_focus_internal(
         &mut self,
         window_store: &mut WindowStore,
@@ -744,16 +774,40 @@ impl LayoutEngine {
                             floating_windows.iter().position(|&w| Some(w) == self.focused_window)
                         {
                             debug!("Found current window at index {}", current_idx);
+                            // Do NOT wrap. Wrapping made the floating set a closed
+                            // trap: with two floating windows (e.g. Zoom and System
+                            // Settings) left/right cycled between them forever and
+                            // the escape to the tiled strip below was unreachable,
+                            // because the modulo always produced a valid index and
+                            // returned early.
+                            //
+                            // Falling off either end now leaves next_idx as None and
+                            // drops through to the tiled-window fallback further
+                            // down, so the strip is always reachable with the same
+                            // keys you used to get here.
                             let next_idx = match direction {
-                                Direction::Left => {
-                                    if current_idx == 0 {
-                                        floating_windows.len() - 1
+                                Direction::Left => current_idx.checked_sub(1),
+                                Direction::Right => {
+                                    if current_idx + 1 < floating_windows.len() {
+                                        Some(current_idx + 1)
                                     } else {
-                                        current_idx - 1
+                                        None
                                     }
                                 }
-                                Direction::Right => (current_idx + 1) % floating_windows.len(),
                                 _ => unreachable!(),
+                            };
+                            let Some(next_idx) = next_idx else {
+                                debug!(
+                                    "At edge of floating set going {:?}; falling through to tiled",
+                                    direction
+                                );
+                                // deliberately no early return: fall through
+                                return self.move_focus_escape_to_tiled(
+                                    window_store,
+                                    space,
+                                    ws_id,
+                                    layout,
+                                );
                             };
                             debug!(
                                 "Moving to index {}, window: {:?}",
