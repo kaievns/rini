@@ -332,6 +332,9 @@ enum LayoutCommands {
     /// Toggle centering of the selected column in scrolling layout.
     /// If invoked again on the same selection, centering is removed.
     CenterSelection,
+    /// Cycle the selected column through the configured preset widths
+    /// (scrolling layout only)
+    CyclePresetColumnWidth,
 }
 
 #[derive(Subcommand)]
@@ -933,6 +936,9 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
         LayoutCommands::CenterSelection => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::CenterSelection,
         ))),
+        LayoutCommands::CyclePresetColumnWidth => Ok(CliCommand::Reactor(
+            reactor::Command::Layout(LC::CyclePresetColumnWidth),
+        )),
     }
 }
 

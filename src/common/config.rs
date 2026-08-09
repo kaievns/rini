@@ -623,6 +623,10 @@ fn default_scrolling_min_column_width_ratio() -> f64 { 0.3 }
 
 fn default_scrolling_max_column_width_ratio() -> f64 { 0.9 }
 
+/// Preset column widths cycled by `cycle_preset_column_width`, mirroring niri's
+/// `layout.preset-column-widths` defaults: a third, a half, two thirds.
+fn default_scrolling_preset_column_widths() -> Vec<f64> { vec![0.33333, 0.5, 0.66667] }
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum HorizontalPlacement {
@@ -738,6 +742,10 @@ pub struct ScrollingLayoutSettings {
     /// Maximum column width ratio allowed by resize commands.
     #[serde(default = "default_scrolling_max_column_width_ratio")]
     pub max_column_width_ratio: f64,
+    /// Column widths cycled by `cycle_preset_column_width`, as ratios of the
+    /// tiling width. Mirrors niri's `layout.preset-column-widths`.
+    #[serde(default = "default_scrolling_preset_column_widths")]
+    pub preset_column_widths: Vec<f64>,
     /// Alignment for the focused column (left, center, right).
     #[serde(default)]
     pub alignment: ScrollingAlignment,
@@ -759,6 +767,7 @@ impl Default for ScrollingLayoutSettings {
             column_width_ratio: default_scrolling_column_width_ratio(),
             min_column_width_ratio: default_scrolling_min_column_width_ratio(),
             max_column_width_ratio: default_scrolling_max_column_width_ratio(),
+            preset_column_widths: default_scrolling_preset_column_widths(),
             alignment: ScrollingAlignment::default(),
             focus_navigation_style: ScrollingFocusNavigationStyle::default(),
             gestures: ScrollingGestureSettings::default(),

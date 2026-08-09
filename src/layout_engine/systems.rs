@@ -160,6 +160,12 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
     fn has_any_fullscreen_node(&self, layout: LayoutId) -> bool;
 
+    /// Cycle the selected column through the configured preset widths.
+    ///
+    /// Only the scrolling layout has a meaningful notion of column width presets;
+    /// every other layout ignores this.
+    fn cycle_preset_column_width(&mut self, _layout: LayoutId) -> Vec<WindowId> { Vec::new() }
+
     fn join_selection_with_direction(&mut self, layout: LayoutId, direction: Direction);
     fn consume_or_expel_selection(&mut self, layout: LayoutId, direction: Direction) {
         self.join_selection_with_direction(layout, direction);

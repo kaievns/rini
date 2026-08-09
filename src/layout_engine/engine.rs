@@ -2167,6 +2167,12 @@ impl LayoutEngine {
                 }
                 EventResponse::default()
             }
+            LayoutCommand::CyclePresetColumnWidth => {
+                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
+                let raised =
+                    self.workspace_tree_mut(workspace_id).cycle_preset_column_width(layout);
+                Self::response_for_raised_windows(raised)
+            }
         }
     }
 

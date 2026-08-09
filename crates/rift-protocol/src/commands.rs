@@ -36,6 +36,12 @@ pub enum LayoutCommand {
         delta: f64,
     },
     SnapStrip,
+    /// Cycle the selected column through the configured preset widths.
+    ///
+    /// niri's `switch-preset-column-width`. The existing ResizeWindowGrow /
+    /// ResizeWindowShrink commands step by a fixed ~5%, which leaves columns at
+    /// arbitrary in-between widths; this snaps to a known set instead.
+    CyclePresetColumnWidth,
     CenterSelection,
     NextWorkspace(Option<bool>),
     PrevWorkspace(Option<bool>),

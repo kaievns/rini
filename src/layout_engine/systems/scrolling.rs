@@ -1518,6 +1518,71 @@ impl LayoutSystem for ScrollingLayoutSystem {
         vec![selected]
     }
 
+    /// Cycle the selected column through `preset_column_widths`.
+    ///
+    /// niri's switch-preset-column-width. Unlike ResizeWindowGrow/Shrink, which
+    /// step by a fixed ~5% and leave columns at arbitrary in-between widths, this
+    /// snaps to a known set — so every column ends up at one of a few predictable
+    /// sizes instead of drifting.
+    ///
+    /// Widths are stored as `width_offset` relative to `column_width_ratio`, the
+    /// same representation the resize path uses, so nothing else needs to know
+    /// these came from a preset.
+    fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId> {
+        let presets: Vec<f64> = self
+            .settings
+            .preset_column_widths
+            .iter()
+            .copied()
+            .filter(|r| *r > 0.0 && *r <= 1.0)
+            .collect();
+        if presets.is_empty() {
+            return Vec::new();
+        }
+        let niri_navigation = matches!(
+            self.settings.focus_navigation_style,
+            ScrollingFocusNavigationStyle::Niri
+        );
+
+        let Some(state) = self.layout_state_mut(layout) else {
+            return Vec::new();
+        };
+        let Some(selected) = state.selected_or_first() else {
+            return Vec::new();
+        };
+        let Some((col_idx, _)) = state.locate(selected) else {
+            return Vec::new();
+        };
+
+        let base_ratio = state.column_width_ratio;
+        let current = base_ratio + state.columns[col_idx].width_offset;
+
+        // Advance to the first preset meaningfully wider than the current width,
+        // wrapping to the narrowest. The 1% epsilon stops floating-point noise
+        // (and the rounding applied when frames are written) from making the
+        // current width look like it is already just past a preset, which would
+        // skip an entry.
+        let next = presets
+            .iter()
+            .copied()
+            .find(|p| *p > current + 0.01)
+            .unwrap_or(presets[0]);
+
+        state.columns[col_idx].width_offset = next - base_ratio;
+        state.columns[col_idx].width_overridden = true;
+
+        // A width change moves every column start after it, so the strip has to be
+        // rescrolled or a column at the viewport edge grows off-screen. Same
+        // reasoning as the fullscreen toggle above.
+        if niri_navigation {
+            state.reveal_selected_without_direction();
+        } else {
+            state.align_scroll_to_selected();
+        }
+
+        vec![selected]
+    }
+
     fn has_any_fullscreen_node(&self, layout: LayoutId) -> bool {
         let Some(state) = self.layout_state(layout) else {
             return false;
