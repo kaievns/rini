@@ -3622,6 +3622,76 @@ mod tests {
         );
     }
 
+    /// Horizontal focus must be able to LEAVE the floating layer.
+    ///
+    /// The floating branch used to advance with `(idx + 1) % len`, which is a
+    /// closed cycle: with two floating windows (e.g. Zoom and System Settings)
+    /// left/right ping-ponged between them forever and the tiled strip was
+    /// unreachable, because the modulo always produced a valid index and returned
+    /// before the fallback below could run.
+    #[test]
+    fn horizontal_focus_escapes_the_floating_layer_into_the_strip() {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let space = SpaceId::new(410);
+        let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1200.0, 800.0));
+        let pid: pid_t = 71;
+        let tiled = WindowId::new(pid, 1);
+        let float_a = WindowId::new(pid, 2);
+        let float_b = WindowId::new(pid, 3);
+        let info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
+
+        let _ = engine
+            .handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(
+            &mut window_store,
+            LayoutEvent::WindowsOnScreenUpdated(
+                space,
+                pid,
+                vec![info(tiled), info(float_a), info(float_b)],
+                None,
+            ),
+        );
+
+        // Float two of the three windows, leaving one in the strip.
+        for wid in [float_a, float_b] {
+            engine.remove_window_from_all_tiling_trees(wid);
+            engine.floating.add_floating(wid);
+            engine.floating.add_active(space, pid, wid);
+        }
+
+        let visible_spaces = vec![space];
+        let mut centers = HashMap::default();
+        centers.insert(space, CGPoint::new(0.0, 0.0));
+
+        // Walk right repeatedly from a floating window. Without the fix this only
+        // ever alternates between float_a and float_b.
+        engine.focused_window = Some(float_a);
+        let mut reached_tiled = false;
+        for _ in 0..6 {
+            let response = engine.handle_command(
+                &mut window_store,
+                Some(space),
+                &visible_spaces,
+                &centers,
+                LayoutCommand::MoveFocus(Direction::Right),
+            );
+            if let Some(next) = response.focus_window {
+                engine.focused_window = Some(next);
+                if next == tiled {
+                    reached_tiled = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            reached_tiled,
+            "focus never escaped the floating layer; it cycled between the floating \
+             windows instead of falling through to the tiled strip"
+        );
+    }
+
     #[test]
     fn move_focus_to_uninitialized_adjacent_space_does_not_panic() {
         let mut window_store = WindowStore::default();

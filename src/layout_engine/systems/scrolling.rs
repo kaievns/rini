@@ -2846,4 +2846,241 @@ mod tests {
 
         assert_eq!(system.all_windows_in_layout(layout), vec![w1, w2, w3]);
     }
+
+    // ── full-width columns participate in the strip ─────────────────────────
+
+    fn niri_settings(ratio: f64) -> ScrollingLayoutSettings {
+        let mut settings = ScrollingLayoutSettings::default();
+        settings.focus_navigation_style =
+            crate::common::config::ScrollingFocusNavigationStyle::Niri;
+        settings.column_width_ratio = ratio;
+        settings.min_column_width_ratio = 0.2;
+        settings.max_column_width_ratio = 1.0;
+        settings
+    }
+
+    /// A full-width column must keep its strip-relative x, not be pinned to the
+    /// viewport origin. Regression test for `frame = tiling`, which lifted the
+    /// window out of the strip so it stayed put while everything scrolled past.
+    #[test]
+    fn fullscreen_within_gaps_column_scrolls_with_the_strip() {
+        let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+
+        assert!(system.select_window(layout, w1));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+
+        let x_before = frame_for(&render(&system, layout, screen, &gaps), w1).origin.x;
+
+        // Scroll the strip by focusing the other column.
+        assert!(system.select_window(layout, w2));
+        let x_after = frame_for(&render(&system, layout, screen, &gaps), w1).origin.x;
+
+        assert!(
+            (x_before - x_after).abs() > 1.0,
+            "full-width column stayed at x={} after the strip scrolled; it is not \
+             participating in the strip",
+            x_before
+        );
+    }
+
+    /// The column holding a full-width window must reserve the whole viewport, or
+    /// the next column is laid out on top of it.
+    #[test]
+    fn fullscreen_within_gaps_column_reserves_full_width() {
+        let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+
+        assert!(system.select_window(layout, w1));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+
+        let frames = render(&system, layout, screen, &gaps);
+        let f1 = frame_for(&frames, w1);
+        let f2 = frame_for(&frames, w2);
+
+        let tiling_width = compute_tiling_area(screen, &gaps).size.width;
+        assert!(
+            (f1.size.width - tiling_width).abs() < 2.0,
+            "expected full tiling width {}, got {}",
+            tiling_width,
+            f1.size.width
+        );
+        assert!(
+            f2.origin.x >= f1.origin.x + f1.size.width - 1.0,
+            "next column at x={} overlaps the full-width column ending at {}",
+            f2.origin.x,
+            f1.origin.x + f1.size.width
+        );
+    }
+
+    /// Toggling must be symmetric: a second press returns the original width.
+    #[test]
+    fn fullscreen_within_gaps_toggles_back_to_preset_width() {
+        let (mut system, layout, w1, _) = setup_two_windows(niri_settings(0.5));
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+
+        assert!(system.select_window(layout, w1));
+        let width_before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        let width_full = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        let width_after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        assert!(width_full > width_before + 1.0, "toggle did not widen the column");
+        assert!(
+            (width_after - width_before).abs() < 2.0,
+            "expected {} after toggling back, got {}",
+            width_before,
+            width_after
+        );
+    }
+
+    /// Toggling a column at the RIGHT EDGE of the viewport must rescroll so the
+    /// widened column is visible. Without the reveal it grew off-screen and the
+    /// command looked like it had done nothing at all.
+    #[test]
+    fn fullscreen_within_gaps_reveals_column_at_right_edge() {
+        let settings = niri_settings(0.5);
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let (w1, w2, w3) = (wid(1, 1), wid(1, 2), wid(1, 3));
+        for w in [w1, w2, w3] {
+            system.add_window_after_selection(layout, w);
+        }
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+
+        // Select the last column, which sits at the right edge of the viewport.
+        assert!(system.select_window(layout, w3));
+        let _ = render(&system, layout, screen, &gaps);
+
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        let f3 = frame_for(&render(&system, layout, screen, &gaps), w3);
+
+        let tiling = compute_tiling_area(screen, &gaps);
+        assert!(
+            f3.origin.x >= tiling.origin.x - 1.0
+                && f3.origin.x + f3.size.width <= tiling.origin.x + tiling.size.width + 1.0,
+            "widened column at x={} w={} is not fully inside the viewport {}..{}",
+            f3.origin.x,
+            f3.size.width,
+            tiling.origin.x,
+            tiling.origin.x + tiling.size.width
+        );
+    }
+
+    // ── preset column widths ────────────────────────────────────────────────
+
+    /// ctrl-R cycles 1/3 -> 1/2 -> 2/3 and wraps back to 1/3.
+    #[test]
+    fn cycle_preset_column_width_walks_presets_and_wraps() {
+        let mut settings = niri_settings(0.33333);
+        settings.preset_column_widths = vec![0.33333, 0.5, 0.66667];
+        let (mut system, layout, w1, _) = setup_two_windows(settings);
+        let screen = screen(1200.0, 800.0);
+        let gaps = GapSettings::default();
+        let tiling_width = compute_tiling_area(screen, &gaps).size.width;
+
+        assert!(system.select_window(layout, w1));
+
+        let width_of = |system: &ScrollingLayoutSystem| {
+            frame_for(&render(system, layout, screen, &gaps), w1).size.width / tiling_width
+        };
+
+        // Starts at the first preset.
+        assert!((width_of(&system) - 0.33333).abs() < 0.02, "start {}", width_of(&system));
+
+        system.cycle_preset_column_width(layout);
+        assert!((width_of(&system) - 0.5).abs() < 0.02, "after 1st {}", width_of(&system));
+
+        system.cycle_preset_column_width(layout);
+        assert!((width_of(&system) - 0.66667).abs() < 0.02, "after 2nd {}", width_of(&system));
+
+        // Wraps rather than sticking at the widest.
+        system.cycle_preset_column_width(layout);
+        assert!((width_of(&system) - 0.33333).abs() < 0.02, "after wrap {}", width_of(&system));
+    }
+
+    /// An empty preset list must be a no-op rather than a panic or a zero width.
+    #[test]
+    fn cycle_preset_column_width_with_no_presets_is_a_noop() {
+        let mut settings = niri_settings(0.5);
+        settings.preset_column_widths = vec![];
+        let (mut system, layout, w1, _) = setup_two_windows(settings);
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+
+        assert!(system.select_window(layout, w1));
+        let before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        let touched = system.cycle_preset_column_width(layout);
+        let after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        assert!(touched.is_empty(), "expected no windows reported changed");
+        assert!((before - after).abs() < 1.0, "width changed from {} to {}", before, after);
+    }
+
+    // ── stacking direction ──────────────────────────────────────────────────
+
+    /// ctrl-, moves the SELECTED window into the PREVIOUS column. It used to drag
+    /// the NEXT column's windows into the current one, which stacked a window the
+    /// user had not chosen and left the selection untouched.
+    #[test]
+    fn stacking_moves_selected_window_into_previous_column() {
+        let settings = niri_settings(0.33333);
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let (w1, w2, w3) = (wid(1, 1), wid(1, 2), wid(1, 3));
+        for w in [w1, w2, w3] {
+            system.add_window_after_selection(layout, w);
+        }
+
+        // Select the middle column and stack it leftwards.
+        assert!(system.select_window(layout, w2));
+        let moved = system
+            .apply_stacking_to_parent_of_selection(
+                layout,
+                crate::common::config::StackDefaultOrientation::Perpendicular,
+            );
+
+        assert_eq!(moved, vec![w2], "expected the SELECTED window to move");
+
+        let state = system.layouts.get(layout).expect("layout state");
+        assert!(
+            state.columns[0].windows.contains(&w1) && state.columns[0].windows.contains(&w2),
+            "w2 should now share the first column with w1, got {:?}",
+            state.columns.iter().map(|c| c.windows.clone()).collect::<Vec<_>>()
+        );
+        assert!(
+            state.columns.iter().any(|c| c.windows == vec![w3]),
+            "w3 should be untouched in its own column"
+        );
+    }
+
+    /// From the first column there is no previous column, so fall forward instead
+    /// of doing nothing.
+    #[test]
+    fn stacking_from_first_column_falls_back_to_next() {
+        let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
+
+        assert!(system.select_window(layout, w1));
+        let moved = system
+            .apply_stacking_to_parent_of_selection(
+                layout,
+                crate::common::config::StackDefaultOrientation::Perpendicular,
+            );
+
+        assert_eq!(moved, vec![w1]);
+        let state = system.layouts.get(layout).expect("layout state");
+        assert_eq!(state.columns.len(), 1, "expected a single stacked column");
+        assert!(
+            state.columns[0].windows.contains(&w1) && state.columns[0].windows.contains(&w2),
+            "both windows should share one column"
+        );
+    }
 }
