@@ -557,17 +557,27 @@ impl Animation {
     }
 
     fn send_frame(&self, frame: u32) {
-        let t = f64::from(frame) / f64::from(self.frames);
         for window in &self.windows {
-            let mut rect = get_frame(window.start, window.finish, t);
-            let set_size = frame * 2 == self.frames || frame == self.frames;
-            if set_size {
-                rect.size = window.finish.size;
-            }
+            // Send the interpolated size on EVERY frame.
+            //
+            // This used to compute a smooth rect and then discard the size:
+            //     let set_size = frame * 2 == self.frames || frame == self.frames;
+            //     if set_size { rect.size = window.finish.size; }
+            // so size reached the app only at the halfway frame and the last frame,
+            // jumping straight to the final value at both. Position was sent every
+            // frame, so a resize looked like the neighbouring window sliding
+            // smoothly while this one held its old size and then popped — a visible
+            // tear between the two mid-transition, and a resize that appeared to
+            // start late.
+            //
+            // frame_after is the single source of truth for the interpolated rect
+            // (it blends origin and size on one eased curve), so use it here instead
+            // of recomputing, and always ask the app to apply the size.
+            let rect = window.frame_after(frame, self.frames);
             _ = window.handle.send(Request::AnimationFrame {
                 wid: window.wid,
                 frame: rect,
-                set_size,
+                set_size: true,
                 txid: window.txid,
             });
         }
@@ -700,7 +710,10 @@ mod tests {
             } => {
                 assert_eq!(*req_wid, wid);
                 assert_eq!(frame.origin, pos);
-                assert!(!*set_size, "expected a position-only frame");
+                // set_size is now true on every frame: size is interpolated
+                // alongside position rather than applied only at the midpoint and
+                // the end. This helper only cares about the POSITION, which is what
+                // its callers assert.
                 assert_eq!(*txid, TransactionId::default());
             }
             _ => panic!("expected AnimationFrame, got {request:?}"),
@@ -942,6 +955,52 @@ mod tests {
             "expected a smooth ramp of widths, got {} distinct values in {:?}",
             distinct,
             widths
+        );
+    }
+
+    /// Every animation frame must carry the interpolated SIZE to the app.
+    ///
+    /// send_frame used to compute a smooth rect and then overwrite the size with
+    /// finish.size, flagging set_size only at the halfway frame and the last frame.
+    /// Position was sent every frame, so a resize appeared to start late and tore
+    /// against the neighbouring window that was already sliding.
+    #[test]
+    fn every_animation_frame_carries_an_interpolated_size() {
+        let (tx, mut rx) = crate::actor::channel();
+        let handle = AppThreadHandle::new_for_test(tx);
+        let wid = WindowId::new(1, 1);
+        let anim = animation(
+            &handle,
+            wid,
+            rect(0.0, 0.0, 100.0, 100.0),
+            rect(300.0, 0.0, 400.0, 100.0),
+        );
+
+        let mut manager = AnimationManager::new();
+        manager.handle_message(Message::Replace(anim));
+        let _ = collect_requests(&mut rx); // BeginWindowAnimation
+
+        let mut widths = Vec::new();
+        for _ in 0..6 {
+            manager.tick();
+            for request in collect_requests(&mut rx) {
+                if let Request::AnimationFrame { frame, set_size, .. } = request {
+                    assert!(set_size, "every frame must apply the size");
+                    widths.push(frame.size.width);
+                }
+            }
+        }
+
+        assert!(widths.len() >= 3, "expected several frames, got {widths:?}");
+        // Intermediate widths must lie strictly between start and finish, which is
+        // what proves interpolation rather than a snap to one end or the other.
+        let intermediate = widths
+            .iter()
+            .filter(|w| **w > 100.5 && **w < 399.5)
+            .count();
+        assert!(
+            intermediate >= 2,
+            "expected intermediate widths between 100 and 400, got {widths:?}"
         );
     }
 }
