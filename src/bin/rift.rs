@@ -58,17 +58,17 @@ struct Cli {
     #[arg(long)]
     validate: bool,
 
-    /// Restore the master layout file on startup. Kept for compatibility; restoring
-    /// is now the default, so this flag is redundant unless paired with
-    /// --no-restore elsewhere in a script.
+    /// Restore the saved layout on startup: window sizes, workspaces and strip
+    /// positions from the last session.
+    ///
+    /// OPT-IN. Restoring a layout that references an unplugged display strands those
+    /// windows off-screen, and there is currently no migration back to a live
+    /// display, so a dock/undock cycle can produce a layout only fixable by deleting
+    /// ~/.rift/layout.ron.
     #[arg(long)]
     restore: bool,
 
-    /// Start from a clean layout, ignoring any saved master file.
-    ///
-    /// Restoring is the default: without it every restart loses each window's
-    /// workspace, size and strip position, and windows fall back to the default
-    /// column width.
+    /// Explicitly start from a clean layout. Overrides --restore.
     #[arg(long)]
     no_restore: bool,
 
@@ -174,10 +174,20 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
 
     let (broadcast_tx, broadcast_rx) = rift_wm::actor::channel();
 
-    // Restore by default. A missing file is not an error — load_for_startup_restore
-    // falls through to a fresh layout below — so the only reason to skip is an
-    // explicit --no-restore.
-    let want_restore = !opt.no_restore;
+    // Restore is OPT-IN via --restore, not the default.
+    //
+    // It was briefly made the default so a restart would keep window sizes and
+    // positions. That exposed two latent bugs in a code path nothing had exercised:
+    // restored workspaces kept a stale layout MODE (fixed), and windows belonging to
+    // a display that has since been unplugged are restored at that display's
+    // coordinates and stranded off-screen with no display there (NOT fixed — spaces
+    // for absent displays are never migrated back to a live one).
+    //
+    // Until that second problem is handled, defaulting to restore turns any
+    // dock/undock cycle into a layout that cannot be recovered without deleting
+    // ~/.rift/layout.ron. Autosave still runs, so the file is kept warm and
+    // `--restore` works for anyone who wants it.
+    let want_restore = opt.restore && !opt.no_restore;
     let mut layout = if want_restore {
         let path = restore_file();
         match LayoutEngine::load_for_startup_restore(path.clone()) {
