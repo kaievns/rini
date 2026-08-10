@@ -328,7 +328,37 @@ impl ScrollingLayoutSystem {
     }
 
     pub fn update_settings(&mut self, settings: &ScrollingLayoutSettings) {
+        // Rebase per-column width overrides when the DEFAULT ratio changes.
+        //
+        // Column widths are stored as `width_offset` relative to
+        // `column_width_ratio`, so a restored layout keeps reproducing its old
+        // absolute width after the default changes in config: the offset is
+        // faithfully re-applied against a new base. Moving the ratio from 0.49 to 0.5
+        // left every restored window at the old 842pt instead of the new 859pt — a
+        // width matching no preset, so ctrl-R could never return a window to it and
+        // every window looked subtly wrong.
+        //
+        // Columns the user deliberately resized (width_overridden) keep their chosen
+        // absolute width by re-basing the offset. Everything else returns to the new
+        // default.
+        let ratio_changed =
+            (self.settings.column_width_ratio - settings.column_width_ratio).abs() > 1e-9;
+        let old_ratio = self.settings.column_width_ratio;
+
         self.settings = settings.clone();
+
+        if ratio_changed {
+            for state in self.layouts.values_mut() {
+                state.column_width_ratio = settings.column_width_ratio;
+                for column in &mut state.columns {
+                    if column.width_overridden {
+                        column.width_offset += old_ratio - settings.column_width_ratio;
+                    } else {
+                        column.width_offset = 0.0;
+                    }
+                }
+            }
+        }
     }
 
     fn insert_new_column(
@@ -3164,6 +3194,71 @@ mod tests {
         assert!(
             state.columns[0].windows.contains(&w1) && state.columns[0].windows.contains(&w2),
             "both windows should share one column"
+        );
+    }
+
+    /// Changing the default column ratio must not leave restored columns at their
+    /// old absolute width.
+    ///
+    /// Widths are stored as an offset from column_width_ratio, so a restored layout
+    /// reproduced its old width against the new base: moving 0.49 -> 0.5 kept every
+    /// window at 842pt instead of 859pt, a width matching no preset.
+    #[test]
+    fn changing_default_ratio_rebases_column_widths() {
+        let settings = niri_settings(0.49);
+        let (mut system, layout, w1, _) = setup_two_windows(settings.clone());
+        let screen = screen(1728.0, 1117.0);
+        let mut gaps = GapSettings::default();
+        gaps.outer.left = 4.0;
+        gaps.outer.right = 4.0;
+        gaps.inner.horizontal = 2.0;
+
+        let width_of = |system: &ScrollingLayoutSystem| {
+            frame_for(&render(system, layout, screen, &gaps), w1).size.width.round()
+        };
+
+        let before = width_of(&system);
+
+        let mut wider = settings.clone();
+        wider.column_width_ratio = 0.5;
+        system.update_settings(&wider);
+
+        let after = width_of(&system);
+        assert!(
+            after > before,
+            "raising the default ratio must widen an un-overridden column: {before} -> {after}"
+        );
+
+        // And it must land on the new default rather than anywhere in between.
+        let tiling = compute_tiling_area(screen, &gaps).size.width;
+        let expected = (tiling * 0.5 - gaps.inner.horizontal / 2.0).round();
+        assert!(
+            (after - expected).abs() <= 1.0,
+            "expected the new default width {expected}, got {after}"
+        );
+    }
+
+    /// A column the user deliberately resized keeps its absolute width across a
+    /// default-ratio change, rather than being reset along with the others.
+    #[test]
+    fn changing_default_ratio_preserves_explicit_column_widths() {
+        let settings = niri_settings(0.49);
+        let (mut system, layout, w1, _) = setup_two_windows(settings.clone());
+        let screen = screen(1728.0, 1117.0);
+        let gaps = GapSettings::default();
+
+        assert!(system.select_window(layout, w1));
+        system.resize_selection_by(layout, 0.10, ResizeOrientation::Horizontal);
+        let chosen = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        let mut wider = settings.clone();
+        wider.column_width_ratio = 0.5;
+        system.update_settings(&wider);
+
+        let after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+        assert!(
+            (after - chosen).abs() <= 2.0,
+            "an explicitly resized column must keep its width: {chosen} -> {after}"
         );
     }
 }
