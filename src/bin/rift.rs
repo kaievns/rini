@@ -58,9 +58,19 @@ struct Cli {
     #[arg(long)]
     validate: bool,
 
-    /// Restore the master layout file saved at shutdown.
+    /// Restore the master layout file on startup. Kept for compatibility; restoring
+    /// is now the default, so this flag is redundant unless paired with
+    /// --no-restore elsewhere in a script.
     #[arg(long)]
     restore: bool,
+
+    /// Start from a clean layout, ignoring any saved master file.
+    ///
+    /// Restoring is the default: without it every restart loses each window's
+    /// workspace, size and strip position, and windows fall back to the default
+    /// column width.
+    #[arg(long)]
+    no_restore: bool,
 
     /// Record reactor events to the specified file path. Overwrites the file if
     /// exists.
@@ -164,7 +174,11 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
 
     let (broadcast_tx, broadcast_rx) = rift_wm::actor::channel();
 
-    let mut layout = if opt.restore {
+    // Restore by default. A missing file is not an error — load_for_startup_restore
+    // falls through to a fresh layout below — so the only reason to skip is an
+    // explicit --no-restore.
+    let want_restore = !opt.no_restore;
+    let mut layout = if want_restore {
         let path = restore_file();
         match LayoutEngine::load_for_startup_restore(path.clone()) {
             Ok(layout) => layout,

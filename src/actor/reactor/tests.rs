@@ -4950,3 +4950,43 @@ fn floating_window_toggles_to_fullscreen_within_gaps() {
         "expected {expected:?}, got {laid_out:?}"
     );
 }
+
+/// Autosave must not reshape live layout state.
+///
+/// save_current_layout normalizes floating-versus-tiled ownership and rewrites
+/// stored floating frames. Those mutations are correct for an explicit save but
+/// destructive on every layout change: wiring them into the layout path broke
+/// un-fullscreening a floating window, because the frame it should return to had
+/// already been overwritten. autosave_current_layout must only refresh fingerprints
+/// and write.
+#[test]
+fn autosave_preserves_floating_restore_frame() {
+    let (mut reactor, wid, space1, screen, floating_frame) = reactor_with_floating_window();
+
+    let dir = std::env::temp_dir().join(format!("rift-autosave-test-{}", std::process::id()));
+    let path = dir.join("layout.ron");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Autosave between the two toggles, which is what the live reactor does.
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreen);
+    let active = reactor.workspace_command_space();
+    // The write itself may legitimately be refused: the persisted-topology validator
+    // rejects snapshots taken while a workspace has no layout state, which happens
+    // transiently in this harness. That is fine and is why the reactor logs and
+    // continues instead of propagating. What must hold is that ATTEMPTING the save
+    // does not disturb live state.
+    let _ = reactor.layout_manager.layout_engine.autosave_current_layout(
+        path.clone(),
+        &reactor.state.windows,
+        active,
+    );
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreen);
+
+    let laid_out = laid_out_frame(&mut reactor, space1, screen, wid).expect("window laid out");
+    assert!(
+        laid_out.same_as(floating_frame),
+        "autosave must not disturb the floating restore frame: expected {floating_frame:?}, got {laid_out:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

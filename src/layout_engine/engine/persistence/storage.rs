@@ -182,6 +182,32 @@ impl LayoutEngine {
         result
     }
 
+    /// Save a snapshot repeatedly and cheaply, without reshaping live layout state.
+    ///
+    /// `save_current_layout` is the right call for an explicit, one-off "save my
+    /// layout": it normalizes floating-versus-tiled ownership, prunes duplicate tree
+    /// entries and rewrites stored floating frames. Those are mutations, and running
+    /// them on every layout change corrupts the running arrangement — it moved
+    /// floating windows out of tiling trees mid-session and dropped the frame a
+    /// window should be restored to when un-fullscreened.
+    ///
+    /// Autosave therefore only refreshes fingerprints (needed so a window reopened
+    /// after a restart can be matched back to its saved slot) and writes. Anything
+    /// that needs normalizing is normalized on load instead, which is where
+    /// `normalize_loaded_floating_state` already runs.
+    pub fn autosave_current_layout(
+        &mut self,
+        path: PathBuf,
+        window_store: &WindowStore,
+        active_space: Option<SpaceId>,
+    ) -> std::io::Result<()> {
+        self.refresh_window_fingerprints(window_store);
+        self.persistence.set_saved_active_space(
+            active_space.filter(|space| self.workspace_layouts.spaces().contains(space)),
+        );
+        self.save(path)
+    }
+
     /// Capture live fingerprint and floating-frame inputs, then atomically save one coherent
     /// snapshot. Callers should prefer this over coordinating preparation and `save` themselves.
     pub fn save_current_layout(

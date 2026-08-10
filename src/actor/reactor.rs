@@ -317,6 +317,11 @@ pub struct Reactor {
     pending_space_change_manager: managers::PendingSpaceChangeManager,
     active_spaces: HashSet<SpaceId>,
     pub animation_tx: Option<AnimationSender>,
+    /// When the layout file was last written, for debouncing autosaves.
+    last_autosave: Option<std::time::Instant>,
+    /// A layout change arrived inside the debounce window and has not been written
+    /// yet. Flushed on shutdown and on display reconfiguration.
+    autosave_pending: bool,
 }
 
 impl Reactor {
@@ -437,6 +442,8 @@ impl Reactor {
             },
             active_spaces: HashSet::default(),
             animation_tx: None,
+            last_autosave: None,
+            autosave_pending: false,
         };
         reactor
     }
@@ -1006,6 +1013,11 @@ impl Reactor {
             Event::SystemWillSleep => {
                 self.refresh_quarantine_manager.sleeping = true;
                 self.refresh_quarantine_manager.awaiting_post_wake_snapshot = false;
+                // Sleep is the last chance to persist before a possible reboot, so
+                // write out any debounced change rather than risk losing it.
+                if self.autosave_pending {
+                    self.save_layout_now();
+                }
                 return Ok(EventOutcome::default());
             }
             Event::SystemWoke => {
@@ -1405,6 +1417,14 @@ impl Reactor {
                 if releases_display_churn_refresh_quarantine {
                     self.refresh_quarantine_manager.display_churn_active = false;
                     self.request_refresh_when_spaces_actor_stabilizes();
+                    // A display was plugged in or unplugged. Flush any debounced save
+                    // now: this is exactly the transition where the arrangement about
+                    // to be replaced is the one worth remembering, and it is also
+                    // when the layout file gets consulted to put windows back on the
+                    // display they came from.
+                    if self.autosave_pending {
+                        self.save_layout_now();
+                    }
                 }
                 return Ok(outcome);
             }
@@ -4710,10 +4730,63 @@ impl Reactor {
         space_scope: Option<SpaceId>,
         context: &'static str,
     ) -> bool {
-        LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope)
+        let changed = LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope)
             .unwrap_or_else(|e| {
                 warn!(error = ?e, "{}", context);
                 false
-            })
+            });
+        if changed {
+            self.autosave_layout();
+        }
+        changed
+    }
+
+    /// Persist the layout after a change, at most once every AUTOSAVE_INTERVAL.
+    ///
+    /// Saving used to be entirely manual — the menu bar item and `rift-cli save-layout`
+    /// were the only writers — so a restart or redeploy lost every window's
+    /// workspace, size and strip position, and windows fell back to the default
+    /// column width. `--restore` existed but had nothing to read.
+    ///
+    /// Debounced because update_layout runs on every focus change, resize and
+    /// workspace switch, and serialising the whole engine plus an fsync on each one
+    /// would be wasteful. The interval is short enough that at most a few seconds of
+    /// arrangement is at risk, and the save is also forced on shutdown and on
+    /// display reconfiguration, which are the moments that actually matter.
+    fn autosave_layout(&mut self) {
+        const AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_autosave {
+            if now.duration_since(last) < AUTOSAVE_INTERVAL {
+                self.autosave_pending = true;
+                return;
+            }
+        }
+        self.save_layout_now();
+    }
+
+    /// Write the layout file immediately, bypassing the debounce.
+    pub(crate) fn save_layout_now(&mut self) {
+        let path = crate::common::config::restore_file();
+        let active_space = self.workspace_command_space();
+        // autosave_current_layout, NOT save_current_layout: the latter also
+        // normalizes floating-versus-tiled ownership and rewrites stored floating
+        // frames, which are mutations to live state. Running them on every layout
+        // change broke un-fullscreening a floating window, because the frame it
+        // should return to had already been overwritten.
+        if let Err(e) = self.layout_manager.layout_engine.autosave_current_layout(
+            path.clone(),
+            &self.state.windows,
+            active_space,
+        ) {
+            // Not fatal: a failed autosave costs the last few seconds of
+            // arrangement, not correctness of the running layout.
+            debug!(error = ?e, path = %path.display(), "Autosave failed");
+            return;
+        }
+        self.last_autosave = Some(std::time::Instant::now());
+        self.autosave_pending = false;
+        trace!(path = %path.display(), "Autosaved layout");
     }
 }
