@@ -1,6 +1,6 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rift_protocol::StackInfo;
-use tracing::trace;
+use tracing::{info, trace};
 
 use super::replay::Record;
 use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
@@ -258,6 +258,44 @@ impl LayoutManager {
                 .layout
                 .gaps
                 .effective_for_display(display_uuid_opt.as_deref());
+            // Reattach a reconnected display's layout BEFORE recording its new space.
+            //
+            // macOS mints a new space id every time a display is reconnected (observed
+            // 479 -> 484 -> 487 -> 516 -> 552 for one monitor), so layout state keyed by
+            // space id is orphaned on replug and the display comes back empty.
+            //
+            // The reactor's snapshot handler also tries this, but loses the race: this
+            // call runs on EVERY layout pass, so by the time a space snapshot is
+            // processed the UUID -> space mapping has already been overwritten with the
+            // new id and the old one is unrecoverable. Verified from the saved state,
+            // where display_last_space already read 552 while the layout still lived
+            // under the previous id. Doing it here, immediately before the overwrite, is
+            // the only point where both ids are still known.
+            if let Some(uuid) = display_uuid_opt.as_deref() {
+                let previous_space =
+                    reactor.layout_manager.layout_engine.last_space_for_display_uuid(uuid);
+                if let Some(previous_space) = previous_space
+                    && previous_space != space
+                {
+                    // Never steal a layout from a display that is still using that space.
+                    let claimed_by_live_display = reactor
+                        .space_state
+                        .screens
+                        .iter()
+                        .any(|other| other.space == Some(previous_space) && other.display_uuid != uuid);
+                    if !claimed_by_live_display {
+                        info!(
+                            uuid,
+                            ?previous_space,
+                            ?space,
+                            "Reattaching reconnected display's layout to its new space id"
+                        );
+                        let engine = &mut reactor.layout_manager.layout_engine;
+                        engine.remap_space(&mut reactor.state.windows, previous_space, space);
+                    }
+                }
+            }
+
             reactor
                 .layout_manager
                 .layout_engine
@@ -305,10 +343,22 @@ impl LayoutManager {
     ) -> Result<bool, crate::model::reactor::ReactorError> {
         let main_window = reactor.main_window();
         trace!(?main_window);
+        // Keep skipping the dragged window for as long as the drag is active.
+        //
+        // This used to `.take()` the marker, so only the FIRST layout pass after a
+        // move event left the window alone. A drag produces many passes, and every
+        // later one reasserted the window's stored frame — for a floating window that
+        // is its saved position, so releasing the mouse snapped it back to where it
+        // started. Observed with System Settings: draggable, but it returned to the
+        // same spot on release.
+        //
+        // The marker is cleared where the drag actually ends (reactor.rs:4301 on
+        // mouse-up, and reactor.rs:4278 when the window stops being dragged), so
+        // reading it without consuming it keeps the window untouched for the whole
+        // gesture instead of one frame of it.
         let skip_wid = reactor
             .drag_manager
             .skip_layout_for_window
-            .take()
             .or(reactor.drag_manager.drag_swap_manager.dragged());
         let mut any_frame_changed = false;
 
