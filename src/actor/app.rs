@@ -617,12 +617,41 @@ impl State {
         let _guard = span.enter();
         let window = self.window_mut(wid)?;
         window.last_seen_txid = txid;
-        if set_size {
+
+        // Only pay for a resize on frames where the size actually changed.
+        //
+        // The set_size path costs THREE synchronous AX round-trips: size, position,
+        // then size again (the repeat works around apps that ignore a resize until
+        // they are repositioned). Doing that on every frame of every window makes
+        // each window's frame land measurably later than the last, so windows
+        // animating together visibly drift apart and tear against each other
+        // mid-scroll.
+        //
+        // During a pure scroll the size is constant, so this collapses to one
+        // set_position per window per frame and the group moves in lockstep. A real
+        // resize still gets the full treatment, but only on the frames where the size
+        // genuinely moves.
+        // 0.5pt tolerance: frames are rounded before being sent, so an unchanged
+        // size can differ by a hair without meaning anything.
+        let size_changed = window
+            .last_animation_frame
+            .map(|last| {
+                (last.size.width - frame.size.width).abs() > 0.5
+                    || (last.size.height - frame.size.height).abs() > 0.5
+            })
+            .unwrap_or(true);
+
+        if set_size && size_changed {
             window.last_animation_frame = Some(frame);
             let _ = window.elem.set_size(frame.size);
             let _ = window.elem.set_position(frame.origin);
             let _ = window.elem.set_size(frame.size);
         } else {
+            if set_size {
+                // Keep the record current so the next comparison is against what we
+                // last asked for rather than a stale frame.
+                window.last_animation_frame = Some(frame);
+            }
             let _ = window.elem.set_position(frame.origin);
         }
         Ok(())
