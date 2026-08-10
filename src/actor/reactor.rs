@@ -3982,25 +3982,37 @@ impl Reactor {
             .filter(|wid| self.is_window_on_active_space(*wid))
             .collect();
 
-        // Push scrolled-away columns to the BACK of the stacking order.
+        // Drop scrolled-away columns from the raise list entirely.
         //
         // A scrolling layout parks off-strip columns just past the screen edge,
-        // leaving a 1pt sliver visible (macOS refuses to place a window entirely
-        // outside every display). Those slivers kept whatever z-order they had, so
-        // a parked column could draw on top of a window that is actually on
-        // screen — and it usually did, because the raise list is in strip order,
-        // so the rightmost parked column was raised LAST and landed frontmost.
+        // leaving a 1pt sliver (macOS refuses to place a window entirely outside
+        // every display). Raising those slivers is pointless — nothing of them is
+        // visible — and it actively hurts: each one is an extra AX round-trip per
+        // focus change, and any raise issued after the on-screen windows puts a
+        // sliver in front of them.
         //
-        // There is no send-to-back to call: AX exposes only AXRaise, and the
-        // SkyLight ordering calls are refused for windows outside our own
-        // connection. But raising is ordered — handle_raise_request walks the list
-        // and the last raise wins — so raising the parked ones FIRST puts them
-        // underneath everything raised after them. Relative order within each group
-        // is preserved (sort_by_key is stable) so the strip's own stacking is
-        // untouched.
+        // An earlier attempt SORTED parked windows to the front of the list instead,
+        // on the theory that raising is last-wins so raising them first would leave
+        // them behind. That worked for stacking but caused visible flicker, because
+        // `wids.first()` is not just "the first raise": handle_raise_request treats
+        // it as the PRIMARY window and uses it for make-key, the is_standard check
+        // and the activation wait (app.rs). Sorting a parked, off-screen window into
+        // that slot made macOS activate an invisible window and then raise the real
+        // one immediately after.
         //
-        // Parked windows sort FIRST, hence `!parked` as the key: false < true.
-        raise_windows.sort_by_key(|wid| !self.is_window_parked_offscreen(*wid));
+        // Not raising them at all avoids both problems and is strictly less work.
+        // They keep whatever relative z-order they already had, which is invisible
+        // by definition while they are parked, and they get raised normally the
+        // moment they scroll back into view.
+        //
+        // Guarded: if EVERY window in the list is parked, keep the list as-is rather
+        // than emptying it. An empty raise list is a different code path above (it
+        // can skip the raise and the focus entirely), and the caller asked for these
+        // windows for a reason — e.g. a workspace switch where the layout has not
+        // been applied yet, so the frames still describe the old positions.
+        if raise_windows.iter().any(|wid| !self.is_window_parked_offscreen(*wid)) {
+            raise_windows.retain(|wid| !self.is_window_parked_offscreen(*wid));
+        }
 
         let focus_window = focus_window.filter(|wid| self.is_window_on_active_space(*wid));
         if let Some(space) = workspace_switch_space {

@@ -489,17 +489,18 @@ mod tests {
         );
     }
 
-    /// Parked columns must sort to the FRONT of the raise list, because the raise
-    /// order is applied last-wins: raising them first leaves them underneath
-    /// everything raised afterwards. This mirrors the sort key used in
-    /// Reactor::is_window_parked_offscreen without needing a live reactor.
+    /// Parked columns must be dropped from the raise list: raising them is wasted
+    /// AX work and puts an invisible sliver in front of real windows.
+    ///
+    /// Mirrors the predicate in Reactor::is_window_parked_offscreen without needing
+    /// a live reactor.
     #[test]
-    fn parked_windows_sort_before_visible_ones_in_raise_order() {
+    fn parked_windows_are_excluded_from_the_raise_list() {
         const VISIBLE_SLACK: f64 = 4.0;
         let screen = rect(0.0, 0.0, 1000.0, 800.0);
 
-        // (label, frame) in strip order: the parked ones are at both edges, and the
-        // rightmost is last -- which is exactly why it used to end up frontmost.
+        // Strip order, parked at both edges. The rightmost being LAST is what used
+        // to leave it frontmost.
         let windows = [
             ("parked_left", rect(-599.0, 0.0, 600.0, 800.0)),
             ("onscreen_a", rect(4.0, 0.0, 490.0, 800.0)),
@@ -514,17 +515,22 @@ mod tests {
             visible <= VISIBLE_SLACK
         };
 
-        let mut order: Vec<&str> = windows.iter().map(|(label, _)| *label).collect();
-        order.sort_by_key(|label| {
-            let frame = windows.iter().find(|(l, _)| l == label).unwrap().1;
-            !parked(frame)
-        });
+        let kept: Vec<&str> = windows
+            .iter()
+            .filter(|(_, frame)| !parked(*frame))
+            .map(|(label, _)| *label)
+            .collect();
 
         assert_eq!(
-            order,
-            vec!["parked_left", "parked_right", "onscreen_a", "onscreen_b"],
-            "parked columns must be raised first so they end up behind"
+            kept,
+            vec!["onscreen_a", "onscreen_b"],
+            "only on-screen columns should be raised"
         );
+
+        // A window straddling the edge is NOT parked -- it is partially visible and
+        // must still be raised.
+        let straddling = rect(960.0, 0.0, 490.0, 800.0);
+        assert!(!parked(straddling), "partially visible window must not count as parked");
     }
 
     #[test]
