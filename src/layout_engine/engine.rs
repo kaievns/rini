@@ -885,12 +885,27 @@ impl LayoutEngine {
             if let Some(prev_wid) = previous_selection {
                 let _ = self.workspace_tree_mut(ws_id).select_window(layout, prev_wid);
             }
-            if let Some(new_space) = self.next_space_for_direction(
-                space,
-                direction,
-                visible_spaces,
-                visible_space_centers,
-            ) {
+            // With isolate_displays set, horizontal focus stops at the ends of this
+            // display's strip instead of continuing onto the neighbouring display,
+            // so each display behaves as its own scrollable strip.
+            //
+            // Vertical navigation still crosses: up/down is not a strip axis, so
+            // there is nothing to isolate there.
+            let isolate_horizontal = self.layout_settings.scrolling.isolate_displays
+                && matches!(direction, Direction::Left | Direction::Right);
+
+            let adjacent_space = if isolate_horizontal {
+                None
+            } else {
+                self.next_space_for_direction(
+                    space,
+                    direction,
+                    visible_spaces,
+                    visible_space_centers,
+                )
+            };
+
+            if let Some(new_space) = adjacent_space {
                 let Some((new_ws_id, new_layout)) = self.workspace_and_layout(new_space) else {
                     debug!(
                         "No active workspace/layout for adjacent space {:?}; skipping cross-space focus",
@@ -3690,6 +3705,67 @@ mod tests {
             "focus never escaped the floating layer; it cycled between the floating \
              windows instead of falling through to the tiled strip"
         );
+    }
+
+    /// With isolate_displays set, horizontal focus must stop at the end of the
+    /// current display's strip instead of continuing onto the adjacent display.
+    #[test]
+    fn isolate_displays_stops_horizontal_focus_at_the_strip_end() {
+        for isolate in [false, true] {
+            let mut window_store = WindowStore::default();
+            let mut engine = test_engine();
+            let mut settings = LayoutSettings::default();
+            settings.scrolling.isolate_displays = isolate;
+            engine.set_layout_settings(&settings);
+
+            let left = SpaceId::new(520);
+            let right = SpaceId::new(521);
+            let size = CGSize::new(1000.0, 800.0);
+            let pid: pid_t = 73;
+            let on_left = WindowId::new(pid, 1);
+            let on_right = WindowId::new(pid, 2);
+            let info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
+
+            for (space, wid) in [(left, on_left), (right, on_right)] {
+                let _ = engine
+                    .handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+                let _ = engine.handle_event(
+                    &mut window_store,
+                    LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(wid)], None),
+                );
+            }
+
+            let visible_spaces = vec![left, right];
+            let mut centers = HashMap::default();
+            centers.insert(left, CGPoint::new(0.0, 0.0));
+            centers.insert(right, CGPoint::new(1000.0, 0.0));
+
+            // Sitting on the only window of the LEFT display, walk right: there is
+            // no further column on this display, so the adjacent display is the
+            // only place focus could go.
+            engine.focused_window = Some(on_left);
+            let response = engine.handle_command(
+                &mut window_store,
+                Some(left),
+                &visible_spaces,
+                &centers,
+                LayoutCommand::MoveFocus(Direction::Right),
+            );
+
+            if isolate {
+                assert_ne!(
+                    response.focus_window,
+                    Some(on_right),
+                    "isolate_displays = true must not move focus to the adjacent display"
+                );
+            } else {
+                assert_eq!(
+                    response.focus_window,
+                    Some(on_right),
+                    "isolate_displays = false should still cross to the adjacent display"
+                );
+            }
+        }
     }
 
     #[test]

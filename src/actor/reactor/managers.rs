@@ -159,9 +159,20 @@ pub struct LayoutManager {
 
 pub type LayoutResult = Vec<(SpaceId, Vec<(WindowId, CGRect)>)>;
 
-fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
-    const WINDOW_HIDDEN_THRESHOLD: f64 = 10.0;
+/// How much of a fully-scrolled-away window stays on screen, in points.
+///
+/// macOS will not let a window be positioned entirely outside every display — it
+/// clamps it back — so a scrolling layout has to leave a deliberate sliver
+/// visible at the edge. 1pt is the smallest value that still satisfies the window
+/// server while being visually negligible.
+///
+/// Was 10pt, which is individually small but stacks: with a dozen scrolled-away
+/// columns parked at the same edge the result is a conspicuous ~10pt band of
+/// overlapping window edges on both sides of the screen, and it is worse on a
+/// wide external display where more columns are off-strip.
+const WINDOW_HIDDEN_THRESHOLD: f64 = 1.0;
 
+fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
     let screen_left = screen.origin.x;
     let screen_top = screen.origin.y;
     let screen_right = screen.max().x;
@@ -180,6 +191,15 @@ fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
         frame.size,
     )
 }
+
+// NOTE on z-order: scrolled-away columns keep whatever stacking they had, so a
+// parked sliver can sit ON TOP of a window that is actually on screen. There is
+// no fix available from here. AX exposes only AXRaise, with no lower/send-to-back
+// counterpart, and the SkyLight ordering calls used elsewhere in this file
+// (SLSOrderWindow via CgsWindow) work only on windows owned by our own
+// connection — a cross-process SLSOrderWindow/SLSSetWindowLevel is refused by the
+// window server (kCGErrorIllegalArgument). Keeping the sliver at 1pt is the
+// available mitigation.
 
 fn bound_scrolling_tiled_frames_to_screen(
     reactor: &Reactor,
@@ -421,7 +441,7 @@ pub struct PendingSpaceChangeManager {
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::bound_frame_to_screen;
+    use super::{WINDOW_HIDDEN_THRESHOLD, bound_frame_to_screen};
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -441,7 +461,9 @@ mod tests {
         let screen = rect(2000.0, 0.0, 1000.0, 800.0);
         let frame = rect(1200.0, 80.0, 600.0, 300.0);
         let bounded = bound_frame_to_screen(frame, screen);
-        assert_eq!(bounded.origin.x, 1410.0);
+        // Derived from WINDOW_HIDDEN_THRESHOLD rather than hardcoded, so tuning the
+        // sliver width does not require editing the expectations.
+        assert_eq!(bounded.origin.x, 2000.0 - 600.0 + WINDOW_HIDDEN_THRESHOLD);
         assert_eq!(bounded.size.width, 600.0);
     }
 
@@ -450,8 +472,21 @@ mod tests {
         let screen = rect(2000.0, 0.0, 1000.0, 800.0);
         let frame = rect(3200.0, 80.0, 600.0, 300.0);
         let bounded = bound_frame_to_screen(frame, screen);
-        assert_eq!(bounded.origin.x, 2990.0);
+        assert_eq!(bounded.origin.x, 3000.0 - WINDOW_HIDDEN_THRESHOLD);
         assert_eq!(bounded.size.width, 600.0);
+    }
+
+    /// The sliver must stay small enough not to read as a visible band of window
+    /// edges when many columns are parked at the same screen edge, but non-zero:
+    /// macOS refuses to leave a window entirely outside every display.
+    #[test]
+    fn hidden_sliver_is_minimal_but_nonzero() {
+        assert!(
+            WINDOW_HIDDEN_THRESHOLD > 0.0 && WINDOW_HIDDEN_THRESHOLD <= 2.0,
+            "sliver must be >0 (macOS clamps fully off-screen windows back) and \
+             small enough to be visually negligible, got {}",
+            WINDOW_HIDDEN_THRESHOLD
+        );
     }
 
     #[test]

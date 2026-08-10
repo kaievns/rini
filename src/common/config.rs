@@ -746,6 +746,11 @@ pub struct ScrollingLayoutSettings {
     /// tiling width. Mirrors niri's `layout.preset-column-widths`.
     #[serde(default = "default_scrolling_preset_column_widths")]
     pub preset_column_widths: Vec<f64>,
+    /// When true, horizontal focus stops at the ends of a display's strip instead
+    /// of continuing onto the adjacent display. Each display then behaves as an
+    /// isolated strip, which is what niri does with its per-output workspaces.
+    #[serde(default)]
+    pub isolate_displays: bool,
     /// Alignment for the focused column (left, center, right).
     #[serde(default)]
     pub alignment: ScrollingAlignment,
@@ -768,6 +773,7 @@ impl Default for ScrollingLayoutSettings {
             min_column_width_ratio: default_scrolling_min_column_width_ratio(),
             max_column_width_ratio: default_scrolling_max_column_width_ratio(),
             preset_column_widths: default_scrolling_preset_column_widths(),
+            isolate_displays: false,
             alignment: ScrollingAlignment::default(),
             focus_navigation_style: ScrollingFocusNavigationStyle::default(),
             gestures: ScrollingGestureSettings::default(),
