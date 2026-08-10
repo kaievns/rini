@@ -3177,6 +3177,44 @@ impl Reactor {
         self.state.windows.is_window_server_id_native_fullscreen_suspended(wsid)
     }
 
+    /// True when a window has been parked off-strip: it overlaps its screen by no
+    /// more than the hidden sliver, so nothing meaningful of it is on display.
+    ///
+    /// Used to sort parked columns to the back of the raise order. Floating windows
+    /// are never considered parked — they are positioned by the user, and a small
+    /// window near a screen edge is not the same thing as a scrolled-away column.
+    fn is_window_parked_offscreen(&self, wid: WindowId) -> bool {
+        // Generous relative to the 1pt parking sliver: a parked window can sit a
+        // fraction of a point inside after rounding, and a genuinely useful window
+        // is never this close to invisible.
+        const VISIBLE_SLACK: f64 = 4.0;
+
+        if self.layout_manager.layout_engine.is_window_floating(wid) {
+            return false;
+        }
+        let Some(window) = self.state.windows.window(wid) else {
+            return false;
+        };
+        let frame = window.frame_monotonic;
+        let Some(screen) = self
+            .screen_for_point(frame.mid())
+            .map(|screen| screen.frame)
+            .or_else(|| {
+                // A fully parked window's midpoint is outside every display, so fall
+                // back to whichever screen its own space belongs to.
+                self.best_space_for_window_id(wid).and_then(|space| {
+                    self.space_state.screen_by_space(space).map(|screen| screen.frame)
+                })
+            })
+        else {
+            return false;
+        };
+
+        let visible_width =
+            (frame.max().x.min(screen.max().x) - frame.origin.x.max(screen.origin.x)).max(0.0);
+        visible_width <= VISIBLE_SLACK
+    }
+
     fn window_center_on_known_screen(&self, wid: WindowId) -> Option<CGPoint> {
         let window_center = self.state.windows.window(wid)?.frame_monotonic.mid();
         self.screen_for_point(window_center).map(|_| window_center)
@@ -3939,10 +3977,31 @@ impl Reactor {
             self.insert_app_handle_for_window(&mut app_handles, wid);
         }
 
-        let raise_windows: Vec<WindowId> = raise_windows
+        let mut raise_windows: Vec<WindowId> = raise_windows
             .into_iter()
             .filter(|wid| self.is_window_on_active_space(*wid))
             .collect();
+
+        // Push scrolled-away columns to the BACK of the stacking order.
+        //
+        // A scrolling layout parks off-strip columns just past the screen edge,
+        // leaving a 1pt sliver visible (macOS refuses to place a window entirely
+        // outside every display). Those slivers kept whatever z-order they had, so
+        // a parked column could draw on top of a window that is actually on
+        // screen — and it usually did, because the raise list is in strip order,
+        // so the rightmost parked column was raised LAST and landed frontmost.
+        //
+        // There is no send-to-back to call: AX exposes only AXRaise, and the
+        // SkyLight ordering calls are refused for windows outside our own
+        // connection. But raising is ordered — handle_raise_request walks the list
+        // and the last raise wins — so raising the parked ones FIRST puts them
+        // underneath everything raised after them. Relative order within each group
+        // is preserved (sort_by_key is stable) so the strip's own stacking is
+        // untouched.
+        //
+        // Parked windows sort FIRST, hence `!parked` as the key: false < true.
+        raise_windows.sort_by_key(|wid| !self.is_window_parked_offscreen(*wid));
+
         let focus_window = focus_window.filter(|wid| self.is_window_on_active_space(*wid));
         if let Some(space) = workspace_switch_space {
             self.layout_manager.layout_engine.commit_workspace_focus(

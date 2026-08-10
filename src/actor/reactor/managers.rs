@@ -489,6 +489,44 @@ mod tests {
         );
     }
 
+    /// Parked columns must sort to the FRONT of the raise list, because the raise
+    /// order is applied last-wins: raising them first leaves them underneath
+    /// everything raised afterwards. This mirrors the sort key used in
+    /// Reactor::is_window_parked_offscreen without needing a live reactor.
+    #[test]
+    fn parked_windows_sort_before_visible_ones_in_raise_order() {
+        const VISIBLE_SLACK: f64 = 4.0;
+        let screen = rect(0.0, 0.0, 1000.0, 800.0);
+
+        // (label, frame) in strip order: the parked ones are at both edges, and the
+        // rightmost is last -- which is exactly why it used to end up frontmost.
+        let windows = [
+            ("parked_left", rect(-599.0, 0.0, 600.0, 800.0)),
+            ("onscreen_a", rect(4.0, 0.0, 490.0, 800.0)),
+            ("onscreen_b", rect(500.0, 0.0, 490.0, 800.0)),
+            ("parked_right", rect(999.0, 0.0, 600.0, 800.0)),
+        ];
+
+        let parked = |frame: CGRect| {
+            let visible = (frame.max().x.min(screen.max().x)
+                - frame.origin.x.max(screen.origin.x))
+            .max(0.0);
+            visible <= VISIBLE_SLACK
+        };
+
+        let mut order: Vec<&str> = windows.iter().map(|(label, _)| *label).collect();
+        order.sort_by_key(|label| {
+            let frame = windows.iter().find(|(l, _)| l == label).unwrap().1;
+            !parked(frame)
+        });
+
+        assert_eq!(
+            order,
+            vec!["parked_left", "parked_right", "onscreen_a", "onscreen_b"],
+            "parked columns must be raised first so they end up behind"
+        );
+    }
+
     #[test]
     fn bound_frame_to_screen_does_not_park_partially_visible_right_windows() {
         let screen = rect(2000.0, 0.0, 1000.0, 800.0);
