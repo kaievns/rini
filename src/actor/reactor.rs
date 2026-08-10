@@ -2605,6 +2605,15 @@ impl Reactor {
                 // space's layout dragged onto the new one.
                 let display_was_absent = !previous_display_uuids.contains(display_uuid);
 
+                info!(
+                    display_uuid,
+                    ?previous_space,
+                    ?space,
+                    claimed_by_live_display,
+                    display_was_absent,
+                    "Reconnect remap candidate"
+                );
+
                 if !claimed_by_live_display && display_was_absent {
                     display_remaps.push((previous_space, space));
                 }
