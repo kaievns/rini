@@ -235,6 +235,46 @@ impl WorkspaceStore {
                     }
                 }
             }
+
+            // Migrate restored workspaces whose layout mode no longer matches config.
+            //
+            // Only `default_layout_mode` was updated here, which governs workspaces
+            // created LATER; a workspace deserialized from the layout file kept the
+            // mode it was saved with forever. With persistence enabled that was
+            // immediately visible: a file written while the default was "traditional"
+            // restored traditional workspaces into a scrolling config, so windows kept
+            // their app-native sizes, nothing scrolled, and the column commands had no
+            // columns to act on.
+            //
+            // The old tree cannot be carried across — the layout systems have different
+            // internal shapes — so the system is replaced with an empty one of the right
+            // kind. Window membership is not lost: rift re-discovers on-screen windows at
+            // startup and adds them to the active layout, which is the same path a fresh
+            // launch takes. Strip ORDER is not preserved through a mode change, which is
+            // an acceptable one-off cost for a config change that has to rebuild the tree
+            // anyway.
+            let workspace_ids: Vec<VirtualWorkspaceId> =
+                self.workspaces_by_space.get(&space).cloned().unwrap_or_default();
+            for (index, workspace_id) in workspace_ids.into_iter().enumerate() {
+                let Some(workspace) = self.workspaces.get(workspace_id) else { continue };
+                if workspace.layout_mode
+                    == self.resolve_layout_mode_for_workspace(index, &workspace.name.clone())
+                {
+                    continue;
+                }
+                let desired =
+                    self.resolve_layout_mode_for_workspace(index, &workspace.name.clone());
+                let settings = self.layout_settings.clone();
+                let Some(workspace) = self.workspaces.get_mut(workspace_id) else { continue };
+                tracing::info!(
+                    ?workspace_id,
+                    from = ?workspace.layout_mode,
+                    to = ?desired,
+                    "Migrating restored workspace to the configured layout mode"
+                );
+                workspace.layout_mode = desired;
+                workspace.layout_system = VirtualWorkspace::create_layout_system(desired, &settings);
+            }
             while self.workspaces_by_space.get(&space).unwrap().len() < target_count {
                 let idx = self.workspaces_by_space.get(&space).unwrap().len();
                 let name = if let Some(n) = self.default_workspace_names.get(idx) {
