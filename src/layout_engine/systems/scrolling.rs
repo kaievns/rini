@@ -754,6 +754,36 @@ impl LayoutSystem for ScrollingLayoutSystem {
             // scrolls between column starts; it does not pan within a single
             // oversized column.
             width = width.min(tiling.size.width.max(1.0));
+
+            // Absorb the inner gaps into the column width so that N columns of ratio
+            // 1/N actually FIT side by side.
+            //
+            // Without this, two columns at ratio 0.5 need 2*(0.5*W) + gap = W + gap,
+            // i.e. `gap` points more than the viewport has. The second column is then
+            // never fully visible, so reveal-on-demand nudges the strip on every focus
+            // change and the pair visibly shifts back and forth by the gap width.
+            // Measured on a 1720pt viewport with a 4pt gap: the columns alternated
+            // between x=[0, 864] and x=[4, 868] as focus moved between them.
+            //
+            // N columns have (N-1) gaps between them, so each gives up (N-1)/N of a
+            // gap. N is inferred from the ratio the user asked for — a ratio of 1/N is
+            // a request for N columns abreast — which keeps the correction local to
+            // this column and independent of how many windows happen to exist.
+            //
+            //   ratio 0.5     -> N=2, col 858.00, 2 cols + 1 gap = 1720.00  fits
+            //   ratio 0.33333 -> N=3, col 570.66, 3 cols + 2 gaps = 1719.98 fits
+            //   ratio 0.25    -> N=4, col 427.00, 4 cols + 3 gaps = 1720.00 fits
+            //
+            // Guarded so gapless configs, single columns and degenerate widths are
+            // untouched.
+            if gap_x > 0.0 && ratio > 0.0 {
+                let columns_abreast = (1.0 / ratio).round().max(1.0);
+                let gap_share = gap_x * (columns_abreast - 1.0) / columns_abreast;
+                let shrunk = width - gap_share;
+                if shrunk >= 1.0 {
+                    width = shrunk;
+                }
+            }
             column_widths.push(width);
             column_ratios.push(if tiling.size.width > 0.0 {
                 (width / tiling.size.width).max(0.0)
@@ -3004,6 +3034,59 @@ mod tests {
         // Wraps rather than sticking at the widest.
         system.cycle_preset_column_width(layout);
         assert!((width_of(&system) - 0.33333).abs() < 0.02, "after wrap {}", width_of(&system));
+    }
+
+    /// Two columns at ratio 0.5 must FIT, so moving focus between them does not
+    /// scroll the strip.
+    ///
+    /// They used to need 2*(0.5*W) + gap, i.e. one gap more than the viewport, so
+    /// the second column was never fully visible and reveal-on-demand nudged the
+    /// strip on every focus change — the pair visibly shifted by the gap width.
+    #[test]
+    fn two_half_width_columns_do_not_shift_when_focus_alternates() {
+        let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
+        let screen = screen(1728.0, 1117.0);
+        // Real gaps matter here: with GapSettings::default() (all zero) two 0.5
+        // columns fit exactly and the bug cannot appear. The shift only shows up
+        // once there is an inner gap to overflow by.
+        let mut gaps = GapSettings::default();
+        gaps.outer.left = 4.0;
+        gaps.outer.right = 4.0;
+        gaps.inner.horizontal = 4.0;
+
+        let positions = |system: &ScrollingLayoutSystem| {
+            let frames = render(system, layout, screen, &gaps);
+            (
+                frame_for(&frames, w1).origin.x.round(),
+                frame_for(&frames, w2).origin.x.round(),
+            )
+        };
+
+        assert!(system.select_window(layout, w1));
+        // Render once so the strip settles before measuring.
+        let _ = positions(&system);
+        let first = positions(&system);
+
+        // Alternate focus with move_focus, which is what ctrl-J / ctrl-L invoke and
+        // what triggers reveal-on-demand. select_window does NOT take that path, so
+        // it cannot reproduce the shift.
+        for i in 0..3 {
+            let _ = system.move_focus(layout, Direction::Right);
+            assert_eq!(positions(&system), first, "strip shifted moving right (iter {i})");
+            let _ = system.move_focus(layout, Direction::Left);
+            assert_eq!(positions(&system), first, "strip shifted moving left (iter {i})");
+        }
+
+        // And both must genuinely be on screen, not merely stable.
+        let frames = render(&system, layout, screen, &gaps);
+        let tiling = compute_tiling_area(screen, &gaps);
+        let f2 = frame_for(&frames, w2);
+        assert!(
+            f2.origin.x + f2.size.width <= tiling.origin.x + tiling.size.width + 1.0,
+            "second column runs past the viewport: ends at {}, viewport ends at {}",
+            f2.origin.x + f2.size.width,
+            tiling.origin.x + tiling.size.width
+        );
     }
 
     /// An empty preset list must be a no-op rather than a panic or a zero width.

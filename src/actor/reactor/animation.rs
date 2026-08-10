@@ -246,7 +246,21 @@ impl AnimationManager {
                 .layout_engine
                 .layout_specific_animate_settings(space)
                 .unwrap_or(reactor.config.settings.animate);
-            let skip_anim = is_resize || !layout_animate || low_power;
+            // `is_resize` means a window REPORTED a size change, which happens both
+            // when the user is dragging an edge and when we ourselves resized it via
+            // a command (ctrl-R preset cycling, ctrl-F full width). Skipping the
+            // animation is right for a drag — animation would lag the cursor — but
+            // wrong for a command, and it produced a specific visible artefact:
+            //
+            //   the NEIGHBOUR column animated into its new position (that pass had
+            //   is_resize = false), then the resized window SNAPPED to its new size
+            //   when the app's own resize notification arrived and forced a second,
+            //   unanimated pass.
+            //
+            // Only a real interactive drag should skip. is_in_drag() is the existing
+            // signal for that, already used to suppress arrange passes mid-drag in
+            // reactor.rs.
+            let skip_anim = (is_resize && reactor.is_in_drag()) || !layout_animate || low_power;
 
             if let Some(tx) = &reactor.animation_tx {
                 let message = if skip_anim {
