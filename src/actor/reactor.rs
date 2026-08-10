@@ -78,7 +78,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 pub use replay::{Record, replay};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 use transaction_manager::TransactionId;
 
 use super::{event_tap, gesture_tap};
@@ -2509,11 +2509,21 @@ impl Reactor {
             self.space_state.command_space = command_space;
             return Ok(outcome);
         }
-        if display_set_changed {
-            let active_displays: Vec<String> =
-                screens.iter().map(|screen| screen.display_uuid.clone()).collect();
-            self.layout_manager.layout_engine.prune_display_state(&active_displays);
-        }
+        // Deliberately NOT pruning display state when the display set changes.
+        //
+        // prune_display_state drops the UUID -> space mapping for every display that is
+        // no longer attached, which is precisely the memory needed to put windows back
+        // when that display returns. macOS assigns a NEW space id on every reconnect —
+        // observed 479 -> 484 -> 487 across two unplug/replug cycles of the same
+        // monitor — so the display UUID is the only durable link between a physical
+        // display and its layout. Deleting it on unplug leaves the replug with nothing
+        // to remap against, so the external comes back empty and the windows that were
+        // on it never return.
+        //
+        // The map holds one entry per display ever seen, and remap_space corrects it in
+        // place when a display reappears under a new space id, so retaining it costs
+        // effectively nothing and is what makes dock/undock recoverable.
+        let _ = display_set_changed;
         self.space_state.menu_bar_space = menu_bar_space;
         self.space_state.command_space = command_space;
         self.space_state.display_space_ids = display_space_ids;
@@ -2532,6 +2542,12 @@ impl Reactor {
         }
 
         self.refocus_manager.stale_cleanup_state = StaleCleanupState::Enabled;
+        // Which displays were attached BEFORE this snapshot. Captured here because
+        // space_state.screens is replaced on the next line, and the reconnect remap
+        // below needs to distinguish "this display just came back" from "this display
+        // merely switched space".
+        let previous_display_uuids: HashSet<String> =
+            self.space_state.screens.iter().map(|screen| screen.display_uuid.clone()).collect();
         self.space_state.screens = screens;
         if invalidates_pending_targets {
             self.clear_pending_hidden_window_targets();
@@ -2547,6 +2563,66 @@ impl Reactor {
                 space,
             );
         }
+        // Reattach each display's layout to its CURRENT space id, keyed by display UUID.
+        //
+        // macOS mints a new space id every time a display is reconnected (observed
+        // 479 -> 484 -> 487 for the same monitor), so a layout saved against the old id
+        // is orphaned and the display comes back empty. The spaces actor has its own
+        // remap path (compute_space_remaps), but it is gated behind
+        // should_force_refresh_layout, which never became true across a full
+        // unplug/replug cycle here: every snapshot reported
+        // `allow_space_remap: false, space_remaps: []` even while
+        // `display_set_changed: true`.
+        //
+        // Rather than loosen that gate — its guards exist to stop one display's layout
+        // being remapped onto another, which is a worse failure — remap here from the
+        // durable UUID -> space mapping the engine already maintains. This runs before
+        // update_space_display overwrites it, and remap_space is a no-op when the id has
+        // not changed.
+        let mut display_remaps: Vec<(SpaceId, SpaceId)> = Vec::new();
+        for screen in &self.space_state.screens {
+            let (Some(space), Some(display_uuid)) = (screen.space, screen.display_uuid_opt())
+            else {
+                continue;
+            };
+            if let Some(previous_space) =
+                self.layout_manager.layout_engine.last_space_for_display_uuid(display_uuid)
+                && previous_space != space
+            {
+                // Only move a layout whose previous space is genuinely gone. If any live
+                // display is sitting on that id, this is not a reconnect and remapping
+                // would steal that display's layout.
+                let claimed_by_live_display = self
+                    .space_state
+                    .screens
+                    .iter()
+                    .any(|other| other.space == Some(previous_space));
+
+                // And only when this display was ABSENT from the previous snapshot, i.e.
+                // it is genuinely coming back. A display that merely switched to a
+                // different space — the user changing spaces, or macOS moving a space
+                // between displays — keeps per-space layouts and must not have the old
+                // space's layout dragged onto the new one.
+                let display_was_absent = !previous_display_uuids.contains(display_uuid);
+
+                if !claimed_by_live_display && display_was_absent {
+                    display_remaps.push((previous_space, space));
+                }
+            }
+        }
+        for (previous_space, space) in display_remaps {
+            info!(
+                ?previous_space,
+                ?space,
+                "Reattaching display layout to its new space id after reconnect"
+            );
+            self.layout_manager.layout_engine.remap_space(
+                &mut self.state.windows,
+                previous_space,
+                space,
+            );
+        }
+
         for screen in &self.space_state.screens {
             let (Some(space), Some(display_uuid)) = (screen.space, screen.display_uuid_opt())
             else {

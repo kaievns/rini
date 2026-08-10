@@ -4990,3 +4990,79 @@ fn autosave_preserves_floating_restore_frame() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A display that is unplugged and replugged must get its layout back, even though
+/// macOS assigns a brand-new space id each time.
+///
+/// Two bugs made this fail. prune_display_state deleted the display's UUID -> space
+/// mapping the moment it was unplugged, destroying the only durable link between a
+/// physical display and its layout; and the spaces actor's own remap path is gated
+/// behind should_force_refresh_layout, which never became true across a real
+/// unplug/replug cycle (every snapshot reported allow_space_remap: false).
+///
+/// Observed on hardware: the same monitor came back as space 479, then 484, then 487,
+/// and windows arranged on it stayed on the built-in display.
+#[test]
+fn reconnected_display_regains_its_layout_under_the_new_space_id() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    // macOS mints a new id on reconnect.
+    let replugged_space = SpaceId::new(484);
+
+    reactor.handle_event(space_state_event(vec![builtin, external], vec![
+        Some(builtin_space),
+        Some(external_space),
+    ]));
+
+    let pid = 1;
+    reactor.add_test_app(pid);
+    let wid = WindowId::new(pid, 1);
+    let wsid = WindowServerId::new(931);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    reactor.add_test_window(wid, wsid, Some(external_space), external);
+    assert!(reactor.assign_test_window_to_workspace(external_space, wid, external_workspace));
+
+    // The engine must know which display owns that space.
+    assert_eq!(
+        reactor.layout_manager.layout_engine.last_space_for_display_uuid("test-display-1"),
+        Some(external_space),
+        "the external display's space must be recorded before unplugging"
+    );
+
+    // Unplug: only the built-in remains.
+    reactor.handle_event(space_state_event_with(
+        vec![builtin],
+        vec![Some(builtin_space)],
+        |state| state.display_set_changed = true,
+    ));
+
+    // The mapping must SURVIVE the unplug — this is what prune_display_state destroyed.
+    assert_eq!(
+        reactor.layout_manager.layout_engine.last_space_for_display_uuid("test-display-1"),
+        Some(external_space),
+        "unplugging must not forget which space belonged to the display"
+    );
+
+    // Replug with a DIFFERENT space id, as macOS actually does.
+    reactor.handle_event(space_state_event_with(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(replugged_space)],
+        |state| state.display_set_changed = true,
+    ));
+
+    // The mapping is overwritten by update_space_display regardless, so asserting on
+    // it proves nothing. What matters is whether the WINDOW came back with the display.
+    let landed = reactor
+        .layout_manager
+        .layout_engine
+        .virtual_workspace_manager()
+        .workspace_for_window(&reactor.state.windows, replugged_space, wid);
+    assert!(
+        landed.is_some(),
+        "the window arranged on the external display must be reachable under its new \
+         space id after reconnect; instead the display came back empty"
+    );
+}
