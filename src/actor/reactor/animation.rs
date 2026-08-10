@@ -1003,4 +1003,58 @@ mod tests {
             "expected intermediate widths between 100 and 400, got {widths:?}"
         );
     }
+
+    /// A pure scroll (position changes, size does not) must not request a resize on
+    /// every frame.
+    ///
+    /// flush_frames in app.rs takes a three-AX-call path whenever a frame asks for a
+    /// size change, and those calls are synchronous: paying it per window per frame
+    /// makes each window's frame land later than the last, so windows animating
+    /// together drift apart and tear. This asserts the frames a scroll produces all
+    /// carry the SAME size, which is what lets the flush skip the expensive path.
+    #[test]
+    fn scrolling_frames_keep_a_constant_size() {
+        let (tx, mut rx) = crate::actor::channel();
+        let handle = AppThreadHandle::new_for_test(tx);
+        let wid = WindowId::new(1, 1);
+        // Same size at both ends, different position: this is a scroll.
+        let anim = animation(
+            &handle,
+            wid,
+            rect(0.0, 0.0, 400.0, 800.0),
+            rect(900.0, 0.0, 400.0, 800.0),
+        );
+
+        let mut manager = AnimationManager::new();
+        manager.handle_message(Message::Replace(anim));
+        let _ = collect_requests(&mut rx);
+
+        let mut sizes = Vec::new();
+        let mut positions = Vec::new();
+        for _ in 0..8 {
+            manager.tick();
+            for request in collect_requests(&mut rx) {
+                if let Request::AnimationFrame { frame, .. } = request {
+                    sizes.push((frame.size.width, frame.size.height));
+                    positions.push(frame.origin.x);
+                }
+            }
+        }
+
+        assert!(sizes.len() >= 3, "expected several frames, got {sizes:?}");
+        // 0.5pt tolerance, matching the tolerance flush_frames uses: blending
+        // start and finish reintroduces float noise (400.00000000000006) even when
+        // both ends are identical, and that must not count as a size change.
+        assert!(
+            sizes
+                .iter()
+                .all(|(w, h)| (w - 400.0).abs() <= 0.5 && (h - 800.0).abs() <= 0.5),
+            "a scroll must not change size across frames, got {sizes:?}"
+        );
+        // And it really is moving, so the test is not vacuous.
+        assert!(
+            positions.last().unwrap() > positions.first().unwrap(),
+            "expected the window to travel, got {positions:?}"
+        );
+    }
 }
