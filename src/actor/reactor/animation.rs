@@ -49,31 +49,32 @@ struct AnimatedWindow {
     wid: WindowId,
     start: CGRect,
     finish: CGRect,
+    /// Kept for callers and debugging, but no longer changes the animation: the
+    /// focused window used to be special-cased into snapping straight to its final
+    /// size, which is what made resizes pop instead of easing.
+    #[allow(dead_code)]
     is_focus: bool,
     txid: TransactionId,
 }
 
 impl AnimatedWindow {
     fn frame_after(&self, frame: u32, total_frames: u32) -> CGRect {
+        // Interpolate SIZE as well as position.
+        //
+        // This used to snap the size instead of easing it: the focused window got
+        // `finish.size` at frame 0, and every other window held `start.size` until
+        // halfway and then jumped. Position eased smoothly the whole time, so a
+        // resize read as "the neighbour glides into place, then the focused window
+        // pops to its new width" — with a visible gap in between while the
+        // neighbour had moved but the focused window had not yet grown.
+        //
+        // get_frame already blends both origin and size on the same eased curve,
+        // so the two now finish together.
         if frame == 0 {
-            return if self.is_focus {
-                CGRect {
-                    origin: self.start.origin,
-                    size: self.finish.size,
-                }
-            } else {
-                self.start
-            };
+            return self.start;
         }
-
         let t = f64::from(frame) / f64::from(total_frames);
-        let mut rect = get_frame(self.start, self.finish, t);
-        if self.is_focus || frame * 2 >= total_frames {
-            rect.size = self.finish.size;
-        } else {
-            rect.size = self.start.size;
-        }
-        rect
+        get_frame(self.start, self.finish, t)
     }
 }
 
@@ -533,18 +534,13 @@ impl Animation {
                 continue;
             }
             _ = window.handle.send(Request::BeginWindowAnimation(window.wid));
-            if window.is_focus {
-                let frame = CGRect {
-                    origin: window.start.origin,
-                    size: window.finish.size,
-                };
-                _ = window.handle.send(Request::AnimationFrame {
-                    wid: window.wid,
-                    frame,
-                    set_size: true,
-                    txid: window.txid,
-                });
-            }
+            // No pre-sizing of the focused window here.
+            //
+            // This used to immediately push `size: finish.size` at `start.origin`
+            // before the animation began, which is the same size-snap that
+            // frame_after used to do — the window jumped to its final width while
+            // still at its old position, then slid. With size now interpolated
+            // across the animation, sending this would undo it on the first frame.
         }
     }
 
@@ -892,5 +888,60 @@ mod tests {
         assert_animation_frame(&requests[1], wid, rect(50.0, 60.0, 10.0, 10.0));
         assert!(matches!(requests[2], Request::EndWindowAnimation(req_wid) if req_wid == wid));
         assert_set_window_frame(&requests[3], wid, rect(80.0, 90.0, 10.0, 10.0));
+    }
+
+    /// Size must be interpolated across the animation, not snapped.
+    ///
+    /// The focused window used to receive `finish.size` at frame 0 and every other
+    /// window held `start.size` until halfway then jumped, while POSITION eased
+    /// smoothly throughout. A resize therefore read as "the neighbour glides into
+    /// place, then this window pops to its new width", with a visible gap in
+    /// between.
+    #[test]
+    fn animation_interpolates_size_not_just_position() {
+        let start = rect(0.0, 0.0, 100.0, 100.0);
+        let finish = rect(200.0, 0.0, 400.0, 100.0);
+        let (tx, _rx) = crate::actor::channel();
+        let window = AnimatedWindow {
+            handle: AppThreadHandle::new_for_test(tx),
+            wid: WindowId::new(1, 1),
+            start,
+            finish,
+            is_focus: true,
+            txid: TransactionId::default(),
+        };
+
+        let total = 10u32;
+        let mut widths = Vec::new();
+        for frame in 0..=total {
+            widths.push(window.frame_after(frame, total).size.width);
+        }
+
+        assert_eq!(widths[0], start.size.width, "frame 0 must start at the old width");
+        assert_eq!(
+            widths[total as usize], finish.size.width,
+            "final frame must reach the target width"
+        );
+
+        // Strictly increasing: a snap would show a run of identical values followed
+        // by one jump.
+        for pair in widths.windows(2) {
+            assert!(
+                pair[1] >= pair[0],
+                "width must not go backwards: {:?}",
+                widths
+            );
+        }
+        let distinct = widths
+            .iter()
+            .map(|w| (w * 100.0).round() as i64)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(
+            distinct > total as usize / 2,
+            "expected a smooth ramp of widths, got {} distinct values in {:?}",
+            distinct,
+            widths
+        );
     }
 }
