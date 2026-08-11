@@ -356,6 +356,73 @@ impl LayoutEngine {
         for (temporary, new) in staged {
             self.remap_space(window_store, temporary, new);
         }
+
+        self.release_windows_saved_on_absent_displays(current_spaces);
+    }
+
+    /// Give up the saved slots that belong to a display which is not attached, keeping only
+    /// the record of which display they belonged to.
+    ///
+    /// This is what makes restore safe to enable by default. A saved layout describes every
+    /// display the last session had. Restoring an entry whose display is now absent puts
+    /// those windows at that display's coordinates — measured at x=-1680, with no display
+    /// there — and nothing migrated them back, so a single dock/undock cycle produced a
+    /// layout only fixable by deleting the layout file.
+    ///
+    /// Releasing the candidate means those windows are laid out fresh on a live display, at
+    /// default width rather than their saved one. That is a real loss, and it is the
+    /// deliberate trade: their display affinity survives, so plugging the display back in
+    /// repatriates them, whereas a stranded window is not recoverable at all.
+    fn release_windows_saved_on_absent_displays(&mut self, current_spaces: &[(SpaceId, String)]) {
+        let live_displays: HashSet<&str> =
+            current_spaces.iter().map(|(_, display)| display.as_str()).collect();
+
+        let absent: Vec<(SpaceId, String)> = self
+            .workspace_layouts
+            .spaces()
+            .into_iter()
+            .filter_map(|space| {
+                let uuid = self.display_affinity.display_for_space(space)?;
+                (!live_displays.contains(uuid)).then(|| (space, uuid.to_owned()))
+            })
+            .collect();
+        if absent.is_empty() {
+            return;
+        }
+
+        let mut released = Vec::new();
+        for (space, uuid) in absent {
+            let windows: Vec<WindowId> = self
+                .persistence
+                .pending_windows
+                .iter()
+                .copied()
+                .filter(|window| {
+                    self.restored_locations_for_window(*window)
+                        .iter()
+                        .any(|(saved_space, _)| *saved_space == space)
+                })
+                .collect();
+            if windows.is_empty() {
+                continue;
+            }
+            tracing::info!(
+                display_uuid = %uuid,
+                ?space,
+                window_count = windows.len(),
+                "Releasing saved windows whose display is not attached; their affinity is kept \
+                 so a replug brings them back"
+            );
+            // The affinity is the whole point of releasing rather than deleting: it is what
+            // sends these windows back when their display returns. discard_candidates drops
+            // the saved slot but not the home, so recording it here is enough.
+            for window in &windows {
+                self.display_affinity.set_window_home(*window, &uuid);
+            }
+            released.extend(windows);
+        }
+
+        self.discard_candidates(released);
     }
 
     pub fn serialize_to_string(&self) -> String {

@@ -2279,3 +2279,89 @@ fn app_close_removes_saved_fingerprints() {
     assert!(!engine.persistence.windows.contains_key(&window));
     assert!(!engine.persistence.pending_windows.contains(&window));
 }
+
+/// Restoring a layout must never leave windows on a display that is not attached.
+///
+/// This is what made restore unsafe to enable by default. A saved layout describes every
+/// display the last session had, so restoring it while the external is unplugged put its
+/// windows at that display's coordinates — measured at x=-1680, with nothing there — and
+/// no path migrated them back. One dock/undock cycle produced a layout that could only be
+/// fixed by deleting ~/.rift/layout.ron.
+#[test]
+fn startup_restore_releases_windows_saved_on_an_absent_display() {
+    let builtin_space = SpaceId::new(630);
+    let external_space = SpaceId::new(631);
+    let size = CGSize::new(1200.0, 800.0);
+    let builtin = "display-builtin".to_string();
+    let external = "display-external".to_string();
+
+    let mut snapshot = test_engine();
+    let mut snapshot_store = WindowStore::default();
+    let on_builtin = WindowId::new(10, 1);
+    let on_external = WindowId::new(10, 2);
+    for (space, display, window, server_id) in [
+        (builtin_space, &builtin, on_builtin, 5001u32),
+        (external_space, &external, on_external, 5002u32),
+    ] {
+        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+        snapshot.update_space_display(space, Some(display.clone()));
+        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::WindowAdded(space, window));
+        snapshot.persistence.windows.insert(
+            window,
+            WindowFingerprint {
+                window_server_id: Some(server_id),
+                title: Some(format!("window-{server_id}")),
+                width: 600.0,
+                height: 400.0,
+                app_id: Some("com.example.app".into()),
+            },
+        );
+    }
+    let path = std::env::temp_dir().join(format!(
+        "rift-absent-display-release-test-{}.ron",
+        std::process::id(),
+    ));
+    snapshot.save(path.clone()).unwrap();
+
+    let mut restored = LayoutEngine::load(path.clone()).unwrap();
+    let _ = std::fs::remove_file(path);
+    restored.startup_restore_pending = true;
+    assert!(
+        restored.restored_location_for_window(on_external).is_some(),
+        "the saved file must contain a slot for the window on the external"
+    );
+
+    // Forget every recorded home first. A file written by schema v2 has no per-window
+    // affinity at all, only the display maps, so the release path itself has to establish
+    // the home from the saved space's display. Without this the assertion below would pass
+    // on affinity that had merely been carried over from the save.
+    for window in [on_builtin, on_external] {
+        restored.display_affinity.forget_window(window);
+    }
+    assert_eq!(restored.window_display_home(on_external), None);
+
+    // Boot with ONLY the built-in attached, as after undocking.
+    let mut window_store = WindowStore::default();
+    restored.reconcile_startup_spaces(&mut window_store, &[(builtin_space, builtin.clone())], 1);
+
+    assert!(
+        restored.restored_location_for_window(on_external).is_none(),
+        "a window saved on an unplugged display must not keep a saved slot there; \
+         restoring it strands the window off-screen with no display to show it"
+    );
+    assert_eq!(
+        restored.window_display_home(on_external),
+        Some(external.as_str()),
+        "its display affinity must survive, so plugging the display back in returns it"
+    );
+    assert!(
+        restored.restored_location_for_window(on_builtin).is_some(),
+        "a window on the display that IS attached must keep its saved size and position"
+    );
+    assert_eq!(
+        restored.window_display_home(on_builtin),
+        None,
+        "a window on an attached display keeps its saved slot, so the release path must \
+         leave it alone entirely"
+    );
+}
