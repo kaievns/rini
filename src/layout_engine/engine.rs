@@ -8,7 +8,7 @@ use super::{
     Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
 };
 use crate::actor::app::{AppInfo, WindowId, pid_t};
-use crate::common::collections::{HashMap, HashSet};
+use crate::common::collections::HashMap;
 use crate::common::config::{LayoutMode, LayoutSettings, WorkspaceSelector};
 use crate::layout_engine::LayoutSystem;
 use crate::layout_engine::floating::FloatingFullscreenKind;
@@ -17,8 +17,8 @@ use crate::model::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFoc
 use crate::model::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
 use crate::model::virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStore};
 use crate::model::{
-    AppRuleEffects, AppRuleEngine, AppRuleResult, FloatingPositionStore, WindowRuleContext,
-    WindowStore,
+    AppRuleEffects, AppRuleEngine, AppRuleResult, DisplayAffinity, FloatingPositionStore,
+    WindowRuleContext, WindowStore,
 };
 use crate::sys::screen::SpaceId;
 
@@ -97,7 +97,9 @@ pub struct LayoutEventOutcome {
 impl std::ops::Deref for LayoutEventOutcome {
     type Target = EventResponse;
 
-    fn deref(&self) -> &Self::Target { &self.response }
+    fn deref(&self) -> &Self::Target {
+        &self.response
+    }
 }
 
 pub struct LayoutEngine {
@@ -110,8 +112,10 @@ pub struct LayoutEngine {
     virtual_workspace_manager: WorkspaceStore,
     layout_settings: LayoutSettings,
     broadcast_tx: Option<BroadcastSender>,
-    space_display_map: HashMap<SpaceId, Option<String>>,
-    display_last_space: HashMap<String, SpaceId>,
+    /// Durable display identity: which native space each physical display owns, and which
+    /// display each window belongs to. Replaces the former `space_display_map` /
+    /// `display_last_space` pair, which could disagree with each other.
+    display_affinity: DisplayAffinity,
     persistence: PersistenceState,
     /// Set only while a master-file startup restore is waiting for the first display snapshot.
     startup_restore_pending: bool,
@@ -127,7 +131,9 @@ pub(crate) struct WorkspaceLayoutQuerySnapshot {
 }
 
 impl LayoutEngine {
-    pub fn focused_window(&self) -> Option<WindowId> { self.focused_window }
+    pub fn focused_window(&self) -> Option<WindowId> {
+        self.focused_window
+    }
 
     /// Resolve an optional workspace index and snapshot its layout for read-only consumers.
     pub(crate) fn query_workspace_layout(
@@ -1132,6 +1138,11 @@ impl LayoutEngine {
                 },
             };
 
+        // Establish a home for a window Rift has not placed before. Absent-only, so the
+        // reassignment that follows an unplug cannot overwrite the home a window already
+        // has — that record is what brings it back when its display returns.
+        self.note_window_display_home(wid, space);
+
         let should_be_floating = self.floating.is_floating(wid);
 
         if should_be_floating {
@@ -1285,33 +1296,78 @@ impl LayoutEngine {
 
     pub fn update_space_display(&mut self, space: SpaceId, display_uuid: Option<String>) {
         if let Some(uuid) = display_uuid {
-            self.space_display_map.insert(space, Some(uuid.clone()));
-            self.display_last_space.insert(uuid, space);
-        } else {
-            self.space_display_map.remove(&space);
+            self.display_affinity.set_display_space(&uuid, space);
         }
     }
 
     pub fn last_space_for_display_uuid(&self, display_uuid: &str) -> Option<SpaceId> {
-        self.display_last_space.get(display_uuid).copied()
+        self.display_affinity.space_for_display(display_uuid)
     }
 
     pub fn display_seen_before(&self, display_uuid: &str) -> bool {
-        self.display_last_space.contains_key(display_uuid)
+        self.display_affinity.knows_display(display_uuid)
     }
 
     fn display_uuid_for_space(&self, space: SpaceId) -> Option<String> {
-        self.space_display_map.get(&space).and_then(|uuid| uuid.clone())
+        self.display_affinity.display_for_space(space).map(str::to_owned)
     }
 
     /// Returns the last known space associated with the given display UUID.
     /// Useful when the OS recreates spaces (e.g. after sleep/resume) and we
     /// want to migrate layout state to the new space id.
     pub fn space_for_display_uuid(&self, display_uuid: &str) -> Option<SpaceId> {
-        self.space_display_map.iter().find_map(|(space, uuid_opt)| match uuid_opt {
-            Some(uuid) if uuid == display_uuid => Some(*space),
-            _ => None,
-        })
+        self.display_affinity.space_for_display(display_uuid)
+    }
+
+    pub fn display_affinity(&self) -> &DisplayAffinity {
+        &self.display_affinity
+    }
+
+    /// Record that `window` belongs to the display currently owning `space`.
+    ///
+    /// Only call this from paths that express intent — an explicit move, or the first
+    /// time a window is seen. The forced reassignment that follows a display change must
+    /// NOT call it: an unplug evacuates windows onto the remaining display, and recording
+    /// that as their home destroys the record needed to bring them back on replug.
+    pub fn set_window_display_home(&mut self, window: WindowId, space: SpaceId) {
+        if let Some(display) = self.display_affinity.display_for_space(space) {
+            let display = display.to_owned();
+            self.display_affinity.set_window_home(window, &display);
+        }
+    }
+
+    /// Record a home for a newly seen window, leaving an existing home untouched.
+    pub fn note_window_display_home(&mut self, window: WindowId, space: SpaceId) {
+        if let Some(display) = self.display_affinity.display_for_space(space) {
+            let display = display.to_owned();
+            self.display_affinity.set_window_home_if_absent(window, &display);
+        }
+    }
+
+    pub fn window_display_home(&self, window: WindowId) -> Option<&str> {
+        self.display_affinity.window_home(window)
+    }
+
+    /// Windows that belong on `display` but are currently assigned somewhere else.
+    ///
+    /// This is what a replug consults. It deliberately reports only windows whose current
+    /// assignment disagrees with their home, so a display that came back to find its own
+    /// windows already in place produces no moves at all.
+    pub fn windows_to_repatriate(
+        &self,
+        window_store: &WindowStore,
+        display_uuid: &str,
+        target_space: SpaceId,
+    ) -> Vec<WindowId> {
+        self.display_affinity
+            .windows_homed_to(display_uuid)
+            .into_iter()
+            .filter(|window| {
+                window_store
+                    .workspace_info_for_window(*window)
+                    .is_some_and(|assignment| assignment.space != target_space)
+            })
+            .collect()
     }
 
     /// Move all per-space layout state from `old_space` to `new_space`.
@@ -1329,26 +1385,7 @@ impl LayoutEngine {
         self.floating.remap_space(old_space, new_space);
         self.floating_positions.remap_space(old_space, new_space);
         self.virtual_workspace_manager.remap_space(window_store, old_space, new_space);
-
-        if let Some(uuid) = self.space_display_map.remove(&old_space) {
-            self.space_display_map.insert(new_space, uuid);
-        }
-
-        for (_uuid, space) in self.display_last_space.iter_mut() {
-            if *space == old_space {
-                *space = new_space;
-            }
-        }
-    }
-
-    pub fn prune_display_state(&mut self, active_display_uuids: &[String]) {
-        let active: HashSet<&str> = active_display_uuids.iter().map(|s| s.as_str()).collect();
-
-        self.display_last_space.retain(|uuid, _| active.contains(uuid.as_str()));
-
-        self.space_display_map.retain(|_, uuid_opt| {
-            uuid_opt.as_ref().map(|uuid| active.contains(uuid.as_str())).unwrap_or(false)
-        });
+        self.display_affinity.remap_space(old_space, new_space);
     }
 
     pub fn new(
@@ -1369,8 +1406,7 @@ impl LayoutEngine {
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
             broadcast_tx,
-            space_display_map: HashMap::default(),
-            display_last_space: HashMap::default(),
+            display_affinity: DisplayAffinity::default(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
         }
@@ -1440,7 +1476,9 @@ impl LayoutEngine {
             .mark_last_saved(resize.space, resize.workspace_id, layout);
     }
 
-    pub fn debug_tree(&self, space: SpaceId) { self.debug_tree_desc(space, "", false); }
+    pub fn debug_tree(&self, space: SpaceId) {
+        self.debug_tree_desc(space, "", false);
+    }
 
     pub fn debug_tree_desc(&self, space: SpaceId, desc: &'static str, print: bool) {
         if let Some(workspace_id) = self.virtual_workspace_manager.active_workspace(space) {
@@ -2787,7 +2825,9 @@ impl LayoutEngine {
         self.switch_to_workspace(window_store, space, workspace_index, Some(focus_window))
     }
 
-    pub fn virtual_workspace_manager(&self) -> &WorkspaceStore { &self.virtual_workspace_manager }
+    pub fn virtual_workspace_manager(&self) -> &WorkspaceStore {
+        &self.virtual_workspace_manager
+    }
 
     pub fn virtual_workspace_manager_mut(&mut self) -> &mut WorkspaceStore {
         &mut self.virtual_workspace_manager
@@ -3426,12 +3466,15 @@ mod tests {
         assert_eq!(frame.size.width, 234.0);
 
         let user_frame = CGRect::new(new_frame.origin, CGSize::new(400.0, new_frame.size.height));
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowResized {
-            wid: window,
-            old_frame: new_frame,
-            new_frame: user_frame,
-            screens: vec![(space, screen, None)],
-        });
+        let _ = engine.handle_event(
+            &mut window_store,
+            LayoutEvent::WindowResized {
+                wid: window,
+                old_frame: new_frame,
+                new_frame: user_frame,
+                screens: vec![(space, screen, None)],
+            },
+        );
         let frames = engine.calculate_layout(
             space,
             screen,
@@ -3656,8 +3699,8 @@ mod tests {
         let float_b = WindowId::new(pid, 3);
         let info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
 
-        let _ = engine
-            .handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ =
+            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
         let _ = engine.handle_event(
             &mut window_store,
             LayoutEvent::WindowsOnScreenUpdated(
@@ -3727,8 +3770,8 @@ mod tests {
             let info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
 
             for (space, wid) in [(left, on_left), (right, on_right)] {
-                let _ = engine
-                    .handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+                let _ =
+                    engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
                 let _ = engine.handle_event(
                     &mut window_store,
                     LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(wid)], None),

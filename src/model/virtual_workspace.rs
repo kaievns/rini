@@ -77,11 +77,17 @@ impl VirtualWorkspace {
         }
     }
 
-    pub fn tree(&self) -> &LayoutSystemKind { &self.layout_system }
+    pub fn tree(&self) -> &LayoutSystemKind {
+        &self.layout_system
+    }
 
-    pub fn tree_mut(&mut self) -> &mut LayoutSystemKind { &mut self.layout_system }
+    pub fn tree_mut(&mut self) -> &mut LayoutSystemKind {
+        &mut self.layout_system
+    }
 
-    pub fn layout_mode(&self) -> LayoutMode { self.layout_mode }
+    pub fn layout_mode(&self) -> LayoutMode {
+        self.layout_mode
+    }
 
     pub fn create_layout_system(mode: LayoutMode, settings: &LayoutSettings) -> LayoutSystemKind {
         match mode {
@@ -123,7 +129,9 @@ impl VirtualWorkspace {
         self.last_focused = window_id;
     }
 
-    pub fn last_focused(&self) -> Option<WindowId> { self.last_focused }
+    pub fn last_focused(&self) -> Option<WindowId> {
+        self.last_focused
+    }
 }
 
 /// Owns the virtual workspace topology for each native macOS space.
@@ -164,7 +172,9 @@ pub struct WorkspaceStore {
 }
 
 impl Default for WorkspaceStore {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WorkspaceStore {
@@ -256,7 +266,9 @@ impl WorkspaceStore {
             let workspace_ids: Vec<VirtualWorkspaceId> =
                 self.workspaces_by_space.get(&space).cloned().unwrap_or_default();
             for (index, workspace_id) in workspace_ids.into_iter().enumerate() {
-                let Some(workspace) = self.workspaces.get(workspace_id) else { continue };
+                let Some(workspace) = self.workspaces.get(workspace_id) else {
+                    continue;
+                };
                 if workspace.layout_mode
                     == self.resolve_layout_mode_for_workspace(index, &workspace.name.clone())
                 {
@@ -265,7 +277,9 @@ impl WorkspaceStore {
                 let desired =
                     self.resolve_layout_mode_for_workspace(index, &workspace.name.clone());
                 let settings = self.layout_settings.clone();
-                let Some(workspace) = self.workspaces.get_mut(workspace_id) else { continue };
+                let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
+                    continue;
+                };
                 tracing::info!(
                     ?workspace_id,
                     from = ?workspace.layout_mode,
@@ -273,7 +287,8 @@ impl WorkspaceStore {
                     "Migrating restored workspace to the configured layout mode"
                 );
                 workspace.layout_mode = desired;
-                workspace.layout_system = VirtualWorkspace::create_layout_system(desired, &settings);
+                workspace.layout_system =
+                    VirtualWorkspace::create_layout_system(desired, &settings);
             }
             while self.workspaces_by_space.get(&space).unwrap().len() < target_count {
                 let idx = self.workspaces_by_space.get(&space).unwrap().len();
@@ -519,7 +534,9 @@ impl WorkspaceStore {
         })
     }
 
-    pub fn workspace_auto_back_and_forth(&self) -> bool { self.workspace_auto_back_and_forth }
+    pub fn workspace_auto_back_and_forth(&self) -> bool {
+        self.workspace_auto_back_and_forth
+    }
 
     pub fn set_active_workspace(
         &mut self,
@@ -1354,12 +1371,14 @@ mod tests {
             Some(ws2_id)
         );
 
-        assert_eq!(manager.workspace_windows(&window_store, space, ws1_id), vec![
-            window1
-        ]);
-        assert_eq!(manager.workspace_windows(&window_store, space, ws2_id), vec![
-            window2
-        ]);
+        assert_eq!(
+            manager.workspace_windows(&window_store, space, ws1_id),
+            vec![window1]
+        );
+        assert_eq!(
+            manager.workspace_windows(&window_store, space, ws2_id),
+            vec![window2]
+        );
     }
 
     #[test]
@@ -1376,9 +1395,10 @@ mod tests {
             manager.workspace_for_window(&window_store, space, window),
             Some(ws1_id)
         );
-        assert_eq!(manager.workspace_windows(&window_store, space, ws1_id), vec![
-            window
-        ]);
+        assert_eq!(
+            manager.workspace_windows(&window_store, space, ws1_id),
+            vec![window]
+        );
 
         assert!(manager.assign_window_to_workspace(&mut window_store, space, window, ws2_id));
         assert_eq!(
@@ -1386,9 +1406,10 @@ mod tests {
             Some(ws2_id)
         );
         assert!(manager.workspace_windows(&window_store, space, ws1_id).is_empty());
-        assert_eq!(manager.workspace_windows(&window_store, space, ws2_id), vec![
-            window
-        ]);
+        assert_eq!(
+            manager.workspace_windows(&window_store, space, ws2_id),
+            vec![window]
+        );
     }
 
     #[test]

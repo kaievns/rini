@@ -91,7 +91,9 @@ pub(crate) struct ArrangeRequest {
 
 impl EventOutcome {
     /// The event was observed, but it does not require any follow-up work.
-    pub(crate) fn no_change() -> Self { Self::default() }
+    pub(crate) fn no_change() -> Self {
+        Self::default()
+    }
 
     /// Combines follow-up work produced by nested reducers while preserving
     /// reducer order for every queued operation.

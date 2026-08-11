@@ -75,7 +75,9 @@ const BOOTSTRAP_NAME_IN_USE: kern_return_t = 1101;
 const BOOTSTRAP_UNKNOWN_SERVICE: kern_return_t = 1102;
 
 #[inline]
-const fn MACH_MSGH_BITS(remote: u32, local: u32) -> u32 { remote | (local << 8) }
+const fn MACH_MSGH_BITS(remote: u32, local: u32) -> u32 {
+    remote | (local << 8)
+}
 
 #[inline]
 const fn MACH_MSGH_BITS_SET(remote: u32, local: u32, voucher: u32, other: u32) -> u32 {
@@ -83,10 +85,14 @@ const fn MACH_MSGH_BITS_SET(remote: u32, local: u32, voucher: u32, other: u32) -
 }
 
 #[inline]
-const fn MACH_MSGH_BITS_REMOTE(bits: u32) -> u32 { bits & 0xff }
+const fn MACH_MSGH_BITS_REMOTE(bits: u32) -> u32 {
+    bits & 0xff
+}
 
 #[inline]
-const fn MACH_MSGH_BITS_LOCAL(bits: u32) -> u32 { (bits >> 8) & 0xff }
+const fn MACH_MSGH_BITS_LOCAL(bits: u32) -> u32 {
+    (bits >> 8) & 0xff
+}
 
 type CFIndex = isize;
 type CFAllocatorRef = *const c_void;

@@ -129,7 +129,9 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     /// Replace a window identity in-place without changing its layout position.
     fn replace_window(&mut self, from: WindowId, to: WindowId);
     fn remove_window(&mut self, wid: WindowId);
-    fn remove_window_and_rebalance_parent(&mut self, wid: WindowId) { self.remove_window(wid) }
+    fn remove_window_and_rebalance_parent(&mut self, wid: WindowId) {
+        self.remove_window(wid)
+    }
     fn remove_windows_for_app(&mut self, pid: pid_t);
     fn windows_for_app(&self, layout: LayoutId, pid: pid_t) -> Vec<WindowId>;
     fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>);
@@ -164,7 +166,9 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     ///
     /// Only the scrolling layout has a meaningful notion of column width presets;
     /// every other layout ignores this.
-    fn cycle_preset_column_width(&mut self, _layout: LayoutId) -> Vec<WindowId> { Vec::new() }
+    fn cycle_preset_column_width(&mut self, _layout: LayoutId) -> Vec<WindowId> {
+        Vec::new()
+    }
 
     fn join_selection_with_direction(&mut self, layout: LayoutId, direction: Direction);
     fn consume_or_expel_selection(&mut self, layout: LayoutId, direction: Direction) {
@@ -211,7 +215,9 @@ mod tests {
     use crate::actor::app::WindowId;
     use crate::common::config::{ScrollingLayoutSettings, WindowInsertionPoint};
 
-    fn w(idx: u32) -> WindowId { WindowId::new(1, idx) }
+    fn w(idx: u32) -> WindowId {
+        WindowId::new(1, idx)
+    }
 
     #[test]
     fn common_insertion_point_controls_tree_and_linear_layouts() {
@@ -221,11 +227,10 @@ mod tests {
         traditional.add_window_after_selection(traditional_layout, w(2));
         traditional.select_window(traditional_layout, w(1));
         traditional.add_window_after_selection(traditional_layout, w(3));
-        assert_eq!(traditional.all_windows_in_layout(traditional_layout), vec![
-            w(1),
-            w(2),
-            w(3)
-        ]);
+        assert_eq!(
+            traditional.all_windows_in_layout(traditional_layout),
+            vec![w(1), w(2), w(3)]
+        );
 
         let mut scrolling_settings = ScrollingLayoutSettings::default();
         scrolling_settings.base.window_insertion_point = Some(WindowInsertionPoint::EndOfTree);
@@ -235,11 +240,10 @@ mod tests {
         scrolling.add_window_after_selection(scrolling_layout, w(2));
         scrolling.select_window(scrolling_layout, w(1));
         scrolling.add_window_after_selection(scrolling_layout, w(3));
-        assert_eq!(scrolling.all_windows_in_layout(scrolling_layout), vec![
-            w(1),
-            w(2),
-            w(3)
-        ]);
+        assert_eq!(
+            scrolling.all_windows_in_layout(scrolling_layout),
+            vec![w(1), w(2), w(3)]
+        );
     }
 
     #[test]

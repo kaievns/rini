@@ -325,7 +325,7 @@ impl LayoutEngine {
         let saved_spaces = self.workspace_layouts.spaces();
         let mut remaps = Vec::new();
         for (current, display_uuid) in current_spaces {
-            let Some(saved) = self.display_last_space.get(display_uuid).copied() else {
+            let Some(saved) = self.display_affinity.space_for_display(display_uuid) else {
                 continue;
             };
             if saved != *current
@@ -358,7 +358,9 @@ impl LayoutEngine {
         }
     }
 
-    pub fn serialize_to_string(&self) -> String { PersistedLayout::serialize_engine(self) }
+    pub fn serialize_to_string(&self) -> String {
+        PersistedLayout::serialize_engine(self)
+    }
 
     pub fn finish_loading(
         &mut self,

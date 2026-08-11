@@ -79,7 +79,9 @@ impl AnimatedWindow {
 }
 
 impl AnimationManager {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub async fn run(mut rx: Receiver) {
         let mut manager = Self::new();
@@ -461,7 +463,9 @@ impl ActiveAnimation {
         self.next_frame += 1;
     }
 
-    fn is_complete(&self) -> bool { self.next_frame > self.animation.frames }
+    fn is_complete(&self) -> bool {
+        self.next_frame > self.animation.frames
+    }
 
     fn current_frames(&self) -> Vec<(WindowId, CGRect)> {
         let frame = self.next_frame.saturating_sub(1);
@@ -524,9 +528,13 @@ impl Animation {
         }
     }
 
-    pub fn is_empty(&self) -> bool { self.windows.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.windows.is_empty()
+    }
 
-    fn begin(&self) { self.begin_windows_not_in(&[]); }
+    fn begin(&self) {
+        self.begin_windows_not_in(&[]);
+    }
 
     fn begin_windows_not_in(&self, skip: &[WindowId]) {
         for window in &self.windows {
@@ -618,7 +626,9 @@ impl Animation {
         }
     }
 
-    fn skip_to_end_and_end(self) { self.finish_all(); }
+    fn skip_to_end_and_end(self) {
+        self.finish_all();
+    }
 }
 
 fn get_frame(a: CGRect, b: CGRect, t: f64) -> CGRect {
@@ -643,7 +653,9 @@ fn ease(t: f64) -> f64 {
     }
 }
 
-fn blend(a: f64, b: f64, s: f64) -> f64 { (1.0 - s) * a + s * b }
+fn blend(a: f64, b: f64, s: f64) -> f64 {
+    (1.0 - s) * a + s * b
+}
 
 #[cfg(test)]
 mod tests {
@@ -655,7 +667,9 @@ mod tests {
         CGRect::new(CGPoint::new(origin_x, origin_y), CGSize::new(width, height))
     }
 
-    fn config() -> Config { Config::default() }
+    fn config() -> Config {
+        Config::default()
+    }
 
     fn animation(handle: &AppThreadHandle, wid: WindowId, from: CGRect, to: CGRect) -> Animation {
         let mut animation = Animation::new(config());
@@ -930,7 +944,10 @@ mod tests {
             widths.push(window.frame_after(frame, total).size.width);
         }
 
-        assert_eq!(widths[0], start.size.width, "frame 0 must start at the old width");
+        assert_eq!(
+            widths[0], start.size.width,
+            "frame 0 must start at the old width"
+        );
         assert_eq!(
             widths[total as usize], finish.size.width,
             "final frame must reach the target width"
@@ -939,11 +956,7 @@ mod tests {
         // Strictly increasing: a snap would show a run of identical values followed
         // by one jump.
         for pair in widths.windows(2) {
-            assert!(
-                pair[1] >= pair[0],
-                "width must not go backwards: {:?}",
-                widths
-            );
+            assert!(pair[1] >= pair[0], "width must not go backwards: {:?}", widths);
         }
         let distinct = widths
             .iter()
@@ -994,10 +1007,7 @@ mod tests {
         assert!(widths.len() >= 3, "expected several frames, got {widths:?}");
         // Intermediate widths must lie strictly between start and finish, which is
         // what proves interpolation rather than a snap to one end or the other.
-        let intermediate = widths
-            .iter()
-            .filter(|w| **w > 100.5 && **w < 399.5)
-            .count();
+        let intermediate = widths.iter().filter(|w| **w > 100.5 && **w < 399.5).count();
         assert!(
             intermediate >= 2,
             "expected intermediate widths between 100 and 400, got {widths:?}"
@@ -1046,9 +1056,7 @@ mod tests {
         // start and finish reintroduces float noise (400.00000000000006) even when
         // both ends are identical, and that must not count as a size change.
         assert!(
-            sizes
-                .iter()
-                .all(|(w, h)| (w - 400.0).abs() <= 0.5 && (h - 800.0).abs() <= 0.5),
+            sizes.iter().all(|(w, h)| (w - 400.0).abs() <= 0.5 && (h - 800.0).abs() <= 0.5),
             "a scroll must not change size across frames, got {sizes:?}"
         );
         // And it really is moving, so the test is not vacuous.

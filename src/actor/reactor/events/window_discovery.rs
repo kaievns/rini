@@ -44,12 +44,10 @@ fn sync_existing_window_state(
 
     let outcome = match (was_minimized, info.is_minimized) {
         (false, true) => window::handle_window_minimized(state, wid)?,
-        (true, false) => {
-            window::handle_window_deminiaturized(state, window::WindowDeminiaturizedPayload {
-                window: wid,
-                active_space,
-            })?
-        }
+        (true, false) => window::handle_window_deminiaturized(
+            state,
+            window::WindowDeminiaturizedPayload { window: wid, active_space },
+        )?,
         _ => {
             let manageable = utils::compute_window_manageability(
                 info.sys_id,

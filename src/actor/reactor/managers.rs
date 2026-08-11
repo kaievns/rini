@@ -1,6 +1,6 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rift_protocol::StackInfo;
-use tracing::{info, trace};
+use tracing::trace;
 
 use super::replay::Record;
 use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
@@ -25,7 +25,9 @@ pub struct AppManager {
 }
 
 impl AppManager {
-    pub fn new() -> Self { AppManager { apps: HashMap::default() } }
+    pub fn new() -> Self {
+        AppManager { apps: HashMap::default() }
+    }
 }
 
 /// Manages drag operations and window swapping
@@ -36,13 +38,21 @@ pub struct DragManager {
 }
 
 impl DragManager {
-    pub fn reset(&mut self) { self.drag_swap_manager.reset(); }
+    pub fn reset(&mut self) {
+        self.drag_swap_manager.reset();
+    }
 
-    pub fn last_target(&self) -> Option<WindowId> { self.drag_swap_manager.last_target() }
+    pub fn last_target(&self) -> Option<WindowId> {
+        self.drag_swap_manager.last_target()
+    }
 
-    pub fn dragged(&self) -> Option<WindowId> { self.drag_swap_manager.dragged() }
+    pub fn dragged(&self) -> Option<WindowId> {
+        self.drag_swap_manager.dragged()
+    }
 
-    pub fn origin_frame(&self) -> Option<CGRect> { self.drag_swap_manager.origin_frame() }
+    pub fn origin_frame(&self) -> Option<CGRect> {
+        self.drag_swap_manager.origin_frame()
+    }
 
     pub fn update_config(&mut self, config: WindowSnappingSettings) {
         self.drag_swap_manager.update_config(config);
@@ -133,7 +143,9 @@ impl RefreshQuarantineManager {
         }
     }
 
-    pub fn blocks_refreshes(&self) -> bool { self.state() != RefreshQuarantineState::Ready }
+    pub fn blocks_refreshes(&self) -> bool {
+        self.state() != RefreshQuarantineState::Ready
+    }
 }
 
 /// Manages communication channels to other actors
@@ -258,44 +270,15 @@ impl LayoutManager {
                 .layout
                 .gaps
                 .effective_for_display(display_uuid_opt.as_deref());
-            // Reattach a reconnected display's layout BEFORE recording its new space.
+            // A reconnected display's layout is NOT reattached here any more.
             //
-            // macOS mints a new space id every time a display is reconnected (observed
-            // 479 -> 484 -> 487 -> 516 -> 552 for one monitor), so layout state keyed by
-            // space id is orphaned on replug and the display comes back empty.
-            //
-            // The reactor's snapshot handler also tries this, but loses the race: this
-            // call runs on EVERY layout pass, so by the time a space snapshot is
-            // processed the UUID -> space mapping has already been overwritten with the
-            // new id and the old one is unrecoverable. Verified from the saved state,
-            // where display_last_space already read 552 while the layout still lived
-            // under the previous id. Doing it here, immediately before the overwrite, is
-            // the only point where both ids are still known.
-            if let Some(uuid) = display_uuid_opt.as_deref() {
-                let previous_space =
-                    reactor.layout_manager.layout_engine.last_space_for_display_uuid(uuid);
-                if let Some(previous_space) = previous_space
-                    && previous_space != space
-                {
-                    // Never steal a layout from a display that is still using that space.
-                    let claimed_by_live_display = reactor
-                        .space_state
-                        .screens
-                        .iter()
-                        .any(|other| other.space == Some(previous_space) && other.display_uuid != uuid);
-                    if !claimed_by_live_display {
-                        info!(
-                            uuid,
-                            ?previous_space,
-                            ?space,
-                            "Reattaching reconnected display's layout to its new space id"
-                        );
-                        let engine = &mut reactor.layout_manager.layout_engine;
-                        engine.remap_space(&mut reactor.state.windows, previous_space, space);
-                    }
-                }
-            }
-
+            // This ran a whole-space remap on every layout pass, from the display's last
+            // known space id onto its current one. Two problems: remap_space deletes the
+            // workspaces already on the target id and drops their window assignments, and a
+            // layout pass is far too hot a path to be mutating space identity from — it fired
+            // on ordinary space switches too. Window placement across a display change is now
+            // decided by per-window affinity in Reactor::repatriate_windows_to_display, which
+            // runs once per topology change.
             reactor
                 .layout_manager
                 .layout_engine
@@ -559,9 +542,8 @@ mod tests {
         ];
 
         let parked = |frame: CGRect| {
-            let visible = (frame.max().x.min(screen.max().x)
-                - frame.origin.x.max(screen.origin.x))
-            .max(0.0);
+            let visible =
+                (frame.max().x.min(screen.max().x) - frame.origin.x.max(screen.origin.x)).max(0.0);
             visible <= VISIBLE_SLACK
         };
 
@@ -580,7 +562,10 @@ mod tests {
         // A window straddling the edge is NOT parked -- it is partially visible and
         // must still be raised.
         let straddling = rect(960.0, 0.0, 490.0, 800.0);
-        assert!(!parked(straddling), "partially visible window must not count as parked");
+        assert!(
+            !parked(straddling),
+            "partially visible window must not count as parked"
+        );
     }
 
     #[test]

@@ -64,6 +64,7 @@ mod SpaceEventHandler {
 #[cfg(test)]
 mod tests;
 
+use std::path::PathBuf;
 use std::thread;
 
 use animation::Sender as AnimationSender;
@@ -124,11 +125,17 @@ pub struct ReactorHandle {
 }
 
 impl ReactorHandle {
-    pub fn new(sender: Sender, queries: ReactorQueryHandle) -> Self { Self { sender, queries } }
+    pub fn new(sender: Sender, queries: ReactorQueryHandle) -> Self {
+        Self { sender, queries }
+    }
 
-    pub fn sender(&self) -> Sender { self.sender.clone() }
+    pub fn sender(&self) -> Sender {
+        self.sender.clone()
+    }
 
-    pub fn send(&self, event: Event) { self.sender.send(event) }
+    pub fn send(&self, event: Event) {
+        self.sender.send(event)
+    }
 
     pub fn try_send(
         &self,
@@ -141,7 +148,9 @@ impl ReactorHandle {
 impl std::ops::Deref for ReactorHandle {
     type Target = ReactorQueryHandle;
 
-    fn deref(&self) -> &Self::Target { &self.queries }
+    fn deref(&self) -> &Self::Target {
+        &self.queries
+    }
 }
 
 use crate::model::server::RuntimeWindowData;
@@ -322,6 +331,13 @@ pub struct Reactor {
     /// A layout change arrived inside the debounce window and has not been written
     /// yet. Flushed on shutdown and on display reconfiguration.
     autosave_pending: bool,
+    /// Where autosave writes. `None` disables it.
+    ///
+    /// A field rather than a call to `config::restore_file()` at the write site because
+    /// autosave fires from `update_layout_or_warn_with`, which almost every test drives.
+    /// Resolving the real path there meant the suite overwrote the user's own
+    /// ~/.rift/layout.ron with test fixtures.
+    autosave_path: Option<PathBuf>,
 }
 
 impl Reactor {
@@ -444,6 +460,12 @@ impl Reactor {
             animation_tx: None,
             last_autosave: None,
             autosave_pending: false,
+            #[cfg(not(test))]
+            autosave_path: Some(crate::common::config::restore_file()),
+            // Tests drive update_layout, which autosaves. Never let the suite write to the
+            // real layout file; a test that wants to exercise autosave sets a temp path.
+            #[cfg(test)]
+            autosave_path: None,
         };
         reactor
     }
@@ -455,7 +477,9 @@ impl Reactor {
         }
     }
 
-    fn is_space_active(&self, space: SpaceId) -> bool { self.active_spaces.contains(&space) }
+    fn is_space_active(&self, space: SpaceId) -> bool {
+        self.active_spaces.contains(&space)
+    }
 
     fn iter_active_spaces(&self) -> impl Iterator<Item = SpaceId> + '_ {
         self.active_spaces.iter().copied()
@@ -477,7 +501,9 @@ impl Reactor {
         }
     }
 
-    fn screens_for_current_spaces(&self) -> Vec<ScreenInfo> { self.space_state.screens.clone() }
+    fn screens_for_current_spaces(&self) -> Vec<ScreenInfo> {
+        self.space_state.screens.clone()
+    }
 
     fn display_uuids_for_current_screens(&self) -> Vec<Option<String>> {
         self.space_state
@@ -939,7 +965,9 @@ impl Reactor {
         self.refresh_quarantine_manager.state()
     }
 
-    fn refreshes_blocked(&self) -> bool { self.refresh_quarantine_manager.blocks_refreshes() }
+    fn refreshes_blocked(&self) -> bool {
+        self.refresh_quarantine_manager.blocks_refreshes()
+    }
 
     fn defer_visible_refresh(&mut self, track_mission_control_refresh: bool) {
         self.refresh_quarantine_manager.pending_visible_refresh = true;
@@ -2509,21 +2537,13 @@ impl Reactor {
             self.space_state.command_space = command_space;
             return Ok(outcome);
         }
-        // Deliberately NOT pruning display state when the display set changes.
-        //
-        // prune_display_state drops the UUID -> space mapping for every display that is
-        // no longer attached, which is precisely the memory needed to put windows back
-        // when that display returns. macOS assigns a NEW space id on every reconnect —
-        // observed 479 -> 484 -> 487 across two unplug/replug cycles of the same
-        // monitor — so the display UUID is the only durable link between a physical
-        // display and its layout. Deleting it on unplug leaves the replug with nothing
-        // to remap against, so the external comes back empty and the windows that were
-        // on it never return.
-        //
-        // The map holds one entry per display ever seen, and remap_space corrects it in
-        // place when a display reappears under a new space id, so retaining it costs
-        // effectively nothing and is what makes dock/undock recoverable.
-        let _ = display_set_changed;
+        // Note on pruning: display state is deliberately NOT pruned when a display goes
+        // away. The UUID -> space entry is precisely the memory needed to put windows back
+        // when that display returns, and macOS assigns a NEW space id on every reconnect
+        // (observed 479 -> 484 -> 487 -> 516 -> 552 for one monitor), so the display UUID
+        // is the only durable link between a physical display and its layout. The registry
+        // holds one entry per display ever seen, which costs nothing and is what makes
+        // dock/undock recoverable.
         self.space_state.menu_bar_space = menu_bar_space;
         self.space_state.command_space = command_space;
         self.space_state.display_space_ids = display_space_ids;
@@ -2546,8 +2566,55 @@ impl Reactor {
         // space_state.screens is replaced on the next line, and the reconnect remap
         // below needs to distinguish "this display just came back" from "this display
         // merely switched space".
-        let previous_display_uuids: HashSet<String> =
-            self.space_state.screens.iter().map(|screen| screen.display_uuid.clone()).collect();
+        let previous_display_uuids: HashSet<String> = self
+            .space_state
+            .screens
+            .iter()
+            .map(|screen| screen.display_uuid.clone())
+            .collect();
+        // Capture affinity for a departing display BEFORE anything reacts to its absence.
+        //
+        // This is the only moment the truth is still available. `self.state.windows` still
+        // holds the pre-change assignments here; the evacuation happens later in this same
+        // handler, in apply_topology_window_delta, and once macOS has moved those windows to
+        // the remaining display there is no way left to tell which of them had been on the
+        // one that vanished. Recording it now is what lets a later replug move back exactly
+        // the windows that were there, rather than whichever windows now occupy those slots.
+        let departed_displays: Vec<String> = previous_display_uuids
+            .iter()
+            .filter(|uuid| {
+                !screens.iter().any(|screen| screen.display_uuid_opt() == Some(uuid.as_str()))
+            })
+            .cloned()
+            .collect();
+        for display_uuid in departed_displays {
+            let Some(departing_space) =
+                self.layout_manager.layout_engine.last_space_for_display_uuid(&display_uuid)
+            else {
+                continue;
+            };
+            let residents: Vec<WindowId> = self
+                .state
+                .windows
+                .iter_workspace_assignments()
+                .filter(|(_, assignment)| assignment.space == departing_space)
+                .map(|(window, _)| window)
+                .collect();
+            if residents.is_empty() {
+                continue;
+            }
+            info!(
+                display_uuid,
+                ?departing_space,
+                window_count = residents.len(),
+                "Recording display affinity for windows on a departing display"
+            );
+            for window in residents {
+                self.layout_manager
+                    .layout_engine
+                    .set_window_display_home(window, departing_space);
+            }
+        }
         self.space_state.screens = screens;
         if invalidates_pending_targets {
             self.clear_pending_hidden_window_targets();
@@ -2563,75 +2630,25 @@ impl Reactor {
                 space,
             );
         }
-        // Reattach each display's layout to its CURRENT space id, keyed by display UUID.
+        // Deliberately NOT remapping a reconnected display's whole SPACE onto its new id.
         //
-        // macOS mints a new space id every time a display is reconnected (observed
-        // 479 -> 484 -> 487 for the same monitor), so a layout saved against the old id
-        // is orphaned and the display comes back empty. The spaces actor has its own
-        // remap path (compute_space_remaps), but it is gated behind
-        // should_force_refresh_layout, which never became true across a full
-        // unplug/replug cycle here: every snapshot reported
-        // `allow_space_remap: false, space_remaps: []` even while
-        // `display_set_changed: true`.
+        // An earlier fix did exactly that, keyed by display UUID, because macOS mints a new
+        // space id on every reconnect (observed 479 -> 484 -> 487 -> 516 -> 552 for one
+        // monitor) and the layout saved under the old id is otherwise orphaned. It made the
+        // replug worse, not better, for two reasons:
         //
-        // Rather than loosen that gate — its guards exist to stop one display's layout
-        // being remapped onto another, which is a worse failure — remap here from the
-        // durable UUID -> space mapping the engine already maintains. This runs before
-        // update_space_display overwrites it, and remap_space is a no-op when the id has
-        // not changed.
-        let mut display_remaps: Vec<(SpaceId, SpaceId)> = Vec::new();
-        for screen in &self.space_state.screens {
-            let (Some(space), Some(display_uuid)) = (screen.space, screen.display_uuid_opt())
-            else {
-                continue;
-            };
-            if let Some(previous_space) =
-                self.layout_manager.layout_engine.last_space_for_display_uuid(display_uuid)
-                && previous_space != space
-            {
-                // Only move a layout whose previous space is genuinely gone. If any live
-                // display is sitting on that id, this is not a reconnect and remapping
-                // would steal that display's layout.
-                let claimed_by_live_display = self
-                    .space_state
-                    .screens
-                    .iter()
-                    .any(|other| other.space == Some(previous_space));
-
-                // And only when this display was ABSENT from the previous snapshot, i.e.
-                // it is genuinely coming back. A display that merely switched to a
-                // different space — the user changing spaces, or macOS moving a space
-                // between displays — keeps per-space layouts and must not have the old
-                // space's layout dragged onto the new one.
-                let display_was_absent = !previous_display_uuids.contains(display_uuid);
-
-                info!(
-                    display_uuid,
-                    ?previous_space,
-                    ?space,
-                    claimed_by_live_display,
-                    display_was_absent,
-                    "Reconnect remap candidate"
-                );
-
-                if !claimed_by_live_display && display_was_absent {
-                    display_remaps.push((previous_space, space));
-                }
-            }
-        }
-        for (previous_space, space) in display_remaps {
-            info!(
-                ?previous_space,
-                ?space,
-                "Reattaching display layout to its new space id after reconnect"
-            );
-            self.layout_manager.layout_engine.remap_space(
-                &mut self.state.windows,
-                previous_space,
-                space,
-            );
-        }
-
+        //   - The old space is a snapshot from before the unplug. Its windows were long
+        //     since evacuated to the remaining display and the user carried on working
+        //     there, so replaying it moved back whichever windows now occupied those slots
+        //     rather than the ones that had actually been on the external.
+        //   - remap_space deletes the auto-created workspaces already sitting on the target
+        //     space id, and that drops the WindowStore assignments of any window macOS had
+        //     placed there. Those windows were then re-assigned from scratch, which is what
+        //     reshuffled the other display's strip.
+        //
+        // Per-window affinity handles this instead: see repatriate_windows_to_display, run
+        // once the topology delta has settled. Startup space-id churn is a genuinely
+        // different case and is still remapped, by reconcile_startup_spaces.
         for screen in &self.space_state.screens {
             let (Some(space), Some(display_uuid)) = (screen.space, screen.display_uuid_opt())
             else {
@@ -2640,6 +2657,25 @@ impl Reactor {
             self.layout_manager
                 .layout_engine
                 .update_space_display(space, Some(display_uuid.to_string()));
+        }
+        // Home every window that does not have one yet, from where it currently sits.
+        //
+        // Only while the display set is UNCHANGED. During a display change the current
+        // assignments are mid-evacuation and would record the wrong display; on a settled
+        // topology they are exactly right, and this is the one place that sees every
+        // window whatever assigned it.
+        let display_set_unchanged =
+            !display_set_changed && self.space_state.screens.len() == previous_display_uuids.len();
+        if display_set_unchanged {
+            let assignments: Vec<(WindowId, SpaceId)> = self
+                .state
+                .windows
+                .iter_workspace_assignments()
+                .map(|(window, assignment)| (window, assignment.space))
+                .collect();
+            for (window, space) in assignments {
+                self.layout_manager.layout_engine.note_window_display_home(window, space);
+            }
         }
         let current_screens = self.screens_for_current_spaces();
         self.space_activation_policy
@@ -2660,9 +2696,29 @@ impl Reactor {
         if let Some(delta) = topology_window_delta {
             outcome.absorb(self.apply_topology_window_delta(delta));
         }
+        let arrived_displays: Vec<String> = self
+            .space_state
+            .screens
+            .iter()
+            .filter_map(|screen| screen.display_uuid_opt())
+            .filter(|uuid| !previous_display_uuids.contains(*uuid))
+            .map(str::to_owned)
+            .collect();
         let active_windows = self.authoritative_active_space_windows();
         self.finalize_space_change(&spaces, active_windows, releases_lifecycle_refresh_quarantine);
         self.try_apply_pending_space_change();
+        // Repatriate LAST, after finalize_space_change.
+        //
+        // Everything above this line derives window ownership from where macOS currently
+        // reports each window, and finalize_space_change's
+        // reconcile_windows_with_authoritative_spaces re-derives it for every tracked
+        // window. Repatriating before that point is silently undone: the moved windows are
+        // still physically on the old display when the reconciliation reads their position,
+        // so it puts them straight back. Running afterwards makes affinity the last word on
+        // a display arrival, which is the whole point of recording it.
+        for display_uuid in arrived_displays {
+            outcome.absorb(self.repatriate_windows_to_display(&display_uuid));
+        }
         if should_force_refresh_layout {
             outcome = outcome.with_force_window_refresh().with_arrange_passes(1);
         }
@@ -3038,6 +3094,105 @@ impl Reactor {
         })
     }
 
+    /// Send windows that belong on `display_uuid` back to it after it reappears.
+    ///
+    /// A replug used to be handled by remapping whole SPACES: the display's old space id
+    /// was migrated onto its new one. That is wrong whenever the windows moved in the
+    /// meantime. Unplugging evacuates the external's windows onto the built-in, where the
+    /// user keeps working — closing some, opening others, reordering the strip. The old
+    /// space is by then a stale snapshot, so remapping it wholesale sent back whichever
+    /// windows happened to occupy those slots (Excel and Slack, in the reported case,
+    /// instead of the two terminals) and reshuffled the built-in's strip on the way out.
+    ///
+    /// Per-window affinity replaces that: each window remembers the display it was last
+    /// deliberately placed on, and only windows whose home is this display move. Windows
+    /// with no affinity for it are left exactly where they are, which is what keeps the
+    /// other display's column order intact.
+    fn repatriate_windows_to_display(&mut self, display_uuid: &str) -> EventOutcome {
+        let mut outcome = EventOutcome::default();
+        let Some(target_screen) = self
+            .space_state
+            .screens
+            .iter()
+            .find(|screen| screen.display_uuid_opt() == Some(display_uuid))
+            .cloned()
+        else {
+            return outcome;
+        };
+        let Some(target_space) = target_screen.space else {
+            return outcome;
+        };
+
+        let windows = self.layout_manager.layout_engine.windows_to_repatriate(
+            &self.state.windows,
+            display_uuid,
+            target_space,
+        );
+        if windows.is_empty() {
+            return outcome;
+        }
+
+        info!(
+            display_uuid,
+            ?target_space,
+            window_count = windows.len(),
+            "Repatriating windows to their home display"
+        );
+
+        for window in windows {
+            let Some(source_space) = self.assigned_space_for_window_id(window) else {
+                continue;
+            };
+            // Place the window inside the target display's frame before reassigning it.
+            //
+            // Reassignment alone is not enough. WindowServer decides which space a window
+            // belongs to from where it physically is, so a window still sitting on the old
+            // display's coordinates gets reported back on the old space at the next
+            // snapshot and the repatriation is silently undone. This mirrors what an
+            // explicit move-to-display does; tiling supplies the final frame on the
+            // following arrange pass.
+            let mut target_frame = self
+                .state
+                .windows
+                .window(window)
+                .map(|window| window.frame_monotonic)
+                .unwrap_or(target_screen.frame);
+            let mut origin = target_screen.frame.mid();
+            origin.x -= target_frame.size.width / 2.0;
+            origin.y -= target_frame.size.height / 2.0;
+            let min = target_screen.frame.min();
+            let max = target_screen.frame.max();
+            origin.x = origin.x.max(min.x).min((max.x - target_frame.size.width).max(min.x));
+            origin.y = origin.y.max(min.y).min((max.y - target_frame.size.height).max(min.y));
+            target_frame.origin = origin;
+
+            let window_server_id =
+                self.state.windows.window(window).and_then(|window| window.info.sys_id);
+            if let Some(state) = self.state.windows.window_mut(window) {
+                state.frame_monotonic = target_frame;
+            }
+            let response = self.layout_manager.layout_engine.move_window_to_space(
+                &mut self.state.windows,
+                source_space,
+                target_space,
+                target_screen.frame.size,
+                window,
+            );
+            if let Some(window_server_id) = window_server_id {
+                self.state.windows.set_window_server_space(window_server_id, Some(target_space));
+                self.state.windows.mark_window_visible(window_server_id);
+            }
+            outcome.absorb(
+                EventOutcome::layout_changed(false)
+                    .with_layout_response(response, None)
+                    .with_pre_layout_window_frame_write(window, target_frame, true),
+            );
+        }
+
+        outcome.absorb(EventOutcome::layout_changed(false).with_arrange_passes(1));
+        outcome
+    }
+
     pub(crate) fn reassign_window_to_authoritative_space_preserving_workspace_ordinal(
         &mut self,
         wid: WindowId,
@@ -3301,10 +3456,8 @@ impl Reactor {
             return false;
         };
         let frame = window.frame_monotonic;
-        let Some(screen) = self
-            .screen_for_point(frame.mid())
-            .map(|screen| screen.frame)
-            .or_else(|| {
+        let Some(screen) =
+            self.screen_for_point(frame.mid()).map(|screen| screen.frame).or_else(|| {
                 // A fully parked window's midpoint is outside every display, so fall
                 // back to whichever screen its own space belongs to.
                 self.best_space_for_window_id(wid).and_then(|space| {
@@ -4587,7 +4740,9 @@ impl Reactor {
     // Uses the same "pending refresh" path as Mission Control recovery so a bulk
     // visibility rediscovery can reconcile tracked windows without treating a
     // transient empty AX window list as authoritative removal.
-    fn force_refresh_all_windows(&mut self) { self.request_visible_windows_for_apps(true); }
+    fn force_refresh_all_windows(&mut self) {
+        self.request_visible_windows_for_apps(true);
+    }
 
     fn has_user_space_context(&self) -> bool {
         self.raw_command_space().is_some_and(|space| !self.is_fullscreen_space(space))
@@ -4606,7 +4761,9 @@ impl Reactor {
         }
     }
 
-    pub(crate) fn main_window(&self) -> Option<WindowId> { self.main_window_tracker.main_window() }
+    pub(crate) fn main_window(&self) -> Option<WindowId> {
+        self.main_window_tracker.main_window()
+    }
 
     fn main_window_space(&self) -> Option<SpaceId> {
         // TODO: Optimize this with a cache or something.
@@ -4625,7 +4782,9 @@ impl Reactor {
         (self.workspace_command_space() == Some(space)).then_some((space, window))
     }
 
-    fn raw_command_space(&self) -> Option<SpaceId> { self.space_state.command_space }
+    fn raw_command_space(&self) -> Option<SpaceId> {
+        self.space_state.command_space
+    }
 
     fn active_display_space(&self) -> Option<SpaceId> {
         self.raw_command_space()
@@ -4815,11 +4974,12 @@ impl Reactor {
         space_scope: Option<SpaceId>,
         context: &'static str,
     ) -> bool {
-        let changed = LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope)
-            .unwrap_or_else(|e| {
-                warn!(error = ?e, "{}", context);
-                false
-            });
+        let changed =
+            LayoutManager::update_layout(self, is_resize, is_workspace_switch, space_scope)
+                .unwrap_or_else(|e| {
+                    warn!(error = ?e, "{}", context);
+                    false
+                });
         if changed {
             self.autosave_layout();
         }
@@ -4853,7 +5013,9 @@ impl Reactor {
 
     /// Write the layout file immediately, bypassing the debounce.
     pub(crate) fn save_layout_now(&mut self) {
-        let path = crate::common::config::restore_file();
+        let Some(path) = self.autosave_path.clone() else {
+            return;
+        };
         let active_space = self.workspace_command_space();
         // autosave_current_layout, NOT save_current_layout: the latter also
         // normalizes floating-versus-tiled ownership and rewrites stored floating

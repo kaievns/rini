@@ -58,7 +58,7 @@ impl RestorePlan {
                     // that interval until the next master save.
                     engine
                         .display_uuid_for_space(request.active_space)
-                        .and_then(|display| snapshot.display_last_space.get(&display).copied())
+                        .and_then(|display| snapshot.display_affinity.space_for_display(&display))
                         .filter(|space| saved_spaces.contains(space))
                 }),
         };

@@ -1,8 +1,10 @@
 use super::*;
 
-pub(super) const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub(super) const CURRENT_SCHEMA_VERSION: u32 = 3;
 
-fn legacy_schema_version() -> u32 { 0 }
+fn legacy_schema_version() -> u32 {
+    0
+}
 
 /// Owned, versioned representation of the layout file.
 ///
@@ -17,7 +19,11 @@ pub(super) struct PersistedLayout {
     pub(super) floating_positions: FloatingPositionStore,
     pub(super) virtual_workspace_manager: WorkspaceStore,
     #[serde(default)]
+    pub(super) display_affinity: DisplayAffinity,
+    /// Schema v2 and earlier. Folded into `display_affinity` on load; never written.
+    #[serde(default)]
     pub(super) space_display_map: HashMap<SpaceId, Option<String>>,
+    /// Schema v2 and earlier. Folded into `display_affinity` on load; never written.
     #[serde(default)]
     pub(super) display_last_space: HashMap<String, SpaceId>,
     #[serde(flatten)]
@@ -32,8 +38,7 @@ struct PersistedLayoutRef<'a> {
     floating: &'a FloatingManager,
     floating_positions: &'a FloatingPositionStore,
     virtual_workspace_manager: &'a WorkspaceStore,
-    space_display_map: &'a HashMap<SpaceId, Option<String>>,
-    display_last_space: &'a HashMap<String, SpaceId>,
+    display_affinity: &'a DisplayAffinity,
     #[serde(flatten)]
     persistence: &'a PersistenceState,
 }
@@ -50,14 +55,22 @@ impl PersistedLayout {
             floating: &engine.floating,
             floating_positions: &engine.floating_positions,
             virtual_workspace_manager: &engine.virtual_workspace_manager,
-            space_display_map: &engine.space_display_map,
-            display_last_space: &engine.display_last_space,
+            display_affinity: &engine.display_affinity,
             persistence: &engine.persistence,
         })
         .expect("persisted layout serialization must support all engine layout state")
     }
 
-    pub(super) fn into_engine(self) -> LayoutEngine {
+    pub(super) fn into_engine(mut self) -> LayoutEngine {
+        // A v2 file carried two separate display maps that could disagree. Fold them into
+        // the registry so an upgrade keeps its display identities instead of coming back
+        // as if every display had never been seen.
+        if !self.space_display_map.is_empty() || !self.display_last_space.is_empty() {
+            self.display_affinity.absorb_legacy(
+                std::mem::take(&mut self.space_display_map),
+                std::mem::take(&mut self.display_last_space),
+            );
+        }
         LayoutEngine {
             workspace_layouts: self.workspace_layouts,
             floating: self.floating,
@@ -68,8 +81,7 @@ impl PersistedLayout {
             virtual_workspace_manager: self.virtual_workspace_manager,
             layout_settings: LayoutSettings::default(),
             broadcast_tx: None,
-            space_display_map: self.space_display_map,
-            display_last_space: self.display_last_space,
+            display_affinity: self.display_affinity,
             persistence: self.persistence,
             startup_restore_pending: false,
         }

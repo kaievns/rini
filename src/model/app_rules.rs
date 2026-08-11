@@ -101,9 +101,13 @@ impl AppRuleOutcome {
         self.placements.push(placement);
     }
 
-    pub(crate) fn push_resize(&mut self, resize: AppRuleResize) { self.resizes.push(resize); }
+    pub(crate) fn push_resize(&mut self, resize: AppRuleResize) {
+        self.resizes.push(resize);
+    }
 
-    pub(crate) fn has_resizes(&self) -> bool { !self.resizes.is_empty() }
+    pub(crate) fn has_resizes(&self) -> bool {
+        !self.resizes.is_empty()
+    }
 
     pub(crate) fn set_workspace_focus(&mut self, focus: AppRuleWorkspaceFocus) {
         self.workspace_focus = Some(focus);

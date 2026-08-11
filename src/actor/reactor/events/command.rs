@@ -272,10 +272,13 @@ pub fn handle_command_reactor_toggle_space_activated(
     let Some(space) = payload.space else {
         return Ok(EventOutcome::no_change());
     };
-    policy.toggle_space_activated(payload.config, ToggleSpaceContext {
-        space,
-        display_uuid: payload.display_uuid,
-    });
+    policy.toggle_space_activated(
+        payload.config,
+        ToggleSpaceContext {
+            space,
+            display_uuid: payload.display_uuid,
+        },
+    );
     Ok(EventOutcome::layout_changed(false).with_active_space_recompute())
 }
 
@@ -393,6 +396,12 @@ pub fn handle_command_reactor_move_window_to_display(
         payload.target_screen.size,
         payload.window,
     );
+
+    // The user asked for this display, so it becomes the window's home. A later unplug
+    // will evacuate the window elsewhere, and this is the record that brings it back.
+    layout
+        .layout_engine
+        .set_window_display_home(payload.window, payload.target_space);
 
     if state
         .windows

@@ -23,11 +23,14 @@ impl MainWindowTracker {
             &Event::ApplicationLaunched {
                 pid, is_frontmost, main_window, ..
             } => {
-                self.apps.insert(pid, AppState {
-                    is_frontmost,
-                    frontmost_is_quiet: Quiet::No,
-                    main_window,
-                });
+                self.apps.insert(
+                    pid,
+                    AppState {
+                        is_frontmost,
+                        frontmost_is_quiet: Quiet::No,
+                        main_window,
+                    },
+                );
                 (pid, Quiet::No)
             }
             &Event::ApplicationThreadTerminated(pid) => {
@@ -115,7 +118,9 @@ impl MainWindowTracker {
         }
     }
 
-    pub fn is_globally_frontmost(&self, pid: pid_t) -> bool { self.global_frontmost == Some(pid) }
+    pub fn is_globally_frontmost(&self, pid: pid_t) -> bool {
+        self.global_frontmost == Some(pid)
+    }
 }
 
 #[cfg(test)]
@@ -135,11 +140,14 @@ mod tests {
         let stale_window = WindowId::new(7, 3);
         let mut tracker = MainWindowTracker::default();
         tracker.global_frontmost = Some(7);
-        tracker.apps.insert(7, AppState {
-            is_frontmost: true,
-            frontmost_is_quiet: Quiet::No,
-            main_window: Some(ax_window),
-        });
+        tracker.apps.insert(
+            7,
+            AppState {
+                is_frontmost: true,
+                frontmost_is_quiet: Quiet::No,
+                main_window: Some(ax_window),
+            },
+        );
 
         assert_eq!(tracker.main_window(), Some(ax_window));
         assert_eq!(

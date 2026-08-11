@@ -253,10 +253,10 @@ fn forwarded_space_snapshot_respects_one_space_policy() {
     let space1 = SpaceId::new(1);
     let space2 = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
 
     assert!(reactor.is_space_active(space1));
     assert!(
@@ -303,10 +303,10 @@ fn layout_commands_follow_active_display_space_across_active_displays() {
         (target_b, WindowServerId::new(103), right_space, right),
     ];
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space),
-        Some(right_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space), Some(right_space)],
+    ));
 
     reactor.add_test_app(1);
 
@@ -359,10 +359,10 @@ fn workspace_commands_follow_active_display_space_across_active_displays() {
         (target, WindowServerId::new(202), right_space, right),
     ];
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space),
-        Some(right_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space), Some(right_space)],
+    ));
 
     reactor.add_test_app(1);
 
@@ -417,10 +417,10 @@ fn workspace_switch_arrange_is_scoped_to_its_command_space() {
     let left_space = SpaceId::new(1);
     let right_space = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space),
-        Some(right_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space), Some(right_space)],
+    ));
 
     let switch = reactor.dispatch_test_layout_command(LayoutCommand::NextWorkspace(None));
     assert_eq!(switch.arrange.space_scope, Some(left_space));
@@ -489,10 +489,10 @@ fn active_display_update_only_changes_command_context() {
     let left_space = SpaceId::new(1);
     let right_space = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space),
-        Some(right_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space), Some(right_space)],
+    ));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
     assert!(apps.requests().is_empty());
 
@@ -663,10 +663,10 @@ fn menu_bar_space_prefers_active_menu_bar_display_space() {
     let space1 = SpaceId::new(1);
     let space2 = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
 
     assert_eq!(reactor.test_default_query_space(), Some(space1));
     assert_eq!(
@@ -700,10 +700,10 @@ fn workspace_queries_are_isolated_per_macos_space() {
     let space1 = SpaceId::new(1);
     let space2 = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
 
     reactor.handle_test_workspace_command(space1, &LayoutCommand::SwitchToWorkspace(0));
     reactor.handle_test_workspace_command(space2, &LayoutCommand::SwitchToWorkspace(1));
@@ -825,10 +825,10 @@ fn reactor_with_window_moved_to_space2()
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(111);
 
-    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![screen1, screen2],
+        vec![Some(space1), Some(space2)],
+    ));
 
     reactor.add_test_app(pid);
 
@@ -865,10 +865,10 @@ fn reactor_with_window_on_space1_two_displays() -> (
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(121);
 
-    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![screen1, screen2],
+        vec![Some(space1), Some(space2)],
+    ));
 
     reactor.add_test_app(pid);
 
@@ -1447,10 +1447,10 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(121);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
 
     reactor.add_test_app(pid);
 
@@ -1616,13 +1616,16 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(user_space)]));
 
     let (app_tx, mut app_rx) = crate::actor::channel();
-    reactor.app_manager.apps.insert(pid, AppState {
-        info: AppInfo {
-            bundle_id: Some("com.test.pending-fullscreen".to_string()),
-            localized_name: Some("Pending Fullscreen".to_string()),
+    reactor.app_manager.apps.insert(
+        pid,
+        AppState {
+            info: AppInfo {
+                bundle_id: Some("com.test.pending-fullscreen".to_string()),
+                localized_name: Some("Pending Fullscreen".to_string()),
+            },
+            handle: AppThreadHandle::new_for_test(app_tx),
         },
-        handle: AppThreadHandle::new_for_test(app_tx),
-    });
+    );
 
     reactor.track_test_window_server_info(wsid, pid, frame);
 
@@ -2045,10 +2048,10 @@ fn it_keeps_discovered_windows_on_their_initial_screen() {
     let (mut apps, mut reactor) = test_context();
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let screen2 = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
-        Some(SpaceId::new(1)),
-        Some(SpaceId::new(2)),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![screen1, screen2],
+        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
+    ));
 
     let mut windows = make_windows(2);
     windows[1].frame.origin = CGPoint::new(1100., 100.);
@@ -2095,10 +2098,10 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
     reactor.communication_manager.raise_manager_tx = raise_manager_tx;
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let screen2 = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
-        Some(SpaceId::new(1)),
-        Some(SpaceId::new(2)),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![screen1, screen2],
+        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
+    ));
 
     reactor.handle_events(apps.make_app(1, make_windows(2)));
 
@@ -2630,9 +2633,10 @@ fn windows_discovered_does_not_reintroduce_inactive_workspace_window() {
 
     reactor.discover_test_windows(1, vec![], vec![WindowId::new(1, 1), WindowId::new(1, 2)]);
 
-    assert_eq!(reactor.test_active_workspace_windows(space), vec![
-        WindowId::new(1, 2)
-    ]);
+    assert_eq!(
+        reactor.test_active_workspace_windows(space),
+        vec![WindowId::new(1, 2)]
+    );
 }
 
 #[test]
@@ -2920,9 +2924,10 @@ fn it_retains_windows_without_server_ids_after_login_visibility_failure() {
     // Simulate a native fullscreen transition: space temporarily becomes a fullscreen
     // space id (reactor suppresses it to None), then returns to the original space.
     let fullscreen_space = SpaceId::new(0x400000000 + space.get());
-    reactor.handle_event(space_state_event(vec![full_screen], vec![Some(
-        fullscreen_space,
-    )]));
+    reactor.handle_event(space_state_event(
+        vec![full_screen],
+        vec![Some(fullscreen_space)],
+    ));
 
     reactor.handle_event(space_state_event(vec![full_screen], vec![Some(space)]));
 
@@ -2997,10 +3002,10 @@ fn display_index_selector_uses_physical_left_to_right_order() {
     let mut reactor = test_reactor();
     let right = CGRect::new(CGPoint::new(200000., 0.), CGSize::new(1000., 1000.));
     let left = CGRect::new(CGPoint::new(100000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(vec![right, left], vec![
-        Some(SpaceId::new(1)),
-        Some(SpaceId::new(2)),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![right, left],
+        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
+    ));
 
     let selected = reactor
         .screen_for_selector(&DisplaySelector::Index(0), None)
@@ -3014,10 +3019,10 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
     let (mut apps, mut reactor) = test_context();
     let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
     let right = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(SpaceId::new(1)),
-        Some(SpaceId::new(2)),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
+    ));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
 
     let moved = WindowId::new(1, 1);
@@ -3412,14 +3417,14 @@ fn normal_macos_space_switch_does_not_arm_topology_relayout() {
     let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1280., 800.));
     let right = CGRect::new(CGPoint::new(1280., 0.), CGSize::new(1280., 800.));
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(SpaceId::new(11)),
-        Some(SpaceId::new(22)),
-    ]));
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(SpaceId::new(111)),
-        Some(SpaceId::new(222)),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(SpaceId::new(11)), Some(SpaceId::new(22))],
+    ));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(SpaceId::new(111)), Some(SpaceId::new(222))],
+    ));
     assert_eq!(
         reactor.raw_spaces_for_current_screens(),
         vec![Some(SpaceId::new(111)), Some(SpaceId::new(222))],
@@ -3486,16 +3491,16 @@ fn fullscreen_transition_preserves_other_display_space() {
     let right_space_1 = SpaceId::new(21);
     let right_fullscreen = SpaceId::new(0x400000000 + right_space_1.get());
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space_2),
-        Some(right_space_1),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space_2), Some(right_space_1)],
+    ));
     reactor.space_state.fullscreen_spaces.insert(right_fullscreen);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space_2),
-        None,
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space_2), None],
+    ));
 
     assert_eq!(
         reactor.raw_spaces_for_current_screens(),
@@ -3515,20 +3520,20 @@ fn user_space_switch_is_allowed_while_other_display_already_fullscreen() {
     let right_space_1 = SpaceId::new(21);
     let right_fullscreen = SpaceId::new(0x400000000 + right_space_1.get());
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space_2),
-        Some(right_space_1),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space_2), Some(right_space_1)],
+    ));
     reactor.space_state.fullscreen_spaces.insert(right_fullscreen);
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space_2),
-        None,
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space_2), None],
+    ));
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space_1),
-        None,
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space_1), None],
+    ));
 
     assert_eq!(
         reactor.raw_spaces_for_current_screens(),
@@ -3663,10 +3668,13 @@ fn rekey_window(reactor: &mut Reactor, old_wid: WindowId, new_wid: WindowId) {
         .clone();
     reactor.discover_test_windows(
         old_wid.pid,
-        vec![(new_wid, WindowInfo {
-            sys_id: old_info.sys_id,
-            ..old_info
-        })],
+        vec![(
+            new_wid,
+            WindowInfo {
+                sys_id: old_info.sys_id,
+                ..old_info
+            },
+        )],
         vec![new_wid],
     );
 }
@@ -3774,10 +3782,13 @@ fn discovery_minimize_transition_removes_window_from_layout() {
 
     reactor.discover_test_windows(
         1,
-        vec![(wid, WindowInfo {
-            is_minimized: true,
-            ..make_window(1)
-        })],
+        vec![(
+            wid,
+            WindowInfo {
+                is_minimized: true,
+                ..make_window(1)
+            },
+        )],
         vec![],
     );
 
@@ -3836,10 +3847,13 @@ fn discovery_manageability_loss_removes_window_from_layout() {
 
     reactor.discover_test_windows(
         1,
-        vec![(wid, WindowInfo {
-            is_root: false,
-            ..make_window(1)
-        })],
+        vec![(
+            wid,
+            WindowInfo {
+                is_root: false,
+                ..make_window(1)
+            },
+        )],
         vec![wid],
     );
 
@@ -4684,10 +4698,10 @@ fn authoritative_active_space_membership_queries_each_active_space_independently
     crate::sys::window_server::set_window_spaces_override(wsid_left, Some(vec![space1.get()]));
     crate::sys::window_server::set_window_spaces_override(wsid_right, Some(vec![space2.get()]));
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
     let mut snapshot = reactor.authoritative_active_space_windows();
 
     crate::sys::window_server::set_space_window_list_for_space_override(space1.get(), None);
@@ -4861,10 +4875,10 @@ fn native_space_resolution_policy_table() {
         let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
         let right = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
         let space2 = SpaceId::new(2);
-        reactor.handle_event(space_state_event(vec![left, right], vec![
-            Some(SpaceId::new(1)),
-            Some(space2),
-        ]));
+        reactor.handle_event(space_state_event(
+            vec![left, right],
+            vec![Some(SpaceId::new(1)), Some(space2)],
+        ));
         let frame = CGRect::new(CGPoint::new(1200., 100.), CGSize::new(400., 400.));
         cases.push((
             "geometry fallback",
@@ -5012,10 +5026,10 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
     // macOS mints a new id on reconnect.
     let replugged_space = SpaceId::new(484);
 
-    reactor.handle_event(space_state_event(vec![builtin, external], vec![
-        Some(builtin_space),
-        Some(external_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
 
     let pid = 1;
     reactor.add_test_app(pid);
@@ -5027,7 +5041,10 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The engine must know which display owns that space.
     assert_eq!(
-        reactor.layout_manager.layout_engine.last_space_for_display_uuid("test-display-1"),
+        reactor
+            .layout_manager
+            .layout_engine
+            .last_space_for_display_uuid("test-display-1"),
         Some(external_space),
         "the external display's space must be recorded before unplugging"
     );
@@ -5041,7 +5058,10 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The mapping must SURVIVE the unplug — this is what prune_display_state destroyed.
     assert_eq!(
-        reactor.layout_manager.layout_engine.last_space_for_display_uuid("test-display-1"),
+        reactor
+            .layout_manager
+            .layout_engine
+            .last_space_for_display_uuid("test-display-1"),
         Some(external_space),
         "unplugging must not forget which space belonged to the display"
     );
@@ -5064,5 +5084,187 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
         landed.is_some(),
         "the window arranged on the external display must be reachable under its new \
          space id after reconnect; instead the display came back empty"
+    );
+}
+
+/// Present the windows macOS reports as living on each space, the way a real snapshot
+/// does. Without this the reactor sees an empty active-space query, concludes every
+/// window has vanished, and drops its workspace assignment — which makes any
+/// display-change test measure that instead of what it meant to.
+fn set_space_membership(entries: &[(SpaceId, &[u32])]) {
+    for (space, wsids) in entries {
+        crate::sys::window_server::set_space_window_list_for_space_override(
+            space.get(),
+            Some(wsids.to_vec()),
+        );
+    }
+}
+
+/// Replugging a display must bring back the windows that were ON it, not whichever
+/// windows happen to occupy the slots its old space snapshot recorded.
+///
+/// The previous fix remapped the display's whole SPACE from its old id onto its new one.
+/// That replays a snapshot taken before the unplug, so once the user carried on working on
+/// the remaining display it moved back the wrong windows entirely — reported on hardware
+/// as Excel and Slack returning to the external instead of the two terminals that had
+/// been there.
+#[test]
+fn replug_returns_the_windows_that_were_on_that_display() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let replugged_space = SpaceId::new(552);
+
+    // Two windows on the external (the terminals), one on the built-in (Slack).
+    let terminal_a = WindowId::new(1, 1);
+    let terminal_b = WindowId::new(1, 2);
+    let slack = WindowId::new(1, 3);
+    set_space_membership(&[(builtin_space, &[903]), (external_space, &[901, 902])]);
+
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    let builtin_workspace = reactor.test_workspace(builtin_space, 0);
+    reactor.add_test_window(
+        terminal_a,
+        WindowServerId::new(901),
+        Some(external_space),
+        external,
+    );
+    reactor.add_test_window(
+        terminal_b,
+        WindowServerId::new(902),
+        Some(external_space),
+        external,
+    );
+    reactor.add_test_window(slack, WindowServerId::new(903), Some(builtin_space), builtin);
+    assert!(reactor.assign_test_window_to_workspace(
+        external_space,
+        terminal_a,
+        external_workspace
+    ));
+    assert!(reactor.assign_test_window_to_workspace(
+        external_space,
+        terminal_b,
+        external_workspace
+    ));
+    assert!(reactor.assign_test_window_to_workspace(builtin_space, slack, builtin_workspace));
+
+    // Unplug. macOS evacuates the external's windows onto the built-in.
+    set_space_membership(&[(builtin_space, &[901, 902, 903]), (external_space, &[])]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin],
+        vec![Some(builtin_space)],
+        |state| state.display_set_changed = true,
+    ));
+
+    // Replug under a new space id. macOS still reports all three on the built-in.
+    set_space_membership(&[(builtin_space, &[901, 902, 903]), (replugged_space, &[])]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(replugged_space)],
+        |state| state.display_set_changed = true,
+    ));
+
+    let space_of = |reactor: &Reactor, window: WindowId| {
+        reactor
+            .state
+            .windows
+            .workspace_info_for_window(window)
+            .map(|assignment| assignment.space)
+    };
+    assert_eq!(
+        space_of(&reactor, terminal_a),
+        Some(replugged_space),
+        "a window that was on the external must return to it"
+    );
+    assert_eq!(
+        space_of(&reactor, terminal_b),
+        Some(replugged_space),
+        "both windows that were on the external must return to it"
+    );
+    assert_eq!(
+        space_of(&reactor, slack),
+        Some(builtin_space),
+        "a window that was never on the external must NOT be dragged onto it"
+    );
+}
+
+/// A replug must not disturb the display that stayed attached.
+///
+/// remap_space deletes the workspaces already sitting on the target space id, which drops
+/// the WindowStore assignment of every window macOS had put there. Those were then
+/// re-assigned from scratch in discovery order, which is what reshuffled the built-in's
+/// column order on every dock/undock cycle.
+#[test]
+fn replug_leaves_the_other_display_strip_order_untouched() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let replugged_space = SpaceId::new(552);
+
+    let strip: Vec<WindowId> = (1..=3).map(|idx| WindowId::new(1, idx)).collect();
+    let resident = WindowId::new(1, 9);
+    set_space_membership(&[(builtin_space, &[801, 802, 803]), (external_space, &[909])]);
+
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+    let builtin_workspace = reactor.test_workspace(builtin_space, 0);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    reactor.add_test_window(
+        resident,
+        WindowServerId::new(909),
+        Some(external_space),
+        external,
+    );
+    assert!(reactor.assign_test_window_to_workspace(external_space, resident, external_workspace));
+    for (offset, window) in strip.iter().enumerate() {
+        reactor.add_test_window(
+            *window,
+            WindowServerId::new(801 + offset as u32),
+            Some(builtin_space),
+            builtin,
+        );
+        assert!(reactor.assign_test_window_to_workspace(builtin_space, *window, builtin_workspace));
+    }
+    let order_before = reactor.test_workspace_windows(builtin_space, builtin_workspace);
+    assert_eq!(
+        order_before, strip,
+        "test setup must establish a known strip order"
+    );
+
+    set_space_membership(&[
+        (builtin_space, &[801, 802, 803, 909]),
+        (external_space, &[]),
+    ]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin],
+        vec![Some(builtin_space)],
+        |state| state.display_set_changed = true,
+    ));
+    set_space_membership(&[
+        (builtin_space, &[801, 802, 803, 909]),
+        (replugged_space, &[]),
+    ]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(replugged_space)],
+        |state| state.display_set_changed = true,
+    ));
+
+    assert_eq!(
+        reactor.test_workspace_windows(builtin_space, builtin_workspace),
+        order_before,
+        "a replug must not reorder or drop the windows on the display that stayed attached"
     );
 }

@@ -305,7 +305,9 @@ impl MachHandler {
     }
 
     fn send_typed_reactor_command<T>(&self, command: T) -> RiftResponse
-    where T: Serialize {
+    where
+        T: Serialize,
+    {
         let command = match decode_protocol(command) {
             Ok(command) => command,
             Err(e) => {
@@ -332,7 +334,8 @@ impl MachHandler {
 fn decode_protocol<T, U>(value: T) -> Result<U, serde_json::Error>
 where
     T: Serialize,
-    U: DeserializeOwned, {
+    U: DeserializeOwned,
+{
     serde_json::from_value(serde_json::to_value(value)?)
 }
 

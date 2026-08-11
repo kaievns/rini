@@ -69,6 +69,10 @@ pub fn handle_mouse_up(
                 {
                     warn!(?window, ?workspace, "failed to assign dragged window");
                 }
+                // Dragging a window to another display is the user choosing where it
+                // lives, so it becomes the window's home. Without this a later replug
+                // would repatriate it back to the display it was dragged off.
+                layout.layout_engine.set_window_display_home(window, space);
                 outcome = outcome.with_layout_event(LayoutEvent::WindowAdded(space, window));
             }
             drag.skip_layout_for_window = Some(window);

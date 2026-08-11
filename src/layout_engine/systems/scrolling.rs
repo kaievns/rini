@@ -310,9 +310,15 @@ impl Clone for LayoutState {
     }
 }
 
-fn default_atomic_bool() -> AtomicBool { AtomicBool::new(false) }
-fn default_atomic_i8() -> AtomicI8 { AtomicI8::new(0) }
-fn default_atomic() -> AtomicU64 { AtomicU64::new(0.0f64.to_bits()) }
+fn default_atomic_bool() -> AtomicBool {
+    AtomicBool::new(false)
+}
+fn default_atomic_i8() -> AtomicI8 {
+    AtomicI8::new(0)
+}
+fn default_atomic() -> AtomicU64 {
+    AtomicU64::new(0.0f64.to_bits())
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ScrollingLayoutSystem {
@@ -321,7 +327,9 @@ pub struct ScrollingLayoutSystem {
     settings: ScrollingLayoutSettings,
 }
 
-fn default_scrolling_settings() -> ScrollingLayoutSettings { ScrollingLayoutSettings::default() }
+fn default_scrolling_settings() -> ScrollingLayoutSettings {
+    ScrollingLayoutSettings::default()
+}
 
 impl Default for ScrollingLayoutSystem {
     fn default() -> Self {
@@ -539,7 +547,9 @@ impl ScrollingLayoutSystem {
         state.request_center_on_selected();
     }
 
-    fn layout_state(&self, layout: LayoutId) -> Option<&LayoutState> { self.layouts.get(layout) }
+    fn layout_state(&self, layout: LayoutId) -> Option<&LayoutState> {
+        self.layouts.get(layout)
+    }
 
     fn layout_state_mut(&mut self, layout: LayoutId) -> Option<&mut LayoutState> {
         self.layouts.get_mut(layout)
@@ -613,12 +623,15 @@ impl ScrollingLayoutSystem {
                 Direction::Right => (col_idx + 1).min(state.columns.len()),
                 _ => return false,
             };
-            state.columns.insert(insert_at, Column {
-                windows: vec![wid],
-                width_offset: 0.0,
-                width_overridden: false,
-                height_weights: vec![weight],
-            });
+            state.columns.insert(
+                insert_at,
+                Column {
+                    windows: vec![wid],
+                    width_offset: 0.0,
+                    width_overridden: false,
+                    height_weights: vec![weight],
+                },
+            );
             state.selected = Some(wid);
             return true;
         }
@@ -645,7 +658,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
         self.layouts.insert(LayoutState::new(self.settings.column_width_ratio))
     }
 
-    fn contains_layout(&self, layout: LayoutId) -> bool { self.layouts.contains_key(layout) }
+    fn contains_layout(&self, layout: LayoutId) -> bool {
+        self.layouts.contains_key(layout)
+    }
 
     fn clone_layout(&mut self, layout: LayoutId) -> LayoutId {
         let cloned = self
@@ -656,7 +671,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
         self.layouts.insert(cloned)
     }
 
-    fn remove_layout(&mut self, layout: LayoutId) { self.layouts.remove(layout); }
+    fn remove_layout(&mut self, layout: LayoutId) {
+        self.layouts.remove(layout);
+    }
 
     fn draw_tree(&self, layout: LayoutId) -> String {
         let Some(state) = self.layouts.get(layout) else {
@@ -1635,11 +1652,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         // (and the rounding applied when frames are written) from making the
         // current width look like it is already just past a preset, which would
         // skip an entry.
-        let next = presets
-            .iter()
-            .copied()
-            .find(|p| *p > current + 0.01)
-            .unwrap_or(presets[0]);
+        let next = presets.iter().copied().find(|p| *p > current + 0.01).unwrap_or(presets[0]);
 
         state.columns[col_idx].width_offset = next - base_ratio;
         state.columns[col_idx].width_overridden = true;
@@ -1717,12 +1730,15 @@ impl LayoutSystem for ScrollingLayoutSystem {
             Direction::Right => col_idx + 1,
             Direction::Up | Direction::Down => unreachable!(),
         };
-        state.columns.insert(insert_at, Column {
-            windows: vec![wid],
-            width_offset: 0.0,
-            width_overridden: false,
-            height_weights: vec![weight],
-        });
+        state.columns.insert(
+            insert_at,
+            Column {
+                windows: vec![wid],
+                width_offset: 0.0,
+                width_overridden: false,
+                height_weights: vec![weight],
+            },
+        );
         state.selected = Some(wid);
         if niri_navigation {
             state.reveal_selected_without_direction();
@@ -1813,12 +1829,15 @@ impl LayoutSystem for ScrollingLayoutSystem {
         state.columns[col_idx].height_weights = remaining_weights;
         let mut insert_at = col_idx + 1;
         for (idx, wid) in moved.iter().copied().enumerate() {
-            state.columns.insert(insert_at, Column {
-                windows: vec![wid],
-                width_offset: 0.0,
-                width_overridden: false,
-                height_weights: vec![moved_weights[idx]],
-            });
+            state.columns.insert(
+                insert_at,
+                Column {
+                    windows: vec![wid],
+                    width_offset: 0.0,
+                    width_overridden: false,
+                    height_weights: vec![moved_weights[idx]],
+                },
+            );
             insert_at += 1;
         }
         moved
@@ -1853,12 +1872,15 @@ impl LayoutSystem for ScrollingLayoutSystem {
         let wid = state.columns[col_idx].windows.remove(row_idx);
         let weight = state.columns[col_idx].height_weights.remove(row_idx);
         let insert_at = (col_idx + 1).min(state.columns.len());
-        state.columns.insert(insert_at, Column {
-            windows: vec![wid],
-            width_offset: 0.0,
-            width_overridden: false,
-            height_weights: vec![weight],
-        });
+        state.columns.insert(
+            insert_at,
+            Column {
+                windows: vec![wid],
+                width_offset: 0.0,
+                width_overridden: false,
+                height_weights: vec![weight],
+            },
+        );
         state.selected = Some(wid);
         if niri_navigation {
             state.reveal_selected_without_direction();
@@ -3004,7 +3026,10 @@ mod tests {
         system.toggle_fullscreen_within_gaps_of_selection(layout);
         let width_after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
 
-        assert!(width_full > width_before + 1.0, "toggle did not widen the column");
+        assert!(
+            width_full > width_before + 1.0,
+            "toggle did not widen the column"
+        );
         assert!(
             (width_after - width_before).abs() < 2.0,
             "expected {} after toggling back, got {}",
@@ -3066,17 +3091,33 @@ mod tests {
         };
 
         // Starts at the first preset.
-        assert!((width_of(&system) - 0.33333).abs() < 0.02, "start {}", width_of(&system));
+        assert!(
+            (width_of(&system) - 0.33333).abs() < 0.02,
+            "start {}",
+            width_of(&system)
+        );
 
         system.cycle_preset_column_width(layout);
-        assert!((width_of(&system) - 0.5).abs() < 0.02, "after 1st {}", width_of(&system));
+        assert!(
+            (width_of(&system) - 0.5).abs() < 0.02,
+            "after 1st {}",
+            width_of(&system)
+        );
 
         system.cycle_preset_column_width(layout);
-        assert!((width_of(&system) - 0.66667).abs() < 0.02, "after 2nd {}", width_of(&system));
+        assert!(
+            (width_of(&system) - 0.66667).abs() < 0.02,
+            "after 2nd {}",
+            width_of(&system)
+        );
 
         // Wraps rather than sticking at the widest.
         system.cycle_preset_column_width(layout);
-        assert!((width_of(&system) - 0.33333).abs() < 0.02, "after wrap {}", width_of(&system));
+        assert!(
+            (width_of(&system) - 0.33333).abs() < 0.02,
+            "after wrap {}",
+            width_of(&system)
+        );
     }
 
     /// Two columns at ratio 0.5 must FIT, so moving focus between them does not
@@ -3115,7 +3156,11 @@ mod tests {
         // it cannot reproduce the shift.
         for i in 0..3 {
             let _ = system.move_focus(layout, Direction::Right);
-            assert_eq!(positions(&system), first, "strip shifted moving right (iter {i})");
+            assert_eq!(
+                positions(&system),
+                first,
+                "strip shifted moving right (iter {i})"
+            );
             let _ = system.move_focus(layout, Direction::Left);
             assert_eq!(positions(&system), first, "strip shifted moving left (iter {i})");
         }
@@ -3148,7 +3193,12 @@ mod tests {
         let after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
 
         assert!(touched.is_empty(), "expected no windows reported changed");
-        assert!((before - after).abs() < 1.0, "width changed from {} to {}", before, after);
+        assert!(
+            (before - after).abs() < 1.0,
+            "width changed from {} to {}",
+            before,
+            after
+        );
     }
 
     // ── stacking direction ──────────────────────────────────────────────────
@@ -3168,11 +3218,10 @@ mod tests {
 
         // Select the middle column and stack it leftwards.
         assert!(system.select_window(layout, w2));
-        let moved = system
-            .apply_stacking_to_parent_of_selection(
-                layout,
-                crate::common::config::StackDefaultOrientation::Perpendicular,
-            );
+        let moved = system.apply_stacking_to_parent_of_selection(
+            layout,
+            crate::common::config::StackDefaultOrientation::Perpendicular,
+        );
 
         assert_eq!(moved, vec![w2], "expected the SELECTED window to move");
 
@@ -3195,11 +3244,10 @@ mod tests {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
 
         assert!(system.select_window(layout, w1));
-        let moved = system
-            .apply_stacking_to_parent_of_selection(
-                layout,
-                crate::common::config::StackDefaultOrientation::Perpendicular,
-            );
+        let moved = system.apply_stacking_to_parent_of_selection(
+            layout,
+            crate::common::config::StackDefaultOrientation::Perpendicular,
+        );
 
         assert_eq!(moved, vec![w1]);
         let state = system.layouts.get(layout).expect("layout state");

@@ -176,10 +176,13 @@ mod tests {
 
         let restored: ReactorCommand = serde_json::from_value(serialized).unwrap();
 
-        assert_eq!(restored, ReactorCommand::RestoreLayout {
-            path: "layout.ron".into(),
-            scope: RestoreScope::Workspace,
-            source: RestoreSource::SavedActiveSpace,
-        });
+        assert_eq!(
+            restored,
+            ReactorCommand::RestoreLayout {
+                path: "layout.ron".into(),
+                scope: RestoreScope::Workspace,
+                source: RestoreSource::SavedActiveSpace,
+            }
+        );
     }
 }

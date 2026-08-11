@@ -31,13 +31,16 @@ fn identity_transfer_preserves_window_tree_position_and_fingerprint() {
     );
     let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, old));
     let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, sibling));
-    engine.persistence.windows.insert(old, WindowFingerprint {
-        window_server_id: Some(42),
-        title: Some("Editor".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.editor".into()),
-    });
+    engine.persistence.windows.insert(
+        old,
+        WindowFingerprint {
+            window_server_id: Some(42),
+            title: Some("Editor".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.editor".into()),
+        },
+    );
     engine.persistence.pending_windows.insert(old);
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -91,13 +94,16 @@ fn save_and_load_arms_fingerprint_reconciliation() {
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
-    engine.persistence.windows.insert(window, WindowFingerprint {
-        window_server_id: Some(9001),
-        title: Some("Project".into()),
-        width: 900.0,
-        height: 700.0,
-        app_id: Some("com.example.editor".into()),
-    });
+    engine.persistence.windows.insert(
+        window,
+        WindowFingerprint {
+            window_server_id: Some(9001),
+            title: Some("Project".into()),
+            width: 900.0,
+            height: 700.0,
+            app_id: Some("com.example.editor".into()),
+        },
+    );
     let path = std::env::temp_dir().join(format!(
         "rift-layout-restore-test-{}-{}.ron",
         std::process::id(),
@@ -133,26 +139,29 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
         .map(|(workspace, _)| workspace)
         .find(|workspace| *workspace != active_workspace)
         .unwrap();
-    window_store.insert_window(window, WindowState {
-        info: WindowInfo {
-            is_standard: true,
-            is_root: true,
-            is_minimized: false,
-            is_resizable: true,
-            min_size: None,
-            max_size: None,
-            title: "Inactive floating".into(),
-            frame,
-            sys_id: Some(WindowServerId::new(4106)),
-            bundle_id: Some("com.example.floating".into()),
-            path: None,
-            ax_role: None,
-            ax_subrole: None,
+    window_store.insert_window(
+        window,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Inactive floating".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(4106)),
+                bundle_id: Some("com.example.floating".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
         },
-        frame_monotonic: frame,
-        is_manageable: true,
-        ignore_app_rule: false,
-    });
+    );
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         space,
@@ -194,26 +203,29 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
     let window = WindowId::new(41, 7);
     let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
     let workspace = engine.active_workspace(space).unwrap();
-    window_store.insert_window(window, WindowState {
-        info: WindowInfo {
-            is_standard: true,
-            is_root: true,
-            is_minimized: false,
-            is_resizable: true,
-            min_size: None,
-            max_size: None,
-            title: "Tiled".into(),
-            frame,
-            sys_id: Some(WindowServerId::new(4107)),
-            bundle_id: Some("com.example.tiled".into()),
-            path: None,
-            ax_role: None,
-            ax_subrole: None,
+    window_store.insert_window(
+        window,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Tiled".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(4107)),
+                bundle_id: Some("com.example.tiled".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
         },
-        frame_monotonic: frame,
-        is_manageable: true,
-        ignore_app_rule: false,
-    });
+    );
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         space,
@@ -252,13 +264,16 @@ fn load_does_not_arm_locationless_fingerprints() {
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let workspace = engine.active_workspace(space).unwrap();
-    engine.persistence.windows.insert(orphan, WindowFingerprint {
-        window_server_id: None,
-        title: Some("Untitled".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.orphan".into()),
-    });
+    engine.persistence.windows.insert(
+        orphan,
+        WindowFingerprint {
+            window_server_id: None,
+            title: Some("Untitled".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.orphan".into()),
+        },
+    );
     engine
         .virtual_workspace_manager
         .set_last_focused_window(space, workspace, Some(orphan));
@@ -326,13 +341,16 @@ fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
     );
     for window in [closed, still_open, restarted_app] {
         let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
-        engine.persistence.windows.insert(window, WindowFingerprint {
-            window_server_id: Some(window.idx.get()),
-            title: Some(format!("window-{}", window.idx.get())),
-            width: 600.0,
-            height: 800.0,
-            app_id: Some(format!("com.example.{}", window.pid)),
-        });
+        engine.persistence.windows.insert(
+            window,
+            WindowFingerprint {
+                window_server_id: Some(window.idx.get()),
+                title: Some(format!("window-{}", window.idx.get())),
+                width: 600.0,
+                height: 800.0,
+                app_id: Some(format!("com.example.{}", window.pid)),
+            },
+        );
         engine.persistence.pending_windows.insert(window);
     }
 
@@ -382,13 +400,16 @@ fn workspace_restore_discards_unmatched_scoped_windows_and_floating_state() {
         .floating_positions
         .store(space, source_workspace, floating, floating_frame);
     for window in [tiled, floating, out_of_scope] {
-        snapshot.persistence.windows.insert(window, WindowFingerprint {
-            window_server_id: Some(window.idx.get()),
-            title: Some(format!("window-{}", window.idx.get())),
-            width: 500.0,
-            height: 400.0,
-            app_id: Some("com.example.restore".into()),
-        });
+        snapshot.persistence.windows.insert(
+            window,
+            WindowFingerprint {
+                window_server_id: Some(window.idx.get()),
+                title: Some(format!("window-{}", window.idx.get())),
+                width: 500.0,
+                height: 400.0,
+                app_id: Some("com.example.restore".into()),
+            },
+        );
     }
     let path = std::env::temp_dir().join(format!(
         "rift-scoped-layout-restore-test-{}-{}.ron",
@@ -445,13 +466,16 @@ fn workspace_restore_keeps_current_windows_absent_from_snapshot() {
     snapshot
         .workspace_tree_mut(snapshot_workspace)
         .add_window_after_selection(snapshot_layout, saved);
-    snapshot.persistence.windows.insert(saved, WindowFingerprint {
-        window_server_id: Some(7001),
-        title: Some("Saved".into()),
-        width: 700.0,
-        height: 500.0,
-        app_id: Some("com.example.saved".into()),
-    });
+    snapshot.persistence.windows.insert(
+        saved,
+        WindowFingerprint {
+            window_server_id: Some(7001),
+            title: Some("Saved".into()),
+            width: 700.0,
+            height: 500.0,
+            app_id: Some("com.example.saved".into()),
+        },
+    );
     let path = std::env::temp_dir().join(format!(
         "rift-live-window-restore-test-{}-{}.ron",
         std::process::id(),
@@ -554,13 +578,16 @@ fn scoped_restore_does_not_consume_same_id_live_window_on_another_space() {
     snapshot
         .workspace_tree_mut(snapshot_workspace)
         .add_window_after_selection(snapshot_layout, reused_id);
-    snapshot.persistence.windows.insert(reused_id, WindowFingerprint {
-        window_server_id: Some(7300),
-        title: Some("Old saved window".into()),
-        width: 700.0,
-        height: 500.0,
-        app_id: Some("com.example.old".into()),
-    });
+    snapshot.persistence.windows.insert(
+        reused_id,
+        WindowFingerprint {
+            window_server_id: Some(7300),
+            title: Some("Old saved window".into()),
+            width: 700.0,
+            height: 500.0,
+            app_id: Some("com.example.old".into()),
+        },
+    );
     let path = std::env::temp_dir().join(format!(
         "rift-cross-space-id-collision-test-{}-{}.ron",
         std::process::id(),
@@ -576,26 +603,29 @@ fn scoped_restore_does_not_consume_same_id_live_window_on_another_space() {
     let external_workspace = engine.active_workspace(external_space).unwrap();
     let external_layout =
         engine.workspace_layouts.active(external_space, external_workspace).unwrap();
-    window_store.insert_window(reused_id, WindowState {
-        info: WindowInfo {
-            is_standard: true,
-            is_root: true,
-            is_minimized: false,
-            is_resizable: true,
-            min_size: None,
-            max_size: None,
-            title: "Current external window".into(),
-            frame,
-            sys_id: Some(WindowServerId::new(7310)),
-            bundle_id: Some("com.example.current".into()),
-            path: None,
-            ax_role: None,
-            ax_subrole: None,
+    window_store.insert_window(
+        reused_id,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Current external window".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(7310)),
+                bundle_id: Some("com.example.current".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
         },
-        frame_monotonic: frame,
-        is_manageable: true,
-        ignore_app_rule: false,
-    });
+    );
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         external_space,
@@ -663,13 +693,16 @@ fn space_restore_uses_workspace_assignment_over_stale_window_server_space() {
     snapshot
         .workspace_tree_mut(source_workspace)
         .add_window_after_selection(source_layout, saved);
-    snapshot.persistence.windows.insert(saved, WindowFingerprint {
-        window_server_id: Some(window_server_id.as_u32()),
-        title: Some("External editor".into()),
-        width: 700.0,
-        height: 500.0,
-        app_id: Some("com.example.editor".into()),
-    });
+    snapshot.persistence.windows.insert(
+        saved,
+        WindowFingerprint {
+            window_server_id: Some(window_server_id.as_u32()),
+            title: Some("External editor".into()),
+            width: 700.0,
+            height: 500.0,
+            app_id: Some("com.example.editor".into()),
+        },
+    );
     let path = std::env::temp_dir().join(format!(
         "rift-stale-server-space-restore-test-{}-{}.ron",
         std::process::id(),
@@ -685,26 +718,29 @@ fn space_restore_uses_workspace_assignment_over_stale_window_server_space() {
     let external_workspace = engine.active_workspace(external_space).unwrap();
     let external_layout =
         engine.workspace_layouts.active(external_space, external_workspace).unwrap();
-    window_store.insert_window(live, WindowState {
-        info: WindowInfo {
-            is_standard: true,
-            is_root: true,
-            is_minimized: false,
-            is_resizable: true,
-            min_size: None,
-            max_size: None,
-            title: "External editor".into(),
-            frame,
-            sys_id: Some(window_server_id),
-            bundle_id: Some("com.example.editor".into()),
-            path: None,
-            ax_role: None,
-            ax_subrole: None,
+    window_store.insert_window(
+        live,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "External editor".into(),
+                frame,
+                sys_id: Some(window_server_id),
+                bundle_id: Some("com.example.editor".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
         },
-        frame_monotonic: frame,
-        is_manageable: true,
-        ignore_app_rule: false,
-    });
+    );
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         external_space,
@@ -760,13 +796,16 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
     snapshot
         .workspace_tree_mut(source_workspace)
         .add_window_after_selection(source_layout, saved);
-    snapshot.persistence.windows.insert(saved, WindowFingerprint {
-        window_server_id: Some(7400),
-        title: Some("Shared editor".into()),
-        width: 700.0,
-        height: 500.0,
-        app_id: Some("com.example.editor".into()),
-    });
+    snapshot.persistence.windows.insert(
+        saved,
+        WindowFingerprint {
+            window_server_id: Some(7400),
+            title: Some("Shared editor".into()),
+            width: 700.0,
+            height: 500.0,
+            app_id: Some("com.example.editor".into()),
+        },
+    );
     let path = std::env::temp_dir().join(format!(
         "rift-sibling-workspace-restore-test-{}-{}.ron",
         std::process::id(),
@@ -786,26 +825,29 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
         .find(|workspace| *workspace != target_workspace)
         .unwrap();
     let sibling_layout = engine.workspace_layouts.active(space, sibling_workspace).unwrap();
-    window_store.insert_window(live, WindowState {
-        info: WindowInfo {
-            is_standard: true,
-            is_root: true,
-            is_minimized: false,
-            is_resizable: true,
-            min_size: None,
-            max_size: None,
-            title: "Shared editor".into(),
-            frame,
-            sys_id: Some(WindowServerId::new(7400)),
-            bundle_id: Some("com.example.editor".into()),
-            path: None,
-            ax_role: None,
-            ax_subrole: None,
+    window_store.insert_window(
+        live,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Shared editor".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(7400)),
+                bundle_id: Some("com.example.editor".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
         },
-        frame_monotonic: frame,
-        is_manageable: true,
-        ignore_app_rule: false,
-    });
+    );
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         space,
@@ -857,13 +899,16 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
     snapshot
         .workspace_tree_mut(source_workspace)
         .add_window_after_selection(source_layout, reused);
-    snapshot.persistence.windows.insert(reused, WindowFingerprint {
-        window_server_id: Some(7600),
-        title: Some("Old window".into()),
-        width: 700.0,
-        height: 500.0,
-        app_id: Some("com.example.old".into()),
-    });
+    snapshot.persistence.windows.insert(
+        reused,
+        WindowFingerprint {
+            window_server_id: Some(7600),
+            title: Some("Old window".into()),
+            width: 700.0,
+            height: 500.0,
+            app_id: Some("com.example.old".into()),
+        },
+    );
     let path = std::env::temp_dir().join(format!(
         "rift-reused-id-workspace-restore-test-{}-{}.ron",
         std::process::id(),
@@ -875,26 +920,29 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
     let mut window_store = WindowStore::default();
     let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
     let target_workspace = engine.active_workspace(space).unwrap();
-    window_store.insert_window(reused, WindowState {
-        info: WindowInfo {
-            is_standard: true,
-            is_root: true,
-            is_minimized: false,
-            is_resizable: true,
-            min_size: None,
-            max_size: None,
-            title: "Current window".into(),
-            frame,
-            sys_id: Some(WindowServerId::new(7601)),
-            bundle_id: Some("com.example.current".into()),
-            path: None,
-            ax_role: None,
-            ax_subrole: None,
+    window_store.insert_window(
+        reused,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Current window".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(7601)),
+                bundle_id: Some("com.example.current".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
         },
-        frame_monotonic: frame,
-        is_manageable: true,
-        ignore_app_rule: false,
-    });
+    );
     assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
         &mut window_store,
         space,
@@ -942,13 +990,16 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, ghost));
-    engine.persistence.windows.insert(ghost, WindowFingerprint {
-        window_server_id: Some(9000),
-        title: Some("Closed window".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.closed-window".into()),
-    });
+    engine.persistence.windows.insert(
+        ghost,
+        WindowFingerprint {
+            window_server_id: Some(9000),
+            title: Some("Closed window".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.closed-window".into()),
+        },
+    );
     engine.persistence.pending_windows.insert(ghost);
     let _ = engine.handle_event(
         &mut window_store,
@@ -958,13 +1009,16 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
         &mut window_store,
         LayoutEvent::WindowAdded(inactive_space, inactive_ghost),
     );
-    engine.persistence.windows.insert(inactive_ghost, WindowFingerprint {
-        window_server_id: Some(9001),
-        title: Some("Inactive-space window".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.closed-window".into()),
-    });
+    engine.persistence.windows.insert(
+        inactive_ghost,
+        WindowFingerprint {
+            window_server_id: Some(9001),
+            title: Some("Inactive-space window".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.closed-window".into()),
+        },
+    );
     engine.persistence.pending_windows.insert(inactive_ghost);
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -999,17 +1053,51 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
 fn persisted_layout_schema_is_versioned_and_legacy_files_still_load() {
     let engine = test_engine();
     let serialized = engine.serialize_to_string();
-    assert!(serialized.contains("\"schema_version\":2"), "{serialized}");
+    assert!(serialized.contains("\"schema_version\":3"), "{serialized}");
 
-    let legacy = serialized.replacen("\"schema_version\":2,", "", 1);
+    let legacy = serialized.replacen("\"schema_version\":3,", "", 1);
     LayoutEngine::deserialize_from_str(&legacy).unwrap();
 
-    let future = serialized.replacen("\"schema_version\":2", "\"schema_version\":3", 1);
+    let future = serialized.replacen("\"schema_version\":3", "\"schema_version\":4", 1);
     let error = match LayoutEngine::deserialize_from_str(&future) {
         Ok(_) => panic!("future schema version should be rejected"),
         Err(error) => error,
     };
     assert!(error.to_string().contains("newer than supported"));
+}
+
+/// A v2 file on disk carried two separate display maps. Both must survive the upgrade,
+/// or every display looks unseen after it and a replug has nothing to match against.
+#[test]
+fn schema_v2_display_maps_are_folded_into_the_affinity_registry() {
+    let engine = test_engine();
+    let v2 = engine
+        .serialize_to_string()
+        .replacen("\"schema_version\":3", "\"schema_version\":2", 1)
+        .replacen(
+            "\"display_affinity\":(display_space:{},window_home:{})",
+            "\"space_display_map\":{(7):Some(\"external-uuid\")},\
+             \"display_last_space\":{\"builtin-uuid\":(1)}",
+            1,
+        );
+    assert!(v2.contains("space_display_map"), "{v2}");
+
+    let upgraded = LayoutEngine::deserialize_from_str(&v2).expect("v2 file must load");
+
+    assert_eq!(
+        upgraded.last_space_for_display_uuid("external-uuid"),
+        Some(SpaceId::new(7)),
+        "the space -> display map must carry over"
+    );
+    assert_eq!(
+        upgraded.last_space_for_display_uuid("builtin-uuid"),
+        Some(SpaceId::new(1)),
+        "the display -> space map must carry over"
+    );
+    assert!(
+        !upgraded.serialize_to_string().contains("space_display_map"),
+        "the upgraded file must be written in the new shape only"
+    );
 }
 
 #[test]
@@ -1046,13 +1134,16 @@ fn malformed_active_layout_configuration_is_rejected_at_load_boundary() {
 fn invalid_persisted_window_geometry_is_rejected() {
     let mut engine = test_engine();
     let window = WindowId::new(60, 1);
-    engine.persistence.windows.insert(window, WindowFingerprint {
-        window_server_id: Some(6001),
-        title: Some("Invalid geometry".into()),
-        width: -1.0,
-        height: 500.0,
-        app_id: Some("com.example.invalid".into()),
-    });
+    engine.persistence.windows.insert(
+        window,
+        WindowFingerprint {
+            window_server_id: Some(6001),
+            title: Some("Invalid geometry".into()),
+            width: -1.0,
+            height: 500.0,
+            app_id: Some("com.example.invalid".into()),
+        },
+    );
 
     let error = match LayoutEngine::deserialize_from_str(&engine.serialize_to_string()) {
         Ok(_) => panic!("invalid persisted window geometry should be rejected"),
@@ -1679,31 +1770,40 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
     for window in [ghost, live] {
         let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
     }
-    engine.persistence.windows.insert(ghost, WindowFingerprint {
-        window_server_id: None,
-        title: Some("Music".into()),
-        width: 500.0,
-        height: 500.0,
-        app_id: Some("com.example.app".into()),
-    });
+    engine.persistence.windows.insert(
+        ghost,
+        WindowFingerprint {
+            window_server_id: None,
+            title: Some("Music".into()),
+            width: 500.0,
+            height: 500.0,
+            app_id: Some("com.example.app".into()),
+        },
+    );
     engine.persistence.pending_windows.insert(ghost);
 
-    let outcome =
-        engine.reconcile_restored_window(&mut window_store, space, live, &WindowFingerprint {
+    let outcome = engine.reconcile_restored_window(
+        &mut window_store,
+        space,
+        live,
+        &WindowFingerprint {
             window_server_id: None,
             title: Some("Preferences".into()),
             width: 900.0,
             height: 700.0,
             app_id: Some("com.example.app".into()),
-        });
+        },
+    );
     assert!(!outcome.matched);
     assert!(engine.persistence.pending_windows.contains(&ghost));
 
     let _ = engine.handle_event(
         &mut window_store,
-        LayoutEvent::WindowDiscoveryCompleted(live.pid, Some("com.example.app".into()), vec![
-            space,
-        ]),
+        LayoutEvent::WindowDiscoveryCompleted(
+            live.pid,
+            Some("com.example.app".into()),
+            vec![space],
+        ),
     );
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -1782,13 +1882,16 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
     snapshot
         .workspace_tree_mut(workspace)
         .add_window_after_selection(small_layout, ghost);
-    snapshot.persistence.windows.insert(ghost, WindowFingerprint {
-        window_server_id: Some(82684),
-        title: Some("Music".into()),
-        width: 1512.0,
-        height: 944.0,
-        app_id: Some("com.apple.Music".into()),
-    });
+    snapshot.persistence.windows.insert(
+        ghost,
+        WindowFingerprint {
+            window_server_id: Some(82684),
+            title: Some("Music".into()),
+            width: 1512.0,
+            height: 944.0,
+            app_id: Some("com.apple.Music".into()),
+        },
+    );
     let path = std::env::temp_dir().join(format!(
         "rift-runtime-inactive-size-restore-test-{}-{}.ron",
         std::process::id(),
@@ -1881,29 +1984,40 @@ fn restored_window_server_id_cannot_cross_known_application_identity() {
     );
     let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, titled_match));
     let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, id_match));
-    engine.persistence.windows.insert(titled_match, WindowFingerprint {
-        window_server_id: Some(10),
-        title: Some("Current title".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.one".into()),
-    });
-    engine.persistence.windows.insert(id_match, WindowFingerprint {
-        window_server_id: Some(20),
-        title: Some("Old title".into()),
-        width: 500.0,
-        height: 400.0,
-        app_id: Some("com.example.two".into()),
-    });
+    engine.persistence.windows.insert(
+        titled_match,
+        WindowFingerprint {
+            window_server_id: Some(10),
+            title: Some("Current title".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.one".into()),
+        },
+    );
+    engine.persistence.windows.insert(
+        id_match,
+        WindowFingerprint {
+            window_server_id: Some(20),
+            title: Some("Old title".into()),
+            width: 500.0,
+            height: 400.0,
+            app_id: Some("com.example.two".into()),
+        },
+    );
     engine.persistence.pending_windows.extend([titled_match, id_match]);
 
-    engine.reconcile_restored_window(&mut window_store, space, live, &WindowFingerprint {
-        window_server_id: Some(20),
-        title: Some("Current title".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.one".into()),
-    });
+    engine.reconcile_restored_window(
+        &mut window_store,
+        space,
+        live,
+        &WindowFingerprint {
+            window_server_id: Some(20),
+            title: Some("Current title".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.one".into()),
+        },
+    );
 
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -2039,29 +2153,40 @@ fn restore_fallback_requires_title_and_size_within_known_app() {
         &mut window_store,
         LayoutEvent::WindowAdded(space, size_and_app_match),
     );
-    engine.persistence.windows.insert(title_match, WindowFingerprint {
-        window_server_id: None,
-        title: Some("Project".into()),
-        width: 400.0,
-        height: 300.0,
-        app_id: Some("com.example.other".into()),
-    });
-    engine.persistence.windows.insert(size_and_app_match, WindowFingerprint {
-        window_server_id: None,
-        title: Some("Other".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.editor".into()),
-    });
+    engine.persistence.windows.insert(
+        title_match,
+        WindowFingerprint {
+            window_server_id: None,
+            title: Some("Project".into()),
+            width: 400.0,
+            height: 300.0,
+            app_id: Some("com.example.other".into()),
+        },
+    );
+    engine.persistence.windows.insert(
+        size_and_app_match,
+        WindowFingerprint {
+            window_server_id: None,
+            title: Some("Other".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.editor".into()),
+        },
+    );
     engine.persistence.pending_windows.extend([title_match, size_and_app_match]);
 
-    engine.reconcile_restored_window(&mut window_store, space, live, &WindowFingerprint {
-        window_server_id: None,
-        title: Some("Project".into()),
-        width: 800.0,
-        height: 600.0,
-        app_id: Some("com.example.editor".into()),
-    });
+    engine.reconcile_restored_window(
+        &mut window_store,
+        space,
+        live,
+        &WindowFingerprint {
+            window_server_id: None,
+            title: Some("Project".into()),
+            width: 800.0,
+            height: 600.0,
+            app_id: Some("com.example.editor".into()),
+        },
+    );
 
     let workspace = engine.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, workspace).unwrap();
@@ -2083,13 +2208,16 @@ fn load_heals_disagreeing_tiled_and_floating_ownership() {
     let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
     for window in [marked_without_frame, agreed_floating, frame_without_marker] {
         let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
-        engine.persistence.windows.insert(window, WindowFingerprint {
-            window_server_id: Some(window.idx.get()),
-            title: Some(format!("window-{}", window.idx)),
-            width: 600.0,
-            height: 500.0,
-            app_id: Some("com.example.editor".into()),
-        });
+        engine.persistence.windows.insert(
+            window,
+            WindowFingerprint {
+                window_server_id: Some(window.idx.get()),
+                title: Some(format!("window-{}", window.idx)),
+                width: 600.0,
+                height: 500.0,
+                app_id: Some("com.example.editor".into()),
+            },
+        );
     }
     let workspaces = engine.virtual_workspace_manager.existing_workspaces(space);
     let active = engine.active_workspace(space).unwrap();
@@ -2134,13 +2262,16 @@ fn app_close_removes_saved_fingerprints() {
     let mut engine = test_engine();
     let mut window_store = WindowStore::default();
     let window = WindowId::new(42, 7);
-    engine.persistence.windows.insert(window, WindowFingerprint {
-        window_server_id: Some(9),
-        title: Some("Closed".into()),
-        width: 400.0,
-        height: 300.0,
-        app_id: Some("com.example.closed".into()),
-    });
+    engine.persistence.windows.insert(
+        window,
+        WindowFingerprint {
+            window_server_id: Some(9),
+            title: Some("Closed".into()),
+            width: 400.0,
+            height: 300.0,
+            app_id: Some("com.example.closed".into()),
+        },
+    );
     engine.persistence.pending_windows.insert(window);
 
     let _ = engine.handle_event(&mut window_store, LayoutEvent::AppClosed(window.pid));
