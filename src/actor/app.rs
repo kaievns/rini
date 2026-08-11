@@ -32,6 +32,7 @@ use crate::sys::axuielement::{
 };
 use crate::sys::enhanced_ui::EnhancedUi;
 use crate::sys::event;
+use crate::sys::event::MouseState;
 use crate::sys::executor::Executor;
 use crate::sys::observer::Observer;
 use crate::sys::process::ProcessInfo;
@@ -1123,9 +1124,16 @@ impl State {
                     return;
                 }
 
+                let mouse_state = event::get_mouse_state();
                 let txid = match self.window(wid) {
                     Ok(window) => {
-                        if window.is_animating {
+                        // Ignoring move/resize notifications while WE are animating a window
+                        // is right: they are echoes of rift's own set_position calls. But it
+                        // must not swallow a move the USER is making. A held mouse button is
+                        // the strongest available evidence of that, and honouring it also
+                        // means a leaked is_animating flag degrades to a cosmetic problem
+                        // rather than a window that never reports its position again.
+                        if window.is_animating && mouse_state != Some(MouseState::Down) {
                             trace!(?wid, ?notif, "Ignoring notification during animation");
                             return;
                         }
@@ -1170,7 +1178,7 @@ impl State {
                     frame,
                     txid,
                     Requested(false),
-                    event::get_mouse_state(),
+                    mouse_state,
                 ));
             }
             AxNotificationKind::WindowMiniaturized => {

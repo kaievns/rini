@@ -611,10 +611,27 @@ impl Animation {
 
     fn carry_over(&mut self, previous: Animation, current_frames: &[(WindowId, CGRect)]) {
         for mut window in previous.windows {
-            if self.handled_windows.contains(&window.wid) {
-                continue;
-            }
-            if self.windows.iter().any(|existing| existing.wid == window.wid) {
+            let continues_in_replacement =
+                self.windows.iter().any(|existing| existing.wid == window.wid);
+            if self.handled_windows.contains(&window.wid) || continues_in_replacement {
+                // Balance the BeginWindowAnimation of a window the replacement DROPS.
+                //
+                // `handled_windows` covers both windows the replacement animates (added via
+                // add_window, which marks them handled) and windows it deliberately excludes
+                // — a dragged window, or one positioned directly because it is on an
+                // inactive workspace. Only the latter need ending here: the former keep
+                // animating and get their end from `end()`.
+                //
+                // Leaking it is not cosmetic. BeginWindowAnimation deregisters
+                // AXWindowMoved/AXWindowResized, and app.rs drops move notifications while
+                // is_animating is set, so a window left in that state stops reporting its
+                // position. A drag then produces no WindowFrameChanged events at all, no
+                // drag session is created, and the layout pass keeps reasserting the stored
+                // frame with nothing to suppress it — measured as has_session=false on
+                // mouse-up for exactly this reason.
+                if !continues_in_replacement {
+                    _ = window.handle.send(Request::EndWindowAnimation(window.wid));
+                }
                 continue;
             }
             if let Some(&(_, current_frame)) =
@@ -885,6 +902,64 @@ mod tests {
         manager.handle_message(Message::Replace(second));
 
         assert!(!animation_contains(&manager, wid2));
+    }
+
+    /// A window the replacement DROPS must have its animation ended.
+    ///
+    /// BeginWindowAnimation deregisters AXWindowMoved/AXWindowResized and sets
+    /// is_animating, which makes app.rs drop move notifications. Leaking that leaves the
+    /// window unable to report its position for the rest of the session: a drag produces no
+    /// WindowFrameChanged events, no drag session is created, and the layout pass reasserts
+    /// the stored frame with nothing to suppress it.
+    #[test]
+    fn replacement_ends_the_animation_of_a_window_it_drops() {
+        let (tx, mut rx) = crate::actor::channel();
+        let handle = AppThreadHandle::new_for_test(tx);
+        let dragged = WindowId::new(1, 1);
+        let continuing = WindowId::new(1, 2);
+        let mut first = Animation::new(config());
+        for wid in [dragged, continuing] {
+            first.add_window(
+                &handle,
+                wid,
+                rect(0.0, 0.0, 10.0, 10.0),
+                rect(50.0, 60.0, 10.0, 10.0),
+                false,
+                TransactionId::default(),
+            );
+        }
+        // The replacement animates `continuing` and excludes `dragged`, which is what
+        // animate_layout does for a window the user has grabbed.
+        let mut second = Animation::new(config());
+        second.add_window(
+            &handle,
+            continuing,
+            rect(50.0, 60.0, 10.0, 10.0),
+            rect(80.0, 90.0, 10.0, 10.0),
+            false,
+            TransactionId::default(),
+        );
+        second.mark_handled(dragged);
+
+        let mut manager = AnimationManager::new();
+        manager.handle_message(Message::Replace(first));
+        let _ = collect_requests(&mut rx);
+        manager.handle_message(Message::Replace(second));
+
+        let requests = collect_requests(&mut rx);
+        assert!(
+            requests.iter().any(
+                |request| matches!(request, Request::EndWindowAnimation(wid) if *wid == dragged)
+            ),
+            "a dropped window must be released from animation state, else it stops \
+             reporting its position entirely; got {requests:?}"
+        );
+        assert!(
+            !requests.iter().any(
+                |request| matches!(request, Request::EndWindowAnimation(wid) if *wid == continuing)
+            ),
+            "a window that keeps animating must NOT be ended mid-flight; got {requests:?}"
+        );
     }
 
     #[test]
