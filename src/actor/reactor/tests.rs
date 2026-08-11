@@ -5412,3 +5412,57 @@ fn replug_rebuilds_strip_adjacency() {
         "the strip must come back in the order it was left, keeping adjacent windows adjacent"
     );
 }
+
+/// A floating window must stay where the user drops it.
+///
+/// maybe_swap_on_drag ran for floating windows even though they are not in the tiling
+/// strip and have nothing to swap with. Finding no target, it fell through to the tail of
+/// the function, which clears `skip_layout_for_window` — mid-gesture. The next layout pass
+/// then reasserted the window's stored frame underneath the drag.
+///
+/// Measured on System Settings: the reported old_frame rewound repeatedly inside one drag
+/// (695,188 -> 832,167 -> 927,146, then back to 350,212), and the window ended up wherever
+/// the tug-of-war left it — about a third of the way back, as reported.
+#[test]
+fn dragging_a_floating_window_keeps_the_layout_skip_for_the_whole_gesture() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let space = SpaceId::new(1);
+    let floating = WindowId::new(1, 1);
+    let tiled = WindowId::new(1, 2);
+    let start = CGRect::new(CGPoint::new(100., 100.), CGSize::new(200., 200.));
+
+    set_space_membership(&[(space, &[1, 2])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    reactor.add_test_window(tiled, WindowServerId::new(2), Some(space), screen);
+    reactor.add_test_window(floating, WindowServerId::new(1), Some(space), start);
+    let workspace = reactor.test_workspace(space, 0);
+    assert!(reactor.assign_test_window_to_workspace(space, tiled, workspace));
+    assert!(reactor.assign_test_window_to_workspace(space, floating, workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(space, tiled));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(space, floating));
+
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, floating));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    assert!(
+        reactor.layout_manager.layout_engine.is_window_floating(floating),
+        "test setup must make the window floating"
+    );
+
+    // Drag it across the screen, over the tiled window, as a real drag does.
+    reactor.ensure_active_drag(floating, &start);
+    for x in [300., 500., 700.] {
+        let frame = CGRect::new(CGPoint::new(x, 100.), start.size);
+        if let Some(state) = reactor.state.windows.window_mut(floating) {
+            state.frame_monotonic = frame;
+        }
+        reactor.maybe_swap_on_drag_for_test(floating, frame);
+        assert_eq!(
+            reactor.drag_manager.skip_layout_for_window,
+            Some(floating),
+            "the layout skip must survive the whole gesture; clearing it mid-drag lets the \
+             next layout pass write the stored frame back underneath the user"
+        );
+    }
+}

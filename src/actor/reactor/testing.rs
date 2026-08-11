@@ -118,6 +118,11 @@ impl Reactor {
         );
     }
 
+    /// Drive the drag-swap evaluation the way a real drag frame does.
+    pub fn maybe_swap_on_drag_for_test(&mut self, wid: WindowId, new_frame: CGRect) {
+        self.maybe_swap_on_drag(wid, new_frame);
+    }
+
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
         self.handle_event(Event::Command(crate::model::reactor::Command::Layout(command)));
     }

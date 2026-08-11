@@ -4392,6 +4392,25 @@ impl Reactor {
             return;
         }
 
+        // A floating window has no swap semantics: it is not in the tiling strip, so there
+        // is nothing for it to trade places with. Returning before the fall-through at the
+        // end of this function is the point — that path clears
+        // `skip_layout_for_window`, and clearing it MID-GESTURE lets the next layout pass
+        // reassert the window's stored frame while the user is still holding the mouse.
+        //
+        // Measured on System Settings: the reported `old_frame` rewound repeatedly during a
+        // single drag (695,188 -> 832,167 -> 927,146, then back to 350,212), because rift
+        // kept writing the stale stored position underneath the drag. The window ended up
+        // wherever the last tug-of-war left it, which reads as snapping back part of the
+        // way — roughly a third of the distance, in the reported case.
+        if self.layout_manager.layout_engine.is_window_floating(wid) {
+            trace!(
+                ?wid,
+                "Skipping swap: floating windows do not participate in strip swaps"
+            );
+            return;
+        }
+
         let server_id = {
             let Some(window) = self.state.windows.window(wid) else {
                 return;
