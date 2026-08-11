@@ -259,7 +259,20 @@ impl LayoutState {
             } else {
                 self.columns[target].ensure_height_weights();
                 self.columns[target].windows.push(window);
-                self.columns[target].height_weights.push(weight);
+                // Equalise the column rather than carrying the old weight over.
+                //
+                // `weight` came from the column the window just left, where as the only
+                // window it held that column's entire share. Pushed into a column of
+                // 1.0-weighted windows it dominates: stacking two terminals collapsed the
+                // existing one to its title bar while the newcomer took the rest.
+                //
+                // Weights are relative, so resetting the column to all-1.0 divides the
+                // height evenly, which is what stacking should do. A deliberate vertical
+                // resize afterwards still sets its own weights.
+                let _ = weight;
+                let count = self.columns[target].windows.len();
+                self.columns[target].height_weights.clear();
+                self.columns[target].height_weights.resize(count, 1.0);
             }
             self.selected = Some(window);
             self.align_scroll_to_selected();
@@ -3259,6 +3272,46 @@ mod tests {
         assert!(
             (after - chosen).abs() <= 2.0,
             "an explicitly resized column must keep its width: {chosen} -> {after}"
+        );
+    }
+
+    /// Stacking a window into another column must divide the height evenly, not let
+    /// the newcomer take almost everything.
+    ///
+    /// move_window_to_column_end carried the window's weight over from the column it
+    /// left, where as the sole window it held that column's entire share. Pushed into a
+    /// column of 1.0-weighted windows it dominated, collapsing the existing window to
+    /// its title bar.
+    #[test]
+    fn stacking_into_a_column_equalises_heights() {
+        let settings = niri_settings(0.5);
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let (w1, w2) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, w1);
+        system.add_window_after_selection(layout, w2);
+
+        let screen = screen(1728.0, 1117.0);
+        let gaps = GapSettings::default();
+
+        // Stack w2 into w1's column.
+        assert!(system.select_window(layout, w2));
+        system.apply_stacking_to_parent_of_selection(
+            layout,
+            crate::common::config::StackDefaultOrientation::Perpendicular,
+        );
+
+        let frames = render(&system, layout, screen, &gaps);
+        let h1 = frame_for(&frames, w1).size.height;
+        let h2 = frame_for(&frames, w2).size.height;
+
+        assert!(
+            (h1 - h2).abs() <= 2.0,
+            "stacked windows should share the height evenly, got {h1} and {h2}"
+        );
+        assert!(
+            h1 > 100.0,
+            "the pre-existing window must not collapse to a title bar, got height {h1}"
         );
     }
 }
