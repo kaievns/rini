@@ -8,7 +8,7 @@ use super::{
     Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
 };
 use crate::actor::app::{AppInfo, WindowId, pid_t};
-use crate::common::collections::HashMap;
+use crate::common::collections::{HashMap, HashSet};
 use crate::common::config::{LayoutMode, LayoutSettings, WorkspaceSelector};
 use crate::layout_engine::LayoutSystem;
 use crate::layout_engine::floating::FloatingFullscreenKind;
@@ -1342,6 +1342,64 @@ impl LayoutEngine {
             let display = display.to_owned();
             self.display_affinity.set_window_home_if_absent(window, &display);
         }
+    }
+
+    /// Re-observe where windows actually are, and in what order, for one attached display.
+    ///
+    /// Affinity used to be written once and never revised, so it went stale the moment the
+    /// user rearranged anything: a window that had been on the external months ago was
+    /// dragged to the built-in, kept its old home, and was hauled back on the next replug.
+    /// Reported as a Chrome and an editor window following the two terminals across.
+    ///
+    /// Call this only for a display that is currently attached, and only on a settled
+    /// topology. `live_windows` must be the display's strip in visual order.
+    ///
+    /// Windows whose recorded home is a DETACHED display keep it. That is the evacuation
+    /// case: they are sitting here only because their own display went away, and
+    /// overwriting the home is exactly the mistake that made replug useless.
+    pub fn sync_display_affinity(
+        &mut self,
+        display_uuid: &str,
+        live_windows: &[WindowId],
+        attached_displays: &[String],
+    ) {
+        let attached: HashSet<&str> = attached_displays.iter().map(String::as_str).collect();
+        for window in live_windows {
+            let keeps_absent_home = self
+                .display_affinity
+                .window_home(*window)
+                .is_some_and(|home| home != display_uuid && !attached.contains(home));
+            if !keeps_absent_home {
+                self.display_affinity.set_window_home(*window, display_uuid);
+            }
+        }
+
+        // The strip is the arrangement to rebuild on replug, so it must reflect only the
+        // windows that genuinely live here. A window parked here while its own display is
+        // unplugged would otherwise be recorded as part of this display's layout.
+        let strip: Vec<WindowId> = live_windows
+            .iter()
+            .copied()
+            .filter(|window| self.display_affinity.window_home(*window) == Some(display_uuid))
+            .collect();
+        self.display_affinity.set_display_strip(display_uuid, strip);
+    }
+
+    /// Windows homed to `display_uuid`, in the order last seen on it.
+    pub fn windows_homed_to_display(&self, display_uuid: &str) -> Vec<WindowId> {
+        self.display_affinity.windows_homed_to(display_uuid)
+    }
+
+    /// The active workspace's tiled windows on `space`, in layout order.
+    ///
+    /// `WindowStore::workspace_windows` sorts by `WindowId`, which is unrelated to what the
+    /// user sees. Strip order has to come from the layout tree, which is the thing that
+    /// actually defines left-to-right position.
+    pub fn ordered_windows_in_active_workspace(&self, space: SpaceId) -> Vec<WindowId> {
+        let Some((workspace_id, layout)) = self.workspace_and_layout(space) else {
+            return Vec::new();
+        };
+        self.workspace_tree(workspace_id).all_windows_in_layout(layout)
     }
 
     pub fn window_display_home(&self, window: WindowId) -> Option<&str> {

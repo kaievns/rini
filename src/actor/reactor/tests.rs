@@ -5268,3 +5268,147 @@ fn replug_leaves_the_other_display_strip_order_untouched() {
         "a replug must not reorder or drop the windows on the display that stayed attached"
     );
 }
+
+/// A window parked on the built-in only because its own display was unplugged must NOT be
+/// re-homed to the built-in. That would overwrite the record the replug depends on.
+#[test]
+fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let exile = WindowId::new(1, 1);
+
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    reactor.add_test_window(exile, WindowServerId::new(901), Some(external_space), external);
+    assert!(reactor.assign_test_window_to_workspace(external_space, exile, external_workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, exile));
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    assert_eq!(
+        reactor.layout_manager.layout_engine.window_display_home(exile),
+        Some("test-display-1")
+    );
+
+    // Unplug, then let the built-in-only topology settle repeatedly, as it does in practice.
+    set_space_membership(&[(builtin_space, &[901]), (external_space, &[])]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin],
+        vec![Some(builtin_space)],
+        |state| state.display_set_changed = true,
+    ));
+    reactor.handle_event(space_state_event(vec![builtin], vec![Some(builtin_space)]));
+    reactor.handle_event(space_state_event(vec![builtin], vec![Some(builtin_space)]));
+
+    assert_eq!(
+        reactor.layout_manager.layout_engine.window_display_home(exile),
+        Some("test-display-1"),
+        "an evacuated window must keep its own display's home, otherwise the replug has \
+         nothing left to bring it back with"
+    );
+}
+
+/// Windows kept side by side must come back side by side.
+///
+/// Repatriation used to run in WindowId order, which is unrelated to strip position, so two
+/// terminals the user had adjacent came back as terminal, Chrome, terminal, editor.
+#[test]
+fn replug_rebuilds_strip_adjacency() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let replugged_space = SpaceId::new(552);
+
+    // On the external: chrome, then the two terminals adjacent, then the editor. The
+    // terminals have the HIGHEST ids, so id order would place them last, not in the middle.
+    let chrome = WindowId::new(1, 1);
+    let terminal_a = WindowId::new(1, 8);
+    let terminal_b = WindowId::new(1, 9);
+    let editor = WindowId::new(1, 2);
+    let ids = [
+        (chrome, 901u32),
+        (terminal_a, 908),
+        (terminal_b, 909),
+        (editor, 902),
+    ];
+
+    set_space_membership(&[
+        (builtin_space, &[]),
+        (external_space, &[901, 902, 908, 909]),
+    ]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    for (window, server_id) in ids {
+        reactor.add_test_window(
+            window,
+            WindowServerId::new(server_id),
+            Some(external_space),
+            external,
+        );
+        assert!(reactor.assign_test_window_to_workspace(
+            external_space,
+            window,
+            external_workspace
+        ));
+    }
+    // Establish the visual order chrome, terminal_a, terminal_b, editor.
+    for window in [chrome, terminal_a, terminal_b, editor] {
+        reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, window));
+    }
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    let strip_before = reactor
+        .layout_manager
+        .layout_engine
+        .ordered_windows_in_active_workspace(external_space);
+    assert_eq!(
+        strip_before,
+        vec![chrome, terminal_a, terminal_b, editor],
+        "test setup must establish a known strip order on the external"
+    );
+
+    set_space_membership(&[
+        (builtin_space, &[901, 902, 908, 909]),
+        (external_space, &[]),
+    ]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin],
+        vec![Some(builtin_space)],
+        |state| state.display_set_changed = true,
+    ));
+    set_space_membership(&[
+        (builtin_space, &[901, 902, 908, 909]),
+        (replugged_space, &[]),
+    ]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(replugged_space)],
+        |state| state.display_set_changed = true,
+    ));
+
+    let strip_after = reactor
+        .layout_manager
+        .layout_engine
+        .ordered_windows_in_active_workspace(replugged_space);
+    assert_eq!(
+        strip_after, strip_before,
+        "the strip must come back in the order it was left, keeping adjacent windows adjacent"
+    );
+}

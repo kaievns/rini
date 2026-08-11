@@ -30,6 +30,10 @@ pub struct DisplayAffinity {
     display_space: HashMap<String, SpaceId>,
     /// Display each window belongs to, by display UUID.
     window_home: HashMap<WindowId, String>,
+    /// Last observed strip order per display, so a replug can rebuild adjacency rather
+    /// than repatriating in arbitrary id order.
+    #[serde(default)]
+    display_strip: HashMap<String, Vec<WindowId>>,
 }
 
 impl DisplayAffinity {
@@ -100,22 +104,60 @@ impl DisplayAffinity {
         self.window_home.get(&window).map(String::as_str)
     }
 
+    /// Windows homed to `display`, in the strip order last observed on it.
+    ///
+    /// Order matters on replug. Repatriating in `WindowId` order is effectively arbitrary,
+    /// so two windows the user had kept side by side come back with unrelated windows
+    /// between them. Windows with a remembered position come first, in that order;
+    /// anything homed here without one follows, in id order for determinism.
     pub fn windows_homed_to(&self, display: &str) -> Vec<WindowId> {
-        let mut windows: Vec<WindowId> = self
+        let mut homed: Vec<WindowId> = self
             .window_home
             .iter()
             .filter_map(|(window, home)| (home == display).then_some(*window))
             .collect();
-        windows.sort_unstable();
-        windows
+        homed.sort_unstable();
+
+        let order = self.display_strip.get(display);
+        let mut ordered: Vec<WindowId> = Vec::with_capacity(homed.len());
+        if let Some(order) = order {
+            ordered.extend(order.iter().copied().filter(|window| homed.contains(window)));
+        }
+        let remainder: Vec<WindowId> =
+            homed.into_iter().filter(|window| !ordered.contains(window)).collect();
+        ordered.extend(remainder);
+        ordered
+    }
+
+    /// Remember the strip order currently on `display`.
+    ///
+    /// Recorded continuously while the display is attached, so the last snapshot before an
+    /// unplug is the arrangement the user actually left behind — including windows opened,
+    /// dragged in, or reshuffled since they were first homed.
+    pub fn set_display_strip(&mut self, display: &str, windows: Vec<WindowId>) {
+        if windows.is_empty() {
+            self.display_strip.remove(display);
+        } else {
+            self.display_strip.insert(display.to_owned(), windows);
+        }
+    }
+
+    pub fn display_strip(&self, display: &str) -> &[WindowId] {
+        self.display_strip.get(display).map(Vec::as_slice).unwrap_or_default()
     }
 
     pub fn forget_window(&mut self, window: WindowId) {
         self.window_home.remove(&window);
+        for strip in self.display_strip.values_mut() {
+            strip.retain(|candidate| *candidate != window);
+        }
     }
 
     pub fn forget_app(&mut self, pid: pid_t) {
         self.window_home.retain(|window, _| window.pid != pid);
+        for strip in self.display_strip.values_mut() {
+            strip.retain(|window| window.pid != pid);
+        }
     }
 
     /// Carry a window's home across an identity change (an app relaunching into a new
@@ -123,6 +165,13 @@ impl DisplayAffinity {
     pub fn rekey_window(&mut self, from: WindowId, to: WindowId) {
         if let Some(home) = self.window_home.remove(&from) {
             self.window_home.insert(to, home);
+        }
+        for strip in self.display_strip.values_mut() {
+            for window in strip.iter_mut() {
+                if *window == from {
+                    *window = to;
+                }
+            }
         }
     }
 
@@ -212,6 +261,57 @@ mod tests {
 
         assert_eq!(affinity.window_home(win(1)), Some("built-in"));
         assert!(affinity.windows_homed_to("external").is_empty());
+    }
+
+    #[test]
+    fn a_window_seen_on_a_new_display_is_re_homed_to_it() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home(win(1), "external");
+        // Seen on the built-in while BOTH displays are attached: the user moved it, so the
+        // built-in is its home now. Re-homing has to overwrite, not defer to the old value,
+        // or a later replug of the external hauls the window back off the built-in.
+        affinity.set_window_home(win(1), "built-in");
+
+        assert_eq!(affinity.window_home(win(1)), Some("built-in"));
+        assert!(affinity.windows_homed_to("external").is_empty());
+    }
+
+    #[test]
+    fn strip_order_drives_repatriation_order() {
+        let mut affinity = DisplayAffinity::default();
+        // Ids deliberately out of visual order: sorting by WindowId would give 1, 2, 8, 9
+        // and split the adjacent pair 8, 9 apart from where the user left them.
+        for window in [win(1), win(8), win(9), win(2)] {
+            affinity.set_window_home(window, "external");
+        }
+        affinity.set_display_strip("external", vec![win(1), win(8), win(9), win(2)]);
+
+        assert_eq!(
+            affinity.windows_homed_to("external"),
+            vec![win(1), win(8), win(9), win(2)]
+        );
+    }
+
+    #[test]
+    fn a_window_homed_without_a_remembered_position_still_comes_back() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home(win(1), "external");
+        affinity.set_window_home(win(5), "external");
+        // Only one of them has a position; the other must not be silently dropped.
+        affinity.set_display_strip("external", vec![win(5)]);
+
+        assert_eq!(affinity.windows_homed_to("external"), vec![win(5), win(1)]);
+    }
+
+    #[test]
+    fn forgetting_a_window_also_drops_it_from_every_strip() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home(win(1), "external");
+        affinity.set_display_strip("external", vec![win(1), win(2)]);
+        affinity.forget_window(win(1));
+
+        assert_eq!(affinity.display_strip("external"), &[win(2)]);
+        assert_eq!(affinity.window_home(win(1)), None);
     }
 
     #[test]

@@ -2658,24 +2658,15 @@ impl Reactor {
                 .layout_engine
                 .update_space_display(space, Some(display_uuid.to_string()));
         }
-        // Home every window that does not have one yet, from where it currently sits.
+        // Re-observe where windows are, and in what order, whenever the topology is settled.
         //
         // Only while the display set is UNCHANGED. During a display change the current
         // assignments are mid-evacuation and would record the wrong display; on a settled
-        // topology they are exactly right, and this is the one place that sees every
-        // window whatever assigned it.
+        // topology they are exactly right.
         let display_set_unchanged =
             !display_set_changed && self.space_state.screens.len() == previous_display_uuids.len();
         if display_set_unchanged {
-            let assignments: Vec<(WindowId, SpaceId)> = self
-                .state
-                .windows
-                .iter_workspace_assignments()
-                .map(|(window, assignment)| (window, assignment.space))
-                .collect();
-            for (window, space) in assignments {
-                self.layout_manager.layout_engine.note_window_display_home(window, space);
-            }
+            self.sync_display_affinity_from_live_layout();
         }
         let current_screens = self.screens_for_current_spaces();
         self.space_activation_policy
@@ -3094,6 +3085,49 @@ impl Reactor {
         })
     }
 
+    /// Re-observe display affinity and strip order for every attached display.
+    ///
+    /// Affinity was originally written once per window and never revised, so it went stale
+    /// the moment anything was rearranged: a window dragged from the external to the
+    /// built-in kept its old home and was hauled back on the next replug. Reported as a
+    /// Chrome and an editor window following the two terminals across.
+    ///
+    /// Cheap enough to run on every settled layout because it only walks the active
+    /// workspace of each screen, which is what the layout pass just computed anyway.
+    fn sync_display_affinity_from_live_layout(&mut self) {
+        if crate::sys::display_churn::is_active() {
+            return;
+        }
+        let attached: Vec<String> = self
+            .space_state
+            .screens
+            .iter()
+            .filter_map(|screen| screen.display_uuid_owned())
+            .collect();
+        let observations: Vec<(String, Vec<WindowId>)> = self
+            .space_state
+            .screens
+            .iter()
+            .filter_map(|screen| {
+                let (space, uuid) = (screen.space?, screen.display_uuid_owned()?);
+                self.is_space_active(space).then_some((space, uuid))
+            })
+            .map(|(space, uuid)| {
+                let windows =
+                    self.layout_manager.layout_engine.ordered_windows_in_active_workspace(space);
+                (uuid, windows)
+            })
+            .collect();
+        for (uuid, windows) in observations {
+            if windows.is_empty() {
+                continue;
+            }
+            self.layout_manager
+                .layout_engine
+                .sync_display_affinity(&uuid, &windows, &attached);
+        }
+    }
+
     /// Send windows that belong on `display_uuid` back to it after it reappears.
     ///
     /// A replug used to be handled by remapping whole SPACES: the display's old space id
@@ -3139,6 +3173,14 @@ impl Reactor {
             "Repatriating windows to their home display"
         );
 
+        // Order matters, and this loop depends on two things to rebuild adjacency.
+        //
+        // `windows` arrives in the strip order last observed on this display, and
+        // move_window_to_space inserts each window after the current selection and then
+        // selects it. So moving them in order lays them down contiguously, in that order,
+        // instead of scattering them among whatever is already on the display. Repatriating
+        // in WindowId order — which is what it used to do — is why two terminals the user
+        // had kept side by side came back as terminal, Chrome, terminal, editor.
         for window in windows {
             let Some(source_space) = self.assigned_space_for_window_id(window) else {
                 continue;
@@ -4981,6 +5023,11 @@ impl Reactor {
                     false
                 });
         if changed {
+            // Re-observe affinity before saving, so the file records the arrangement that
+            // was just applied. This is the path that catches a window dragged between
+            // displays, a new window opened, and any reshuffle of the strip — none of which
+            // produce a display snapshot, so none of which used to update affinity at all.
+            self.sync_display_affinity_from_live_layout();
             self.autosave_layout();
         }
         changed
