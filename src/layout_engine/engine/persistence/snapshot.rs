@@ -82,6 +82,7 @@ impl PersistedLayout {
             layout_settings: LayoutSettings::default(),
             broadcast_tx: None,
             display_affinity: self.display_affinity,
+            workspace_switch_directions: HashMap::default(),
             persistence: self.persistence,
             startup_restore_pending: false,
         }

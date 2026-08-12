@@ -299,13 +299,87 @@ impl AnimationManager {
     /// Keep this entry point separate from `instant_layout`: layouts merely suppressed
     /// while a switch is in progress may still change window sizes and must use the
     /// full-frame request.
+    /// Slide a workspace switch vertically instead of cutting to it.
+    ///
+    /// Workspaces are stacked vertically, so a switch reads as travelling up or down the
+    /// stack: the arriving strip enters from the opposite edge to the one the departing strip
+    /// leaves by. Combined with each column's horizontal position that gives the diagonal
+    /// motion the stack implies.
+    ///
+    /// This used to be an instant reposition. With no animation and no other indicator, two
+    /// workspaces on one display were indistinguishable from two overlapping strips — the
+    /// switch simply happened, which read as a glitch rather than as movement.
+    ///
+    /// Falls back to the instant path when there is no recorded direction (the first layout
+    /// for a display, or a switch that did not change workspace) or when animation is off.
     pub fn workspace_switch_layout(
         reactor: &mut Reactor,
         space: SpaceId,
         layout: &[(WindowId, CGRect)],
         skip_wid: Option<WindowId>,
     ) -> bool {
-        Self::instant_layout_inner(reactor, space, layout, skip_wid, true)
+        let direction = reactor.layout_manager.layout_engine.take_workspace_switch_direction(space);
+        let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
+        let Some(direction) = direction.filter(|_| animate) else {
+            return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
+        };
+        let Some(screen) = reactor
+            .space_state
+            .screens
+            .iter()
+            .find(|screen| screen.space == Some(space))
+            .map(|screen| screen.frame)
+        else {
+            return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
+        };
+
+        // The arriving strip comes from below when travelling down the stack, and from above
+        // when travelling up.
+        let travel = match direction {
+            crate::model::reactor::WorkspaceSwitchDirection::Down => screen.size.height,
+            crate::model::reactor::WorkspaceSwitchDirection::Up => -screen.size.height,
+        };
+
+        let mut anim = Animation::new(reactor.config.clone());
+        let mut any_frame_changed = false;
+        for &(wid, target_frame) in layout {
+            if skip_wid == Some(wid) {
+                anim.mark_handled(wid);
+                continue;
+            }
+            let target_frame = target_frame.round();
+            let Some(app_state) = reactor.app_manager.apps.get(&wid.pid) else {
+                continue;
+            };
+            let handle = app_state.handle.clone();
+            let window_server_id =
+                reactor.state.windows.window(wid).and_then(|window| window.info.sys_id);
+            let txid = window_server_id
+                .map(|wsid| reactor.transaction_manager.generate_next_txid(wsid))
+                .unwrap_or_default();
+            let start = CGRect::new(
+                CGPoint::new(target_frame.origin.x, target_frame.origin.y + travel),
+                target_frame.size,
+            );
+            if let Some(window) = reactor.state.windows.window_mut(wid) {
+                window.frame_monotonic = start;
+            }
+            if let Some(wsid) = window_server_id {
+                reactor.transaction_manager.update_txid_entries([(wsid, txid, target_frame)]);
+            }
+            anim.add_window(&handle, wid, start, target_frame, false, txid);
+            any_frame_changed = true;
+        }
+
+        if anim.is_empty() {
+            return any_frame_changed;
+        }
+        if let Some(tx) = &reactor.animation_tx {
+            _ = tx.send(Message::Replace(anim));
+        } else {
+            anim.skip_to_end();
+        }
+        any_frame_changed
     }
 
     fn instant_layout_inner(

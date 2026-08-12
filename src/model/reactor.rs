@@ -77,6 +77,16 @@ pub enum WorkspaceSwitchOrigin {
     Auto,
 }
 
+/// Which way a workspace switch travels, for the slide animation.
+///
+/// Workspaces are stacked vertically: going to a higher ordinal moves DOWN the stack, so
+/// the outgoing strip leaves upward and the incoming one arrives from below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceSwitchDirection {
+    Down,
+    Up,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StaleCleanupState {
     Enabled,

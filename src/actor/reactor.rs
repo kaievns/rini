@@ -415,6 +415,7 @@ impl Reactor {
                 active_workspace_switch: None,
                 pending_workspace_switch_origin: None,
                 pending_workspace_mouse_warp: None,
+                switch_directions: HashMap::default(),
             },
             recording_manager: managers::RecordingManager { record },
             communication_manager: managers::CommunicationManager {

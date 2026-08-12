@@ -85,6 +85,14 @@ pub struct WorkspaceSwitchManager {
     pub active_workspace_switch: Option<u64>,
     pub pending_workspace_switch_origin: Option<WorkspaceSwitchOrigin>,
     pub pending_workspace_mouse_warp: Option<WindowId>,
+    /// Which way the in-flight switch travels, per display.
+    ///
+    /// Per display because displays switch workspaces independently: the built-in can be
+    /// sliding down to "comms" while the external stays put.
+    pub switch_directions: crate::common::collections::HashMap<
+        SpaceId,
+        crate::model::reactor::WorkspaceSwitchDirection,
+    >,
 }
 
 impl WorkspaceSwitchManager {

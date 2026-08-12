@@ -5729,3 +5729,61 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
         "the display carries on showing what it was showing"
     );
 }
+
+/// Switching workspace records which way the switch travels, per display.
+///
+/// The animation needs this to slide the arriving strip in from the correct edge. Recording it
+/// per display matters because displays switch independently: the built-in can be moving down
+/// to "comms" while the external stays where it is.
+#[test]
+fn workspace_switch_records_its_direction_per_display() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+
+    // Going to a higher ordinal travels DOWN the stack.
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(2));
+    assert_eq!(
+        reactor
+            .layout_manager
+            .layout_engine
+            .take_workspace_switch_direction(builtin_space),
+        Some(crate::model::reactor::WorkspaceSwitchDirection::Down),
+    );
+    assert_eq!(
+        reactor
+            .layout_manager
+            .layout_engine
+            .take_workspace_switch_direction(external_space),
+        None,
+        "the other display did not switch, so it has no direction to animate"
+    );
+
+    // And back to a lower ordinal travels UP.
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
+    assert_eq!(
+        reactor
+            .layout_manager
+            .layout_engine
+            .take_workspace_switch_direction(builtin_space),
+        Some(crate::model::reactor::WorkspaceSwitchDirection::Up),
+    );
+
+    // Switching to the workspace already showing is not movement.
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
+    assert_eq!(
+        reactor
+            .layout_manager
+            .layout_engine
+            .take_workspace_switch_direction(builtin_space),
+        None,
+    );
+}

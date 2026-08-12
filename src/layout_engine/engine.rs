@@ -116,6 +116,9 @@ pub struct LayoutEngine {
     /// display each window belongs to. Replaces the former `space_display_map` /
     /// `display_last_space` pair, which could disagree with each other.
     display_affinity: DisplayAffinity,
+    /// Direction of the in-flight workspace switch per display, consumed by the animation.
+    #[allow(clippy::type_complexity)]
+    workspace_switch_directions: HashMap<SpaceId, crate::model::reactor::WorkspaceSwitchDirection>,
     persistence: PersistenceState,
     /// Set only while a master-file startup restore is waiting for the first display snapshot.
     startup_restore_pending: bool,
@@ -514,6 +517,16 @@ impl LayoutEngine {
         }
     }
 
+    /// Which way the last switch on this display travelled, for the slide animation.
+    ///
+    /// Workspaces are stacked vertically, so moving to a higher ordinal reads as going DOWN.
+    pub fn take_workspace_switch_direction(
+        &mut self,
+        space: SpaceId,
+    ) -> Option<crate::model::reactor::WorkspaceSwitchDirection> {
+        self.workspace_switch_directions.remove(&space)
+    }
+
     fn activate_workspace(
         &mut self,
         window_store: &WindowStore,
@@ -521,6 +534,23 @@ impl LayoutEngine {
         workspace_id: VirtualWorkspaceId,
         preferred_focus_window: Option<WindowId>,
     ) -> EventResponse {
+        // Record the travel direction before the active workspace changes, while both
+        // ordinals are still known.
+        let ordered = self.virtual_workspace_manager_mut().list_workspaces(space);
+        let index_of = |target: VirtualWorkspaceId| {
+            ordered.iter().position(|(candidate, _)| *candidate == target)
+        };
+        if let Some(previous) = self.virtual_workspace_manager.active_workspace(space)
+            && let (Some(from), Some(to)) = (index_of(previous), index_of(workspace_id))
+            && from != to
+        {
+            let direction = if to > from {
+                crate::model::reactor::WorkspaceSwitchDirection::Down
+            } else {
+                crate::model::reactor::WorkspaceSwitchDirection::Up
+            };
+            self.workspace_switch_directions.insert(space, direction);
+        }
         self.virtual_workspace_manager.set_active_workspace(space, workspace_id);
         self.update_active_floating_windows(window_store, space);
         self.broadcast_workspace_changed(space);
@@ -1400,6 +1430,7 @@ impl LayoutEngine {
             layout_settings: layout_settings.clone(),
             broadcast_tx,
             display_affinity: DisplayAffinity::default(),
+            workspace_switch_directions: HashMap::default(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
         }
