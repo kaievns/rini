@@ -90,39 +90,11 @@ impl VirtualWorkspace {
     }
 
     pub fn create_layout_system(mode: LayoutMode, settings: &LayoutSettings) -> LayoutSystemKind {
-        match mode {
-            LayoutMode::Traditional => LayoutSystemKind::Traditional(
-                crate::layout_engine::systems::TraditionalLayoutSystem::new(
-                    settings.window_insertion_point_for(mode),
-                    settings.traditional.equalize_nodes,
-                ),
-            ),
-            LayoutMode::Bsp => {
-                LayoutSystemKind::Bsp(crate::layout_engine::systems::BspLayoutSystem::new(
-                    settings.window_insertion_point_for(mode),
-                ))
-            }
-            LayoutMode::Stack => LayoutSystemKind::Stack(
-                crate::layout_engine::systems::StackLayoutSystem::new_with_insertion_point(
-                    settings.stack.default_orientation,
-                    settings.window_insertion_point_for(mode),
-                ),
-            ),
-            LayoutMode::MasterStack => {
-                let mut mode_settings = settings.master_stack.clone();
-                mode_settings.base = settings.resolved_base_for(mode);
-                LayoutSystemKind::MasterStack(
-                    crate::layout_engine::systems::MasterStackLayoutSystem::new(mode_settings),
-                )
-            }
-            LayoutMode::Scrolling => {
-                let mut mode_settings = settings.scrolling.clone();
-                mode_settings.base = settings.resolved_base_for(mode);
-                LayoutSystemKind::Scrolling(
-                    crate::layout_engine::systems::ScrollingLayoutSystem::new(&mode_settings),
-                )
-            }
-        }
+        let mut mode_settings = settings.scrolling.clone();
+        mode_settings.base = settings.resolved_base_for(mode);
+        LayoutSystemKind::Scrolling(crate::layout_engine::systems::ScrollingLayoutSystem::new(
+            &mode_settings,
+        ))
     }
 
     pub fn set_last_focused(&mut self, window_id: Option<WindowId>) {

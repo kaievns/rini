@@ -58,12 +58,6 @@ pub enum LayoutCommand {
     CreateWorkspace,
     SwitchToLastWorkspace,
     SwapWindows(WindowId, WindowId),
-    AdjustMasterRatio(f64),
-    AdjustMasterCount {
-        delta: i32,
-    },
-    PromoteToMaster,
-    SwapMasterStack,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

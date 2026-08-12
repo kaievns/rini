@@ -120,7 +120,7 @@ impl Default for State {
             hide_count: 0,
             mouse_hides_on_focus: false,
             focus_follows_mouse_config_enabled: false,
-            default_layout_mode: LayoutMode::Traditional,
+            default_layout_mode: LayoutMode::Scrolling,
             converter: CoordinateConverter::default(),
             screens: Vec::new(),
             event_processing_enabled: false,
@@ -1060,14 +1060,14 @@ mod tests {
         state.screen_spaces = vec![(left, left_space), (right, right_space)];
         state
             .layout_mode_by_space
-            .insert(left_space, crate::common::config::LayoutMode::Traditional);
+            .insert(left_space, crate::common::config::LayoutMode::Scrolling);
         state
             .layout_mode_by_space
             .insert(right_space, crate::common::config::LayoutMode::Scrolling);
 
         assert_eq!(
             state.layout_mode_at_point(CGPoint::new(50.0, 50.0)),
-            Some(crate::common::config::LayoutMode::Traditional)
+            Some(crate::common::config::LayoutMode::Scrolling)
         );
         assert_eq!(
             state.layout_mode_at_point(CGPoint::new(150.0, 50.0)),

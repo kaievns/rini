@@ -80,7 +80,6 @@ pub struct MenuIcon {
     view: Retained<MenuIconView>,
     _menu: Retained<NSMenu>,
     menu_handler: Retained<MenuActionHandler>,
-    layout_items: Vec<(LayoutMode, Retained<NSMenuItem>)>,
     workspace_item: Retained<NSMenuItem>,
     workspace_submenu: Retained<NSMenu>,
     workspace_items: Vec<WorkspaceMenuItem>,
@@ -147,7 +146,6 @@ impl MenuIcon {
             view,
             _menu: built.menu,
             menu_handler,
-            layout_items: built.layout_items,
             workspace_item: built.workspace_item,
             workspace_submenu: built.workspace_submenu,
             workspace_items: Vec::new(),
@@ -240,13 +238,6 @@ impl MenuIcon {
         active_space_is_activated: bool,
         workspaces: &[RuntimeWorkspaceData],
     ) {
-        let active_layout = workspaces
-            .iter()
-            .find(|workspace| workspace.is_active)
-            .and_then(|workspace| parse_layout_mode(&workspace.layout_mode));
-        for (mode, item) in &self.layout_items {
-            set_menu_item_checked(item, active_layout == Some(*mode));
-        }
         for workspace_item in &self.workspace_items {
             let is_active = workspaces
                 .iter()
@@ -451,10 +442,6 @@ fn as_any_object<T: Message>(obj: &T) -> &AnyObject {
 
 fn parse_layout_mode(layout_mode: &str) -> Option<LayoutMode> {
     match layout_mode {
-        "traditional" => Some(LayoutMode::Traditional),
-        "bsp" => Some(LayoutMode::Bsp),
-        "stack" => Some(LayoutMode::Stack),
-        "master_stack" => Some(LayoutMode::MasterStack),
         "scrolling" => Some(LayoutMode::Scrolling),
         _ => None,
     }
@@ -462,10 +449,6 @@ fn parse_layout_mode(layout_mode: &str) -> Option<LayoutMode> {
 
 fn layout_title(mode: &LayoutMode) -> &'static str {
     match mode {
-        LayoutMode::Traditional => "Traditional",
-        LayoutMode::Bsp => "BSP",
-        LayoutMode::Stack => "Stack",
-        LayoutMode::MasterStack => "Master Stack",
         LayoutMode::Scrolling => "Scrolling",
     }
 }
@@ -648,7 +631,6 @@ fn layout_library_files_in(directory: &Path) -> Vec<(String, PathBuf)> {
 
 struct BuiltStatusMenu {
     menu: Retained<NSMenu>,
-    layout_items: Vec<(LayoutMode, Retained<NSMenuItem>)>,
     workspace_item: Retained<NSMenuItem>,
     workspace_submenu: Retained<NSMenu>,
     next_workspace_item: Retained<NSMenuItem>,
@@ -664,42 +646,9 @@ fn build_static_menu(mtm: MainThreadMarker, handler: &MenuActionHandler) -> Buil
     let title = NSString::from_str("Rift");
     let menu: Retained<NSMenu> = unsafe { msg_send![NSMenu::alloc(mtm), initWithTitle: &*title] };
 
-    let layout_item = make_menu_item(mtm, "Layout", None, None, None, None, None, None);
-
-    let layout_submenu_title = NSString::from_str("Layout");
-    let layout_submenu: Retained<NSMenu> =
-        unsafe { msg_send![NSMenu::alloc(mtm), initWithTitle: &*layout_submenu_title] };
-
-    let mut layout_items = Vec::new();
-    for mode in [
-        LayoutMode::Traditional,
-        LayoutMode::Bsp,
-        LayoutMode::Stack,
-        LayoutMode::MasterStack,
-        LayoutMode::Scrolling,
-    ] {
-        let action = match mode {
-            LayoutMode::Traditional => sel!(onSetLayoutTraditional:),
-            LayoutMode::Bsp => sel!(onSetLayoutBsp:),
-            LayoutMode::Stack => sel!(onSetLayoutStack:),
-            LayoutMode::MasterStack => sel!(onSetLayoutMasterStack:),
-            LayoutMode::Scrolling => sel!(onSetLayoutScrolling:),
-        };
-        let item = make_menu_item(
-            mtm,
-            layout_title(&mode),
-            Some(action),
-            Some(handler),
-            Some(false),
-            None,
-            None,
-            None,
-        );
-        layout_submenu.addItem(&item);
-        layout_items.push((mode, item));
-    }
-    layout_item.setSubmenu(Some(&layout_submenu));
-    menu.addItem(&layout_item);
+    // No Layout submenu. With the tree-based layouts removed there is exactly one mode, so
+    // a picker offering a single choice is noise. Upstream's cached-menu structure (built
+    // once, refreshed in place) is kept intact; only the picker itself is gone.
 
     let workspace_item = make_menu_item(mtm, "Workspaces", None, None, None, None, None, None);
 
@@ -901,7 +850,6 @@ fn build_static_menu(mtm: MainThreadMarker, handler: &MenuActionHandler) -> Buil
 
     BuiltStatusMenu {
         menu,
-        layout_items,
         workspace_item,
         workspace_submenu: ws_submenu,
         next_workspace_item,
@@ -1159,31 +1107,6 @@ define_class!(
     struct MenuActionHandler;
 
     impl MenuActionHandler {
-        #[unsafe(method(onSetLayoutTraditional:))]
-        fn on_set_layout_traditional(&self, _sender: Option<&AnyObject>) {
-            self.emit(MenuAction::SetLayout(LayoutMode::Traditional));
-        }
-
-        #[unsafe(method(onSetLayoutBsp:))]
-        fn on_set_layout_bsp(&self, _sender: Option<&AnyObject>) {
-            self.emit(MenuAction::SetLayout(LayoutMode::Bsp));
-        }
-
-        #[unsafe(method(onSetLayoutStack:))]
-        fn on_set_layout_stack(&self, _sender: Option<&AnyObject>) {
-            self.emit(MenuAction::SetLayout(LayoutMode::Stack));
-        }
-
-        #[unsafe(method(onSetLayoutMasterStack:))]
-        fn on_set_layout_master_stack(&self, _sender: Option<&AnyObject>) {
-            self.emit(MenuAction::SetLayout(LayoutMode::MasterStack));
-        }
-
-        #[unsafe(method(onSetLayoutScrolling:))]
-        fn on_set_layout_scrolling(&self, _sender: Option<&AnyObject>) {
-            self.emit(MenuAction::SetLayout(LayoutMode::Scrolling));
-        }
-
         #[unsafe(method(onToggleSpaceActivation:))]
         fn on_toggle_space_activation(&self, _sender: Option<&AnyObject>) {
             self.emit(MenuAction::ToggleSpaceActivated);

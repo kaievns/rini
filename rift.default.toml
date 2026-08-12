@@ -77,7 +77,7 @@ hot_reload = true
 # This is the default layout mode if there is nothing else configured
 # in the `workspace_rules` section below.
 # You can set different layouts per workspace using `workspace_rules`.
-mode = "traditional"
+mode = "scrolling"
 
 # Where new windows are inserted by default for every layout:
 # - "next_to_selection": immediately after the selected window
@@ -395,8 +395,8 @@ comb1 = "Alt + Shift"
 #   (follow and window_id are optional)
 # - create_workspace
 # - switch_to_last_workspace
-# - set_workspace_layout = { mode = "traditional"|"bsp"|"stack"|"master_stack"|"scrolling" } (active workspace)
-# - set_workspace_layout = { workspace = N, mode = "traditional"|"bsp"|"stack"|"master_stack"|"scrolling" }
+# - set_workspace_layout = { mode = "scrolling"|"bsp"|"stack"|"master_stack"|"scrolling" } (active workspace)
+# - set_workspace_layout = { workspace = N, mode = "scrolling"|"bsp"|"stack"|"master_stack"|"scrolling" }
 # - next_window / prev_window (focus wraps when it reaches last window in current workspace)
 # - ascend / descend
 # - move_focus = "left"|"right"|"up"|"down"
@@ -449,7 +449,7 @@ comb1 = "Alt + Shift"
 "Alt + Tab" = "switch_to_last_workspace"
 
 # commands to change the layout engine of the active workspace
-# "Alt + Ctrl + 1" = { set_workspace_layout = { mode = "traditional" } }
+# "Alt + Ctrl + 1" = { set_workspace_layout = { mode = "scrolling" } }
 # "Alt + Ctrl + 2" = { set_workspace_layout = { mode = "bsp" } }
 # "Alt + Ctrl + 3" = { set_workspace_layout = { mode = "master_stack" } }
 # "Alt + Ctrl + 4" = { set_workspace_layout = { mode = "scrolling" } }

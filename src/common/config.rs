@@ -1050,10 +1050,6 @@ impl Settings {
 impl LayoutSettings {
     pub fn base_for(&self, mode: LayoutMode) -> &BaseLayoutSettings {
         match mode {
-            LayoutMode::Traditional => &self.traditional.base,
-            LayoutMode::Bsp => &self.bsp.base,
-            LayoutMode::Stack => &self.stack.base,
-            LayoutMode::MasterStack => &self.master_stack.base,
             LayoutMode::Scrolling => &self.scrolling.base,
         }
     }
@@ -1658,31 +1654,36 @@ mod tests {
     use crate::layout_engine::{LayoutCommand, ResizeOrientation};
 
     #[test]
-    fn layout_insertion_point_supports_global_default_and_per_mode_override() {
-        let settings: LayoutSettings = toml::from_str(
+    fn scrolling_insertion_point_falls_back_to_the_global_default() {
+        // Was a per-mode override test. With one layout mode left there is no second mode
+        // to override against, so what remains worth asserting is the fallback chain:
+        // the mode's own setting wins, and the global default applies when it is absent.
+        let overridden: LayoutSettings = toml::from_str(
             r#"
                 window_insertion_point = "end_of_tree"
 
-                [traditional]
-                window_insertion_point = "next_to_selection"
-                equalize_nodes = true
-
                 [scrolling]
+                window_insertion_point = "next_to_selection"
                 animate = false
             "#,
         )
         .unwrap();
-
         assert_eq!(
-            settings.window_insertion_point_for(LayoutMode::Traditional),
+            overridden.window_insertion_point_for(LayoutMode::Scrolling),
             WindowInsertionPoint::NextToSelection
         );
+        assert_eq!(overridden.scrolling.animate, Some(false));
+
+        let inherited: LayoutSettings = toml::from_str(
+            r#"
+                window_insertion_point = "end_of_tree"
+            "#,
+        )
+        .unwrap();
         assert_eq!(
-            settings.window_insertion_point_for(LayoutMode::Bsp),
+            inherited.window_insertion_point_for(LayoutMode::Scrolling),
             WindowInsertionPoint::EndOfTree
         );
-        assert!(settings.traditional.equalize_nodes);
-        assert_eq!(settings.scrolling.animate, Some(false));
     }
 
     #[test]

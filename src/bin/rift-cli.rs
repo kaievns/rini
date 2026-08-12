@@ -321,14 +321,6 @@ enum LayoutCommands {
     Unjoin,
     /// Toggle floating on the focused selection (tree focus)
     ToggleFocusFloat,
-    /// Adjust master ratio by a delta (master/stack layout only)
-    AdjustMasterRatio { delta: f64 },
-    /// Adjust master count by a delta (master/stack layout only)
-    AdjustMasterCount { delta: i32 },
-    /// Promote the selected window into the master area (master/stack layout only)
-    PromoteToMaster,
-    /// Swap the first master with the first stack window (master/stack layout only)
-    SwapMasterStack,
     /// Swap two windows by window id (`WindowId { pid: ..., idx: ... }`)
     SwapWindows { a: String, b: String },
     /// Scroll the strip by a normalized delta (scrolling layout only)
@@ -842,14 +834,9 @@ fn parse_event_kind(input: &str) -> Result<EventKind, String> {
 
 fn parse_layout_mode(value: &str) -> Result<LayoutMode, String> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "traditional" => Ok(LayoutMode::Traditional),
-        "bsp" => Ok(LayoutMode::Bsp),
-        "stack" => Ok(LayoutMode::Stack),
-        "master_stack" => Ok(LayoutMode::MasterStack),
         "scrolling" => Ok(LayoutMode::Scrolling),
         other => Err(format!(
-            "Invalid layout mode '{}'; must be traditional, bsp, stack, master_stack, or scrolling",
-            other
+            "Invalid layout mode '{other}'; the only mode is scrolling"
         )),
     }
 }
@@ -917,18 +904,6 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
         }
         LayoutCommands::ToggleFocusFloat => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::ToggleFocusFloating,
-        ))),
-        LayoutCommands::AdjustMasterRatio { delta } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::AdjustMasterRatio(delta)),
-        )),
-        LayoutCommands::AdjustMasterCount { delta } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::AdjustMasterCount { delta }),
-        )),
-        LayoutCommands::PromoteToMaster => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::PromoteToMaster,
-        ))),
-        LayoutCommands::SwapMasterStack => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::SwapMasterStack,
         ))),
         LayoutCommands::SwapWindows { a, b } => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::SwapWindows(parse_window_id(&a)?.into(), parse_window_id(&b)?.into()),

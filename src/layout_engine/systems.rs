@@ -196,22 +196,13 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     fn toggle_tile_orientation(&mut self, layout: LayoutId);
 }
 
-mod traditional;
-pub use traditional::TraditionalLayoutSystem;
-mod bsp;
 pub(crate) mod constraints;
-pub use bsp::BspLayoutSystem;
-mod master_stack;
-pub use master_stack::MasterStackLayoutSystem;
 mod scrolling;
 pub use scrolling::ScrollingLayoutSystem;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BspLayoutSystem, LayoutSystem, MasterStackLayoutSystem, ScrollingLayoutSystem,
-        TraditionalLayoutSystem, WindowLayoutConstraints,
-    };
+    use super::{LayoutSystem, ScrollingLayoutSystem, WindowLayoutConstraints};
     use crate::actor::app::WindowId;
     use crate::common::config::{ScrollingLayoutSettings, WindowInsertionPoint};
 
@@ -220,18 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn common_insertion_point_controls_tree_and_linear_layouts() {
-        let mut traditional = TraditionalLayoutSystem::new(WindowInsertionPoint::EndOfTree, false);
-        let traditional_layout = traditional.create_layout();
-        traditional.add_window_after_selection(traditional_layout, w(1));
-        traditional.add_window_after_selection(traditional_layout, w(2));
-        traditional.select_window(traditional_layout, w(1));
-        traditional.add_window_after_selection(traditional_layout, w(3));
-        assert_eq!(
-            traditional.all_windows_in_layout(traditional_layout),
-            vec![w(1), w(2), w(3)]
-        );
-
+    fn insertion_point_is_honoured_by_the_scrolling_layout() {
         let mut scrolling_settings = ScrollingLayoutSettings::default();
         scrolling_settings.base.window_insertion_point = Some(WindowInsertionPoint::EndOfTree);
         let mut scrolling = ScrollingLayoutSystem::new(&scrolling_settings);
@@ -239,6 +219,8 @@ mod tests {
         scrolling.add_window_after_selection(scrolling_layout, w(1));
         scrolling.add_window_after_selection(scrolling_layout, w(2));
         scrolling.select_window(scrolling_layout, w(1));
+        // EndOfTree ignores the selection and appends, so w(3) lands last rather than
+        // directly after w(1).
         scrolling.add_window_after_selection(scrolling_layout, w(3));
         assert_eq!(
             scrolling.all_windows_in_layout(scrolling_layout),
@@ -339,58 +321,34 @@ mod tests {
         windows
     }
 
+    /// Upstream's container-tree test, reduced to the one layout system that still exists.
+    ///
+    /// It originally also covered Traditional, Bsp and MasterStack. Those systems were
+    /// removed in "refactor: remove the tree-based layout modes, leaving only scrolling", so
+    /// their sections are gone rather than the whole test: the scrolling assertions are
+    /// unaffected by that removal and still pin the container-tree contract the IPC layer
+    /// depends on.
     #[test]
     fn normalized_container_trees_expose_layout_topology() {
-        let mut traditional = TraditionalLayoutSystem::default();
-        let layout = traditional.create_layout();
-        traditional.add_window_after_selection(layout, w(1));
-        traditional.add_window_after_selection(layout, w(2));
-        let tree = traditional.container_tree(layout);
-        assert_eq!(tree.node_type, rift_protocol::ContainerNodeType::Container);
-        assert_eq!(window_nodes(&tree).len(), 2);
-        assert_eq!(
-            window_nodes(&tree).iter().filter(|node| node.is_selected).count(),
-            1
-        );
-
-        let mut bsp = BspLayoutSystem::default();
-        let layout = bsp.create_layout();
-        bsp.add_window_after_selection(layout, w(1));
-        bsp.add_window_after_selection(layout, w(2));
-        let tree = bsp.container_tree(layout);
-        assert_eq!(tree.children.len(), 2);
-        let total_weight: f64 = tree.children.iter().filter_map(|node| node.weight).sum();
-        assert!((total_weight - 1.0).abs() < f64::EPSILON);
-
-        let mut master_stack = MasterStackLayoutSystem::default();
-        let layout = master_stack.create_layout();
-        master_stack.add_window_after_selection(layout, w(1));
-        master_stack.add_window_after_selection(layout, w(2));
-        let tree = master_stack.container_tree(layout);
-        let roles: Vec<_> = tree.children.iter().filter_map(|node| node.role.as_deref()).collect();
-        assert!(roles.contains(&"master"), "{tree:#?}");
-        assert!(roles.contains(&"stack"), "{tree:#?}");
-
         let mut scrolling = ScrollingLayoutSystem::default();
         let layout = scrolling.create_layout();
         scrolling.add_window_after_selection(layout, w(1));
         scrolling.add_window_after_selection(layout, w(2));
         let tree = scrolling.container_tree(layout);
+        assert_eq!(tree.node_type, rift_protocol::ContainerNodeType::Container);
         assert!(tree.children.iter().all(|node| node.role.as_deref() == Some("column")));
         assert_eq!(window_nodes(&tree).len(), 2);
+        assert_eq!(
+            window_nodes(&tree).iter().filter(|node| node.is_selected).count(),
+            1
+        );
     }
 }
-mod stack;
-pub use stack::StackLayoutSystem;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Debug)]
 #[enum_dispatch(LayoutSystem)]
 pub enum LayoutSystemKind {
-    Traditional(TraditionalLayoutSystem),
-    Bsp(BspLayoutSystem),
-    MasterStack(MasterStackLayoutSystem),
     Scrolling(ScrollingLayoutSystem),
-    Stack(StackLayoutSystem),
 }

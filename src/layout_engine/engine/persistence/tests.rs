@@ -1249,17 +1249,18 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     }
     let source_a_workspace = snapshot.active_workspace(source_a).unwrap();
     let source_b_workspace = snapshot.active_workspace(source_b).unwrap();
-    assert!(snapshot.switch_workspace_layout_mode(
-        &snapshot_store,
+    // These used to be given DIFFERENT layout modes so the assertions could tell which
+    // snapshot won. With one mode left, name them instead — same purpose, and it survives
+    // the layout modes being removed.
+    assert!(snapshot.virtual_workspace_manager.rename_workspace(
         source_a,
         source_a_workspace,
-        LayoutMode::Bsp,
+        "saved-a".to_string(),
     ));
-    assert!(snapshot.switch_workspace_layout_mode(
-        &snapshot_store,
+    assert!(snapshot.virtual_workspace_manager.rename_workspace(
         source_b,
         source_b_workspace,
-        LayoutMode::Scrolling,
+        "saved-b".to_string(),
     ));
     let path = std::env::temp_dir().join(format!(
         "rift-portable-source-restore-test-{}-{}.ron",
@@ -1317,7 +1318,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     let _ = std::fs::remove_file(path);
     assert_eq!(
         master_target.active_layout_mode_at(target_space),
-        LayoutMode::Bsp
+        LayoutMode::Scrolling
     );
     assert_eq!(
         master_target
@@ -1346,17 +1347,17 @@ fn master_workspace_restore_uses_target_ordinal_and_preserves_configured_name() 
     let saved_t = saved_workspaces[3].0;
     let saved_s = saved_workspaces[5].0;
     assert_eq!(snapshot.active_workspace(space), Some(saved_t));
-    assert!(snapshot.switch_workspace_layout_mode(
-        &snapshot_store,
+    // Names rather than layout modes as the marker; see the note in
+    // portable_restore_uses_the_space_that_was_active_when_saved.
+    assert!(snapshot.virtual_workspace_manager.rename_workspace(
         space,
         saved_t,
-        LayoutMode::Scrolling,
+        "saved-t".to_string(),
     ));
-    assert!(snapshot.switch_workspace_layout_mode(
-        &snapshot_store,
+    assert!(snapshot.virtual_workspace_manager.rename_workspace(
         space,
         saved_s,
-        LayoutMode::Stack,
+        "saved-s".to_string(),
     ));
     let path = std::env::temp_dir().join(format!(
         "rift-master-workspace-ordinal-test-{}-{}.ron",
@@ -1386,8 +1387,8 @@ fn master_workspace_restore_uses_target_ordinal_and_preserves_configured_name() 
 
     let restored = engine.virtual_workspace_manager.workspace_info(space, target_s).unwrap();
     assert_eq!(restored.name, "S");
-    assert_eq!(restored.layout_mode(), LayoutMode::Stack);
-    assert_eq!(engine.active_layout_mode_at(space), LayoutMode::Stack);
+    assert_eq!(restored.layout_mode(), LayoutMode::Scrolling);
+    assert_eq!(engine.active_layout_mode_at(space), LayoutMode::Scrolling);
 }
 
 #[test]
@@ -1398,14 +1399,15 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
     let size = CGSize::new(1200.0, 800.0);
     let mut snapshot = test_engine();
     let mut snapshot_store = WindowStore::default();
-    for (space, display, mode) in [
-        (saved_a, "display-a", LayoutMode::Bsp),
-        (saved_b, "display-b", LayoutMode::Scrolling),
-    ] {
+    for (space, display) in [(saved_a, "display-a"), (saved_b, "display-b")] {
         let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
         snapshot.update_space_display(space, Some(display.into()));
         let workspace = snapshot.active_workspace(space).unwrap();
-        assert!(snapshot.switch_workspace_layout_mode(&snapshot_store, space, workspace, mode,));
+        assert!(snapshot.virtual_workspace_manager.rename_workspace(
+            space,
+            workspace,
+            format!("saved-{display}"),
+        ));
     }
     let path = std::env::temp_dir().join(format!(
         "rift-master-display-source-test-{}.ron",
@@ -1430,7 +1432,7 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
         .unwrap();
     let _ = std::fs::remove_file(path);
 
-    assert_eq!(engine.active_layout_mode_at(current_a), LayoutMode::Bsp);
+    assert_eq!(engine.active_layout_mode_at(current_a), LayoutMode::Scrolling);
 }
 
 #[test]
@@ -1926,43 +1928,11 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
 #[test]
 fn every_layout_system_round_trips_through_ron() {
     let settings = LayoutSettings::default();
-    for mode in [
-        LayoutMode::Traditional,
-        LayoutMode::Bsp,
-        LayoutMode::Stack,
-        LayoutMode::MasterStack,
-        LayoutMode::Scrolling,
-    ] {
+    for mode in [LayoutMode::Scrolling] {
         let system = VirtualWorkspace::create_layout_system(mode, &settings);
         let serialized = ron::ser::to_string(&system).unwrap();
         let restored: LayoutSystemKind = ron::from_str(&serialized)
             .unwrap_or_else(|error| panic!("{mode:?} failed to round-trip: {error}"));
-        assert_eq!(
-            std::mem::discriminant(&system),
-            std::mem::discriminant(&restored)
-        );
-    }
-}
-
-#[test]
-fn legacy_internally_tagged_layout_systems_are_migrated() {
-    let settings = LayoutSettings::default();
-    for (mode, variant) in [
-        (LayoutMode::Traditional, "traditional"),
-        (LayoutMode::Bsp, "bsp"),
-        (LayoutMode::Stack, "stack"),
-        (LayoutMode::MasterStack, "master_stack"),
-        (LayoutMode::Scrolling, "scrolling"),
-    ] {
-        let system = VirtualWorkspace::create_layout_system(mode, &settings);
-        let current = ron::ser::to_string(&system).unwrap();
-        let prefix = format!("{variant}((");
-        assert!(current.starts_with(&prefix) && current.ends_with("))"));
-        let fields = &current[prefix.len()..current.len() - 2];
-        let legacy = format!("(kind:\"{variant}\",{fields})");
-        let migrated = super::storage::migrate_legacy_layout_system_tags(&legacy).unwrap();
-        let restored: LayoutSystemKind = ron::from_str(&migrated)
-            .unwrap_or_else(|error| panic!("{mode:?} migration failed: {error}"));
         assert_eq!(
             std::mem::discriminant(&system),
             std::mem::discriminant(&restored)

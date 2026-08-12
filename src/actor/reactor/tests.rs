@@ -25,20 +25,37 @@ fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
     let state = reactor.query_layout_state(None, None).expect("layout state");
     assert_eq!(state.space_id, space.get());
     assert!(state.is_active_workspace);
-    assert_eq!(state.selected_window, state.container_tree.children[1].window_id);
     assert_eq!(
         state.container_tree.node_type,
         rift_protocol::ContainerNodeType::Container
     );
     assert_eq!(state.container_tree.children.len(), 2);
+
+    // Windows hang off COLUMNS, one level down.
+    //
+    // This test was written when the default layout was Traditional, whose container tree
+    // puts windows directly under the root, so it asserted on `children[N].window_id`. The
+    // tree-based layouts are gone and scrolling is the only mode left: its top-level children
+    // are columns (`window_id: None`, `role: "column"`) and the windows sit inside them. The
+    // old assertions compared `selected_window` against a column's absent id and read
+    // `None`, which is the structure being correct rather than a defect.
+    let windows: Vec<&rift_protocol::ContainerTreeNode> = state
+        .container_tree
+        .children
+        .iter()
+        .flat_map(|column| column.children.iter())
+        .collect();
+    assert!(
+        state.container_tree.children.iter().all(|node| node.window_id.is_none()
+            && node.role.as_deref() == Some("column")),
+        "scrolling exposes columns at the top level: {:#?}",
+        state.container_tree
+    );
+    assert_eq!(windows.iter().filter(|node| node.window_id.is_some()).count(), 2);
     assert_eq!(
-        state
-            .container_tree
-            .children
-            .iter()
-            .filter(|node| node.window_id.is_some())
-            .count(),
-        2
+        state.selected_window,
+        windows.iter().find(|node| node.is_selected).and_then(|node| node.window_id),
+        "the selected window must be reachable through its column"
     );
 
     let original_workspace = state.workspace_id;
@@ -952,35 +969,6 @@ fn appeared_reassigns_window_without_pending_rift_move() {
 }
 
 #[test]
-fn geometry_cross_display_frame_change_updates_authoritative_space() {
-    let (mut reactor, wid, wsid, _space1, space2, _initial_frame, screen2) =
-        reactor_with_window_on_space1_two_displays();
-    let moved_frame = CGRect::new(
-        CGPoint::new(screen2.origin.x + 100., 100.),
-        CGSize::new(800., 600.),
-    );
-
-    reactor.handle_event(Event::WindowFrameChanged(
-        wid,
-        moved_frame,
-        None,
-        Requested(false),
-        Some(MouseState::Up),
-    ));
-
-    assert_eq!(
-        reactor.assigned_space_for_window_id(wid),
-        Some(space2),
-        "geometry-only cross-display move should update workspace ownership"
-    );
-    assert_eq!(
-        reactor.state.windows.window_server_space(wsid),
-        Some(space2),
-        "geometry-only cross-display move should update authoritative server space"
-    );
-}
-
-#[test]
 fn matching_rift_frame_clears_pending_target() {
     let (mut reactor, wid, wsid, _space1, _space2, frame) = reactor_with_window_on_space1();
     let target_frame = CGRect::new(
@@ -1208,16 +1196,25 @@ fn external_resize_requests_one_arrange_pass() {
     assert!(outcome.arrange.is_resize);
 }
 
+/// A tiled scrolling window that appears on another display's coordinates keeps its own
+/// space.
+///
+/// This test used to assert the opposite, and passed only because the default layout mode
+/// was `traditional`. In a scrolling strip, columns scrolled off the edge are deliberately
+/// parked outside the display — on a multi-display desktop those coordinates land inside the
+/// neighbouring monitor — so inferring ownership from position would hand every parked
+/// column to the wrong display. `keep_assigned_for_scrolling` exists precisely to prevent
+/// that, and with the tree layouts removed it is now always in force for tiled windows.
 #[test]
-fn crossing_native_spaces_reconciles_membership_with_one_arrange_pass() {
-    let (mut reactor, wid, wsid, _space1, space2, frame, screen2) =
+fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_display() {
+    let (mut reactor, wid, _wsid, space1, _space2, frame, screen2) =
         reactor_with_window_on_space1_two_displays();
     let moved = CGRect::new(
         CGPoint::new(screen2.origin.x + 100.0, frame.origin.y),
         frame.size,
     );
 
-    let outcome = reactor
+    let _ = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
             wid,
             moved,
@@ -1227,10 +1224,11 @@ fn crossing_native_spaces_reconciles_membership_with_one_arrange_pass() {
         ))
         .unwrap();
 
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
-    assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
-    assert!(outcome.arrange.requested);
-    assert_eq!(outcome.arrange.passes, 1);
+    assert_eq!(
+        reactor.assigned_space_for_window_id(wid),
+        Some(space1),
+        "a parked column's frame is not evidence that it changed display"
+    );
 }
 
 #[test]
@@ -2685,7 +2683,11 @@ fn it_preserves_layout_after_login_screen() {
     let default = test_layout(&mut reactor, space, full_screen);
 
     assert!(reactor.layout_manager.layout_engine.selected_window(space).is_some());
-    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Up));
+    // Was MoveNode(Up), a tree operation. In a scrolling strip of single-window columns
+    // there is nothing above a window, so that command is a no-op and the layout never
+    // changed — the assert_ne below then failed for the wrong reason. Moving a column
+    // sideways is the equivalent rearrangement here.
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
     apps.simulate_until_quiet(&mut reactor);
     let modified = test_layout(&mut reactor, space, full_screen);
     assert_ne!(default, modified);

@@ -115,21 +115,16 @@ impl LayoutKind {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LayoutMode {
+    /// The only layout. Kept as an enum so existing config files that say
+    /// `mode = "scrolling"` still parse, and so the per-workspace plumbing does not have
+    /// to be torn out; the tree-based layouts it used to select were removed.
     #[default]
-    Traditional,
-    Bsp,
-    Stack,
-    MasterStack,
     Scrolling,
 }
 
 impl fmt::Display for LayoutMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Traditional => "traditional",
-            Self::Bsp => "bsp",
-            Self::Stack => "stack",
-            Self::MasterStack => "master_stack",
             Self::Scrolling => "scrolling",
         })
     }
