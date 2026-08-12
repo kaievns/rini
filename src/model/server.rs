@@ -55,6 +55,20 @@ impl From<WindowId> for protocol::WindowId {
     }
 }
 
+/// Convert a CoreGraphics rect to the wire shape.
+pub fn to_protocol_rect(frame: objc2_core_foundation::CGRect) -> protocol::Rect {
+    protocol::Rect {
+        origin: protocol::Point {
+            x: frame.origin.x,
+            y: frame.origin.y,
+        },
+        size: protocol::Size {
+            width: frame.size.width,
+            height: frame.size.height,
+        },
+    }
+}
+
 impl From<RuntimeWindowData> for protocol::WindowData {
     fn from(value: RuntimeWindowData) -> Self {
         Self {

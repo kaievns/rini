@@ -249,6 +249,16 @@ impl MachHandler {
                 RiftResponse::Success { data: metrics }
             }
 
+            RiftRequest::GetDiagnostics => {
+                let diagnostics = self.reactor.query_diagnostics();
+                match serde_json::to_value(&diagnostics) {
+                    Ok(value) => RiftResponse::Success { data: value },
+                    Err(e) => RiftResponse::Error {
+                        error: serde_json::json!({ "message": "Failed to serialize diagnostics", "details": format!("{}", e) }),
+                    },
+                }
+            }
+
             RiftRequest::GetConfig => {
                 match self.perform_config_query(|tx| config_actor::Event::QueryConfig(tx)) {
                     Ok(config) => match serde_json::to_value(&config) {

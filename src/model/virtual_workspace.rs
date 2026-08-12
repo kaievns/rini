@@ -1258,6 +1258,31 @@ impl WorkspaceStore {
         }
     }
 
+    /// Workspaces holding windows but belonging to a space no display owns.
+    ///
+    /// macOS mints a new space id on every display reconnect, so a dock/undock cycle can
+    /// leave whole workspace generations behind. Their windows are still assigned and so
+    /// still cmd-tab reachable, but no strip can scroll to them.
+    pub fn workspaces_with_windows_outside(
+        &self,
+        live_spaces: &crate::common::collections::HashSet<SpaceId>,
+    ) -> Vec<String> {
+        let mut orphaned: Vec<String> = self
+            .workspaces
+            .iter()
+            .filter(|(_, workspace)| !live_spaces.contains(&workspace.space))
+            .filter_map(|(workspace_id, workspace)| {
+                let count = self
+                    .workspaces_by_space
+                    .get(&workspace.space)
+                    .map_or(0, |ids| ids.iter().filter(|id| **id == workspace_id).count());
+                (count > 0).then(|| format!("{workspace_id:?} on space {}", workspace.space.get()))
+            })
+            .collect();
+        orphaned.sort();
+        orphaned
+    }
+
     pub fn get_stats(&self, window_store: &WindowStore) -> WorkspaceStats {
         let mut stats = WorkspaceStats {
             total_workspaces: self.workspaces.len(),

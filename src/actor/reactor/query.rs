@@ -1,7 +1,10 @@
 use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 
 use objc2_core_foundation::CGRect;
-use rift_protocol::{ApplicationData, LayoutStateData, WorkspaceLayoutData};
+use rift_protocol::{
+    ApplicationData, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, LayoutStateData,
+    WorkspaceLayoutData,
+};
 
 use crate::actor::app::WindowId;
 use crate::actor::menu_bar;
@@ -84,6 +87,15 @@ impl ReactorQueryHandle {
     pub fn query_metrics(&self) -> serde_json::Value {
         self.send_query(QueryRequest::Metrics).unwrap_or_else(|_| serde_json::json!({}))
     }
+
+    pub fn query_diagnostics(&self) -> DiagnosticsData {
+        self.send_query(QueryRequest::Diagnostics).unwrap_or_else(|_| DiagnosticsData {
+            spaces: Vec::new(),
+            orphaned_workspaces: Vec::new(),
+            stale_homes: Vec::new(),
+            windows_managed: 0,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -117,6 +129,7 @@ pub enum QueryRequest {
         resp: SyncSender<Option<LayoutStateData>>,
     },
     Metrics(SyncSender<serde_json::Value>),
+    Diagnostics(SyncSender<DiagnosticsData>),
 }
 
 impl Reactor {
@@ -148,6 +161,9 @@ impl Reactor {
             }
             QueryRequest::Metrics(resp) => {
                 let _ = resp.send(self.query_metrics());
+            }
+            QueryRequest::Diagnostics(resp) => {
+                let _ = resp.send(self.handle_diagnostics_query());
             }
         }
     }
@@ -455,6 +471,159 @@ impl Reactor {
                 }
             })
             .collect()
+    }
+
+    /// One-shot dump of strip and display state for every known space.
+    ///
+    /// Exists because diagnosing multi-monitor behaviour from the other queries proved
+    /// actively misleading: `query windows` with no space defaults to a single space's
+    /// active workspace, so windows living on the other display look absent. Reading that
+    /// output produced three wrong conclusions in a row — that windows were missing, then
+    /// dead, then unmanaged — when all of them were present and correctly placed.
+    ///
+    /// Everything here is derived from live state and nothing is filtered by
+    /// manageability, so a window that IS owned but is NOT in the layout tree shows up in
+    /// `orphaned_windows` rather than silently vanishing.
+    #[cfg(test)]
+    pub(crate) fn query_diagnostics(&mut self) -> DiagnosticsData {
+        self.handle_diagnostics_query()
+    }
+
+    fn handle_diagnostics_query(&mut self) -> DiagnosticsData {
+        let screens = self.space_state.screens.clone();
+        let mut spaces = Vec::new();
+
+        for screen in &screens {
+            let Some(space) = screen.space else { continue };
+            let engine = &self.layout_manager.layout_engine;
+            let workspace = engine.active_workspace(space);
+            let ordered = engine.ordered_windows_in_active_workspace(space);
+            let owned: Vec<WindowId> = engine
+                .virtual_workspace_manager()
+                .windows_in_active_workspace(&self.state.windows, space);
+
+            // Column geometry is read off the applied frames rather than the layout
+            // system's internals: it is what the user is actually looking at, and it makes
+            // several columns collapsing onto one parking position directly visible.
+            let mut column_origins: Vec<f64> = Vec::new();
+            let mut column_widths: Vec<f64> = Vec::new();
+            let mut windows = Vec::new();
+
+            for window_id in owned.iter().copied() {
+                let Some(state) = self.state.windows.window(window_id) else {
+                    continue;
+                };
+                let frame = state.frame_monotonic;
+                let is_floating = self.layout_manager.layout_engine.is_window_floating(window_id);
+                let left = frame.origin.x.max(screen.frame.origin.x);
+                let right = (frame.origin.x + frame.size.width)
+                    .min(screen.frame.origin.x + screen.frame.size.width);
+                let visible_width = (right - left).max(0.0);
+                let column = (!is_floating)
+                    .then(|| ordered.iter().position(|candidate| *candidate == window_id))
+                    .flatten();
+
+                if !is_floating {
+                    let origin = (frame.origin.x * 10.0).round() / 10.0;
+                    if !column_origins.iter().any(|existing| (existing - origin).abs() < 0.5) {
+                        column_origins.push(origin);
+                        column_widths.push(frame.size.width);
+                    }
+                }
+
+                windows.push(DiagnosticWindow {
+                    window_id: window_id.into(),
+                    app: self
+                        .app_manager
+                        .apps
+                        .get(&window_id.pid)
+                        .and_then(|app| app.info.localized_name.clone())
+                        .unwrap_or_default(),
+                    title: state.info.title.clone(),
+                    column,
+                    row: None,
+                    frame: crate::model::server::to_protocol_rect(frame),
+                    visible_width,
+                    is_parked: !is_floating && visible_width <= 3.0,
+                    is_floating,
+                    is_focused: self.main_window() == Some(window_id),
+                    home_display: self
+                        .layout_manager
+                        .layout_engine
+                        .window_display_home(window_id)
+                        .map(str::to_owned),
+                });
+            }
+            column_origins.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Owned but absent from the layout tree. Such a window is cmd-tab reachable
+            // while being unreachable by scrolling, which is what "a second invisible
+            // strip" actually looks like.
+            let orphaned_windows: Vec<rift_protocol::WindowId> = owned
+                .iter()
+                .copied()
+                .filter(|window_id| {
+                    !self.layout_manager.layout_engine.is_window_floating(*window_id)
+                        && !ordered.contains(window_id)
+                })
+                .map(Into::into)
+                .collect();
+
+            let engine = &mut self.layout_manager.layout_engine;
+            let workspace_index = workspace.and_then(|workspace| {
+                engine
+                    .virtual_workspace_manager_mut()
+                    .list_workspaces(space)
+                    .iter()
+                    .position(|(candidate, _)| *candidate == workspace)
+            });
+
+            spaces.push(DiagnosticSpace {
+                space_id: space.get(),
+                display_uuid: screen.display_uuid_owned(),
+                display_name: screen.name.clone(),
+                display_frame: crate::model::server::to_protocol_rect(screen.frame),
+                is_active: self.is_space_active(space),
+                mode: self.layout_manager.layout_engine.layout_mode_at(space).to_string(),
+                workspace_id: workspace.map(|workspace| format!("{workspace:?}")),
+                workspace_name: workspace.and_then(|workspace| {
+                    self.layout_manager.layout_engine.workspace_name(space, workspace)
+                }),
+                workspace_index,
+                column_origins,
+                column_widths,
+                windows,
+                orphaned_windows,
+            });
+        }
+
+        // Workspaces still holding windows but belonging to no attached display. These are
+        // left over from earlier space generations — macOS mints a new space id on every
+        // reconnect — and their windows are unreachable from any strip.
+        let live_spaces: HashSet<SpaceId> =
+            screens.iter().filter_map(|screen| screen.space).collect();
+        let orphaned_workspaces = self
+            .layout_manager
+            .layout_engine
+            .virtual_workspace_manager()
+            .workspaces_with_windows_outside(&live_spaces);
+
+        let stale_homes = self
+            .layout_manager
+            .layout_engine
+            .display_affinity()
+            .homed_windows()
+            .into_iter()
+            .filter(|window| !self.state.windows.contains_window(*window))
+            .map(Into::into)
+            .collect();
+
+        DiagnosticsData {
+            spaces,
+            orphaned_workspaces,
+            stale_homes,
+            windows_managed: self.state.windows.tracked_window_count(),
+        }
     }
 
     fn handle_windows_query(&self, space_id: Option<SpaceId>) -> Vec<RuntimeWindowData> {

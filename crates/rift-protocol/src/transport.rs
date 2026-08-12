@@ -28,6 +28,8 @@ pub enum RiftRequest {
     },
     GetApplications,
     GetMetrics,
+    /// One-shot dump of everything needed to reason about strips and displays.
+    GetDiagnostics,
     GetConfig,
     ExecuteCommand {
         command: RiftCommand,

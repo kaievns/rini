@@ -5545,3 +5545,93 @@ fn closed_windows_do_not_keep_their_display_affinity() {
         "the window that is still open keeps its home"
     );
 }
+
+/// The diagnostics dump must report every space, not just the queried one.
+///
+/// This is the tool-level defect that made three diagnoses wrong in a row:
+/// `query windows` with no space falls back to ONE space's active workspace, so windows
+/// on the other display appear to be missing. They were present the whole time.
+#[test]
+fn diagnostics_report_every_display_not_just_the_default_space() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let on_builtin = WindowId::new(1, 1);
+    let on_external = WindowId::new(1, 2);
+
+    set_space_membership(&[(builtin_space, &[901]), (external_space, &[902])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+    for (window, wsid, space, frame) in [
+        (on_builtin, 901u32, builtin_space, builtin),
+        (on_external, 902, external_space, external),
+    ] {
+        let workspace = reactor.test_workspace(space, 0);
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), frame);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+
+    let diagnostics = reactor.query_diagnostics();
+
+    assert_eq!(diagnostics.spaces.len(), 2, "both displays must be reported");
+    let spaces: Vec<u64> = diagnostics.spaces.iter().map(|space| space.space_id).collect();
+    assert!(spaces.contains(&builtin_space.get()) && spaces.contains(&external_space.get()));
+
+    let external_dump = diagnostics
+        .spaces
+        .iter()
+        .find(|space| space.space_id == external_space.get())
+        .expect("external space present");
+    assert!(
+        external_dump
+            .windows
+            .iter()
+            .any(|window| window.window_id == on_external.into()),
+        "a window on the non-default display must appear in its own space's dump, \
+         which is exactly what `query windows` hid"
+    );
+    assert_eq!(
+        external_dump.display_uuid.as_deref(),
+        Some("test-display-1"),
+        "each space must carry the display it belongs to"
+    );
+    assert!(
+        external_dump.orphaned_windows.is_empty(),
+        "a window in the layout tree must not be reported as orphaned"
+    );
+}
+
+/// A window owned by a space but absent from its layout tree must be reported.
+///
+/// That combination is invisible to the strip while remaining cmd-tab reachable, which is
+/// what "a second concurrent strip" looks like from the outside.
+#[test]
+fn diagnostics_report_windows_missing_from_the_layout_tree() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let orphan = WindowId::new(1, 1);
+
+    set_space_membership(&[(space, &[901])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    reactor.add_test_window(orphan, WindowServerId::new(901), Some(space), screen);
+    // Assigned to the workspace, but deliberately never added to the layout tree.
+    assert!(reactor.assign_test_window_to_workspace(space, orphan, workspace));
+
+    let diagnostics = reactor.query_diagnostics();
+    let dump = diagnostics.spaces.first().expect("one space");
+
+    assert!(
+        dump.orphaned_windows.contains(&orphan.into()),
+        "a window the space owns but the strip does not contain must be flagged; \
+         it is reachable by cmd-tab and unreachable by scrolling"
+    );
+}

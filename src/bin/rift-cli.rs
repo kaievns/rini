@@ -101,6 +101,12 @@ enum QueryCommands {
     },
     /// Get performance metrics
     Metrics,
+    /// Dump strip and display state for every space.
+    ///
+    /// Use this instead of `windows` when investigating multi-monitor behaviour:
+    /// `windows` defaults to a single space's active workspace, so windows on the
+    /// other display look absent when they are simply not in the queried space.
+    Diagnostics,
 }
 
 #[derive(Subcommand)]
@@ -592,6 +598,7 @@ fn build_query_request(query: QueryCommands) -> Result<RiftRequest, String> {
             Ok(RiftRequest::GetWorkspaceLayouts { space_id, workspace_id })
         }
         QueryCommands::Metrics => Ok(RiftRequest::GetMetrics),
+        QueryCommands::Diagnostics => Ok(RiftRequest::GetDiagnostics),
     }
 }
 

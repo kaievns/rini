@@ -202,6 +202,66 @@ pub struct ContainerTreeNode {
     pub children: Vec<ContainerTreeNode>,
 }
 
+/// One window as the diagnostics dump sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticWindow {
+    pub window_id: WindowId,
+    pub app: String,
+    pub title: String,
+    /// Column index in the strip, or `None` for a floating window.
+    pub column: Option<usize>,
+    /// Row within the column, for stacked columns.
+    pub row: Option<usize>,
+    pub frame: Rect,
+    /// Points of this window actually inside the display. 0-3 means parked
+    /// off-strip: macOS refuses a fully off-screen window, so a scrolled-away
+    /// column keeps a 1pt sliver on the edge.
+    pub visible_width: f64,
+    pub is_parked: bool,
+    pub is_floating: bool,
+    pub is_focused: bool,
+    /// Display UUID this window is remembered as belonging to.
+    pub home_display: Option<String>,
+}
+
+/// Everything needed to reason about one space's strip, in one place.
+///
+/// Added because diagnosing multi-monitor problems from `query windows` alone led to
+/// three wrong conclusions in a row: that query defaults to a single space's active
+/// workspace, so windows on the other display looked missing, then dead, then
+/// unmanaged. All three were artefacts of the tool rather than real defects.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticSpace {
+    pub space_id: u64,
+    pub display_uuid: Option<String>,
+    pub display_name: Option<String>,
+    pub display_frame: Rect,
+    pub is_active: bool,
+    pub mode: String,
+    pub workspace_id: Option<String>,
+    pub workspace_name: Option<String>,
+    pub workspace_index: Option<usize>,
+    /// Left edge of every column, in strip coordinates, so a collapse of several
+    /// columns onto one parking position is visible directly.
+    pub column_origins: Vec<f64>,
+    pub column_widths: Vec<f64>,
+    pub windows: Vec<DiagnosticWindow>,
+    /// Windows this space owns that are NOT in its layout tree. Should always be
+    /// empty; anything here is reachable by cmd-tab but invisible to the strip.
+    pub orphaned_windows: Vec<WindowId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticsData {
+    pub spaces: Vec<DiagnosticSpace>,
+    /// Workspaces holding windows but belonging to no attached display, i.e. left
+    /// over from a previous space generation.
+    pub orphaned_workspaces: Vec<String>,
+    /// Affinity entries whose window no longer exists.
+    pub stale_homes: Vec<WindowId>,
+    pub windows_managed: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DisplayData {
     pub uuid: String,
