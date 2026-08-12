@@ -61,7 +61,22 @@ pub fn handle_mouse_up(
                     state.windows.set_window_server_space(server_id, Some(space));
                     state.windows.mark_window_visible(server_id);
                 }
-                if let Some(workspace) = layout.layout_engine.active_workspace(space)
+                // Keep the window in ITS OWN workspace, changing only which display's strip
+                // holds it.
+                //
+                // This used to assign it to the destination display's ACTIVE workspace. If
+                // that display was showing something else, the window silently changed
+                // workspace and vanished from view — reported when tearing a Chrome tab into
+                // its own window, and when dragging a window across displays. A drag moves a
+                // window between strips; only an explicit move-to-workspace command may move
+                // it between workspaces.
+                let workspace = layout
+                    .layout_engine
+                    .virtual_workspace_manager()
+                    .workspace_info_for_window_any(&state.windows, window)
+                    .map(|assignment| assignment.workspace_id)
+                    .or_else(|| layout.layout_engine.active_workspace(space));
+                if let Some(workspace) = workspace
                     && !layout
                         .layout_engine
                         .virtual_workspace_manager_mut()

@@ -933,6 +933,18 @@ impl WorkspaceStore {
         }
     }
 
+    /// Keep a window in the workspace it is already in, moving only which display it is on.
+    ///
+    /// A window's workspace is its identity — "this terminal lives in coding" — and changing
+    /// displays must not change it. The workspace exists on every display, so the move is just
+    /// a change of space in the assignment.
+    ///
+    /// This used to translate the workspace by ORDINAL, because each display had its own
+    /// workspace objects and there was no other way to find the counterpart. It was also gated
+    /// on the target display having no assignments at all, so on a display that was already in
+    /// use it simply gave up and let the window fall to whatever workspace was active there.
+    /// That is what made a window dragged between displays, or a new window torn off a Chrome
+    /// tab, appear to vanish: it had silently changed workspace.
     fn preserved_workspace_assignment(
         &self,
         window_store: &WindowStore,
@@ -943,23 +955,9 @@ impl WorkspaceStore {
         if existing_assignment.space == space {
             return Some(existing_assignment);
         }
-
-        // Treat an empty, newly initialized target space as a transient native-space-id churn
-        // candidate and preserve workspace ownership by ordinal. Once the target space already
-        // has assignments, prefer the normal resolution path so real cross-space moves still
-        // follow the destination space.
-        if window_store.has_workspace_assignments_in_space(space) {
-            return None;
-        }
-
-        let source_index = self
-            .ordered_workspace_ids(existing_assignment.space)
-            .iter()
-            .position(|&workspace_id| workspace_id == existing_assignment.workspace_id)?;
-        let target_workspace_id = *self.ordered_workspace_ids(space).get(source_index)?;
         Some(WindowWorkspaceInfo {
             space,
-            workspace_id: target_workspace_id,
+            workspace_id: existing_assignment.workspace_id,
         })
     }
 
@@ -1493,8 +1491,139 @@ mod tests {
         );
     }
 
+    /// A window keeps its workspace when it moves to a display that is already in use.
+    ///
+    /// This test previously asserted the OPPOSITE: that moving to a display with existing
+    /// assignments dropped the window onto that display's workspace 0. That was the old
+    /// model's only option, because each display had its own workspace objects and the
+    /// ordinal translation was gated on the target display being empty.
+    ///
+    /// It is also the bug the user hit: tearing a Chrome tab into its own window, or dragging
+    /// a window to the other display, silently moved it to a different workspace, so it
+    /// "disappeared". Workspace membership is the window's identity; only an explicit
+    /// move-to-workspace command may change it.
+    /// A new window lands on the workspace its own display is showing.
+    ///
+    /// Not the first workspace, and not another display's workspace: if the built-in is
+    /// showing "comms" while the external shows "coding", an app launched on the built-in
+    /// belongs in "comms".
     #[test]
-    fn does_not_preserve_workspace_ordinal_when_target_space_already_has_assignments() {
+    fn a_new_window_lands_on_its_own_displays_active_workspace() {
+        let mut window_store = WindowStore::default();
+        let mut settings = VirtualWorkspaceSettings::default();
+        settings.default_workspace_count = 4;
+        let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let builtin = SpaceId::new(1);
+        let external = SpaceId::new(479);
+
+        let workspaces = manager.list_workspaces(builtin);
+        let _ = manager.list_workspaces(external);
+        assert!(manager.set_active_workspace(builtin, workspaces[1].0));
+        assert!(manager.set_active_workspace(external, workspaces[3].0));
+
+        let on_builtin = WindowId::new(1, 1);
+        let on_external = WindowId::new(1, 2);
+        let builtin_assignment = assign(
+            &mut manager,
+            &mut window_store,
+            on_builtin,
+            builtin,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let external_assignment = assign(
+            &mut manager,
+            &mut window_store,
+            on_external,
+            external,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            builtin_assignment.workspace_id, workspaces[1].0,
+            "a window launched on the built-in joins what the built-in is showing"
+        );
+        assert_eq!(
+            external_assignment.workspace_id, workspaces[3].0,
+            "and one launched on the external joins what the external is showing"
+        );
+    }
+
+    /// An app rule pins the WORKSPACE without pinning the display.
+    ///
+    /// Under the old model workspace indices were per-display, so a rule naming index 2 meant
+    /// a different object on each display. Now index 2 is one workspace, and a rule sends the
+    /// window there regardless of which display it opened on.
+    #[test]
+    fn an_app_rule_pins_the_workspace_on_whichever_display_it_opens_on() {
+        let mut window_store = WindowStore::default();
+        let settings = VirtualWorkspaceSettings {
+            default_workspace_count: 4,
+            app_rules: vec![AppWorkspaceRule {
+                app_id: Some("com.example.editor".into()),
+                workspace: Some(WorkspaceSelector::Index(2)),
+                floating: false,
+                position: None,
+                size: None,
+                focus: false,
+                manage: true,
+                app_name: None,
+                title_regex: None,
+                title_substring: None,
+                ax_role: None,
+                ax_subrole: None,
+            }],
+            ..VirtualWorkspaceSettings::default()
+        };
+        let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
+        let builtin = SpaceId::new(1);
+        let external = SpaceId::new(479);
+
+        let workspaces = manager.list_workspaces(builtin);
+        let _ = manager.list_workspaces(external);
+        // Both displays are showing something OTHER than the rule's target.
+        assert!(manager.set_active_workspace(builtin, workspaces[0].0));
+        assert!(manager.set_active_workspace(external, workspaces[1].0));
+
+        for (space, window) in [
+            (builtin, WindowId::new(2, 1)),
+            (external, WindowId::new(2, 2)),
+        ] {
+            let assignment = assign(
+                &mut manager,
+                &mut window_store,
+                window,
+                space,
+                Some("com.example.editor"),
+                None,
+                None,
+                None,
+                None,
+            );
+            assert_eq!(
+                assignment.workspace_id, workspaces[2].0,
+                "the rule decides the workspace, on every display"
+            );
+            assert_eq!(
+                manager.workspace_info_for_window_any(&window_store, window),
+                Some(WindowWorkspaceInfo {
+                    space,
+                    workspace_id: workspaces[2].0
+                }),
+                "and the window stays on the display it opened on"
+            );
+        }
+    }
+
+    #[test]
+    fn moving_to_a_busy_display_keeps_the_windows_workspace() {
         let mut window_store = WindowStore::default();
         let mut settings = VirtualWorkspaceSettings::default();
         settings.default_workspace_count = 3;
@@ -1504,20 +1633,25 @@ mod tests {
         let moved_window = WindowId::new(13, 1);
         let existing_window = WindowId::new(14, 1);
 
-        let old_workspaces = manager.list_workspaces(old_space);
-        let new_workspaces = manager.list_workspaces(new_space);
+        let workspaces = manager.list_workspaces(old_space);
+        assert_eq!(
+            manager.list_workspaces(new_space),
+            workspaces,
+            "both displays share the workspace list"
+        );
 
         assert!(manager.assign_window_to_workspace(
             &mut window_store,
             old_space,
             moved_window,
-            old_workspaces[2].0
+            workspaces[2].0
         ));
+        // The destination display is already in use, on a different workspace.
         assert!(manager.assign_window_to_workspace(
             &mut window_store,
             new_space,
             existing_window,
-            new_workspaces[1].0
+            workspaces[1].0
         ));
 
         let assignment = assign(
@@ -1532,13 +1666,24 @@ mod tests {
             None,
         );
 
-        assert_eq!(assignment.workspace_id, new_workspaces[0].0);
+        assert_eq!(
+            assignment.workspace_id, workspaces[2].0,
+            "the window stays in workspace 2; only its display changed"
+        );
         assert_eq!(
             manager.workspace_info_for_window_any(&window_store, moved_window),
             Some(WindowWorkspaceInfo {
                 space: new_space,
-                workspace_id: new_workspaces[0].0,
+                workspace_id: workspaces[2].0,
             })
+        );
+        assert_eq!(
+            manager.workspace_info_for_window_any(&window_store, existing_window),
+            Some(WindowWorkspaceInfo {
+                space: new_space,
+                workspace_id: workspaces[1].0,
+            }),
+            "and the window already there is undisturbed"
         );
     }
 
