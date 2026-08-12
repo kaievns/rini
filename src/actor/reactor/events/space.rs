@@ -91,6 +91,9 @@ pub struct WindowServerDestroyedObservations {
 #[derive(Debug)]
 pub struct WindowServerAppearedObservations {
     pub resolved_space: Option<SpaceId>,
+    /// True when this window is one rift itself parked off-screen because its workspace is
+    /// not the one its display is showing.
+    pub is_parked_by_rift: bool,
     pub active_spaces: HashSet<SpaceId>,
     pub mission_control_active: bool,
     pub assigned_space: Option<SpaceId>,
@@ -243,10 +246,41 @@ pub fn handle_window_server_appeared(
         window_server_info,
         app_known,
         running_app_info,
+        is_parked_by_rift,
     } = observations;
     let mut outcome = EventOutcome::default();
     if matches!(kind, SpaceEventKind::User) {
         if let Some(resolved_space) = resolved_space {
+            // Never infer a display change for a window rift parked itself.
+            //
+            // Windows whose workspace is not the one their display is showing are moved
+            // off-screen, and macOS will not keep a window entirely outside every display —
+            // so those coordinates land inside the NEIGHBOURING display. WindowServer then
+            // reports the window as belonging to that display, rift believed it, and the
+            // window changed display. The next workspace switch parked it off the new
+            // display, and so on: a feedback loop that walked every window onto one display.
+            //
+            // Measured from the logs, the loop is exactly:
+            //   cmd=SwitchToWorkspace(1)
+            //   -> WindowServerAppeared(wsid, SpaceId(980), User)
+            //   -> reassigned to 980
+            //
+            // The old per-display workspace model contained this by accident: a window
+            // reassigned across displays landed in a DIFFERENT workspace object, which broke
+            // the cycle. Sharing workspaces between displays removed that accident, so the
+            // guard has to be explicit. This mirrors `keep_assigned_for_scrolling` on the
+            // WindowFrameChanged path, which exists for the same reason.
+            if is_parked_by_rift && Some(resolved_space) != assigned_space {
+                debug!(
+                    ?wsid,
+                    reported_space = ?sid,
+                    ?resolved_space,
+                    ?assigned_space,
+                    "Ignoring appearance for a window rift parked off-screen; its position is \
+                     not evidence of a display change"
+                );
+                return Ok(outcome);
+            }
             if resolved_space != sid {
                 state.windows.set_window_server_space(wsid, Some(resolved_space));
                 if active_spaces.contains(&resolved_space) {

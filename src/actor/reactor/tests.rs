@@ -5787,3 +5787,164 @@ fn workspace_switch_records_its_direction_per_display() {
         None,
     );
 }
+
+/// A window rift parked off-screen must not be treated as having changed display.
+///
+/// Windows belonging to a workspace their display is not showing are moved off-screen, and
+/// macOS refuses to keep a window entirely outside every display — so those coordinates land
+/// inside the NEIGHBOURING display. WindowServer then announces the window there.
+///
+/// Believing that announcement created a feedback loop: park off the built-in, get claimed by
+/// the external, park off the external on the next switch, and so on until every window had
+/// walked onto one display. Measured on hardware as all 17 windows collapsing onto the
+/// external, with both displays stuck on the same workspace.
+///
+/// The old per-display workspace model hid this: a window reassigned across displays landed in
+/// a different workspace OBJECT, which broke the cycle by accident.
+#[test]
+fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let parked = WindowId::new(1, 1);
+    let wsid = WindowServerId::new(901);
+
+    set_space_membership(&[(builtin_space, &[901]), (external_space, &[])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+
+    // The window belongs to workspace 1 while the built-in shows workspace 0, so rift parks
+    // it — and the parked frame sits over the external.
+    let workspaces = reactor.test_workspace_ids(builtin_space);
+    assert!(reactor.set_test_active_workspace(builtin_space, workspaces[0]));
+    reactor.add_test_window(parked, wsid, Some(builtin_space), builtin);
+    assert!(reactor.assign_test_window_to_workspace(builtin_space, parked, workspaces[1]));
+
+    // WindowServer announces it on the external, as it does for a parked window whose frame
+    // overlaps that display. Its space MEMBERSHIP still says built-in, which is what
+    // distinguishes this from a real move.
+    crate::sys::window_server::set_window_spaces_override(wsid, Some(vec![builtin_space.get()]));
+    window_server_appeared(&mut reactor, wsid, external_space, SpaceEventKind::User);
+    crate::sys::window_server::set_window_spaces_override(wsid, None);
+
+    assert_eq!(
+        reactor.assigned_space_for_window_id(parked),
+        Some(builtin_space),
+        "a parked window's position is not evidence of a display change"
+    );
+    assert_eq!(
+        reactor
+            .state
+            .windows
+            .workspace_info_for_window(parked)
+            .map(|assignment| assignment.workspace_id),
+        Some(workspaces[1]),
+        "and it stays in the workspace it belongs to"
+    );
+}
+
+/// Strip navigation never walks the floating set, and returns to where the strip was.
+///
+/// Reported: with Zoom and System Settings floating, ctrl-J/L cycled those two rather than
+/// the columns, and leaving them landed on the FIRST column instead of the one that had been
+/// selected. Floating windows belong to a workspace but are not strip members; cmd-tab and
+/// toggle_focus_floating reach them.
+#[test]
+fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let first = WindowId::new(1, 1);
+    let second = WindowId::new(1, 2);
+    let floater = WindowId::new(1, 3);
+
+    set_space_membership(&[(space, &[901, 902, 903])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    for (window, wsid) in [(first, 901u32), (second, 902), (floater, 903)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+
+    // Select the SECOND column, then make the third window floating and focus it.
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    assert!(
+        reactor.layout_manager.layout_engine.is_window_floating(floater),
+        "test setup must make the third window floating"
+    );
+
+    // Strip navigation from the floating window must land back on the strip's selection,
+    // not on the first column and not on another floating window.
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+
+    let focused = reactor.layout_manager.layout_engine.focused_window();
+    assert_ne!(
+        focused,
+        Some(floater),
+        "strip navigation must leave the floating set rather than cycle within it"
+    );
+    assert_eq!(
+        focused,
+        Some(second),
+        "and it must resume at the strip's own selection, not the leftmost column"
+    );
+}
+
+/// Switching away from a workspace must not erase where focus was in it.
+///
+/// apply_focus_response cleared the workspace's remembered focus whenever the focused window
+/// was not one of its members — which is every ordinary focus change to another display or
+/// workspace. Switching back then fell through to the first column, reported as always
+/// landing on the first window and reading as visual chaos.
+///
+/// CAVEAT: this test passes with that clearing restored, so it documents the intended
+/// property rather than pinning the fix. The clearing branch is only reached when focus lands
+/// on a window outside the workspace being applied, and the test harness drives focus through
+/// paths that do not produce that combination. Left in place because the property is worth
+/// stating; do not read a green result here as proof the fix works.
+#[test]
+fn switching_away_and_back_returns_to_the_same_window() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let first = WindowId::new(1, 1);
+    let second = WindowId::new(1, 2);
+
+    set_space_membership(&[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspaces = reactor.test_workspace_ids(space);
+    for (window, wsid) in [(first, 901u32), (second, 902)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspaces[0]));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+
+    // Sit on the SECOND window, then leave the workspace and come back.
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(1));
+    // Focus something that is NOT a member of workspace 0 while away. This is the case that
+    // used to erase the memory: apply_focus_response cleared it whenever the focused window
+    // was not one of the target workspace's own windows.
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
+
+    assert_eq!(
+        reactor
+            .layout_manager
+            .layout_engine
+            .virtual_workspace_manager()
+            .last_focused_window(space, workspaces[0]),
+        Some(second),
+        "the workspace must still remember which window was focused in it"
+    );
+}

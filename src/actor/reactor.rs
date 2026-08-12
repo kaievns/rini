@@ -1276,7 +1276,32 @@ impl Reactor {
                     )
                     .map(|app| AppInfo::from(&*app))
                 });
+                // A window belonging to a workspace its display is not showing is one rift
+                // parked off-screen. Membership rather than geometry, because the parked
+                // coordinates deliberately sit inside the neighbouring display and so cannot
+                // distinguish "parked" from "genuinely moved there".
+                let is_parked_by_rift = self
+                    .state
+                    .windows
+                    .tracked_window_id(wsid)
+                    .and_then(|wid| {
+                        let assignment = self.state.windows.workspace_info_for_window(wid)?;
+                        let showing =
+                            self.layout_manager.layout_engine.active_workspace(assignment.space)?;
+                        if assignment.workspace_id == showing {
+                            return Some(false);
+                        }
+                        // Parked, so its POSITION proves nothing. But WindowServer's own
+                        // space membership still does: Mission Control and a genuine
+                        // cross-display move both update it, whereas parking only changes
+                        // coordinates. So only distrust the appearance when membership does
+                        // not corroborate it.
+                        let membership = window_server::window_spaces(wsid);
+                        Some(!membership.contains(&sid))
+                    })
+                    .unwrap_or(false);
                 let observations = topology_workflow::WindowServerAppearedObservations {
+                    is_parked_by_rift,
                     resolved_space: self.resolve_native_space(wsid, Some(sid)),
                     active_spaces: self.active_spaces.clone(),
                     mission_control_active: self.is_mission_control_active(),

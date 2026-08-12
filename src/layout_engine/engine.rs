@@ -511,9 +511,17 @@ impl LayoutEngine {
                 let _ = self.workspace_tree_mut(workspace_id).select_window(layout, wid);
             }
         } else {
+            // Do NOT clear the workspace's remembered focus here.
+            //
+            // This runs whenever the focused window is not a member of this workspace, which
+            // includes every ordinary focus change to another display or another workspace.
+            // Wiping the memory in that case is why switching back always landed on the
+            // FIRST column instead of where you were: preferred_focus_for_workspace consults
+            // last_focused_window first, and it had just been erased.
+            //
+            // The memory is per (workspace, display) and is cleaned up properly when a window
+            // is closed or forgotten, so leaving it alone here cannot leak a stale window.
             self.focused_window = None;
-            self.virtual_workspace_manager
-                .set_last_focused_window(space, workspace_id, None);
         }
     }
 
@@ -674,9 +682,17 @@ impl LayoutEngine {
         if tiled_windows.is_empty() {
             return EventResponse::default();
         }
+        // Resume at the strip's own selection, falling back to the first column only when the
+        // strip has none. Taking `first()` unconditionally is why leaving a floating window
+        // always jumped to the leftmost column instead of back to where the strip was.
+        let focus_window = self
+            .workspace_tree(ws_id)
+            .selected_window(layout)
+            .filter(|wid| tiled_windows.contains(wid))
+            .or_else(|| tiled_windows.first().copied());
         let response = EventResponse {
             changed: true,
-            focus_window: tiled_windows.first().copied(),
+            focus_window,
             raise_windows: tiled_windows,
             boundary_hit: None,
         };
@@ -702,113 +718,19 @@ impl LayoutEngine {
         };
 
         if is_floating {
-            let floating_windows = self.active_floating_windows_in_workspace(window_store, space);
-            debug!(
-                "Floating navigation: found {} floating windows: {:?}",
-                floating_windows.len(),
-                floating_windows
-            );
-
-            match direction {
-                Direction::Left | Direction::Right => {
-                    if floating_windows.len() > 1 {
-                        debug!(
-                            "Multiple floating windows found, looking for current window: {:?}",
-                            self.focused_window
-                        );
-
-                        if let Some(current_idx) =
-                            floating_windows.iter().position(|&w| Some(w) == self.focused_window)
-                        {
-                            debug!("Found current window at index {}", current_idx);
-                            // Do NOT wrap. Wrapping made the floating set a closed
-                            // trap: with two floating windows (e.g. Zoom and System
-                            // Settings) left/right cycled between them forever and
-                            // the escape to the tiled strip below was unreachable,
-                            // because the modulo always produced a valid index and
-                            // returned early.
-                            //
-                            // Falling off either end now leaves next_idx as None and
-                            // drops through to the tiled-window fallback further
-                            // down, so the strip is always reachable with the same
-                            // keys you used to get here.
-                            let next_idx = match direction {
-                                Direction::Left => current_idx.checked_sub(1),
-                                Direction::Right => {
-                                    if current_idx + 1 < floating_windows.len() {
-                                        Some(current_idx + 1)
-                                    } else {
-                                        None
-                                    }
-                                }
-                                _ => unreachable!(),
-                            };
-                            let Some(next_idx) = next_idx else {
-                                debug!(
-                                    "At edge of floating set going {:?}; falling through to tiled",
-                                    direction
-                                );
-                                // deliberately no early return: fall through
-                                return self.move_focus_escape_to_tiled(
-                                    window_store,
-                                    space,
-                                    ws_id,
-                                    layout,
-                                );
-                            };
-                            debug!(
-                                "Moving to index {}, window: {:?}",
-                                next_idx, floating_windows[next_idx]
-                            );
-                            let focus_window = Some(floating_windows[next_idx]);
-                            let response = EventResponse {
-                                changed: true,
-                                focus_window,
-                                raise_windows: vec![],
-                                boundary_hit: None,
-                            };
-                            self.apply_focus_response(
-                                window_store,
-                                space,
-                                ws_id,
-                                layout,
-                                &response,
-                            );
-                            return response;
-                        } else {
-                            debug!("Could not find current window in floating windows list");
-                        }
-                    } else {
-                        debug!(
-                            "Not enough floating windows for horizontal navigation (len: {})",
-                            floating_windows.len()
-                        );
-                    }
-                }
-                Direction::Up | Direction::Down => {
-                    debug!("Vertical navigation - switching to tiled windows");
-                }
-            }
-
-            let tiled_windows = self.filter_active_workspace_windows(
-                window_store,
-                space,
-                self.workspace_tree(ws_id).visible_windows_in_layout(layout),
-            );
-            debug!("Trying tiled windows: {:?}", tiled_windows);
-            if !tiled_windows.is_empty() {
-                let response = EventResponse {
-                    changed: true,
-                    focus_window: tiled_windows.first().copied(),
-                    raise_windows: tiled_windows,
-                    boundary_hit: None,
-                };
-                self.apply_focus_response(window_store, space, ws_id, layout, &response);
-                return response;
-            }
-
-            debug!("No windows to navigate to, returning default");
-            return EventResponse::default();
+            // A floating window is not a strip member, so strip navigation does not walk the
+            // floating set at all: it moves to the strip and resumes where the strip was.
+            //
+            // This used to cycle between floating windows for left/right, with an escape hatch
+            // at either end. With Zoom and System Settings floating, ctrl-J/L therefore cycled
+            // those two rather than the columns — and the escape landed on
+            // `tiled_windows.first()`, i.e. the FIRST column rather than the one that had been
+            // selected. Both were reported: strip navigation "cycling between the terminals,
+            // settings and zoom windows", and always ending up on the first window.
+            //
+            // Floating windows still belong to a workspace and are still reachable with
+            // cmd-tab and toggle_focus_floating; they are simply not part of the strip.
+            return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
         }
 
         let previous_selection = self.workspace_tree(ws_id).selected_window(layout);
