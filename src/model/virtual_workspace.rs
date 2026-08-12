@@ -1258,13 +1258,19 @@ impl WorkspaceStore {
         }
     }
 
-    /// Workspaces holding windows but belonging to a space no display owns.
+    /// Workspaces that still hold WINDOWS on a space no attached display owns.
     ///
-    /// macOS mints a new space id on every display reconnect, so a dock/undock cycle can
-    /// leave whole workspace generations behind. Their windows are still assigned and so
-    /// still cmd-tab reachable, but no strip can scroll to them.
+    /// macOS mints a new space id on every display reconnect, so a dock/undock cycle leaves
+    /// whole workspace generations behind. Empty ones are harmless clutter; ones with
+    /// windows are the problem, because those windows stay assigned — and so remain
+    /// cmd-tab reachable — while no strip can scroll to them.
+    ///
+    /// Counting registration rather than windows was the first version of this and it was
+    /// useless: it reported four empty workspaces on a dead space as though they were
+    /// stranding windows.
     pub fn workspaces_with_windows_outside(
         &self,
+        window_store: &WindowStore,
         live_spaces: &crate::common::collections::HashSet<SpaceId>,
     ) -> Vec<String> {
         let mut orphaned: Vec<String> = self
@@ -1272,11 +1278,13 @@ impl WorkspaceStore {
             .iter()
             .filter(|(_, workspace)| !live_spaces.contains(&workspace.space))
             .filter_map(|(workspace_id, workspace)| {
-                let count = self
-                    .workspaces_by_space
-                    .get(&workspace.space)
-                    .map_or(0, |ids| ids.iter().filter(|id| **id == workspace_id).count());
-                (count > 0).then(|| format!("{workspace_id:?} on space {}", workspace.space.get()))
+                let windows = window_store.workspace_window_count(workspace.space, workspace_id);
+                (windows > 0).then(|| {
+                    format!(
+                        "{workspace_id:?} on space {} ({windows} window(s))",
+                        workspace.space.get()
+                    )
+                })
             })
             .collect();
         orphaned.sort();

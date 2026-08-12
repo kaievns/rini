@@ -606,7 +606,7 @@ impl Reactor {
             .layout_manager
             .layout_engine
             .virtual_workspace_manager()
-            .workspaces_with_windows_outside(&live_spaces);
+            .workspaces_with_windows_outside(&self.state.windows, &live_spaces);
 
         let stale_homes = self
             .layout_manager
