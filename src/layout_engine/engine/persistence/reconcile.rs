@@ -192,7 +192,11 @@ impl LayoutEngine {
             let Some(entry) = self.virtual_workspace_manager.workspaces.get_mut(workspace) else {
                 continue;
             };
-            if (entry.space, workspace) != keep {
+            // A workspace's layout system holds one strip per display, so "keep" identifies
+            // a workspace, not a (space, workspace) pair. Removing from every OTHER workspace
+            // is still right; removing the other displays' strips of the SAME workspace is
+            // not, and would delete the window from the display it legitimately sits on.
+            if workspace != keep.1 {
                 entry.layout_system.remove_window_and_rebalance_parent(window);
             }
         }

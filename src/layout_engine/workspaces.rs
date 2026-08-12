@@ -55,13 +55,9 @@ impl WorkspaceLayouts {
                     "layout state references missing workspace {workspace:?}"
                 ));
             };
-            if workspace_info.space != space {
-                return Err(format!(
-                    "layout for workspace {workspace:?} is stored under native space {} instead of {}",
-                    space.get(),
-                    workspace_info.space.get()
-                ));
-            }
+            // No space-ownership check: a workspace owns one strip per display, so having
+            // layout state under several native spaces is now correct rather than corrupt.
+            let _ = (space, workspace_info);
             if info.configurations.is_empty() {
                 return Err(format!("workspace {workspace:?} has no layout configurations"));
             }

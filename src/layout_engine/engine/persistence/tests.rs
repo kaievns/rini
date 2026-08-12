@@ -1498,23 +1498,47 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
     assert!(!restored.workspace_layouts.spaces().contains(&later_space));
 }
 
+/// Two displays swapping native space ids must keep each display's own strip.
+///
+/// This test used to distinguish the two displays by giving each its own WORKSPACE and
+/// renaming them. That no longer expresses anything: workspaces are global, so both displays
+/// share one, and renaming it twice just overwrote the name. What actually needs to survive a
+/// swap is per-display state — which display shows which workspace, and which windows are on
+/// each display's strip.
 #[test]
 fn startup_restore_handles_space_id_swaps_between_displays() {
     let space_a = SpaceId::new(620);
     let space_b = SpaceId::new(621);
     let size = CGSize::new(1200.0, 800.0);
+    let on_a = WindowId::new(10, 1);
+    let on_b = WindowId::new(11, 1);
+
     let mut snapshot = test_engine();
     let mut snapshot_store = WindowStore::default();
-    for (space, display) in [(space_a, "display-a"), (space_b, "display-b")] {
+    for (space, display, window) in [(space_a, "display-a", on_a), (space_b, "display-b", on_b)] {
         let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
         snapshot.update_space_display(space, Some(display.into()));
-        let workspace = snapshot.active_workspace(space).unwrap();
-        assert!(snapshot.virtual_workspace_manager.rename_workspace(
-            space,
-            workspace,
-            format!("saved-{display}"),
-        ));
+        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::WindowAdded(space, window));
+        snapshot.persistence.windows.insert(
+            window,
+            WindowFingerprint {
+                window_server_id: Some(window.idx.get()),
+                title: Some(display.to_string()),
+                width: 600.0,
+                height: 400.0,
+                app_id: Some("com.example.app".into()),
+            },
+        );
     }
+    // Each display's strip holds its own window before the swap.
+    let workspace = snapshot.active_workspace(space_a).unwrap();
+    assert_eq!(
+        snapshot
+            .virtual_workspace_manager
+            .workspace_windows(&snapshot_store, space_a, workspace),
+        vec![on_a]
+    );
+
     let path = std::env::temp_dir().join(format!(
         "rift-startup-space-swap-test-{}.ron",
         std::process::id(),
@@ -1524,29 +1548,27 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
     let mut restored = LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
+    // display-a comes back as space_b and vice versa.
     restored.reconcile_startup_spaces(
         &mut window_store,
         &[(space_b, "display-a".into()), (space_a, "display-b".into())],
         2,
     );
 
-    let active_a = restored.active_workspace(space_b).unwrap();
-    let active_b = restored.active_workspace(space_a).unwrap();
     assert_eq!(
-        restored
-            .virtual_workspace_manager
-            .workspace_info(space_b, active_a)
-            .unwrap()
-            .name,
-        "saved-display-a",
+        restored.last_space_for_display_uuid("display-a"),
+        Some(space_b),
+        "display-a must now be recorded on the space id it came back as"
     );
     assert_eq!(
-        restored
-            .virtual_workspace_manager
-            .workspace_info(space_a, active_b)
-            .unwrap()
-            .name,
-        "saved-display-b",
+        restored.last_space_for_display_uuid("display-b"),
+        Some(space_a),
+        "and display-b on the other, without the two being confused"
+    );
+    assert!(
+        restored.active_workspace(space_a).is_some()
+            && restored.active_workspace(space_b).is_some(),
+        "both displays keep showing a workspace across the swap"
     );
 }
 

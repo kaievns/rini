@@ -27,13 +27,9 @@ impl FloatingPositionStore {
                     "floating frame for window {window:?} references missing workspace {workspace:?}"
                 ));
             };
-            if workspace_info.space != space {
-                return Err(format!(
-                    "floating frame for window {window:?} is stored under native space {} instead of {}",
-                    space.get(),
-                    workspace_info.space.get()
-                ));
-            }
+            // A workspace exists on every display, so a floating frame under any native
+            // space is legitimate.
+            let _ = (space, workspace_info);
             if !frame.origin.x.is_finite()
                 || !frame.origin.y.is_finite()
                 || !frame.size.width.is_finite()

@@ -5637,3 +5637,95 @@ fn diagnostics_report_windows_missing_from_the_layout_tree() {
          it is reachable by cmd-tab and unreachable by scrolling"
     );
 }
+
+/// Each display switches workspaces independently, and a workspace is the SAME workspace on
+/// every display.
+///
+/// This is the core of the restructure. Previously each display got its own set of workspace
+/// objects, so "coding" on the built-in and "coding" on the external were unrelated; moving a
+/// window between displays had to guess a target by ordinal, and an unplug scattered windows
+/// into whichever workspace shared an index.
+#[test]
+fn displays_share_workspaces_but_switch_between_them_independently() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+
+    let builtin_workspaces = reactor.test_workspace_ids(builtin_space);
+    let external_workspaces = reactor.test_workspace_ids(external_space);
+    assert_eq!(
+        builtin_workspaces, external_workspaces,
+        "both displays must see one shared workspace list, not a private copy each"
+    );
+
+    // Move only the external to workspace 3.
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    assert!(reactor.set_test_active_workspace(external_space, external_workspaces[3]));
+
+    assert_eq!(
+        reactor.layout_manager.layout_engine.active_workspace(external_space),
+        Some(external_workspaces[3]),
+        "the external follows the switch"
+    );
+    assert_eq!(
+        reactor.layout_manager.layout_engine.active_workspace(builtin_space),
+        Some(builtin_workspaces[0]),
+        "and the built-in is unaffected: displays switch independently"
+    );
+}
+
+/// A window keeps its workspace when its display's native space id changes.
+///
+/// macOS mints a new space id on every reconnect. Windows macOS had already moved to the
+/// incoming id used to be silently dropped, because the remap replaced the target's window
+/// set instead of merging into it.
+#[test]
+fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let old_space = SpaceId::new(479);
+    let new_space = SpaceId::new(552);
+    let window = WindowId::new(1, 1);
+
+    set_space_membership(&[(old_space, &[901])]);
+    reactor.handle_event(space_state_event(vec![builtin], vec![Some(old_space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(old_space, 2);
+    assert!(reactor.set_test_active_workspace(old_space, workspace));
+    reactor.add_test_window(window, WindowServerId::new(901), Some(old_space), builtin);
+    assert!(reactor.assign_test_window_to_workspace(old_space, window, workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(old_space, window));
+
+    reactor.layout_manager.layout_engine.remap_space(
+        &mut reactor.state.windows,
+        old_space,
+        new_space,
+    );
+
+    let landed = reactor
+        .state
+        .windows
+        .workspace_info_for_window(window)
+        .expect("the window keeps an assignment across the id change");
+    assert_eq!(landed.space, new_space);
+    assert_eq!(
+        landed.workspace_id, workspace,
+        "and it is the SAME workspace: a new space id is not a new workspace"
+    );
+    assert_eq!(
+        reactor.layout_manager.layout_engine.active_workspace(new_space),
+        Some(workspace),
+        "the display carries on showing what it was showing"
+    );
+}

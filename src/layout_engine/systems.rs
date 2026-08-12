@@ -129,6 +129,12 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     /// Replace a window identity in-place without changing its layout position.
     fn replace_window(&mut self, from: WindowId, to: WindowId);
     fn remove_window(&mut self, wid: WindowId);
+    /// Remove a window from ONE layout only.
+    ///
+    /// `remove_window` spans every layout the system owns. A workspace now owns one layout
+    /// (strip) per display, so normalizing a single display's strip must not reach into the
+    /// others — doing so deleted windows from the display they legitimately sat on.
+    fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId);
     fn remove_window_and_rebalance_parent(&mut self, wid: WindowId) {
         self.remove_window(wid)
     }

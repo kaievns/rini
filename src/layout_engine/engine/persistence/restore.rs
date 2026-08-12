@@ -259,7 +259,7 @@ impl RestorePlan {
                 .expect("target workspace was validated before extraction")
                 .name
                 .clone();
-            workspace.space = mapping.target_space;
+            // No owning space to rewrite any more: a workspace is shared by every display.
             let layout = snapshot
                 .workspace_layouts
                 .snapshot_workspace(mapping.source_space, mapping.source_workspace)
@@ -356,7 +356,21 @@ impl RestorePlan {
             engine.persistence.pending_windows.remove(live);
             preempted_candidates += 1;
             for &(space, workspace) in &restored_targets {
-                engine.workspace_tree_mut(workspace).remove_window(*live);
+                // Scope the removal to the target display's strips. The workspace spans every
+                // display, so an unscoped remove_window would evict this window from the
+                // display it is legitimately on.
+                let layouts: Vec<_> = engine
+                    .workspace_layouts
+                    .all_layouts()
+                    .into_iter()
+                    .filter(|(candidate_space, candidate_workspace, _)| {
+                        (*candidate_space, *candidate_workspace) == (space, workspace)
+                    })
+                    .map(|(_, _, layout)| layout)
+                    .collect();
+                for layout in layouts {
+                    engine.workspace_tree_mut(workspace).remove_window_from_layout(layout, *live);
+                }
                 engine.floating_positions.remove_workspace_window(space, workspace, *live);
                 if engine.virtual_workspace_manager.last_focused_window(space, workspace)
                     == Some(*live)
@@ -472,23 +486,30 @@ impl LayoutEngine {
         for &(space, workspace) in targets {
             let expected_assignment =
                 crate::model::window_store::WindowWorkspaceInfo { space, workspace_id: workspace };
-            let tiled_windows = self
+            // Only this display's strips of the workspace. A workspace spans every display,
+            // so its layout ids must be filtered to the target space before anything is
+            // removed — and the removal itself must be layout-scoped, because
+            // LayoutSystem::remove_window reaches into every strip the workspace owns.
+            let target_layouts: Vec<_> = self
                 .workspace_layouts
                 .all_layouts()
                 .into_iter()
                 .filter(|(candidate_space, candidate_workspace, _)| {
                     (*candidate_space, *candidate_workspace) == (space, workspace)
                 })
-                .flat_map(|(_, _, layout)| {
-                    self.workspace_tree(workspace).all_windows_in_layout(layout)
-                })
-                .collect::<HashSet<_>>();
-            for window in tiled_windows {
-                let valid = live_windows.contains(&window)
-                    && window_store.workspace_info_for_window(window) == Some(expected_assignment)
-                    && !self.floating.is_floating(window);
-                if !valid {
-                    self.workspace_tree_mut(workspace).remove_window(window);
+                .map(|(_, _, layout)| layout)
+                .collect();
+            for layout in target_layouts {
+                let tiled_windows = self.workspace_tree(workspace).all_windows_in_layout(layout);
+                for window in tiled_windows {
+                    let valid = live_windows.contains(&window)
+                        && window_store.workspace_info_for_window(window)
+                            == Some(expected_assignment)
+                        && !self.floating.is_floating(window);
+                    if !valid {
+                        self.workspace_tree_mut(workspace)
+                            .remove_window_from_layout(layout, window);
+                    }
                 }
             }
 
@@ -602,7 +623,25 @@ impl LayoutEngine {
             self.floating.remove_floating(window);
             self.persistence.forget_window(window);
         }
-        self.virtual_workspace_manager.workspaces[state.target_workspace] = state.workspace;
+        // Install the saved workspace WITHOUT discarding the other displays' strips.
+        //
+        // This used to overwrite the whole VirtualWorkspace. That was safe while a workspace
+        // belonged to exactly one display, but a workspace now owns one strip per display and
+        // its layout_system holds all of them, so replacing the object wiped every other
+        // display's strip whenever one display's layout was restored.
+        //
+        // Only the per-display facts are taken from the snapshot: this display's focused
+        // window, plus the strip installed by install_workspace_snapshot below. Name and
+        // layout mode are current-session metadata and are deliberately left alone.
+        {
+            let target_space = state.target_space;
+            let restored_focus = state.workspace.last_focused(target_space);
+            if let Some(existing) =
+                self.virtual_workspace_manager.workspaces.get_mut(state.target_workspace)
+            {
+                existing.set_last_focused(target_space, restored_focus);
+            }
+        }
         self.workspace_layouts.install_workspace_snapshot(
             state.target_space,
             state.target_workspace,

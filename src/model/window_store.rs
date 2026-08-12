@@ -937,6 +937,17 @@ impl WindowStore {
         })
     }
 
+    /// Native spaces that currently own at least one window assignment.
+    pub fn spaces_with_assignments(&self) -> Vec<SpaceId> {
+        let mut spaces: Vec<SpaceId> = self
+            .iter_workspace_assignments()
+            .map(|(_, assignment)| assignment.space)
+            .collect();
+        spaces.sort_unstable();
+        spaces.dedup();
+        spaces
+    }
+
     pub fn workspace_assignment_count(&self) -> usize {
         self.windows.values().filter(|record| record.workspace.is_some()).count()
     }
@@ -954,13 +965,18 @@ impl WindowStore {
             .collect();
         for old_assignment in moved_assignments {
             if let Some(windows) = self.workspace_windows.remove(&old_assignment) {
-                self.workspace_windows.insert(
-                    WindowWorkspaceInfo {
+                // MERGE, do not replace. macOS can already have placed windows on the
+                // incoming space id — that is the normal case on a reconnect, since it moves
+                // windows to the display before rift sees the new id. `insert` overwrote
+                // that set, so those windows kept a stale assignment pointing at a key that
+                // no longer listed them and dropped out of their workspace.
+                self.workspace_windows
+                    .entry(WindowWorkspaceInfo {
                         space: new_space,
                         workspace_id: old_assignment.workspace_id,
-                    },
-                    windows,
-                );
+                    })
+                    .or_default()
+                    .extend(windows);
             }
         }
 

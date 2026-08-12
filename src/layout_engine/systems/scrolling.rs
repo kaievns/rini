@@ -1254,6 +1254,12 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
+    fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId) {
+        if let Some(state) = self.layouts.get_mut(layout) {
+            let _ = state.remove_window(wid);
+        }
+    }
+
     fn remove_windows_for_app(&mut self, pid: pid_t) {
         for state in self.layouts.values_mut() {
             let windows: Vec<_> = state
