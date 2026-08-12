@@ -3098,6 +3098,13 @@ impl Reactor {
         if crate::sys::display_churn::is_active() {
             return;
         }
+        // Closed windows keep their affinity otherwise, because the display-change path
+        // removes windows with WindowRemovedPreserveFloating, which does not clear it.
+        // Measured: the external's affinity list held three long-closed windows while every
+        // live window was homed to the built-in, so a replug had nothing to move back.
+        self.layout_manager
+            .layout_engine
+            .forget_affinity_for_dead_windows(&self.state.windows);
         let attached: Vec<String> = self
             .space_state
             .screens

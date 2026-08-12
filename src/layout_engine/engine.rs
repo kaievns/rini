@@ -1428,6 +1428,30 @@ impl LayoutEngine {
             .collect()
     }
 
+    /// Drop affinity for windows that no longer exist.
+    ///
+    /// Affinity was only cleared on the `WindowRemoved` path, not on
+    /// `WindowRemovedPreserveFloating` — and the display-change path uses the latter. A
+    /// window closed while its display was unplugged therefore kept its home forever.
+    ///
+    /// Measured on hardware: the external display's affinity list held three windows that
+    /// had all been closed (two Ghostty windows and a Chrome window), while all fourteen
+    /// live windows were homed to the built-in. Repatriation reported
+    /// `homed=[3 windows] to_move=[]` and the external came back empty every time.
+    ///
+    /// Called on every settled topology, which is cheap: it only walks the affinity map.
+    pub fn forget_affinity_for_dead_windows(&mut self, window_store: &WindowStore) {
+        let stale: Vec<WindowId> = self
+            .display_affinity
+            .homed_windows()
+            .into_iter()
+            .filter(|window| !window_store.contains_window(*window))
+            .collect();
+        for window in stale {
+            self.display_affinity.forget_window(window);
+        }
+    }
+
     /// Move all per-space layout state from `old_space` to `new_space`.
     pub fn remap_space(
         &mut self,

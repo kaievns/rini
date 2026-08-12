@@ -5466,3 +5466,82 @@ fn dragging_a_floating_window_keeps_the_layout_skip_for_the_whole_gesture() {
         );
     }
 }
+
+/// A closed window must not keep its display affinity.
+///
+/// Affinity was only cleared on the WindowRemoved path, but every display change removes
+/// windows with WindowRemovedPreserveFloating, which does not clear it. A window closed
+/// while its display was unplugged therefore kept its home forever.
+///
+/// Measured on hardware: the external's affinity list held three long-closed windows (two
+/// Ghostty, one Chrome) while all fourteen live windows were homed to the built-in.
+/// Repatriation logged `homed=[3 windows] to_move=[]` and the external came back empty on
+/// every replug.
+#[test]
+fn closed_windows_do_not_keep_their_display_affinity() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let doomed = WindowId::new(1, 1);
+    let survivor = WindowId::new(1, 2);
+
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[901, 902])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    for (window, wsid) in [(doomed, 901u32), (survivor, 902)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(external_space), external);
+        assert!(reactor.assign_test_window_to_workspace(
+            external_space,
+            window,
+            external_workspace
+        ));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, window));
+    }
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    assert_eq!(
+        reactor.layout_manager.layout_engine.window_display_home(doomed),
+        Some("test-display-1"),
+        "test setup must home both windows to the external"
+    );
+
+    // The window is closed. This is the removal flavour the display-change path uses, and
+    // the one that used to leave affinity behind.
+    reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(doomed));
+    reactor.state.windows.remove_window(doomed);
+
+    // Any settled topology is enough to notice.
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[902])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+
+    assert_eq!(
+        reactor.layout_manager.layout_engine.window_display_home(doomed),
+        None,
+        "a closed window must not keep a home; stale entries make a replug look like it \
+         has windows to bring back when it does not"
+    );
+    assert!(
+        !reactor
+            .layout_manager
+            .layout_engine
+            .windows_homed_to_display("test-display-1")
+            .contains(&doomed),
+        "and it must be gone from the display's affinity list"
+    );
+    assert_eq!(
+        reactor.layout_manager.layout_engine.window_display_home(survivor),
+        Some("test-display-1"),
+        "the window that is still open keeps its home"
+    );
+}

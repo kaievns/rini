@@ -146,6 +146,13 @@ impl DisplayAffinity {
         self.display_strip.get(display).map(Vec::as_slice).unwrap_or_default()
     }
 
+    /// Every window that currently has a home, in any display.
+    pub fn homed_windows(&self) -> Vec<WindowId> {
+        let mut windows: Vec<WindowId> = self.window_home.keys().copied().collect();
+        windows.sort_unstable();
+        windows
+    }
+
     pub fn forget_window(&mut self, window: WindowId) {
         self.window_home.remove(&window);
         for strip in self.display_strip.values_mut() {
