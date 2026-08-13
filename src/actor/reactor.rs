@@ -1169,12 +1169,23 @@ impl Reactor {
                     }
                     return Ok(EventOutcome::default());
                 }
-                return Ok(if self.is_space_active(reported_space) {
-                    EventOutcome::default()
-                        .with_layout_event(LayoutEvent::WindowFocused(reported_space, window))
-                } else {
-                    EventOutcome::default()
-                });
+                if !self.is_space_active(reported_space) {
+                    return Ok(EventOutcome::default());
+                }
+                // Follow focus to the window's own workspace.
+                //
+                // Auto-switching only happened on APP activation, so cmd-` — which cycles
+                // windows inside the already-active app — moved focus to a window sitting in
+                // another workspace without the display switching to it. The window is parked
+                // off-screen, so focus went somewhere invisible and the keystroke looked like
+                // it had done nothing.
+                let outcome =
+                    self.maybe_auto_switch_to_window_workspace(window.pid, window, reported_space);
+                if outcome.arrange.requested {
+                    return Ok(outcome);
+                }
+                return Ok(EventOutcome::default()
+                    .with_layout_event(LayoutEvent::WindowFocused(reported_space, window)));
             }
             Event::RegisterWmSender(sender) => {
                 return Ok(system_workflow::handle_register_wm_sender(

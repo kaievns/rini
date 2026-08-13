@@ -129,6 +129,18 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     /// Replace a window identity in-place without changing its layout position.
     fn replace_window(&mut self, from: WindowId, to: WindowId);
     fn remove_window(&mut self, wid: WindowId);
+    /// The width a window's column carries, if it has been sized away from the default.
+    ///
+    /// Needed so moving a window between workspaces or displays keeps the width the user gave
+    /// it; a fresh column otherwise starts at the default ratio and the window appeared to
+    /// reset to 50%.
+    fn column_width_offset(&self, _layout: LayoutId, _wid: WindowId) -> Option<f64> {
+        None
+    }
+
+    /// Re-apply a width carried from another column.
+    fn set_column_width_offset(&mut self, _layout: LayoutId, _wid: WindowId, _offset: f64) {}
+
     /// Remove a window from ONE layout only.
     ///
     /// `remove_window` spans every layout the system owns. A workspace now owns one layout

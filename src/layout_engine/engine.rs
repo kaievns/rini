@@ -2573,6 +2573,21 @@ impl LayoutEngine {
 
                 let is_floating = self.floating.is_floating(focused_window);
 
+                // Remember the column width before the window leaves its tree. Adding it to
+                // the destination creates a FRESH column at the default ratio, so without this
+                // a window sized to a third or two thirds snapped back to the default on every
+                // move between workspaces — reported as "size gets reset to 50%".
+                let carried_width = (!is_floating)
+                    .then(|| {
+                        self.workspace_layouts.active(op_space, current_workspace_id).and_then(
+                            |layout| {
+                                self.workspace_tree(current_workspace_id)
+                                    .column_width_offset(layout, focused_window)
+                            },
+                        )
+                    })
+                    .flatten();
+
                 if is_floating {
                     self.floating.remove_active_for_window(focused_window);
                 } else {
@@ -2603,6 +2618,13 @@ impl LayoutEngine {
                     {
                         self.workspace_tree_mut(target_workspace_id)
                             .add_window_after_selection(target_layout, focused_window);
+                        if let Some(offset) = carried_width {
+                            self.workspace_tree_mut(target_workspace_id).set_column_width_offset(
+                                target_layout,
+                                focused_window,
+                                offset,
+                            );
+                        }
                     }
                 }
 

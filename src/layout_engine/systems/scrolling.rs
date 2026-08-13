@@ -1254,6 +1254,28 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
+    fn column_width_offset(&self, layout: LayoutId, wid: WindowId) -> Option<f64> {
+        let state = self.layout_state(layout)?;
+        let (col_idx, _) = state.locate(wid)?;
+        let column = state.columns.get(col_idx)?;
+        // Only a deliberately sized column is worth carrying. An untouched one should adopt
+        // the destination's default, which may differ (a wider display, a different config).
+        column.width_overridden.then_some(column.width_offset)
+    }
+
+    fn set_column_width_offset(&mut self, layout: LayoutId, wid: WindowId, offset: f64) {
+        let Some(state) = self.layout_state_mut(layout) else {
+            return;
+        };
+        let Some((col_idx, _)) = state.locate(wid) else {
+            return;
+        };
+        if let Some(column) = state.columns.get_mut(col_idx) {
+            column.width_offset = offset;
+            column.width_overridden = true;
+        }
+    }
+
     fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId) {
         if let Some(state) = self.layouts.get_mut(layout) {
             let _ = state.remove_window(wid);

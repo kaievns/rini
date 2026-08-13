@@ -6019,3 +6019,60 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     );
     assert_eq!(settled_now.workspace_id, workspaces[0]);
 }
+
+/// Moving a window to another workspace keeps the width the user gave it.
+///
+/// Adding a window to a workspace creates a FRESH column at the default ratio, so a window
+/// sized to a third or two thirds snapped back on every move. Reported as the size resetting
+/// to 50%. Asserts the laid-out width, which is what is actually visible.
+#[test]
+fn moving_a_window_between_workspaces_keeps_its_column_width() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let sized = WindowId::new(1, 1);
+    let neighbour = WindowId::new(1, 2);
+
+    set_space_membership(&[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspaces = reactor.test_workspace_ids(space);
+    for (window, wsid) in [(sized, 901u32), (neighbour, 902)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspaces[0]));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+
+    // Two equal columns to start with. Cycle the focused one to a different preset width.
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, sized));
+    let default_width = laid_out_frame(&mut reactor, space, screen, sized)
+        .expect("window is laid out")
+        .size
+        .width;
+    reactor.handle_test_layout_command(LayoutCommand::CyclePresetColumnWidth);
+    let resized_width = laid_out_frame(&mut reactor, space, screen, sized)
+        .expect("window is laid out")
+        .size
+        .width;
+    assert_ne!(
+        resized_width.round(),
+        default_width.round(),
+        "test setup must actually change the column width"
+    );
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+        workspace: rift_protocol::WorkspaceSelector::Index(1),
+        follow: true,
+        window_id: None,
+    });
+
+    let moved_width = laid_out_frame(&mut reactor, space, screen, sized)
+        .expect("window is laid out after the move")
+        .size
+        .width;
+    assert_eq!(
+        moved_width.round(),
+        resized_width.round(),
+        "the window must arrive with the width it had, not the workspace default"
+    );
+}
