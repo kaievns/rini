@@ -364,26 +364,57 @@ impl AnimationManager {
         //
         // For a full-height window this yields about half the display height — a clearly
         // visible slide, and every interpolated frame is placeable.
-        let frames: Vec<CGRect> = layout
+        //
+        // Only windows that END UP VISIBLE take part. Parking puts an off-strip window at the
+        // display's BOTTOM edge, so its downward allowance is negative — and the fold below
+        // takes the minimum across every window, then clamps at zero. One parked window
+        // therefore cancelled the whole downward slide while leaving upward untouched:
+        //
+        //   built-in  visible  Down_allow= +538.5   Up_allow= +538.5
+        //   built-in  PARKED   Down_allow= -541.5   Up_allow=+1618.5
+        //
+        // which is exactly the reported "animation on the way up ... nothing on the way down".
+        //
+        // Excluding them is also what makes the slide watchable on a busy display. Every
+        // animated window costs an AX frame write per tick, and on the external 10 of 12
+        // windows are parked, so 6x the necessary work was being spent moving windows that are
+        // off-screen the whole time and cannot be seen: "on the external screen it's barely
+        // noticeable, i catch like one or two frames".
+        let others: Vec<CGRect> = reactor
+            .space_state
+            .screens
+            .iter()
+            .filter(|other| other.space != Some(space))
+            .map(|other| other.frame)
+            .collect();
+        let (sliding, parked): (Vec<(WindowId, CGRect)>, Vec<(WindowId, CGRect)>) = layout
             .iter()
             .filter(|(wid, _)| skip_wid != Some(*wid))
-            .map(|(_, frame)| frame.round())
-            .collect();
+            .map(|(wid, frame)| (*wid, frame.round()))
+            .partition(|(_, frame)| {
+                !crate::model::HiddenWindowPlacement::is_hidden(screen, *frame, &others)
+            });
+
+        let frames: Vec<CGRect> = sliding.iter().map(|(_, frame)| *frame).collect();
         let travel = workspace_slide_travel(screen, &frames, direction);
-        // Below a few points the slide is invisible anyway, and a zero-length one would write
-        // the target frame twice for no reason.
-        if travel.abs() < 4.0 {
+        // Nothing visible to slide (an empty workspace), or a slide too short to see. A
+        // zero-length one would also write every target frame twice for no reason.
+        if frames.is_empty() || travel.abs() < 4.0 {
             return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
         }
 
-        let mut anim = Animation::new(reactor.config.clone());
+        // Parked windows still have to reach their new parking position; they just do it
+        // without an animation, since they are off-screen at both ends.
         let mut any_frame_changed = false;
-        for &(wid, target_frame) in layout {
-            if skip_wid == Some(wid) {
-                anim.mark_handled(wid);
-                continue;
-            }
-            let target_frame = target_frame.round();
+        if !parked.is_empty() {
+            any_frame_changed = Self::instant_layout_inner(reactor, space, &parked, skip_wid, true);
+        }
+
+        let mut anim = Animation::new(reactor.config.clone());
+        if let Some(wid) = skip_wid {
+            anim.mark_handled(wid);
+        }
+        for &(wid, target_frame) in &sliding {
             let Some(app_state) = reactor.app_manager.apps.get(&wid.pid) else {
                 continue;
             };
@@ -1176,6 +1207,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A parked window must not be able to cancel the slide.
+    ///
+    /// Parking puts an off-strip window at the display's BOTTOM edge, so its downward
+    /// allowance is NEGATIVE, and the travel is the minimum across every window clamped at
+    /// zero. One parked window therefore killed every downward slide while leaving upward
+    /// untouched — reported as the animation having "reversed basically", visible going up and
+    /// insta-flip going down. Measured on the built-in:
+    ///
+    ///   visible  Down_allow= +538.5   Up_allow= +538.5
+    ///   PARKED   Down_allow= -541.5   Up_allow=+1618.5
+    ///
+    /// `workspace_switch_layout` now excludes parked windows before calling this, so the guard
+    /// under test is that a parked frame WOULD still poison the result if one leaked through.
+    /// That keeps the arithmetic honest rather than asserting the filter twice.
+    #[test]
+    fn a_parked_frame_would_cancel_a_downward_slide() {
+        use crate::model::reactor::WorkspaceSwitchDirection::{Down, Up};
+
+        let screen = BUILT_IN;
+        let visible = rect(screen.origin.x, screen.origin.y + 4.0, 800.0, 1077.0);
+        // Where HiddenWindowPlacement actually parks it: bottom edge, 1pt sliver showing.
+        let parked = rect(screen.max().x - 1.0, screen.max().y - 1.0, 800.0, 1077.0);
+
+        let visible_only = workspace_slide_travel(screen, &[visible], Down);
+        assert!(
+            visible_only > 4.0,
+            "a visible window alone must slide downward, got {visible_only}"
+        );
+
+        let with_parked = workspace_slide_travel(screen, &[visible, parked], Down);
+        assert_eq!(
+            with_parked, 0.0,
+            "this is the bug being guarded against: a parked frame zeroes the downward travel"
+        );
+
+        // And the asymmetry is what made it look like a reversal rather than a dead animation.
+        assert!(
+            workspace_slide_travel(screen, &[visible, parked], Up).abs() > 4.0,
+            "upward travel survives a parked frame, which is why only one direction broke"
+        );
     }
 
     /// Every start frame must keep its midpoint on its OWN display.
