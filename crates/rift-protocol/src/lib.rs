@@ -17,9 +17,9 @@ pub use commands::{
 pub use events::{EventKind, RiftEvent, StackInfo, WorkspaceId};
 pub use layout::{Direction, LayoutKind, LayoutMode, Orientation, ResizeOrientation};
 pub use queries::{
-    ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticSpace, DiagnosticWindow,
-    DiagnosticsData, DisplayData, LayoutStateData, Point, Rect, Size, WindowData, WindowId,
-    WorkspaceData, WorkspaceLayoutData,
+    ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticDisplayCensus,
+    DiagnosticSpace, DiagnosticWindow, DiagnosticsData, DisplayData, LayoutStateData, Point, Rect,
+    Size, WindowData, WindowId, WorkspaceData, WorkspaceLayoutData,
 };
 pub use selectors::{DisplaySelector, RestoreScope, RestoreSource, WorkspaceSelector};
 pub use transport::{JsonRiftResponse, RiftRequest, RiftResponse};

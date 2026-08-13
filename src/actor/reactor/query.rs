@@ -91,6 +91,7 @@ impl ReactorQueryHandle {
     pub fn query_diagnostics(&self) -> DiagnosticsData {
         self.send_query(QueryRequest::Diagnostics).unwrap_or_else(|_| DiagnosticsData {
             spaces: Vec::new(),
+            census: Vec::new(),
             orphaned_workspaces: Vec::new(),
             stale_homes: Vec::new(),
             windows_managed: 0,
@@ -618,8 +619,56 @@ impl Reactor {
             .map(Into::into)
             .collect();
 
+        // Per-display totals across EVERY workspace, not just the visible one. Without this
+        // the only way to answer "did a switch migrate anything" is to visit each workspace in
+        // turn, and tallying the `spaces` list instead silently measures what is ON SCREEN —
+        // which reads as windows vanishing whenever a switch happens. Cost me a wrong
+        // conclusion, the same way `query windows` did before this whole query existed.
+        let mut census = Vec::new();
+        for screen in &screens {
+            let Some(space) = screen.space else { continue };
+            let Some(display_uuid) = screen.display_uuid_owned() else {
+                continue;
+            };
+            let homed = self
+                .layout_manager
+                .layout_engine
+                .display_affinity()
+                .windows_homed_to(&display_uuid)
+                .into_iter()
+                .filter(|window| self.state.windows.contains_window(*window))
+                .count();
+
+            let workspaces = self
+                .layout_manager
+                .layout_engine
+                .virtual_workspace_manager_mut()
+                .list_workspaces(space);
+            let mut by_workspace = Vec::new();
+            let mut assigned = 0;
+            for (workspace_id, name) in workspaces {
+                let count = self
+                    .layout_manager
+                    .layout_engine
+                    .virtual_workspace_manager()
+                    .workspace_windows(&self.state.windows, space, workspace_id)
+                    .len();
+                assigned += count;
+                by_workspace.push((name, count));
+            }
+
+            census.push(rift_protocol::DiagnosticDisplayCensus {
+                display_uuid,
+                display_name: screen.name.clone(),
+                homed,
+                assigned,
+                by_workspace,
+            });
+        }
+
         DiagnosticsData {
             spaces,
+            census,
             orphaned_workspaces,
             stale_homes,
             windows_managed: self.state.windows.tracked_window_count(),

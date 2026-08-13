@@ -251,9 +251,33 @@ pub struct DiagnosticSpace {
     pub orphaned_windows: Vec<WindowId>,
 }
 
+/// How many windows belong to one display, independent of what it is showing.
+///
+/// `DiagnosticSpace` only covers the workspace currently visible on each display, which is a
+/// genuine trap: counting windows across the `spaces` list answers "what is on screen now",
+/// not "where do these windows live". Tallying that way made a workspace switch look like it
+/// had lost 14 windows when they were simply on a workspace that was no longer showing.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticDisplayCensus {
+    pub display_uuid: String,
+    pub display_name: Option<String>,
+    /// Windows whose durable home is this display.
+    pub homed: usize,
+    /// Windows currently ASSIGNED to this display's space, across every workspace. A
+    /// persistent gap between this and `homed` is a migration.
+    pub assigned: usize,
+    /// Per workspace name, how many of this display's windows sit there. Makes a pile-up in
+    /// one workspace visible without switching to it.
+    pub by_workspace: Vec<(String, usize)>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DiagnosticsData {
     pub spaces: Vec<DiagnosticSpace>,
+    /// Whole-topology counts, so "did anything migrate" can be answered without switching
+    /// workspaces to look.
+    #[serde(default)]
+    pub census: Vec<DiagnosticDisplayCensus>,
     /// Workspaces holding windows but belonging to no attached display, i.e. left
     /// over from a previous space generation.
     pub orphaned_workspaces: Vec<String>,

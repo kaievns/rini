@@ -15,8 +15,8 @@ use crate::layout_engine::floating::FloatingFullscreenKind;
 use crate::layout_engine::systems::WindowLayoutConstraints;
 use crate::model::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus};
 use crate::model::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
-use crate::model::virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStore};
 use crate::model::display_affinity::ColumnWidth;
+use crate::model::virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStore};
 use crate::model::{
     AppRuleEffects, AppRuleEngine, AppRuleResult, DisplayAffinity, FloatingPositionStore,
     WindowRuleContext, WindowStore,
@@ -1294,7 +1294,8 @@ impl LayoutEngine {
         layout: LayoutId,
         window: WindowId,
     ) {
-        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned) else {
+        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned)
+        else {
             return;
         };
         let tree = self.workspace_tree(workspace_id);
@@ -1304,8 +1305,11 @@ impl LayoutEngine {
         }
         match tree.column_width_offset(layout, window) {
             Some(offset) => {
-                self.display_affinity
-                    .set_window_width(&display, window, ColumnWidth::Offset(offset));
+                self.display_affinity.set_window_width(
+                    &display,
+                    window,
+                    ColumnWidth::Offset(offset),
+                );
             }
             // Toggled back to the default. Forget rather than pin, so the window follows
             // each display's configured ratio again.
@@ -1341,7 +1345,8 @@ impl LayoutEngine {
         layout: LayoutId,
         window: WindowId,
     ) {
-        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned) else {
+        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned)
+        else {
             return;
         };
         let Some(width) = self.display_affinity.window_width(&display, window) else {
@@ -1349,7 +1354,8 @@ impl LayoutEngine {
         };
         match width {
             ColumnWidth::FullWidth => {
-                self.workspace_tree_mut(workspace_id).set_window_full_width(layout, window, true);
+                self.workspace_tree_mut(workspace_id)
+                    .set_window_full_width(layout, window, true);
             }
             ColumnWidth::Offset(offset) => {
                 self.workspace_tree_mut(workspace_id)

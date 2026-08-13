@@ -146,7 +146,9 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     /// Separate from `column_width_offset` because full width is a MODE rather than a ratio:
     /// it stays full on a display of any size, so it cannot be represented as an offset from
     /// the configured default and survive a move between displays.
-    fn is_window_full_width(&self, _layout: LayoutId, _wid: WindowId) -> bool { false }
+    fn is_window_full_width(&self, _layout: LayoutId, _wid: WindowId) -> bool {
+        false
+    }
 
     /// Set or clear the full-viewport-width mode for a window's column.
     fn set_window_full_width(&mut self, _layout: LayoutId, _wid: WindowId, _full: bool) {}

@@ -1150,14 +1150,9 @@ mod tests {
     /// The real topology from the machine this was debugged on, deliberately kept concrete.
     /// The displays are stacked VERTICALLY (rift issue #266), which is what makes a vertical
     /// slide able to stray onto the neighbour at all.
-    const BUILT_IN: CGRect = CGRect::new(
-        CGPoint::new(0.0, 32.0),
-        CGSize::new(1728.0, 1085.0),
-    );
-    const EXTERNAL: CGRect = CGRect::new(
-        CGPoint::new(-670.0, -1692.0),
-        CGSize::new(3008.0, 1692.0),
-    );
+    const BUILT_IN: CGRect = CGRect::new(CGPoint::new(0.0, 32.0), CGSize::new(1728.0, 1085.0));
+    const EXTERNAL: CGRect =
+        CGRect::new(CGPoint::new(-670.0, -1692.0), CGSize::new(3008.0, 1692.0));
 
     /// A slide must be visible in BOTH directions, on every display.
     ///
@@ -1171,8 +1166,7 @@ mod tests {
 
         for (name, screen) in [("built-in", BUILT_IN), ("external", EXTERNAL)] {
             // A full-height window, as a maximised column is.
-            let window =
-                rect(screen.origin.x, screen.origin.y, 800.0, screen.size.height - 8.0);
+            let window = rect(screen.origin.x, screen.origin.y, 800.0, screen.size.height - 8.0);
             for direction in [Up, Down] {
                 let travel = workspace_slide_travel(screen, &[window], direction);
                 assert!(

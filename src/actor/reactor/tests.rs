@@ -6134,9 +6134,10 @@ fn a_full_width_window_stays_full_width_across_workspaces() {
     let workspaces = reactor.test_workspace_ids(space);
     // The neighbour lives on workspace 2, so that workspace is POPULATED while workspace 3
     // stays empty — the asymmetry that produced the bug.
-    for (window, wsid, workspace) in
-        [(sized, 901u32, workspaces[0]), (neighbour, 902, workspaces[1])]
-    {
+    for (window, wsid, workspace) in [
+        (sized, 901u32, workspaces[0]),
+        (neighbour, 902, workspaces[1]),
+    ] {
         reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
         assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
         reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
