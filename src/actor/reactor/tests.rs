@@ -5948,3 +5948,74 @@ fn switching_away_and_back_returns_to_the_same_window() {
         "the workspace must still remember which window was focused in it"
     );
 }
+
+/// Redistribute moves windows back to their home display without touching their workspace.
+///
+/// Recovery for a layout where windows have piled onto one display. Workspace membership is
+/// the window's identity, so a recovery command must not guess at it — only the display is
+/// corrected.
+#[test]
+fn redistribute_returns_windows_to_their_home_display_only() {
+    let mut reactor = test_reactor();
+    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let displaced = WindowId::new(1, 1);
+    let settled = WindowId::new(1, 2);
+
+    set_space_membership(&[(builtin_space, &[901, 902]), (external_space, &[])]);
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+    reactor.add_test_app(1);
+    let workspaces = reactor.test_workspace_ids(builtin_space);
+
+    // `displaced` belongs on the external but sits on the built-in, in workspace 2.
+    reactor.add_test_window(displaced, WindowServerId::new(901), Some(builtin_space), builtin);
+    assert!(reactor.assign_test_window_to_workspace(builtin_space, displaced, workspaces[2]));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, displaced));
+    reactor
+        .layout_manager
+        .layout_engine
+        .set_window_display_home(displaced, external_space);
+
+    // `settled` is already where it belongs.
+    reactor.add_test_window(settled, WindowServerId::new(902), Some(builtin_space), builtin);
+    assert!(reactor.assign_test_window_to_workspace(builtin_space, settled, workspaces[0]));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, settled));
+    reactor
+        .layout_manager
+        .layout_engine
+        .set_window_display_home(settled, builtin_space);
+
+    reactor.handle_event(Event::Command(Command::Reactor(
+        ReactorCommand::RedistributeWindows,
+    )));
+
+    let displaced_now = reactor
+        .state
+        .windows
+        .workspace_info_for_window(displaced)
+        .expect("displaced window keeps an assignment");
+    assert_eq!(
+        displaced_now.space, external_space,
+        "it must move to the display its affinity records"
+    );
+    assert_eq!(
+        displaced_now.workspace_id, workspaces[2],
+        "and keep the workspace it was in: redistribute corrects the display, nothing else"
+    );
+
+    let settled_now = reactor
+        .state
+        .windows
+        .workspace_info_for_window(settled)
+        .expect("settled window keeps an assignment");
+    assert_eq!(
+        settled_now.space, builtin_space,
+        "a window already on its home display is left alone"
+    );
+    assert_eq!(settled_now.workspace_id, workspaces[0]);
+}

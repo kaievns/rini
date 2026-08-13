@@ -1663,6 +1663,9 @@ impl Reactor {
             Event::Command(Command::Reactor(ReactorCommand::SwitchSpace(direction))) => {
                 return command_workflow::handle_switch_native_space(direction);
             }
+            Event::Command(Command::Reactor(ReactorCommand::RedistributeWindows)) => {
+                return Ok(self.redistribute_windows());
+            }
             Event::Command(Command::Reactor(ReactorCommand::ToggleSpaceActivated)) => {
                 let space = self.active_display_space();
                 let display_uuid = space.and_then(|space| {
@@ -3159,6 +3162,76 @@ impl Reactor {
                 .layout_engine
                 .sync_display_affinity(&uuid, &windows, &attached);
         }
+    }
+
+    /// Spread every window back onto the display it belongs to, keeping its workspace.
+    ///
+    /// Recovery command. Windows can end up piled into a single workspace on a single display:
+    /// the display-migration feedback loop did that before it was fixed, and any future state
+    /// corruption could do it again. Fixing the loop stops it recurring but does not undo the
+    /// damage, and until now the only remedy was deleting ~/.rift/layout.ron and losing every
+    /// window's size and position.
+    ///
+    /// Only windows whose recorded home display differs from where they currently sit are
+    /// moved, so running this on a healthy layout does nothing. Workspace membership is never
+    /// changed — that is the window's identity, and a recovery command has no business
+    /// guessing at it.
+    fn redistribute_windows(&mut self) -> EventOutcome {
+        let mut outcome = EventOutcome::default();
+        let attached: Vec<(String, SpaceId)> = self
+            .space_state
+            .screens
+            .iter()
+            .filter_map(|screen| Some((screen.display_uuid_owned()?, screen.space?)))
+            .collect();
+        if attached.is_empty() {
+            return outcome;
+        }
+
+        let mut moved = 0usize;
+        for (display_uuid, target_space) in &attached {
+            let windows = self.layout_manager.layout_engine.windows_to_repatriate(
+                &self.state.windows,
+                display_uuid,
+                *target_space,
+            );
+            for window in windows {
+                let Some(source_space) = self.assigned_space_for_window_id(window) else {
+                    continue;
+                };
+                // Do not fight macOS over a window on a display that is no longer attached;
+                // those are handled by repatriation when the display returns.
+                if !attached.iter().any(|(_, space)| *space == source_space) {
+                    continue;
+                }
+                let Some(assignment) = self.state.windows.workspace_info_for_window(window) else {
+                    continue;
+                };
+                if self
+                    .layout_manager
+                    .layout_engine
+                    .virtual_workspace_manager_mut()
+                    .assign_window_to_workspace(
+                        &mut self.state.windows,
+                        *target_space,
+                        window,
+                        assignment.workspace_id,
+                    )
+                {
+                    moved += 1;
+                }
+            }
+        }
+
+        info!(
+            moved,
+            displays = attached.len(),
+            "Redistributed windows to their home displays"
+        );
+        if moved > 0 {
+            outcome.absorb(EventOutcome::layout_changed(false).with_arrange_passes(1));
+        }
+        outcome
     }
 
     /// Send windows that belong on `display_uuid` back to it after it reappears.

@@ -77,6 +77,11 @@ pub enum ReactorCommand {
     },
     SwitchSpace(Direction),
     ToggleSpaceActivated,
+    /// Spread each display's windows back across workspaces by their recorded affinity.
+    ///
+    /// Recovery for a state where windows have piled into one workspace. Before this the only
+    /// remedy was deleting the layout file.
+    RedistributeWindows,
     FocusWindow {
         window_id: WindowId,
         window_server_id: Option<u32>,

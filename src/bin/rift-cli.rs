@@ -174,6 +174,11 @@ enum ExecuteCommands {
     ToggleSpaceActivated,
     /// Show timing metrics
     ShowTiming,
+    /// Move every window back to the display it belongs to, keeping its workspace.
+    ///
+    /// Recovery for a layout where windows have piled onto one display. Does nothing when
+    /// every window is already where its recorded affinity says it belongs.
+    Redistribute,
 }
 
 #[derive(Subcommand)]
@@ -678,6 +683,9 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiftRequest, String
         }
         ExecuteCommands::ShowTiming => CliCommand::Reactor(reactor::Command::Metrics(
             rift_wm::common::log::MetricsCommand::ShowTiming,
+        )),
+        ExecuteCommands::Redistribute => CliCommand::Reactor(reactor::Command::Reactor(
+            reactor::ReactorCommand::RedistributeWindows,
         )),
     };
 
