@@ -6076,3 +6076,45 @@ fn moving_a_window_between_workspaces_keeps_its_column_width() {
         "the window must arrive with the width it had, not the workspace default"
     );
 }
+
+/// Strip navigation stops at the edge instead of falling into the floating layer.
+///
+/// move_focus_internal focused the FIRST floating window whenever the strip ran out of
+/// columns. With System Settings floating, walking right stepped off the last column onto
+/// Settings and the next keypress came straight back — the two-window bounce that was
+/// reported. Reproduced live by stepping focus right repeatedly: the fifth step landed on a
+/// floating window and the sixth returned to the previous column.
+#[test]
+fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let left = WindowId::new(1, 1);
+    let right = WindowId::new(1, 2);
+    let floater = WindowId::new(1, 3);
+
+    set_space_membership(&[(space, &[901, 902, 903])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    for (window, wsid) in [(left, 901u32), (right, 902), (floater, 903)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    assert!(reactor.layout_manager.layout_engine.is_window_floating(floater));
+
+    // Sit on the rightmost column and keep walking right.
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, right));
+    for _ in 0..3 {
+        reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        assert_ne!(
+            reactor.layout_manager.layout_engine.focused_window(),
+            Some(floater),
+            "walking off the end of the strip must not focus a floating window"
+        );
+    }
+}

@@ -814,19 +814,16 @@ impl LayoutEngine {
                 }
             }
 
-            let floating_windows = self.active_floating_windows_in_workspace(window_store, space);
-
-            if let Some(&first_floating) = floating_windows.first() {
-                let focus_window = Some(first_floating);
-                let response = EventResponse {
-                    changed: true,
-                    focus_window,
-                    raise_windows: vec![],
-                    boundary_hit: None,
-                };
-                self.apply_focus_response(window_store, space, ws_id, layout, &response);
-                return response;
-            }
+            // No falling into the floating layer at the end of the strip.
+            //
+            // This focused the first floating window whenever strip navigation ran out of
+            // columns. With System Settings floating, walking right therefore stepped off the
+            // last column onto Settings, and the next keypress came back — the two-window
+            // bounce that was reported. Floating windows belong to the workspace but are not
+            // strip members; cmd-tab and toggle_focus_floating reach them.
+            //
+            // Falling through leaves the selection where it was, so the strip simply stops at
+            // its edge.
 
             let visible_windows = self.filter_active_workspace_windows(
                 window_store,
