@@ -532,7 +532,16 @@ impl LayoutEngine {
         &mut self,
         space: SpaceId,
     ) -> Option<crate::model::reactor::WorkspaceSwitchDirection> {
-        self.workspace_switch_directions.remove(&space)
+        // Peek, do not consume.
+        //
+        // A switch runs several arrange passes (outcome.arrange.passes), and removing the
+        // direction on the first one left the rest with nothing, so they fell back to the
+        // instant path and cancelled the slide already in flight. That is the "animation works
+        // every other time" report: whether you saw it depended on which pass won.
+        //
+        // The entry is instead replaced on the next switch and cleared when the workspace does
+        // not change, so a stale direction cannot animate anything on its own.
+        self.workspace_switch_directions.get(&space).copied()
     }
 
     fn activate_workspace(
@@ -558,6 +567,9 @@ impl LayoutEngine {
                 crate::model::reactor::WorkspaceSwitchDirection::Up
             };
             self.workspace_switch_directions.insert(space, direction);
+        } else {
+            // Same workspace, so there is no movement to animate.
+            self.workspace_switch_directions.remove(&space);
         }
         self.virtual_workspace_manager.set_active_workspace(space, workspace_id);
         self.update_active_floating_windows(window_store, space);
@@ -597,6 +609,9 @@ impl LayoutEngine {
                         return self.activate_workspace(window_store, space, last_workspace, None);
                     }
                 }
+                // Nothing moved, so no slide should be pending. activate_workspace is not
+                // reached on this path, which is why the clear has to happen here too.
+                self.workspace_switch_directions.remove(&space);
                 return EventResponse::default();
             }
             return self.activate_workspace(

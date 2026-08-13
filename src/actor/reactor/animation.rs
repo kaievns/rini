@@ -335,10 +335,47 @@ impl AnimationManager {
 
         // The arriving strip comes from below when travelling down the stack, and from above
         // when travelling up.
+        // Slide only as far as there is empty space in that direction.
+        //
+        // A full screen height was used here, which on a VERTICALLY stacked desktop places the
+        // start frame squarely inside the neighbouring display. WindowServer then reports the
+        // window on that display and it gets reassigned — the exact feedback loop fixed for
+        // parked windows in the display-affinity work, reintroduced through this animation.
+        // Measured on this machine: built-in y=32..1117, external y=-1692..0, so a travel of
+        // -1085 starts the slide at y=-1053, inside the external.
+        //
+        // Clamping to the gap before the next display keeps the motion on the right screen. If
+        // a display is flush against a neighbour there is no room at all, so the slide is
+        // skipped rather than faked: an instant switch is honest, whereas throwing windows onto
+        // another display is not.
+        let others: Vec<CGRect> = reactor
+            .space_state
+            .screens
+            .iter()
+            .filter(|other| other.space != Some(space))
+            .map(|other| other.frame)
+            .collect();
+        let room_above = others
+            .iter()
+            .filter(|other| other.max().y <= screen.origin.y + 1.0)
+            .map(|other| screen.origin.y - other.max().y)
+            .fold(screen.size.height, f64::min)
+            .max(0.0);
+        let room_below = others
+            .iter()
+            .filter(|other| other.origin.y + 1.0 >= screen.max().y)
+            .map(|other| other.origin.y - screen.max().y)
+            .fold(screen.size.height, f64::min)
+            .max(0.0);
         let travel = match direction {
-            crate::model::reactor::WorkspaceSwitchDirection::Down => screen.size.height,
-            crate::model::reactor::WorkspaceSwitchDirection::Up => -screen.size.height,
+            crate::model::reactor::WorkspaceSwitchDirection::Down => room_below,
+            crate::model::reactor::WorkspaceSwitchDirection::Up => -room_above,
         };
+        // Below a few points the slide is invisible anyway, and a zero-length one would write
+        // the target frame twice for no reason.
+        if travel.abs() < 4.0 {
+            return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
+        }
 
         let mut anim = Animation::new(reactor.config.clone());
         let mut any_frame_changed = false;

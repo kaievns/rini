@@ -5777,7 +5777,19 @@ fn workspace_switch_records_its_direction_per_display() {
         Some(crate::model::reactor::WorkspaceSwitchDirection::Up),
     );
 
-    // Switching to the workspace already showing is not movement.
+    // Reading is a PEEK, not a consume: a switch runs several arrange passes and every one
+    // needs the direction, otherwise the later passes cancel the slide the first one started.
+    assert_eq!(
+        reactor
+            .layout_manager
+            .layout_engine
+            .take_workspace_switch_direction(builtin_space),
+        Some(crate::model::reactor::WorkspaceSwitchDirection::Up),
+        "repeated reads within one switch must return the same direction"
+    );
+
+    // Switching to the workspace already showing is not movement, and clears the direction so
+    // a stale one cannot animate anything later.
     reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
     assert_eq!(
         reactor
