@@ -6055,6 +6055,75 @@ fn redistribute_returns_windows_to_their_home_display_only() {
 /// Adding a window to a workspace creates a FRESH column at the default ratio, so a window
 /// sized to a third or two thirds snapped back on every move. Reported as the size resetting
 /// to 50%. Asserts the laid-out width, which is what is actually visible.
+/// Cycling an app's windows must reach the ones on OTHER workspaces.
+///
+/// macOS's cmd-` only offers windows on the visible workspace, so three Ghostty windows
+/// split across two workspaces cycled between the two that shared one: "i have three
+/// ghostty windows between different displays/workspaces and i can only swap between the
+/// two on the same workspace". rift knows where all of them are, so CycleAppWindows rotates
+/// through every one and switches the display's workspace to follow.
+#[test]
+fn cycling_app_windows_reaches_every_workspace() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let first = WindowId::new(1, 1);
+    let second = WindowId::new(1, 2);
+    let elsewhere = WindowId::new(1, 3);
+
+    set_space_membership(&[(space, &[901, 902, 903])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspaces = reactor.test_workspace_ids(space);
+    // Two windows share workspace 0; the third sits on workspace 1, which is the one macOS
+    // could never reach.
+    for (window, wsid, workspace) in [
+        (first, 901u32, workspaces[0]),
+        (second, 902, workspaces[0]),
+        (elsewhere, 903, workspaces[1]),
+    ] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
+    reactor.set_test_focus(first);
+
+    // Rotate through the whole set. Focus is normally applied by the raise manager, which
+    // does not run under test, so read the requested target out of the outcome and apply it
+    // by hand — otherwise every iteration rotates from the same starting point.
+    let mut visited = vec![first];
+    for _ in 0..3 {
+        let outcome = reactor.probe_cycle_app_windows(false);
+        let target = outcome.raise_requests.iter().find_map(|request| match request {
+            crate::actor::raise_manager::Event::RaiseRequest(request) => {
+                request.focus_window.map(|(window, _)| window)
+            }
+            _ => None,
+        });
+        let Some(target) = target else { break };
+        visited.push(target);
+        reactor.set_test_focus(target);
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, target));
+    }
+
+    assert!(
+        visited.contains(&elsewhere),
+        "the window on another workspace must be reachable; visited {visited:?}"
+    );
+    assert!(
+        visited.contains(&second),
+        "the window sharing the workspace must still be reachable; visited {visited:?}"
+    );
+    // And reaching it must have brought the display along, or focus would sit on a window
+    // parked off-screen and the keystroke would look like it did nothing.
+    assert_eq!(
+        reactor.test_workspace_for_window(space, *visited.last().expect("non-empty")),
+        reactor.test_active_workspace(space),
+        "the display must be showing the workspace of the window focus landed on"
+    );
+}
+
 #[test]
 fn moving_a_window_between_workspaces_keeps_its_column_width() {
     let mut reactor = test_reactor();

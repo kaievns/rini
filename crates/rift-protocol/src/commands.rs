@@ -98,6 +98,18 @@ pub enum ReactorCommand {
         selector: DisplaySelector,
         window_id: Option<u32>,
     },
+    /// Cycle focus between the focused app's windows, across workspaces and displays.
+    ///
+    /// macOS's own cmd-` only offers windows it considers reachable on the current Space, so
+    /// with one app's windows spread over several rift workspaces it silently cycles a subset:
+    /// three Ghostty windows, only the two sharing a workspace reachable. rift knows where all
+    /// of them are, so it can do the full rotation and switch the owning display's workspace to
+    /// follow.
+    CycleAppWindows {
+        /// Reverse order, for a shift-modified binding.
+        #[serde(default)]
+        backward: bool,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

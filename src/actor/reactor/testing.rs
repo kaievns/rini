@@ -50,6 +50,23 @@ impl Reactor {
         self.test_workspace_ids(space)[index]
     }
 
+    pub fn test_window_is_standard(&self, wid: WindowId) -> bool {
+        self.window_is_standard_for_test(wid)
+    }
+
+    /// Make `window` the focused window, as WindowServer focus would.
+    pub fn set_test_focus(&mut self, window: WindowId) {
+        self.main_window_tracker.set_focus_for_test(window);
+    }
+
+    /// Which workspace `space` is currently showing.
+    pub fn test_active_workspace(
+        &self,
+        space: crate::sys::screen::SpaceId,
+    ) -> Option<crate::model::virtual_workspace::VirtualWorkspaceId> {
+        self.layout_manager.layout_engine.active_workspace(space)
+    }
+
     pub fn test_workspace_for_window(
         &self,
         space: crate::sys::screen::SpaceId,

@@ -644,17 +644,41 @@ impl Reactor {
                 .layout_engine
                 .virtual_workspace_manager_mut()
                 .list_workspaces(space);
+            let active_workspace = self.layout_manager.layout_engine.active_workspace(space);
             let mut by_workspace = Vec::new();
+            let mut census_windows = Vec::new();
             let mut assigned = 0;
             for (workspace_id, name) in workspaces {
-                let count = self
+                let windows = self
                     .layout_manager
                     .layout_engine
                     .virtual_workspace_manager()
-                    .workspace_windows(&self.state.windows, space, workspace_id)
-                    .len();
-                assigned += count;
-                by_workspace.push((name, count));
+                    .workspace_windows(&self.state.windows, space, workspace_id);
+                assigned += windows.len();
+                by_workspace.push((name.clone(), windows.len()));
+
+                let visible = active_workspace == Some(workspace_id);
+                for window_id in windows {
+                    let Some(state) = self.state.windows.window(window_id) else {
+                        continue;
+                    };
+                    census_windows.push(rift_protocol::DiagnosticCensusWindow {
+                        window_id: window_id.into(),
+                        app: self
+                            .app_manager
+                            .apps
+                            .get(&window_id.pid)
+                            .and_then(|app| app.info.localized_name.clone())
+                            .unwrap_or_default(),
+                        title: state.info.title.clone(),
+                        workspace_name: name.clone(),
+                        visible,
+                        is_floating: self
+                            .layout_manager
+                            .layout_engine
+                            .is_window_floating(window_id),
+                    });
+                }
             }
 
             census.push(rift_protocol::DiagnosticDisplayCensus {
@@ -663,6 +687,7 @@ impl Reactor {
                 homed,
                 assigned,
                 by_workspace,
+                windows: census_windows,
             });
         }
 

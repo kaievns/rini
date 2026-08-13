@@ -269,6 +269,27 @@ pub struct DiagnosticDisplayCensus {
     /// Per workspace name, how many of this display's windows sit there. Makes a pile-up in
     /// one workspace visible without switching to it.
     pub by_workspace: Vec<(String, usize)>,
+    /// Every window on this display, with the workspace it sits on — including workspaces
+    /// that are not currently showing.
+    ///
+    /// `DiagnosticSpace.windows` and `query windows --space-id` BOTH report only the visible
+    /// workspace, so neither can answer "where is this app's other window". Chasing a third
+    /// Ghostty window that cmd-` would not reach meant switching every display through every
+    /// workspace and diffing the output, which still missed windows on the unfocused display
+    /// because a switch only moves the focused one.
+    pub windows: Vec<DiagnosticCensusWindow>,
+}
+
+/// One window as the per-display census sees it: identity, app, and where it lives.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticCensusWindow {
+    pub window_id: WindowId,
+    pub app: String,
+    pub title: String,
+    pub workspace_name: String,
+    /// True when this display is currently showing the window's workspace.
+    pub visible: bool,
+    pub is_floating: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

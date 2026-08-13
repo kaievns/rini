@@ -1676,6 +1676,9 @@ impl Reactor {
             Event::Command(Command::Reactor(ReactorCommand::RedistributeWindows)) => {
                 return Ok(self.redistribute_windows());
             }
+            Event::Command(Command::Reactor(ReactorCommand::CycleAppWindows { backward })) => {
+                return Ok(self.cycle_app_windows(backward));
+            }
             Event::Command(Command::Reactor(ReactorCommand::ToggleSpaceActivated)) => {
                 let space = self.active_display_space();
                 let display_uuid = space.and_then(|space| {
@@ -3186,6 +3189,96 @@ impl Reactor {
     /// moved, so running this on a healthy layout does nothing. Workspace membership is never
     /// changed — that is the window's identity, and a recovery command has no business
     /// guessing at it.
+    #[cfg(test)]
+    pub(crate) fn probe_cycle_app_windows(&mut self, backward: bool) -> EventOutcome {
+        self.cycle_app_windows(backward)
+    }
+
+    /// Cycle focus between the focused app's windows, wherever they are.
+    ///
+    /// macOS's cmd-` only offers windows it considers reachable on the current Space. rift
+    /// parks off-workspace windows off-screen rather than moving them to another native space,
+    /// so macOS sees them but treats a parked window as not a sensible cycle target — with
+    /// three Ghostty windows across two workspaces only the two sharing the visible workspace
+    /// were reachable, which is what "i can only swap between the two on the same workspace"
+    /// described.
+    ///
+    /// rift already knows where every window is, so it can rotate through all of them and let
+    /// the existing focus path switch the owning display's workspace to follow. Ordering is by
+    /// (space, workspace, window id) so the rotation is stable and does not depend on which
+    /// workspace happens to be showing.
+    fn cycle_app_windows(&mut self, backward: bool) -> EventOutcome {
+        let Some(current) = self.main_window() else {
+            return EventOutcome::no_change();
+        };
+        let pid = current.pid;
+
+        let mut windows: Vec<(SpaceId, crate::model::VirtualWorkspaceId, WindowId)> = self
+            .state
+            .windows
+            .iter_windows()
+            .filter(|(wid, _)| wid.pid == pid)
+            .map(|(wid, _)| wid)
+            .filter(|wid| self.window_is_standard(*wid))
+            .filter_map(|wid| {
+                let assignment = self.state.windows.workspace_info_for_window(wid)?;
+                Some((assignment.space, assignment.workspace_id, wid))
+            })
+            .collect();
+        if windows.len() < 2 {
+            return EventOutcome::no_change();
+        }
+        windows.sort_by(|a, b| {
+            (a.0.get(), format!("{:?}", a.1), a.2).cmp(&(b.0.get(), format!("{:?}", b.1), b.2))
+        });
+
+        let position = windows.iter().position(|(_, _, wid)| *wid == current);
+        let next = match position {
+            Some(index) => {
+                let len = windows.len();
+                let step = if backward { len - 1 } else { 1 };
+                windows[(index + step) % len].2
+            }
+            // The focused window is not in the list (unassigned, or filtered out), so start
+            // the rotation from the beginning rather than doing nothing.
+            None => windows[0].2,
+        };
+        if next == current {
+            return EventOutcome::no_change();
+        }
+
+        let resolved_space = self.best_space_for_window_id(next);
+        let space_is_active = resolved_space.is_some_and(|space| self.is_space_active(space));
+        match command_workflow::handle_command_reactor_focus_window(
+            &self.state,
+            &self.app_manager,
+            command_workflow::FocusWindowPayload {
+                window_id: next,
+                window_server_id: self
+                    .state
+                    .windows
+                    .window(next)
+                    .and_then(|window| window.info.sys_id),
+                resolved_space,
+                space_is_active,
+            },
+        ) {
+            Ok(mut outcome) => {
+                // Switch the owning display to the target's workspace, or focus lands on a
+                // window that is parked off-screen and the keystroke looks like a no-op. This
+                // is the same follow used by the focus-changed path.
+                if let Some(space) = resolved_space {
+                    outcome.absorb(self.maybe_auto_switch_to_window_workspace(pid, next, space));
+                }
+                outcome
+            }
+            Err(error) => {
+                warn!(%error, ?next, "cycle app windows failed to focus");
+                EventOutcome::no_change()
+            }
+        }
+    }
+
     fn redistribute_windows(&mut self) -> EventOutcome {
         let mut outcome = EventOutcome::default();
         let attached: Vec<(String, SpaceId)> = self
@@ -3688,6 +3781,11 @@ impl Reactor {
         for space in spaces {
             self.expose_space_if_known(space);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn window_is_standard_for_test(&self, id: WindowId) -> bool {
+        self.window_is_standard(id)
     }
 
     fn window_is_standard(&self, id: WindowId) -> bool {

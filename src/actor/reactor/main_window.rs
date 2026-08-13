@@ -17,6 +17,19 @@ struct AppState {
 }
 
 impl MainWindowTracker {
+    /// Make `window` the focused window, as WindowServer focus would.
+    ///
+    /// Tests that exercise commands operating on "the focused window" otherwise have to
+    /// replay a launch/activate sequence just to populate this, and `add_test_app` does not
+    /// set it — so such a command silently no-ops and the test passes for the wrong reason.
+    #[cfg(test)]
+    pub(crate) fn set_focus_for_test(&mut self, window: WindowId) {
+        // main_window() requires the owning app to be globally frontmost before it will
+        // consult window_server_focus, so both have to be set.
+        self.global_frontmost = Some(window.pid);
+        self.window_server_focus_authoritative = true;
+        self.window_server_focus = Some(window);
+    }
     #[must_use]
     pub fn handle_event(&mut self, event: &Event) -> Option<WindowId> {
         let (event_pid, quiet_edge) = match event {

@@ -179,6 +179,16 @@ enum ExecuteCommands {
     /// Recovery for a layout where windows have piled onto one display. Does nothing when
     /// every window is already where its recorded affinity says it belongs.
     Redistribute,
+    /// Cycle focus between the focused app's windows, across workspaces and displays.
+    ///
+    /// macOS's own cmd-` only reaches windows on the visible workspace, so an app whose
+    /// windows are spread over several workspaces silently cycles a subset. This rotates
+    /// through all of them and switches the owning display's workspace to follow.
+    CycleAppWindows {
+        /// Cycle in reverse, for a shift-modified binding.
+        #[arg(long)]
+        backward: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -687,6 +697,9 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiftRequest, String
         ExecuteCommands::Redistribute => CliCommand::Reactor(reactor::Command::Reactor(
             reactor::ReactorCommand::RedistributeWindows,
         )),
+        ExecuteCommands::CycleAppWindows { backward } => CliCommand::Reactor(
+            reactor::Command::Reactor(reactor::ReactorCommand::CycleAppWindows { backward }),
+        ),
     };
 
     if let CliCommand::Config(rift_wm::common::config::ConfigCommand::GetConfig) = &rift_command {
