@@ -71,6 +71,17 @@ pub enum WmCmd {
     ShowMissionControlCurrent,
     DismissMissionControl,
     CloseWindow,
+
+    /// Cycle the focused app's windows across workspaces and displays.
+    ///
+    /// Two unit variants rather than one taking `{ backward: bool }`. `WmCommand` is
+    /// `#[serde(untagged)]`, so a struct-bodied variant whose only field has a default
+    /// cannot be written as a bare string in a keybinding: `"cycle_app_windows"` matched
+    /// neither arm, and rift PANICS at startup on an unparseable binding rather than
+    /// skipping it, so the whole WM failed to start. Unit variants keep both directions
+    /// expressible as plain strings.
+    CycleAppWindows,
+    CycleAppWindowsBackward,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -370,6 +381,16 @@ impl WmController {
             Command(Wm(CloseWindow)) => {
                 self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
                     reactor::ReactorCommand::CloseWindow { window_server_id: None },
+                )));
+            }
+            Command(Wm(CycleAppWindows)) => {
+                self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
+                    reactor::ReactorCommand::CycleAppWindows { backward: false },
+                )));
+            }
+            Command(Wm(CycleAppWindowsBackward)) => {
+                self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
+                    reactor::ReactorCommand::CycleAppWindows { backward: true },
                 )));
             }
             Command(Wm(Exec(cmd))) => {
