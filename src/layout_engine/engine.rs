@@ -16,6 +16,7 @@ use crate::layout_engine::systems::WindowLayoutConstraints;
 use crate::model::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus};
 use crate::model::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
 use crate::model::virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStore};
+use crate::model::display_affinity::ColumnWidth;
 use crate::model::{
     AppRuleEffects, AppRuleEngine, AppRuleResult, DisplayAffinity, FloatingPositionStore,
     WindowRuleContext, WindowStore,
@@ -1281,6 +1282,82 @@ impl LayoutEngine {
         self.display_affinity.window_home(window)
     }
 
+    /// Record the width `window` now occupies on the display owning `space`.
+    ///
+    /// Called after any command that deliberately sets a width. Width is remembered per
+    /// DISPLAY, so this is the only place the two are tied together; see
+    /// `DisplayAffinity::window_width` for why the layout tree is the wrong home for it.
+    fn remember_column_width(
+        &mut self,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+        layout: LayoutId,
+        window: WindowId,
+    ) {
+        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned) else {
+            return;
+        };
+        let tree = self.workspace_tree(workspace_id);
+        if tree.is_window_full_width(layout, window) {
+            self.display_affinity.set_window_width(&display, window, ColumnWidth::FullWidth);
+            return;
+        }
+        match tree.column_width_offset(layout, window) {
+            Some(offset) => {
+                self.display_affinity
+                    .set_window_width(&display, window, ColumnWidth::Offset(offset));
+            }
+            // Toggled back to the default. Forget rather than pin, so the window follows
+            // each display's configured ratio again.
+            None => self.display_affinity.clear_window_width(&display, window),
+        }
+    }
+
+    /// Record the width of whichever column the resize commands just acted on.
+    ///
+    /// Those commands operate on the selection and report nothing back, so the window has to
+    /// be looked up rather than taken from a return value.
+    fn remember_selected_column_width(
+        &mut self,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+        layout: LayoutId,
+    ) {
+        let Some(window) = self.workspace_tree(workspace_id).selected_window(layout) else {
+            return;
+        };
+        self.remember_column_width(space, workspace_id, layout, window);
+    }
+
+    /// Re-apply the width `window` last had on the display owning `space`.
+    ///
+    /// Called when a window ARRIVES in a strip — a new workspace, or a new display. A fresh
+    /// column starts at the configured default, so without this a window sized to fill the
+    /// built-in lost that size the moment it changed workspace.
+    fn apply_remembered_column_width(
+        &mut self,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+        layout: LayoutId,
+        window: WindowId,
+    ) {
+        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned) else {
+            return;
+        };
+        let Some(width) = self.display_affinity.window_width(&display, window) else {
+            return;
+        };
+        match width {
+            ColumnWidth::FullWidth => {
+                self.workspace_tree_mut(workspace_id).set_window_full_width(layout, window, true);
+            }
+            ColumnWidth::Offset(offset) => {
+                self.workspace_tree_mut(workspace_id)
+                    .set_column_width_offset(layout, window, offset);
+            }
+        }
+    }
+
     /// Windows that belong on `display` but are currently assigned somewhere else.
     ///
     /// This is what a replug consults. It deliberately reports only windows whose current
@@ -2025,6 +2102,9 @@ impl LayoutEngine {
                 let raise_windows = self
                     .workspace_tree_mut(workspace_id)
                     .toggle_fullscreen_within_gaps_of_selection(layout);
+                for window in &raise_windows {
+                    self.remember_column_width(space, workspace_id, layout, *window);
+                }
                 if raise_windows.is_empty() {
                     EventResponse::default()
                 } else {
@@ -2086,6 +2166,7 @@ impl LayoutEngine {
                     resize_amount,
                     orientation,
                 );
+                self.remember_selected_column_width(space, workspace_id, layout);
                 EventResponse::default()
             }
             LayoutCommand::ResizeWindowShrink(orientation) => {
@@ -2100,6 +2181,7 @@ impl LayoutEngine {
                     resize_amount,
                     orientation,
                 );
+                self.remember_selected_column_width(space, workspace_id, layout);
                 EventResponse::default()
             }
             LayoutCommand::ResizeWindowBy { amount } => {
@@ -2113,6 +2195,7 @@ impl LayoutEngine {
                     amount,
                     ResizeOrientation::Horizontal,
                 );
+                self.remember_selected_column_width(space, workspace_id, layout);
                 EventResponse::default()
             }
             LayoutCommand::ScrollStrip { delta } => {
@@ -2138,6 +2221,9 @@ impl LayoutEngine {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 let raised =
                     self.workspace_tree_mut(workspace_id).cycle_preset_column_width(layout);
+                for window in &raised {
+                    self.remember_column_width(space, workspace_id, layout, *window);
+                }
                 Self::response_for_raised_windows(raised)
             }
         }
@@ -2585,20 +2671,22 @@ impl LayoutEngine {
 
                 let is_floating = self.floating.is_floating(focused_window);
 
-                // Remember the column width before the window leaves its tree. Adding it to
-                // the destination creates a FRESH column at the default ratio, so without this
-                // a window sized to a third or two thirds snapped back to the default on every
-                // move between workspaces — reported as "size gets reset to 50%".
-                let carried_width = (!is_floating)
-                    .then(|| {
-                        self.workspace_layouts.active(op_space, current_workspace_id).and_then(
-                            |layout| {
-                                self.workspace_tree(current_workspace_id)
-                                    .column_width_offset(layout, focused_window)
-                            },
-                        )
-                    })
-                    .flatten();
+                // Capture the width before the window leaves its tree, so a size the user set
+                // and never re-applied elsewhere is not lost on the way out. The destination
+                // reads it back from per-display affinity below, NOT from a value threaded
+                // through this function: the width belongs to the display, and this move keeps
+                // the window on the same display, so what it had here is what it gets there.
+                if !is_floating
+                    && let Some(layout) =
+                        self.workspace_layouts.active(op_space, current_workspace_id)
+                {
+                    self.remember_column_width(
+                        op_space,
+                        current_workspace_id,
+                        layout,
+                        focused_window,
+                    );
+                }
 
                 if is_floating {
                     self.floating.remove_active_for_window(focused_window);
@@ -2624,20 +2712,20 @@ impl LayoutEngine {
                     return EventResponse::default();
                 }
 
-                if !is_floating {
-                    if let Some(target_layout) =
+                if !is_floating
+                    && let Some(target_layout) =
                         self.workspace_layouts.active(op_space, target_workspace_id)
-                    {
-                        self.workspace_tree_mut(target_workspace_id)
-                            .add_window_after_selection(target_layout, focused_window);
-                        if let Some(offset) = carried_width {
-                            self.workspace_tree_mut(target_workspace_id).set_column_width_offset(
-                                target_layout,
-                                focused_window,
-                                offset,
-                            );
-                        }
-                    }
+                {
+                    self.workspace_tree_mut(target_workspace_id)
+                        .add_window_after_selection(target_layout, focused_window);
+                    // A fresh column starts at the display's default ratio, so re-apply
+                    // whatever this window last had on THIS display.
+                    self.apply_remembered_column_width(
+                        op_space,
+                        target_workspace_id,
+                        target_layout,
+                        focused_window,
+                    );
                 }
 
                 if *follow {
@@ -2924,6 +3012,17 @@ impl LayoutEngine {
         {
             self.workspace_tree_mut(target_workspace_id)
                 .add_window_after_selection(target_layout, window_id);
+            // Adopt the size this window last had on the DESTINATION display, not the one it
+            // had on the source. A half-width column is roomy on a 2338pt monitor and cramped
+            // on a 1728pt laptop panel, so carrying the source width across would be wrong;
+            // the whole point of keying widths by display is that each has its own answer.
+            // A window that has never been here keeps the display's configured default.
+            self.apply_remembered_column_width(
+                target_space,
+                target_workspace_id,
+                target_layout,
+                window_id,
+            );
         }
 
         if self.focused_window == Some(window_id) {

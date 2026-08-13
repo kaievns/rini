@@ -34,6 +34,36 @@ pub struct DisplayAffinity {
     /// than repatriating in arbitrary id order.
     #[serde(default)]
     display_strip: HashMap<String, Vec<WindowId>>,
+    /// Column width each window last had on each display, keyed by display UUID.
+    ///
+    /// Width belongs to the DISPLAY, not the workspace: a window sized to fill the
+    /// built-in should stay that size across every workspace on the built-in, and adopt
+    /// whatever it last had on the external when it moves there. A half-width column is
+    /// a sensible default on a 2338pt-wide monitor and cramped on a 1728pt laptop panel,
+    /// so one remembered width per window cannot serve both.
+    ///
+    /// Storing it here rather than in the layout tree is deliberate. A tree is per
+    /// workspace, so a width living there is necessarily per workspace — which is the
+    /// bug this fixes: moving a full-size window from workspace 1 to 2 to 3 made it
+    /// half-size on 2 (which held other windows) and full again on 3 (which was empty),
+    /// because nothing was stored at all and the width was being inferred from how many
+    /// columns each workspace happened to contain.
+    #[serde(default)]
+    window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
+}
+
+/// The width a window occupied, as the layout means it rather than in points.
+///
+/// Points would not survive a resolution change or a move between displays of different
+/// widths, which is exactly when this record is consulted.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ColumnWidth {
+    /// Full viewport width, as `toggle_fullscreen_within_gaps` produces. Kept distinct
+    /// from `Offset` because it is a MODE, not a ratio: it must stay full width on a
+    /// display of any size, and it round-trips back to the preset width when toggled off.
+    FullWidth,
+    /// A deliberate width, as an offset from the configured `column_width_ratio`.
+    Offset(f64),
 }
 
 impl DisplayAffinity {
@@ -146,6 +176,29 @@ impl DisplayAffinity {
         self.display_strip.get(display).map(Vec::as_slice).unwrap_or_default()
     }
 
+    /// Remember the width `window` occupies on `display`.
+    pub fn set_window_width(&mut self, display: &str, window: WindowId, width: ColumnWidth) {
+        self.window_width.entry(display.to_owned()).or_default().insert(window, width);
+    }
+
+    /// Forget any remembered width, so the window adopts the display's default.
+    ///
+    /// Distinct from never having had one: toggling a deliberate width back off is an
+    /// instruction to stop pinning it, not to keep the old value.
+    pub fn clear_window_width(&mut self, display: &str, window: WindowId) {
+        if let Some(widths) = self.window_width.get_mut(display) {
+            widths.remove(&window);
+            if widths.is_empty() {
+                self.window_width.remove(display);
+            }
+        }
+    }
+
+    /// The width `window` last had on `display`, if it ever had a deliberate one.
+    pub fn window_width(&self, display: &str, window: WindowId) -> Option<ColumnWidth> {
+        self.window_width.get(display)?.get(&window).copied()
+    }
+
     /// Every window that currently has a home, in any display.
     pub fn homed_windows(&self) -> Vec<WindowId> {
         let mut windows: Vec<WindowId> = self.window_home.keys().copied().collect();
@@ -158,6 +211,10 @@ impl DisplayAffinity {
         for strip in self.display_strip.values_mut() {
             strip.retain(|candidate| *candidate != window);
         }
+        for widths in self.window_width.values_mut() {
+            widths.remove(&window);
+        }
+        self.window_width.retain(|_, widths| !widths.is_empty());
     }
 
     pub fn forget_app(&mut self, pid: pid_t) {
@@ -165,6 +222,10 @@ impl DisplayAffinity {
         for strip in self.display_strip.values_mut() {
             strip.retain(|window| window.pid != pid);
         }
+        for widths in self.window_width.values_mut() {
+            widths.retain(|window, _| window.pid != pid);
+        }
+        self.window_width.retain(|_, widths| !widths.is_empty());
     }
 
     /// Carry a window's home across an identity change (an app relaunching into a new
@@ -178,6 +239,11 @@ impl DisplayAffinity {
                 if *window == from {
                     *window = to;
                 }
+            }
+        }
+        for widths in self.window_width.values_mut() {
+            if let Some(width) = widths.remove(&from) {
+                widths.insert(to, width);
             }
         }
     }
@@ -296,6 +362,84 @@ mod tests {
         assert_eq!(
             affinity.windows_homed_to("external"),
             vec![win(1), win(8), win(9), win(2)]
+        );
+    }
+
+    /// The point of keying width by display: one window, two displays, two answers.
+    #[test]
+    fn a_window_can_have_a_different_width_on_each_display() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
+        affinity.set_window_width("external", win(1), ColumnWidth::Offset(0.25));
+
+        assert_eq!(
+            affinity.window_width("built-in", win(1)),
+            Some(ColumnWidth::FullWidth)
+        );
+        assert_eq!(
+            affinity.window_width("external", win(1)),
+            Some(ColumnWidth::Offset(0.25))
+        );
+        // A display it has never been on has no opinion, so the window adopts that
+        // display's configured default rather than inheriting another display's size.
+        assert_eq!(affinity.window_width("third", win(1)), None);
+    }
+
+    /// Clearing must forget, not freeze the last value: toggling a deliberate width off is an
+    /// instruction to follow the display default again.
+    #[test]
+    fn clearing_a_width_restores_the_display_default() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
+        affinity.clear_window_width("built-in", win(1));
+
+        assert_eq!(affinity.window_width("built-in", win(1)), None);
+    }
+
+    #[test]
+    fn forgetting_a_window_drops_its_remembered_widths() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
+        affinity.set_window_width("built-in", win(2), ColumnWidth::Offset(0.1));
+        affinity.forget_window(win(1));
+
+        assert_eq!(affinity.window_width("built-in", win(1)), None);
+        assert_eq!(
+            affinity.window_width("built-in", win(2)),
+            Some(ColumnWidth::Offset(0.1)),
+            "forgetting one window must not disturb another"
+        );
+    }
+
+    /// An app relaunching into a new WindowId must keep the size the user gave it, for the
+    /// same reason its home display carries across.
+    #[test]
+    fn rekeying_carries_remembered_widths() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width("built-in", win(1), ColumnWidth::FullWidth);
+        affinity.rekey_window(win(1), win(7));
+
+        assert_eq!(affinity.window_width("built-in", win(1)), None);
+        assert_eq!(
+            affinity.window_width("built-in", win(7)),
+            Some(ColumnWidth::FullWidth)
+        );
+    }
+
+    #[test]
+    fn forgetting_an_app_drops_widths_for_all_of_its_windows() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_width("built-in", WindowId::new(1, 1), ColumnWidth::FullWidth);
+        affinity.set_window_width("built-in", WindowId::new(1, 2), ColumnWidth::Offset(0.2));
+        affinity.set_window_width("built-in", WindowId::new(2, 1), ColumnWidth::Offset(0.3));
+        affinity.forget_app(1);
+
+        assert_eq!(affinity.window_width("built-in", WindowId::new(1, 1)), None);
+        assert_eq!(affinity.window_width("built-in", WindowId::new(1, 2)), None);
+        assert_eq!(
+            affinity.window_width("built-in", WindowId::new(2, 1)),
+            Some(ColumnWidth::Offset(0.3)),
+            "another app's windows must survive"
         );
     }
 

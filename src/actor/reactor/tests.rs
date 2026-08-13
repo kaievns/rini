@@ -168,9 +168,16 @@ fn it_manages_windows_on_enabled_spaces() {
     reactor.handle_events(apps.make_app(1, make_windows(1)));
 
     let _events = apps.simulate_events();
-    assert_eq!(
-        full_screen,
-        apps.windows.get(&WindowId::new(1, 1)).expect("Window was not resized").frame,
+    // Tiled onto the space, at the configured column width rather than the whole screen: a
+    // lone column no longer expands to fill the viewport, because that made a window's size
+    // depend on how many neighbours its workspace held. What this test is actually about is
+    // that the window got managed at all, so it asserts placement, not full width.
+    let frame = apps.windows.get(&WindowId::new(1, 1)).expect("Window was not resized").frame;
+    assert_eq!(frame.origin, full_screen.origin);
+    assert_eq!(frame.size.height, full_screen.size.height);
+    assert!(
+        frame.size.width > 0.0 && frame.size.width <= full_screen.size.width,
+        "window must be tiled within the screen, got {frame:?}"
     );
 }
 
@@ -2056,13 +2063,18 @@ fn it_keeps_discovered_windows_on_their_initial_screen() {
     reactor.handle_events(apps.make_app(1, windows));
 
     let _events = apps.simulate_events();
-    assert_eq!(
-        screen1,
-        apps.windows.get(&WindowId::new(1, 1)).expect("Window was not resized").frame,
+    // Asserts WHICH SCREEN each window landed on, not how wide it ended up. A lone column no
+    // longer stretches to fill its viewport, so comparing against the full screen rect would
+    // be testing the column-width rule rather than the screen-affinity behaviour named here.
+    let frame1 = apps.windows.get(&WindowId::new(1, 1)).expect("Window was not resized").frame;
+    let frame2 = apps.windows.get(&WindowId::new(1, 2)).expect("Window was not resized").frame;
+    assert!(
+        screen1.contains(frame1.mid()),
+        "window 1 must stay on screen 1: {frame1:?}"
     );
-    assert_eq!(
-        screen2,
-        apps.windows.get(&WindowId::new(1, 2)).expect("Window was not resized").frame,
+    assert!(
+        screen2.contains(frame2.mid()),
+        "window 2 must stay on screen 2: {frame2:?}"
     );
 }
 
@@ -3052,13 +3064,19 @@ fn moving_tiled_window_to_display_applies_destination_layout_after_transfer_fram
         writes.len() >= 2,
         "expected transfer and tiled writes: {writes:?}"
     );
+    // The subject here is ORDERING: the destination's own layout pass must have the last word,
+    // after the transfer frame. It used to be asserted as "the final frame equals the whole
+    // right-hand screen", which only held because a lone column filled its viewport. That rule
+    // is gone, so the check is now that the final frame is tiled ON the right-hand display.
+    let last = writes.last().copied().expect("at least one write");
     assert!(
-        writes.last().is_some_and(|frame| frame.same_as(right)),
-        "the destination layout must supply the final frame: {writes:?}"
+        right.contains(last.mid()),
+        "the destination layout must supply the final frame, on the destination display: \
+         {writes:?}"
     );
     assert!(
-        !writes.first().is_some_and(|frame| frame.same_as(right)),
-        "the initial transfer frame should preserve the source tile size: {writes:?}"
+        !left.contains(last.mid()),
+        "the final frame must not still be on the source display: {writes:?}"
     );
 }
 
@@ -6087,6 +6105,66 @@ fn moving_a_window_between_workspaces_keeps_its_column_width() {
         resized_width.round(),
         "the window must arrive with the width it had, not the workspace default"
     );
+}
+
+/// A window's width must not change because its destination workspace is emptier.
+///
+/// The exact reported repro: a full-size window moved from workspace 1 to 2 to 3 on ONE
+/// display went half-size on 2 (which held other windows) and full again on 3 (which was
+/// empty). Two causes, both fixed:
+///   - a lone column used to be rendered at the full viewport width, so "alone" and
+///     "deliberately full width" were indistinguishable, and
+///   - the full-width MODE was dropped by `remove_window` on the way out of a tree, with
+///     nothing recording that the user had asked for it.
+///
+/// Width is now remembered per DISPLAY, so it survives any number of workspace hops. The
+/// window here is alone on workspace 3 and shares workspace 2, which is what made the old
+/// behaviour flip back and forth.
+#[test]
+fn a_full_width_window_stays_full_width_across_workspaces() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let sized = WindowId::new(1, 1);
+    let neighbour = WindowId::new(1, 2);
+
+    set_space_membership(&[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspaces = reactor.test_workspace_ids(space);
+    // The neighbour lives on workspace 2, so that workspace is POPULATED while workspace 3
+    // stays empty — the asymmetry that produced the bug.
+    for (window, wsid, workspace) in
+        [(sized, 901u32, workspaces[0]), (neighbour, 902, workspaces[1])]
+    {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, sized));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
+    let full_width = laid_out_frame(&mut reactor, space, screen, sized)
+        .expect("window is laid out")
+        .size
+        .width;
+
+    for target in [1usize, 2] {
+        reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+            workspace: rift_protocol::WorkspaceSelector::Index(target),
+            follow: true,
+            window_id: None,
+        });
+        let width = laid_out_frame(&mut reactor, space, screen, sized)
+            .unwrap_or_else(|| panic!("window is laid out on workspace {target}"))
+            .size
+            .width;
+        assert_eq!(
+            width.round(),
+            full_width.round(),
+            "workspace {target} changed the width of a full-size window"
+        );
+    }
 }
 
 /// Strip navigation stops at the edge instead of falling into the floating layer.

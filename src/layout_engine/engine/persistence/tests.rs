@@ -1075,7 +1075,7 @@ fn schema_v2_display_maps_are_folded_into_the_affinity_registry() {
         .serialize_to_string()
         .replacen("\"schema_version\":3", "\"schema_version\":2", 1)
         .replacen(
-            "\"display_affinity\":(display_space:{},window_home:{},display_strip:{})",
+            "\"display_affinity\":(display_space:{},window_home:{},display_strip:{},window_width:{})",
             "\"space_display_map\":{(7):Some(\"external-uuid\")},\
              \"display_last_space\":{\"builtin-uuid\":(1)}",
             1,

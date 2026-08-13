@@ -776,9 +776,21 @@ impl LayoutSystem for ScrollingLayoutSystem {
             // out on top of the full-width one.
             let holds_full_width =
                 col.windows.iter().any(|wid| state.fullscreen_within_gaps.contains(wid));
+            // A LONE column used to be expanded to the full viewport here, whatever its
+            // width. Removed: it made a window's size depend on how many OTHER windows its
+            // workspace happened to hold, which is precisely what "a window size should be
+            // tied to a display not a workspace" rules out.
+            //
+            // Measured symptom: a full-size window moved from workspace 1 to 2 to 3 on one
+            // display went half-size on 2 (which held other windows) and full again on 3
+            // (which was empty). Nothing about the window changed between those two frames —
+            // only its neighbours did.
+            //
+            // niri behaves the same way: a single column keeps its preset width and simply
+            // leaves the rest of the strip empty. Full width is `maximize-column`'s job,
+            // which here is toggle_fullscreen_within_gaps (ctrl-f) — and that IS remembered
+            // per display, so it now survives a workspace change.
             let ratio = if holds_full_width {
-                1.0
-            } else if state.columns.len() == 1 && !col.width_overridden {
                 1.0
             } else {
                 self.clamp_ratio(base_ratio + col.width_offset)
@@ -1273,6 +1285,28 @@ impl LayoutSystem for ScrollingLayoutSystem {
         if let Some(column) = state.columns.get_mut(col_idx) {
             column.width_offset = offset;
             column.width_overridden = true;
+        }
+    }
+
+    fn is_window_full_width(&self, layout: LayoutId, wid: WindowId) -> bool {
+        self.layout_state(layout)
+            .is_some_and(|state| state.fullscreen_within_gaps.contains(&wid))
+    }
+
+    fn set_window_full_width(&mut self, layout: LayoutId, wid: WindowId, full: bool) {
+        let Some(state) = self.layout_state_mut(layout) else {
+            return;
+        };
+        if state.locate(wid).is_none() {
+            return;
+        }
+        if full {
+            // Full width and true fullscreen are mutually exclusive modes, exactly as the
+            // two toggle commands treat them.
+            state.fullscreen.remove(&wid);
+            state.fullscreen_within_gaps.insert(wid);
+        } else {
+            state.fullscreen_within_gaps.remove(&wid);
         }
     }
 
@@ -2899,8 +2933,19 @@ mod tests {
         }
     }
 
+    /// A column's width must not depend on how many OTHER columns share its workspace.
+    ///
+    /// This inverts the former `single_column_fills_full_width`, which asserted that a lone
+    /// column expands to the whole viewport. That rule made a window's size a function of its
+    /// neighbours, so a full-size window moved from a populated workspace to an empty one
+    /// changed size with nothing having been done to it — reported as an Outlook window going
+    /// half-size on workspace 2 and full again on 3.
+    ///
+    /// niri behaves as asserted here: one column keeps its preset width and leaves the rest
+    /// of the strip empty. Full width is `maximize-column`
+    /// (`toggle_fullscreen_within_gaps`), which is explicit and remembered per display.
     #[test]
-    fn single_column_fills_full_width() {
+    fn a_lone_column_keeps_its_configured_width() {
         let mut settings = ScrollingLayoutSettings::default();
         settings.column_width_ratio = 0.4;
         let mut system = ScrollingLayoutSystem::new(&settings);
@@ -2914,11 +2959,14 @@ mod tests {
         let frames1 = render(&system, layout, screen, &gaps);
         let w1_frame1 = frame_for(&frames1, w1);
 
-        // With only 1 column, width should be 100% of tiling width (1000.0)
-        assert!((w1_frame1.size.width - 1000.0).abs() < 1.0);
+        // Alone in the strip, and still the configured 0.4 * 1000.
+        assert!(
+            (w1_frame1.size.width - 400.0).abs() < 1.0,
+            "a lone column must keep its configured width, got {w1_frame1:?}"
+        );
         assert!((w1_frame1.origin.x - 0.0).abs() < 1.0);
 
-        // Add a second window (w2)
+        // Gaining a neighbour must not resize it. This is the property that failed before.
         let w2 = wid(1, 2);
         system.add_window_after_selection(layout, w2);
 
@@ -2926,9 +2974,39 @@ mod tests {
         let w1_frame2 = frame_for(&frames2, w1);
         let w2_frame2 = frame_for(&frames2, w2);
 
-        // With 2 columns, they should respect the configured column_width_ratio (0.4 * 1000 = 400.0)
-        assert!((w1_frame2.size.width - 400.0).abs() < 1.0);
+        assert!(
+            (w1_frame2.size.width - w1_frame1.size.width).abs() < 1.0,
+            "gaining a neighbour must not resize a column: {w1_frame1:?} -> {w1_frame2:?}"
+        );
         assert!((w2_frame2.size.width - 400.0).abs() < 1.0);
+    }
+
+    /// Full width is still reachable — explicitly, rather than as a side effect of being
+    /// alone in a workspace.
+    #[test]
+    fn full_width_mode_still_fills_the_viewport() {
+        let mut settings = ScrollingLayoutSettings::default();
+        settings.column_width_ratio = 0.4;
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let w1 = wid(1, 1);
+        system.add_window_after_selection(layout, w1);
+
+        system.set_window_full_width(layout, w1, true);
+        assert!(system.is_window_full_width(layout, w1));
+
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        let frame = frame_for(&render(&system, layout, screen, &gaps), w1);
+        assert!(
+            (frame.size.width - 1000.0).abs() < 1.0,
+            "full-width mode must fill the tiling width, got {frame:?}"
+        );
+
+        // And it round-trips back to the preset, so the mode is not a one-way door.
+        system.set_window_full_width(layout, w1, false);
+        let frame = frame_for(&render(&system, layout, screen, &gaps), w1);
+        assert!((frame.size.width - 400.0).abs() < 1.0, "got {frame:?}");
     }
 
     #[test]
