@@ -987,7 +987,26 @@ impl State {
                 let (elem, started_animation) = {
                     let window = self.window_mut(wid)?;
                     let started_animation = !std::mem::replace(&mut window.is_animating, true);
-                    window.last_animation_frame = None;
+                    // Seed the size record from the window's CURRENT frame rather than
+                    // clearing it.
+                    //
+                    // flush_frames only pays for the expensive resize path (set_size,
+                    // set_position, set_size — three synchronous AX round trips) when the size
+                    // has changed since the last animated frame. Clearing the record made
+                    // `size_changed` unconditionally true for the FIRST frame of every
+                    // animation, so every animation opened with a 3x write on every window
+                    // before settling into the cheap one-call path.
+                    //
+                    // That is the "jumps the first one or two times and then goes more smooth"
+                    // report. It shows up on workspace switches and not on sideways scrolls
+                    // because a switch animates windows arriving from a parked position, whose
+                    // owning apps have been idle for minutes and are slow to answer the first
+                    // AX call; a scroll animates windows that were just being written to.
+                    //
+                    // The current frame is the right seed: a pure slide keeps the size
+                    // constant, so the first comparison correctly reports no change. A genuine
+                    // resize still differs from it and takes the full path.
+                    window.last_animation_frame = window.elem.frame().ok();
                     (window.elem.clone(), started_animation)
                 };
                 if started_animation {

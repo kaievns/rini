@@ -320,11 +320,11 @@ impl AnimationManager {
     ) -> bool {
         let direction = reactor.layout_manager.layout_engine.take_workspace_switch_direction(space);
         let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
-        // The direction is required to distinguish a real workspace switch (which animates)
-        // from a re-layout of the workspace already showing (which must not). It deliberately
-        // does NOT choose the entry edge: see workspace_slide_travel for why the arriving
-        // strip always enters from below.
-        let Some(_direction) = direction.filter(|_| animate) else {
+        // The direction distinguishes a real workspace switch (which animates) from a
+        // re-layout of the workspace already showing (which must not), AND supplies the
+        // horizontal half of the diagonal — see `slide_offset`. It does not choose the
+        // VERTICAL entry edge, because only one of those is placeable.
+        let Some(direction) = direction.filter(|_| animate) else {
             return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
         };
         let Some(screen) = reactor
@@ -400,6 +400,8 @@ impl AnimationManager {
             return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
         }
 
+        let offset = slide_offset(travel, direction);
+
         // Parked windows still have to reach their new parking position; they just do it
         // without an animation, since they are off-screen at both ends.
         let mut any_frame_changed = false;
@@ -422,7 +424,10 @@ impl AnimationManager {
                 .map(|wsid| reactor.transaction_manager.generate_next_txid(wsid))
                 .unwrap_or_default();
             let start = CGRect::new(
-                CGPoint::new(target_frame.origin.x, target_frame.origin.y + travel),
+                CGPoint::new(
+                    target_frame.origin.x + offset.x,
+                    target_frame.origin.y + offset.y,
+                ),
                 target_frame.size,
             );
             if let Some(window) = reactor.state.windows.window_mut(wid) {
@@ -784,6 +789,39 @@ impl Animation {
     fn skip_to_end_and_end(self) {
         self.finish_all();
     }
+}
+
+/// Where the arriving strip starts, relative to where it ends.
+///
+/// The vertical component is always DOWNWARD, because that is the only direction macOS will
+/// place a window in: it refuses any position above the display's top edge, and a tiled column
+/// normally sits flush against that edge. See `workspace_slide_travel`.
+///
+/// That left the two directions looking identical, which is worse than a missing animation:
+/// "you made it slide in from the bottom no matter which direction im going and that's super
+/// confusing". The horizontal component restores the distinction. It is fully placeable in
+/// both directions — there is no clamp on x within a display — so going DOWN the stack enters
+/// from below-and-right and going UP enters from below-and-left. Same vertical motion,
+/// mirrored diagonal.
+///
+/// The horizontal offset is a fraction of the vertical one rather than a fixed number of
+/// points, so the diagonal keeps its angle on displays of any height and the two components
+/// finish together.
+fn slide_offset(
+    travel: f64,
+    direction: crate::model::reactor::WorkspaceSwitchDirection,
+) -> CGPoint {
+    use crate::model::reactor::WorkspaceSwitchDirection as Dir;
+
+    /// Shallow enough to read as "sideways lean" rather than a diagonal fly-in. At the
+    /// measured 540pt of vertical travel this is ~135pt of horizontal movement.
+    const LEAN: f64 = 0.25;
+
+    let dx = match direction {
+        Dir::Down => travel * LEAN,
+        Dir::Up => -travel * LEAN,
+    };
+    CGPoint::new(dx, travel)
 }
 
 /// Below this a slide is not worth starting: invisible to the eye, and a zero-length one
@@ -1223,6 +1261,59 @@ mod tests {
                         screen.origin.y
                     );
                 }
+            }
+        }
+    }
+
+    /// The two directions must be visually distinguishable.
+    ///
+    /// Both enter from below, because only downward entry is placeable, so without a
+    /// horizontal component an up-switch and a down-switch look identical: "you made it slide
+    /// in from the bottom no matter which direction im going and that's super confusing".
+    #[test]
+    fn the_two_directions_lean_opposite_ways() {
+        use crate::model::reactor::WorkspaceSwitchDirection::{Down, Up};
+
+        let down = slide_offset(540.0, Down);
+        let up = slide_offset(540.0, Up);
+
+        assert_eq!(down.y, up.y, "both directions enter from below");
+        assert!(down.x > 0.0, "down the stack leans right, got {}", down.x);
+        assert!(up.x < 0.0, "up the stack leans left, got {}", up.x);
+        assert_eq!(down.x, -up.x, "the lean should be symmetric");
+        assert!(
+            down.x.abs() < down.y.abs(),
+            "the lean must stay shallower than the vertical travel"
+        );
+    }
+
+    /// The horizontal lean must not push a start frame onto a neighbouring display.
+    ///
+    /// x is not clamped by macOS the way y is, so a lean too large would place the window on
+    /// the display beside it — which `best_space_for_frame` then reads as a real display
+    /// change, and the affinity pass relocates the window for good. That is the same class of
+    /// bug the vertical bound already guards.
+    #[test]
+    fn the_lean_keeps_the_start_frame_on_its_own_display() {
+        use crate::model::reactor::WorkspaceSwitchDirection::{Down, Up};
+        use crate::sys::geometry::CGRectExt;
+
+        let screen = BUILT_IN;
+        // Worst cases: a column hard against each edge of the strip.
+        for x in [screen.origin.x, screen.max().x - 859.0] {
+            let window = rect(x, screen.origin.y, 859.0, screen.size.height - 8.0);
+            let travel = workspace_slide_travel(screen, &[window]);
+            for direction in [Up, Down] {
+                let offset = slide_offset(travel, direction);
+                let start = CGRect::new(
+                    CGPoint::new(window.origin.x + offset.x, window.origin.y + offset.y),
+                    window.size,
+                );
+                assert!(
+                    screen.contains(start.mid()),
+                    "{direction:?} at x={x}: start midpoint {:?} left display {screen:?}",
+                    start.mid()
+                );
             }
         }
     }
