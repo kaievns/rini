@@ -320,7 +320,11 @@ impl AnimationManager {
     ) -> bool {
         let direction = reactor.layout_manager.layout_engine.take_workspace_switch_direction(space);
         let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
-        let Some(direction) = direction.filter(|_| animate) else {
+        // The direction is required to distinguish a real workspace switch (which animates)
+        // from a re-layout of the workspace already showing (which must not). It deliberately
+        // does NOT choose the entry edge: see workspace_slide_travel for why the arriving
+        // strip always enters from below.
+        let Some(_direction) = direction.filter(|_| animate) else {
             return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
         };
         let Some(screen) = reactor
@@ -333,53 +337,42 @@ impl AnimationManager {
             return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
         };
 
-        // The arriving strip comes from below when travelling down the stack, and from above
-        // when travelling up. Slide WITHIN this display; never start on a neighbour.
+        // Every frame of the slide must be a position macOS will actually accept.
         //
-        // Two earlier attempts were both wrong, in opposite directions:
+        // THIS IS THE CONSTRAINT THAT MATTERS, and three earlier attempts all missed it. The
+        // AX API refuses to place a window above the display's top edge: on a display
+        // spanning y=32..1117 there is 1085pt of off-screen room BELOW y=1117 and exactly
+        // ZERO above y=32. So a slide that enters from above cannot animate through negative
+        // y — macOS silently pins those frames to the top edge.
         //
-        //  1. A full screen height. On a vertically stacked desktop that puts the start frame
-        //     squarely inside the neighbouring display, which WindowServer then reports as the
-        //     window's display — the same feedback loop fixed for parked windows in the
-        //     display-affinity work, reintroduced through the animation.
+        // Measured by instrumenting every tick, before this rewrite:
         //
-        //  2. Clamping to the GAP BEFORE the next display, which is this code's previous
-        //     shape. It traded that bug for two others, both measured on this machine
-        //     (built-in y=32..1117, external y=-1692..0):
-        //       - The built-in's gap above it is just the 32pt menu bar, so room_above=32 fell
-        //         under the threshold below and every upward switch took the instant path.
-        //         Reported as "they're just insta-flip on the way up".
-        //       - Downward, room_below was a full 1085, so the start frame sat at
-        //         y=1117..2202 — outside EVERY display. macOS refuses to place a window
-        //         entirely off-screen and clamps it, so frame 0 is not where the animation
-        //         believes it is and the motion appears to begin partway through: "a bit
-        //         junky like it's starting midway".
+        //   Down : 22 ticks, y  571.4 -> 32.0    every frame accepted
+        //   Up   : 22 ticks, y -503.4 -> 32.0    ~19 frames clamped to 32
         //
-        // Measuring the room INSIDE the display fixes both at once. The bound that matters is
-        // where a frame gets ATTRIBUTED: best_space_for_frame resolves by MIDPOINT first, so
-        // keeping every start frame's midpoint on this display means no window can be read as
-        // having moved to the neighbour. That is what the old clamp was really protecting, and
-        // it holds regardless of how the displays are arranged. Staying partly on-screen also
-        // keeps macOS from clamping the frame.
+        // The upward case therefore sent a perfectly smooth interpolation that the window
+        // never followed: it sat at y=32 for ~85% of the animation and then arrived, which
+        // reads as an instant switch. Reported repeatedly as "instaswap from the top".
         //
-        // For a full-height window this yields about half the display height — a clearly
-        // visible slide, and every interpolated frame is placeable.
+        // The earlier attempts each moved the problem rather than fixing it, because each
+        // changed WHICH direction received the large travel and the clamp simply followed:
+        //   1. A full screen height          -> start frame landed on the neighbouring display.
+        //   2. Clamp to the gap beside it    -> up died (the gap above is the 32pt menu bar).
+        //   3. Clamp to room inside it       -> symmetric arithmetic, but upward frames were
+        //                                      still negative, so macOS clamped them.
+        // All three passed their unit tests, because the arithmetic was never wrong. The
+        // failure was in what the OS would accept, one layer below.
+        //
+        // A slide is now bounded so the topmost animated window never goes above the top
+        // edge. That makes the motion smaller in the upward direction than it could
+        // theoretically be, and REAL rather than a smooth-looking no-op. Downward keeps using
+        // the off-screen room below, which is genuinely available.
         //
         // Only windows that END UP VISIBLE take part. Parking puts an off-strip window at the
-        // display's BOTTOM edge, so its downward allowance is negative — and the fold below
-        // takes the minimum across every window, then clamps at zero. One parked window
-        // therefore cancelled the whole downward slide while leaving upward untouched:
-        //
-        //   built-in  visible  Down_allow= +538.5   Up_allow= +538.5
-        //   built-in  PARKED   Down_allow= -541.5   Up_allow=+1618.5
-        //
-        // which is exactly the reported "animation on the way up ... nothing on the way down".
-        //
-        // Excluding them is also what makes the slide watchable on a busy display. Every
-        // animated window costs an AX frame write per tick, and on the external 10 of 12
-        // windows are parked, so 6x the necessary work was being spent moving windows that are
-        // off-screen the whole time and cannot be seen: "on the external screen it's barely
-        // noticeable, i catch like one or two frames".
+        // display's BOTTOM edge, so including them dragged the bound to zero and cancelled
+        // the slide outright; it also cost an AX write per parked window per tick for motion
+        // nobody can see (10 of 12 windows on the external), which is why the slide was
+        // "barely noticeable" there.
         let others: Vec<CGRect> = reactor
             .space_state
             .screens
@@ -396,10 +389,14 @@ impl AnimationManager {
             });
 
         let frames: Vec<CGRect> = sliding.iter().map(|(_, frame)| *frame).collect();
-        let travel = workspace_slide_travel(screen, &frames, direction);
+        // `direction` is deliberately not consulted for the entry edge; see
+        // workspace_slide_travel for why both directions enter from below. It is still taken
+        // from the engine above so that a switch which did not change workspace takes the
+        // instant path.
+        let travel = workspace_slide_travel(screen, &frames);
         // Nothing visible to slide (an empty workspace), or a slide too short to see. A
         // zero-length one would also write every target frame twice for no reason.
-        if frames.is_empty() || travel.abs() < 4.0 {
+        if frames.is_empty() || travel.abs() < MIN_VISIBLE_TRAVEL {
             return Self::instant_layout_inner(reactor, space, layout, skip_wid, true);
         }
 
@@ -789,49 +786,55 @@ impl Animation {
     }
 }
 
-/// How far a workspace slide may travel, signed: positive enters from below, negative from
-/// above.
+/// Below this a slide is not worth starting: invisible to the eye, and a zero-length one
+/// would write every target frame twice.
+const MIN_VISIBLE_TRAVEL: f64 = 4.0;
+
+/// How far a workspace slide travels. Always POSITIVE: the arriving strip enters from below,
+/// whichever way the workspace stack is being traversed.
 ///
-/// Every start frame must keep its midpoint on `screen`. `best_space_for_frame` attributes a
-/// window by midpoint first, so a start frame whose midpoint lands on a neighbouring display
-/// gets read as having MOVED there, and the display-affinity pass then relocates it for real.
-/// Staying partly on-screen also stops macOS clamping the frame, which it does for any window
-/// placed entirely outside every display.
+/// Entering from below in both directions looks like a deliberate design choice and is really
+/// a consequence of what macOS permits. The AX API refuses to place a window above the
+/// display's top edge, and a tiled column normally sits flush against that edge, so the room
+/// available above is ZERO. Measured on a display spanning y=32..1117:
 ///
-/// Extracted from `workspace_switch_layout` so the bound can be asserted directly; getting it
-/// wrong is not visible in a unit test of the animation itself, and two successive attempts
-/// were wrong in opposite directions.
-fn workspace_slide_travel(
-    screen: CGRect,
-    frames: &[CGRect],
-    direction: crate::model::reactor::WorkspaceSwitchDirection,
-) -> f64 {
+/// ```text
+/// room below y=1117 : 1085pt   (a window may hang off the bottom)
+/// room above y=32   :    0pt   (macOS clamps anything higher)
+/// ```
+///
+/// An upward slide therefore cannot exist. Three earlier versions tried to produce one, and
+/// each sent a smooth interpolation through negative y that the window never followed —
+/// ~19 of 22 frames pinned to y=32, so it sat still and then arrived. Reported every time as
+/// "instaswap from the top".
+///
+/// Direction is still expressed, just not through the entry edge: the DEPARTING strip is what
+/// differs, and each column's horizontal position gives the diagonal motion the stack
+/// implies. Movement that is real in one direction beats movement that is symmetric on paper
+/// and absent on screen.
+///
+/// The bound is the midpoint rule, which exists for a second and unrelated reason:
+/// `best_space_for_frame` attributes a window by midpoint, so a start frame whose midpoint
+/// lands on a neighbouring display gets read as having MOVED there, and the display-affinity
+/// pass then relocates it for real.
+///
+/// Extracted so the bound can be asserted directly. Every previous version passed its unit
+/// tests while the animation stayed visibly broken, because the tests checked arithmetic and
+/// the failure was one layer down, in what the OS would accept.
+fn workspace_slide_travel(screen: CGRect, frames: &[CGRect]) -> f64 {
     /// Keeps the midpoint strictly inside rather than exactly on the edge, where rounding
     /// could tip it onto the neighbour.
     const EDGE_MARGIN: f64 = 4.0;
 
-    let room = frames
+    frames
         .iter()
         .map(|frame| {
+            // The lowest this window's midpoint may sit is the display's bottom edge.
             let to_midpoint = frame.size.height / 2.0;
-            match direction {
-                // Starting below the target: the lowest the midpoint may sit is the bottom edge.
-                crate::model::reactor::WorkspaceSwitchDirection::Down => {
-                    screen.max().y - EDGE_MARGIN - frame.origin.y - to_midpoint
-                }
-                // Starting above it: the highest the midpoint may sit is the top edge.
-                crate::model::reactor::WorkspaceSwitchDirection::Up => {
-                    frame.origin.y + to_midpoint - screen.origin.y - EDGE_MARGIN
-                }
-            }
+            screen.max().y - EDGE_MARGIN - frame.origin.y - to_midpoint
         })
         .fold(screen.size.height, f64::min)
-        .max(0.0);
-
-    match direction {
-        crate::model::reactor::WorkspaceSwitchDirection::Down => room,
-        crate::model::reactor::WorkspaceSwitchDirection::Up => -room,
-    }
+        .max(0.0)
 }
 
 fn get_frame(a: CGRect, b: CGRect, t: f64) -> CGRect {
@@ -1185,108 +1188,113 @@ mod tests {
     const EXTERNAL: CGRect =
         CGRect::new(CGPoint::new(-670.0, -1692.0), CGSize::new(3008.0, 1692.0));
 
-    /// A slide must be visible in BOTH directions, on every display.
+    /// EVERY frame of a slide must be a position macOS will actually accept.
     ///
-    /// The previous clamp measured the gap to the neighbouring display, which on the built-in
-    /// is just the 32pt menu bar. That fell under the 4pt threshold, so every upward switch
-    /// silently took the instant path: "they're okay when im going down ... but they're just
-    /// insta-flip on the way up". The mirror case on the external is downward.
+    /// This is the property every previous version of this code failed while passing its own
+    /// tests. The AX API refuses to place a window above the display's top edge, so a slide
+    /// that entered from above sent a smooth interpolation through negative y that the window
+    /// never followed: measured on the built-in, 19 of 22 frames were pinned to y=32, the
+    /// window sat still, and it read as an instant switch.
+    ///
+    /// Asserting the arithmetic is not enough — the earlier tests all did that and passed. The
+    /// assertion has to be that the RESULTING FRAMES are placeable.
     #[test]
-    fn a_workspace_slide_is_visible_in_both_directions_on_every_display() {
-        use crate::model::reactor::WorkspaceSwitchDirection::{Down, Up};
-
+    fn every_slide_frame_is_a_position_macos_will_accept() {
         for (name, screen) in [("built-in", BUILT_IN), ("external", EXTERNAL)] {
-            // A full-height window, as a maximised column is.
-            let window = rect(screen.origin.x, screen.origin.y, 800.0, screen.size.height - 8.0);
-            for direction in [Up, Down] {
-                let travel = workspace_slide_travel(screen, &[window], direction);
+            for height in [200.0, screen.size.height / 2.0, screen.size.height - 8.0] {
+                let window = rect(screen.origin.x, screen.origin.y, 800.0, height);
+                let travel = workspace_slide_travel(screen, &[window]);
                 assert!(
-                    travel.abs() > 4.0,
-                    "{name} {direction:?}: travel {travel} is below the visibility threshold, \
-                     so the switch would insta-flip"
+                    travel >= 0.0,
+                    "{name} h={height}: travel must enter from below, got {travel}"
                 );
+
+                // Walk the whole eased path, not just the endpoints: a mid-frame above the
+                // top edge would stall just as visibly as a bad start frame.
+                let start =
+                    CGRect::new(CGPoint::new(window.origin.x, window.origin.y + travel), window.size);
+                for step in 0..=20 {
+                    let frame = get_frame(start, window, f64::from(step) / 20.0);
+                    assert!(
+                        frame.origin.y >= screen.origin.y - 0.5,
+                        "{name} h={height} step={step}: frame at y={} is above the display top \
+                         y={}, which macOS clamps",
+                        frame.origin.y,
+                        screen.origin.y
+                    );
+                }
             }
+        }
+    }
+
+    /// A slide has to be big enough to see, in whichever direction the stack is traversed.
+    ///
+    /// Both directions now enter from below, so there is one travel value rather than two, and
+    /// this pins that it clears the visibility threshold for a realistic column.
+    #[test]
+    fn a_workspace_slide_is_visible_on_every_display() {
+        for (name, screen) in [("built-in", BUILT_IN), ("external", EXTERNAL)] {
+            let window = rect(screen.origin.x, screen.origin.y, 800.0, screen.size.height - 8.0);
+            let travel = workspace_slide_travel(screen, &[window]);
+            assert!(
+                travel > MIN_VISIBLE_TRAVEL,
+                "{name}: travel {travel} is below the visibility threshold, so the switch \
+                 would insta-flip"
+            );
         }
     }
 
     /// A parked window must not be able to cancel the slide.
     ///
-    /// Parking puts an off-strip window at the display's BOTTOM edge, so its downward
-    /// allowance is NEGATIVE, and the travel is the minimum across every window clamped at
-    /// zero. One parked window therefore killed every downward slide while leaving upward
-    /// untouched — reported as the animation having "reversed basically", visible going up and
-    /// insta-flip going down. Measured on the built-in:
-    ///
-    ///   visible  Down_allow= +538.5   Up_allow= +538.5
-    ///   PARKED   Down_allow= -541.5   Up_allow=+1618.5
-    ///
-    /// `workspace_switch_layout` now excludes parked windows before calling this, so the guard
-    /// under test is that a parked frame WOULD still poison the result if one leaked through.
-    /// That keeps the arithmetic honest rather than asserting the filter twice.
+    /// Parking puts an off-strip window at the display's BOTTOM edge, which leaves it no room
+    /// to enter from below — so including one collapses the travel to zero and kills the
+    /// animation outright. `workspace_switch_layout` filters them out before calling this; the
+    /// guard under test is that a leaked parked frame WOULD still poison the result, which
+    /// keeps the reason for the filter documented.
     #[test]
-    fn a_parked_frame_would_cancel_a_downward_slide() {
-        use crate::model::reactor::WorkspaceSwitchDirection::{Down, Up};
-
+    fn a_parked_frame_would_cancel_the_slide() {
         let screen = BUILT_IN;
         let visible = rect(screen.origin.x, screen.origin.y + 4.0, 800.0, 1077.0);
         // Where HiddenWindowPlacement actually parks it: bottom edge, 1pt sliver showing.
         let parked = rect(screen.max().x - 1.0, screen.max().y - 1.0, 800.0, 1077.0);
 
-        let visible_only = workspace_slide_travel(screen, &[visible], Down);
         assert!(
-            visible_only > 4.0,
-            "a visible window alone must slide downward, got {visible_only}"
+            workspace_slide_travel(screen, &[visible]) > MIN_VISIBLE_TRAVEL,
+            "a visible window alone must slide"
         );
-
-        let with_parked = workspace_slide_travel(screen, &[visible, parked], Down);
         assert_eq!(
-            with_parked, 0.0,
-            "this is the bug being guarded against: a parked frame zeroes the downward travel"
-        );
-
-        // And the asymmetry is what made it look like a reversal rather than a dead animation.
-        assert!(
-            workspace_slide_travel(screen, &[visible, parked], Up).abs() > 4.0,
-            "upward travel survives a parked frame, which is why only one direction broke"
+            workspace_slide_travel(screen, &[visible, parked]),
+            0.0,
+            "a parked frame zeroes the travel, which is why they are filtered out"
         );
     }
 
     /// Every start frame must keep its midpoint on its OWN display.
     ///
-    /// This is the bound that matters: `best_space_for_frame` attributes a window by midpoint,
-    /// so a start frame centred on the neighbour is read as a genuine display change and the
-    /// window gets relocated. A full screen height of travel violated this in both directions,
-    /// and also placed the frame fully off every display, where macOS clamps it — the reported
-    /// "starting midway" jank.
+    /// A second, unrelated reason to bound the travel: `best_space_for_frame` attributes a
+    /// window by midpoint, so a start frame centred on the neighbour is read as a genuine
+    /// display change and the display-affinity pass relocates the window for real.
     #[test]
     fn a_workspace_slide_never_starts_on_another_display() {
-        use crate::model::reactor::WorkspaceSwitchDirection::{Down, Up};
         use crate::sys::geometry::CGRectExt;
 
-        for (name, screen, other) in [
-            ("built-in", BUILT_IN, EXTERNAL),
-            ("external", EXTERNAL, BUILT_IN),
-        ] {
+        for (name, screen, other) in
+            [("built-in", BUILT_IN, EXTERNAL), ("external", EXTERNAL, BUILT_IN)]
+        {
             for height in [200.0, screen.size.height / 2.0, screen.size.height - 8.0] {
                 let window = rect(screen.origin.x, screen.origin.y, 800.0, height);
-                for direction in [Up, Down] {
-                    let travel = workspace_slide_travel(screen, &[window], direction);
-                    let start = CGRect::new(
-                        CGPoint::new(window.origin.x, window.origin.y + travel),
-                        window.size,
-                    );
-                    let mid = start.mid();
-                    assert!(
-                        screen.contains(mid),
-                        "{name} {direction:?} h={height}: start midpoint {mid:?} left its own \
-                         display {screen:?}"
-                    );
-                    assert!(
-                        !other.contains(mid),
-                        "{name} {direction:?} h={height}: start midpoint {mid:?} landed on the \
-                         neighbouring display {other:?}"
-                    );
-                }
+                let travel = workspace_slide_travel(screen, &[window]);
+                let start =
+                    CGRect::new(CGPoint::new(window.origin.x, window.origin.y + travel), window.size);
+                let mid = start.mid();
+                assert!(
+                    screen.contains(mid),
+                    "{name} h={height}: start midpoint {mid:?} left its own display {screen:?}"
+                );
+                assert!(
+                    !other.contains(mid),
+                    "{name} h={height}: start midpoint {mid:?} landed on the neighbour {other:?}"
+                );
             }
         }
     }
@@ -1295,12 +1303,10 @@ mod tests {
     /// tall window cannot drag a short one off its display.
     #[test]
     fn a_workspace_slide_respects_the_most_constrained_window() {
-        use crate::model::reactor::WorkspaceSwitchDirection::Down;
-
         let tall = rect(0.0, 32.0, 800.0, 1077.0);
         let short = rect(900.0, 900.0, 800.0, 200.0);
-        let together = workspace_slide_travel(BUILT_IN, &[tall, short], Down);
-        let alone = workspace_slide_travel(BUILT_IN, &[short], Down);
+        let together = workspace_slide_travel(BUILT_IN, &[tall, short]);
+        let alone = workspace_slide_travel(BUILT_IN, &[short]);
 
         assert!(
             together <= alone,
@@ -1308,7 +1314,7 @@ mod tests {
         );
         assert_eq!(
             together,
-            workspace_slide_travel(BUILT_IN, &[tall], Down).min(alone),
+            workspace_slide_travel(BUILT_IN, &[tall]).min(alone),
             "travel must be the minimum across all windows"
         );
     }
