@@ -17,10 +17,10 @@ use tracing::{debug, error, info};
 
 const MAX_MESSAGE_SIZE: u32 = 262_144;
 const MACH_BS_NAME_FMT_PREFIX: &str = "git.";
-static G_NAME: &str = "acsandmann.rift";
+static G_NAME: &str = "kaievns.rini";
 
 fn bs_name() -> CString {
-    if let Ok(name) = std::env::var("RIFT_BS_NAME") {
+    if let Ok(name) = std::env::var("RINI_BS_NAME") {
         return CString::new(name).unwrap();
     }
     CString::new(format!("{}{}", MACH_BS_NAME_FMT_PREFIX, G_NAME)).unwrap()
@@ -542,7 +542,7 @@ unsafe fn create_connection_server_port() -> mach_port_t {
     msg.0.magic2 = 0x110000;
     msg.0.magic3 = 0x110000;
 
-    let bundle = b"com.acsandmann.rift";
+    let bundle = b"com.kaievns.rini";
     let copy_len = bundle.len().min(msg.0.bundle_name.len());
     msg.0.bundle_name[..copy_len].copy_from_slice(&bundle[..copy_len]);
     if bundle.len() > copy_len {

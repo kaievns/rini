@@ -172,7 +172,7 @@ pub struct LayoutStateData {
     pub container_tree: ContainerTreeNode,
 }
 
-/// The type of a node in Rift's normalized layout topology.
+/// The type of a node in Rini's normalized layout topology.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContainerNodeType {

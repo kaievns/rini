@@ -1,5 +1,5 @@
-# rift config
-# Copy this file to ~/.config/rift/config.toml or $HOME~/.config/rift/config.toml
+# rini config
+# Copy this file to ~/.config/rini/config.toml or $HOME~/.config/rini/config.toml
 
 [settings]
 # Animations
@@ -12,7 +12,7 @@ animation_duration = 0.3
 animation_fps = 100.0
 
 # Space activation behavior
-# - If true, spaces start inactive (rift does not manage windows there)
+# - If true, spaces start inactive (rini does not manage windows there)
 #   and you must toggle activation via a keybind (toggle_space_activated).
 # - If false, spaces are managed by default and you can disable specific ones.
 # Default is true; uncomment to change.
@@ -39,30 +39,30 @@ auto_focus_blacklist = []
 
 # Run commands on start
 #
-# Tip: You can subscribe to rift events and trigger your own scripts. The command will
+# Tip: You can subscribe to rini events and trigger your own scripts. The command will
 # receive environment variables with context:
-#   RIFT_EVENT_TYPE            # "workspace_changed" | "windows_changed" | "window_title_changed" | "focused_window_changed"
-#   RIFT_WORKSPACE_ID          # workspace id
-#   RIFT_WORKSPACE_NAME        # workspace name
-#   RIFT_WORKSPACE_INDEX       # workspace index (window_title_changed and focused_window_changed)
-#   RIFT_WINDOW_COUNT          # number of windows (windows_changed only)
-#   RIFT_WINDOWS               # comma-separated window ids (windows_changed only)
-#   RIFT_WINDOW_ID             # window id (window_title_changed and focused_window_changed)
-#   RIFT_PREVIOUS_WINDOW_TITLE # previous title (window_title_changed only)
-#   RIFT_WINDOW_TITLE          # new title (window_title_changed only)
-#   RIFT_EVENT_JSON            # full JSON payload of the event
+#   RINI_EVENT_TYPE            # "workspace_changed" | "windows_changed" | "window_title_changed" | "focused_window_changed"
+#   RINI_WORKSPACE_ID          # workspace id
+#   RINI_WORKSPACE_NAME        # workspace name
+#   RINI_WORKSPACE_INDEX       # workspace index (window_title_changed and focused_window_changed)
+#   RINI_WINDOW_COUNT          # number of windows (windows_changed only)
+#   RINI_WINDOWS               # comma-separated window ids (windows_changed only)
+#   RINI_WINDOW_ID             # window id (window_title_changed and focused_window_changed)
+#   RINI_PREVIOUS_WINDOW_TITLE # previous title (window_title_changed only)
+#   RINI_WINDOW_TITLE          # new title (window_title_changed only)
+#   RINI_EVENT_JSON            # full JSON payload of the event
 #
 # Example (sketchybar integration):
 # run_on_start = [
-#   "rift-cli subscribe cli --event workspace_changed --command sh --args -c --args 'sketchybar --trigger rift_workspace_changed RIFT_WORKSPACE_NAME=\"$RIFT_WORKSPACE_NAME\" RIFT_WORKSPACE_ID=\"$RIFT_WORKSPACE_ID\"'",
-#   "rift-cli subscribe cli --event windows_changed --command sh --args -c --args 'sketchybar --trigger rift_windows_changed RIFT_WORKSPACE_NAME=\"$RIFT_WORKSPACE_NAME\" RIFT_WINDOW_COUNT=\"$RIFT_WINDOW_COUNT\"'"
+#   "rini-cli subscribe cli --event workspace_changed --command sh --args -c --args 'sketchybar --trigger rini_workspace_changed RINI_WORKSPACE_NAME=\"$RINI_WORKSPACE_NAME\" RINI_WORKSPACE_ID=\"$RINI_WORKSPACE_ID\"'",
+#   "rini-cli subscribe cli --event windows_changed --command sh --args -c --args 'sketchybar --trigger rini_windows_changed RINI_WORKSPACE_NAME=\"$RINI_WORKSPACE_NAME\" RINI_WINDOW_COUNT=\"$RINI_WINDOW_COUNT\"'"
 # ]
 
 run_on_start = []
 
 # Hot Reloading
-# - If true, rift will watch the config file for changes and reload automatically.
-# - If false, your config changes will only apply when restarting rift.
+# - If true, rini will watch the config file for changes and reload automatically.
+# - If false, your config changes will only apply when restarting rini.
 hot_reload = true
 
 [settings.layout]
@@ -159,7 +159,7 @@ default_orientation = "perpendicular"
 # - per_display: optional display-specific overrides keyed by display UUID.
 #   When present, the values in a per-display override replace the defaults
 #   (you may override only `outer`, only `inner`, or both for a display).
-#   Use the display's UUID as the key (for example, from system profiler or via rift CLI).
+#   Use the display's UUID as the key (for example, from system profiler or via rini CLI).
 
 [settings.layout.gaps.outer]
 top = 0
@@ -196,7 +196,7 @@ active_label = "index"
 # options are "layout" or "label"
 display_style = "layout"
 # .ron files in this folder appear under Layout Files in the menu bar
-layout_folder = "~/.config/rift/layouts"
+layout_folder = "~/.config/rini/layouts"
 
 [settings.ui.stack_line]
 # experimental stack line indicator (defaults to off)
@@ -224,7 +224,7 @@ fade_duration_ms = 180.0
 [settings.gestures]
 # Enable horizontal swipes to switch virtual workspaces
 enabled = false
-# If true, Rift consumes horizontal swipes handled by its trackpad gesture handlers
+# If true, Rini consumes horizontal swipes handled by its trackpad gesture handlers
 # so macOS and the foreground app do not also handle them
 consume_dock_swipe = true
 # Invert horizontal direction (swap next/prev)
@@ -253,7 +253,7 @@ drag_swap_fraction = 0.3
 
 [virtual_workspaces]
 # Virtual workspaces
-# - enabled: if false, rift behaves like a simple tiling WM with a single space
+# - enabled: if false, rini behaves like a simple tiling WM with a single space
 # - default_workspace_count: number of workspaces to create on startup (1–32)
 # - auto_assign_windows: when true, new windows can be auto-assigned using app_rules
 # - preserve_focus_per_workspace: remember last focused window per workspace
@@ -312,7 +312,7 @@ workspace_names = [
 #   - size ({ w, h }): initial size in logical pixels. Either dimension may be omitted. Floating
 #     windows are initially resized; tiled windows receive a one-time resize after insertion.
 #   - focus (boolean): focus the window after applying the rule, switching to its virtual workspace.
-#   - manage (boolean): whether Rift should manage the matching window. Set to false to ignore the window completely (default = true).
+#   - manage (boolean): whether Rini should manage the matching window. Set to false to ignore the window completely (default = true).
 #
 # Matching behavior (summary):
 #   1. All rules that match a window are evaluated.
@@ -414,7 +414,7 @@ comb1 = "Alt + Shift"
 # - move_window_to_display = { selector = "left"|"right"|"up"|"down"|N|"<display_uuid>", window_id = 123 }
 # - close_window / close_window = { window_server_id = 123 } (optional window id)
 # - focus_window = { window_id = 123, window_server_id = 456 }
-# - show_mission_control_all / show_mission_control_current / dismiss_mission_control (this is rift's own mission control, not macOS's)
+# - show_mission_control_all / show_mission_control_current / dismiss_mission_control (this is rini's own mission control, not macOS's)
 
 # the following commands *only* work when the master stack layout is active
 # - adjust_master_ratio = 0.05 / adjust_master_count = 1

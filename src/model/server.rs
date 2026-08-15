@@ -1,4 +1,4 @@
-use rift_protocol as protocol;
+use rini_protocol as protocol;
 use serde::de::Deserializer;
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use crate::sys::window_server::WindowServerId;
 
 /// Runtime-only workspace projection. Its windows retain the macOS
 /// accessibility metadata needed by the UI; IPC uses the protocol-owned
-/// `rift_protocol::WorkspaceData` representation.
+/// `rini_protocol::WorkspaceData` representation.
 #[derive(Debug, Clone)]
 pub struct RuntimeWorkspaceData {
     pub id: String,
@@ -38,7 +38,7 @@ pub struct RuntimeDisplayData {
     pub info: ScreenInfo,
     /// True if this display's space is active per the activation policy.
     pub is_active_space: bool,
-    /// True if this display corresponds to the context Rift uses when no space_id is provided
+    /// True if this display corresponds to the context Rini uses when no space_id is provided
     pub is_active_context: bool,
     /// Active space ids for this display (empty if none).
     pub active_space_ids: Vec<u64>,

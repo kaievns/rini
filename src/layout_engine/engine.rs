@@ -27,7 +27,7 @@ mod persistence;
 
 use persistence::PersistenceState;
 pub use persistence::{RestoreReport, RestoreRequest, RestoreScope, RestoreSource, RestoreWarning};
-pub use rift_protocol::LayoutCommand;
+pub use rini_protocol::LayoutCommand;
 
 #[derive(Debug, Clone)]
 pub struct GroupContainerInfo {
@@ -131,7 +131,7 @@ pub(crate) struct WorkspaceLayoutQuerySnapshot {
     pub is_active: bool,
     pub mode: LayoutMode,
     pub selected_window: Option<WindowId>,
-    pub container_tree: rift_protocol::ContainerTreeNode,
+    pub container_tree: rini_protocol::ContainerTreeNode,
 }
 
 impl LayoutEngine {
@@ -1014,7 +1014,7 @@ impl LayoutEngine {
                 },
             };
 
-        // Establish a home for a window Rift has not placed before. Absent-only, so the
+        // Establish a home for a window Rini has not placed before. Absent-only, so the
         // reassignment that follows an unplug cannot overwrite the home a window already
         // has — that record is what brings it back when its display returns.
         self.note_window_display_home(wid, space);

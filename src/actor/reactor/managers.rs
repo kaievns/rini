@@ -1,5 +1,5 @@
 use objc2_core_foundation::{CGPoint, CGRect};
-use rift_protocol::StackInfo;
+use rini_protocol::StackInfo;
 use tracing::trace;
 
 use super::replay::Record;
@@ -419,16 +419,16 @@ impl LayoutManager {
                         .map(|g| StackInfo {
                             container_kind: match g.container_kind {
                                 crate::layout_engine::LayoutKind::Horizontal => {
-                                    rift_protocol::LayoutKind::Horizontal
+                                    rini_protocol::LayoutKind::Horizontal
                                 }
                                 crate::layout_engine::LayoutKind::Vertical => {
-                                    rift_protocol::LayoutKind::Vertical
+                                    rini_protocol::LayoutKind::Vertical
                                 }
                                 crate::layout_engine::LayoutKind::HorizontalStack => {
-                                    rift_protocol::LayoutKind::HorizontalStack
+                                    rini_protocol::LayoutKind::HorizontalStack
                                 }
                                 crate::layout_engine::LayoutKind::VerticalStack => {
-                                    rift_protocol::LayoutKind::VerticalStack
+                                    rini_protocol::LayoutKind::VerticalStack
                                 }
                             },
                             total_count: g.total_count,

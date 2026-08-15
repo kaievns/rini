@@ -475,7 +475,7 @@ impl GestureTap {
             .and_then(|(_, space)| layout_modes.get(space).copied())
     }
 
-    /// Returns whether this event belongs to a horizontal swipe Rift owns and
+    /// Returns whether this event belongs to a horizontal swipe Rini owns and
     /// should therefore be suppressed at the event tap.
     fn handle_gesture_event(&self, handler: &SwipeHandler, nsevent: &NSEvent) -> bool {
         let cfg = &handler.cfg;
@@ -578,7 +578,7 @@ impl GestureTap {
     }
 
     /// Returns whether this event belongs to a horizontal scrolling gesture
-    /// Rift owns and should therefore be suppressed at the event tap.
+    /// Rini owns and should therefore be suppressed at the event tap.
     fn handle_scroll_gesture_event(&self, handler: &ScrollHandler, nsevent: &NSEvent) -> bool {
         let cfg = &handler.cfg;
         let state = &handler.state;

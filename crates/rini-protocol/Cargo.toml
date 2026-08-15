@@ -1,8 +1,8 @@
 [package]
-name = "rift-protocol"
+name = "rini-protocol"
 version = "0.1.0"
 edition = "2024"
-description = "Shared wire protocol types for Rift"
+description = "Shared wire protocol types for Rini"
 license = "Apache-2.0"
 
 [dependencies]

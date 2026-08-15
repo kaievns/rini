@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{EventKind, RiftCommand, WindowId};
+use crate::{EventKind, RiniCommand, WindowId};
 
-/// A request accepted by Rift's Mach IPC server.
+/// A request accepted by Rini's Mach IPC server.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RiftRequest {
+pub enum RiniRequest {
     GetWorkspaces {
         space_id: Option<u64>,
     },
@@ -32,7 +32,7 @@ pub enum RiftRequest {
     GetDiagnostics,
     GetConfig,
     ExecuteCommand {
-        command: RiftCommand,
+        command: RiniCommand,
     },
     Subscribe {
         event: EventKind,
@@ -51,16 +51,16 @@ pub enum RiftRequest {
     ListCliSubscriptions,
 }
 
-/// The response envelope returned by Rift's Mach IPC server.
+/// The response envelope returned by Rini's Mach IPC server.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum RiftResponse<T = Value> {
+pub enum RiniResponse<T = Value> {
     Success { data: T },
     Error { error: Value },
 }
 
-impl<T> RiftResponse<T> {
+impl<T> RiniResponse<T> {
     pub fn into_result(self) -> Result<T, Value> {
         match self {
             Self::Success { data } => Ok(data),
@@ -71,7 +71,7 @@ impl<T> RiftResponse<T> {
 
 /// The compatibility response type for callers that intentionally want raw
 /// JSON values.
-pub type JsonRiftResponse = RiftResponse<Value>;
+pub type JsonRiniResponse = RiniResponse<Value>;
 
 #[cfg(test)]
 mod tests {
@@ -80,8 +80,8 @@ mod tests {
 
     #[test]
     fn request_uses_typed_command_wire_shape() {
-        let request = RiftRequest::ExecuteCommand {
-            command: RiftCommand::Layout(LayoutCommand::NextWindow),
+        let request = RiniRequest::ExecuteCommand {
+            command: RiniCommand::Layout(LayoutCommand::NextWindow),
         };
         assert_eq!(
             serde_json::to_value(request).unwrap(),
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn layout_query_allows_the_server_to_select_the_active_space() {
-        let request = RiftRequest::GetLayoutState {
+        let request = RiniRequest::GetLayoutState {
             space_id: None,
             workspace_id: None,
         };
@@ -104,9 +104,9 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::from_value::<RiftRequest>(serde_json::json!({ "get_layout_state": {} }))
+            serde_json::from_value::<RiniRequest>(serde_json::json!({ "get_layout_state": {} }))
                 .unwrap(),
-            RiftRequest::GetLayoutState {
+            RiniRequest::GetLayoutState {
                 space_id: None,
                 workspace_id: None,
             }
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn typed_response_decodes_shared_query_types() {
-        let response: RiftResponse<Vec<crate::WorkspaceData>> =
+        let response: RiniResponse<Vec<crate::WorkspaceData>> =
             serde_json::from_value(serde_json::json!({ "data": [{
                 "id": "workspace-1",
                 "index": 0,
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn legacy_stringified_reactor_commands_still_decode() {
-        let request: RiftRequest = serde_json::from_value(serde_json::json!({
+        let request: RiniRequest = serde_json::from_value(serde_json::json!({
             "execute_command": {
                 "command": "{\"Reactor\":{\"switch_to_workspace\":5}}",
                 "args": []
@@ -142,22 +142,22 @@ mod tests {
 
         assert_eq!(
             request,
-            RiftRequest::ExecuteCommand {
-                command: RiftCommand::Layout(LayoutCommand::SwitchToWorkspace(5)),
+            RiniRequest::ExecuteCommand {
+                command: RiniCommand::Layout(LayoutCommand::SwitchToWorkspace(5)),
             }
         );
     }
 
     #[test]
     fn legacy_window_id_strings_still_decode() {
-        let request: RiftRequest = serde_json::from_value(serde_json::json!({
+        let request: RiniRequest = serde_json::from_value(serde_json::json!({
             "get_window_info": { "window_id": "WindowId { pid: 42, idx: 7 }" }
         }))
         .unwrap();
 
         assert_eq!(
             request,
-            RiftRequest::GetWindowInfo {
+            RiniRequest::GetWindowInfo {
                 window_id: WindowId::new(42, 7).unwrap(),
             }
         );

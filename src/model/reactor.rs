@@ -1,5 +1,5 @@
 use objc2_core_foundation::CGRect;
-pub use rift_protocol::{DisplaySelector, ReactorCommand};
+pub use rini_protocol::{DisplaySelector, ReactorCommand};
 use serde::{Deserialize, Serialize};
 
 use crate::actor::app::{AppInfo, AppThreadHandle, WindowId, pid_t};
@@ -16,7 +16,7 @@ use crate::sys::screen::SpaceId;
 /// assignments have one explicit owner here. Cross-store operations receive
 /// this store by reference instead of retaining an alias to it.
 #[derive(Debug, Default)]
-pub struct RiftState {
+pub struct RiniState {
     pub windows: WindowStore,
 }
 
@@ -166,7 +166,7 @@ pub enum ReactorError {
 
 #[cfg(test)]
 mod tests {
-    use rift_protocol::{RestoreScope, RestoreSource};
+    use rini_protocol::{RestoreScope, RestoreSource};
 
     use super::*;
 

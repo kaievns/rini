@@ -1,4 +1,4 @@
-//! Shared, platform-neutral protocol types for Rift.
+//! Shared, platform-neutral protocol types for Rini.
 //!
 //! The server owns the runtime model and the client owns the Mach transport,
 //! but both use these types at the wire boundary. JSON encoding remains an
@@ -12,9 +12,9 @@ mod selectors;
 mod transport;
 
 pub use commands::{
-    AnimationEasing, ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiftCommand,
+    AnimationEasing, ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand,
 };
-pub use events::{EventKind, RiftEvent, StackInfo, WorkspaceId};
+pub use events::{EventKind, RiniEvent, StackInfo, WorkspaceId};
 pub use layout::{Direction, LayoutKind, LayoutMode, Orientation, ResizeOrientation};
 pub use queries::{
     ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticCensusWindow,
@@ -22,4 +22,4 @@ pub use queries::{
     LayoutStateData, Point, Rect, Size, WindowData, WindowId, WorkspaceData, WorkspaceLayoutData,
 };
 pub use selectors::{DisplaySelector, RestoreScope, RestoreSource, WorkspaceSelector};
-pub use transport::{JsonRiftResponse, RiftRequest, RiftResponse};
+pub use transport::{JsonRiniResponse, RiniRequest, RiniResponse};

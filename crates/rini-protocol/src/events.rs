@@ -42,7 +42,7 @@ impl fmt::Display for EventKind {
 /// CLI clients can continue consuming the same payloads unchanged.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum RiftEvent {
+pub enum RiniEvent {
     WorkspaceChanged {
         space_id: u64,
         workspace_id: WorkspaceId,
@@ -85,7 +85,7 @@ pub enum RiftEvent {
     },
 }
 
-impl RiftEvent {
+impl RiniEvent {
     pub const fn kind(&self) -> EventKind {
         match self {
             Self::WorkspaceChanged { .. } => EventKind::WorkspaceChanged,
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn typed_event_preserves_the_legacy_wire_shape() {
-        let event = RiftEvent::WorkspaceChanged {
+        let event = RiniEvent::WorkspaceChanged {
             space_id: 42,
             workspace_id: WorkspaceId { idx: 3, version: 1 },
             workspace_name: "main".into(),

@@ -45,12 +45,12 @@ impl CliExecutor for DefaultCliExecutor {
                 space_id,
                 display_uuid,
             } => {
-                env_vars.insert("RIFT_EVENT_TYPE".into(), "workspace_changed".into());
-                env_vars.insert("RIFT_WORKSPACE_ID".into(), workspace_id.to_string());
-                env_vars.insert("RIFT_WORKSPACE_NAME".into(), workspace_name.clone());
-                env_vars.insert("RIFT_SPACE_ID".into(), space_id.to_string());
+                env_vars.insert("RINI_EVENT_TYPE".into(), "workspace_changed".into());
+                env_vars.insert("RINI_WORKSPACE_ID".into(), workspace_id.to_string());
+                env_vars.insert("RINI_WORKSPACE_NAME".into(), workspace_name.clone());
+                env_vars.insert("RINI_SPACE_ID".into(), space_id.to_string());
                 if let Some(display_uuid) = display_uuid.as_ref() {
-                    env_vars.insert("RIFT_DISPLAY_UUID".into(), display_uuid.clone());
+                    env_vars.insert("RINI_DISPLAY_UUID".into(), display_uuid.clone());
                 }
             }
             BroadcastEvent::WindowsChanged {
@@ -60,14 +60,14 @@ impl CliExecutor for DefaultCliExecutor {
                 space_id,
                 display_uuid,
             } => {
-                env_vars.insert("RIFT_EVENT_TYPE".into(), "windows_changed".into());
-                env_vars.insert("RIFT_WORKSPACE_ID".into(), workspace_id.to_string());
-                env_vars.insert("RIFT_WORKSPACE_NAME".into(), workspace_name.clone());
-                env_vars.insert("RIFT_WINDOW_COUNT".into(), windows.len().to_string());
-                env_vars.insert("RIFT_WINDOWS".into(), windows.join(","));
-                env_vars.insert("RIFT_SPACE_ID".into(), space_id.to_string());
+                env_vars.insert("RINI_EVENT_TYPE".into(), "windows_changed".into());
+                env_vars.insert("RINI_WORKSPACE_ID".into(), workspace_id.to_string());
+                env_vars.insert("RINI_WORKSPACE_NAME".into(), workspace_name.clone());
+                env_vars.insert("RINI_WINDOW_COUNT".into(), windows.len().to_string());
+                env_vars.insert("RINI_WINDOWS".into(), windows.join(","));
+                env_vars.insert("RINI_SPACE_ID".into(), space_id.to_string());
                 if let Some(display_uuid) = display_uuid.as_ref() {
-                    env_vars.insert("RIFT_DISPLAY_UUID".into(), display_uuid.clone());
+                    env_vars.insert("RINI_DISPLAY_UUID".into(), display_uuid.clone());
                 }
             }
             BroadcastEvent::WindowTitleChanged {
@@ -80,18 +80,18 @@ impl CliExecutor for DefaultCliExecutor {
                 space_id,
                 display_uuid,
             } => {
-                env_vars.insert("RIFT_EVENT_TYPE".into(), "window_title_changed".into());
-                env_vars.insert("RIFT_WINDOW_ID".into(), window_id.to_debug_string());
-                env_vars.insert("RIFT_WORKSPACE_ID".into(), workspace_id.to_string());
-                env_vars.insert("RIFT_WORKSPACE_NAME".into(), workspace_name.clone());
+                env_vars.insert("RINI_EVENT_TYPE".into(), "window_title_changed".into());
+                env_vars.insert("RINI_WINDOW_ID".into(), window_id.to_debug_string());
+                env_vars.insert("RINI_WORKSPACE_ID".into(), workspace_id.to_string());
+                env_vars.insert("RINI_WORKSPACE_NAME".into(), workspace_name.clone());
                 if let Some(workspace_index) = workspace_index {
-                    env_vars.insert("RIFT_WORKSPACE_INDEX".into(), workspace_index.to_string());
+                    env_vars.insert("RINI_WORKSPACE_INDEX".into(), workspace_index.to_string());
                 }
-                env_vars.insert("RIFT_PREVIOUS_WINDOW_TITLE".into(), previous_title.clone());
-                env_vars.insert("RIFT_WINDOW_TITLE".into(), new_title.clone());
-                env_vars.insert("RIFT_SPACE_ID".into(), space_id.to_string());
+                env_vars.insert("RINI_PREVIOUS_WINDOW_TITLE".into(), previous_title.clone());
+                env_vars.insert("RINI_WINDOW_TITLE".into(), new_title.clone());
+                env_vars.insert("RINI_SPACE_ID".into(), space_id.to_string());
                 if let Some(display_uuid) = display_uuid.as_ref() {
-                    env_vars.insert("RIFT_DISPLAY_UUID".into(), display_uuid.clone());
+                    env_vars.insert("RINI_DISPLAY_UUID".into(), display_uuid.clone());
                 }
             }
             BroadcastEvent::FocusedWindowChanged {
@@ -102,16 +102,16 @@ impl CliExecutor for DefaultCliExecutor {
                 space_id,
                 display_uuid,
             } => {
-                env_vars.insert("RIFT_EVENT_TYPE".into(), "focused_window_changed".into());
-                env_vars.insert("RIFT_WINDOW_ID".into(), window_id.to_debug_string());
-                env_vars.insert("RIFT_WORKSPACE_ID".into(), workspace_id.to_string());
-                env_vars.insert("RIFT_WORKSPACE_NAME".into(), workspace_name.clone());
+                env_vars.insert("RINI_EVENT_TYPE".into(), "focused_window_changed".into());
+                env_vars.insert("RINI_WINDOW_ID".into(), window_id.to_debug_string());
+                env_vars.insert("RINI_WORKSPACE_ID".into(), workspace_id.to_string());
+                env_vars.insert("RINI_WORKSPACE_NAME".into(), workspace_name.clone());
                 if let Some(workspace_index) = workspace_index {
-                    env_vars.insert("RIFT_WORKSPACE_INDEX".into(), workspace_index.to_string());
+                    env_vars.insert("RINI_WORKSPACE_INDEX".into(), workspace_index.to_string());
                 }
-                env_vars.insert("RIFT_SPACE_ID".into(), space_id.to_string());
+                env_vars.insert("RINI_SPACE_ID".into(), space_id.to_string());
                 if let Some(display_uuid) = display_uuid.as_ref() {
-                    env_vars.insert("RIFT_DISPLAY_UUID".into(), display_uuid.clone());
+                    env_vars.insert("RINI_DISPLAY_UUID".into(), display_uuid.clone());
                 }
             }
             BroadcastEvent::StacksChanged {
@@ -123,20 +123,20 @@ impl CliExecutor for DefaultCliExecutor {
                 space_id,
                 display_uuid,
             } => {
-                env_vars.insert("RIFT_EVENT_TYPE".into(), "stacks_changed".into());
-                env_vars.insert("RIFT_WORKSPACE_ID".into(), workspace_id.to_string());
-                env_vars.insert("RIFT_WORKSPACE_NAME".into(), workspace_name.clone());
+                env_vars.insert("RINI_EVENT_TYPE".into(), "stacks_changed".into());
+                env_vars.insert("RINI_WORKSPACE_ID".into(), workspace_id.to_string());
+                env_vars.insert("RINI_WORKSPACE_NAME".into(), workspace_name.clone());
                 if let Some(workspace_index) = workspace_index {
-                    env_vars.insert("RIFT_WORKSPACE_INDEX".into(), workspace_index.to_string());
+                    env_vars.insert("RINI_WORKSPACE_INDEX".into(), workspace_index.to_string());
                 }
-                env_vars.insert("RIFT_STACK_COUNT".into(), stacks.len().to_string());
+                env_vars.insert("RINI_STACK_COUNT".into(), stacks.len().to_string());
                 env_vars.insert(
-                    "RIFT_ACTIVE_WORKSPACE_HAS_FULLSCREEN".into(),
+                    "RINI_ACTIVE_WORKSPACE_HAS_FULLSCREEN".into(),
                     active_workspace_has_fullscreen.to_string(),
                 );
-                env_vars.insert("RIFT_SPACE_ID".into(), space_id.to_string());
+                env_vars.insert("RINI_SPACE_ID".into(), space_id.to_string());
                 if let Some(display_uuid) = display_uuid.as_ref() {
-                    env_vars.insert("RIFT_DISPLAY_UUID".into(), display_uuid.clone());
+                    env_vars.insert("RINI_DISPLAY_UUID".into(), display_uuid.clone());
                 }
             }
         }
@@ -151,7 +151,7 @@ impl CliExecutor for DefaultCliExecutor {
                 ));
             }
         };
-        env_vars.insert("RIFT_EVENT_JSON".to_string(), event_json.clone());
+        env_vars.insert("RINI_EVENT_JSON".to_string(), event_json.clone());
 
         let command = subscription.command.clone();
         let mut args = subscription.args.clone();

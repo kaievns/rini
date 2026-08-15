@@ -12,7 +12,7 @@ use crate::sys::window_server::WindowServerId;
 /// Handler for window discovery events, responsible for processing newly discovered windows
 /// and managing the lifecycle of window state in the reactor.
 fn sync_existing_window_state(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     wid: WindowId,
     info: &WindowInfo,
     active_space: Option<SpaceId>,
@@ -81,7 +81,7 @@ fn sync_existing_window_state(
 }
 
 fn should_emit_window_for_space(
-    state: &crate::model::RiftState,
+    state: &crate::model::RiniState,
     layout: &crate::actor::reactor::managers::LayoutManager,
     space: SpaceId,
     wid: WindowId,
@@ -100,7 +100,7 @@ fn should_emit_window_for_space(
 }
 
 fn sync_window_server_id_mapping(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     layout: &mut crate::actor::reactor::managers::LayoutManager,
     wid: WindowId,
     old_sys_id: Option<WindowServerId>,
@@ -162,7 +162,7 @@ pub(crate) struct StaleWindowObservation {
 }
 
 pub(crate) fn identify_stale_windows(
-    state: &crate::model::RiftState,
+    state: &crate::model::RiniState,
     pid: pid_t,
     known_visible: &[WindowId],
     snapshot: &StaleCleanupSnapshot,
@@ -252,7 +252,7 @@ pub(crate) fn identify_stale_windows(
 
 /// Remove stale windows and send events.
 pub(crate) fn cleanup_stale_windows(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     transactions: &crate::actor::reactor::transaction_manager::TransactionManager,
     drag: &mut crate::actor::reactor::managers::DragManager,
     mission_control: &mut crate::actor::reactor::managers::MissionControlManager,
@@ -285,7 +285,7 @@ pub(crate) struct ObservedWindow {
 }
 
 pub(crate) fn process_window_list(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     layout: &mut crate::actor::reactor::managers::LayoutManager,
     observed: Vec<ObservedWindow>,
     app_info: &Option<AppInfo>,
@@ -393,7 +393,7 @@ pub(crate) fn process_window_list(
 
 /// Inserts the newly discovered window snapshots into domain state.
 pub(crate) fn update_window_states(
-    rift_state: &mut crate::model::RiftState,
+    rini_state: &mut crate::model::RiniState,
     new_windows: Vec<(WindowId, WindowInfo)>,
 ) {
     // Update or insert window states
@@ -404,16 +404,16 @@ pub(crate) fn update_window_states(
             state.info.is_minimized,
             state.info.is_standard,
             state.info.is_root,
-            |wsid| rift_state.windows.get_window_server_info(wsid),
+            |wsid| rini_state.windows.get_window_server_info(wsid),
         );
         state.is_manageable = manageable;
-        rift_state.windows.insert_window(wid, state);
+        rini_state.windows.insert_window(wid, state);
     }
 }
 
 /// Send layout events for discovered windows.
 fn assign_discovered_window_to_space(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     layout: &mut crate::actor::reactor::managers::LayoutManager,
     wid: WindowId,
     space: SpaceId,
@@ -439,7 +439,7 @@ fn assign_discovered_window_to_space(
 }
 
 fn apply_assignment_result(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     layout: &crate::actor::reactor::managers::LayoutManager,
     wid: WindowId,
     space: SpaceId,
@@ -484,7 +484,7 @@ pub(crate) struct EmitLayoutPayload<'a> {
 }
 
 pub(crate) fn emit_layout_events(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     layout: &mut crate::actor::reactor::managers::LayoutManager,
     payload: EmitLayoutPayload<'_>,
 ) -> crate::actor::reactor::events::EventOutcome {

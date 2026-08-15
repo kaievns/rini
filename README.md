@@ -1,76 +1,132 @@
 <div align="center">
 
-# Rift
-  <p>Rift is a tiling window manager for macOS that focuses on performance and usability. </p>
-  <img src="assets/demo.gif" alt="Rift demo" />
+# Rini
 
-  <p>
-    <a href="https://github.com/acsandmann/rift/actions/workflows/rust.yml">
-      <img src="https://img.shields.io/github/actions/workflow/status/acsandmann/rift/rust.yml?style=flat-square" alt="Rust CI Status" />
-    </a>
-    <a href="https://github.com/acsandmann/rift/commits/main">
-      <img src="https://img.shields.io/github/last-commit/acsandmann/rift?style=flat-square" alt="Last Commit" />
-    </a>
-    <a href="https://github.com/acsandmann/rift/issues">
-      <img src="https://img.shields.io/github/issues/acsandmann/rift?style=flat-square" alt="Open Issues" />
-    </a>
-    <a href="https://github.com/acsandmann/rift/stargazers">
-      <img src="https://img.shields.io/github/stars/acsandmann/rift?style=flat-square" alt="GitHub stars" />
-    </a>
-    <a href="https://matrix.to/#/%23rift:matrix.org">
-      <img src="https://img.shields.io/matrix/rift%3Amatrix.org?style=flat-square" alt="Matrix" />
-    </a>
-  </p>
+**A scrollable-tiling window manager for macOS. One layout, done properly.**
+
+Rini is a hard fork of [rift](https://github.com/acsandmann/rift) that keeps the
+scrolling layout and throws the rest away. If you want [niri](https://github.com/YaLTeR/niri)
+on a Mac, this is an attempt at that and nothing else.
+
 </div>
 
-## Features
-- Multiple layout styles
-  - Tiling (i3/sway-like)
-  - Binary Space Partitioning (bspwm-like)
-  - Master-stack (dwm-like)
-  - Scrolling columns (niri-style) <details> <summary><sup>note</sup></summary>when using multiple displays and the scrolling layout, displays must be arranged in a vertical stack or windows may leak into other displays due to displays all existing in the same coordinate space</details>
-  - Stack (accordion)
-- Menubar icon that opens a menu for switching workspaces, changing layouts, and accessing quick Rift controls <details> <summary><sup>click to see the menu bar icon</sup></summary><img src="assets/menu_menu.png" alt="Rift menu bar icon" /></details>
-- Save and restore layouts from the menu bar or CLI, with reusable layouts listed from a configurable folder <details> <summary><sup>click to see the menu</sup></summary><img src="assets/menu_layouts.png" alt="Rift menu for restoring layouts" /></details>
-- MacOS-style mission control that allows you to visually navigate between workspaces <details><summary><sup>click to see mission control</sup></summary><img src="assets/mission_control.png" alt="Rift Mission Control view" /></details>
-- Focus follows the mouse with auto raise
-- Drag windows over one another to swap positions
-- Performant animations <sup>(as seen in the [demo](#rift))</sup>
-- Switch to next/previous workspace with trackpad gestures <sup>(just like native macOS)</sup>
-- Hot reloadable configuration
-- Interop with third-party programs (ie Sketchybar)
-  - Requests can be made to rift via the cli or the mach port exposed [(lua client here)](https://github.com/acsandmann/rift.lua)
-  - Signals can be sent on startup, workspace switches, and when the windows within a workspace change. These signals can be sent via a command(cli) or through a mach connection
-- Does **not** require disabling SIP
-- Works with “Displays have separate Spaces” enabled (unlike all other major WMs)
+## Why fork
 
-## Quick Start
-Get up and running via the wiki:
-<br>
+Rift is a good, general-purpose window manager: five layout modes, a menu bar picker,
+broad configurability. That generality is the problem for what I wanted.
 
-[<kbd><br>config<br></kbd>][config_link]
+I use one layout — the niri-style scrollable strip. Every other mode is code that has to
+keep working, be configured around, and be reasoned about when something breaks. Worse, a
+lot of the hard bugs in a scrolling layout are *specific to it*: what a column's width
+means, what happens to a scrolled-away window, what "the same workspace" means when two
+displays show different parts of it. Those questions have no good answer that is also
+correct for BSP and master-stack, so in a multi-layout codebase they get answered
+conservatively, or not at all.
 
-[<kbd><br>quick start<br></kbd>][quick_start]
-<br>
+Rini answers them for scrolling only, and accepts breaking changes to do it. A soft fork
+tracking upstream could not: nearly every fix here changes shared behaviour, deletes a
+subsystem, or reshapes persisted state. So this is a hard fork with no intention of
+merging back.
+
+## Direction
+
+**One layout.** Scrollable columns. `traditional`, `bsp`, `master_stack` and `stack` are
+deleted, not deprecated — along with the layout picker, since a menu offering one choice
+is noise.
+
+**Opinionated defaults over configurability.** Where rift offers a setting, Rini prefers a
+decision. Fewer knobs, each one load-bearing.
+
+**Multi-display correctness as a first-class concern.** This is where most of the work has
+gone, and where the design differs most from upstream:
+
+- **Workspaces are global; each display shows one independently.** The built-in can be on
+  `comms` while the external is on `coding`. Switching one display never moves the other.
+- **A window's display is durable, not inferred.** Displays get a UUID-keyed identity,
+  because macOS mints a brand-new space id on every reconnect (observed 479 → 484 → 487 →
+  516 → 552 → 1138 for one monitor in a single session). Unplug and replug returns *your*
+  windows in *their* order.
+- **Window width belongs to the display, not the workspace.** A window sized to fill a
+  laptop panel keeps that size across every workspace on it, and adopts whatever it last
+  had on the 32" when it moves there. Half of 3008pt and half of 1728pt are not the same
+  request.
+- **Never guess a window's display from its coordinates.** Off-workspace windows are
+  parked off-screen, and macOS will not keep a window fully outside every display — so
+  parked coordinates land on a *neighbour*. Trusting them creates a feedback loop that
+  walks every window onto one display. Rini trusts space membership instead.
+
+**Behaviour rift leaves to macOS, where macOS gets it wrong.** ⌘\` only cycles windows on
+the visible workspace, so an app with windows on three workspaces silently cycles two.
+Rini does the rotation itself and brings the display along.
+
+**Diagnosability.** `rini-cli query diagnostics` dumps the whole topology — every display,
+every workspace, column origins and widths, which windows are parked, and where each
+window's durable home is. It exists because reasoning about multi-display state from
+per-space queries produced three wrong conclusions in a row.
 
 ## Status
-Rift is a stable, reliable, and performant window manager used by many. It is still in development and thus new features, optimizations, and general improvements are regularly released, but is more than good enough for daily use.
 
-> Issues and PRs are very welcome.
+**Personal project, used daily on one machine.** It works well for me. I am not
+soliciting users, I make breaking changes without warning, and persisted layout state has
+no migration guarantees. If you want a stable macOS tiling WM with a community behind it,
+use [rift](https://github.com/acsandmann/rift) — it is actively maintained and good.
 
-## Community
-Join the Rift community on Matrix for discussion, support, and announcements: [#rift:matrix.org](https://matrix.to/#/#rift:matrix.org)
+Known rough edges are tracked as I hit them. Two upstream tests fail on `main` and are
+not yet mine to fix.
 
-## Motivation
-Aerospace worked well for me, but I missed animations and the ability to use fullscreen on one display while working on the other. I also prefer leveraging private/undocumented APIs as they tend to be more reliable (due to the OS being built on them and all the public APIs) and performant.
-<sup><sup>for more on why rift exists and what rift strives to do, see the [manifesto](manifesto.md)</sup></sup>
+## Building
 
+```sh
+cargo build --release          # produces target/release/rini and rini-cli
+./target/release/rini --validate   # parse config + layout file, exit
+```
+
+Requires a Rust toolchain and macOS. Does **not** require disabling SIP. Works with
+"Displays have separate Spaces" enabled — in fact it assumes it.
+
+Formatting needs nightly, because `rustfmt.toml` enables unstable options:
+
+```sh
+rustup toolchain install nightly
+cargo +nightly fmt
+```
+
+Running stable `cargo fmt` silently ignores those options and reflows the whole file,
+which makes every diff a conflict.
+
+## Configuration
+
+Config lives at `~/.config/rini/config.toml`; saved layout state at `~/.rini/layout.ron`.
+`rini.default.toml` in this repo is the annotated reference and is compiled in as the
+default.
+
+The config format is inherited from rift and has diverged. Upstream's
+[wiki](https://github.com/acsandmann/rift/wiki/Config) is still the best explanation of
+the shared parts, but scrolling-specific and multi-display settings differ.
+
+## Interop
+
+Same Mach-port IPC as rift, under `git.kaievns.rini`:
+
+```sh
+rini-cli query diagnostics       # whole-topology dump
+rini-cli query displays
+rini-cli execute workspace switch 2
+```
+
+Signals fire on startup, workspace switches, and workspace window changes, so a status bar
+can subscribe rather than poll. My SketchyBar indicator reads `query diagnostics` and draws
+one row set per display, pinned with SketchyBar's `display` property, so each bar shows
+only its own display's position.
 
 ## Credits
-Rift began as a fork (and is licensed as such) of <a href="https://github.com/glide-wm/glide">glide-wm</a> but has since diverged significantly. It uses private APIs reverse engineered by yabai and other projects. It is not affiliated with glide-wm or yabai.
 
+Rini is a hard fork of [rift](https://github.com/acsandmann/rift) by
+[acsandmann](https://github.com/acsandmann), which is itself a fork of
+[glide-wm](https://github.com/glide-wm/glide) by tmandry. Rift did the overwhelming
+majority of the engineering here — the actor architecture, the private-API work, the
+animation system, the IPC layer — and this fork would not exist without it. Copyright and
+license are unchanged; see [LICENSE](LICENSE).
 
-<!---------------------------------------------------------------------------->
-
-[config_link]: https://github.com/acsandmann/rift/wiki/Config
-[quick_start]: https://github.com/acsandmann/rift/wiki/Quick-Start
+It uses private APIs reverse engineered by yabai and other projects. Not affiliated with
+rift, glide-wm, or yabai.

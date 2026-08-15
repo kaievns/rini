@@ -266,7 +266,7 @@ impl WorkspaceStore {
         // so a file written under a different default would otherwise never adopt the
         // configured one. The old tree cannot be carried across — layout systems have
         // different internal shapes — so the system is replaced with an empty one of the
-        // right kind. Window membership is not lost: rift re-discovers on-screen windows
+        // right kind. Window membership is not lost: rini re-discovers on-screen windows
         // at startup and adds them to the active layout, the same path a fresh launch
         // takes. Strip ORDER is not preserved through a mode change, which is an acceptable
         // one-off cost for a config change that has to rebuild the tree anyway.

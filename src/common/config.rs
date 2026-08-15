@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::bail;
-pub use rift_protocol::{AnimationEasing, ConfigCommand, LayoutMode, WorkspaceSelector};
+pub use rini_protocol::{AnimationEasing, ConfigCommand, LayoutMode, WorkspaceSelector};
 use serde::{Deserialize, Serialize};
 
 use super::collections::HashMap;
@@ -19,13 +19,13 @@ const DEPRECATED_MAP: &[(&str, &str)] = &[
 ];
 
 pub fn data_dir() -> PathBuf {
-    dirs::home_dir().unwrap().join(".rift")
+    dirs::home_dir().unwrap().join(".rini")
 }
 pub fn restore_file() -> PathBuf {
     data_dir().join("layout.ron")
 }
 pub fn config_file() -> PathBuf {
-    dirs::home_dir().unwrap().join(".config").join("rift").join("config.toml")
+    dirs::home_dir().unwrap().join(".config").join("rini").join("config.toml")
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -84,8 +84,8 @@ pub struct AppWorkspaceRule {
     /// Focus the window after applying this rule, switching virtual workspaces if needed.
     #[serde(default)]
     pub focus: bool,
-    /// Whether Rift should manage matching windows (defaults to true). `false` makes the
-    /// window invisible to Rift (no tiling, floating, or assignments).
+    /// Whether Rini should manage matching windows (defaults to true). `false` makes the
+    /// window invisible to Rini (no tiling, floating, or assignments).
     #[serde(default = "yes")]
     pub manage: bool,
     /// Optional: Application name pattern (alternative to app_id)
@@ -97,7 +97,7 @@ pub struct AppWorkspaceRule {
     pub title_regex: Option<String>,
     /// Optional: Substring to search for in window title (applies to window.title)
     ///
-    /// If present, rift will internally treat this as a substring match and will
+    /// If present, rini will internally treat this as a substring match and will
     /// construct a regex to match titles containing this substring. This allows
     /// people who don't want to write full regexes to match by a simple substring.
     pub title_substring: Option<String>,
@@ -462,7 +462,7 @@ pub struct GestureSettings {
     /// Enable horizontal swipes to switch virtual workspaces
     #[serde(default = "no")]
     pub enabled: bool,
-    /// If true, consume horizontal swipe events owned by Rift so macOS and the
+    /// If true, consume horizontal swipe events owned by Rini so macOS and the
     /// foreground app do not also handle them.
     #[serde(default = "yes")]
     pub consume_dock_swipe: bool,
@@ -1298,7 +1298,7 @@ pub fn no() -> bool {
 }
 
 fn default_layout_folder() -> PathBuf {
-    PathBuf::from("~/.config/rift/layouts")
+    PathBuf::from("~/.config/rini/layouts")
 }
 
 fn default_workspace_count() -> usize {
@@ -1344,7 +1344,7 @@ impl Config {
     }
 
     pub fn default() -> Config {
-        Self::parse(include_str!("../../rift.default.toml")).unwrap()
+        Self::parse(include_str!("../../rini.default.toml")).unwrap()
     }
 
     /// Save the current config to a file
@@ -1803,21 +1803,21 @@ mod tests {
     fn menu_bar_layout_folder_defaults_and_expands_home() {
         let settings: MenuBarSettings = toml::from_str("").unwrap();
 
-        assert_eq!(settings.layout_folder, PathBuf::from("~/.config/rift/layouts"));
+        assert_eq!(settings.layout_folder, PathBuf::from("~/.config/rini/layouts"));
         assert_eq!(
             settings.resolved_layout_folder(),
-            dirs::home_dir().unwrap().join(".config/rift/layouts")
+            dirs::home_dir().unwrap().join(".config/rini/layouts")
         );
     }
 
     #[test]
     fn menu_bar_layout_folder_preserves_absolute_paths() {
         let settings: MenuBarSettings =
-            toml::from_str("layout_folder = \"/tmp/rift-layouts\"").unwrap();
+            toml::from_str("layout_folder = \"/tmp/rini-layouts\"").unwrap();
 
         assert_eq!(
             settings.resolved_layout_folder(),
-            PathBuf::from("/tmp/rift-layouts")
+            PathBuf::from("/tmp/rini-layouts")
         );
     }
 

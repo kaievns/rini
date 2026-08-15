@@ -13,7 +13,7 @@ use crate::common::collections::HashMap;
 use crate::common::config::{self as config, Config};
 use crate::common::log::{MetricsCommand, handle_command as handle_metrics_command};
 use crate::layout_engine::{EventResponse, LayoutCommand, LayoutEvent};
-use crate::model::RiftState;
+use crate::model::RiniState;
 use crate::model::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
@@ -29,7 +29,7 @@ pub struct LayoutCommandPayload {
 }
 
 pub fn handle_command_layout(
-    state: &mut RiftState,
+    state: &mut RiniState,
     layout: &mut LayoutManager,
     workspace_switch: &mut WorkspaceSwitchManager,
     payload: LayoutCommandPayload,
@@ -137,7 +137,7 @@ pub fn handle_command_layout(
 }
 
 fn current_floating_positions(
-    state: &RiftState,
+    state: &RiniState,
     layout: &LayoutManager,
     space: SpaceId,
 ) -> Vec<(SpaceId, WindowId, objc2_core_foundation::CGRect)> {
@@ -152,7 +152,7 @@ fn current_floating_positions(
         .collect()
 }
 
-fn store_current_floating_positions(state: &RiftState, layout: &mut LayoutManager, space: SpaceId) {
+fn store_current_floating_positions(state: &RiniState, layout: &mut LayoutManager, space: SpaceId) {
     let positions = current_floating_positions(state, layout, space)
         .into_iter()
         .map(|(_, window, frame)| (window, frame))
@@ -188,7 +188,7 @@ pub fn handle_close_window(
 pub fn handle_config_updated(
     config: &mut Config,
     layout: &mut LayoutManager,
-    state: &RiftState,
+    state: &RiniState,
     drag: &mut DragManager,
     new_config: Config,
 ) -> anyhow::Result<EventOutcome> {
@@ -223,23 +223,23 @@ pub fn handle_command_reactor_serialize(
 }
 
 pub fn handle_command_reactor_save_and_exit(
-    state: &RiftState,
+    state: &RiniState,
     layout: &mut LayoutManager,
     active_space: Option<SpaceId>,
 ) -> anyhow::Result<EventOutcome> {
     if let Err(e) = save_layout(state, layout, config::restore_file(), active_space) {
         error!("Could not save master file: {e}");
-        // A quit request is conditional on a durable master save. Keep Rift running when the
+        // A quit request is conditional on a durable master save. Keep Rini running when the
         // snapshot cannot be committed so the user can fix the filesystem problem or retry
         // without losing the only complete in-memory layout.
         return Ok(EventOutcome::no_change()
-            .with_stdout_line(format!("Could not save master file; Rift is still running: {e}")));
+            .with_stdout_line(format!("Could not save master file; Rini is still running: {e}")));
     }
     std::process::exit(0);
 }
 
 fn save_layout(
-    state: &RiftState,
+    state: &RiniState,
     layout: &mut LayoutManager,
     path: std::path::PathBuf,
     active_space: Option<SpaceId>,
@@ -248,7 +248,7 @@ fn save_layout(
 }
 
 pub fn handle_command_reactor_save_layout(
-    state: &RiftState,
+    state: &RiniState,
     layout: &mut LayoutManager,
     path: std::path::PathBuf,
     active_space: Option<SpaceId>,
@@ -328,7 +328,7 @@ pub fn handle_focus_display(payload: DisplayFocusPayload) -> anyhow::Result<Even
 }
 
 pub fn handle_command_reactor_focus_window(
-    state: &RiftState,
+    state: &RiniState,
     apps: &AppManager,
     payload: FocusWindowPayload,
 ) -> anyhow::Result<EventOutcome> {
@@ -378,7 +378,7 @@ pub struct MoveWindowToDisplayPayload {
 }
 
 pub fn handle_command_reactor_move_window_to_display(
-    state: &mut RiftState,
+    state: &mut RiniState,
     layout: &mut LayoutManager,
     payload: MoveWindowToDisplayPayload,
 ) -> anyhow::Result<EventOutcome> {

@@ -639,7 +639,7 @@ impl State {
         // then size again (the repeat works around apps that ignore a resize until
         // they are repositioned). Doing that on every frame of every window makes
         // each window's frame land measurably later than the last, so windows
-        // animating together visibly drift apart and tear against each other
+        // animating together visibly drini apart and tear against each other
         // mid-scroll.
         //
         // During a pure scroll the size is constant, so this collapses to one
@@ -1128,7 +1128,7 @@ impl State {
                 let txid = match self.window(wid) {
                     Ok(window) => {
                         // Ignoring move/resize notifications while WE are animating a window
-                        // is right: they are echoes of rift's own set_position calls. But it
+                        // is right: they are echoes of rini's own set_position calls. But it
                         // must not swallow a move the USER is making. A held mouse button is
                         // the strongest available evidence of that, and honouring it also
                         // means a leaked is_animating flag degrades to a cosmetic problem

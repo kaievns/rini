@@ -105,7 +105,7 @@ fn save_and_load_arms_fingerprint_reconciliation() {
         },
     );
     let path = std::env::temp_dir().join(format!(
-        "rift-layout-restore-test-{}-{}.ron",
+        "rini-layout-restore-test-{}-{}.ron",
         std::process::id(),
         window.idx.get()
     ));
@@ -170,7 +170,7 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
     ));
     engine.floating.add_floating(window);
     let path = std::env::temp_dir().join(format!(
-        "rift-inactive-floating-save-test-{}-{}.ron",
+        "rini-inactive-floating-save-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -236,7 +236,7 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
     // Model stale state left behind by an earlier floating-to-tiled transition.
     engine.floating_positions.store(space, workspace, window, frame);
     let path = std::env::temp_dir().join(format!(
-        "rift-stale-floating-save-test-{}-{}.ron",
+        "rini-stale-floating-save-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -412,7 +412,7 @@ fn workspace_restore_discards_unmatched_scoped_windows_and_floating_state() {
         );
     }
     let path = std::env::temp_dir().join(format!(
-        "rift-scoped-layout-restore-test-{}-{}.ron",
+        "rini-scoped-layout-restore-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -477,7 +477,7 @@ fn workspace_restore_keeps_current_windows_absent_from_snapshot() {
         },
     );
     let path = std::env::temp_dir().join(format!(
-        "rift-live-window-restore-test-{}-{}.ron",
+        "rini-live-window-restore-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -589,7 +589,7 @@ fn scoped_restore_does_not_consume_same_id_live_window_on_another_space() {
         },
     );
     let path = std::env::temp_dir().join(format!(
-        "rift-cross-space-id-collision-test-{}-{}.ron",
+        "rini-cross-space-id-collision-test-{}-{}.ron",
         std::process::id(),
         target_space.get(),
     ));
@@ -704,7 +704,7 @@ fn space_restore_uses_workspace_assignment_over_stale_window_server_space() {
         },
     );
     let path = std::env::temp_dir().join(format!(
-        "rift-stale-server-space-restore-test-{}-{}.ron",
+        "rini-stale-server-space-restore-test-{}-{}.ron",
         std::process::id(),
         target_space.get(),
     ));
@@ -807,7 +807,7 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
         },
     );
     let path = std::env::temp_dir().join(format!(
-        "rift-sibling-workspace-restore-test-{}-{}.ron",
+        "rini-sibling-workspace-restore-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -910,7 +910,7 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
         },
     );
     let path = std::env::temp_dir().join(format!(
-        "rift-reused-id-workspace-restore-test-{}-{}.ron",
+        "rini-reused-id-workspace-restore-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -1195,7 +1195,7 @@ fn portable_restore_rejects_ambiguous_legacy_multi_space_files() {
     }
     // A direct snapshot models a legacy file, which has no saved-active-space hint.
     let path = std::env::temp_dir().join(format!(
-        "rift-ambiguous-portable-restore-test-{}-{}.ron",
+        "rini-ambiguous-portable-restore-test-{}-{}.ron",
         std::process::id(),
         target_space.get(),
     ));
@@ -1263,7 +1263,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
         "saved-b".to_string(),
     ));
     let path = std::env::temp_dir().join(format!(
-        "rift-portable-source-restore-test-{}-{}.ron",
+        "rini-portable-source-restore-test-{}-{}.ron",
         std::process::id(),
         target_space.get(),
     ));
@@ -1360,7 +1360,7 @@ fn master_workspace_restore_uses_target_ordinal_and_preserves_configured_name() 
         "saved-s".to_string(),
     ));
     let path = std::env::temp_dir().join(format!(
-        "rift-master-workspace-ordinal-test-{}-{}.ron",
+        "rini-master-workspace-ordinal-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -1410,7 +1410,7 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
         ));
     }
     let path = std::env::temp_dir().join(format!(
-        "rift-master-display-source-test-{}.ron",
+        "rini-master-display-source-test-{}.ron",
         std::process::id(),
     ));
     snapshot
@@ -1476,7 +1476,7 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
         snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(saved_space, size));
     snapshot.update_space_display(saved_space, Some(display.clone()));
     let path = std::env::temp_dir().join(format!(
-        "rift-startup-space-remap-test-{}-{}.ron",
+        "rini-startup-space-remap-test-{}-{}.ron",
         std::process::id(),
         saved_space.get(),
     ));
@@ -1540,7 +1540,7 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
     );
 
     let path = std::env::temp_dir().join(format!(
-        "rift-startup-space-swap-test-{}.ron",
+        "rini-startup-space-swap-test-{}.ron",
         std::process::id(),
     ));
     snapshot.save(path.clone()).unwrap();
@@ -1845,7 +1845,7 @@ fn space_restore_rejects_workspace_count_mismatch_before_mutating_layouts() {
     let mut snapshot_store = WindowStore::default();
     let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
     let path = std::env::temp_dir().join(format!(
-        "rift-space-count-restore-test-{}-{}.ron",
+        "rini-space-count-restore-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -1917,7 +1917,7 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
         },
     );
     let path = std::env::temp_dir().join(format!(
-        "rift-runtime-inactive-size-restore-test-{}-{}.ron",
+        "rini-runtime-inactive-size-restore-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -2278,7 +2278,7 @@ fn app_close_removes_saved_fingerprints() {
 /// display the last session had, so restoring it while the external is unplugged put its
 /// windows at that display's coordinates — measured at x=-1680, with nothing there — and
 /// no path migrated them back. One dock/undock cycle produced a layout that could only be
-/// fixed by deleting ~/.rift/layout.ron.
+/// fixed by deleting ~/.rini/layout.ron.
 #[test]
 fn startup_restore_releases_windows_saved_on_an_absent_display() {
     let builtin_space = SpaceId::new(630);
@@ -2310,7 +2310,7 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
         );
     }
     let path = std::env::temp_dir().join(format!(
-        "rift-absent-display-release-test-{}.ron",
+        "rini-absent-display-release-test-{}.ron",
         std::process::id(),
     ));
     snapshot.save(path.clone()).unwrap();

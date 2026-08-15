@@ -22,7 +22,7 @@ pub struct WindowCreatedPayload {
 }
 
 pub fn handle_window_created(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     transactions: &TransactionManager,
     payload: WindowCreatedPayload,
 ) -> anyhow::Result<EventOutcome> {
@@ -73,7 +73,7 @@ pub struct WindowDestroyedPayload {
 }
 
 pub fn handle_window_destroyed(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     transactions: &TransactionManager,
     drag: &mut DragManager,
     payload: WindowDestroyedPayload,
@@ -119,7 +119,7 @@ pub fn handle_window_destroyed(
 }
 
 pub fn handle_window_minimized(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     wid: WindowId,
 ) -> anyhow::Result<crate::actor::reactor::events::EventOutcome> {
     let server_id = if let Some(window) = state.windows.window_mut(wid) {
@@ -150,7 +150,7 @@ pub struct WindowDeminiaturizedPayload {
 }
 
 pub fn handle_window_deminiaturized(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     payload: WindowDeminiaturizedPayload,
 ) -> anyhow::Result<crate::actor::reactor::events::EventOutcome> {
     let WindowDeminiaturizedPayload { window: wid, active_space } = payload;
@@ -210,7 +210,7 @@ pub enum FrameChangeDisposition {
 }
 
 pub fn classify_window_frame_change(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     transactions: &TransactionManager,
     drag: &mut DragManager,
     wid: WindowId,
@@ -285,7 +285,7 @@ fn query_mouse_for_active_drag(drag: &DragManager, mouse_state: &mut Option<Mous
 }
 
 pub fn handle_window_frame_changed(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     layout: &mut crate::actor::reactor::managers::LayoutManager,
     drag: &mut DragManager,
     payload: WindowFrameChangedPayload,
@@ -418,7 +418,7 @@ pub struct WindowTitleChangedPayload {
 }
 
 pub fn handle_window_title_changed(
-    state: &mut crate::model::RiftState,
+    state: &mut crate::model::RiniState,
     payload: WindowTitleChangedPayload,
 ) -> anyhow::Result<crate::actor::reactor::events::EventOutcome> {
     let WindowTitleChangedPayload { window: wid, title: new_title } = payload;

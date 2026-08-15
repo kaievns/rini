@@ -22,4 +22,4 @@ pub use window_store::{
 pub mod broadcast;
 pub mod reactor;
 pub mod space_activation;
-pub use reactor::RiftState;
+pub use reactor::RiniState;

@@ -7,7 +7,7 @@ use crate::actor::reactor::managers::{DragManager, LayoutManager};
 use crate::actor::reactor::{DragState, LayoutEvent};
 use crate::common::collections::HashMap;
 use crate::layout_engine::LayoutCommand;
-use crate::model::RiftState;
+use crate::model::RiniState;
 use crate::sys::screen::SpaceId;
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct MouseUpPayload {
 }
 
 pub fn handle_mouse_up(
-    state: &mut RiftState,
+    state: &mut RiniState,
     layout: &mut LayoutManager,
     drag: &mut DragManager,
     payload: MouseUpPayload,

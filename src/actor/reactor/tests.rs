@@ -27,7 +27,7 @@ fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
     assert!(state.is_active_workspace);
     assert_eq!(
         state.container_tree.node_type,
-        rift_protocol::ContainerNodeType::Container
+        rini_protocol::ContainerNodeType::Container
     );
     assert_eq!(state.container_tree.children.len(), 2);
 
@@ -39,7 +39,7 @@ fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
     // are columns (`window_id: None`, `role: "column"`) and the windows sit inside them. The
     // old assertions compared `selected_window` against a column's absent id and read
     // `None`, which is the structure being correct rather than a defect.
-    let windows: Vec<&rift_protocol::ContainerTreeNode> = state
+    let windows: Vec<&rini_protocol::ContainerTreeNode> = state
         .container_tree
         .children
         .iter()
@@ -959,10 +959,10 @@ fn window_server_destroyed(
 }
 
 #[test]
-fn appeared_reassigns_window_without_pending_rift_move() {
+fn appeared_reassigns_window_without_pending_rini_move() {
     let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_on_space1();
 
-    // No pending transaction: this is a genuine external space change, so Rift should
+    // No pending transaction: this is a genuine external space change, so Rini should
     // follow it and reassign the window to the reported space.
     assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space1));
 
@@ -971,12 +971,12 @@ fn appeared_reassigns_window_without_pending_rift_move() {
     assert_eq!(
         reactor.assigned_space_for_window_id(wid),
         Some(space2),
-        "window without an in-flight Rift move must follow a genuine external space change"
+        "window without an in-flight Rini move must follow a genuine external space change"
     );
 }
 
 #[test]
-fn matching_rift_frame_clears_pending_target() {
+fn matching_rini_frame_clears_pending_target() {
     let (mut reactor, wid, wsid, _space1, _space2, frame) = reactor_with_window_on_space1();
     let target_frame = CGRect::new(
         CGPoint::new(frame.origin.x + 40.0, frame.origin.y + 25.0),
@@ -996,7 +996,7 @@ fn matching_rift_frame_clears_pending_target() {
     assert_eq!(
         reactor.transaction_manager.get_target_frame(wsid),
         None,
-        "a confirmed Rift frame must clear the pending target"
+        "a confirmed Rini frame must clear the pending target"
     );
     assert!(
         reactor
@@ -1399,7 +1399,7 @@ fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pend
     assert_eq!(
         reactor.authoritative_space_for_window_id(wid),
         Some(space1),
-        "late appearance from the old display should be ignored once Rift has already committed the new server-space target"
+        "late appearance from the old display should be ignored once Rini has already committed the new server-space target"
     );
 }
 
@@ -3351,7 +3351,7 @@ fn non_active_workspace_windows_remain_hidden_even_if_frame_no_longer_matches_co
     assert_eq!(
         reactor.hidden_assigned_space_for_window_id(wid),
         Some(space),
-        "workspace-hidden status should follow Rift's workspace assignment, not stale corner geometry"
+        "workspace-hidden status should follow Rini's workspace assignment, not stale corner geometry"
     );
     assert_eq!(
         reactor.geometry_space_for_window(
@@ -4851,7 +4851,7 @@ fn wsid_rekey_preserves_floating_membership_and_position() {
 fn native_space_resolution_policy_table() {
     let mut cases = Vec::new();
 
-    // A direct observation from the old space is stale while Rift's target is
+    // A direct observation from the old space is stale while Rini's target is
     // still pending.
     {
         let (reactor, _wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
@@ -4870,7 +4870,7 @@ fn native_space_resolution_policy_table() {
         cases.push(("confirmed target", resolved, Some(space2)));
     }
 
-    // With no pending Rift move, a live WindowServer observation is an external move.
+    // With no pending Rini move, a live WindowServer observation is an external move.
     {
         let (reactor, _wid, wsid, _space1, space2, _) = reactor_with_window_on_space1();
         crate::sys::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
@@ -4997,7 +4997,7 @@ fn floating_window_toggles_to_fullscreen_within_gaps() {
 fn autosave_preserves_floating_restore_frame() {
     let (mut reactor, wid, space1, screen, floating_frame) = reactor_with_floating_window();
 
-    let dir = std::env::temp_dir().join(format!("rift-autosave-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("rini-autosave-test-{}", std::process::id()));
     let path = dir.join("layout.ron");
     let _ = std::fs::remove_dir_all(&dir);
 
@@ -5818,7 +5818,7 @@ fn workspace_switch_records_its_direction_per_display() {
     );
 }
 
-/// A window rift parked off-screen must not be treated as having changed display.
+/// A window rini parked off-screen must not be treated as having changed display.
 ///
 /// Windows belonging to a workspace their display is not showing are moved off-screen, and
 /// macOS refuses to keep a window entirely outside every display — so those coordinates land
@@ -5848,7 +5848,7 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     ));
     reactor.add_test_app(1);
 
-    // The window belongs to workspace 1 while the built-in shows workspace 0, so rift parks
+    // The window belongs to workspace 1 while the built-in shows workspace 0, so rini parks
     // it — and the parked frame sits over the external.
     let workspaces = reactor.test_workspace_ids(builtin_space);
     assert!(reactor.set_test_active_workspace(builtin_space, workspaces[0]));
@@ -6060,7 +6060,7 @@ fn redistribute_returns_windows_to_their_home_display_only() {
 /// macOS's cmd-` only offers windows on the visible workspace, so three Ghostty windows
 /// split across two workspaces cycled between the two that shared one: "i have three
 /// ghostty windows between different displays/workspaces and i can only swap between the
-/// two on the same workspace". rift knows where all of them are, so CycleAppWindows rotates
+/// two on the same workspace". rini knows where all of them are, so CycleAppWindows rotates
 /// through every one and switches the display's workspace to follow.
 #[test]
 fn cycling_app_windows_reaches_every_workspace() {
@@ -6160,7 +6160,7 @@ fn moving_a_window_between_workspaces_keeps_its_column_width() {
     );
 
     reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
-        workspace: rift_protocol::WorkspaceSelector::Index(1),
+        workspace: rini_protocol::WorkspaceSelector::Index(1),
         follow: true,
         window_id: None,
     });
@@ -6221,7 +6221,7 @@ fn a_full_width_window_stays_full_width_across_workspaces() {
 
     for target in [1usize, 2] {
         reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
-            workspace: rift_protocol::WorkspaceSelector::Index(target),
+            workspace: rini_protocol::WorkspaceSelector::Index(target),
             follow: true,
             window_id: None,
         });

@@ -1,7 +1,7 @@
 use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 
 use objc2_core_foundation::CGRect;
-use rift_protocol::{
+use rini_protocol::{
     ApplicationData, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, LayoutStateData,
     WorkspaceLayoutData,
 };
@@ -560,7 +560,7 @@ impl Reactor {
             // Owned but absent from the layout tree. Such a window is cmd-tab reachable
             // while being unreachable by scrolling, which is what "a second invisible
             // strip" actually looks like.
-            let orphaned_windows: Vec<rift_protocol::WindowId> = owned
+            let orphaned_windows: Vec<rini_protocol::WindowId> = owned
                 .iter()
                 .copied()
                 .filter(|window_id| {
@@ -662,7 +662,7 @@ impl Reactor {
                     let Some(state) = self.state.windows.window(window_id) else {
                         continue;
                     };
-                    census_windows.push(rift_protocol::DiagnosticCensusWindow {
+                    census_windows.push(rini_protocol::DiagnosticCensusWindow {
                         window_id: window_id.into(),
                         app: self
                             .app_manager
@@ -681,7 +681,7 @@ impl Reactor {
                 }
             }
 
-            census.push(rift_protocol::DiagnosticDisplayCensus {
+            census.push(rini_protocol::DiagnosticDisplayCensus {
                 display_uuid,
                 display_name: screen.name.clone(),
                 homed,

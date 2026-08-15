@@ -96,7 +96,7 @@ use crate::model::broadcast::{
 };
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::model::tx_store::WindowTxStore;
-use crate::model::{AppRuleResult, RiftState};
+use crate::model::{AppRuleResult, RiniState};
 use crate::sys::event::MouseState;
 use crate::sys::executor::Executor;
 use crate::sys::geometry::{CGRectDef, CGRectExt};
@@ -309,7 +309,7 @@ pub struct Reactor {
     pub one_space: bool,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
-    pub(crate) state: RiftState,
+    pub(crate) state: RiniState,
     space_state: ForwardedSpaceState,
     space_activation_policy: SpaceActivationPolicy,
     main_window_tracker: MainWindowTracker,
@@ -336,7 +336,7 @@ pub struct Reactor {
     /// A field rather than a call to `config::restore_file()` at the write site because
     /// autosave fires from `update_layout_or_warn_with`, which almost every test drives.
     /// Resolving the real path there meant the suite overwrote the user's own
-    /// ~/.rift/layout.ron with test fixtures.
+    /// ~/.rini/layout.ron with test fixtures.
     autosave_path: Option<PathBuf>,
 }
 
@@ -398,7 +398,7 @@ impl Reactor {
             one_space,
             app_manager: managers::AppManager::new(),
             layout_manager: managers::LayoutManager { layout_engine },
-            state: RiftState::default(),
+            state: RiniState::default(),
             space_state: ForwardedSpaceState::default(),
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
@@ -1286,11 +1286,11 @@ impl Reactor {
                     )
                     .map(|app| AppInfo::from(&*app))
                 });
-                // A window belonging to a workspace its display is not showing is one rift
+                // A window belonging to a workspace its display is not showing is one rini
                 // parked off-screen. Membership rather than geometry, because the parked
                 // coordinates deliberately sit inside the neighbouring display and so cannot
                 // distinguish "parked" from "genuinely moved there".
-                let is_parked_by_rift = self
+                let is_parked_by_rini = self
                     .state
                     .windows
                     .tracked_window_id(wsid)
@@ -1311,7 +1311,7 @@ impl Reactor {
                     })
                     .unwrap_or(false);
                 let observations = topology_workflow::WindowServerAppearedObservations {
-                    is_parked_by_rift,
+                    is_parked_by_rini,
                     resolved_space: self.resolve_native_space(wsid, Some(sid)),
                     active_spaces: self.active_spaces.clone(),
                     mission_control_active: self.is_mission_control_active(),
@@ -3182,7 +3182,7 @@ impl Reactor {
     /// Recovery command. Windows can end up piled into a single workspace on a single display:
     /// the display-migration feedback loop did that before it was fixed, and any future state
     /// corruption could do it again. Fixing the loop stops it recurring but does not undo the
-    /// damage, and until now the only remedy was deleting ~/.rift/layout.ron and losing every
+    /// damage, and until now the only remedy was deleting ~/.rini/layout.ron and losing every
     /// window's size and position.
     ///
     /// Only windows whose recorded home display differs from where they currently sit are
@@ -3196,14 +3196,14 @@ impl Reactor {
 
     /// Cycle focus between the focused app's windows, wherever they are.
     ///
-    /// macOS's cmd-` only offers windows it considers reachable on the current Space. rift
+    /// macOS's cmd-` only offers windows it considers reachable on the current Space. rini
     /// parks off-workspace windows off-screen rather than moving them to another native space,
     /// so macOS sees them but treats a parked window as not a sensible cycle target — with
     /// three Ghostty windows across two workspaces only the two sharing the visible workspace
     /// were reachable, which is what "i can only swap between the two on the same workspace"
     /// described.
     ///
-    /// rift already knows where every window is, so it can rotate through all of them and let
+    /// rini already knows where every window is, so it can rotate through all of them and let
     /// the existing focus path switch the owning display's workspace to follow. Ordering is by
     /// (space, workspace, window id) so the rotation is stable and does not depend on which
     /// workspace happens to be showing.
@@ -3462,7 +3462,7 @@ impl Reactor {
         authoritative_space: SpaceId,
         preserve_workspace_ordinal: bool,
     ) -> bool {
-        // Native WindowServer visibility is not enough to participate in Rift's
+        // Native WindowServer visibility is not enough to participate in Rini's
         // layout. Fullscreen exit can surface transient AppKit/Electron windows
         // that are visible and space-owned but are filtered out of query output.
         // Treat this as the single gate for authoritative-space reconciliation:
@@ -3609,7 +3609,7 @@ impl Reactor {
     /// Resolve native space ownership from the strongest available source.
     ///
     /// `observation` is a direct per-space membership observation. A pending
-    /// Rift move wins over an observation that is not backed by the live
+    /// Rini move wins over an observation that is not backed by the live
     /// WindowServer state, while a live conflict is treated as a newer external
     /// move. With no direct observation, the live WindowServer query wins over
     /// the accepted prior observation and the pending target wins over stale
@@ -4613,7 +4613,7 @@ impl Reactor {
         // reassert the window's stored frame while the user is still holding the mouse.
         //
         // Measured on System Settings: the reported `old_frame` rewound repeatedly during a
-        // single drag (695,188 -> 832,167 -> 927,146, then back to 350,212), because rift
+        // single drag (695,188 -> 832,167 -> 927,146, then back to 350,212), because rini
         // kept writing the stale stored position underneath the drag. The window ended up
         // wherever the last tug-of-war left it, which reads as snapping back part of the
         // way — roughly a third of the distance, in the reported case.
@@ -5268,7 +5268,7 @@ impl Reactor {
 
     /// Persist the layout after a change, at most once every AUTOSAVE_INTERVAL.
     ///
-    /// Saving used to be entirely manual — the menu bar item and `rift-cli save-layout`
+    /// Saving used to be entirely manual — the menu bar item and `rini-cli save-layout`
     /// were the only writers — so a restart or redeploy lost every window's
     /// workspace, size and strip position, and windows fell back to the default
     /// column width. `--restore` existed but had nothing to read.

@@ -1,1 +1,1 @@
-pub use rift_protocol::*;
+pub use rini_protocol::*;

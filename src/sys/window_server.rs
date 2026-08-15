@@ -685,8 +685,8 @@ pub fn get_window_at_point(mut point: CGPoint) -> Option<WindowServerId> {
 /// Returns `true` if an external application window at normal level or above
 /// occludes the given screen point.
 ///
-/// Walks down the window stack at `point`, skipping all Rift-owned CGS
-/// windows (there may be more than one at the same point), until a non-Rift
+/// Walks down the window stack at `point`, skipping all Rini-owned CGS
+/// windows (there may be more than one at the same point), until a non-Rini
 /// window is found. Desktop/wallpaper windows sit well below
 /// `NSNormalWindowLevel` and are not considered occluders.
 pub fn is_point_occluded_by_external_window(mut point: CGPoint) -> bool {
@@ -694,7 +694,7 @@ pub fn is_point_occluded_by_external_window(mut point: CGPoint) -> bool {
 
     let mut hit = find_window_at_point(&mut point, None);
 
-    // Skip past any Rift-owned windows stacked at this point.
+    // Skip past any Rini-owned windows stacked at this point.
     while let Some((wid, cid)) = hit {
         if !is_own_window(cid) {
             let level = window_level(wid).unwrap_or(NSWindowLevel::MIN);

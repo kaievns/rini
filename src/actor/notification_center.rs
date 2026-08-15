@@ -198,7 +198,7 @@ impl NotificationCenterInner {
         } else if unsafe { NSWorkspaceDidActivateApplicationNotification } == name {
             // Do not forward AppGloballyActivated from NSWorkspace here.
             //
-            // Rift intentionally treats workspace app-activation notifications as a
+            // Rini intentionally treats workspace app-activation notifications as a
             // lock/login hint channel only. The authoritative global activation
             // stream comes from the Carbon process actor (`K_EVENT_APP_FRONT_SWITCHED`),
             // which still drives the reactor's activation-time visible-window refresh

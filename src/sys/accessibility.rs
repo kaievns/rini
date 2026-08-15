@@ -82,7 +82,7 @@ pub fn ensure_accessibility_permission() {
     }
 
     println!(
-        "Rift still does not have accessibility permission. Enable it in System Settings > Privacy & Security > Accessibility, then restart Rift."
+        "Rini still does not have accessibility permission. Enable it in System Settings > Privacy & Security > Accessibility, then restart Rini."
     );
 
     std::process::exit(1);

@@ -1,8 +1,8 @@
-//! Authoritative native display/space state for Rift.
+//! Authoritative native display/space state for Rini.
 //!
 //! This actor is the only place that should translate macOS display, space, and
 //! session lifecycle signals into the snapshot consumed by the reactor. The
-//! reactor owns Rift's virtual workspace model, but it must only do so on top of
+//! reactor owns Rini's virtual workspace model, but it must only do so on top of
 //! a stable native-space picture. The rules here are therefore intentionally
 //! conservative:
 //!
@@ -16,7 +16,7 @@
 //!   the reactor with the post-churn WindowServer state.
 //!
 //! The core failure mode this prevents is treating unstable lock/wake/login
-//! snapshots as authoritative user-space state. That can cause Rift to
+//! snapshots as authoritative user-space state. That can cause Rini to
 //! initialize fresh default workspaces for transient spaces and later remap them
 //! onto the real desktop, which looks like "all windows reset to workspace 1".
 
@@ -42,7 +42,7 @@ const REFRESH_RETRY_DELAY_NS: i64 = 100_000_000;
 const REFRESH_MAX_RETRIES: u8 = 10;
 
 // OmniWM debounces display changes at 100 ms and then rescans immediately.
-// Rift still requires two identical topology samples plus a quiet WindowServer,
+// Rini still requires two identical topology samples plus a quiet WindowServer,
 // but it should converge on the same order of magnitude rather than waiting
 // multiple seconds before even attempting stabilization.
 const DISPLAY_CHURN_QUIET_NS: i64 = 100_000_000;
@@ -325,7 +325,7 @@ impl SpacesActor {
                     self.schedule_display_stabilization_check(expected_epoch);
                 }
                 // The login window can transiently replace every display's current
-                // space. Do not replay buffered lock-screen snapshots into Rift's
+                // space. Do not replay buffered lock-screen snapshots into Rini's
                 // workspace model; always resample after the user session becomes
                 // active again.
                 self.state.release_reactor_quarantine_on_next_forward = true;

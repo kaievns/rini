@@ -694,7 +694,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         out
     }
 
-    fn container_tree(&self, layout: LayoutId) -> rift_protocol::ContainerTreeNode {
+    fn container_tree(&self, layout: LayoutId) -> rini_protocol::ContainerTreeNode {
         let state = self.layouts.get(layout).expect("unknown scrolling layout");
         let children = state
             .columns
@@ -704,8 +704,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     .windows
                     .iter()
                     .enumerate()
-                    .map(|(index, &window)| rift_protocol::ContainerTreeNode {
-                        node_type: rift_protocol::ContainerNodeType::Window,
+                    .map(|(index, &window)| rini_protocol::ContainerTreeNode {
+                        node_type: rini_protocol::ContainerNodeType::Window,
                         layout_kind: None,
                         weight: Some(column.height_weights.get(index).copied().unwrap_or(1.0)),
                         window_id: Some(window.into()),
@@ -717,9 +717,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         children: Vec::new(),
                     })
                     .collect();
-                rift_protocol::ContainerTreeNode {
-                    node_type: rift_protocol::ContainerNodeType::Container,
-                    layout_kind: Some(rift_protocol::LayoutKind::Vertical),
+                rini_protocol::ContainerTreeNode {
+                    node_type: rini_protocol::ContainerNodeType::Container,
+                    layout_kind: Some(rini_protocol::LayoutKind::Vertical),
                     weight: Some((state.column_width_ratio + column.width_offset).max(0.0)),
                     window_id: None,
                     is_selected: false,
@@ -732,9 +732,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
             })
             .collect();
 
-        rift_protocol::ContainerTreeNode {
-            node_type: rift_protocol::ContainerNodeType::Container,
-            layout_kind: Some(rift_protocol::LayoutKind::Horizontal),
+        rini_protocol::ContainerTreeNode {
+            node_type: rini_protocol::ContainerNodeType::Container,
+            layout_kind: Some(rini_protocol::LayoutKind::Horizontal),
             weight: None,
             window_id: None,
             is_selected: false,
@@ -1675,7 +1675,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
     /// niri's switch-preset-column-width. Unlike ResizeWindowGrow/Shrink, which
     /// step by a fixed ~5% and leave columns at arbitrary in-between widths, this
     /// snaps to a known set — so every column ends up at one of a few predictable
-    /// sizes instead of drifting.
+    /// sizes instead of driniing.
     ///
     /// Widths are stored as `width_offset` relative to `column_width_ratio`, the
     /// same representation the resize path uses, so nothing else needs to know

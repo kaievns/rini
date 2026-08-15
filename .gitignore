@@ -1,4 +1,4 @@
 dev
 target
-rift.toml
+rini.toml
 src/bin/dev.rs

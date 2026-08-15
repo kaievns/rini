@@ -122,7 +122,7 @@ impl RestorePlan {
                         .ok_or_else(|| anyhow::anyhow!("saved space has no active workspace"))?,
                     // A master file represents the complete workspace catalog. Restoring S must
                     // therefore read S's ordinal from the saved native space, regardless of which
-                    // workspace happened to be active when Rift last quit.
+                    // workspace happened to be active when Rini last quit.
                     RestoreSource::CurrentSpace => {
                         let target_workspaces = engine
                             .virtual_workspace_manager
@@ -340,7 +340,7 @@ impl RestorePlan {
             let live_space = window_store
                 .current_window_server_space_for_window(*live)
                 .or_else(|| live_assignment.map(|assignment| assignment.space));
-            // WorkspaceStore is the authoritative Rift ownership record. WindowServer space can
+            // WorkspaceStore is the authoritative Rini ownership record. WindowServer space can
             // briefly lag or lead during native-space transitions, so it must not make an
             // externally assigned window eligible for a restore transaction.
             let live_is_in_scope = live_assignment.is_some_and(|assignment| {

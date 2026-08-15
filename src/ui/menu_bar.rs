@@ -72,7 +72,7 @@ pub enum MenuAction {
     OpenSponsor,
     OpenConfig,
     ReloadConfig,
-    QuitRift,
+    QuitRini,
 }
 
 pub struct MenuIcon {
@@ -174,7 +174,7 @@ impl MenuIcon {
         set_menu_item_hotkey(&self.prev_workspace_item, shortcuts.prev_workspace.as_ref());
         set_menu_item_hotkey(&self.tiling_item, shortcuts.toggle_space_activation.as_ref());
         set_menu_item_hotkey(&self.reload_item, shortcuts.reload_config.as_ref());
-        set_menu_item_hotkey(&self.quit_item, shortcuts.quit_rift.as_ref());
+        set_menu_item_hotkey(&self.quit_item, shortcuts.quit_rini.as_ref());
         for workspace in &self.workspace_items {
             let shortcut = shortcuts
                 .switch_workspace_by_index
@@ -643,7 +643,7 @@ struct BuiltStatusMenu {
 }
 
 fn build_static_menu(mtm: MainThreadMarker, handler: &MenuActionHandler) -> BuiltStatusMenu {
-    let title = NSString::from_str("Rift");
+    let title = NSString::from_str("Rini");
     let menu: Retained<NSMenu> = unsafe { msg_send![NSMenu::alloc(mtm), initWithTitle: &*title] };
 
     // No Layout submenu. With the tree-based layouts removed there is exactly one mode, so
@@ -826,20 +826,20 @@ fn build_static_menu(mtm: MainThreadMarker, handler: &MenuActionHandler) -> Buil
     add_separator(&menu);
     menu.addItem(&make_menu_item(
         mtm,
-        "Support Rift…",
+        "Support Rini…",
         Some(sel!(onOpenSponsor:)),
         Some(handler),
         None,
         None,
         None,
-        menu_image("heart", "Support Rift"),
+        menu_image("heart", "Support Rini"),
     ));
 
     add_separator(&menu);
     let quit_item = make_menu_item(
         mtm,
-        "Quit Rift",
-        Some(sel!(onQuitRift:)),
+        "Quit Rini",
+        Some(sel!(onQuitRini:)),
         Some(handler),
         None,
         None,
@@ -867,7 +867,7 @@ struct MenuShortcuts {
     toggle_space_activation: Option<Hotkey>,
     next_workspace: Option<Hotkey>,
     prev_workspace: Option<Hotkey>,
-    quit_rift: Option<Hotkey>,
+    quit_rini: Option<Hotkey>,
     switch_workspace_by_index: HashMap<usize, Hotkey>,
     switch_workspace_by_name: HashMap<String, Hotkey>,
     reload_config: Option<Hotkey>,
@@ -919,7 +919,7 @@ impl MenuShortcuts {
                 WmCommand::ReactorCommand(ReactorTopCommand::Reactor(
                     ReactorCommand::SaveAndExit,
                 )) => {
-                    out.quit_rift.get_or_insert_with(|| hotkey.clone());
+                    out.quit_rini.get_or_insert_with(|| hotkey.clone());
                 }
                 WmCommand::Wm(WmCmd::ReloadConfig) => {
                     out.reload_config.get_or_insert_with(|| hotkey.clone());
@@ -1102,7 +1102,7 @@ impl MenuActionHandler {
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "RiftMenuBarActionHandler"]
+    #[name = "RiniMenuBarActionHandler"]
     #[ivars = MenuActionHandlerIvars]
     struct MenuActionHandler;
 
@@ -1238,9 +1238,9 @@ define_class!(
             self.emit(MenuAction::ReloadConfig);
         }
 
-        #[unsafe(method(onQuitRift:))]
-        fn on_quit_rift(&self, _sender: Option<&AnyObject>) {
-            self.emit(MenuAction::QuitRift);
+        #[unsafe(method(onQuitRini:))]
+        fn on_quit_rini(&self, _sender: Option<&AnyObject>) {
+            self.emit(MenuAction::QuitRini);
         }
     }
 );
@@ -1508,7 +1508,7 @@ fn add_rounded_rect(ctx: &CGContext, x: f64, y: f64, w: f64, h: f64, r: f64) {
 define_class!(
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
-    #[name = "RiftMenuBarIconView"]
+    #[name = "RiniMenuBarIconView"]
     #[ivars = MenuIconViewIvars]
     struct MenuIconView;
 

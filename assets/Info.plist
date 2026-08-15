@@ -5,13 +5,13 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>rift</string>
+	<string>rini</string>
 	<key>CFBundleIdentifier</key>
-	<string>git.acsandmann.rift</string>
+	<string>git.kaievns.rini</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>0.1.0</string>
 	<key>CFBundleName</key>
-	<string>rift</string>
+	<string>rini</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>NSHumanReadableCopyright</key>

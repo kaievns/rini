@@ -69,7 +69,7 @@ pub enum ColumnWidth {
 impl DisplayAffinity {
     /// Record that `display` currently owns `space`.
     ///
-    /// A native space belongs to exactly one display (Rift requires "Displays have
+    /// A native space belongs to exactly one display (Rini requires "Displays have
     /// separate Spaces"), so any other display previously claiming `space` is stale and
     /// is dropped. Without that eviction two displays can both appear to own one space
     /// and the affinity pass moves windows between them forever.

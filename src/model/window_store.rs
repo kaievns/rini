@@ -148,7 +148,7 @@ pub struct WindowWorkspaceInfo {
     pub workspace_id: VirtualWorkspaceId,
 }
 
-/// Authoritative per-window metadata tracked by Rift.
+/// Authoritative per-window metadata tracked by Rini.
 ///
 /// Workspace membership lives here, not inside `VirtualWorkspace`. Layout trees
 /// are only a materialized projection for arranging visible windows. Keeping the
@@ -967,7 +967,7 @@ impl WindowStore {
             if let Some(windows) = self.workspace_windows.remove(&old_assignment) {
                 // MERGE, do not replace. macOS can already have placed windows on the
                 // incoming space id — that is the normal case on a reconnect, since it moves
-                // windows to the display before rift sees the new id. `insert` overwrote
+                // windows to the display before rini sees the new id. `insert` overwrote
                 // that set, so those windows kept a stale assignment pointing at a key that
                 // no longer listed them and dropped out of their workspace.
                 self.workspace_windows

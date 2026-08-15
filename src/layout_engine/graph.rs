@@ -1,1 +1,1 @@
-pub use rift_protocol::{Direction, LayoutKind, Orientation, ResizeOrientation};
+pub use rini_protocol::{Direction, LayoutKind, Orientation, ResizeOrientation};

@@ -96,7 +96,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
 
     fn draw_tree(&self, layout: LayoutId) -> String;
     /// Return a stable, platform-neutral view of the layout topology for IPC consumers.
-    fn container_tree(&self, layout: LayoutId) -> rift_protocol::ContainerTreeNode;
+    fn container_tree(&self, layout: LayoutId) -> rini_protocol::ContainerTreeNode;
 
     fn calculate_layout(
         &self,
@@ -339,10 +339,10 @@ mod tests {
     }
 
     fn window_nodes(
-        tree: &rift_protocol::ContainerTreeNode,
-    ) -> Vec<&rift_protocol::ContainerTreeNode> {
+        tree: &rini_protocol::ContainerTreeNode,
+    ) -> Vec<&rini_protocol::ContainerTreeNode> {
         let mut windows = Vec::new();
-        if tree.node_type == rift_protocol::ContainerNodeType::Window {
+        if tree.node_type == rini_protocol::ContainerNodeType::Window {
             windows.push(tree);
         }
         for child in &tree.children {
@@ -365,7 +365,7 @@ mod tests {
         scrolling.add_window_after_selection(layout, w(1));
         scrolling.add_window_after_selection(layout, w(2));
         let tree = scrolling.container_tree(layout);
-        assert_eq!(tree.node_type, rift_protocol::ContainerNodeType::Container);
+        assert_eq!(tree.node_type, rini_protocol::ContainerNodeType::Container);
         assert!(tree.children.iter().all(|node| node.role.as_deref() == Some("column")));
         assert_eq!(window_nodes(&tree).len(), 2);
         assert_eq!(

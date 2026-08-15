@@ -1179,7 +1179,7 @@ mod tests {
     }
 
     /// The real topology from the machine this was debugged on, deliberately kept concrete.
-    /// The displays are stacked VERTICALLY (rift issue #266), which is what makes a vertical
+    /// The displays are stacked VERTICALLY (rini issue #266), which is what makes a vertical
     /// slide able to stray onto the neighbour at all.
     const BUILT_IN: CGRect = CGRect::new(CGPoint::new(0.0, 32.0), CGSize::new(1728.0, 1085.0));
     const EXTERNAL: CGRect =
@@ -1416,7 +1416,7 @@ mod tests {
     /// flush_frames in app.rs takes a three-AX-call path whenever a frame asks for a
     /// size change, and those calls are synchronous: paying it per window per frame
     /// makes each window's frame land later than the last, so windows animating
-    /// together drift apart and tear. This asserts the frames a scroll produces all
+    /// together drini apart and tear. This asserts the frames a scroll produces all
     /// carry the SAME size, which is what lets the flush skip the expensive path.
     #[test]
     fn scrolling_frames_keep_a_constant_size() {

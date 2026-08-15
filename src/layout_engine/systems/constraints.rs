@@ -139,10 +139,10 @@ pub(crate) fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<
 
     if remaining <= f64::EPSILON {
         let used: f64 = lengths.iter().sum();
-        let drift = usable - used;
-        if drift.abs() > f64::EPSILON {
+        let drini = usable - used;
+        if drini.abs() > f64::EPSILON {
             if let Some(idx) = (0..n).rfind(|&idx| lengths[idx] > 0.0) {
-                lengths[idx] = (lengths[idx] + drift).max(0.0);
+                lengths[idx] = (lengths[idx] + drini).max(0.0);
             }
         }
     }

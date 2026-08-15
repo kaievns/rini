@@ -1,4 +1,4 @@
-//! Dims every window in each active Rift workspace except the focused window.
+//! Dims every window in each active Rini workspace except the focused window.
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -6,7 +6,7 @@ use std::ffi::c_float;
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use rift_client::{EventKind, RiftEvent, RiftMachClient};
+use rini_client::{EventKind, RiniEvent, RiniMachClient};
 
 type ConnID = i32;
 type WinID = u32;
@@ -31,14 +31,14 @@ unsafe extern "C" {
 }
 
 struct Dimmer {
-    client: RiftMachClient,
+    client: RiniMachClient,
     cid: ConnID,
     dimmed: Arc<Mutex<DimmedBySpace>>,
     space_by_display: HashMap<String, u64>,
 }
 
 impl Dimmer {
-    fn new(client: RiftMachClient) -> Self {
+    fn new(client: RiniMachClient) -> Self {
         Self {
             client,
             cid: unsafe { SLSMainConnectionID() },
@@ -65,11 +65,11 @@ impl Dimmer {
         Ok(())
     }
 
-    fn handle_event(&mut self, event: &RiftEvent) -> Result<()> {
+    fn handle_event(&mut self, event: &RiniEvent) -> Result<()> {
         let space_id = event.space_id();
 
         match event {
-            RiftEvent::WorkspaceChanged { display_uuid, .. } => {
+            RiniEvent::WorkspaceChanged { display_uuid, .. } => {
                 if let Some(display) = display_uuid.as_deref()
                     && let Some(old_space) = self.space_by_display.insert(display.into(), space_id)
                     && old_space != space_id
@@ -80,7 +80,7 @@ impl Dimmer {
                 self.refresh(space_id)?;
             }
 
-            RiftEvent::FocusedWindowChanged { .. } | RiftEvent::WindowsChanged { .. } => {
+            RiniEvent::FocusedWindowChanged { .. } | RiniEvent::WindowsChanged { .. } => {
                 self.refresh(space_id)?;
             }
 
@@ -171,7 +171,7 @@ fn set_brightness(cid: ConnID, changes: impl IntoIterator<Item = (WinID, f32)>) 
 }
 
 fn main() -> Result<()> {
-    let client = RiftMachClient::connect()?;
+    let client = RiniMachClient::connect()?;
     let events = client.subscribe(EventKind::All)?;
     let mut dimmer = Dimmer::new(client);
 

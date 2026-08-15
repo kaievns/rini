@@ -261,7 +261,7 @@ impl Menu {
                     icon.refresh_layout_library();
                 }
             }
-            MenuAction::QuitRift => {
+            MenuAction::QuitRini => {
                 self.reactor_tx.send(reactor::Event::Command(reactor::Command::Reactor(
                     reactor::ReactorCommand::SaveAndExit,
                 )));

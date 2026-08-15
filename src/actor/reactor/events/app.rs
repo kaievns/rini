@@ -65,7 +65,7 @@ pub fn handle_application_activated(
     if quiet == Quiet::Yes {
         debug!(
             pid,
-            "Skipping auto workspace switch for quiet app activation (initiated by Rift)"
+            "Skipping auto workspace switch for quiet app activation (initiated by Rini)"
         );
         return Ok(EventOutcome::no_change());
     }

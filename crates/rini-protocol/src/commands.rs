@@ -101,8 +101,8 @@ pub enum ReactorCommand {
     /// Cycle focus between the focused app's windows, across workspaces and displays.
     ///
     /// macOS's own cmd-` only offers windows it considers reachable on the current Space, so
-    /// with one app's windows spread over several rift workspaces it silently cycles a subset:
-    /// three Ghostty windows, only the two sharing a workspace reachable. rift knows where all
+    /// with one app's windows spread over several rini workspaces it silently cycles a subset:
+    /// three Ghostty windows, only the two sharing a workspace reachable. rini knows where all
     /// of them are, so it can do the full rotation and switch the owning display's workspace to
     /// follow.
     CycleAppWindows {
@@ -180,7 +180,7 @@ pub enum AnimationEasing {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RiftCommand {
+pub enum RiniCommand {
     Layout(LayoutCommand),
     Metrics(MetricsCommand),
     Reactor(ReactorCommand),
@@ -189,7 +189,7 @@ pub enum RiftCommand {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum TypedRiftCommand {
+enum TypedRiniCommand {
     Layout(LayoutCommand),
     Metrics(MetricsCommand),
     Reactor(ReactorCommand),
@@ -212,18 +212,18 @@ enum LegacyReactorCommand {
     Reactor(ReactorCommand),
 }
 
-impl From<TypedRiftCommand> for RiftCommand {
-    fn from(command: TypedRiftCommand) -> Self {
+impl From<TypedRiniCommand> for RiniCommand {
+    fn from(command: TypedRiniCommand) -> Self {
         match command {
-            TypedRiftCommand::Layout(command) => Self::Layout(command),
-            TypedRiftCommand::Metrics(command) => Self::Metrics(command),
-            TypedRiftCommand::Reactor(command) => Self::Reactor(command),
-            TypedRiftCommand::Config(command) => Self::Config(command),
+            TypedRiniCommand::Layout(command) => Self::Layout(command),
+            TypedRiniCommand::Metrics(command) => Self::Metrics(command),
+            TypedRiniCommand::Reactor(command) => Self::Reactor(command),
+            TypedRiniCommand::Config(command) => Self::Config(command),
         }
     }
 }
 
-impl<'de> Deserialize<'de> for RiftCommand {
+impl<'de> Deserialize<'de> for RiniCommand {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -231,7 +231,7 @@ impl<'de> Deserialize<'de> for RiftCommand {
         #[derive(Deserialize)]
         #[serde(untagged)]
         enum CommandInput {
-            Typed(TypedRiftCommand),
+            Typed(TypedRiniCommand),
             LegacyJson(String),
         }
 
@@ -242,22 +242,22 @@ impl<'de> Deserialize<'de> for RiftCommand {
     }
 }
 
-fn decode_legacy_command<E>(command: &str) -> Result<RiftCommand, E>
+fn decode_legacy_command<E>(command: &str) -> Result<RiniCommand, E>
 where
     E: DeError,
 {
     match serde_json::from_str::<LegacyCommand>(command)
         .map_err(|error| E::custom(format!("invalid legacy command JSON: {error}")))?
     {
-        LegacyCommand::Config(command) => Ok(RiftCommand::Config(command)),
+        LegacyCommand::Config(command) => Ok(RiniCommand::Config(command)),
         LegacyCommand::Reactor(LegacyReactorCommand::Layout(command)) => {
-            Ok(RiftCommand::Layout(command))
+            Ok(RiniCommand::Layout(command))
         }
         LegacyCommand::Reactor(LegacyReactorCommand::Metrics(command)) => {
-            Ok(RiftCommand::Metrics(command))
+            Ok(RiniCommand::Metrics(command))
         }
         LegacyCommand::Reactor(LegacyReactorCommand::Reactor(command)) => {
-            Ok(RiftCommand::Reactor(command))
+            Ok(RiniCommand::Reactor(command))
         }
     }
 }

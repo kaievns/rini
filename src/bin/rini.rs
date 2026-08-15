@@ -5,32 +5,32 @@ use std::process;
 use clap::{Parser, Subcommand};
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
-use rift_wm::actor::config::ConfigActor;
-use rift_wm::actor::config_watcher::ConfigWatcher;
-use rift_wm::actor::event_tap::EventTap;
-use rift_wm::actor::gesture_tap::GestureTap;
-use rift_wm::actor::menu_bar::Menu;
-use rift_wm::actor::mission_control::MissionControlActor;
-use rift_wm::actor::mission_control_observer::NativeMissionControl;
-use rift_wm::actor::notification_center::NotificationCenter;
-use rift_wm::actor::process::ProcessActor;
-use rift_wm::actor::reactor::{self, Reactor};
-use rift_wm::actor::spaces::SpacesActor;
-use rift_wm::actor::stack_line::StackLine;
-use rift_wm::actor::window_notify as window_notify_actor;
-use rift_wm::actor::wm_controller::{self, WmController};
-use rift_wm::common::config::{Config, config_file, restore_file};
-use rift_wm::common::log;
-use rift_wm::common::util::execute_startup_commands;
-use rift_wm::ipc;
-use rift_wm::layout_engine::LayoutEngine;
-use rift_wm::model::tx_store::WindowTxStore;
-use rift_wm::sys::accessibility::ensure_accessibility_permission;
-use rift_wm::sys::executor::Executor;
-use rift_wm::sys::mach::init_window_sub_level_server_port;
-use rift_wm::sys::screen::{CoordinateConverter, displays_have_separate_spaces};
-use rift_wm::sys::service::{ServiceCommands, handle_service_command};
-use rift_wm::sys::skylight::{
+use rini_wm::actor::config::ConfigActor;
+use rini_wm::actor::config_watcher::ConfigWatcher;
+use rini_wm::actor::event_tap::EventTap;
+use rini_wm::actor::gesture_tap::GestureTap;
+use rini_wm::actor::menu_bar::Menu;
+use rini_wm::actor::mission_control::MissionControlActor;
+use rini_wm::actor::mission_control_observer::NativeMissionControl;
+use rini_wm::actor::notification_center::NotificationCenter;
+use rini_wm::actor::process::ProcessActor;
+use rini_wm::actor::reactor::{self, Reactor};
+use rini_wm::actor::spaces::SpacesActor;
+use rini_wm::actor::stack_line::StackLine;
+use rini_wm::actor::window_notify as window_notify_actor;
+use rini_wm::actor::wm_controller::{self, WmController};
+use rini_wm::common::config::{Config, config_file, restore_file};
+use rini_wm::common::log;
+use rini_wm::common::util::execute_startup_commands;
+use rini_wm::ipc;
+use rini_wm::layout_engine::LayoutEngine;
+use rini_wm::model::tx_store::WindowTxStore;
+use rini_wm::sys::accessibility::ensure_accessibility_permission;
+use rini_wm::sys::executor::Executor;
+use rini_wm::sys::mach::init_window_sub_level_server_port;
+use rini_wm::sys::screen::{CoordinateConverter, displays_have_separate_spaces};
+use rini_wm::sys::service::{ServiceCommands, handle_service_command};
+use rini_wm::sys::skylight::{
     CGEnableEventStateCombining, CGSEventType, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
     SLSWindowManagementBridgeSetDelegate,
 };
@@ -84,7 +84,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Manage the launchd service for rift
+    /// Manage the launchd service for rini
     Service {
         #[command(subcommand)]
         service: ServiceCommands,
@@ -93,7 +93,7 @@ enum Commands {
 
 /// this is okay because there is no recovery mechanism for actors
 /// so we want to immediately exit (and most likely restart since
-/// rift runs as a service most of the time)
+/// rini runs as a service most of the time)
 async fn supervise(name: &'static str, fut: impl Future<Output = ()>) {
     fut.await;
     panic!("{name} exited");
@@ -139,9 +139,9 @@ fn main() {
 
     if !displays_have_separate_spaces() {
         eprintln!(
-            "Rift detected that the macOS setting \"Displays have separate Spaces\" \
-is disabled. Rift currently requires this setting to be enabled. \
-Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift."
+            "Rini detected that the macOS setting \"Displays have separate Spaces\" \
+is disabled. Rini currently requires this setting to be enabled. \
+Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini."
         );
         std::process::exit(1);
     }
@@ -169,7 +169,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
 
     execute_startup_commands(&config.settings.run_on_start);
 
-    let (broadcast_tx, broadcast_rx) = rift_wm::actor::channel();
+    let (broadcast_tx, broadcast_rx) = rini_wm::actor::channel();
 
     // Restore is ON by default, so a restart or redeploy keeps window sizes, workspaces
     // and strip positions.
@@ -179,7 +179,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
     // windows belonging to a display that had since been unplugged were restored at
     // that display's coordinates — measured at x=-1680 with no display there — and
     // stranded, with nothing to migrate them back. A single dock/undock cycle then
-    // produced a layout only fixable by deleting ~/.rift/layout.ron.
+    // produced a layout only fixable by deleting ~/.rini/layout.ron.
     //
     // Both are handled now. The layout mode is migrated on restore, and
     // release_windows_saved_on_absent_displays gives up the saved slots of any display
@@ -215,12 +215,12 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
         &config.settings.layout,
         Some(broadcast_tx.clone()),
     );
-    let (event_tap_tx, event_tap_rx) = rift_wm::actor::channel();
-    let (menu_tx, menu_rx) = rift_wm::actor::channel();
-    let (stack_line_tx, stack_line_rx) = rift_wm::actor::channel();
-    let (wnd_tx, wnd_rx) = rift_wm::actor::channel();
+    let (event_tap_tx, event_tap_rx) = rini_wm::actor::channel();
+    let (menu_tx, menu_rx) = rini_wm::actor::channel();
+    let (stack_line_tx, stack_line_rx) = rini_wm::actor::channel();
+    let (wnd_tx, wnd_rx) = rini_wm::actor::channel();
     let window_tx_store = WindowTxStore::new();
-    let (gesture_tap_tx, gesture_tap_rx) = rift_wm::actor::channel();
+    let (gesture_tap_tx, gesture_tap_rx) = rini_wm::actor::channel();
     let reactor = Reactor::spawn(
         config.clone(),
         layout,
@@ -271,8 +271,8 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
         restore_file: restore_file(),
         config: config.clone(),
     };
-    let (mc_tx, mc_rx) = rift_wm::actor::channel();
-    let (_mc_native_tx, mc_native_rx) = rift_wm::actor::channel();
+    let (mc_tx, mc_rx) = rini_wm::actor::channel();
+    let (_mc_native_tx, mc_native_rx) = rini_wm::actor::channel();
     let (wm_controller, wm_controller_sender) = WmController::new(
         wm_config,
         config_tx.clone(),
@@ -320,7 +320,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
 
     let process_actor = ProcessActor::new(wm_controller_sender.clone());
 
-    let stack_line_hit_rects = rift_wm::actor::stack_line::new_shared_hit_rects();
+    let stack_line_hit_rects = rini_wm::actor::stack_line::new_shared_hit_rects();
     let event_tap = EventTap::new(
         config.clone(),
         events_tx.clone(),
@@ -352,7 +352,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
 
     if config.settings.default_disable {
         println!(
-            "NOTICE: by default rift starts in a deactivated state.
+            "NOTICE: by default rini starts in a deactivated state.
             you must activate it by using the toggle_spaces_activated command.
             by default this is bound to Alt+Z but can be changed in the config file."
         );
@@ -368,7 +368,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rift
     std::thread::Builder::new()
         .name("input".into())
         .spawn(move || {
-            rift_wm::sys::executor::Executor::run(event_tap.run());
+            rini_wm::sys::executor::Executor::run(event_tap.run());
             panic!("input thread exited");
         })
         .expect("failed to spawn input thread");

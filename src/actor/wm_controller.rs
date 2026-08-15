@@ -77,7 +77,7 @@ pub enum WmCmd {
     /// Two unit variants rather than one taking `{ backward: bool }`. `WmCommand` is
     /// `#[serde(untagged)]`, so a struct-bodied variant whose only field has a default
     /// cannot be written as a bare string in a keybinding: `"cycle_app_windows"` matched
-    /// neither arm, and rift PANICS at startup on an unparseable binding rather than
+    /// neither arm, and rini PANICS at startup on an unparseable binding rather than
     /// skipping it, so the whole WM failed to start. Unit variants keep both directions
     /// expressible as plain strings.
     CycleAppWindows,

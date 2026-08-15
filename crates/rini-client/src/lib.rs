@@ -1,12 +1,12 @@
-//! A small, synchronous Rust client for Rift's Mach IPC API.
+//! A small, synchronous Rust client for Rini's Mach IPC API.
 //!
-//! The client talks to the same bootstrap service as `rift-cli` and includes
+//! The client talks to the same bootstrap service as `rini-cli` and includes
 //! the public request and response wire types.
 
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 #[cfg(not(target_os = "macos"))]
-compile_error!("rift-client only supports macOS");
+compile_error!("rini-client only supports macOS");
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::mem::{size_of, zeroed};
@@ -14,13 +14,13 @@ use std::ptr::copy_nonoverlapping;
 use std::thread;
 use std::time::Duration;
 
-pub use rift_protocol::*;
+pub use rini_protocol::*;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
 
 const MAX_MESSAGE_SIZE: usize = 262_144;
-const DEFAULT_SERVICE_NAME: &str = "git.acsandmann.rift";
+const DEFAULT_SERVICE_NAME: &str = "git.kaievns.rini";
 
 type KernReturn = c_int;
 type MachPort = u32;
@@ -40,7 +40,7 @@ const TASK_BOOTSTRAP_PORT: c_int = 4;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
-    #[error("Rift's Mach service is not registered")]
+    #[error("Rini's Mach service is not registered")]
     ServiceUnavailable,
     #[error("invalid Mach service name")]
     InvalidServiceName,
@@ -51,7 +51,7 @@ pub enum ClientError {
     },
     #[error("IPC payload exceeds the {MAX_MESSAGE_SIZE}-byte limit")]
     MessageTooLarge,
-    #[error("Rift returned an empty response")]
+    #[error("Rini returned an empty response")]
     EmptyResponse,
     #[error("{kind} payload is missing its NUL terminator")]
     MissingTerminator { kind: &'static str },
@@ -63,28 +63,28 @@ pub enum ClientError {
         #[source]
         source: serde_json::Error,
     },
-    #[error("Rift rejected the subscription: {0}")]
+    #[error("Rini rejected the subscription: {0}")]
     SubscriptionRejected(Value),
-    #[error("Rift returned an error: {0}")]
+    #[error("Rini returned an error: {0}")]
     Server(Value),
-    #[error("Rift returned an unknown response shape")]
+    #[error("Rini returned an unknown response shape")]
     UnknownResponse,
 }
 
-/// A handle for issuing synchronous requests to the running Rift process.
+/// A handle for issuing synchronous requests to the running Rini process.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct RiftMachClient;
+pub struct RiniMachClient;
 
-impl RiftMachClient {
+impl RiniMachClient {
     /// Creates a client handle.
     ///
     /// Service discovery happens when a request is sent, allowing callers to
-    /// construct the client before Rift has finished starting.
+    /// construct the client before Rini has finished starting.
     pub fn connect() -> Result<Self, ClientError> {
         Ok(Self)
     }
 
-    /// Returns whether Rift's bootstrap service is currently registered.
+    /// Returns whether Rini's bootstrap service is currently registered.
     pub fn is_available(&self) -> bool {
         let service_port = service_name()
             .ok()
@@ -93,8 +93,8 @@ impl RiftMachClient {
         service_port.is_some()
     }
 
-    /// Sends one request and blocks until Rift responds.
-    pub fn send_request(&self, request: &RiftRequest) -> Result<JsonRiftResponse, ClientError> {
+    /// Sends one request and blocks until Rini responds.
+    pub fn send_request(&self, request: &RiniRequest) -> Result<JsonRiniResponse, ClientError> {
         self.send_typed_request(request)
     }
 
@@ -102,8 +102,8 @@ impl RiftMachClient {
     /// types.
     pub fn send_typed_request<T: DeserializeOwned>(
         &self,
-        request: &RiftRequest,
-    ) -> Result<RiftResponse<T>, ClientError> {
+        request: &RiniRequest,
+    ) -> Result<RiniResponse<T>, ClientError> {
         let request_json = serde_json::to_vec(request).map_err(ClientError::Encode)?;
         let response = unsafe { send_request(&request_json, None)? };
         parse_json_payload(&response, "response")
@@ -111,22 +111,22 @@ impl RiftMachClient {
 
     /// Lists virtual workspaces, optionally for a specific macOS space.
     pub fn get_workspaces(&self, space_id: Option<u64>) -> Result<Vec<WorkspaceData>, ClientError> {
-        self.request(RiftRequest::GetWorkspaces { space_id })
+        self.request(RiniRequest::GetWorkspaces { space_id })
     }
 
     /// Lists managed windows, optionally filtered by a macOS space.
     pub fn get_windows(&self, space_id: Option<u64>) -> Result<Vec<WindowData>, ClientError> {
-        self.request(RiftRequest::GetWindows { space_id })
+        self.request(RiniRequest::GetWindows { space_id })
     }
 
     /// Lists connected displays.
     pub fn get_displays(&self) -> Result<Vec<DisplayData>, ClientError> {
-        self.request(RiftRequest::GetDisplays)
+        self.request(RiniRequest::GetDisplays)
     }
 
     /// Returns information about a managed window.
     pub fn get_window_info(&self, window_id: WindowId) -> Result<WindowData, ClientError> {
-        self.request(RiftRequest::GetWindowInfo { window_id })
+        self.request(RiniRequest::GetWindowInfo { window_id })
     }
 
     /// Returns the layout state for a macOS space.
@@ -141,7 +141,7 @@ impl RiftMachClient {
         space_id: Option<u64>,
         workspace_id: Option<usize>,
     ) -> Result<LayoutStateData, ClientError> {
-        self.request(RiftRequest::GetLayoutState { space_id, workspace_id })
+        self.request(RiniRequest::GetLayoutState { space_id, workspace_id })
     }
 
     /// Returns layout modes for workspaces in a macOS space.
@@ -150,55 +150,55 @@ impl RiftMachClient {
         space_id: Option<u64>,
         workspace_id: Option<usize>,
     ) -> Result<Vec<WorkspaceLayoutData>, ClientError> {
-        self.request(RiftRequest::GetWorkspaceLayouts { space_id, workspace_id })
+        self.request(RiniRequest::GetWorkspaceLayouts { space_id, workspace_id })
     }
 
-    /// Lists running applications known to Rift.
+    /// Lists running applications known to Rini.
     pub fn get_applications(&self) -> Result<Vec<ApplicationData>, ClientError> {
-        self.request(RiftRequest::GetApplications)
+        self.request(RiniRequest::GetApplications)
     }
 
     /// Returns the current metrics payload.
     pub fn get_metrics(&self) -> Result<Value, ClientError> {
-        self.request(RiftRequest::GetMetrics)
+        self.request(RiniRequest::GetMetrics)
     }
 
     /// Returns the current configuration as JSON until the config model is
-    /// moved into `rift-protocol`.
+    /// moved into `rini-protocol`.
     pub fn get_config(&self) -> Result<Value, ClientError> {
-        self.request(RiftRequest::GetConfig)
+        self.request(RiniRequest::GetConfig)
     }
 
-    /// Executes a typed Rift command.
-    pub fn execute(&self, command: RiftCommand) -> Result<Value, ClientError> {
-        self.request(RiftRequest::ExecuteCommand { command })
+    /// Executes a typed Rini command.
+    pub fn execute(&self, command: RiniCommand) -> Result<Value, ClientError> {
+        self.request(RiniRequest::ExecuteCommand { command })
     }
 
-    /// Executes a typed Rift command.
-    pub fn execute_command(&self, command: RiftCommand) -> Result<Value, ClientError> {
+    /// Executes a typed Rini command.
+    pub fn execute_command(&self, command: RiniCommand) -> Result<Value, ClientError> {
         self.execute(command)
     }
 
     /// Subscribes to an event and returns a handle that blocks for future events.
-    pub fn subscribe(&self, event: EventKind) -> Result<RiftMachSubscription, ClientError> {
+    pub fn subscribe(&self, event: EventKind) -> Result<RiniMachSubscription, ClientError> {
         let reply_port = ReplyPort::allocate(MACH_PORT_QLIMIT_LARGE)?;
-        let request = RiftRequest::Subscribe { event };
+        let request = RiniRequest::Subscribe { event };
         let request_json = serde_json::to_vec(&request).map_err(ClientError::Encode)?;
         let response = unsafe { send_request(&request_json, Some(reply_port.name))? };
 
-        match parse_json_payload::<RiftResponse>(&response, "response")? {
-            RiftResponse::Success { .. } => Ok(RiftMachSubscription { reply_port }),
-            RiftResponse::Error { error } => Err(ClientError::SubscriptionRejected(error)),
+        match parse_json_payload::<RiniResponse>(&response, "response")? {
+            RiniResponse::Success { .. } => Ok(RiniMachSubscription { reply_port }),
+            RiniResponse::Error { error } => Err(ClientError::SubscriptionRejected(error)),
             _ => Err(ClientError::SubscriptionRejected(Value::String(
-                "Rift returned an unknown response shape".to_owned(),
+                "Rini returned an unknown response shape".to_owned(),
             ))),
         }
     }
 
-    fn request<T: DeserializeOwned>(&self, request: RiftRequest) -> Result<T, ClientError> {
+    fn request<T: DeserializeOwned>(&self, request: RiniRequest) -> Result<T, ClientError> {
         match self.send_typed_request(&request)? {
-            RiftResponse::Success { data } => Ok(data),
-            RiftResponse::Error { error } => Err(ClientError::Server(error)),
+            RiniResponse::Success { data } => Ok(data),
+            RiniResponse::Error { error } => Err(ClientError::Server(error)),
             _ => Err(ClientError::UnknownResponse),
         }
     }
@@ -206,13 +206,13 @@ impl RiftMachClient {
 
 /// A live event subscription. Dropping it releases its Mach receive right.
 #[derive(Debug)]
-pub struct RiftMachSubscription {
+pub struct RiniMachSubscription {
     reply_port: ReplyPort,
 }
 
-impl RiftMachSubscription {
+impl RiniMachSubscription {
     /// Blocks until the next event arrives on this subscription.
-    pub fn recv_event(&self) -> Result<RiftEvent, ClientError> {
+    pub fn recv_event(&self) -> Result<RiniEvent, ClientError> {
         self.recv_event_as()
     }
 
@@ -246,7 +246,7 @@ fn parse_json_payload<T: DeserializeOwned>(
 }
 
 fn service_name() -> Result<CString, ClientError> {
-    let name = std::env::var("RIFT_BS_NAME").unwrap_or_else(|_| DEFAULT_SERVICE_NAME.to_owned());
+    let name = std::env::var("RINI_BS_NAME").unwrap_or_else(|_| DEFAULT_SERVICE_NAME.to_owned());
     CString::new(name).map_err(|_| ClientError::InvalidServiceName)
 }
 
@@ -514,20 +514,20 @@ mod tests {
 
     #[test]
     fn parses_nul_terminated_response_with_alignment_padding() {
-        let response: RiftResponse =
+        let response: RiniResponse =
             parse_json_payload(b"{\"data\":true}\0\0\0", "response").unwrap();
         assert_eq!(response.into_result(), Ok(Value::Bool(true)));
     }
 
     #[test]
     fn rejects_payload_without_nul() {
-        let result = parse_json_payload::<RiftResponse>(b"{\"data\":true}", "response");
+        let result = parse_json_payload::<RiniResponse>(b"{\"data\":true}", "response");
         assert!(matches!(result, Err(ClientError::MissingTerminator { .. })));
     }
 
     #[test]
     fn request_uses_the_existing_wire_format() {
-        let request = RiftRequest::GetWindows { space_id: Some(7) };
+        let request = RiniRequest::GetWindows { space_id: Some(7) };
         assert_eq!(
             serde_json::to_value(request).unwrap(),
             serde_json::json!({ "get_windows": { "space_id": 7 } })
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn response_is_untagged() {
-        let response = RiftResponse::Success {
+        let response = RiniResponse::Success {
             data: serde_json::json!({ "ok": true }),
         };
         assert_eq!(
