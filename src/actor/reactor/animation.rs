@@ -684,7 +684,7 @@ impl Animation {
             if skip.contains(&window.wid) {
                 continue;
             }
-            _ = window.handle.send(Request::BeginWindowAnimation(window.wid));
+            _ = window.handle.send(Request::BeginWindowAnimation(window.wid, window.start.size));
             // No pre-sizing of the focused window here.
             //
             // This used to immediately push `size: finish.size` at `start.origin`
@@ -1000,7 +1000,7 @@ mod tests {
         manager.handle_message(Message::Replace(first));
         assert!(matches!(
             collect_requests(&mut rx).as_slice(),
-            [Request::BeginWindowAnimation(req_wid)] if *req_wid == wid
+            [Request::BeginWindowAnimation(req_wid, _)] if *req_wid == wid
         ));
 
         manager.tick();
@@ -1074,7 +1074,7 @@ mod tests {
 
         let requests = collect_requests(&mut rx);
         assert_eq!(requests.len(), 1);
-        assert!(matches!(requests[0], Request::BeginWindowAnimation(req_wid) if req_wid == wid3));
+        assert!(matches!(requests[0], Request::BeginWindowAnimation(req_wid, _) if req_wid == wid3));
         assert!(animation_contains(&manager, wid2));
 
         let carried = manager
@@ -1213,7 +1213,7 @@ mod tests {
 
         let requests = collect_requests(&mut rx);
         assert_eq!(requests.len(), 4);
-        assert!(matches!(requests[0], Request::BeginWindowAnimation(req_wid) if req_wid == wid));
+        assert!(matches!(requests[0], Request::BeginWindowAnimation(req_wid, _) if req_wid == wid));
         assert_animation_frame(&requests[1], wid, rect(50.0, 60.0, 10.0, 10.0));
         assert!(matches!(requests[2], Request::EndWindowAnimation(req_wid) if req_wid == wid));
         assert_set_window_frame(&requests[3], wid, rect(80.0, 90.0, 10.0, 10.0));

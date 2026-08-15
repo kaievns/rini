@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use objc2::rc::Retained;
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
-use objc2_core_foundation::{CFRunLoop, CGPoint, CGRect};
+use objc2_core_foundation::{CFRunLoop, CGPoint, CGRect, CGSize};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio::{join, select};
@@ -355,7 +355,13 @@ pub enum Request {
         txid: TransactionId,
     },
 
-    BeginWindowAnimation(WindowId),
+    /// Start animating `WindowId`, whose size at that moment is the second field.
+    ///
+    /// The size is PASSED rather than read back with `elem.frame()`. Reading it cost a
+    /// synchronous AX round trip at the start of every animation, on every window, which is
+    /// exactly the per-window latency that makes windows animating together drift apart. The
+    /// caller already knows the start frame, so asking the app for it was pure overhead.
+    BeginWindowAnimation(WindowId, CGSize),
     EndWindowAnimation(WindowId),
 
     /// Raise the windows within a single space, in the given order. All windows must be
@@ -983,7 +989,7 @@ impl State {
                     ));
                 }
             }
-            Request::BeginWindowAnimation(wid) => {
+            Request::BeginWindowAnimation(wid, start_size) => {
                 let (elem, started_animation) = {
                     let window = self.window_mut(wid)?;
                     let started_animation = !std::mem::replace(&mut window.is_animating, true);
@@ -1006,7 +1012,16 @@ impl State {
                     // The current frame is the right seed: a pure slide keeps the size
                     // constant, so the first comparison correctly reports no change. A genuine
                     // resize still differs from it and takes the full path.
-                    window.last_animation_frame = window.elem.frame().ok();
+                    // Seed from the size the caller is starting from, so the first frame of a
+                    // pure slide correctly reports "size unchanged" and takes the cheap
+                    // single set_position path. Clearing it made size_changed unconditionally
+                    // true, so every animation opened with a 3x write (set_size,
+                    // set_position, set_size) on every window — the "jumps the first one or
+                    // two times then goes smooth" report.
+                    //
+                    // Only the size matters here; flush_frames compares sizes only.
+                    window.last_animation_frame =
+                        Some(CGRect::new(CGPoint::new(0.0, 0.0), start_size));
                     (window.elem.clone(), started_animation)
                 };
                 if started_animation {

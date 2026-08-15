@@ -677,7 +677,7 @@ impl Apps {
                         ));
                     }
                 }
-                Request::BeginWindowAnimation(wid) => {
+                Request::BeginWindowAnimation(wid, _) => {
                     self.windows.entry(wid).or_default().animating = true;
                 }
                 Request::EndWindowAnimation(wid) => {
