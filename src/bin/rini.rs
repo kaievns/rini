@@ -221,6 +221,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
     let (wnd_tx, wnd_rx) = rini_wm::actor::channel();
     let window_tx_store = WindowTxStore::new();
     let (gesture_tap_tx, gesture_tap_rx) = rini_wm::actor::channel();
+    let (cursor_warp_tx, cursor_warp_rx) = rini_wm::actor::channel();
     let reactor = Reactor::spawn(
         config.clone(),
         layout,
@@ -229,6 +230,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
         broadcast_tx.clone(),
         menu_tx.clone(),
         stack_line_tx.clone(),
+        Some(cursor_warp_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
         Some(gesture_tap_tx.clone()),
         opt.one,
@@ -346,6 +348,13 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
         stack_line_hit_rects,
     );
 
+    // Warping needs no main-thread access and no permissions, so it is just another
+    // actor. It stays parked until the reactor sends it geometry for two or more displays.
+    let cursor_warp = rini_wm::actor::cursor_warp::CursorWarp::new(
+        config.settings.warp_cursor_between_stacked_displays,
+        cursor_warp_rx,
+    );
+
     let mission_control =
         MissionControlActor::new(config.clone(), mc_rx, mc_tx.clone(), reactor.clone(), mtm);
     let mission_control_native = NativeMissionControl::new(events_tx.clone(), mc_native_rx);
@@ -388,6 +397,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
             supervise("mc_native", mission_control_native.run()),
             supervise("mission_control", mission_control.run()),
             supervise("process_actor", process_actor.run()),
+            supervise("cursor_warp", cursor_warp.run()),
         );
     });
 }

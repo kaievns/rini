@@ -349,6 +349,7 @@ impl Reactor {
         broadcast_tx: BroadcastSender,
         menu_tx: menu_bar::Sender,
         stack_line_tx: stack_line::Sender,
+        cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
         window_notify: Option<(crate::actor::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -366,6 +367,7 @@ impl Reactor {
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.menu_manager.menu_tx = Some(menu_tx);
         reactor.communication_manager.stack_line_tx = Some(stack_line_tx);
+        reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());
@@ -421,6 +423,7 @@ impl Reactor {
                 event_tap_tx: None,
                 gesture_tap_tx: None,
                 stack_line_tx: None,
+                cursor_warp_tx: None,
                 raise_manager_tx,
                 event_broadcaster: broadcast_tx,
                 wm_sender: None,
@@ -2135,6 +2138,9 @@ impl Reactor {
             if let Some(wm) = &self.communication_manager.wm_sender {
                 wm.send(crate::actor::wm_controller::WmEvent::ConfigUpdated(config));
             }
+            // Re-sends both the flag and the geometry, so toggling
+            // warp_cursor_between_stacked_displays applies without a restart.
+            self.publish_cursor_warp_screens();
         }
         for line in outcome.stdout_lines {
             println!("{line}");
@@ -2658,6 +2664,11 @@ impl Reactor {
             }
         }
         self.space_state.screens = screens;
+        // Cursor warping is derived from display geometry, so it has to be told whenever
+        // that geometry changes — docking, undocking, or rearranging in System Settings.
+        // Pushing it from here rather than having the actor poll CGDisplayBounds keeps one
+        // source of truth for the screen set.
+        self.publish_cursor_warp_screens();
         if invalidates_pending_targets {
             self.clear_pending_hidden_window_targets();
         }
@@ -3727,6 +3738,22 @@ impl Reactor {
     fn window_center_on_known_screen(&self, wid: WindowId) -> Option<CGPoint> {
         let window_center = self.state.windows.window(wid)?.frame_monotonic.mid();
         self.screen_for_point(window_center).map(|_| window_center)
+    }
+
+    /// Send the current display geometry to the cursor-warp actor.
+    ///
+    /// Also re-sends the enabled flag, so a config reload that toggles
+    /// `warp_cursor_between_stacked_displays` takes effect without a restart.
+    fn publish_cursor_warp_screens(&self) {
+        let Some(tx) = &self.communication_manager.cursor_warp_tx else {
+            return;
+        };
+        _ = tx.send(crate::actor::cursor_warp::Request::SetEnabled(
+            self.config.settings.warp_cursor_between_stacked_displays,
+        ));
+        _ = tx.send(crate::actor::cursor_warp::Request::ScreensChanged(
+            crate::actor::cursor_warp::frames_of(&self.space_state.screens),
+        ));
     }
 
     pub fn warp_mouse(&mut self, point: CGPoint) {

@@ -336,6 +336,11 @@ unsafe extern "C" {
     pub fn CGEventSetDoubleValueField(event: *mut CFType, field: u32, value: f64);
     pub fn CGEventPost(tapLocation: CGEventTapLocation, event: *mut CFType);
     pub fn CGWarpMouseCursorPosition(point: CGPoint) -> CGError;
+    /// Re-couple the hardware mouse to the on-screen cursor after a warp.
+    ///
+    /// A warp leaves the cursor carrying whatever velocity it had, so a pointer warped in
+    /// at a display edge can slide straight back out. Passing 1 re-associates them.
+    pub fn CGAssociateMouseAndMouseCursorPosition(connected: u32) -> CGError;
     pub fn CGEventSourceSetLocalEventsSuppressionInterval(source: *mut CFType, interval: f64);
 
     pub fn CGSGetWindowBounds(cid: cid_t, wid: u32, frame: *mut CGRect) -> i32;

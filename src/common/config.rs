@@ -413,6 +413,21 @@ pub struct Settings {
     pub mouse_follows_focus: bool,
     #[serde(default = "yes")]
     pub mouse_hides_on_focus: bool,
+    /// Warp the cursor between displays that are stacked VERTICALLY, so left/right
+    /// travel crosses them as if they sat side by side.
+    ///
+    /// This pays back the cost of a compromise the scrolling layout forces. Off-strip
+    /// columns are parked just past the screen edge, at large negative x — measured on
+    /// this machine at x=-1680, -857 and -819 while the display spans 0..1728. With
+    /// displays arranged side by side those coordinates land inside the NEIGHBOUR, so
+    /// scrolled-away windows appear on the wrong screen and focus follows them there.
+    /// Upstream closed that as not-planned (rift issue #266): "displays simply have to be
+    /// arranged vertically. consequence of native multi display behavior in macOS".
+    ///
+    /// Stacking removes the bleed and costs horizontal cursor travel: with nothing beside
+    /// either display, the pointer stops dead at the edge. This restores it.
+    #[serde(default = "no")]
+    pub warp_cursor_between_stacked_displays: bool,
     #[serde(default = "yes")]
     pub focus_follows_mouse: bool,
     /// Hotkey that disables focus-follows-mouse while held.

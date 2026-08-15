@@ -26,6 +26,13 @@ animation_fps = 100.0
 focus_follows_mouse = true
 mouse_follows_focus = true
 mouse_hides_on_focus = true
+# - warp_cursor_between_stacked_displays: with displays arranged VERTICALLY, pushing the
+#   pointer off a left or right edge crosses to the display above or below, as if they sat
+#   side by side. Off by default; it only makes sense for the stacked arrangement the
+#   scrolling layout needs, because off-strip columns park at negative x and that lands
+#   inside a horizontally adjacent monitor (rift issue #266). Genuinely adjacent displays
+#   are left alone, since macOS crosses those natively.
+warp_cursor_between_stacked_displays = false
 # focus_follows_mouse_disable_hotkey temporarily suspends focus-follows-mouse while held
 # e.g. "Fn"; omit or set to null to keep focus-follows-mouse always active
 #focus_follows_mouse_disable_hotkey = "Fn"
