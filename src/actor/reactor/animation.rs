@@ -33,6 +33,16 @@ pub struct AnimationManager {
 struct ActiveAnimation {
     animation: Animation,
     next_frame: u32,
+    /// When this animation began, so the frame shown is derived from ELAPSED TIME rather
+    /// than from a tick count.
+    ///
+    /// A counter assumes every tick arrives on schedule. They do not: each tick writes
+    /// frames to app processes over synchronous AX calls, and a slow app delays the whole
+    /// tick. With a counter that delay shifts every later frame too, so the animation
+    /// stretches and stutters instead of dropping a frame and staying on schedule — which
+    /// is what "choppy" looks like. Reading the clock instead makes a late tick skip
+    /// forward, so the animation always finishes in animation_duration.
+    started: std::time::Instant,
 }
 
 #[derive(Debug)]
@@ -597,20 +607,53 @@ impl ActiveAnimation {
             return None;
         }
         animation.begin();
-        Some(Self { animation, next_frame: 1 })
+        Some(Self { animation, next_frame: 1, started: std::time::Instant::now() })
     }
 
     fn replace_with(self, mut next: Animation) -> Self {
+        // If the replacement is going to the SAME places, keep animating rather than
+        // restarting.
+        //
+        // A workspace switch runs the layout more than once (arrange.passes), and each pass
+        // produced a fresh Animation that superseded the one in flight. Instrumented, one
+        // switch showed the frame sequence restart twice:
+        //
+        //   1, 2, 4, | 1, 2, 4, 5, ... 21, 22, | 1, 2, 4, 5, ...
+        //
+        // Every restart snaps windows back to a start frame and re-eases from there, which is
+        // the choppiness. Worse, the passes do not all carry the same window set, so one
+        // window could be re-started while another kept going — that is the systematic
+        // ~520pt offset measured between two windows that should have moved together.
+        if self.animation.targets_match(&next) {
+            return self;
+        }
         let current = self.current_frames();
         let continuing = next.patch_starts_from(&current);
         next.begin_windows_not_in(&continuing);
         next.carry_over(self.animation, &current);
-        Self { animation: next, next_frame: 1 }
+        // A replacement restarts the clock: it has its own duration to cover, and inheriting
+        // the old start time would make it appear already part-finished.
+        Self { animation: next, next_frame: 1, started: std::time::Instant::now() }
     }
 
     fn send_next_frame(&mut self) {
-        self.animation.send_frame(self.next_frame);
-        self.next_frame += 1;
+        // Pick the frame from the clock, not from a counter. If ticks ran late the frame
+        // index jumps ahead, dropping the frames that are already in the past instead of
+        // replaying them behind schedule.
+        let frame = self.frame_for_now().max(self.next_frame);
+        self.animation.send_frame(frame);
+        self.next_frame = frame + 1;
+    }
+
+    /// Which frame corresponds to the time elapsed since the animation began.
+    fn frame_for_now(&self) -> u32 {
+        let total = self.animation.interval * self.animation.frames;
+        if total.is_zero() {
+            return self.animation.frames;
+        }
+        let progress = self.started.elapsed().as_secs_f64() / total.as_secs_f64();
+        let frame = (progress * f64::from(self.animation.frames)).round();
+        (frame as u32).clamp(1, self.animation.frames)
     }
 
     fn is_complete(&self) -> bool {
@@ -715,29 +758,40 @@ impl Animation {
     }
 
     fn send_frame(&self, frame: u32) {
+        // Group by app and send ONE message per app per tick.
+        //
+        // Previously this sent one message per window. Each app actor drains its queue and
+        // applies frames with synchronous AX writes, so N messages meant N separate drains
+        // and N wakeups, and every window's frame landed at a different moment. Two columns
+        // sliding together drifted apart by a measured 155pt on ~540pt of travel (112pt after
+        // removing a synchronous read at animation start).
+        //
+        // Batching does not make the writes simultaneous, since AX offers no such call, but
+        // it collapses the per-window scheduling: one drain per app, one enhanced-UI lease,
+        // no queue round trip between siblings. Windows of the SAME app now move in lockstep;
+        // windows of different apps are still limited by how fast each app answers.
+        //
+        // The size flag is per batch, which is correct because every window in one animation
+        // shares the same easing curve and so the same "is this frame a resize" answer. The
+        // TXID is per window, because it is minted per WindowServer id.
+        let mut per_app: HashMap<pid_t, Vec<(WindowId, CGRect, TransactionId)>> =
+            HashMap::default();
+        let mut handles: HashMap<pid_t, &AppThreadHandle> = HashMap::default();
         for window in &self.windows {
-            // Send the interpolated size on EVERY frame.
+            // Interpolated size on EVERY frame.
             //
-            // This used to compute a smooth rect and then discard the size:
-            //     let set_size = frame * 2 == self.frames || frame == self.frames;
-            //     if set_size { rect.size = window.finish.size; }
-            // so size reached the app only at the halfway frame and the last frame,
-            // jumping straight to the final value at both. Position was sent every
-            // frame, so a resize looked like the neighbouring window sliding
-            // smoothly while this one held its old size and then popped — a visible
-            // tear between the two mid-transition, and a resize that appeared to
-            // start late.
-            //
-            // frame_after is the single source of truth for the interpolated rect
-            // (it blends origin and size on one eased curve), so use it here instead
-            // of recomputing, and always ask the app to apply the size.
+            // This used to compute a smooth rect and then discard the size, so size reached
+            // the app only at the halfway and final frames, jumping at both. Position eased
+            // the whole time, so a resize looked like the neighbouring window sliding
+            // smoothly while this one held its old size and then popped.
             let rect = window.frame_after(frame, self.frames);
-            _ = window.handle.send(Request::AnimationFrame {
-                wid: window.wid,
-                frame: rect,
-                set_size: true,
-                txid: window.txid,
-            });
+            per_app.entry(window.wid.pid).or_default().push((window.wid, rect, window.txid));
+            handles.entry(window.wid.pid).or_insert(&window.handle);
+        }
+
+        for (pid, frames) in per_app {
+            let Some(handle) = handles.get(&pid) else { continue };
+            _ = handle.send(Request::AnimationFrames { frames, set_size: true });
         }
     }
 
@@ -791,6 +845,23 @@ impl Animation {
             }
             self.windows.push(window);
         }
+    }
+
+    /// Whether `other` animates the same windows to the same finishing frames.
+    ///
+    /// Compared by TARGET rather than by start frame: a later arrange pass computes the same
+    /// destination from the same layout, but its start frame is wherever the window happens to
+    /// be mid-animation, so comparing starts would never match.
+    fn targets_match(&self, other: &Animation) -> bool {
+        if self.windows.len() != other.windows.len() {
+            return false;
+        }
+        self.windows.iter().all(|window| {
+            other
+                .windows
+                .iter()
+                .any(|candidate| candidate.wid == window.wid && candidate.finish.same_as(window.finish))
+        })
     }
 
     fn skip_to_end_and_end(self) {
@@ -954,41 +1025,48 @@ mod tests {
         }
     }
 
-    fn assert_animation_frame(request: &Request, wid: WindowId, frame: CGRect) {
+    /// Flatten either animation-frame message shape into (wid, frame, set_size).
+    ///
+    /// Frames are batched per app now, so a test asserting on the message SHAPE breaks when
+    /// the batching changes even though the animation is identical. These helpers assert the
+    /// frames themselves.
+    fn animation_frames_of(request: &Request) -> Vec<(WindowId, CGRect, bool)> {
         match request {
-            Request::AnimationFrame {
-                wid: req_wid,
-                frame: req_frame,
-                set_size,
-                txid,
-            } => {
-                assert_eq!(*req_wid, wid);
-                assert_eq!(*req_frame, frame);
-                assert!(*set_size, "expected a set_size frame");
-                assert_eq!(*txid, TransactionId::default());
+            Request::AnimationFrame { wid, frame, set_size, .. } => {
+                vec![(*wid, *frame, *set_size)]
             }
-            _ => panic!("expected AnimationFrame, got {request:?}"),
+            Request::AnimationFrames { frames, set_size } => {
+                frames.iter().map(|(wid, frame, _)| (*wid, *frame, *set_size)).collect()
+            }
+            _ => Vec::new(),
         }
     }
 
+    fn collect_animation_frames(requests: &[Request]) -> Vec<(WindowId, CGRect, bool)> {
+        requests.iter().flat_map(animation_frames_of).collect()
+    }
+
+    fn assert_animation_frame(request: &Request, wid: WindowId, frame: CGRect) {
+        let frames = animation_frames_of(request);
+        assert!(!frames.is_empty(), "expected an animation frame, got {request:?}");
+        let found = frames
+            .iter()
+            .find(|(req_wid, _, _)| *req_wid == wid)
+            .unwrap_or_else(|| panic!("{wid:?} not in {request:?}"));
+        assert_eq!(found.1, frame);
+        assert!(found.2, "expected a set_size frame");
+    }
+
     fn assert_animation_pos(request: &Request, wid: WindowId, pos: CGPoint) {
-        match request {
-            Request::AnimationFrame {
-                wid: req_wid,
-                frame,
-                set_size,
-                txid,
-            } => {
-                assert_eq!(*req_wid, wid);
-                assert_eq!(frame.origin, pos);
-                // set_size is now true on every frame: size is interpolated
-                // alongside position rather than applied only at the midpoint and
-                // the end. This helper only cares about the POSITION, which is what
-                // its callers assert.
-                assert_eq!(*txid, TransactionId::default());
-            }
-            _ => panic!("expected AnimationFrame, got {request:?}"),
-        }
+        let frames = animation_frames_of(request);
+        assert!(!frames.is_empty(), "expected an animation frame, got {request:?}");
+        let found = frames
+            .iter()
+            .find(|(req_wid, _, _)| *req_wid == wid)
+            .unwrap_or_else(|| panic!("{wid:?} not in {request:?}"));
+        // Only POSITION is asserted here. set_size is true on every frame now, because size
+        // is interpolated alongside position rather than applied at the midpoint and end.
+        assert_eq!(found.1.origin, pos);
     }
 
     #[test]
@@ -1519,7 +1597,7 @@ mod tests {
         for _ in 0..6 {
             manager.tick();
             for request in collect_requests(&mut rx) {
-                if let Request::AnimationFrame { frame, set_size, .. } = request {
+                for (_, frame, set_size) in animation_frames_of(&request) {
                     assert!(set_size, "every frame must apply the size");
                     widths.push(frame.size.width);
                 }
@@ -1566,7 +1644,7 @@ mod tests {
         for _ in 0..8 {
             manager.tick();
             for request in collect_requests(&mut rx) {
-                if let Request::AnimationFrame { frame, .. } = request {
+                for (_, frame, _) in animation_frames_of(&request) {
                     sizes.push((frame.size.width, frame.size.height));
                     positions.push(frame.origin.x);
                 }

@@ -354,6 +354,24 @@ pub enum Request {
         set_size: bool,
         txid: TransactionId,
     },
+    /// Every window of THIS APP that moves on one animation tick, in a single message.
+    ///
+    /// One message per window per tick made each window's frame land at a different moment,
+    /// because the requests are drained and applied in order and every AX write is a
+    /// synchronous round trip. Two columns sliding together visibly drifted apart: measured
+    /// at 155pt of vertical skew on ~540pt of travel, still 112pt after a separate fix.
+    ///
+    /// Batching cannot make the writes simultaneous — AX has no such call — but it does put
+    /// every window of an app in ONE drain, under one enhanced-UI lease, with no queue
+    /// wakeups in between. What remains is only the unavoidable cost of the writes
+    /// themselves.
+    AnimationFrames {
+        /// Per-window, because a transaction id is minted per WindowServer id. Sharing one
+        /// across a batch would stamp every window of an app with a sibling's txid, and the
+        /// reactor uses that id to recognise its own writes when the frame change comes back.
+        frames: Vec<(WindowId, CGRect, TransactionId)>,
+        set_size: bool,
+    },
 
     /// Start animating `WindowId`, whose size at that moment is the second field.
     ///
@@ -867,6 +885,17 @@ impl State {
                     Requested(true),
                     None,
                 ));
+            }
+            Request::AnimationFrames { frames, set_size } => {
+                // Same destination as the single-window form: these are coalesced into
+                // pending_frames and applied together by flush_all_frames at the end of the
+                // drain, so a burst that supersedes itself only pays for the final position.
+                for (wid, frame, txid) in frames {
+                    self.pending_frames.insert(
+                        wid,
+                        PendingFrame { span: Span::current(), frame, set_size, txid },
+                    );
+                }
             }
             Request::AnimationFrame { wid, frame, set_size, txid } => {
                 self.pending_frames.insert(
