@@ -156,6 +156,82 @@ Never judge an SLS mutation by its return code. Three of the calls above return
 `kCGErrorSuccess` and do nothing, and one of them echoes the written value back
 on read. Verify with `CGWindowListCopyWindowInfo` bounds or with pixels.
 
+## What yabai actually does
+
+Read from the source at commit depth 1 of `github.com/koekeishiya/yabai`, not
+from recollection. The relevant code is `window_manager_animate_window_list_async`
+in `src/window_manager.c:604-710`.
+
+yabai animates **proxy windows it owns**, never the real windows. The sequence:
+
+1. `SLSNewConnection` for a dedicated animation connection (`window_manager.c:607`).
+2. Per window, on its own pthread so captures run in parallel
+   (`window_manager.c:666`):
+   - `SLSGetWindowBounds` for the start frame
+   - `SLSHWCaptureWindowList(cid, &wid, 1, (1 << 11) | (1 << 8))`
+     (`window_manager.c:521`)
+   - `SLSNewWindowWithOpaqueShapeAndContext` to create its own window, then
+     `SLSSetWindowOpacity`, `SLSSetWindowResolution(2.0)`, `SLSSetWindowAlpha`,
+     `SLSSetWindowLevel`, `SLSSetWindowSubLevel`, then `SLWindowContextCreate`
+     and `CGContextDrawImage` to paint the bitmap in (`window_manager.c:463-484`)
+3. `pthread_join` on all capture threads (`window_manager.c:679`).
+4. `scripting_addition_swap_window_proxy_in` (`window_manager.c:685`), which asks
+   the injected payload to run
+   `SLSTransactionOrderWindowGroup(transaction, proxy_wid, 1, wid)`
+   (`src/osax/payload.m:827`). That orders the proxy above the real window.
+5. `window_manager_set_window_frame` moves the real window to its final position
+   **once** (`window_manager.c:694`), hidden behind the proxy.
+6. `CVDisplayLinkCreateWithActiveCGDisplays` drives the tick
+   (`window_manager.c:700`).
+7. Each tick lerps, then applies `SLSTransactionSetWindowTransform` to each
+   **proxy** and commits all of them in one `SLSTransactionCommit`
+   (`window_manager.c:556-571`).
+8. At t == 1, `scripting_addition_swap_window_proxy_out` orders the proxy back
+   under the real window, proxies are destroyed, and the connection is released
+   (`window_manager.c:578-594`).
+
+This confirms the measurements in this file rather than contradicting them.
+`SLSSetWindowTransform` appears in exactly 2 files: `src/misc/extern.h`, which is
+only the declaration, and `src/osax/payload.m`, which is the scripting addition
+injected into Dock.app and requires partial SIP disable. yabai's own process
+never transforms a foreign window. Every transform it applies goes to a proxy it
+created itself, which matches the own-window control succeeding here while every
+foreign attempt failed.
+
+### Three things rini should copy
+
+1. **Set the real window frame once, not per frame.** rini currently writes
+   `AXPosition` on every frame of every window. That is the direct cause of the
+   cross-app tear, because each write is a synchronous request into a process
+   that answers at its own speed. yabai writes the final frame one time.
+2. **One transaction per frame for all windows.** `SLSTransactionCommit` applies
+   every proxy's transform atomically, so yabai's windows cannot tear against
+   each other by construction. rini's per-app batching reduced the tear but
+   cannot eliminate it, because separate apps still answer separately.
+3. **`CVDisplayLink` for the tick.** This is item 39 in the backlog. Note that
+   `src/sys/display_link.rs` is currently dead code and its `Drop` is unsound,
+   because `CVDisplayLinkStop` does not wait for an in-flight callback before the
+   `Box` is freed.
+
+### Two places rini's situation differs
+
+1. **rini does not need the scripting addition, and must not adopt yabai's
+   z-ordering approach.** yabai needs partial SIP disable purely to order each
+   proxy directly above its own real window, preserving interleaving with
+   unmanaged windows. rini's design only needs one opaque full-screen overlay
+   above everything, and setting a level on a window rini owns needs no
+   privilege. This is the reason rini can get the same visual result without
+   SIP disable, and it should be treated as a constraint on the design rather
+   than an accident.
+2. **rini cannot use `SLSHWCaptureWindowList` the way yabai does.** yabai only
+   ever animates windows that are already fully on screen, so a
+   visible-portion-only capture is sufficient for it. rini's incoming windows sit
+   off-strip or on a hidden workspace, where that call returns a 40x1081 or 1x28
+   sliver, as measured above. rini therefore needs ScreenCaptureKit, which costs
+   40ms plus 14.5ms per window against yabai's roughly 16ms per window in
+   parallel. That difference is exactly why rini needs a warm cache and yabai
+   does not.
+
 ## Trap that cost about 40 minutes
 
 Every ScreenCaptureKit capture failed with error -3811, "Failed to start stream
