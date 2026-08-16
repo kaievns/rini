@@ -34,6 +34,7 @@ use objc2_quartz_core::{CALayer, CATransaction};
 
 use crate::actor::app::WindowId;
 use crate::sys::cgs_window::CgsWindow;
+use crate::ui::common::render_layer_to_cgs_window;
 use crate::ui::window_snapshot::WindowSnapshot;
 
 /// Window level for the overlay. Managed windows all sit at CG layer 0, so anything above that
@@ -105,6 +106,12 @@ impl WorkspaceOverlay {
         let _ = window.order_above(None);
 
         let layer_context = Self::host_layer(&window, &root);
+        if layer_context.is_none() {
+            // Not fatal: `present` falls back to rendering the layer tree into the window's context
+            // by hand. Worth knowing about though, because that path redraws the whole tree per
+            // frame instead of letting the compositor do it.
+            tracing::warn!("overlay has no CAContext; falling back to manual rendering");
+        }
 
         Some(Self {
             window,
@@ -134,6 +141,19 @@ impl WorkspaceOverlay {
 
     pub fn frame(&self) -> CGRect {
         self.frame
+    }
+
+    /// Pushes the current layer state to the screen.
+    ///
+    /// Required after every change. A hosted `CAContext` is not driven by an app's normal display
+    /// cycle, so committing a transaction alone updates the layer tree without presenting it, and
+    /// the window keeps showing whatever it had. Without this the overlay renders blank.
+    fn present(&self) {
+        if self._layer_context.is_some() {
+            CATransaction::flush();
+        } else {
+            render_layer_to_cgs_window(self.window.id(), self.frame.size, &self.root);
+        }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -200,6 +220,7 @@ impl WorkspaceOverlay {
         }
 
         CATransaction::commit();
+        self.present();
     }
 
     /// Positions every tile for a given progress through the animation, in ONE transaction.
@@ -219,6 +240,7 @@ impl WorkspaceOverlay {
             }
         }
         CATransaction::commit();
+        self.present();
     }
 
     /// Shows the overlay. Costs about 0.36ms, measured, because it is only an alpha change.

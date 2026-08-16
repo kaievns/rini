@@ -135,7 +135,7 @@ impl CursorWarp {
                             None => return,
                         }
                     }
-                    _ = tokio::time::sleep(POLL) => self.tick(),
+                    _ = crate::sys::executor::sleep(POLL) => self.tick(),
                 }
             } else {
                 match self.rx.recv().await {

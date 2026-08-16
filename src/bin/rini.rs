@@ -379,6 +379,7 @@ stays usable. Fix the config and restart. Error: {error}",
     // idle until the reactor sends it display geometry and something to animate.
     let workspace_animation = rini_wm::actor::workspace_animation::WorkspaceAnimation::new(
         workspace_animation_rx,
+        workspace_animation_tx.clone(),
         mtm,
     );
 

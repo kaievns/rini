@@ -28,8 +28,9 @@ use tracing::{debug, warn};
 
 use crate::actor;
 use crate::actor::app::WindowId;
+use crate::sys::run_loop::RepeatingTimer;
 use crate::sys::window_server::WindowServerId;
-use crate::ui::window_snapshot::{capture_via_skylight, SnapshotCache, WindowSnapshot};
+use crate::ui::window_snapshot::{SnapshotCache, WindowSnapshot, capture_via_skylight};
 use crate::ui::workspace_overlay::{OverlayTile, WorkspaceOverlay};
 
 /// One window's part in an animation, as the caller describes it.
@@ -59,6 +60,8 @@ pub enum Event {
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
+    /// One frame of the running animation. Posted by the run loop timer, not by any other actor.
+    Tick,
 }
 
 pub type Sender = actor::Sender<Event>;
@@ -74,6 +77,8 @@ struct RunningAnimation {
     tiles: Vec<OverlayTile>,
     started: Instant,
     duration: Duration,
+    /// Dropped when the animation ends, which invalidates the timer and stops the wakeups.
+    _clock: Option<RepeatingTimer>,
 }
 
 impl RunningAnimation {
@@ -94,6 +99,9 @@ impl RunningAnimation {
 
 pub struct WorkspaceAnimation {
     rx: Receiver,
+    /// Used by the frame timer to post `Tick` back into this actor's own queue, so frames arrive
+    /// through the same path as every other event and need no separate locking.
+    tx: Sender,
     mtm: MainThreadMarker,
     overlay: Option<WorkspaceOverlay>,
     cache: SnapshotCache,
@@ -102,9 +110,10 @@ pub struct WorkspaceAnimation {
 }
 
 impl WorkspaceAnimation {
-    pub fn new(rx: Receiver, mtm: MainThreadMarker) -> Self {
+    pub fn new(rx: Receiver, tx: Sender, mtm: MainThreadMarker) -> Self {
         Self {
             rx,
+            tx,
             mtm,
             overlay: None,
             cache: SnapshotCache::new(),
@@ -114,29 +123,9 @@ impl WorkspaceAnimation {
     }
 
     pub async fn run(mut self) {
-        loop {
-            if self.running.is_some() {
-                // While animating, wake on whichever comes first: the next frame, or a new event.
-                // A new Animate event mid-flight must be able to supersede the current one.
-                tokio::select! {
-                    _ = tokio::time::sleep(FRAME_INTERVAL) => self.step(),
-                    received = self.rx.recv() => match received {
-                        Some((span, event)) => {
-                            let _guard = span.enter();
-                            self.handle(event);
-                        }
-                        None => return,
-                    },
-                }
-            } else {
-                match self.rx.recv().await {
-                    Some((span, event)) => {
-                        let _guard = span.enter();
-                        self.handle(event);
-                    }
-                    None => return,
-                }
-            }
+        while let Some((span, event)) = self.rx.recv().await {
+            let _guard = span.enter();
+            self.handle(event);
         }
     }
 
@@ -149,6 +138,7 @@ impl WorkspaceAnimation {
             }
             Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
+            Event::Tick => self.step(),
         }
     }
 
@@ -190,14 +180,29 @@ impl WorkspaceAnimation {
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         let size = (request.from.size.width, request.from.size.height);
-        if let Some(fresh) = capture_via_skylight(request.server_id, size, scale) {
+        let fresh = capture_via_skylight(request.server_id, size, scale);
+        match &fresh {
+            Some(snapshot) => debug!(
+                wsid = request.server_id.as_u32(),
+                covered = format!("{:.0}x{:.0}", snapshot.coverage.covered.0, snapshot.coverage.covered.1),
+                window = format!("{:.0}x{:.0}", snapshot.coverage.window.0, snapshot.coverage.window.1),
+                usable = snapshot.is_usable(),
+                "skylight capture"
+            ),
+            None => debug!(wsid = request.server_id.as_u32(), "skylight capture returned nothing"),
+        }
+        if let Some(fresh) = fresh {
             let usable = fresh.is_usable();
             self.cache.insert(request.window, fresh);
             if usable {
                 return self.cache.get(request.window).cloned();
             }
         }
-        self.cache.usable(request.window).cloned()
+        let fallback = self.cache.usable(request.window).cloned();
+        if fallback.is_none() {
+            debug!(wsid = request.server_id.as_u32(), "no usable snapshot, window left out");
+        }
+        fallback
     }
 
     fn start(&mut self, windows: Vec<AnimationRequest>, duration: Duration) {
@@ -236,7 +241,24 @@ impl WorkspaceAnimation {
         overlay.draw_frame(&tiles, 0.0);
         overlay.show();
 
-        self.running = Some(RunningAnimation { tiles, started: Instant::now(), duration });
+        // Frames come from the run loop. Posting Tick into our own queue keeps every frame on the
+        // same path as other events, so there is no second code path to reason about.
+        let tx = self.tx.clone();
+        let clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
+            _ = tx.send(Event::Tick);
+        });
+        if clock.is_none() {
+            warn!("could not start the frame clock; drawing the final frame directly");
+        }
+
+        self.running =
+            Some(RunningAnimation { tiles, started: Instant::now(), duration, _clock: clock });
+
+        // With no clock the animation would never advance, so land it immediately rather than
+        // leaving the overlay up over a frozen picture.
+        if self.running.as_ref().is_some_and(|running| running._clock.is_none()) {
+            self.step_to_end();
+        }
     }
 
     fn step(&mut self) {
@@ -249,13 +271,26 @@ impl WorkspaceAnimation {
         }
 
         if done {
-            if let Some(overlay) = self.overlay.as_mut() {
-                overlay.hide();
-                // Free the bitmaps rather than sit on tens of MB of window pictures while idle.
-                overlay.release_tiles();
-            }
-            self.running = None;
+            self.finish();
         }
+    }
+
+    /// Jumps to the end and tears down, for the case where no frame clock could be created.
+    fn step_to_end(&mut self) {
+        if let (Some(overlay), Some(running)) = (self.overlay.as_ref(), self.running.as_ref()) {
+            overlay.draw_frame(&running.tiles, 1.0);
+        }
+        self.finish();
+    }
+
+    fn finish(&mut self) {
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.hide();
+            // Free the bitmaps rather than sit on tens of MB of window pictures while idle.
+            overlay.release_tiles();
+        }
+        // Dropping the animation drops its timer, which stops the wakeups.
+        self.running = None;
     }
 
     /// Slides every window currently on screen in from an offset. For judging animation quality by
@@ -350,8 +385,12 @@ mod tests {
     fn progress_is_complete_for_a_zero_length_animation() {
         // Guards a division by zero, and makes `--no-animate` style zero durations resolve at once
         // rather than never finishing.
-        let running =
-            RunningAnimation { tiles: Vec::new(), started: Instant::now(), duration: Duration::ZERO };
+        let running = RunningAnimation {
+            tiles: Vec::new(),
+            started: Instant::now(),
+            duration: Duration::ZERO,
+            _clock: None,
+        };
         assert_eq!(running.progress(), 1.0);
         assert!(running.is_done());
     }
@@ -362,6 +401,7 @@ mod tests {
             tiles: Vec::new(),
             started: Instant::now(),
             duration: Duration::from_millis(180),
+            _clock: None,
         };
         assert!(running.progress() < 0.2, "just started");
 
@@ -369,6 +409,7 @@ mod tests {
             tiles: Vec::new(),
             started: Instant::now() - Duration::from_secs(5),
             duration: Duration::from_millis(180),
+            _clock: None,
         };
         // Clamped rather than allowed past 1.0, since the easing would otherwise overshoot the
         // target position when a frame arrives late.

@@ -2,9 +2,11 @@
 
 use std::ffi::c_void;
 use std::mem;
+use std::time::Duration;
 
 use objc2_core_foundation::{
-    CFIndex, CFRetained, CFRunLoop, CFRunLoopSource, CFRunLoopSourceContext, kCFRunLoopCommonModes,
+    CFAbsoluteTimeGetCurrent, CFIndex, CFRetained, CFRunLoop, CFRunLoopSource,
+    CFRunLoopSourceContext, CFRunLoopTimer, CFRunLoopTimerContext, kCFRunLoopCommonModes,
 };
 
 /// A core foundation run loop source.
@@ -99,5 +101,94 @@ impl WakeupHandle {
     pub fn wake(&self) {
         self.0.signal();
         self.1.wake_up();
+    }
+}
+
+/// A repeating timer attached to the current [`CFRunLoop`].
+///
+/// Exists because rini's executor is CFRunLoop-based rather than a Tokio runtime, so
+/// `tokio::time::sleep` panics with "there is no reactor running". Anything that needs a periodic
+/// wakeup on an actor thread has to come from the run loop itself.
+///
+/// The timer is invalidated and removed on drop, so an animation that ends stops costing wakeups.
+pub struct RepeatingTimer {
+    timer: CFRetained<CFRunLoopTimer>,
+    run_loop: CFRetained<CFRunLoop>,
+    /// Owns the boxed callback for as long as the timer can fire.
+    ///
+    /// Type-erased to `dyn Fn()` rather than generic, so `Drop` can free it correctly without the
+    /// struct carrying a type parameter. Freeing this as the wrong type would skip the closure's
+    /// own destructor, which matters as soon as it captures something like a channel sender.
+    handler: *mut Box<dyn Fn()>,
+}
+
+impl RepeatingTimer {
+    /// Schedules `handler` to run every `interval` on the current run loop, in all common modes.
+    ///
+    /// The first fire is one full interval away, which is what a frame clock wants: the caller has
+    /// just drawn frame zero itself.
+    pub fn every<F: Fn() + 'static>(interval: Duration, handler: F) -> Option<Self> {
+        unsafe extern "C-unwind" fn callout(_timer: *mut CFRunLoopTimer, info: *mut c_void) {
+            if info.is_null() {
+                return;
+            }
+            // SAFETY: `info` is the pointer handed to CFRunLoopTimerContext below. It stays valid
+            // until Drop invalidates the timer, which is what prevents this running afterwards.
+            let handler = unsafe { &*(info as *const Box<dyn Fn()>) };
+            handler();
+        }
+
+        let seconds = interval.as_secs_f64();
+        let handler: Box<dyn Fn()> = Box::new(handler);
+        let handler_ptr = Box::into_raw(Box::new(handler));
+        let mut context = CFRunLoopTimerContext {
+            version: 0,
+            info: handler_ptr as *mut c_void,
+            retain: None,
+            release: None,
+            copyDescription: None,
+        };
+
+        let fire_date = CFAbsoluteTimeGetCurrent() + seconds;
+        // SAFETY: the context pointer is valid, and the callout matches CFRunLoopTimerCallBack.
+        let timer = unsafe {
+            CFRunLoopTimer::new(
+                None,
+                fire_date,
+                seconds,
+                0,
+                0,
+                Some(callout),
+                &mut context as *mut _,
+            )
+        };
+        let Some(timer) = timer else {
+            // SAFETY: the timer was never created, so nothing can reference the handler.
+            drop(unsafe { Box::from_raw(handler_ptr) });
+            return None;
+        };
+        let Some(run_loop) = CFRunLoop::current() else {
+            // SAFETY: as above, the timer was never scheduled.
+            drop(unsafe { Box::from_raw(handler_ptr) });
+            return None;
+        };
+        run_loop.add_timer(Some(&timer), unsafe { kCFRunLoopCommonModes });
+
+        Some(Self { timer, run_loop, handler: handler_ptr })
+    }
+}
+
+impl Drop for RepeatingTimer {
+    fn drop(&mut self) {
+        // Invalidate before freeing the handler: invalidation is what guarantees the callout will
+        // not be entered again.
+        self.timer.invalidate();
+        self.run_loop.remove_timer(Some(&self.timer), unsafe { kCFRunLoopCommonModes });
+        if !self.handler.is_null() {
+            // SAFETY: the timer is invalidated and removed, so the callout cannot run again, and
+            // nothing else holds this pointer.
+            drop(unsafe { Box::from_raw(self.handler) });
+            self.handler = std::ptr::null_mut();
+        }
     }
 }

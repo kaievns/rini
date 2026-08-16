@@ -6,12 +6,13 @@ use std::pin::Pin;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake};
+use std::time::{Duration, Instant};
 
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSApp;
 use objc2_core_foundation::CFRunLoop;
 
-use super::run_loop::WakeupHandle;
+use super::run_loop::{RepeatingTimer, WakeupHandle};
 
 thread_local! {
     static HANDLE: Handle = Handle::new();
@@ -122,7 +123,6 @@ mod tests {
     use std::cell::Cell;
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::rc::Rc;
-    use std::time::Duration;
     use std::{future, thread};
 
     use super::*;
@@ -206,5 +206,46 @@ mod tests {
         });
 
         assert_eq!(2, msgs.get());
+    }
+}
+
+/// Waits for `duration`, driven by the CFRunLoop this executor is built on.
+///
+/// `tokio::time::sleep` cannot be used with this executor. It needs a Tokio reactor for its timer
+/// and panics with "there is no reactor running" when polled here. That panic took the whole window
+/// manager down twice: once from the animation frame clock, and once from the cursor warp poll,
+/// which only reached its sleep branch after a second display appeared and so hid the bug for weeks.
+pub fn sleep(duration: Duration) -> Sleep {
+    Sleep { deadline: Instant::now() + duration, timer: None }
+}
+
+pub struct Sleep {
+    deadline: Instant,
+    /// Created on first poll, so the timer is tied to the run loop that actually polls this future
+    /// rather than whichever thread constructed it. Dropped on completion, which invalidates it.
+    timer: Option<RepeatingTimer>,
+}
+
+impl Future for Sleep {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let now = Instant::now();
+        if now >= self.deadline {
+            // Drop the timer so a completed sleep stops costing run loop wakeups.
+            self.timer = None;
+            return Poll::Ready(());
+        }
+        if self.timer.is_none() {
+            let waker = cx.waker().clone();
+            let remaining = self.deadline - now;
+            self.timer = RepeatingTimer::every(remaining, move || waker.wake_by_ref());
+            if self.timer.is_none() {
+                // No run loop to schedule on. Waking immediately busy-polls rather than hanging
+                // forever, which is the lesser failure: the caller still makes progress.
+                cx.waker().wake_by_ref();
+            }
+        }
+        Poll::Pending
     }
 }
