@@ -14,6 +14,8 @@ Status: the approach is viable. A warm bitmap cache is mandatory, not optional.
 | Can rini capture a window hidden on another workspace? | Yes, full size, real content | `sck.swift`, window 45 |
 | Can rini capture a window parked at a 2pt sliver? | Yes, full size, real content | `sck.swift`, window 28804 |
 | Which API works? | ScreenCaptureKit only | `capdecide.swift`, `sck.swift` |
+| Can rini move a foreign window via SLS? | No, and the calls report success | `tx2.swift`, `mv.swift` |
+| Can rini set a foreign window's alpha? | No | `tx2.swift` |
 | Can captures be taken on demand at switch time? | No | `cksweep.swift` |
 | Does lower resolution reduce cost? | No | `cksweep.swift` |
 
@@ -92,18 +94,67 @@ Not deprecated. Unavailable. It is a hard compile error on this SDK:
 The system tool inherited this. `screencapture -l <windowid>` fails with "could
 not create image from window" even for a fully visible window.
 
-### Window server transforms do not work for foreign windows
+### Window server mutation does not work for foreign windows
 
-Tested 3 ways: plain, `AtPlacement` at placements 0, 1 and 2, and inside an
-`SLSDisableUpdate` transaction. `SLSSetWindowTransform` returns 0 for success
-every time and is then silently reverted. `SLSMoveWindow` returns error 1000
-(`kCGErrorIllegalArgument`) even for a legal 100pt move. `SLSGetWindowTransform`
-does work and returns the negated origin.
+Retested on 2026-08-16 with a valid control, which the first attempt lacked. The
+verdict is unchanged but 2 details recorded earlier were wrong. Corrections are
+at the end of this section.
+
+**The control.** The spike creates its own `NSWindow` and applies the identical
+transform to it. This separates an ownership restriction from a bad function
+signature. Result: `SLSSetWindowTransform` returned 0, the readback held
+`[tx 0 ty 400]`, and 6.37% of display pixels changed. The window visibly moved.
+So the call is correct, and any foreign-window failure is a real restriction.
+
+**Foreign window results.** Judged on display pixels, not on return codes:
+
+| Attempt | Return code | Readback held | Pixels changed | Moved |
+|---|---|---|---|---|
+| `SLSSetWindowTransform` plain | 0 `kCGErrorSuccess` | no, reverted | 0.0003 | no |
+| `...AtPlacement` placement 0 | 1000 `kCGErrorFailure` | no | 0.0001 | no |
+| `...AtPlacement` placement 1 | 1000 `kCGErrorFailure` | no | 0.0003 | no |
+| `...AtPlacement` placement 2 | 1000 `kCGErrorFailure` | no | 0.0004 | no |
+| inside `SLSDisableUpdate` | 0 `kCGErrorSuccess` | no, reverted | 0.0003 | no |
+| `SLSMoveWindow` legal 100pt | 0 `kCGErrorSuccess` | see below | 0.0004 | no |
+| `SLSMoveWindow` to y = -300 | 0 `kCGErrorSuccess` | see below | 0.0003 | no |
+| `SLSSetWindowAlpha` 0.3 | 0 `kCGErrorSuccess` | n/a | 0.0003 | no effect |
+
+`SLSMoveWindow` deserves its own note, because it lies in a more convincing way
+than the others. After the call, `SLSGetWindowBounds` reports the **new**
+position, while `CGWindowListCopyWindowInfo` still reports the **old** one and no
+pixel changes. So SLS stores the requested value against our connection and the
+window server never applies it. Reading back through SLS confirms a move that
+did not happen.
+
+`SLSGetWindowTransform` does work, and returns the negated origin. For window
+28809 at origin (-857, 32) it returns `[tx 857 ty -32]`. That explains the
+revert: for a foreign window the transform is derived from the real frame rather
+than being independent state, so the window server recomputes it and discards
+what was written.
+
+**Corrections to earlier notes in this file's history:**
+
+1. `SLSMoveWindow` on a foreign window returns **0 `kCGErrorSuccess`**, not error
+   1000. The earlier note was wrong.
+2. Code 1000 is **`kCGErrorFailure`**, not `kCGErrorIllegalArgument`, which is
+   1001.
+
+**Consequence for the overlay design.** `SLSSetWindowAlpha` does not work on
+foreign windows, so the original plan of parking real windows at their final
+positions with opacity 0 cannot be implemented that way. Use an opaque
+edge-to-edge overlay above all windows instead, which rini owns and can
+therefore control. Real windows are repositioned underneath while covered, so
+their tear is never visible, and the overlay is dismissed only once the writes
+have landed.
 
 Note for future spikes: SLS symbols live in the dyld shared cache. `nm` reports
 them as absent, which is misleading. Link against
 `/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight` and they
 resolve.
+
+Never judge an SLS mutation by its return code. Three of the calls above return
+`kCGErrorSuccess` and do nothing, and one of them echoes the written value back
+on read. Verify with `CGWindowListCopyWindowInfo` bounds or with pixels.
 
 ## Trap that cost about 40 minutes
 
@@ -169,6 +220,9 @@ swiftc -O -framework ScreenCaptureKit <name>.swift -o <name>
 | `capdecide.swift` | Visible-portion limit, against rini's own window states |
 | `sck.swift` | Full-size capture of hidden, parked and off-strip windows |
 | `sck2.swift`, `sck3.swift`, `sck4.swift`, `dpy.swift` | The -3811 diagnosis |
+| `tx.swift` | Own-window transform control, proving the call is correct |
+| `tx2.swift` | Foreign-window transform and alpha, verified by pixels |
+| `mv.swift` | Whether SLSMoveWindow moves a foreign window (it does not) |
 | `ckthru.swift` | Concurrency ceiling |
 | `cksweep.swift` | Cost against set size, 2x against 1x |
 
