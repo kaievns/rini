@@ -20,6 +20,7 @@ pub mod spaces;
 pub mod stack_line;
 pub mod window_notify;
 pub mod wm_controller;
+pub mod workspace_animation;
 
 pub struct Sender<Event>(UnboundedSender<(Span, Event)>);
 pub type Receiver<Event> = UnboundedReceiver<(Span, Event)>;

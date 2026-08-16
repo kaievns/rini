@@ -361,6 +361,7 @@ impl Reactor {
         menu_tx: menu_bar::Sender,
         stack_line_tx: stack_line::Sender,
         cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
+        workspace_animation_tx: Option<crate::actor::workspace_animation::Sender>,
         window_notify: Option<(crate::actor::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -379,6 +380,7 @@ impl Reactor {
         reactor.menu_manager.menu_tx = Some(menu_tx);
         reactor.communication_manager.stack_line_tx = Some(stack_line_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
+        reactor.communication_manager.workspace_animation_tx = workspace_animation_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());
@@ -435,6 +437,7 @@ impl Reactor {
                 gesture_tap_tx: None,
                 stack_line_tx: None,
                 cursor_warp_tx: None,
+                workspace_animation_tx: None,
                 raise_manager_tx,
                 event_broadcaster: broadcast_tx,
                 wm_sender: None,
@@ -1646,6 +1649,27 @@ impl Reactor {
             Event::Command(Command::Metrics(cmd)) => {
                 return command_workflow::handle_command_metrics(cmd);
             }
+            Event::Command(Command::Reactor(ReactorCommand::DebugOverlaySlide {
+                dx,
+                dy,
+                duration_ms,
+            })) => {
+                // Make sure the actor knows the display before asking it to draw, since it silently
+                // declines to animate without geometry.
+                self.publish_animation_display();
+                let response = match &self.communication_manager.workspace_animation_tx {
+                    Some(tx) => {
+                        _ = tx.send(crate::actor::workspace_animation::Event::DebugSlide {
+                            dx: dx as f64,
+                            dy: dy as f64,
+                            duration: std::time::Duration::from_millis(duration_ms),
+                        });
+                        format!("overlay slide requested: dx {dx}, dy {dy}, {duration_ms}ms")
+                    }
+                    None => "the workspace animation actor is not running".to_string(),
+                };
+                return Ok(EventOutcome::no_change().with_stdout_line(response));
+            }
             Event::Command(Command::Reactor(ReactorCommand::Debug)) => {
                 return command_workflow::handle_command_reactor_debug(
                     &self.layout_manager,
@@ -2168,6 +2192,7 @@ impl Reactor {
             // Re-sends both the flag and the geometry, so toggling
             // warp_cursor_between_stacked_displays applies without a restart.
             self.publish_cursor_warp_screens();
+            self.publish_animation_display();
         }
         for line in outcome.stdout_lines {
             println!("{line}");
@@ -3781,6 +3806,34 @@ impl Reactor {
         _ = tx.send(crate::actor::cursor_warp::Request::ScreensChanged(
             crate::actor::cursor_warp::frames_of(&self.space_state.screens),
         ));
+    }
+
+    /// Send the active display's usable frame to the animation actor.
+    ///
+    /// The frame must exclude the menu bar strip. sketchybar sits at CG layer -20, below normal
+    /// windows, and is visible only because nothing occupies that strip, so an overlay covering it
+    /// would make the user's bar flicker on every switch. `ScreenInfo::frame` is already the usable
+    /// frame, which is what makes this a straight pass-through.
+    fn publish_animation_display(&self) {
+        let Some(tx) = &self.communication_manager.workspace_animation_tx else {
+            return;
+        };
+        let Some(screen) = self
+            .space_state
+            .screens
+            .iter()
+            .find(|screen| screen.space == self.active_display_space())
+            .or_else(|| self.space_state.screens.first())
+        else {
+            return;
+        };
+        _ = tx.send(crate::actor::workspace_animation::Event::SetDisplay {
+            frame: screen.frame,
+            // Backing scale is not carried on ScreenInfo. Every display rini has been run on is
+            // Retina, and a wrong scale only affects bitmap crispness rather than geometry, so 2.0
+            // is a safe default until there is a reason to plumb the real value through.
+            scale: 2.0,
+        });
     }
 
     /// Note that `windows` are about to slide, for `duration`.

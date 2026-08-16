@@ -158,6 +158,7 @@ pub struct CommunicationManager {
     pub gesture_tap_tx: Option<gesture_tap::Sender>,
     pub stack_line_tx: Option<stack_line::Sender>,
     pub cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
+    pub workspace_animation_tx: Option<crate::actor::workspace_animation::Sender>,
     pub raise_manager_tx: raise_manager::Sender,
     pub event_broadcaster: BroadcastSender,
     pub wm_sender: Option<wm_controller::Sender>,

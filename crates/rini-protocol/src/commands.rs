@@ -64,6 +64,15 @@ pub enum LayoutCommand {
 #[serde(rename_all = "snake_case")]
 pub enum ReactorCommand {
     Debug,
+    /// Slide every visible window in from an offset using the capture-based overlay.
+    ///
+    /// A debugging aid for judging animation quality by eye. It draws pictures of the windows and
+    /// never moves a real one, so it is safe to run at any time and leaves no state behind.
+    DebugOverlaySlide {
+        dx: i32,
+        dy: i32,
+        duration_ms: u64,
+    },
     Serialize,
     SaveLayout {
         path: PathBuf,

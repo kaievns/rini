@@ -240,6 +240,7 @@ stays usable. Fix the config and restart. Error: {error}",
     let window_tx_store = WindowTxStore::new();
     let (gesture_tap_tx, gesture_tap_rx) = rini_wm::actor::channel();
     let (cursor_warp_tx, cursor_warp_rx) = rini_wm::actor::channel();
+    let (workspace_animation_tx, workspace_animation_rx) = rini_wm::actor::channel();
     let reactor = Reactor::spawn(
         config.clone(),
         layout,
@@ -249,6 +250,7 @@ stays usable. Fix the config and restart. Error: {error}",
         menu_tx.clone(),
         stack_line_tx.clone(),
         Some(cursor_warp_tx.clone()),
+        Some(workspace_animation_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
         Some(gesture_tap_tx.clone()),
         opt.one,
@@ -373,6 +375,13 @@ stays usable. Fix the config and restart. Error: {error}",
         cursor_warp_rx,
     );
 
+    // The animation overlay lives on the main thread because Core Animation requires it. It stays
+    // idle until the reactor sends it display geometry and something to animate.
+    let workspace_animation = rini_wm::actor::workspace_animation::WorkspaceAnimation::new(
+        workspace_animation_rx,
+        mtm,
+    );
+
     let mission_control =
         MissionControlActor::new(config.clone(), mc_rx, mc_tx.clone(), reactor.clone(), mtm);
     let mission_control_native = NativeMissionControl::new(events_tx.clone(), mc_native_rx);
@@ -416,6 +425,7 @@ stays usable. Fix the config and restart. Error: {error}",
             supervise("mission_control", mission_control.run()),
             supervise("process_actor", process_actor.run()),
             supervise("cursor_warp", cursor_warp.run()),
+            supervise("workspace_animation", workspace_animation.run()),
         );
     });
 }

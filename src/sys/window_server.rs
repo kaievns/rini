@@ -15,7 +15,7 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{
     CGError, CGWindowID, CGWindowListCopyWindowInfo, CGWindowListOption, kCGNullWindowID,
-    kCGWindowLayer, kCGWindowName, kCGWindowOwnerName,
+    kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
 };
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -579,6 +579,71 @@ fn get_num(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Opt
     dict.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
 }
 
+/// Reads a `kCGWindowBounds` dictionary, whose keys are the plain strings X, Y, Width and Height.
+///
+/// Parsed by hand because the geometry helper that would do this is not exposed by the bindings in
+/// use. Returns `None` if any component is missing, since a partially read frame would place a
+/// window somewhere arbitrary rather than fail visibly.
+fn bounds_from_dict(dict: CFRetained<CFDictionary>) -> Option<CGRect> {
+    // The untyped CFDictionary carries no key or value types, so retype it the same way
+    // get_windows_raw does before reading it.
+    // SAFETY: a kCGWindowBounds dictionary has CFString keys and CFNumber values.
+    let dict: CFRetained<CFDictionary<CFString, CFType>> =
+        unsafe { CFRetained::cast_unchecked(dict) };
+    let component = |name: &str| -> Option<f64> {
+        let key = CFString::from_str(name);
+        dict.get(&key)?.downcast::<CFNumber>().ok()?.as_f64()
+    };
+    Some(CGRect::new(
+        CGPoint::new(component("X")?, component("Y")?),
+        CGSize::new(component("Width")?, component("Height")?),
+    ))
+}
+
+/// Do two rects share any area? Written out rather than using the `CGRectExt` helper, which is only
+/// imported outside test builds and would make this function untestable.
+fn overlaps(a: CGRect, b: CGRect) -> bool {
+    a.origin.x < b.origin.x + b.size.width
+        && b.origin.x < a.origin.x + a.size.width
+        && a.origin.y < b.origin.y + b.size.height
+        && b.origin.y < a.origin.y + a.size.height
+}
+
+/// Ordinary application windows currently on screen and intersecting `display`, with their frames.
+///
+/// Only layer 0 is returned. Every managed application window sits there, while the bar, the Dock
+/// and notifications live at other layers and must not be animated: sketchybar in particular sits at
+/// layer -20, so picking up other layers would mean animating the user's bar.
+///
+/// Slivers are filtered out. rini parks off-strip windows as narrow strips, so CoreGraphics reports
+/// them as on screen, but they have no useful pixels to capture and no business in an animation.
+pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRect)> {
+    /// Below this in either axis a window is a parked strip rather than something worth drawing.
+    const MIN_SIDE: f64 = 100.0;
+
+    get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
+        .iter()
+        .filter_map(|window| {
+            if get_num(&window, unsafe { kCGWindowLayer }) != Some(0) {
+                return None;
+            }
+            let id = get_num(&window, unsafe { kCGWindowNumber })? as u32;
+            let bounds = window
+                .get(unsafe { kCGWindowBounds })?
+                .downcast::<CFDictionary>()
+                .ok()
+                .and_then(bounds_from_dict)?;
+            if bounds.size.width < MIN_SIDE || bounds.size.height < MIN_SIDE {
+                return None;
+            }
+            if !overlaps(bounds, display) {
+                return None;
+            }
+            Some((WindowServerId::new(id), bounds))
+        })
+        .collect()
+}
+
 fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
     Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
 }
@@ -978,7 +1043,53 @@ pub unsafe fn switch_space(direction: crate::layout_engine::Direction) {
 
 #[cfg(test)]
 mod tests {
-    use super::WindowServerId;
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    use super::{WindowServerId, overlaps};
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    #[test]
+    fn overlapping_rects_overlap() {
+        assert!(overlaps(rect(0.0, 0.0, 100.0, 100.0), rect(50.0, 50.0, 100.0, 100.0)));
+    }
+
+    #[test]
+    fn a_window_fully_inside_a_display_overlaps_it() {
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(overlaps(rect(865.0, 32.0, 859.0, 1081.0), display));
+    }
+
+    #[test]
+    fn a_window_scrolled_entirely_off_the_left_does_not_overlap() {
+        // Real measured geometry: off-strip columns sit at x = -1680 with width 1720, so their right
+        // edge lands at 40 and they DO still touch the display. A window fully clear of it must not.
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(!overlaps(rect(-2000.0, 32.0, 859.0, 1081.0), display));
+    }
+
+    #[test]
+    fn a_window_overlapping_by_its_parked_sliver_still_counts_as_overlapping() {
+        // The parked case, which the caller filters on size rather than on overlap.
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(overlaps(rect(-1680.0, 32.0, 1720.0, 1081.0), display));
+    }
+
+    #[test]
+    fn a_window_on_the_next_display_does_not_overlap_this_one() {
+        let display = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(!overlaps(rect(1728.0, 32.0, 859.0, 1081.0), display));
+    }
+
+    #[test]
+    fn merely_touching_edges_does_not_count_as_overlap() {
+        // Exclusive comparison, so a window whose right edge is exactly the display's left edge
+        // contributes no visible pixels and is excluded.
+        let display = rect(0.0, 0.0, 100.0, 100.0);
+        assert!(!overlaps(rect(-50.0, 0.0, 50.0, 100.0), display));
+    }
 
     #[test]
     fn zero_window_server_id_is_not_a_window_id() {

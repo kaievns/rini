@@ -167,6 +167,21 @@ enum ExecuteCommands {
     },
     /// Print layout tree debugging output in the running rini instance
     Debug,
+    /// Slide every visible window in from an offset, using the capture-based overlay
+    ///
+    /// For judging animation quality by eye. Draws pictures of the windows and never moves a real
+    /// one, so it is safe to run at any time and leaves nothing behind.
+    DebugOverlaySlide {
+        /// Horizontal offset in points to slide in from. Negative comes from the left.
+        #[arg(long, default_value_t = -400)]
+        dx: i32,
+        /// Vertical offset in points to slide in from. Negative comes from above.
+        #[arg(long, default_value_t = 0)]
+        dy: i32,
+        /// Animation duration in milliseconds.
+        #[arg(long, default_value_t = 250)]
+        duration_ms: u64,
+    },
     /// Serialize and print runtime state
     Serialize,
     /// this command is deprecated, use `rini-cli execute space toggle-activated`
@@ -681,6 +696,13 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::Debug => {
             CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::Debug))
         }
+        ExecuteCommands::DebugOverlaySlide { dx, dy, duration_ms } => CliCommand::Reactor(
+            reactor::Command::Reactor(reactor::ReactorCommand::DebugOverlaySlide {
+                dx,
+                dy,
+                duration_ms,
+            }),
+        ),
         ExecuteCommands::Serialize => {
             CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::Serialize))
         }
