@@ -5,7 +5,9 @@ capture-based overlay. All numbers below come from spikes in `/tmp/sls-spike`
 run on 2026-08-16, against a live 1728x1117 built-in Retina display at 2x
 backing scale, with 35 real app windows across 4 rini workspaces.
 
-Status: the approach is viable. A warm bitmap cache is mandatory, not optional.
+Status: the approach is viable. The design is a hybrid: capture on-screen windows
+fresh through SkyLight at switch time, and serve off-strip and hidden-workspace
+windows from a ScreenCaptureKit cache refreshed in the background.
 
 ## Verdict
 
@@ -232,6 +234,107 @@ foreign attempt failed.
    parallel. That difference is exactly why rini needs a warm cache and yabai
    does not.
 
+## Claims tested and rejected
+
+An external analysis proposed that the measured ScreenCaptureKit cost is an
+artefact, and that `SLSHWCaptureWindowList` can capture the whole working set
+fresh at animation start with no cache. Each claim was tested. The useful parts
+are folded into the design section below.
+
+**Rejected: "the cost is a per-shot `SCShareableContent` round trip."** Already
+excluded. `cksweep.swift:77` enumerates once, outside every measured loop.
+
+**Rejected: "issue captures concurrently instead of in a loop."** Already done.
+`cksweep` ran them concurrently and unbounded through a `TaskGroup`.
+
+**Rejected: "the `captureSampleBuffer` / IOSurface route reaches 20-40ms for the
+batch."** Measured head to head against `captureImage`, same windows, same scale,
+interleaved and repeated 5 times, stopping at the `IOSurface` without building any
+image:
+
+```
+windows   captureImage   sampleBuffer   result
+1              38.9ms         37.5ms    no real difference
+2              49.6ms         51.6ms    no real difference
+4              72.6ms         88.0ms    captureImage 21% faster
+6              92.6ms        121.5ms    captureImage 31% faster
+8             129.3ms        150.7ms    captureImage 17% faster
+```
+
+The sample-buffer route is slower once past 2 windows. The cost is the capture
+session `SCScreenshotManager` spins up per call, not image materialisation, so no
+rearrangement of the public API avoids it.
+
+**Rejected: "pass the whole wid array and get a CFArray of CGImages back, so N
+windows costs roughly the same as one."** N windows returns ONE flattened
+composite, at every count tested:
+
+```
+requested 1 -> 1 image,  859x1081pt
+requested 2 -> 1 image, 1720x1081pt
+requested 3 -> 1 image, 1724x1081pt
+requested 5 -> 1 image, 1724x1081pt
+```
+
+The time claim is true and the result claim is not. A flattened composite cannot
+drive per-window animation. yabai agrees: it has exactly 1 call site,
+`window_manager.c:521`, and it passes `window_count = 1`. It never batches.
+
+**Rejected: "capture fresh at animation start, no pre-warming, no cache."** This
+is the load-bearing claim and it does not survive rini's layout. The call returns
+only the visible portion, and the option flags do not change that, including
+yabai's exact flags:
+
+```
+case         own size       options                returned      full?
+visible      859x1081pt     1<<11                  859x1081pt    YES
+visible      859x1081pt     (1<<11)|(1<<8) yabai   859x1081pt    YES
+hidden-ws   1147x1081pt     1<<11                  1x28pt        no
+hidden-ws   1147x1081pt     (1<<11)|(1<<8) yabai   1x28pt        no
+offstrip40   859x1081pt     1<<11                  2x1081pt      no
+offstrip40   859x1081pt     (1<<11)|(1<<8) yabai   2x1081pt      no
+```
+
+`1<<9` is a half-resolution variant and clips identically. The limit is the API,
+not the flags. yabai can skip caching because it only animates windows already
+fully on screen. rini's incoming windows are off-strip or on a hidden workspace,
+which is exactly the case that returns a sliver.
+
+### Confirmed and worth using
+
+- `SLSHWCaptureWindowList` is gated by the Screen Recording grant, not by window
+  ownership. No scripting addition and no SIP disable. Verified working from a
+  plain unprivileged connection.
+- It is much cheaper per window than ScreenCaptureKit: about 16ms against 38 to
+  56ms. Worth using wherever it is sufficient.
+- The transform convention is `CGAffineTransformMakeTranslation(-tx, -ty)`, the
+  negative of the target origin in top-left space. This matches
+  `SLSGetWindowTransform` returning the negated origin, measured above.
+- The binding already exists at `src/sys/skylight.rs:495`, so reaching it is
+  cheap.
+- Captures exclude the drop shadow, which is why yabai calls
+  `sls_window_disable_shadow` on its proxies to match
+  (`window_manager.c:473`), and it runs `cgimage_restore_alpha` when the source
+  window's alpha is not 1.0 (`window_manager.c:521-523`).
+- Version-gate it and fall back to ScreenCaptureKit when the array comes back
+  null.
+
+### The design this actually implies: a hybrid
+
+Use each API where it wins, rather than choosing one.
+
+- **On-screen windows, captured fresh at switch time.** `SLSHWCaptureWindowList`
+  with `window_count = 1` per window, on parallel threads, as yabai does. About
+  16ms each and no staleness.
+- **Off-strip and hidden-workspace windows, served from a warm cache.**
+  ScreenCaptureKit is the only API that returns their full surface, and at 40ms
+  plus 14.5ms per window it cannot run at switch time. Refresh these in the
+  background on focus and resize events.
+
+This keeps fresh pixels for everything the eye is already looking at, and accepts
+staleness only for windows that are currently a 2pt sliver, where staleness is
+unobservable.
+
 ## Trap that cost about 40 minutes
 
 Every ScreenCaptureKit capture failed with error -3811, "Failed to start stream
@@ -299,6 +402,9 @@ swiftc -O -framework ScreenCaptureKit <name>.swift -o <name>
 | `tx.swift` | Own-window transform control, proving the call is correct |
 | `tx2.swift` | Foreign-window transform and alpha, verified by pixels |
 | `mv.swift` | Whether SLSMoveWindow moves a foreign window (it does not) |
+| `sbvs.swift` | captureImage against captureSampleBuffer, head to head |
+| `batch.swift` | Whether a batched SLS capture returns per-window images |
+| `flags.swift` | Whether capture option flags change the visible-portion clipping |
 | `ckthru.swift` | Concurrency ceiling |
 | `cksweep.swift` | Cost against set size, 2x against 1x |
 
