@@ -147,8 +147,25 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
     }
 
     let config_path = opt.config.clone().unwrap_or_else(|| config_file());
+    // A broken config must not stop rini from starting. This used to be an unwrap, so a single
+    // unparseable line took the whole window manager down at launch, leaving no way to fix the
+    // config except from a terminal opened by something else. One mistyped keybinding was enough.
+    //
+    // Falling back to the defaults keeps windows managed and the hotkeys for editing the config
+    // reachable, which is the only state from which a user can actually recover. The layout
+    // restore below already degrades this way; the config read was the odd one out.
     let mut config = if config_path.exists() {
-        Config::read(&config_path).unwrap()
+        match Config::read(&config_path) {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!(
+                    "Could not read the config at {}; starting with the built-in defaults so rini \
+stays usable. Fix the config and restart. Error: {error}",
+                    config_path.display()
+                );
+                Config::default()
+            }
+        }
     } else {
         Config::default()
     };
@@ -158,9 +175,9 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
     if opt.validate {
         let path = restore_file();
         match LayoutEngine::load(path.clone()) {
-            Ok(_) => println!("Master file is valid: {}", path.display()),
+            Ok(_) => println!("Saved layout file is valid: {}", path.display()),
             Err(error) => {
-                eprintln!("Could not load master file at {}: {error}", path.display());
+                eprintln!("Could not load the saved layout file at {}: {error}", path.display());
                 process::exit(1);
             }
         }
@@ -193,7 +210,8 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
             Ok(layout) => layout,
             Err(error) => {
                 eprintln!(
-                    "Could not restore master file at {}; starting with a fresh layout: {error}",
+                    "Could not restore the saved layout file at {}; starting with a fresh \
+                     layout: {error}",
                     path.display()
                 );
                 LayoutEngine::new(

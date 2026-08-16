@@ -39,7 +39,7 @@ impl RestoreRequest {
         }
     }
 
-    /// Restore the master file's entry for the current native space when available.
+    /// Restore the saved layout file's entry for the current native space when available.
     pub fn from_master_file(scope: RestoreScope, active_space: SpaceId) -> Self {
         Self {
             scope,

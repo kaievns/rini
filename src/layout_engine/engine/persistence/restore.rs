@@ -120,7 +120,8 @@ impl RestorePlan {
                     // A portable workspace file represents what was active when it was saved.
                     RestoreSource::SavedActiveSpace => source_active
                         .ok_or_else(|| anyhow::anyhow!("saved space has no active workspace"))?,
-                    // A master file represents the complete workspace catalog. Restoring S must
+                    // A saved layout file represents the complete workspace catalog. Restoring
+                    // S must
                     // therefore read S's ordinal from the saved native space, regardless of which
                     // workspace happened to be active when Rini last quit.
                     RestoreSource::CurrentSpace => {

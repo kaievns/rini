@@ -228,12 +228,14 @@ pub fn handle_command_reactor_save_and_exit(
     active_space: Option<SpaceId>,
 ) -> anyhow::Result<EventOutcome> {
     if let Err(e) = save_layout(state, layout, config::restore_file(), active_space) {
-        error!("Could not save master file: {e}");
+        error!("Could not save the layout file: {e}");
         // A quit request is conditional on a durable master save. Keep Rini running when the
         // snapshot cannot be committed so the user can fix the filesystem problem or retry
         // without losing the only complete in-memory layout.
         return Ok(EventOutcome::no_change()
-            .with_stdout_line(format!("Could not save master file; Rini is still running: {e}")));
+            .with_stdout_line(format!(
+            "Could not save the layout file; Rini is still running: {e}"
+        )));
     }
     std::process::exit(0);
 }

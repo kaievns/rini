@@ -209,7 +209,7 @@ impl Menu {
                     reactor::ReactorCommand::RestoreLayout { path, scope, source },
                 )));
             }
-            MenuAction::RestoreMasterFile(scope) => {
+            MenuAction::RestoreLayoutFile(scope) => {
                 self.reactor_tx.send(reactor::Event::Command(reactor::Command::Reactor(
                     reactor::ReactorCommand::RestoreLayout {
                         path: common::config::restore_file(),
@@ -228,7 +228,7 @@ impl Menu {
                     let _ = action_tx.send(MenuAction::RefreshLayoutFiles);
                 });
             }
-            MenuAction::SaveMasterFile => {
+            MenuAction::SaveLayoutFile => {
                 self.reactor_tx.send(reactor::Event::Command(reactor::Command::Reactor(
                     reactor::ReactorCommand::SaveLayout {
                         path: common::config::restore_file(),

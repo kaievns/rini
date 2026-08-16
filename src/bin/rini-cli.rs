@@ -146,18 +146,18 @@ enum ExecuteCommands {
         #[command(subcommand)]
         space_cmd: SpaceCommands,
     },
-    /// Save the master file and exit Rini
+    /// Save the layout file and exit Rini
     SaveAndExit,
     /// Save Rini's current layout state without exiting
     ///
-    /// Use --master instead of PATH to update Rini's master file.
+    /// Use --saved instead of PATH to update Rini's saved layout file.
     SaveLayout {
         #[command(flatten)]
         file: LayoutFileSelection,
     },
     /// Restore a layout file to the current workspace or macOS Space
     ///
-    /// Use --master instead of PATH to load Rini's master file.
+    /// Use --saved instead of PATH to load Rini's saved layout file.
     LoadLayout {
         #[command(flatten)]
         file: LayoutFileSelection,
@@ -270,9 +270,9 @@ struct LayoutFileSelection {
     /// Layout file path.
     #[arg(value_name = "PATH")]
     path: Option<PathBuf>,
-    /// Use Rini's master file (~/.rini/layout.ron).
+    /// Use Rini's saved layout file (~/.rini/layout.ron).
     #[arg(long)]
-    master: bool,
+    saved: bool,
 }
 
 #[derive(Subcommand)]
@@ -644,17 +644,17 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
             CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::SaveAndExit))
         }
         ExecuteCommands::SaveLayout { file } => {
-            let path = if file.master {
+            let path = if file.saved {
                 rini_wm::common::config::restore_file()
             } else {
-                absolute_layout_path(file.path.expect("clap requires either PATH or --master"))?
+                absolute_layout_path(file.path.expect("clap requires either PATH or --saved"))?
             };
             CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::SaveLayout {
                 path,
             }))
         }
         ExecuteCommands::LoadLayout { file, scope } => {
-            let (path, source) = if file.master {
+            let (path, source) = if file.saved {
                 (
                     rini_wm::common::config::restore_file(),
                     layout::RestoreSource::CurrentSpace,
@@ -662,7 +662,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
             } else {
                 (
                     absolute_layout_path(
-                        file.path.expect("clap requires either PATH or --master"),
+                        file.path.expect("clap requires either PATH or --saved"),
                     )?,
                     layout::RestoreSource::SavedActiveSpace,
                 )

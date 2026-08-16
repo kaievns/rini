@@ -58,13 +58,13 @@ pub enum MenuAction {
     PrevWorkspace,
     SwitchToWorkspace(usize),
     SaveLayout(PathBuf),
-    SaveMasterFile,
+    SaveLayoutFile,
     RestoreLayout {
         path: PathBuf,
         scope: RestoreScope,
         source: RestoreSource,
     },
-    RestoreMasterFile(RestoreScope),
+    RestoreLayoutFile(RestoreScope),
     RefreshLayoutFiles,
     OpenGitHub,
     OpenDocumentation,
@@ -692,7 +692,7 @@ fn build_static_menu(mtm: MainThreadMarker, handler: &MenuActionHandler) -> Buil
     let save_submenu: Retained<NSMenu> =
         unsafe { msg_send![NSMenu::alloc(mtm), initWithTitle: &*save_title] };
     for (title, action) in [
-        ("Update Master File", sel!(onSaveMasterFile:)),
+        ("Update Saved Layout", sel!(onSaveLayoutFile:)),
         ("Save Layout File…", sel!(onSaveLayout:)),
     ] {
         save_submenu.addItem(&make_menu_item(
@@ -711,15 +711,15 @@ fn build_static_menu(mtm: MainThreadMarker, handler: &MenuActionHandler) -> Buil
     add_separator(&layouts_submenu);
 
     let mut restore_menus = Vec::new();
-    for (title, master_action, picker_action) in [
+    for (title, saved_action, picker_action) in [
         (
             "Restore to Workspace",
-            sel!(onRestoreMasterFileWorkspace:),
+            sel!(onRestoreLayoutFileWorkspace:),
             sel!(onRestoreWorkspace:),
         ),
         (
             "Restore to Space",
-            sel!(onRestoreMasterFileSpace:),
+            sel!(onRestoreLayoutFileSpace:),
             sel!(onRestoreSpace:),
         ),
     ] {
@@ -728,7 +728,7 @@ fn build_static_menu(mtm: MainThreadMarker, handler: &MenuActionHandler) -> Buil
         let restore_submenu: Retained<NSMenu> =
             unsafe { msg_send![NSMenu::alloc(mtm), initWithTitle: &*restore_title] };
         for (source, action) in [
-            ("Master File", master_action),
+            ("Saved Layout", saved_action),
             ("Choose File…", picker_action),
         ] {
             restore_submenu.addItem(&make_menu_item(
@@ -1164,22 +1164,22 @@ define_class!(
             }
         }
 
-        #[unsafe(method(onSaveMasterFile:))]
-        fn on_save_master_file(&self, _sender: Option<&AnyObject>) {
-            self.emit(MenuAction::SaveMasterFile);
+        #[unsafe(method(onSaveLayoutFile:))]
+        fn on_save_layout_file(&self, _sender: Option<&AnyObject>) {
+            self.emit(MenuAction::SaveLayoutFile);
         }
 
-        #[unsafe(method(onRestoreMasterFileWorkspace:))]
-        fn on_restore_master_file_workspace(&self, _sender: Option<&AnyObject>) {
+        #[unsafe(method(onRestoreLayoutFileWorkspace:))]
+        fn on_restore_layout_file_workspace(&self, _sender: Option<&AnyObject>) {
             if Self::validate_layout_path(restore_file()).is_some() {
-                self.emit(MenuAction::RestoreMasterFile(RestoreScope::Workspace));
+                self.emit(MenuAction::RestoreLayoutFile(RestoreScope::Workspace));
             }
         }
 
-        #[unsafe(method(onRestoreMasterFileSpace:))]
-        fn on_restore_master_file_space(&self, _sender: Option<&AnyObject>) {
+        #[unsafe(method(onRestoreLayoutFileSpace:))]
+        fn on_restore_layout_file_space(&self, _sender: Option<&AnyObject>) {
             if Self::validate_layout_path(restore_file()).is_some() {
-                self.emit(MenuAction::RestoreMasterFile(RestoreScope::Space));
+                self.emit(MenuAction::RestoreLayoutFile(RestoreScope::Space));
             }
         }
 
