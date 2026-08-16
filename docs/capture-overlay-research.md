@@ -413,3 +413,72 @@ reports `is_parked`, `visible_width` and `workspace_name` per window. Do not use
 `CGWindowListCopyWindowInfo` with `optionOnScreenOnly` to find hidden windows.
 rini parks windows as 40pt slivers, so CoreGraphics counts them as on-screen and
 that route silently measures the wrong set.
+
+## Phase 1 result: the overlay works
+
+Gating spike for the design, run 2026-08-16. Every question passed. Spikes are
+`overlay.swift`, `hold-overlay.swift`, `overlay2.swift` and `levels.swift`.
+
+### Level and coverage
+
+All managed windows sit at CG layer 0, read from the window server rather than
+assumed. An overlay at `CGWindowLevelForKey(.screenSaverWindow)`, which is 1000,
+covers all of them. Verified from the framebuffer with `screencapture`, not from
+`SLSHWCaptureWindowList`, which composites only the windows it is handed and so
+cannot answer what is actually on screen.
+
+**Size the overlay to the usable display frame, not the whole screen.**
+sketchybar sits at layer **-20**, below normal windows. It is visible only because
+nothing occupies the top 32pt strip. A full-screen overlay therefore covers the
+user's bar and would make it flicker on every workspace switch. An overlay of
+1728x1085 at the origin leaves that strip live while still covering every window,
+confirmed by screenshot: the bar's workspace indicators, wifi, battery and clock
+all stay visible with the overlay up.
+
+The relevant layers on this machine:
+
+```
+managed app windows      0
+sketchybar             -20
+Dock          -2147483624
+Notification Center   -2147483601
+```
+
+### Focus is never stolen
+
+Tested at 6 levels from `normal` through `CGShieldingWindowLevel`, which is
+2147483628. The frontmost application was unchanged before, during and after in
+every case. The combination that achieves this is `.borderless` style,
+`orderFrontRegardless()`, and `ignoresMouseEvents`.
+
+### Toggle alpha, do not order the window in and out
+
+This is a 30-fold difference and it decides the show and hide path:
+
+```
+                      median      min      max
+orderFrontRegardless  13.94ms  10.25ms  24.72ms
+orderOut              13.07ms  10.09ms  20.25ms
+alpha 0 -> 1           0.36ms   0.29ms   8.56ms
+alpha 1 -> 0           0.34ms   0.19ms   8.33ms
+```
+
+Ordering in or out costs a full frame each way at 60fps. Keep the overlay
+permanently ordered in at alpha 0 and toggle `alphaValue`, which is effectively
+free. Alpha works here because rini owns this window; it does not work on foreign
+windows, as recorded above.
+
+Create the overlay once at startup. First show cost 112ms against a 14ms median,
+which is window creation, and it should not be paid per switch.
+
+### Collection behaviour
+
+`[.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]`. Stationary
+matters: without it the overlay slides along with macOS's own Space animation.
+
+### Spike gotcha worth remembering
+
+`RunLoop.run(mode:before:)` returns as soon as it handles one input source, so it
+cannot hold for a duration. A timed hold needs `run(until:)`. Two coverage
+screenshots were captured against an already dismissed overlay before this was
+spotted.
