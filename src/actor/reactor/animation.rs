@@ -923,6 +923,15 @@ fn workspace_slide_travel(
         .map(|other| screen.origin.y - other.origin.y)
         .fold(0.0, f64::max);
 
+    // KNOWN LIMITATION: this is the MINIMUM allowance across every window, so one badly
+    // placed window shrinks or cancels the slide for all of them. Measured on a real switch —
+    // eighteen tiled columns at y=32 (allowance 540.5) and one floating Zoom window at y=574
+    // (allowance -0.5) — the fold took the Zoom and the animation collapsed to zero. That is
+    // the "sometimes it animates, sometimes it just flips" behaviour.
+    //
+    // Clamping per window instead makes the slide happen, but at different distances per
+    // window, which tears the strip apart visually. The real fix is to composite the strip as
+    // a single image and animate that, so there is one thing moving and nothing to tear.
     let downward = frames
         .iter()
         .map(|frame| {
