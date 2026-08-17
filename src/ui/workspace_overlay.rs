@@ -212,18 +212,28 @@ impl WorkspaceOverlay {
     }
 
     /// Sets the still image drawn behind the moving canvas.
+    ///
+    /// Positioned from the image's own covered size rather than stretched to the overlay. The desktop
+    /// spans the FULL display while the overlay covers only the usable frame, so drawing it to the
+    /// overlay's bounds squashed it by the menu bar inset and left it visibly out of register with the
+    /// real desktop. The difference in height IS that inset, so the image is placed that far above the
+    /// overlay's top edge at its true size.
+    ///
+    /// A failed capture keeps whatever was there before. Hiding it instead made the desktop blink in
+    /// and out whenever one capture did not land.
     pub fn set_backdrop(&mut self, snapshot: Option<&WindowSnapshot>) {
+        let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        match snapshot {
-            Some(snapshot) => {
-                self.backdrop.setContentsScale(self.scale);
-                set_layer_contents(&self.backdrop, snapshot);
-                self.backdrop.setHidden(false);
-            }
-            // Nothing to draw. Hidden rather than left showing a stale desktop from another display.
-            None => self.backdrop.setHidden(true),
-        }
+        let (covered_w, covered_h) = snapshot.coverage.covered;
+        let inset = (covered_h - self.frame.size.height).max(0.0);
+        self.backdrop.setFrame(CGRect::new(
+            CGPoint::new(0.0, -inset),
+            CGSize::new(covered_w, covered_h),
+        ));
+        self.backdrop.setContentsScale(self.scale);
+        set_layer_contents(&self.backdrop, snapshot);
+        self.backdrop.setHidden(false);
         CATransaction::commit();
     }
 
