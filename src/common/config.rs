@@ -419,6 +419,20 @@ pub struct Settings {
     pub animate: bool,
     #[serde(default = "default_animation_duration")]
     pub animation_duration: f64,
+    /// Animate workspace switches by sliding bitmaps in an overlay instead of moving the real
+    /// windows frame by frame.
+    ///
+    /// The Accessibility route writes a position to every animating window on every frame, and each
+    /// write is a synchronous request into a different process that answers at its own speed. That is
+    /// the cross-app tear, measured at 100 to 150px between neighbouring windows mid-scroll. It also
+    /// cannot place a window above a display's usable top edge, which is why a slide from the top has
+    /// never worked.
+    ///
+    /// With this on, real windows are placed at their final frames once, underneath an opaque overlay,
+    /// and what moves is a layer per window composited in a single transaction. Off by default while
+    /// it is still being evaluated.
+    #[serde(default = "no")]
+    pub overlay_animations: bool,
     #[serde(default = "default_animation_fps")]
     pub animation_fps: f64,
     #[serde(default)]

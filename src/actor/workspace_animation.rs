@@ -63,10 +63,19 @@ pub enum Event {
     DebugSlide { dx: f64, dy: f64, duration: Duration },
     /// One frame of the running animation. Posted by the run loop timer, not by any other actor.
     Tick,
+    /// The layout passes have settled; start the clock. Posted by the coalesce timer.
+    StartMoving,
     /// A background capture has landed. Posted by the snapshot service, not by another actor.
     SnapshotsReady,
     /// Capture every managed window that SkyLight cannot serve, so the cache is warm before the next
     /// animation. Safe to call at any time; it only queues background work.
+    ///
+    /// Targets come from the reactor because only it knows each window's real [`WindowId`]. Deriving
+    /// ids from the window server instead produced keys that never matched the ones an animation
+    /// looks up, so the cache filled and was never read.
+    WarmWindows(Vec<SnapshotTarget>),
+    /// Warm from the window server rather than from rini's own window table. Only for the debug
+    /// command, where there is no reactor-supplied window set.
     WarmCache,
 }
 
@@ -79,9 +88,21 @@ pub type Receiver = actor::Receiver<Event>;
 /// revisiting once the overlay is doing the drawing.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
+/// How long to keep collecting windows before the animation starts moving.
+///
+/// The reactor arranges a layout over SEVERAL passes, and each pass reports only the windows it
+/// resolved. Measured on one workspace switch: three passes of a single window, then a fourth of
+/// four. Treating each pass as its own animation restarted the motion four times.
+///
+/// So the overlay goes up immediately, showing every window at the position it is leaving, and the
+/// clock only starts once the passes settle. Because nothing has moved yet, windows joining during
+/// this window cannot pop. One frame is enough to absorb the passes and is imperceptible.
+const COALESCE_WINDOW: Duration = Duration::from_millis(25);
+
 struct RunningAnimation {
     tiles: Vec<OverlayTile>,
-    started: Instant,
+    /// `None` while still collecting windows. The animation is on screen but not yet moving.
+    started: Option<Instant>,
     duration: Duration,
     /// Dropped when the animation ends, which invalidates the timer and stops the wakeups.
     _clock: Option<RepeatingTimer>,
@@ -91,15 +112,30 @@ impl RunningAnimation {
     /// Progress from the clock, not from a frame count, so a late frame skips ahead instead of
     /// stretching the animation.
     fn progress(&self) -> f64 {
+        let Some(started) = self.started else {
+            return 0.0;
+        };
         if self.duration.is_zero() {
             return 1.0;
         }
-        let elapsed = self.started.elapsed().as_secs_f64();
+        let elapsed = started.elapsed().as_secs_f64();
         (elapsed / self.duration.as_secs_f64()).clamp(0.0, 1.0)
     }
 
     fn is_done(&self) -> bool {
-        self.progress() >= 1.0
+        self.started.is_some() && self.progress() >= 1.0
+    }
+
+    /// Adds or retargets one window without disturbing anything already moving.
+    fn merge(&mut self, tile: OverlayTile) {
+        if let Some(existing) = self.tiles.iter_mut().find(|t| t.window == tile.window) {
+            // Keep the original start so a window that is already moving is not yanked backwards,
+            // and take the newer destination.
+            existing.to = tile.to;
+            existing.snapshot = tile.snapshot;
+        } else {
+            self.tiles.push(tile);
+        }
     }
 }
 
@@ -116,6 +152,10 @@ pub struct WorkspaceAnimation {
     service: SnapshotService,
     display: Option<(CGRect, f64)>,
     running: Option<RunningAnimation>,
+    /// Fires once after the layout passes settle, to start the animation moving.
+    coalesce: Option<RepeatingTimer>,
+    /// Windows from the most recent animation, so the post-animation refresh uses real ids.
+    last_animated: Vec<SnapshotTarget>,
 }
 
 impl WorkspaceAnimation {
@@ -138,6 +178,8 @@ impl WorkspaceAnimation {
             service,
             display: None,
             running: None,
+            coalesce: None,
+            last_animated: Vec::new(),
         }
     }
 
@@ -158,8 +200,10 @@ impl WorkspaceAnimation {
             Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
+            Event::StartMoving => self.start_moving(),
             Event::SnapshotsReady => self.collect_snapshots(),
             Event::WarmCache => self.warm_cache(),
+            Event::WarmWindows(targets) => self.warm_windows(targets),
         }
     }
 
@@ -172,10 +216,40 @@ impl WorkspaceAnimation {
         if landed.is_empty() {
             return;
         }
-        debug!(count = landed.len(), "background snapshots collected");
         for (window, snapshot) in landed {
+            debug!(
+                pid = window.pid,
+                idx = window.idx.get(),
+                covered = format!(
+                    "{:.0}x{:.0}",
+                    snapshot.coverage.covered.0, snapshot.coverage.covered.1
+                ),
+                window_size = format!(
+                    "{:.0}x{:.0}",
+                    snapshot.coverage.window.0, snapshot.coverage.window.1
+                ),
+                usable = snapshot.is_usable(),
+                "background snapshot landed"
+            );
             self.cache.insert(window, snapshot);
         }
+    }
+
+    /// Queues background captures for a set of windows the reactor identified.
+    ///
+    /// Already-held windows are skipped by the service, and the cache keeps what it has unless
+    /// something better arrives, so calling this after every switch settles rather than re-capturing.
+    fn warm_windows(&mut self, targets: Vec<SnapshotTarget>) {
+        let wanted: Vec<SnapshotTarget> = targets
+            .into_iter()
+            // Anything already drawable needs nothing. Everything else is worth a real capture.
+            .filter(|target| self.cache.usable(target.window).is_none())
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        debug!(count = wanted.len(), "warming snapshots for reactor-supplied windows");
+        self.service.request(wanted);
     }
 
     /// Queues background captures for every window on the display that SkyLight cannot serve.
@@ -204,10 +278,17 @@ impl WorkspaceAnimation {
     }
 
     fn set_display(&mut self, frame: CGRect, scale: f64) {
+        let first = self.display.is_none();
+        let changed = self.display != Some((frame, scale));
         self.display = Some((frame, scale));
         self.service.set_scale(scale);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_frame(frame, scale);
+        }
+        // Warm on the first geometry, and after any change, so the very first switch has pixels
+        // rather than being the one that fills the cache for later switches.
+        if first || changed {
+            self.warm_cache();
         }
     }
 
@@ -294,6 +375,13 @@ impl WorkspaceAnimation {
                     size: request.from.size,
                 });
             }
+            if snapshot.is_none() {
+                debug!(
+                    pid = request.window.pid,
+                    idx = request.window.idx.get(),
+                    "animation wanted a snapshot for this window and had none"
+                );
+            }
             match snapshot {
                 Some(snapshot) => tiles.push(OverlayTile {
                     window: request.window,
@@ -316,13 +404,49 @@ impl WorkspaceAnimation {
         if skipped > 0 {
             debug!(skipped, total = windows.len(), "windows animated without a usable snapshot");
         }
+        // Remember the real ids so the refresh after this animation, and the one triggered when
+        // nothing was drawable, both use keys an animation will actually look up.
+        self.last_animated = windows
+            .iter()
+            .map(|request| SnapshotTarget {
+                window: request.window,
+                server_id: request.server_id,
+                size: request.to.size,
+            })
+            .collect();
+
         if tiles.is_empty() {
+            // Nothing drawable yet. Warm anyway, or this deadlocks: the cache only ever filled when
+            // an animation completed, and no animation could run with an empty cache.
+            let targets = std::mem::take(&mut self.last_animated);
+            self.warm_windows(targets);
             return;
+        }
+
+        // Merge into an animation that has not started moving yet, rather than replacing it. This is
+        // what makes the reactor's multi-pass layout produce ONE animation instead of four.
+        if let Some(running) = self.running.as_mut() {
+            if running.started.is_none() {
+                for tile in tiles {
+                    running.merge(tile);
+                }
+                let tiles = std::mem::take(&mut running.tiles);
+                if let Some(overlay) = self.overlay.as_mut() {
+                    overlay.set_tiles(&tiles);
+                    overlay.draw_frame(&tiles, 0.0);
+                }
+                if let Some(running) = self.running.as_mut() {
+                    running.tiles = tiles;
+                }
+                return;
+            }
         }
 
         let Some(overlay) = self.ensure_overlay() else { return };
         overlay.set_tiles(&tiles);
         overlay.draw_frame(&tiles, 0.0);
+        // Shown at once, holding the windows exactly where they already are, so the real windows can
+        // be placed underneath without the jump being visible.
         overlay.show();
 
         // Frames come from the run loop. Posting Tick into our own queue keeps every frame on the
@@ -335,14 +459,35 @@ impl WorkspaceAnimation {
             warn!("could not start the frame clock; drawing the final frame directly");
         }
 
-        self.running =
-            Some(RunningAnimation { tiles, started: Instant::now(), duration, _clock: clock });
+        self.running = Some(RunningAnimation { tiles, started: None, duration, _clock: clock });
 
         // With no clock the animation would never advance, so land it immediately rather than
         // leaving the overlay up over a frozen picture.
         if self.running.as_ref().is_some_and(|running| running._clock.is_none()) {
+            if let Some(running) = self.running.as_mut() {
+                running.started = Some(Instant::now());
+            }
             self.step_to_end();
+            return;
         }
+
+        // Start moving once the layout passes have settled.
+        let tx = self.tx.clone();
+        self.coalesce = RepeatingTimer::every(COALESCE_WINDOW, move || {
+            _ = tx.send(Event::StartMoving);
+        });
+    }
+
+    /// Starts the clock on an animation that is on screen but not yet moving.
+    fn start_moving(&mut self) {
+        // Dropping the timer stops it repeating; it only ever needed to fire once.
+        self.coalesce = None;
+        let Some(running) = self.running.as_mut() else { return };
+        if running.started.is_some() {
+            return;
+        }
+        debug!(windows = running.tiles.len(), "starting the animation after coalescing");
+        running.started = Some(Instant::now());
     }
 
     fn step(&mut self) {
@@ -374,11 +519,19 @@ impl WorkspaceAnimation {
     fn finish(&mut self) {
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.hide();
-            // Free the bitmaps rather than sit on tens of MB of window pictures while idle.
+            // Free the tile contents rather than hold window pictures that are no longer drawn.
             overlay.release_tiles();
         }
         // Dropping the animation drops its timer, which stops the wakeups.
         self.running = None;
+        self.coalesce = None;
+
+        // Capture what just became visible, so switching back has pixels ready. Event-driven, once
+        // per animation, never on a timer.
+        let targets = std::mem::take(&mut self.last_animated);
+        if !targets.is_empty() {
+            self.warm_windows(targets);
+        }
     }
 
     /// Slides every window currently on screen in from an offset. For judging animation quality by
@@ -479,7 +632,7 @@ mod tests {
         // rather than never finishing.
         let running = RunningAnimation {
             tiles: Vec::new(),
-            started: Instant::now(),
+            started: Some(Instant::now()),
             duration: Duration::ZERO,
             _clock: None,
         };
@@ -491,7 +644,7 @@ mod tests {
     fn progress_starts_near_zero_and_is_clamped_to_one() {
         let running = RunningAnimation {
             tiles: Vec::new(),
-            started: Instant::now(),
+            started: Some(Instant::now()),
             duration: Duration::from_millis(180),
             _clock: None,
         };
@@ -499,7 +652,7 @@ mod tests {
 
         let finished = RunningAnimation {
             tiles: Vec::new(),
-            started: Instant::now() - Duration::from_secs(5),
+            started: Some(Instant::now() - Duration::from_secs(5)),
             duration: Duration::from_millis(180),
             _clock: None,
         };

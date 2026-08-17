@@ -165,6 +165,14 @@ impl AnimationManager {
         let mut anim = Animation::new(reactor.config.clone());
         let mut animated_count = 0;
         let mut any_frame_changed = false;
+        // Collected alongside the Accessibility animation so the two engines can be compared without
+        // duplicating the eligibility rules, which decide what counts as a visible window.
+        let mut overlay_requests: Vec<crate::actor::workspace_animation::AnimationRequest> =
+            Vec::new();
+        // Every window in this layout, visible or not, so the cache can be warmed for the ones that
+        // will slide in on a later switch. Real WindowIds, which is the whole point: ids derived from
+        // the window server never match what an animation looks up.
+        let mut warm_targets: Vec<crate::ui::snapshot_service::SnapshotTarget> = Vec::new();
 
         for &(wid, target_frame) in layout {
             if skip_wid == Some(wid) {
@@ -214,6 +222,14 @@ impl AnimationManager {
                 continue;
             };
 
+            if let Some(wsid) = window_server_id {
+                warm_targets.push(crate::ui::snapshot_service::SnapshotTarget {
+                    window: wid,
+                    server_id: wsid,
+                    size: target_frame.size,
+                });
+            }
+
             let is_active = reactor
                 .layout_manager
                 .layout_engine
@@ -225,6 +241,14 @@ impl AnimationManager {
                 trace!(?wid, ?current_frame, ?target_frame, "Animating visible window");
                 anim.add_window(&app_state.handle, wid, current_frame, target_frame, false, txid);
                 animated_count += 1;
+                if let Some(wsid) = window_server_id {
+                    overlay_requests.push(crate::actor::workspace_animation::AnimationRequest {
+                        window: wid,
+                        server_id: wsid,
+                        from: current_frame,
+                        to: target_frame,
+                    });
+                }
                 if let Some(wsid) = window_server_id {
                     reactor.transaction_manager.update_txid_entries([(wsid, txid, target_frame)]);
                 }
@@ -275,7 +299,49 @@ impl AnimationManager {
             // reactor.rs.
             let skip_anim = (is_resize && reactor.is_in_drag()) || !layout_animate || low_power;
 
+            // The overlay engine replaces the per-frame Accessibility writes entirely: the real
+            // windows are placed once, and the motion the eye follows is drawn in the overlay.
+            //
+            // Ordering matters. The overlay is asked to animate FIRST, and its first frame draws the
+            // windows at the positions they are leaving, so even if the real windows land before the
+            // overlay is visible the picture stays continuous.
+            let use_overlay = reactor.config.settings.overlay_animations
+                && !skip_anim
+                && !overlay_requests.is_empty()
+                && reactor.communication_manager.workspace_animation_tx.is_some();
+
+            if use_overlay {
+                // Publish geometry at the point of use. Publishing only on screen-change events left
+                // the actor with no display when those events had already passed before it was ready,
+                // and it silently declined to animate.
+                reactor.publish_animation_display();
+                if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
+                    let duration = std::time::Duration::from_secs_f64(
+                        reactor.config.settings.animation_duration.max(0.0),
+                    );
+                    let count = overlay_requests.len();
+                    _ = tx.send(crate::actor::workspace_animation::Event::Animate {
+                        windows: overlay_requests,
+                        duration,
+                    });
+                    trace!(count, "handed the layout to the overlay animation engine");
+                }
+            }
+
+            // Warm whether or not this pass animated: the windows that will slide in next are exactly
+            // the ones sitting off-strip now, and they are only capturable ahead of time.
+            if reactor.config.settings.overlay_animations && !warm_targets.is_empty() {
+                if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
+                    _ = tx.send(crate::actor::workspace_animation::Event::WarmWindows(
+                        std::mem::take(&mut warm_targets),
+                    ));
+                }
+            }
+
             if let Some(tx) = &reactor.animation_tx {
+                // With the overlay driving the visuals, the real windows go straight to their final
+                // frames rather than being stepped there.
+                let skip_anim = skip_anim || use_overlay;
                 let message = if skip_anim {
                     Message::SkipToEnd(anim)
                 } else {

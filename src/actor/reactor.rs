@@ -3831,7 +3831,7 @@ impl Reactor {
     /// windows, and is visible only because nothing occupies that strip, so an overlay covering it
     /// would make the user's bar flicker on every switch. `ScreenInfo::frame` is already the usable
     /// frame, which is what makes this a straight pass-through.
-    fn publish_animation_display(&self) {
+    pub(crate) fn publish_animation_display(&self) {
         let Some(tx) = &self.communication_manager.workspace_animation_tx else {
             return;
         };
