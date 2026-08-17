@@ -110,6 +110,12 @@ pub struct WorkspaceOverlay {
     /// the screen. Showing the actual desktop there makes those gaps look like the desktop, because
     /// they are.
     backdrop: Retained<CALayer>,
+    /// The bar, redrawn on top and held still while the canvas moves beneath it.
+    ///
+    /// The overlay spans the whole display so the desktop fits at its true size and strips can travel
+    /// through the full height. That covers the user's bar, so it is drawn back on top rather than
+    /// left hidden for the duration of every animation.
+    foreground: Retained<CALayer>,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
     /// be translated into the overlay's own space.
@@ -122,8 +128,10 @@ pub struct WorkspaceOverlay {
 impl WorkspaceOverlay {
     /// Creates the overlay once, ordered in but fully transparent.
     ///
-    /// `frame` must be the display's USABLE frame in CoreGraphics (top-left origin) coordinates, i.e.
-    /// excluding the menu bar strip, so the user's bar stays visible during an animation.
+    /// `frame` must be the display's FULL bounds in CoreGraphics (top-left origin) coordinates. Sizing
+    /// it to the usable frame instead forced the captured desktop to be squashed into a shorter box,
+    /// and left a vertical animation invisible in the strip beneath the bar. The bar is drawn back on
+    /// top by `set_foreground` so covering it costs nothing.
     ///
     /// Built on `NSWindow` rather than a raw window server window. A raw window needs its layer tree
     /// bound through `SLSSetWindowLayerContext`, which fails with `kCGErrorFailure` here, leaving only
@@ -183,6 +191,15 @@ impl WorkspaceOverlay {
         backdrop.setZPosition(-10_000.0);
         root.addSublayer(&backdrop);
 
+        // Above the canvas, and never moved: the bar does not scroll with the workspaces.
+        let foreground = CALayer::layer();
+        foreground.setGeometryFlipped(true);
+        foreground.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        foreground.setContentsScale(scale);
+        foreground.setZPosition(10_000.0);
+        foreground.setHidden(true);
+        root.addSublayer(&foreground);
+
         let canvas = CALayer::layer();
         canvas.setGeometryFlipped(true);
         // Anchored at its top-left so setting the position translates the children directly, with no
@@ -198,6 +215,7 @@ impl WorkspaceOverlay {
             window,
             root,
             backdrop,
+            foreground,
             canvas,
             tile_layers: HashMap::new(),
             frame,
@@ -209,6 +227,26 @@ impl WorkspaceOverlay {
 
     pub fn frame(&self) -> CGRect {
         self.frame
+    }
+
+    /// Sets the still image drawn ON TOP of the moving canvas, for the bar.
+    ///
+    /// Positioned from the image's own covered size at the top of the display, because that is where
+    /// a menu bar strip lives. A failed capture leaves whatever was there rather than hiding it, so
+    /// the bar does not blink.
+    pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>) {
+        let Some(snapshot) = snapshot else { return };
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        let (covered_w, covered_h) = snapshot.coverage.covered;
+        self.foreground.setFrame(CGRect::new(
+            CGPoint::new(0.0, 0.0),
+            CGSize::new(covered_w, covered_h),
+        ));
+        self.foreground.setContentsScale(self.scale);
+        set_layer_contents(&self.foreground, snapshot);
+        self.foreground.setHidden(false);
+        CATransaction::commit();
     }
 
     /// Sets the still image drawn behind the moving canvas.
@@ -225,10 +263,12 @@ impl WorkspaceOverlay {
         let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
+        // The overlay spans the full display now, so the desktop capture matches it exactly and needs
+        // no inset correction. It used to be squashed into the shorter usable frame, which is what put
+        // it out of register with the real desktop.
         let (covered_w, covered_h) = snapshot.coverage.covered;
-        let inset = (covered_h - self.frame.size.height).max(0.0);
         self.backdrop.setFrame(CGRect::new(
-            CGPoint::new(0.0, -inset),
+            CGPoint::new(0.0, 0.0),
             CGSize::new(covered_w, covered_h),
         ));
         self.backdrop.setContentsScale(self.scale);

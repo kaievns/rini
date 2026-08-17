@@ -645,6 +645,40 @@ pub fn desktop_backdrop_windows(display: CGRect) -> Vec<WindowServerId> {
     .collect()
 }
 
+/// Window server ids of the bar sitting in the menu bar strip.
+///
+/// Anything above the desktop backdrop but below normal windows, which is where a status bar like
+/// sketchybar lives: measured at layer -20 on this machine. Captured so the overlay can redraw the bar
+/// on top of itself and keep it visible while the strips move underneath, since the overlay now spans
+/// the whole display and would otherwise cover it.
+pub fn bar_windows(display: CGRect) -> Vec<WindowServerId> {
+    /// Above the desktop backdrop.
+    const ABOVE_BACKDROP: i64 = -2147483600;
+
+    get_windows_raw::<CFDictionary<CFString, CFType>>(
+        CGWindowListOption::OptionOnScreenOnly,
+        kCGNullWindowID,
+    )
+    .iter()
+    .filter_map(|window| {
+        let layer = get_num(&window, unsafe { kCGWindowLayer })?;
+        // Strictly between the backdrop and normal windows.
+        if layer <= ABOVE_BACKDROP || layer >= 0 {
+            return None;
+        }
+        let bounds = window
+            .get(unsafe { kCGWindowBounds })?
+            .downcast::<CFDictionary>()
+            .ok()
+            .and_then(bounds_from_dict)?;
+        if !overlaps(bounds, display) {
+            return None;
+        }
+        Some(WindowServerId::new(get_num(&window, unsafe { kCGWindowNumber })? as u32))
+    })
+    .collect()
+}
+
 /// Front-to-back position of every on-screen window, keyed by window server id, 0 being frontmost.
 ///
 /// `CGWindowListCopyWindowInfo` returns on-screen windows in front-to-back order, so the index is the

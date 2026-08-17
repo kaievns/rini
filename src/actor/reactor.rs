@@ -4001,6 +4001,8 @@ impl Reactor {
             self.config.settings.ui.stack_line.vert_placement,
         );
 
+        // Full-display coordinates, matching the overlay's own space.
+        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
         let mut windows: Vec<crate::actor::workspace_animation::CanvasWindow> = Vec::new();
         for (wid, frame) in &full {
             let Some(window) = self.state.windows.window(*wid) else { continue };
@@ -4010,8 +4012,8 @@ impl Reactor {
                 server_id,
                 frame: CGRect::new(
                     CGPoint::new(
-                        frame.origin.x - screen.frame.origin.x,
-                        frame.origin.y - screen.frame.origin.y,
+                        frame.origin.x - display_bounds.origin.x,
+                        frame.origin.y - display_bounds.origin.y,
                     ),
                     frame.size,
                 ),
@@ -4119,11 +4121,11 @@ impl Reactor {
         // The inset is the difference between the display's full height and its usable height, which
         // is exactly the space the menu bar and the bar sitting in it occupy. Adding it to the usable
         // height makes the row pitch the FULL display height.
-        let full_height =
-            objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()).size.height;
-        let usable_height = screen.frame.size.height;
-        let menu_inset = (full_height - usable_height).max(0.0);
-        let row_pitch = usable_height + menu_inset;
+        // The overlay spans the full display, so the canvas is expressed in full-display coordinates
+        // and the row pitch is simply the full display height. That pitch already contains the menu
+        // bar gap, because each workspace's windows start below the bar within their own row.
+        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let row_pitch = display_bounds.size.height;
         let height = row_pitch;
 
         let mut windows: Vec<crate::actor::workspace_animation::CanvasWindow> = Vec::new();
@@ -4151,8 +4153,8 @@ impl Reactor {
                     server_id,
                     frame: CGRect::new(
                         CGPoint::new(
-                            frame.origin.x - screen.frame.origin.x,
-                            (frame.origin.y - screen.frame.origin.y) + row,
+                            frame.origin.x - display_bounds.origin.x,
+                            (frame.origin.y - display_bounds.origin.y) + row,
                         ),
                         frame.size,
                     ),
@@ -4222,7 +4224,7 @@ impl Reactor {
             return;
         };
         _ = tx.send(crate::actor::workspace_animation::Event::SetDisplay {
-            frame: screen.frame,
+            frame: objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()),
             // Backing scale is not carried on ScreenInfo. Every display rini has been run on is
             // Retina, and a wrong scale only affects bitmap crispness rather than geometry, so 2.0
             // is a safe default until there is a reason to plumb the real value through.
