@@ -193,6 +193,41 @@ impl HasCoverage for Coverage {
     }
 }
 
+/// Captures several windows as ONE composited image.
+///
+/// Used for the desktop backdrop, where the wallpaper and the icon layer have to end up in a single
+/// picture. This is the one case where SkyLight's batching behaviour is what is wanted: passing a list
+/// returns a single flattened composite rather than one image per window, which is useless for
+/// animating windows separately but exactly right for a backdrop.
+pub fn capture_composite_via_skylight(
+    windows: &[WindowServerId],
+    covers: (f64, f64),
+    scale: f64,
+) -> Option<WindowSnapshot> {
+    if windows.is_empty() {
+        return None;
+    }
+    let cid = unsafe { SLSMainConnectionID() };
+    let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
+    let array: *mut CFArray<CGImage> = unsafe {
+        SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS)
+    };
+    if array.is_null() {
+        return None;
+    }
+    // SAFETY: returns a +1 CFArray of CGImage, so ownership transfers here.
+    let array = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(array)?) };
+    let image = array.iter().next()?;
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    let px_w = CGImage::width(Some(&image)) as f64;
+    let px_h = CGImage::height(Some(&image)) as f64;
+    Some(WindowSnapshot {
+        image: SnapshotImage::Bitmap(image),
+        coverage: Coverage { covered: (px_w / scale, px_h / scale), window: covers },
+        source: SnapshotSource::SkyLight,
+    })
+}
+
 /// Snapshots held per window, so a switch can composite without capturing anything synchronously.
 ///
 /// Keyed by [`WindowId`] rather than [`WindowServerId`] because window server ids are recycled when

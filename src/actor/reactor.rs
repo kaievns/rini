@@ -3872,6 +3872,71 @@ impl Reactor {
         }
     }
 
+    /// Queues background captures for every window on every workspace of this space.
+    ///
+    /// A workspace switch is only legible when BOTH strips are drawn. Warming just the windows in the
+    /// current animation left the destination blank, so a switch looked like a one-way slide into
+    /// nothing and gave no sense of direction at all.
+    ///
+    /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
+    /// it holds unless something better arrives, so this settles rather than re-capturing.
+    fn warm_all_workspaces(&mut self, space: SpaceId) {
+        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+            return;
+        };
+        let Some(screen) = self
+            .space_state
+            .screens
+            .iter()
+            .find(|s| s.space == Some(space))
+            .or_else(|| self.space_state.screens.first())
+            .cloned()
+        else {
+            return;
+        };
+        let workspaces = self
+            .layout_manager
+            .layout_engine
+            .virtual_workspace_manager_mut()
+            .list_workspaces(space);
+        let gaps = self
+            .config
+            .settings
+            .layout
+            .gaps
+            .effective_for_display(screen.display_uuid_opt());
+        let thickness = self.config.settings.ui.stack_line.thickness();
+        let horiz = self.config.settings.ui.stack_line.horiz_placement;
+        let vert = self.config.settings.ui.stack_line.vert_placement;
+
+        let mut targets: Vec<crate::ui::snapshot_service::SnapshotTarget> = Vec::new();
+        for (workspace_id, _) in &workspaces {
+            let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+                &self.state.windows,
+                space,
+                *workspace_id,
+                screen.frame,
+                &gaps,
+                thickness,
+                horiz,
+                vert,
+            );
+            for (wid, frame) in layout {
+                let Some(window) = self.state.windows.window(wid) else { continue };
+                let Some(server_id) = window.info.sys_id else { continue };
+                targets.push(crate::ui::snapshot_service::SnapshotTarget {
+                    window: wid,
+                    server_id,
+                    size: frame.size,
+                });
+            }
+        }
+        if targets.is_empty() {
+            return;
+        }
+        _ = tx.send(crate::actor::workspace_animation::Event::WarmWindows(targets));
+    }
+
     /// Which workspace indices this switch is moving between.
     ///
     /// Called only from the workspace-switch layout path, so the currently active workspace is already
@@ -3965,8 +4030,17 @@ impl Reactor {
             .collect();
 
         // The strip arrives from where it was: start the viewport shifted by the movement, settle at
-        // zero. Negated because moving windows right by delta is the viewport moving left.
-        let from_offset = CGPoint::new(-delta.x, -delta.y);
+        // zero.
+        //
+        // The sign matters and was wrong. A tile at canvas coordinate c appears on screen at
+        // c - offset, and the canvas is built from the NEW layout, so at t = 0 the tile must appear
+        // where the window currently IS:
+        //
+        //     new_x - offset = old_x,  and  new_x = old_x + delta,  so  offset = delta
+        //
+        // Using -delta started the pan on the wrong side and moved it the wrong way. Chaining then
+        // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
+        let from_offset = CGPoint::new(delta.x, delta.y);
         let to_offset = CGPoint::new(0.0, 0.0);
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
@@ -4129,6 +4203,8 @@ impl Reactor {
             final_frames,
             duration,
         });
+        // Every workspace, so the next switch in any direction has both strips drawn.
+        self.warm_all_workspaces(space);
         true
     }
 

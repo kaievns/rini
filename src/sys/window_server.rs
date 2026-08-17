@@ -609,6 +609,42 @@ fn overlaps(a: CGRect, b: CGRect) -> bool {
         && b.origin.y < a.origin.y + a.size.height
 }
 
+/// Window server ids of the desktop backdrop: the wallpaper and the desktop icons.
+///
+/// Everything at or below the desktop window level, which is where the wallpaper and Finder's icon
+/// layer live, and nothing else. Captured so the animation overlay can show the real desktop in the
+/// gaps between strips rather than a flat colour, which flickers as it appears and disappears.
+pub fn desktop_backdrop_windows(display: CGRect) -> Vec<WindowServerId> {
+    /// Anything at or below this is backdrop. Read from a live system: the wallpaper sits at
+    /// -2147483626 and Finder's desktop icons at -2147483603, while the Dock is far below at
+    /// -2147483624 and must not be included or it would be drawn in the middle of the screen.
+    const DESKTOP_CEILING: i64 = -2147483600;
+    /// The Dock's own level, excluded because it is not part of the desktop backdrop.
+    const DOCK_LEVEL: i64 = -2147483624;
+
+    get_windows_raw::<CFDictionary<CFString, CFType>>(
+        CGWindowListOption::OptionOnScreenOnly,
+        kCGNullWindowID,
+    )
+    .iter()
+    .filter_map(|window| {
+        let layer = get_num(&window, unsafe { kCGWindowLayer })?;
+        if layer > DESKTOP_CEILING || layer == DOCK_LEVEL {
+            return None;
+        }
+        let bounds = window
+            .get(unsafe { kCGWindowBounds })?
+            .downcast::<CFDictionary>()
+            .ok()
+            .and_then(bounds_from_dict)?;
+        if !overlaps(bounds, display) {
+            return None;
+        }
+        Some(WindowServerId::new(get_num(&window, unsafe { kCGWindowNumber })? as u32))
+    })
+    .collect()
+}
+
 /// Front-to-back position of every on-screen window, keyed by window server id, 0 being frontmost.
 ///
 /// `CGWindowListCopyWindowInfo` returns on-screen windows in front-to-back order, so the index is the

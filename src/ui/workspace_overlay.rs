@@ -102,6 +102,14 @@ pub struct WorkspaceOverlay {
     /// transform per frame regardless of how many windows are on screen, and the tiles cannot drift
     /// against each other because they are siblings under one parent that moves as a unit.
     canvas: Retained<CALayer>,
+    /// The real desktop, drawn behind everything and held still while the canvas moves.
+    ///
+    /// The overlay has to be opaque so the real windows being repositioned underneath stay hidden,
+    /// which meant the gaps between and around strips were a flat colour. That flat area appearing and
+    /// disappearing reads as flickering, and on a workspace holding one half-width window it was half
+    /// the screen. Showing the actual desktop there makes those gaps look like the desktop, because
+    /// they are.
+    backdrop: Retained<CALayer>,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
     /// be translated into the overlay's own space.
@@ -166,6 +174,15 @@ impl WorkspaceOverlay {
         root.setGeometryFlipped(true);
         root.setContentsScale(scale);
 
+        // Behind the canvas, and never moved: the desktop does not scroll with the workspaces.
+        let backdrop = CALayer::layer();
+        backdrop.setGeometryFlipped(true);
+        backdrop.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
+        backdrop.setContentsScale(scale);
+        backdrop.setZPosition(-10_000.0);
+        root.addSublayer(&backdrop);
+
         let canvas = CALayer::layer();
         canvas.setGeometryFlipped(true);
         // Anchored at its top-left so setting the position translates the children directly, with no
@@ -180,6 +197,7 @@ impl WorkspaceOverlay {
         Some(Self {
             window,
             root,
+            backdrop,
             canvas,
             tile_layers: HashMap::new(),
             frame,
@@ -191,6 +209,22 @@ impl WorkspaceOverlay {
 
     pub fn frame(&self) -> CGRect {
         self.frame
+    }
+
+    /// Sets the still image drawn behind the moving canvas.
+    pub fn set_backdrop(&mut self, snapshot: Option<&WindowSnapshot>) {
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        match snapshot {
+            Some(snapshot) => {
+                self.backdrop.setContentsScale(self.scale);
+                set_layer_contents(&self.backdrop, snapshot);
+                self.backdrop.setHidden(false);
+            }
+            // Nothing to draw. Hidden rather than left showing a stale desktop from another display.
+            None => self.backdrop.setHidden(true),
+        }
+        CATransaction::commit();
     }
 
     pub fn is_visible(&self) -> bool {

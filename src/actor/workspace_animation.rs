@@ -748,10 +748,15 @@ impl WorkspaceAnimation {
             None => from_offset,
         };
 
+        // Refreshed per animation: the desktop can change, and it is one cheap framebuffer capture of
+        // fully visible windows, which is the case SkyLight handles well.
+        let backdrop = self.capture_backdrop();
+
         let Some(overlay) = self.ensure_overlay() else {
             self.request_frames(final_frames);
             return;
         };
+        overlay.set_backdrop(backdrop.as_ref());
         overlay.set_canvas(&tiles);
         overlay.set_canvas_offset(from_offset);
         overlay.show();
@@ -901,6 +906,17 @@ impl WorkspaceAnimation {
                 "handover mismatch: a real window is not where its tile finished"
             );
         }
+    }
+
+    /// Captures the desktop wallpaper and icons as one image, for the overlay's backdrop.
+    fn capture_backdrop(&self) -> Option<WindowSnapshot> {
+        let (display_frame, scale) = self.display?;
+        let windows = crate::sys::window_server::desktop_backdrop_windows(display_frame);
+        crate::ui::window_snapshot::capture_composite_via_skylight(
+            &windows,
+            (display_frame.size.width, display_frame.size.height),
+            scale,
+        )
     }
 
     /// Asks the reactor to place windows at their final frames.
