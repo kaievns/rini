@@ -373,6 +373,7 @@ stays usable. Fix the config and restart. Error: {error}",
     let cursor_warp = rini_wm::actor::cursor_warp::CursorWarp::new(
         config.settings.warp_cursor_between_stacked_displays,
         config.settings.stacked_display_upper_is,
+        config.settings.stacked_display_lower_top_at,
         cursor_warp_rx,
     );
 

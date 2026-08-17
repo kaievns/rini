@@ -39,6 +39,13 @@ warp_cursor_between_stacked_displays = false
 #   pointer LEFT off the lower display continues onto the upper one's RIGHT edge, which is what a
 #   left-to-right sweep across both screens feels like. Only read when warping is on.
 stacked_display_upper_is = "left"
+# - stacked_display_lower_top_at: where the LOWER display's top edge sits on the UPPER display's
+#   height, as a fraction measured up from the upper display's BOTTOM edge. Only the vertical
+#   relationship needs stating; each display's physical size comes from CGDisplayScreenSize, so a
+#   crossing is mapped by real-world position rather than by fraction along the edge. That matters
+#   whenever the screens differ in size: a 391mm external beside a 223mm laptop has its midpoint
+#   level with the laptop's TOP, not its middle. Set 1.0 to align top edges.
+stacked_display_lower_top_at = 0.4
 # focus_follows_mouse_disable_hotkey temporarily suspends focus-follows-mouse while held
 # e.g. "Fn"; omit or set to null to keep focus-follows-mouse always active
 #focus_follows_mouse_disable_hotkey = "Fn"

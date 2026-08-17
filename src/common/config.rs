@@ -455,6 +455,19 @@ pub struct Settings {
     /// across both screens feels like.
     #[serde(default)]
     pub stacked_display_upper_is: StackedUpperSide,
+    /// Where the lower display's TOP edge sits on the upper display's height, as a fraction measured
+    /// up from the upper display's BOTTOM edge.
+    ///
+    /// Only the vertical relationship needs stating. Each display's physical size comes from
+    /// `CGDisplayScreenSize`, so the rest of the geometry follows, and no pixel offset needs
+    /// hand-tuning when the arrangement changes.
+    ///
+    /// Worked example, measured on this machine: the external is 391mm tall and the laptop 223mm.
+    /// At 0.4 the laptop's top edge sits 156mm above the external's bottom, which puts its bottom
+    /// 67mm below the external's bottom. Set this to 1.0 to align their top edges, and to the
+    /// height ratio to align their bottoms.
+    #[serde(default = "default_stacked_lower_top_at")]
+    pub stacked_display_lower_top_at: f64,
     #[serde(default = "yes")]
     pub focus_follows_mouse: bool,
     /// Hotkey that disables focus-follows-mouse while held.
@@ -1335,7 +1348,13 @@ fn default_animation_fps() -> f64 {
 }
 
 #[allow(dead_code)]
-pub fn no() -> bool {
+pub fn default_stacked_lower_top_at() -> f64 {
+    // The laptop's top edge a little under halfway up the larger screen, which is where a laptop
+    // parked beside a big monitor tends to sit.
+    0.4
+}
+
+fn no() -> bool {
     false
 }
 
