@@ -372,6 +372,7 @@ stays usable. Fix the config and restart. Error: {error}",
     // actor. It stays parked until the reactor sends it geometry for two or more displays.
     let cursor_warp = rini_wm::actor::cursor_warp::CursorWarp::new(
         config.settings.warp_cursor_between_stacked_displays,
+        config.settings.stacked_display_upper_is,
         cursor_warp_rx,
     );
 

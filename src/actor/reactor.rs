@@ -3803,6 +3803,9 @@ impl Reactor {
         _ = tx.send(crate::actor::cursor_warp::Request::SetEnabled(
             self.config.settings.warp_cursor_between_stacked_displays,
         ));
+        _ = tx.send(crate::actor::cursor_warp::Request::SetUpperSide(
+            self.config.settings.stacked_display_upper_is,
+        ));
         _ = tx.send(crate::actor::cursor_warp::Request::ScreensChanged(
             crate::actor::cursor_warp::frames_of(&self.space_state.screens),
         ));

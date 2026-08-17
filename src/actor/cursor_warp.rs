@@ -33,12 +33,20 @@
 //! physical:  [   4K   ] [ built-in ]      logical:  [   4K   ]
 //!                                                   [built-in]
 //!
-//! push right off the built-in  ->  appear at the LEFT edge of the 4K
-//! push left  off the 4K        ->  appear at the RIGHT edge of the built-in
+//! push LEFT  off the built-in  ->  appear at the RIGHT edge of the 4K
+//! push RIGHT off the 4K        ->  appear at the LEFT  edge of the built-in
 //! ```
 //!
-//! That pairing — right goes up, left goes down — is what makes a physical left-to-right
-//! sweep continuous when the wider display is logically on top.
+//! Travel has to continue in the direction the pointer was already moving. Pushing left means
+//! carrying on leftwards, so the pointer must arrive at the FAR edge of the display that sits to
+//! the left, not at its near edge.
+//!
+//! Which side the upper display occupies cannot be derived from the coordinate space: macOS knows
+//! the displays are stacked and nothing about the desk. It comes from
+//! `settings.stacked_display_upper_is`, defaulting to `left`.
+//!
+//! This was originally implemented the other way round, pairing right-goes-up with left-goes-down,
+//! which sent the pointer to the opposite screen AND to the wrong edge of it.
 //!
 //! # History
 //!
@@ -64,6 +72,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{CGError, CGEvent};
 use tracing::{debug, info};
 
+use crate::common::config::StackedUpperSide;
 use crate::sys::geometry::CGRectExt;
 use crate::sys::screen::ScreenInfo;
 
@@ -97,6 +106,8 @@ pub enum Request {
     /// Enable or disable warping without tearing the actor down, so a config reload can
     /// toggle it.
     SetEnabled(bool),
+    /// Which side the logically-upper display physically sits on.
+    SetUpperSide(StackedUpperSide),
     Stop,
 }
 
@@ -106,15 +117,17 @@ pub type Receiver = crate::actor::Receiver<Request>;
 pub struct CursorWarp {
     rx: Receiver,
     enabled: bool,
+    upper_side: StackedUpperSide,
     screens: Vec<CGRect>,
     last_warp: Option<Instant>,
 }
 
 impl CursorWarp {
-    pub fn new(enabled: bool, rx: Receiver) -> Self {
+    pub fn new(enabled: bool, upper_side: StackedUpperSide, rx: Receiver) -> Self {
         Self {
             rx,
             enabled,
+            upper_side,
             screens: Vec::new(),
             last_warp: None,
         }
@@ -163,6 +176,12 @@ impl CursorWarp {
                 }
                 self.enabled = enabled;
             }
+            Request::SetUpperSide(side) => {
+                if side != self.upper_side {
+                    info!(?side, "cursor warp upper display side changed");
+                }
+                self.upper_side = side;
+            }
             Request::Stop => return false,
         }
         true
@@ -175,7 +194,7 @@ impl CursorWarp {
             return;
         }
         let Some(cursor) = cursor_position() else { return };
-        let Some(target) = warp_target(&self.screens, cursor) else {
+        let Some(target) = warp_target(&self.screens, cursor, self.upper_side) else {
             return;
         };
 
@@ -206,7 +225,11 @@ fn cursor_position() -> Option<CGPoint> {
 /// Split out as a free function over plain geometry so the decision can be unit tested
 /// without a display or a running actor. Every branch here is a reason NOT to warp, which
 /// matters: warping when macOS would have handled the crossing natively means fighting it.
-fn warp_target(screens: &[CGRect], cursor: CGPoint) -> Option<CGPoint> {
+fn warp_target(
+    screens: &[CGRect],
+    cursor: CGPoint,
+    upper_side: StackedUpperSide,
+) -> Option<CGPoint> {
     if screens.len() < 2 {
         return None;
     }
@@ -232,9 +255,14 @@ fn warp_target(screens: &[CGRect], cursor: CGPoint) -> Option<CGPoint> {
         return None;
     }
 
-    // Push right -> enter the display ABOVE from its left edge.
-    // Push left  -> enter the display BELOW from its right edge.
-    let going_up = at_right;
+    // Which logical direction continues the pointer's physical travel.
+    //
+    // With the upper display on the LEFT, moving left carries on into it, so left goes up. With the
+    // upper display on the right, moving right carries on into it, so right goes up.
+    let going_up = match upper_side {
+        StackedUpperSide::Left => at_left,
+        StackedUpperSide::Right => at_right,
+    };
     let target = vertical_neighbour(screens, here, going_up)?;
 
     // Preserve position along the edge proportionally, so entering high on a short display
@@ -247,10 +275,12 @@ fn warp_target(screens: &[CGRect], cursor: CGPoint) -> Option<CGPoint> {
     let y = (target.origin.y + fraction * target.size.height)
         .max(target.origin.y + 1.0)
         .min(target.max().y - 1.0);
-    let x = if going_up {
-        target.origin.x + ENTRY_INSET
-    } else {
+    // Arrive at the FAR edge of the destination, so travel continues rather than reversing. Moving
+    // left must land near the destination's right edge, and moving right near its left edge.
+    let x = if at_left {
         target.max().x - ENTRY_INSET
+    } else {
+        target.origin.x + ENTRY_INSET
     };
     Some(CGPoint::new(x, y))
 }
@@ -313,50 +343,104 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
     }
 
-    /// The real arrangement this was built for: external logically ABOVE the built-in,
-    /// with overlapping x ranges, while physically sitting side by side.
+    /// The real arrangement this was built for, read from `rini-cli query displays`: the external
+    /// logically ABOVE the built-in, with overlapping x ranges, while physically sitting to its LEFT.
     const BUILT_IN: fn() -> CGRect = || rect(0.0, 32.0, 1728.0, 1085.0);
     const EXTERNAL: fn() -> CGRect = || rect(-670.0, -1692.0, 3008.0, 1692.0);
 
+    fn upper_left(screens: &[CGRect], cursor: CGPoint) -> Option<CGPoint> {
+        warp_target(screens, cursor, StackedUpperSide::Left)
+    }
+
+    /// The bug this file was reported for. With the upper display physically on the LEFT, pushing
+    /// left off the built-in must continue leftwards onto the external's RIGHT edge. The original
+    /// implementation paired right-with-up and entered at the near edge, so it sent the pointer to
+    /// the opposite screen and the opposite side of it.
     #[test]
-    fn pressing_the_right_edge_enters_the_display_above_from_its_left() {
+    fn pushing_left_continues_onto_the_upper_displays_right_edge() {
         let screens = vec![BUILT_IN(), EXTERNAL()];
         let built_in = BUILT_IN();
-        // Halfway down the built-in's right edge.
-        let cursor = CGPoint::new(built_in.max().x - 1.0, built_in.origin.y + 542.5);
+        let cursor = CGPoint::new(built_in.origin.x + 1.0, built_in.origin.y + 542.5);
 
-        let target = warp_target(&screens, cursor).expect("should warp");
+        let target = upper_left(&screens, cursor).expect("should warp");
         let external = EXTERNAL();
+        assert_eq!(
+            target.x,
+            external.max().x - ENTRY_INSET,
+            "must arrive near the far (right) edge so leftward travel continues"
+        );
+    }
+
+    /// The return trip: pushing right off the upper display continues onto the lower one's LEFT edge.
+    #[test]
+    fn pushing_right_continues_onto_the_lower_displays_left_edge() {
+        let screens = vec![BUILT_IN(), EXTERNAL()];
+        let external = EXTERNAL();
+        let cursor = CGPoint::new(external.max().x - 1.0, external.origin.y + 846.0);
+
+        let target = upper_left(&screens, cursor).expect("should warp");
+        assert_eq!(target.x, BUILT_IN().origin.x + ENTRY_INSET);
+    }
+
+    /// Pushing AWAY from the upper display must do nothing. With the external on the left there is
+    /// no screen to the right of the built-in, so the pointer should simply stop.
+    #[test]
+    fn pushing_away_from_the_upper_display_does_not_warp() {
+        let screens = vec![BUILT_IN(), EXTERNAL()];
+        let built_in = BUILT_IN();
+        let cursor = CGPoint::new(built_in.max().x - 1.0, built_in.origin.y + 542.5);
+        assert!(
+            upper_left(&screens, cursor).is_none(),
+            "nothing lies right of the built-in, so the pointer must stop"
+        );
+    }
+
+    /// The mirror arrangement, so the setting is genuinely honoured rather than the default being
+    /// hardcoded twice.
+    #[test]
+    fn with_the_upper_display_on_the_right_the_pairing_mirrors() {
+        let screens = vec![BUILT_IN(), EXTERNAL()];
+        let built_in = BUILT_IN();
+        let external = EXTERNAL();
+
+        let pushing_right = CGPoint::new(built_in.max().x - 1.0, built_in.origin.y + 542.5);
+        let target = warp_target(&screens, pushing_right, StackedUpperSide::Right)
+            .expect("should warp toward the upper display");
         assert_eq!(target.x, external.origin.x + ENTRY_INSET);
+
+        let pushing_left = CGPoint::new(built_in.origin.x + 1.0, built_in.origin.y + 542.5);
+        assert!(
+            warp_target(&screens, pushing_left, StackedUpperSide::Right).is_none(),
+            "with the upper display on the right, nothing lies left of the built-in"
+        );
+    }
+
+    #[test]
+    fn position_along_the_edge_is_preserved_proportionally() {
+        let screens = vec![BUILT_IN(), EXTERNAL()];
+        let built_in = BUILT_IN();
+        let external = EXTERNAL();
+        let cursor = CGPoint::new(built_in.origin.x + 1.0, built_in.origin.y + built_in.size.height / 2.0);
+
+        let target = upper_left(&screens, cursor).expect("should warp");
         assert!(
             (target.y - (external.origin.y + external.size.height / 2.0)).abs() < 1.0,
             "halfway down one edge should be halfway down the other, got {target:?}"
         );
     }
 
-    #[test]
-    fn pressing_the_left_edge_enters_the_display_below_from_its_right() {
-        let screens = vec![BUILT_IN(), EXTERNAL()];
-        let external = EXTERNAL();
-        let cursor = CGPoint::new(external.origin.x + 1.0, external.origin.y + 846.0);
-
-        let target = warp_target(&screens, cursor).expect("should warp");
-        let built_in = BUILT_IN();
-        assert_eq!(target.x, built_in.max().x - ENTRY_INSET);
-    }
-
-    /// The entry point must be far enough in that the next poll does not re-trigger.
-    /// Otherwise the cursor ping-pongs between displays for as long as it is held there,
-    /// which is what makes a too-small inset feel like the pointer is stuck.
+    /// The entry point must be far enough in that the next poll does not re-trigger. Otherwise the
+    /// cursor ping-pongs between displays for as long as it is held there, which is what makes a
+    /// too-small inset feel like the pointer is stuck.
     #[test]
     fn the_entry_point_does_not_immediately_warp_back() {
         let screens = vec![BUILT_IN(), EXTERNAL()];
         let built_in = BUILT_IN();
-        let cursor = CGPoint::new(built_in.max().x - 1.0, built_in.origin.y + 542.5);
+        let cursor = CGPoint::new(built_in.origin.x + 1.0, built_in.origin.y + 542.5);
 
-        let first = warp_target(&screens, cursor).expect("should warp");
+        let first = upper_left(&screens, cursor).expect("should warp");
         assert!(
-            warp_target(&screens, first).is_none(),
+            upper_left(&screens, first).is_none(),
             "landing point {first:?} re-triggered a warp"
         );
     }
@@ -368,25 +452,24 @@ mod tests {
         let right = rect(1000.0, 0.0, 1000.0, 1000.0);
         let screens = vec![left, right];
 
-        // Pressing the shared edge from either side.
-        assert!(warp_target(&screens, CGPoint::new(999.0, 500.0)).is_none());
-        assert!(warp_target(&screens, CGPoint::new(1001.0, 500.0)).is_none());
+        assert!(upper_left(&screens, CGPoint::new(999.0, 500.0)).is_none());
+        assert!(upper_left(&screens, CGPoint::new(1001.0, 500.0)).is_none());
     }
 
-    /// This is the precondition the standalone Swift daemon could not check. Displays that
-    /// are neither stacked nor adjacent give no vertical neighbour, so nothing happens
-    /// rather than the cursor being flung somewhere arbitrary.
+    /// This is the precondition the standalone Swift daemon could not check. Displays that are
+    /// neither stacked nor adjacent give no vertical neighbour, so nothing happens rather than the
+    /// cursor being flung somewhere arbitrary.
     #[test]
     fn a_lone_display_never_warps() {
         let screens = vec![BUILT_IN()];
         let built_in = BUILT_IN();
-        assert!(warp_target(&screens, CGPoint::new(built_in.max().x - 1.0, 500.0)).is_none());
+        assert!(upper_left(&screens, CGPoint::new(built_in.origin.x + 1.0, 500.0)).is_none());
     }
 
     #[test]
     fn a_cursor_away_from_any_edge_never_warps() {
         let screens = vec![BUILT_IN(), EXTERNAL()];
-        assert!(warp_target(&screens, CGPoint::new(864.0, 500.0)).is_none());
+        assert!(upper_left(&screens, CGPoint::new(864.0, 500.0)).is_none());
     }
 
     /// With three displays stacked, the neighbour chosen is the one that actually lines up
@@ -398,11 +481,11 @@ mod tests {
         let mostly = rect(-100.0, -500.0, 1000.0, 500.0); // 900pt of overlap
         let screens = vec![middle, barely, mostly];
 
-        let target =
-            warp_target(&screens, CGPoint::new(middle.max().x - 1.0, 250.0)).expect("should warp");
+        let target = upper_left(&screens, CGPoint::new(middle.origin.x + 1.0, 250.0))
+            .expect("should warp");
         assert_eq!(
             target.x,
-            mostly.origin.x + ENTRY_INSET,
+            mostly.max().x - ENTRY_INSET,
             "expected the display with the greater horizontal overlap"
         );
     }

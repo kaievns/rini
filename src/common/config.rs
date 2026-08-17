@@ -396,6 +396,22 @@ impl<'de> Deserialize<'de> for Config {
 unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
+/// Which side the logically-upper of two stacked displays physically occupies.
+///
+/// macOS knows the displays are stacked but has no idea how they sit on the desk, and matching the
+/// desk is the entire point of warping, so this cannot be inferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StackedUpperSide {
+    /// The upper display sits to the LEFT on the desk, so pushing the pointer left off the lower
+    /// display continues onto the upper one's right edge. Default because it matches a laptop parked
+    /// to the right of a larger external screen.
+    #[default]
+    Left,
+    /// The upper display sits to the RIGHT on the desk.
+    Right,
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
@@ -428,6 +444,17 @@ pub struct Settings {
     /// either display, the pointer stops dead at the edge. This restores it.
     #[serde(default = "no")]
     pub warp_cursor_between_stacked_displays: bool,
+    /// Which side the logically-upper display physically sits on.
+    ///
+    /// macOS knows the displays are stacked but has no idea how they are arranged on the desk,
+    /// and the whole point of warping is to match the desk rather than the coordinate space. So
+    /// this cannot be inferred and has to be stated.
+    ///
+    /// With the upper display on the left, pushing the pointer LEFT off the lower display
+    /// continues onto the upper one's right edge, which is what a physical left-to-right sweep
+    /// across both screens feels like.
+    #[serde(default)]
+    pub stacked_display_upper_is: StackedUpperSide,
     #[serde(default = "yes")]
     pub focus_follows_mouse: bool,
     /// Hotkey that disables focus-follows-mouse while held.
