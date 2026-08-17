@@ -183,17 +183,20 @@ impl WorkspaceOverlay {
         root.setContentsScale(scale);
 
         // Behind the canvas, and never moved: the desktop does not scroll with the workspaces.
+        //
+        // Deliberately NOT geometryFlipped. That property flips a layer's own contents as well as its
+        // children's coordinates, so setting it here drew the captured desktop upside down, which put
+        // the menu bar strip along the bottom of the screen and made a dark wallpaper look black.
         let backdrop = CALayer::layer();
-        backdrop.setGeometryFlipped(true);
         backdrop.setAnchorPoint(CGPoint::new(0.0, 0.0));
         backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
         backdrop.setContentsScale(scale);
         backdrop.setZPosition(-10_000.0);
         root.addSublayer(&backdrop);
 
-        // Above the canvas, and never moved: the bar does not scroll with the workspaces.
+        // Above the canvas, and never moved: the bar does not scroll with the workspaces. Not
+        // geometryFlipped, for the same reason as the backdrop.
         let foreground = CALayer::layer();
-        foreground.setGeometryFlipped(true);
         foreground.setAnchorPoint(CGPoint::new(0.0, 0.0));
         foreground.setContentsScale(scale);
         foreground.setZPosition(10_000.0);
@@ -234,6 +237,9 @@ impl WorkspaceOverlay {
     /// Positioned from the image's own covered size at the top of the display, because that is where
     /// a menu bar strip lives. A failed capture leaves whatever was there rather than hiding it, so
     /// the bar does not blink.
+    ///
+    /// The layer is not geometryFlipped, so its contents draw the right way up while its position is
+    /// still interpreted in the flipped root's top-left space.
     pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>) {
         let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
