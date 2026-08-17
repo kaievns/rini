@@ -324,6 +324,9 @@ pub struct Reactor {
     workspace_switch_manager: managers::WorkspaceSwitchManager,
     recording_manager: managers::RecordingManager,
     communication_manager: managers::CommunicationManager,
+    /// Last active workspace index per space, so a switch can be recognised without intercepting the
+    /// command that caused it.
+    last_active_workspace: HashMap<SpaceId, usize>,
     notification_manager: managers::NotificationManager,
     transaction_manager: transaction_manager::TransactionManager,
     menu_manager: managers::MenuManager,
@@ -439,6 +442,7 @@ impl Reactor {
                 pending_workspace_mouse_warp: None,
             },
             recording_manager: managers::RecordingManager { record },
+            last_active_workspace: HashMap::default(),
             communication_manager: managers::CommunicationManager {
                 event_tap_tx: None,
                 gesture_tap_tx: None,
@@ -3866,6 +3870,143 @@ impl Reactor {
                 ));
             }
         }
+    }
+
+    /// Which workspace indices this switch is moving between.
+    ///
+    /// Called only from the workspace-switch layout path, so the currently active workspace is already
+    /// the DESTINATION and the previously recorded one is the origin. Recording it here rather than
+    /// intercepting the command means any route into a switch is covered.
+    fn workspace_switch_indices(&mut self, space: SpaceId) -> Option<(usize, usize)> {
+        let active = self.layout_manager.layout_engine.active_workspace(space)?;
+        let workspaces =
+            self.layout_manager.layout_engine.virtual_workspace_manager_mut().list_workspaces(space);
+        let to_index = workspaces.iter().position(|(id, _)| *id == active)?;
+        let previous = self.last_active_workspace.insert(space, to_index);
+        match previous {
+            Some(from_index) if from_index != to_index => Some((from_index, to_index)),
+            // Nothing to move between, but the destination is now recorded so the next switch has an
+            // origin to compare against.
+            _ => None,
+        }
+    }
+
+    /// Builds and starts a canvas animation for a workspace switch, if one is warranted.
+    ///
+    /// Returns true when the canvas took over, in which case the caller must not touch the real
+    /// windows: the animation actor asks for them once it is covering them.
+    ///
+    /// Every workspace between the two is laid out and stacked below the one above it, so a jump from
+    /// 1 to 4 scrolls past 2 and 3. Without that, a four-workspace jump looks exactly like a
+    /// one-workspace step, which gives no sense of where you have moved to.
+    fn start_canvas_switch(&mut self, space: SpaceId, from_index: usize, to_index: usize) -> bool {
+        if from_index == to_index {
+            return false;
+        }
+        tracing::debug!(from_index, to_index, "canvas switch requested");
+        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+            return false;
+        };
+        let Some(screen) = self
+            .space_state
+            .screens
+            .iter()
+            .find(|s| s.space == Some(space))
+            .or_else(|| self.space_state.screens.first())
+            .cloned()
+        else {
+            return false;
+        };
+
+        let workspaces = self
+            .layout_manager
+            .layout_engine
+            .virtual_workspace_manager_mut()
+            .list_workspaces(space);
+        if workspaces.is_empty() {
+            return false;
+        }
+
+        let gaps = self
+            .config
+            .settings
+            .layout
+            .gaps
+            .effective_for_display(screen.display_uuid_opt());
+        let thickness = self.config.settings.ui.stack_line.thickness();
+        let horiz = self.config.settings.ui.stack_line.horiz_placement;
+        let vert = self.config.settings.ui.stack_line.vert_placement;
+
+        let low = from_index.min(to_index);
+        let high = from_index.max(to_index);
+        let height = screen.frame.size.height;
+
+        let mut windows: Vec<crate::actor::workspace_animation::CanvasWindow> = Vec::new();
+        let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
+        for index in low..=high {
+            let Some((workspace_id, _)) = workspaces.get(index) else { continue };
+            let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+                &self.state.windows,
+                space,
+                *workspace_id,
+                screen.frame,
+                &gaps,
+                thickness,
+                horiz,
+                vert,
+            );
+            // Stacked below the workspace above it, and expressed relative to the display's own
+            // origin so the overlay's coordinate space needs no further translation.
+            let row = (index - low) as f64 * height;
+            for (wid, frame) in layout {
+                let Some(window) = self.state.windows.window(wid) else { continue };
+                let Some(server_id) = window.info.sys_id else { continue };
+                windows.push(crate::actor::workspace_animation::CanvasWindow {
+                    window: wid,
+                    server_id,
+                    frame: CGRect::new(
+                        CGPoint::new(
+                            frame.origin.x - screen.frame.origin.x,
+                            (frame.origin.y - screen.frame.origin.y) + row,
+                        ),
+                        frame.size,
+                    ),
+                });
+                // Only the destination workspace's windows end up on screen; the rest are placed by
+                // the normal layout that follows.
+                if index == to_index {
+                    final_frames.push((wid, frame));
+                }
+            }
+        }
+
+        tracing::debug!(
+            from_index,
+            to_index,
+            workspaces = workspaces.len(),
+            canvas_windows = windows.len(),
+            final_frames = final_frames.len(),
+            height,
+            "canvas switch build"
+        );
+        if windows.is_empty() {
+            return false;
+        }
+
+        let from_offset = CGPoint::new(0.0, (from_index - low) as f64 * height);
+        let to_offset = CGPoint::new(0.0, (to_index - low) as f64 * height);
+        let duration =
+            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
+
+        self.publish_animation_display();
+        _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {
+            windows,
+            from_offset,
+            to_offset,
+            final_frames,
+            duration,
+        });
+        true
     }
 
     pub(crate) fn publish_animation_display(&self) {

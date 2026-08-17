@@ -44,6 +44,21 @@ use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 /// stays below the assistive and cursor levels so nothing accessibility-related is hidden.
 const OVERLAY_LEVEL: isize = NSPopUpMenuWindowLevel as isize;
 
+/// One window's picture at a fixed position on the canvas.
+///
+/// Canvas coordinates, not screen coordinates. The canvas holds every window across every workspace
+/// laid out side by side and stacked, and an animation moves the CANVAS rather than the windows on it.
+/// That is what makes a jump across the strip, or from workspace 1 to workspace 4, scroll past
+/// everything in between instead of cutting straight to the destination.
+pub struct CanvasTile {
+    pub window: WindowId,
+    /// Fixed position on the canvas. Never interpolated.
+    pub frame: CGRect,
+    pub snapshot: WindowSnapshot,
+    /// Front-to-back position on screen, 0 being frontmost.
+    pub depth: usize,
+}
+
 /// One window's picture inside the overlay, and where it should be drawn.
 pub struct OverlayTile {
     pub window: WindowId,
@@ -83,6 +98,10 @@ pub struct WorkspaceOverlay {
     /// The layer every tile is added to. Owned by the window's content view, which is layer-backed,
     /// so AppKit presents it on the GPU with no manual rasterisation.
     root: Retained<CALayer>,
+    /// Holds every tile at its fixed canvas position. Moving THIS layer is the animation: one
+    /// transform per frame regardless of how many windows are on screen, and the tiles cannot drift
+    /// against each other because they are siblings under one parent that moves as a unit.
+    canvas: Retained<CALayer>,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
     /// be translated into the overlay's own space.
@@ -143,11 +162,21 @@ impl WorkspaceOverlay {
         root.setGeometryFlipped(true);
         root.setContentsScale(scale);
 
+        let canvas = CALayer::layer();
+        canvas.setGeometryFlipped(true);
+        // Anchored at its top-left so setting the position translates the children directly, with no
+        // half-size offset to reason about.
+        canvas.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        canvas.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
+        canvas.setPosition(CGPoint::new(0.0, 0.0));
+        root.addSublayer(&canvas);
+
         window.orderFrontRegardless();
 
         Some(Self {
             window,
             root,
+            canvas,
             tile_layers: HashMap::new(),
             frame,
             scale,
@@ -182,6 +211,61 @@ impl WorkspaceOverlay {
         self.root.setContentsScale(scale);
     }
 
+    /// Installs the canvas for one animation: every tile at a fixed position.
+    ///
+    /// Tiles are reused across animations for the same window, since handing a layer a bitmap is the
+    /// expensive part. Anything absent is removed, or the previous animation's windows linger.
+    pub fn set_canvas(&mut self, tiles: &[CanvasTile]) {
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+
+        let mut keep = Vec::with_capacity(tiles.len());
+        for tile in tiles {
+            keep.push(tile.window);
+            let layer = self.tile_layers.entry(tile.window).or_insert_with(|| {
+                let layer = CALayer::layer();
+                layer.setGeometryFlipped(true);
+                layer.setMasksToBounds(true);
+                // SAFETY: Core Animation's own filter-name constants.
+                unsafe {
+                    layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
+                    layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
+                }
+                self.canvas.addSublayer(&layer);
+                layer
+            });
+            layer.setContentsScale(self.scale);
+            set_layer_contents(layer, &tile.snapshot);
+            layer.setFrame(tile.frame);
+            layer.setZPosition(-(tile.depth as f64));
+            layer.setHidden(false);
+        }
+
+        let stale: Vec<WindowId> =
+            self.tile_layers.keys().copied().filter(|w| !keep.contains(w)).collect();
+        for window in stale {
+            if let Some(layer) = self.tile_layers.remove(&window) {
+                layer.removeFromSuperlayer();
+            }
+        }
+
+        CATransaction::commit();
+    }
+
+    /// Moves the canvas so that `offset` in canvas coordinates sits at the overlay's top-left.
+    ///
+    /// This is the entire animation: one property on one layer. Because every tile is a child of the
+    /// canvas, they move together exactly, which is what makes relative drift between windows
+    /// impossible rather than merely unlikely.
+    pub fn set_canvas_offset(&mut self, offset: CGPoint) {
+        CATransaction::begin();
+        // Implicit animations off, or Core Animation adds its own ease on top of ours and the result
+        // lags the input by a fixed amount.
+        CATransaction::setDisableActions(true);
+        self.canvas.setPosition(CGPoint::new(-offset.x, -offset.y));
+        CATransaction::commit();
+    }
+
     /// Installs the tiles for one animation and draws frame zero.
     ///
     /// Layers are reused across animations for the same window, since creating a `CALayer` and giving
@@ -207,20 +291,7 @@ impl WorkspaceOverlay {
                 layer
             });
             layer.setContentsScale(self.scale);
-            // Core Animation takes either a CGImage or an IOSurface as contents, so neither kind of
-            // snapshot needs converting. Converting would cost exactly what each capture API avoids.
-            unsafe {
-                match &tile.snapshot.image {
-                    SnapshotImage::Bitmap(image) => {
-                        let raw: *const objc2_core_graphics::CGImage = &**image;
-                        let _: () = msg_send![&**layer, setContents: raw];
-                    }
-                    SnapshotImage::Surface(surface) => {
-                        let raw: *const objc2_io_surface::IOSurfaceRef = &**surface;
-                        let _: () = msg_send![&**layer, setContents: raw];
-                    }
-                }
-            }
+            set_layer_contents(layer, &tile.snapshot);
             layer.setFrame(tile.from);
             // Negated so a smaller depth, meaning nearer the front, draws on top.
             layer.setZPosition(-(tile.depth as f64));
@@ -285,6 +356,25 @@ impl WorkspaceOverlay {
         }
         CATransaction::commit();
         let _ = self.mtm;
+    }
+}
+
+/// Hands a snapshot to a layer as its contents.
+///
+/// Core Animation accepts either a `CGImage` or an `IOSurface`, so neither kind needs converting, and
+/// converting would cost exactly what each capture API exists to avoid.
+fn set_layer_contents(layer: &CALayer, snapshot: &WindowSnapshot) {
+    unsafe {
+        match &snapshot.image {
+            SnapshotImage::Bitmap(image) => {
+                let raw: *const objc2_core_graphics::CGImage = &**image;
+                let _: () = msg_send![layer, setContents: raw];
+            }
+            SnapshotImage::Surface(surface) => {
+                let raw: *const objc2_io_surface::IOSurfaceRef = &**surface;
+                let _: () = msg_send![layer, setContents: raw];
+            }
+        }
     }
 }
 

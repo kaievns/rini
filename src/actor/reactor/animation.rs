@@ -406,6 +406,19 @@ impl AnimationManager {
     ) -> bool {
         let direction = reactor.layout_manager.layout_engine.take_workspace_switch_direction(space);
         let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
+
+        // Animate the switch as ONE canvas movement across every workspace between the two, so a jump
+        // from 1 to 4 scrolls past 2 and 3. Moving each window separately could not do this: the
+        // intermediate workspaces are off screen at both ends of every window's path, so none of them
+        // was ever drawn and a four-workspace jump looked exactly like a one-workspace step.
+        if reactor.config.settings.overlay_animations
+            && animate
+            && let Some((from_index, to_index)) = reactor.workspace_switch_indices(space)
+            && reactor.start_canvas_switch(space, from_index, to_index)
+        {
+            // The canvas owns this movement, including placing the real windows once it covers them.
+            return true;
+        }
         // The direction distinguishes a real workspace switch (which animates) from a
         // re-layout of the workspace already showing (which must not), AND supplies the
         // horizontal half of the diagonal — see `slide_offset`. It does not choose the

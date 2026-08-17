@@ -32,7 +32,19 @@ use crate::sys::run_loop::RepeatingTimer;
 use crate::sys::window_server::WindowServerId;
 use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::ui::window_snapshot::{SnapshotCache, WindowSnapshot, capture_via_skylight};
-use crate::ui::workspace_overlay::{OverlayTile, WorkspaceOverlay};
+use crate::ui::workspace_overlay::{CanvasTile, OverlayTile, WorkspaceOverlay};
+
+/// One window's fixed place on the canvas.
+///
+/// The canvas holds every window across every workspace involved in a movement, laid out as one
+/// continuous surface: x is the strip position, y is the workspace stacked below the one above it.
+#[derive(Debug, Clone)]
+pub struct CanvasWindow {
+    pub window: WindowId,
+    pub server_id: WindowServerId,
+    /// Position on the canvas, never interpolated.
+    pub frame: CGRect,
+}
 
 /// One window's part in an animation, as the caller describes it.
 #[derive(Debug, Clone)]
@@ -61,6 +73,21 @@ pub enum Event {
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
+    /// Move the viewport across a canvas holding every window involved, rather than moving each window
+    /// separately.
+    ///
+    /// This is the shape a scrolling strip and a stack of workspaces actually have. Animating windows
+    /// individually could not convey distance: a jump from workspace 1 to 4, or across the whole
+    /// strip, looked exactly like a step to the neighbour because everything in between was off screen
+    /// at both ends and so never drawn. Moving one canvas scrolls all of it past.
+    AnimateCanvas {
+        windows: Vec<CanvasWindow>,
+        from_offset: CGPoint,
+        to_offset: CGPoint,
+        /// Real screen frames to apply once the overlay is covering them.
+        final_frames: Vec<(WindowId, CGRect)>,
+        duration: Duration,
+    },
     /// One frame of the running animation. Posted by the run loop timer, not by any other actor.
     Tick,
     /// The layout passes have settled; start the clock. Posted by the coalesce timer.
@@ -106,6 +133,33 @@ const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 /// process, and the slowest apps measured around 24ms, so this leaves roughly a fifth of the
 /// animation for them to finish.
 const APPLY_FRAMES_AT: f64 = 0.75;
+
+/// A canvas movement in flight: the tiles never move, the viewport does.
+struct RunningCanvas {
+    from_offset: CGPoint,
+    to_offset: CGPoint,
+    final_frames: Vec<(WindowId, CGRect)>,
+    frames_applied: bool,
+    started: Instant,
+    duration: Duration,
+    _clock: Option<RepeatingTimer>,
+}
+
+impl RunningCanvas {
+    fn progress(&self) -> f64 {
+        if self.duration.is_zero() {
+            return 1.0;
+        }
+        (self.started.elapsed().as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0)
+    }
+
+    fn offset_at(&self, eased: f64) -> CGPoint {
+        CGPoint::new(
+            self.from_offset.x + (self.to_offset.x - self.from_offset.x) * eased,
+            self.from_offset.y + (self.to_offset.y - self.from_offset.y) * eased,
+        )
+    }
+}
 
 struct RunningAnimation {
     tiles: Vec<OverlayTile>,
@@ -165,6 +219,8 @@ pub struct WorkspaceAnimation {
     service: SnapshotService,
     display: Option<(CGRect, f64)>,
     running: Option<RunningAnimation>,
+    /// A canvas movement in flight, which supersedes the per-window path while it runs.
+    canvas: Option<RunningCanvas>,
     /// Fires once after the layout passes settle, to start the animation moving.
     coalesce: Option<RepeatingTimer>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
@@ -193,6 +249,7 @@ impl WorkspaceAnimation {
             service,
             display: None,
             running: None,
+            canvas: None,
             coalesce: None,
             last_animated: Vec::new(),
             reactor_tx: None,
@@ -215,12 +272,26 @@ impl WorkspaceAnimation {
         match event {
             Event::SetDisplay { frame, scale } => self.set_display(frame, scale),
             Event::Animate { windows, duration } => self.start(windows, duration),
+            Event::AnimateCanvas {
+                windows,
+                from_offset,
+                to_offset,
+                final_frames,
+                duration,
+            } => self.start_canvas(windows, from_offset, to_offset, final_frames, duration),
             Event::RefreshSnapshot { window, server_id, size } => {
                 self.refresh_snapshot(window, server_id, size)
             }
             Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
-            Event::Tick => self.step(),
+            Event::Tick => {
+                // A canvas movement owns the frame clock while it runs.
+                if self.canvas.is_some() {
+                    self.step_canvas();
+                } else {
+                    self.step();
+                }
+            }
             Event::StartMoving => self.start_moving(),
             Event::SnapshotsReady => self.collect_snapshots(),
             Event::WarmCache => self.warm_cache(),
@@ -592,6 +663,140 @@ impl WorkspaceAnimation {
         self.coalesce = RepeatingTimer::every(COALESCE_WINDOW, move || {
             _ = tx.send(Event::StartMoving);
         });
+    }
+
+    /// Animates the viewport across a canvas of every window involved.
+    fn start_canvas(
+        &mut self,
+        windows: Vec<CanvasWindow>,
+        from_offset: CGPoint,
+        to_offset: CGPoint,
+        final_frames: Vec<(WindowId, CGRect)>,
+        duration: Duration,
+    ) {
+        // Remember these before anything can fail, so a window with no picture is still placed and
+        // still queued for a background capture.
+        self.last_animated = windows
+            .iter()
+            .map(|w| SnapshotTarget {
+                window: w.window,
+                server_id: w.server_id,
+                size: w.frame.size,
+            })
+            .collect();
+
+        let depths = crate::sys::window_server::front_to_back_depths();
+        let mut tiles = Vec::with_capacity(windows.len());
+        let mut missing = 0usize;
+        for window in &windows {
+            match self.cache.usable(window.window).cloned() {
+                Some(snapshot) => tiles.push(CanvasTile {
+                    window: window.window,
+                    frame: window.frame,
+                    snapshot,
+                    depth: depths
+                        .get(&window.server_id.as_u32())
+                        .copied()
+                        .unwrap_or(usize::MAX / 2),
+                }),
+                None => missing += 1,
+            }
+        }
+        debug!(
+            requested = windows.len(),
+            tiles = tiles.len(),
+            missing,
+            travel = format!(
+                "{:.0},{:.0} -> {:.0},{:.0}",
+                from_offset.x, from_offset.y, to_offset.x, to_offset.y
+            ),
+            "canvas animation"
+        );
+
+        if tiles.is_empty() {
+            // Nothing to draw, so there is no cover: place the windows now rather than leaving them.
+            self.request_frames(final_frames);
+            let targets = std::mem::take(&mut self.last_animated);
+            self.warm_windows(targets);
+            return;
+        }
+
+        let Some(overlay) = self.ensure_overlay() else {
+            self.request_frames(final_frames);
+            return;
+        };
+        overlay.set_canvas(&tiles);
+        overlay.set_canvas_offset(from_offset);
+        overlay.show();
+
+        let tx = self.tx.clone();
+        let clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
+            _ = tx.send(Event::Tick);
+        });
+
+        // Any per-window animation is abandoned: the canvas covers the same ground.
+        self.running = None;
+        self.coalesce = None;
+        self.canvas = Some(RunningCanvas {
+            from_offset,
+            to_offset,
+            final_frames,
+            frames_applied: false,
+            started: Instant::now(),
+            duration,
+            _clock: clock,
+        });
+
+        // With no clock nothing would advance, so land it immediately.
+        if self.canvas.as_ref().is_some_and(|c| c._clock.is_none()) {
+            self.step_canvas_to_end();
+        }
+    }
+
+    fn step_canvas(&mut self) {
+        let (done, place_now) = {
+            let Self { overlay, canvas, .. } = self;
+            let Some(canvas) = canvas.as_mut() else { return };
+            let progress = canvas.progress();
+            let eased = crate::ui::workspace_overlay::ease_out_cubic(progress);
+            if let Some(overlay) = overlay.as_mut() {
+                overlay.set_canvas_offset(canvas.offset_at(eased));
+            }
+            let place_now = !canvas.frames_applied && progress >= APPLY_FRAMES_AT;
+            if place_now {
+                canvas.frames_applied = true;
+            }
+            (progress >= 1.0, place_now)
+        };
+        if place_now {
+            let frames =
+                self.canvas.as_ref().map(|c| c.final_frames.clone()).unwrap_or_default();
+            self.request_frames(frames);
+        }
+        if done {
+            self.finish_canvas();
+        }
+    }
+
+    fn step_canvas_to_end(&mut self) {
+        if let (Some(overlay), Some(canvas)) = (self.overlay.as_mut(), self.canvas.as_ref()) {
+            overlay.set_canvas_offset(canvas.to_offset);
+        }
+        let frames = self.canvas.as_ref().map(|c| c.final_frames.clone()).unwrap_or_default();
+        self.request_frames(frames);
+        self.finish_canvas();
+    }
+
+    fn finish_canvas(&mut self) {
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.hide();
+            overlay.release_tiles();
+        }
+        self.canvas = None;
+        let targets = std::mem::take(&mut self.last_animated);
+        if !targets.is_empty() {
+            self.warm_windows(targets);
+        }
     }
 
     /// Starts the clock on an animation that is on screen but not yet moving.
