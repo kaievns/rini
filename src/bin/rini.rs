@@ -379,11 +379,12 @@ stays usable. Fix the config and restart. Error: {error}",
 
     // The animation overlay lives on the main thread because Core Animation requires it. It stays
     // idle until the reactor sends it display geometry and something to animate.
-    let workspace_animation = rini_wm::actor::workspace_animation::WorkspaceAnimation::new(
+    let mut workspace_animation = rini_wm::actor::workspace_animation::WorkspaceAnimation::new(
         workspace_animation_rx,
         workspace_animation_tx.clone(),
         mtm,
     );
+    workspace_animation.set_reactor(events_tx.clone());
 
     let mission_control =
         MissionControlActor::new(config.clone(), mc_rx, mc_tx.clone(), reactor.clone(), mtm);

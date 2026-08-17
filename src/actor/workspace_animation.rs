@@ -99,8 +99,20 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// this window cannot pop. One frame is enough to absorb the passes and is imperceptible.
 const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 
+/// How far through the animation the real windows are placed.
+///
+/// Late enough that the overlay is certainly covering them, and early enough that the Accessibility
+/// writes have time to land before it comes down. Each write is a synchronous request into another
+/// process, and the slowest apps measured around 24ms, so this leaves roughly a fifth of the
+/// animation for them to finish.
+const APPLY_FRAMES_AT: f64 = 0.75;
+
 struct RunningAnimation {
     tiles: Vec<OverlayTile>,
+    /// Where each window must end up, in display coordinates. Sent to the reactor once the overlay is
+    /// covering them, rather than applied up front.
+    final_frames: Vec<(WindowId, CGRect)>,
+    frames_applied: bool,
     /// `None` while still collecting windows. The animation is on screen but not yet moving.
     started: Option<Instant>,
     duration: Duration,
@@ -156,6 +168,8 @@ pub struct WorkspaceAnimation {
     coalesce: Option<RepeatingTimer>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
     last_animated: Vec<SnapshotTarget>,
+    /// Used to ask the reactor to place real windows once they are hidden behind the overlay.
+    reactor_tx: Option<actor::Sender<crate::actor::reactor::Event>>,
 }
 
 impl WorkspaceAnimation {
@@ -180,7 +194,13 @@ impl WorkspaceAnimation {
             running: None,
             coalesce: None,
             last_animated: Vec::new(),
+            reactor_tx: None,
         }
+    }
+
+    /// Gives the actor a way back to the reactor, for placing real windows mid-animation.
+    pub fn set_reactor(&mut self, reactor_tx: actor::Sender<crate::actor::reactor::Event>) {
+        self.reactor_tx = Some(reactor_tx);
     }
 
     pub async fn run(mut self) {
@@ -357,6 +377,11 @@ impl WorkspaceAnimation {
             return;
         };
 
+        // Every window's destination, whether or not it has a picture. A window with no snapshot is
+        // not drawn, but it still has to be placed.
+        let final_frames: Vec<(WindowId, CGRect)> =
+            windows.iter().map(|request| (request.window, request.to)).collect();
+
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
@@ -385,7 +410,7 @@ impl WorkspaceAnimation {
             match snapshot {
                 Some(snapshot) => tiles.push(OverlayTile {
                     window: request.window,
-                    from: to_overlay_space(request.from, display_frame),
+                    from: to_overlay_space(actual_start(request), display_frame),
                     to: to_overlay_space(request.to, display_frame),
                     snapshot,
                 }),
@@ -416,8 +441,11 @@ impl WorkspaceAnimation {
             .collect();
 
         if tiles.is_empty() {
-            // Nothing drawable yet. Warm anyway, or this deadlocks: the cache only ever filled when
-            // an animation completed, and no animation could run with an empty cache.
+            // Nothing drawable, so there is no overlay to hide behind: place the windows at once
+            // rather than leaving them where they are.
+            self.request_frames(final_frames);
+            // Warm anyway, or this deadlocks: the cache only ever filled when an animation completed,
+            // and no animation could run with an empty cache.
             let targets = std::mem::take(&mut self.last_animated);
             self.warm_windows(targets);
             return;
@@ -427,6 +455,15 @@ impl WorkspaceAnimation {
         // what makes the reactor's multi-pass layout produce ONE animation instead of four.
         if let Some(running) = self.running.as_mut() {
             if running.started.is_none() {
+                for (window, frame) in final_frames {
+                    if let Some(existing) =
+                        running.final_frames.iter_mut().find(|(w, _)| *w == window)
+                    {
+                        existing.1 = frame;
+                    } else {
+                        running.final_frames.push((window, frame));
+                    }
+                }
                 for tile in tiles {
                     running.merge(tile);
                 }
@@ -459,7 +496,14 @@ impl WorkspaceAnimation {
             warn!("could not start the frame clock; drawing the final frame directly");
         }
 
-        self.running = Some(RunningAnimation { tiles, started: None, duration, _clock: clock });
+        self.running = Some(RunningAnimation {
+            tiles,
+            final_frames,
+            frames_applied: false,
+            started: None,
+            duration,
+            _clock: clock,
+        });
 
         // With no clock the animation would never advance, so land it immediately rather than
         // leaving the overlay up over a frozen picture.
@@ -491,18 +535,43 @@ impl WorkspaceAnimation {
     }
 
     fn step(&mut self) {
-        let done = {
+        let (done, place_now) = {
             let Self { overlay, running, .. } = self;
-            let Some(running) = running.as_ref() else { return };
+            let Some(running) = running.as_mut() else { return };
             let progress = running.progress();
             if let Some(overlay) = overlay.as_mut() {
                 overlay.draw_frame(&running.tiles, progress);
             }
-            running.is_done()
+            let place_now = !running.frames_applied && progress >= APPLY_FRAMES_AT;
+            if place_now {
+                running.frames_applied = true;
+            }
+            (running.is_done(), place_now)
         };
+        if place_now {
+            let frames = self
+                .running
+                .as_ref()
+                .map(|running| running.final_frames.clone())
+                .unwrap_or_default();
+            self.request_frames(frames);
+        }
         if done {
             self.finish();
         }
+    }
+
+    /// Asks the reactor to place windows at their final frames.
+    fn request_frames(&self, frames: Vec<(WindowId, CGRect)>) {
+        if frames.is_empty() {
+            return;
+        }
+        let Some(tx) = &self.reactor_tx else {
+            warn!("no reactor channel; cannot place windows at their final frames");
+            return;
+        };
+        debug!(count = frames.len(), "placing real windows behind the overlay");
+        _ = tx.send(crate::actor::reactor::Event::ApplyOverlayFrames(frames));
     }
 
     /// Jumps to the end and tears down, for the case where no frame clock could be created.
@@ -560,6 +629,22 @@ impl WorkspaceAnimation {
             .collect();
         debug!(count = requests.len(), dx, dy, "running debug slide");
         self.start(requests, duration);
+    }
+}
+
+/// Where a window really is right now, preferring the window server over the caller's idea of it.
+///
+/// The reactor arranges a layout over several passes and marks each window as being at its target as
+/// soon as it schedules it, so on a later pass the frame it reports as current is the previous pass's
+/// DESTINATION rather than where the window actually sits. A tile built from that starts in the wrong
+/// place, which reads as the animation being misaligned with the real windows.
+///
+/// The window server always knows the truth, and asking it is a read rather than a round trip into
+/// the owning application.
+fn actual_start(request: &AnimationRequest) -> CGRect {
+    match crate::sys::window_server::get_window(request.server_id) {
+        Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => info.frame,
+        _ => request.from,
     }
 }
 
@@ -632,6 +717,8 @@ mod tests {
         // rather than never finishing.
         let running = RunningAnimation {
             tiles: Vec::new(),
+            final_frames: Vec::new(),
+            frames_applied: false,
             started: Some(Instant::now()),
             duration: Duration::ZERO,
             _clock: None,
@@ -644,6 +731,8 @@ mod tests {
     fn progress_starts_near_zero_and_is_clamped_to_one() {
         let running = RunningAnimation {
             tiles: Vec::new(),
+            final_frames: Vec::new(),
+            frames_applied: false,
             started: Some(Instant::now()),
             duration: Duration::from_millis(180),
             _clock: None,
@@ -652,6 +741,8 @@ mod tests {
 
         let finished = RunningAnimation {
             tiles: Vec::new(),
+            final_frames: Vec::new(),
+            frames_applied: false,
             started: Some(Instant::now() - Duration::from_secs(5)),
             duration: Duration::from_millis(180),
             _clock: None,

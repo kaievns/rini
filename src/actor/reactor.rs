@@ -164,6 +164,13 @@ pub enum SpaceEventKind {
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Event {
+    /// Place these windows at these frames now, with no animation.
+    ///
+    /// Sent by the overlay animation actor once its animation is far enough along that the real
+    /// windows are safely hidden behind it. Applying them any earlier let the windows visibly jump
+    /// into place BEFORE the overlay appeared, so a switch read as a flicker followed by a slide.
+    #[serde(skip)]
+    ApplyOverlayFrames(Vec<(WindowId, CGRect)>),
     #[serde(skip)]
     SpaceStateChanged(ForwardedSpaceState),
     #[serde(skip)]
@@ -1501,6 +1508,10 @@ impl Reactor {
                 )?;
                 outcome.focused_window = raised_window;
                 return Ok(outcome);
+            }
+            Event::ApplyOverlayFrames(frames) => {
+                self.apply_overlay_frames(frames);
+                return Ok(EventOutcome::no_change());
             }
             Event::SpaceStateChanged(space_state) => {
                 let releases_lifecycle_refresh_quarantine =
@@ -3831,6 +3842,32 @@ impl Reactor {
     /// windows, and is visible only because nothing occupies that strip, so an overlay covering it
     /// would make the user's bar flicker on every switch. `ScreenInfo::frame` is already the usable
     /// frame, which is what makes this a straight pass-through.
+    /// Places windows at their final frames immediately, with no animation.
+    ///
+    /// Called when the overlay animation is far enough along that the real windows are hidden behind
+    /// it. Each write is a synchronous request into another process, and those land at different
+    /// times, but that no longer matters: nothing is visible until the overlay comes down.
+    fn apply_overlay_frames(&mut self, frames: Vec<(WindowId, CGRect)>) {
+        for (wid, frame) in frames {
+            let Some(window) = self.state.windows.window_mut(wid) else {
+                continue;
+            };
+            let wsid = window.info.sys_id;
+            window.frame_monotonic = frame;
+            let txid = wsid
+                .map(|wsid| self.transaction_manager.generate_next_txid(wsid))
+                .unwrap_or_default();
+            if let Some(wsid) = wsid {
+                self.transaction_manager.update_txid_entries([(wsid, txid, frame)]);
+            }
+            if let Some(app) = self.app_manager.apps.get(&wid.pid) {
+                _ = app.handle.send(crate::actor::app::Request::SetWindowFrame(
+                    wid, frame, txid, true,
+                ));
+            }
+        }
+    }
+
     pub(crate) fn publish_animation_display(&self) {
         let Some(tx) = &self.communication_manager.workspace_animation_tx else {
             return;

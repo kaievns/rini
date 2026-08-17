@@ -338,10 +338,11 @@ impl AnimationManager {
                 }
             }
 
-            if let Some(tx) = &reactor.animation_tx {
-                // With the overlay driving the visuals, the real windows go straight to their final
-                // frames rather than being stepped there.
-                let skip_anim = skip_anim || use_overlay;
+            if use_overlay {
+                // Deliberately no Accessibility work here. The real windows are placed by
+                // Event::ApplyOverlayFrames once the overlay is covering them, because placing them
+                // now let them visibly jump into position before the overlay appeared.
+            } else if let Some(tx) = &reactor.animation_tx {
                 let message = if skip_anim {
                     Message::SkipToEnd(anim)
                 } else {
