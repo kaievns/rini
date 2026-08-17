@@ -609,6 +609,19 @@ fn overlaps(a: CGRect, b: CGRect) -> bool {
         && b.origin.y < a.origin.y + a.size.height
 }
 
+/// Front-to-back position of every on-screen window, keyed by window server id, 0 being frontmost.
+///
+/// `CGWindowListCopyWindowInfo` returns on-screen windows in front-to-back order, so the index is the
+/// depth. Used by the animation overlay to stack its tiles the way the screen is stacked.
+pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
+    get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
+        .iter()
+        .filter_map(|window| get_num(&window, unsafe { kCGWindowNumber }).map(|id| id as u32))
+        .enumerate()
+        .map(|(depth, id)| (id, depth))
+        .collect()
+}
+
 /// Ordinary application windows currently on screen and intersecting `display`, with their frames.
 ///
 /// Only layer 0 is returned. Every managed application window sits there, while the bar, the Dock

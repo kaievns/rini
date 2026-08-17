@@ -52,6 +52,12 @@ pub struct OverlayTile {
     /// Where the window ends up, in the overlay's coordinate space.
     pub to: CGRect,
     pub snapshot: WindowSnapshot,
+    /// Front-to-back position on screen, 0 being frontmost.
+    ///
+    /// Without this the tiles stack in whatever order the layout happened to list them, so the window
+    /// that is really in front can be drawn behind. The overlay then drops and the real front window
+    /// appears to jump forward, which is what made a switch end with a visible pop.
+    pub depth: usize,
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -216,6 +222,8 @@ impl WorkspaceOverlay {
                 }
             }
             layer.setFrame(tile.from);
+            // Negated so a smaller depth, meaning nearer the front, draws on top.
+            layer.setZPosition(-(tile.depth as f64));
             layer.setHidden(false);
         }
 

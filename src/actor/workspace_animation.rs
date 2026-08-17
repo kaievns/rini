@@ -335,37 +335,42 @@ impl WorkspaceAnimation {
         }
     }
 
-    /// The snapshot to draw for one window: fresh pixels when they are worth having, cache otherwise.
+    /// The snapshot to draw for one window, from the cache only.
     ///
-    /// A fresh SkyLight capture is only usable when the window is fully on screen, because that call
-    /// reads the framebuffer. When it comes back as a sliver the cached full-size capture is the
-    /// better picture even though it is older, so it wins.
+    /// Deliberately captures NOTHING here. Capturing at switch time was the single worst thing about
+    /// the first version: a SkyLight capture costs 12ms to 24ms and runs on the main thread, so an
+    /// 18 window workspace spent roughly 400ms capturing before the animation could start. That is
+    /// the lag between pressing the key and seeing anything move.
+    ///
+    /// A window with nothing cached simply does not animate. It is placed at its destination when the
+    /// overlay comes down, and a background capture is queued so the next switch has it.
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
-        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-        let size = (request.from.size.width, request.from.size.height);
-        let fresh = capture_via_skylight(request.server_id, size, scale);
-        match &fresh {
-            Some(snapshot) => debug!(
-                wsid = request.server_id.as_u32(),
-                covered = format!("{:.0}x{:.0}", snapshot.coverage.covered.0, snapshot.coverage.covered.1),
-                window = format!("{:.0}x{:.0}", snapshot.coverage.window.0, snapshot.coverage.window.1),
-                usable = snapshot.is_usable(),
-                "skylight capture"
-            ),
-            None => debug!(wsid = request.server_id.as_u32(), "skylight capture returned nothing"),
+        self.cache.usable(request.window).cloned()
+    }
+
+    /// Is enough of this window on screen for animating it to make sense?
+    ///
+    /// Off-strip windows are parked as slivers at the display edges. Animating them draws them as
+    /// FULL windows inside the overlay, so they appear out of nowhere along both edges the moment the
+    /// overlay comes up and vanish when it drops. They are not visible to begin with, so they have no
+    /// business in the animation.
+    fn is_worth_animating(&self, frame: CGRect, display: CGRect) -> bool {
+        /// Fraction of the window that must be inside the display.
+        const MIN_ON_SCREEN: f64 = 0.5;
+
+        let area = frame.size.width * frame.size.height;
+        if area <= 0.0 {
+            return false;
         }
-        if let Some(fresh) = fresh {
-            let usable = fresh.is_usable();
-            self.cache.insert(request.window, fresh);
-            if usable {
-                return self.cache.get(request.window).cloned();
-            }
+        let overlap_w = (frame.origin.x + frame.size.width).min(display.origin.x + display.size.width)
+            - frame.origin.x.max(display.origin.x);
+        let overlap_h = (frame.origin.y + frame.size.height)
+            .min(display.origin.y + display.size.height)
+            - frame.origin.y.max(display.origin.y);
+        if overlap_w <= 0.0 || overlap_h <= 0.0 {
+            return false;
         }
-        let fallback = self.cache.usable(request.window).cloned();
-        if fallback.is_none() {
-            debug!(wsid = request.server_id.as_u32(), "no usable snapshot, window left out");
-        }
-        fallback
+        (overlap_w * overlap_h) / area >= MIN_ON_SCREEN
     }
 
     fn start(&mut self, windows: Vec<AnimationRequest>, duration: Duration) {
@@ -382,10 +387,39 @@ impl WorkspaceAnimation {
         let final_frames: Vec<(WindowId, CGRect)> =
             windows.iter().map(|request| (request.window, request.to)).collect();
 
+        // Front-to-back order straight from the window server, so the overlay stacks tiles the way
+        // the screen is actually stacked.
+        let depths = crate::sys::window_server::front_to_back_depths();
+
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
+        let mut offscreen = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
         for request in &windows {
+            let start = actual_start(request);
+            // Parked slivers are excluded on the way in AND on the way out: a window arriving from
+            // off-strip has no visible starting point, and one leaving has no visible destination.
+            if !self.is_worth_animating(start, display_frame)
+                && !self.is_worth_animating(request.to, display_frame)
+            {
+                offscreen += 1;
+                debug!(
+                    wsid = request.server_id.as_u32(),
+                    start = format!(
+                        "{:.0},{:.0} {:.0}x{:.0}",
+                        start.origin.x, start.origin.y, start.size.width, start.size.height
+                    ),
+                    to = format!(
+                        "{:.0},{:.0} {:.0}x{:.0}",
+                        request.to.origin.x,
+                        request.to.origin.y,
+                        request.to.size.width,
+                        request.to.size.height
+                    ),
+                    "skipped as off screen"
+                );
+                continue;
+            }
             let snapshot = self.snapshot_for(request);
             // Anything SkyLight could not serve at full size needs a real capture before it can be
             // animated. Queue it now so the next switch has pixels, even if this one does not.
@@ -410,9 +444,15 @@ impl WorkspaceAnimation {
             match snapshot {
                 Some(snapshot) => tiles.push(OverlayTile {
                     window: request.window,
-                    from: to_overlay_space(actual_start(request), display_frame),
+                    from: to_overlay_space(start, display_frame),
                     to: to_overlay_space(request.to, display_frame),
                     snapshot,
+                    // Unknown windows sort behind everything known, which is the safe default: a tile
+                    // drawn too far back is far less noticeable than one drawn over the front window.
+                    depth: depths
+                        .get(&request.server_id.as_u32())
+                        .copied()
+                        .unwrap_or(usize::MAX / 2),
                 }),
                 // No usable picture. Better to leave the window out than to draw a smear: it will
                 // simply appear at its destination when the overlay drops.
@@ -426,9 +466,20 @@ impl WorkspaceAnimation {
             );
             self.service.request(needs_capture);
         }
-        if skipped > 0 {
-            debug!(skipped, total = windows.len(), "windows animated without a usable snapshot");
-        }
+        debug!(
+            requested = windows.len(),
+            tiles = tiles.len(),
+            offscreen,
+            no_snapshot = skipped,
+            display = format!(
+                "{:.0},{:.0} {:.0}x{:.0}",
+                display_frame.origin.x,
+                display_frame.origin.y,
+                display_frame.size.width,
+                display_frame.size.height
+            ),
+            "overlay animation composition"
+        );
         // Remember the real ids so the refresh after this animation, and the one triggered when
         // nothing was drawable, both use keys an animation will actually look up.
         self.last_animated = windows

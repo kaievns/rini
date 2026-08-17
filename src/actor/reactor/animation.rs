@@ -305,9 +305,18 @@ impl AnimationManager {
             // Ordering matters. The overlay is asked to animate FIRST, and its first frame draws the
             // windows at the positions they are leaving, so even if the real windows land before the
             // overlay is visible the picture stays continuous.
+            // Movement only. The overlay animates a PICTURE of each window, so a size change stretches
+            // that picture rather than re-rendering the window, and a stretched window is exactly as
+            // wrong as it sounds. Any size change hands the whole layout to the Accessibility engine,
+            // which resizes for real.
+            let all_translations = overlay_requests.iter().all(|request| {
+                (request.from.size.width - request.to.size.width).abs() < 1.0
+                    && (request.from.size.height - request.to.size.height).abs() < 1.0
+            });
             let use_overlay = reactor.config.settings.overlay_animations
                 && !skip_anim
                 && !overlay_requests.is_empty()
+                && all_translations
                 && reactor.communication_manager.workspace_animation_tx.is_some();
 
             if use_overlay {

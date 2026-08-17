@@ -38,13 +38,17 @@ use crate::sys::window_server::WindowServerId;
 /// to work in production.
 const CAPTURE_OPTIONS: u32 = (1 << 11) | (1 << 8);
 
-/// How much smaller than its real size a capture may be before it is treated as a useless sliver.
+/// How much smaller than its real size a capture may be before it is not worth drawing.
 ///
-/// A SkyLight capture of a partly scrolled window is clipped to the visible part, and a 40pt strip
-/// of an 859pt window stretched back across the full width is worse than no picture at all. 0.92
-/// rather than 1.0 because captures land a pixel or two off from rounding, and because a window
-/// overlapped at the very edge by another is still perfectly usable.
-const MIN_USABLE_COVERAGE: f64 = 0.92;
+/// A layer draws its contents stretched to fill, so a capture covering less than the whole window is
+/// scaled up when drawn, and the picture no longer lines up with where the real window is. Measured
+/// on a live switch: accepting 92% coverage put the animation 13.5pt off vertically, which read as
+/// the whole animation being misaligned and jumpy.
+///
+/// So this is deliberately strict. 0.995 rather than exactly 1.0 only because captures land a pixel
+/// or two short from rounding, which is half a point at 2x. Anything genuinely clipped is left to
+/// ScreenCaptureKit, which returns the window's own surface at full size.
+const MIN_USABLE_COVERAGE: f64 = 0.995;
 
 /// How much of a window a capture actually covers.
 ///
