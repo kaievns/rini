@@ -3891,6 +3891,97 @@ impl Reactor {
         }
     }
 
+    /// Animates a strip scroll as one horizontal viewport pan, the horizontal twin of a workspace
+    /// switch. Returns true when the canvas took over.
+    ///
+    /// `delta` is how far every window moved. The canvas holds the whole active workspace at its
+    /// final positions, and the viewport starts shifted back by `delta` so the strip appears to
+    /// arrive from where it was, then settles.
+    fn start_canvas_pan(
+        &mut self,
+        space: SpaceId,
+        workspace_id: crate::model::VirtualWorkspaceId,
+        layout: &[(WindowId, CGRect)],
+        skip_wid: Option<WindowId>,
+        delta: CGPoint,
+    ) -> bool {
+        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+            return false;
+        };
+        let Some(screen) = self
+            .space_state
+            .screens
+            .iter()
+            .find(|s| s.space == Some(space))
+            .or_else(|| self.space_state.screens.first())
+            .cloned()
+        else {
+            return false;
+        };
+
+        let gaps = self
+            .config
+            .settings
+            .layout
+            .gaps
+            .effective_for_display(screen.display_uuid_opt());
+        let full = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+            &self.state.windows,
+            space,
+            workspace_id,
+            screen.frame,
+            &gaps,
+            self.config.settings.ui.stack_line.thickness(),
+            self.config.settings.ui.stack_line.horiz_placement,
+            self.config.settings.ui.stack_line.vert_placement,
+        );
+
+        let mut windows: Vec<crate::actor::workspace_animation::CanvasWindow> = Vec::new();
+        for (wid, frame) in &full {
+            let Some(window) = self.state.windows.window(*wid) else { continue };
+            let Some(server_id) = window.info.sys_id else { continue };
+            windows.push(crate::actor::workspace_animation::CanvasWindow {
+                window: *wid,
+                server_id,
+                frame: CGRect::new(
+                    CGPoint::new(
+                        frame.origin.x - screen.frame.origin.x,
+                        frame.origin.y - screen.frame.origin.y,
+                    ),
+                    frame.size,
+                ),
+            });
+        }
+        if windows.is_empty() {
+            return false;
+        }
+
+        // Every window in the authoritative layout is placed, so windows parked for other workspaces
+        // do not linger as phantoms.
+        let final_frames: Vec<(WindowId, CGRect)> = layout
+            .iter()
+            .copied()
+            .filter(|(wid, _)| Some(*wid) != skip_wid)
+            .collect();
+
+        // The strip arrives from where it was: start the viewport shifted by the movement, settle at
+        // zero. Negated because moving windows right by delta is the viewport moving left.
+        let from_offset = CGPoint::new(-delta.x, -delta.y);
+        let to_offset = CGPoint::new(0.0, 0.0);
+        let duration =
+            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
+
+        self.publish_animation_display();
+        _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {
+            windows,
+            from_offset,
+            to_offset,
+            final_frames,
+            duration,
+        });
+        true
+    }
+
     /// Builds and starts a canvas animation for a workspace switch, if one is warranted.
     ///
     /// Returns true when the canvas took over, in which case the caller must not touch the real
@@ -3899,7 +3990,14 @@ impl Reactor {
     /// Every workspace between the two is laid out and stacked below the one above it, so a jump from
     /// 1 to 4 scrolls past 2 and 3. Without that, a four-workspace jump looks exactly like a
     /// one-workspace step, which gives no sense of where you have moved to.
-    fn start_canvas_switch(&mut self, space: SpaceId, from_index: usize, to_index: usize) -> bool {
+    fn start_canvas_switch(
+        &mut self,
+        space: SpaceId,
+        from_index: usize,
+        to_index: usize,
+        layout: &[(WindowId, CGRect)],
+        skip_wid: Option<WindowId>,
+    ) -> bool {
         if from_index == to_index {
             return false;
         }
@@ -3972,13 +4070,20 @@ impl Reactor {
                         frame.size,
                     ),
                 });
-                // Only the destination workspace's windows end up on screen; the rest are placed by
-                // the normal layout that follows.
-                if index == to_index {
-                    final_frames.push((wid, frame));
-                }
+                let _ = &mut final_frames;
             }
         }
+
+        // EVERY window in the layout, not just the destination workspace's. This layout is what the
+        // non-animated path would have applied, and it includes the parked positions of windows
+        // belonging to other workspaces. Placing only the destination's windows left all the others
+        // wherever they happened to be, so windows from one workspace showed up as phantoms on
+        // another until something else moved the strip.
+        final_frames = layout
+            .iter()
+            .copied()
+            .filter(|(wid, _)| Some(*wid) != skip_wid)
+            .collect();
 
         tracing::debug!(
             from_index,
@@ -3995,8 +4100,13 @@ impl Reactor {
 
         let from_offset = CGPoint::new(0.0, (from_index - low) as f64 * height);
         let to_offset = CGPoint::new(0.0, (to_index - low) as f64 * height);
-        let duration =
-            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
+        let rows = (to_index as f64 - from_index as f64).abs().max(1.0);
+        // Grows with distance but sublinearly and capped, so a four-workspace jump reads as further
+        // than a one-workspace step without becoming tedious.
+        let stretch = rows.sqrt().min(2.5);
+        let duration = std::time::Duration::from_secs_f64(
+            (self.config.settings.animation_duration.max(0.0)) * stretch,
+        );
 
         self.publish_animation_display();
         _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {

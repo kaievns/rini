@@ -319,10 +319,18 @@ impl AnimationManager {
                 && all_translations
                 && reactor.communication_manager.workspace_animation_tx.is_some();
 
-            if use_overlay {
-                // Publish geometry at the point of use. Publishing only on screen-change events left
-                // the actor with no display when those events had already passed before it was ready,
-                // and it silently declined to animate.
+            // A strip scroll moves every window by the SAME vector, which is a viewport pan over the
+            // one workspace, the horizontal twin of the vertical workspace switch. Treating it as one
+            // canvas pan gives the same sense of distance and the same freedom from per-window drift.
+            // A layout where windows move by DIFFERENT vectors (a window inserted, a column resized
+            // pushing neighbours) is not a pan and falls back to the per-window path.
+            let pan_delta = uniform_delta(&overlay_requests);
+            if use_overlay
+                && let Some(delta) = pan_delta
+                && reactor.start_canvas_pan(space, active_ws, layout, skip_wid, delta)
+            {
+                // The canvas owns it, including placing the real windows once it covers them.
+            } else if use_overlay {
                 reactor.publish_animation_display();
                 if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
                     let duration = std::time::Duration::from_secs_f64(
@@ -414,7 +422,7 @@ impl AnimationManager {
         if reactor.config.settings.overlay_animations
             && animate
             && let Some((from_index, to_index)) = reactor.workspace_switch_indices(space)
-            && reactor.start_canvas_switch(space, from_index, to_index)
+            && reactor.start_canvas_switch(space, from_index, to_index, layout, skip_wid)
         {
             // The canvas owns this movement, including placing the real windows once it covers them.
             return true;
@@ -1763,4 +1771,29 @@ mod tests {
             "expected the window to travel, got {positions:?}"
         );
     }
+}
+
+/// The common movement vector if every request shares one, else None.
+///
+/// A shared vector means the whole set is being panned, which the canvas can do as a single viewport
+/// move. Distinct vectors mean windows are rearranging relative to each other, which a pan cannot
+/// express and which stays on the per-window path.
+fn uniform_delta(
+    requests: &[crate::actor::workspace_animation::AnimationRequest],
+) -> Option<objc2_core_foundation::CGPoint> {
+    let first = requests.first()?;
+    let dx = first.to.origin.x - first.from.origin.x;
+    let dy = first.to.origin.y - first.from.origin.y;
+    // A pan of zero is not a pan; let those fall through rather than animating a non-movement.
+    if dx.abs() < 1.0 && dy.abs() < 1.0 {
+        return None;
+    }
+    for request in requests.iter().skip(1) {
+        let ddx = request.to.origin.x - request.from.origin.x;
+        let ddy = request.to.origin.y - request.from.origin.y;
+        if (ddx - dx).abs() > 1.0 || (ddy - dy).abs() > 1.0 {
+            return None;
+        }
+    }
+    Some(objc2_core_foundation::CGPoint::new(dx, dy))
 }

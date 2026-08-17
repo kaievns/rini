@@ -714,7 +714,15 @@ impl WorkspaceAnimation {
         );
 
         if tiles.is_empty() {
-            // Nothing to draw, so there is no cover: place the windows now rather than leaving them.
+            // Nothing to draw. If a canvas is already running, leave it alone: cancelling a good
+            // animation to show nothing is worse than ignoring this request. Placing the real frames
+            // now would also yank them out from behind the running overlay.
+            if self.canvas.is_some() {
+                let targets = std::mem::take(&mut self.last_animated);
+                self.warm_windows(targets);
+                return;
+            }
+            // Otherwise there is no cover, so place the windows rather than leaving them adrift.
             self.request_frames(final_frames);
             let targets = std::mem::take(&mut self.last_animated);
             self.warm_windows(targets);
