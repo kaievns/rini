@@ -141,10 +141,11 @@ impl RunningAnimation {
     /// Adds or retargets one window without disturbing anything already moving.
     fn merge(&mut self, tile: OverlayTile) {
         if let Some(existing) = self.tiles.iter_mut().find(|t| t.window == tile.window) {
-            // Keep the original start so a window that is already moving is not yanked backwards,
-            // and take the newer destination.
+            // Keep the original start so a window already moving is not yanked backwards, and take
+            // the newer destination so the animation ends where the window really goes.
             existing.to = tile.to;
             existing.snapshot = tile.snapshot;
+            existing.depth = tile.depth;
         } else {
             self.tiles.push(tile);
         }
@@ -348,29 +349,38 @@ impl WorkspaceAnimation {
         self.cache.usable(request.window).cloned()
     }
 
-    /// Is enough of this window on screen for animating it to make sense?
+    /// Does this window appear on screen at ANY point during the animation?
     ///
-    /// Off-strip windows are parked as slivers at the display edges. Animating them draws them as
-    /// FULL windows inside the overlay, so they appear out of nowhere along both edges the moment the
-    /// overlay comes up and vanish when it drops. They are not visible to begin with, so they have no
-    /// business in the animation.
-    fn is_worth_animating(&self, frame: CGRect, display: CGRect) -> bool {
-        /// Fraction of the window that must be inside the display.
-        const MIN_ON_SCREEN: f64 = 0.5;
+    /// Testing only the endpoints was wrong in a way that mattered. On a scrolling strip, jumping
+    /// between distant columns moves intermediate windows straight across the display, and those are
+    /// exactly the windows that show how far the strip travelled. Excluding them made a jump across
+    /// the whole strip look identical to a jump between neighbours, with the new column simply
+    /// appearing from one side and no sense of distance at all.
+    ///
+    /// So the whole path is sampled, not just its ends. A window parked off-strip that never crosses
+    /// the display is still excluded, which is what stopped the slivers flickering in along both
+    /// edges, but one that sweeps through is now drawn.
+    fn is_worth_animating(&self, from: CGRect, to: CGRect, display: CGRect) -> bool {
+        /// Fraction of the window that must be on screen at some sampled moment.
+        ///
+        /// Lower than an endpoint test would need, because a window crossing the display is only
+        /// partly on it for most of the crossing, and clipping it out would leave a gap in the very
+        /// motion that conveys distance.
+        const MIN_ON_SCREEN: f64 = 0.25;
+        /// Samples along the path. Enough that a window cannot cross the display between two of them:
+        /// the fastest realistic travel is a few display widths, so eleven samples leave any crossing
+        /// window on screen for at least one of them.
+        const SAMPLES: usize = 11;
 
-        let area = frame.size.width * frame.size.height;
+        let area = from.size.width * from.size.height;
         if area <= 0.0 {
             return false;
         }
-        let overlap_w = (frame.origin.x + frame.size.width).min(display.origin.x + display.size.width)
-            - frame.origin.x.max(display.origin.x);
-        let overlap_h = (frame.origin.y + frame.size.height)
-            .min(display.origin.y + display.size.height)
-            - frame.origin.y.max(display.origin.y);
-        if overlap_w <= 0.0 || overlap_h <= 0.0 {
-            return false;
-        }
-        (overlap_w * overlap_h) / area >= MIN_ON_SCREEN
+        (0..SAMPLES).any(|step| {
+            let t = step as f64 / (SAMPLES - 1) as f64;
+            let at = crate::ui::workspace_overlay::lerp_rect(from, to, t);
+            on_screen_fraction(at, display) >= MIN_ON_SCREEN
+        })
     }
 
     fn start(&mut self, windows: Vec<AnimationRequest>, duration: Duration) {
@@ -399,9 +409,7 @@ impl WorkspaceAnimation {
             let start = actual_start(request);
             // Parked slivers are excluded on the way in AND on the way out: a window arriving from
             // off-strip has no visible starting point, and one leaving has no visible destination.
-            if !self.is_worth_animating(start, display_frame)
-                && !self.is_worth_animating(request.to, display_frame)
-            {
+            if !self.is_worth_animating(start, request.to, display_frame) {
                 offscreen += 1;
                 debug!(
                     wsid = request.server_id.as_u32(),
@@ -502,10 +510,17 @@ impl WorkspaceAnimation {
             return;
         }
 
-        // Merge into an animation that has not started moving yet, rather than replacing it. This is
-        // what makes the reactor's multi-pass layout produce ONE animation instead of four.
+        // Merge into the animation already in flight rather than replacing it. Two reasons.
+        //
+        // The reactor arranges a layout over several passes, so treating each as its own animation
+        // restarted the motion four times on a measured switch.
+        //
+        // And a later pass can CHANGE where a window is going, which is why retargeting is allowed
+        // even after the motion has started. Ignoring those updates left the animation ending
+        // somewhere the windows did not, so the real windows visibly shifted at the handover, by a
+        // little for the focused window and a lot for its neighbours.
         if let Some(running) = self.running.as_mut() {
-            if running.started.is_none() {
+            {
                 for (window, frame) in final_frames {
                     if let Some(existing) =
                         running.final_frames.iter_mut().find(|(w, _)| *w == window)
@@ -518,13 +533,19 @@ impl WorkspaceAnimation {
                 for tile in tiles {
                     running.merge(tile);
                 }
+                // A window joining or retargeting mid-flight is drawn at the CURRENT progress, so it
+                // lands with everything else rather than snapping when the overlay lifts.
+                let progress = running.progress();
                 let tiles = std::mem::take(&mut running.tiles);
                 if let Some(overlay) = self.overlay.as_mut() {
                     overlay.set_tiles(&tiles);
-                    overlay.draw_frame(&tiles, 0.0);
+                    overlay.draw_frame(&tiles, progress);
                 }
                 if let Some(running) = self.running.as_mut() {
                     running.tiles = tiles;
+                    // The destinations changed, so the frames already requested are stale. Ask again
+                    // once the animation is far enough along.
+                    running.frames_applied = false;
                 }
                 return;
             }
@@ -612,6 +633,44 @@ impl WorkspaceAnimation {
         }
     }
 
+    /// Logs how far each real window is from where its tile finished.
+    ///
+    /// This is the handover shift, measured rather than eyeballed: a non-zero delta here is exactly
+    /// the jump seen when the overlay lifts. Kept because it is the only way to tell a layout that
+    /// moved from an animation that ended in the wrong place.
+    fn report_handover_error(&self) {
+        let Some(running) = self.running.as_ref() else { return };
+        let Some((display_frame, _)) = self.display else { return };
+        let mut worst = 0.0f64;
+        let mut worst_wsid = 0u32;
+        for (window, intended) in &running.final_frames {
+            let Some(target) = running.tiles.iter().find(|t| t.window == *window) else {
+                continue;
+            };
+            let _ = target;
+            let Some(info) = crate::sys::window_server::get_window(
+                crate::sys::window_server::WindowServerId::new(window.idx.get()),
+            ) else {
+                continue;
+            };
+            let dx = (info.frame.origin.x - intended.origin.x).abs();
+            let dy = (info.frame.origin.y - intended.origin.y).abs();
+            let error = dx.max(dy);
+            if error > worst {
+                worst = error;
+                worst_wsid = window.idx.get();
+            }
+        }
+        let _ = display_frame;
+        if worst > 2.0 {
+            debug!(
+                worst_pt = format!("{:.0}", worst),
+                wsid = worst_wsid,
+                "handover mismatch: a real window is not where its tile finished"
+            );
+        }
+    }
+
     /// Asks the reactor to place windows at their final frames.
     fn request_frames(&self, frames: Vec<(WindowId, CGRect)>) {
         if frames.is_empty() {
@@ -637,6 +696,7 @@ impl WorkspaceAnimation {
     }
 
     fn finish(&mut self) {
+        self.report_handover_error();
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.hide();
             // Free the tile contents rather than hold window pictures that are no longer drawn.
@@ -681,6 +741,22 @@ impl WorkspaceAnimation {
         debug!(count = requests.len(), dx, dy, "running debug slide");
         self.start(requests, duration);
     }
+}
+
+/// What fraction of `frame`'s area lies inside `display`.
+fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
+    let area = frame.size.width * frame.size.height;
+    if area <= 0.0 {
+        return 0.0;
+    }
+    let overlap_w = (frame.origin.x + frame.size.width).min(display.origin.x + display.size.width)
+        - frame.origin.x.max(display.origin.x);
+    let overlap_h = (frame.origin.y + frame.size.height).min(display.origin.y + display.size.height)
+        - frame.origin.y.max(display.origin.y);
+    if overlap_w <= 0.0 || overlap_h <= 0.0 {
+        return 0.0;
+    }
+    (overlap_w * overlap_h) / area
 }
 
 /// Where a window really is right now, preferring the window server over the caller's idea of it.

@@ -40,6 +40,8 @@ use objc2_screen_capture_kit::{
     SCStreamConfiguration,
 };
 
+use tracing::debug;
+
 use crate::actor::app::WindowId;
 use crate::sys::window_server::WindowServerId;
 use crate::ui::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, WindowSnapshot};
@@ -152,6 +154,7 @@ impl SnapshotService {
         let scale = self.scale();
         let block = RcBlock::new(move |content: *mut SCShareableContent, _error: *mut NSError| {
             let Some(content) = NonNull::new(content) else {
+                debug!(count = targets.len(), "ScreenCaptureKit enumeration returned nothing");
                 service.abandon(&targets);
                 return;
             };
@@ -167,6 +170,11 @@ impl SnapshotService {
                     .find(|window| unsafe { window.windowID() } == target.server_id.as_u32());
                 let Some(window) = found else {
                     // The window closed between the request and the enumeration. Not an error.
+                    debug!(
+                        wsid = target.server_id.as_u32(),
+                        pid = target.window.pid,
+                        "capture target not enumerated by ScreenCaptureKit"
+                    );
                     service.abandon(std::slice::from_ref(target));
                     continue;
                 };
@@ -258,6 +266,13 @@ impl SnapshotService {
             state.active = state.active.saturating_sub(1);
 
             if revision != self.revision.load(Ordering::Acquire) {
+                false
+            } else if surface.is_none() {
+                debug!(
+                    wsid = target.server_id.as_u32(),
+                    pid = target.window.pid,
+                    "capture produced no surface"
+                );
                 false
             } else if let Some(surface) = surface {
                 // ScreenCaptureKit returns the window's own surface at the requested size, so the
