@@ -26,7 +26,8 @@
 use std::collections::HashMap;
 
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
+use objc2::runtime::NSObject;
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSPopUpMenuWindowLevel, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask,
@@ -43,6 +44,31 @@ use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 /// covers them. `NSPopUpMenuWindowLevel` is 101, which `mission_control.rs` already uses, and it
 /// stays below the assistive and cursor levels so nothing accessibility-related is hidden.
 const OVERLAY_LEVEL: isize = NSPopUpMenuWindowLevel as isize;
+
+define_class!(
+    /// An `NSView` with a top-left origin.
+    ///
+    /// Everything in rini reasons about window frames in CoreGraphics coordinates, which put the
+    /// origin at the top left. AppKit puts it at the bottom left, and `setGeometryFlipped(true)` on a
+    /// VIEW-BACKED layer does not change that: AppKit owns that layer and manages its geometry, so the
+    /// flag was silently ineffective and every child was positioned in bottom-left space while the
+    /// arithmetic assumed top-left.
+    ///
+    /// That was measurable rather than theoretical: the bar layer, positioned at (0, 0), rendered along
+    /// the BOTTOM of the screen. Overriding `isFlipped` on the view is the sanctioned way to get a
+    /// top-left system, and it makes the whole layer tree agree with the rest of the codebase.
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RiniFlippedOverlayView"]
+    struct FlippedView;
+
+    impl FlippedView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+    }
+);
 
 /// One window's picture at a fixed position on the canvas.
 ///
@@ -172,14 +198,19 @@ impl WorkspaceOverlay {
         // window in and out costs about 14ms each way, against 0.36ms for an alpha change.
         window.setAlphaValue(0.0);
 
-        let view = unsafe { NSView::initWithFrame(NSView::alloc(mtm), CGRect::new(CGPoint::new(0.0, 0.0), frame.size)) };
+        // A flipped view, so the layer tree uses the same top-left origin as everything else here.
+        let view: Retained<FlippedView> = unsafe {
+            objc2::msg_send![
+                FlippedView::alloc(mtm),
+                initWithFrame: CGRect::new(CGPoint::new(0.0, 0.0), frame.size)
+            ]
+        };
         view.setWantsLayer(true);
         window.setContentView(Some(&view));
 
         let root = view.layer()?;
-        // Top-left origin, matching how rini reasons about display and window frames everywhere else.
-        // Without this every tile is positioned upside down.
-        root.setGeometryFlipped(true);
+        // No geometryFlipped here: the flipped VIEW already provides the top-left origin, and setting
+        // both would cancel out.
         root.setContentsScale(scale);
 
         // Behind the canvas, and never moved: the desktop does not scroll with the workspaces.
@@ -204,7 +235,6 @@ impl WorkspaceOverlay {
         root.addSublayer(&foreground);
 
         let canvas = CALayer::layer();
-        canvas.setGeometryFlipped(true);
         // Anchored at its top-left so setting the position translates the children directly, with no
         // half-size offset to reason about.
         canvas.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -318,7 +348,6 @@ impl WorkspaceOverlay {
             keep.push(tile.window);
             let layer = self.tile_layers.entry(tile.window).or_insert_with(|| {
                 let layer = CALayer::layer();
-                layer.setGeometryFlipped(true);
                 layer.setMasksToBounds(true);
                 // SAFETY: Core Animation's own filter-name constants.
                 unsafe {
@@ -374,7 +403,6 @@ impl WorkspaceOverlay {
             keep.push(tile.window);
             let layer = self.tile_layers.entry(tile.window).or_insert_with(|| {
                 let layer = CALayer::layer();
-                layer.setGeometryFlipped(true);
                 layer.setMasksToBounds(true);
                 // SAFETY: Core Animation's own filter-name constants.
                 unsafe {
