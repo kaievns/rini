@@ -73,6 +73,10 @@ pub enum ReactorCommand {
         dy: i32,
         duration_ms: u64,
     },
+    /// Capture every window the framebuffer route cannot serve, filling the animation snapshot cache.
+    ///
+    /// Background work only. Nothing is drawn and no window is touched.
+    DebugWarmSnapshots,
     Serialize,
     SaveLayout {
         path: PathBuf,

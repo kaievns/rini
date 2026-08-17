@@ -1670,6 +1670,17 @@ impl Reactor {
                 };
                 return Ok(EventOutcome::no_change().with_stdout_line(response));
             }
+            Event::Command(Command::Reactor(ReactorCommand::DebugWarmSnapshots)) => {
+                self.publish_animation_display();
+                let response = match &self.communication_manager.workspace_animation_tx {
+                    Some(tx) => {
+                        _ = tx.send(crate::actor::workspace_animation::Event::WarmCache);
+                        "snapshot cache warm requested".to_string()
+                    }
+                    None => "the workspace animation actor is not running".to_string(),
+                };
+                return Ok(EventOutcome::no_change().with_stdout_line(response));
+            }
             Event::Command(Command::Reactor(ReactorCommand::Debug)) => {
                 return command_workflow::handle_command_reactor_debug(
                     &self.layout_manager,

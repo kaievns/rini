@@ -26,21 +26,23 @@
 use std::collections::HashMap;
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
-use objc2::{msg_send, MainThreadMarker};
+use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
+use objc2_app_kit::{
+    NSBackingStoreType, NSPopUpMenuWindowLevel, NSView, NSWindow, NSWindowCollectionBehavior,
+    NSWindowStyleMask,
+};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_foundation::NSDictionary;
+use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
 use objc2_quartz_core::{CALayer, CATransaction};
 
 use crate::actor::app::WindowId;
-use crate::sys::cgs_window::CgsWindow;
-use crate::ui::common::render_layer_to_cgs_window;
-use crate::ui::window_snapshot::WindowSnapshot;
+use crate::sys::screen::CoordinateConverter;
+use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 
 /// Window level for the overlay. Managed windows all sit at CG layer 0, so anything above that
-/// covers them. `NSPopUpMenuWindowLevel` is 101, which is what `mission_control.rs` already uses,
-/// and it stays below the assistive and cursor levels so nothing accessibility-related is hidden.
-const OVERLAY_LEVEL: i32 = 101;
+/// covers them. `NSPopUpMenuWindowLevel` is 101, which `mission_control.rs` already uses, and it
+/// stays below the assistive and cursor levels so nothing accessibility-related is hidden.
+const OVERLAY_LEVEL: isize = NSPopUpMenuWindowLevel as isize;
 
 /// One window's picture inside the overlay, and where it should be drawn.
 pub struct OverlayTile {
@@ -71,89 +73,85 @@ pub fn ease_out_cubic(t: f64) -> f64 {
 }
 
 pub struct WorkspaceOverlay {
-    window: CgsWindow,
-    /// Kept alive for as long as the overlay exists: dropping the CAContext unbinds the layer tree
-    /// and the overlay goes blank while still being composited.
-    _layer_context: Option<Retained<AnyObject>>,
+    window: Retained<NSWindow>,
+    /// The layer every tile is added to. Owned by the window's content view, which is layer-backed,
+    /// so AppKit presents it on the GPU with no manual rasterisation.
     root: Retained<CALayer>,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
+    /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
+    /// be translated into the overlay's own space.
     frame: CGRect,
     scale: f64,
     visible: bool,
+    mtm: MainThreadMarker,
 }
 
 impl WorkspaceOverlay {
     /// Creates the overlay once, ordered in but fully transparent.
     ///
-    /// `frame` must be the display's USABLE frame in top-left coordinates, i.e. excluding the menu
-    /// bar strip, so the user's bar stays visible during an animation.
-    pub fn new(frame: CGRect, scale: f64, _mtm: MainThreadMarker) -> Option<Self> {
-        let root = CALayer::layer();
-        // Top-left origin, matching how rini reasons about display and window frames everywhere
-        // else. Without this every tile would be positioned upside down.
+    /// `frame` must be the display's USABLE frame in CoreGraphics (top-left origin) coordinates, i.e.
+    /// excluding the menu bar strip, so the user's bar stays visible during an animation.
+    ///
+    /// Built on `NSWindow` rather than a raw window server window. A raw window needs its layer tree
+    /// bound through `SLSSetWindowLayerContext`, which fails with `kCGErrorFailure` here, leaving only
+    /// a manual `renderInContext` fallback. That fallback has to rasterise every tile's `IOSurface`
+    /// into CPU memory on every frame, which measured at over 800MB resident for one animation. A
+    /// layer-backed `NSWindow` composites on the GPU instead, which is both correct and free.
+    pub fn new(frame: CGRect, scale: f64, mtm: MainThreadMarker) -> Option<Self> {
+        let converter = CoordinateConverter::from_height(primary_display_height());
+        let cocoa_frame = converter.convert_rect(frame)?;
+
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                NSWindow::alloc(mtm),
+                cocoa_frame,
+                NSWindowStyleMask::Borderless,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        window.setOpaque(true);
+        window.setHasShadow(false);
+        // Must never take focus: a workspace animation that changes the active app is a bug.
+        window.setIgnoresMouseEvents(true);
+        window.setLevel(OVERLAY_LEVEL);
+        // canJoinAllSpaces so a Space change does not leave the overlay behind, and stationary so it
+        // does not slide along with macOS's own Space animation.
+        window.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::Stationary
+                | NSWindowCollectionBehavior::IgnoresCycle
+                | NSWindowCollectionBehavior::FullScreenNone,
+        );
+        // Alpha is the show and hide mechanism, so it starts hidden and stays ordered in. Ordering a
+        // window in and out costs about 14ms each way, against 0.36ms for an alpha change.
+        window.setAlphaValue(0.0);
+
+        let view = unsafe { NSView::initWithFrame(NSView::alloc(mtm), CGRect::new(CGPoint::new(0.0, 0.0), frame.size)) };
+        view.setWantsLayer(true);
+        window.setContentView(Some(&view));
+
+        let root = view.layer()?;
+        // Top-left origin, matching how rini reasons about display and window frames everywhere else.
+        // Without this every tile is positioned upside down.
         root.setGeometryFlipped(true);
-        root.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
         root.setContentsScale(scale);
 
-        let window = CgsWindow::new(frame).ok()?;
-        let _ = window.set_resolution(scale);
-        // Opaque: the overlay's whole job is to hide the real windows being repositioned underneath.
-        let _ = window.set_opacity(true);
-        let _ = window.set_level(OVERLAY_LEVEL);
-        // Ordered in immediately and left that way. Alpha is the show/hide mechanism because
-        // ordering costs a frame each way and alpha costs nothing.
-        let _ = window.set_alpha(0.0);
-        let _ = window.order_above(None);
-
-        let layer_context = Self::host_layer(&window, &root);
-        if layer_context.is_none() {
-            // Not fatal: `present` falls back to rendering the layer tree into the window's context
-            // by hand. Worth knowing about though, because that path redraws the whole tree per
-            // frame instead of letting the compositor do it.
-            tracing::warn!("overlay has no CAContext; falling back to manual rendering");
-        }
+        window.orderFrontRegardless();
 
         Some(Self {
             window,
-            _layer_context: layer_context,
             root,
             tile_layers: HashMap::new(),
             frame,
             scale,
             visible: false,
+            mtm,
         })
-    }
-
-    /// Binds a Core Animation layer tree into a raw window server window, via a remote CAContext.
-    /// Same mechanism `mission_control.rs` uses.
-    fn host_layer(window: &CgsWindow, root: &CALayer) -> Option<Retained<AnyObject>> {
-        let class = AnyClass::get(c"CAContext")?;
-        let options = NSDictionary::<AnyObject, AnyObject>::new();
-        unsafe {
-            let raw: *mut AnyObject = msg_send![class, remoteContextWithOptions: &*options];
-            let context = Retained::retain_autoreleased(raw)?;
-            let _: () = msg_send![&*context, setLayer: root];
-            window.bind_layer_context(Retained::as_ptr(&context).cast_mut().cast()).ok()?;
-            CATransaction::flush();
-            Some(context)
-        }
     }
 
     pub fn frame(&self) -> CGRect {
         self.frame
-    }
-
-    /// Pushes the current layer state to the screen.
-    ///
-    /// Required after every change. A hosted `CAContext` is not driven by an app's normal display
-    /// cycle, so committing a transaction alone updates the layer tree without presenting it, and
-    /// the window keeps showing whatever it had. Without this the overlay renders blank.
-    fn present(&self) {
-        if self._layer_context.is_some() {
-            CATransaction::flush();
-        } else {
-            render_layer_to_cgs_window(self.window.id(), self.frame.size, &self.root);
-        }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -161,25 +159,29 @@ impl WorkspaceOverlay {
     }
 
     /// Repoints the overlay at a different display, or the same one after a resolution change.
-    /// Cheaper than recreating it, which would mean paying the ~112ms window creation cost again.
+    /// Cheaper than recreating it, which would pay the window creation cost again.
     pub fn set_frame(&mut self, frame: CGRect, scale: f64) {
         if self.frame == frame && (self.scale - scale).abs() < f64::EPSILON {
             return;
         }
         self.frame = frame;
         self.scale = scale;
-        let _ = self.window.set_shape(frame);
-        let _ = self.window.set_resolution(scale);
-        self.root.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
+        let converter = CoordinateConverter::from_height(primary_display_height());
+        if let Some(cocoa) = converter.convert_rect(frame) {
+            self.window.setFrame_display(cocoa, false);
+        }
+        if let Some(view) = self.window.contentView() {
+            view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
+        }
         self.root.setContentsScale(scale);
     }
 
     /// Installs the tiles for one animation and draws frame zero.
     ///
-    /// Layers are reused across animations where the window is the same, since creating a `CALayer`
-    /// and handing it a bitmap is the expensive part. Tiles absent from `tiles` are removed.
+    /// Layers are reused across animations for the same window, since creating a `CALayer` and giving
+    /// it a bitmap is the expensive part. Tiles absent from `tiles` are removed, or the previous
+    /// switch's windows linger as ghosts behind the current one.
     pub fn set_tiles(&mut self, tiles: &[OverlayTile]) {
-        // Batched so no half-built frame is ever presented.
         CATransaction::begin();
         CATransaction::setDisableActions(true);
 
@@ -189,28 +191,34 @@ impl WorkspaceOverlay {
             let layer = self.tile_layers.entry(tile.window).or_insert_with(|| {
                 let layer = CALayer::layer();
                 layer.setGeometryFlipped(true);
-                // Nearest-neighbour would shimmer while moving; the bitmap is already at device
-                // scale so the filter only matters during the sub-pixel steps of the slide.
-                // SAFETY: these are Core Animation's own filter-name string constants.
+                layer.setMasksToBounds(true);
+                // SAFETY: Core Animation's own filter-name constants.
                 unsafe {
                     layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
                     layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
                 }
-                layer.setMasksToBounds(true);
                 self.root.addSublayer(&layer);
                 layer
             });
             layer.setContentsScale(self.scale);
+            // Core Animation takes either a CGImage or an IOSurface as contents, so neither kind of
+            // snapshot needs converting. Converting would cost exactly what each capture API avoids.
             unsafe {
-                let img: *const objc2_core_graphics::CGImage = &*tile.snapshot.image;
-                let _: () = msg_send![&**layer, setContents: img];
+                match &tile.snapshot.image {
+                    SnapshotImage::Bitmap(image) => {
+                        let raw: *const objc2_core_graphics::CGImage = &**image;
+                        let _: () = msg_send![&**layer, setContents: raw];
+                    }
+                    SnapshotImage::Surface(surface) => {
+                        let raw: *const objc2_io_surface::IOSurfaceRef = &**surface;
+                        let _: () = msg_send![&**layer, setContents: raw];
+                    }
+                }
             }
             layer.setFrame(tile.from);
             layer.setHidden(false);
         }
 
-        // Anything not in this animation must stop being drawn, or the previous switch's windows
-        // linger as ghosts behind the current one.
         let stale: Vec<WindowId> =
             self.tile_layers.keys().copied().filter(|w| !keep.contains(w)).collect();
         for window in stale {
@@ -220,19 +228,17 @@ impl WorkspaceOverlay {
         }
 
         CATransaction::commit();
-        self.present();
     }
 
     /// Positions every tile for a given progress through the animation, in ONE transaction.
     ///
-    /// The single transaction is the whole point: it is what makes tearing between windows
-    /// impossible, rather than merely unlikely as it was with per-window Accessibility writes.
-    pub fn draw_frame(&self, tiles: &[OverlayTile], t: f64) {
+    /// The single transaction is the whole point: it makes tearing between windows impossible rather
+    /// than merely unlikely, which is what per-window Accessibility writes could never achieve.
+    pub fn draw_frame(&mut self, tiles: &[OverlayTile], t: f64) {
         let eased = ease_out_cubic(t);
         CATransaction::begin();
         // Implicit animations must be off. Core Animation would otherwise add its own quarter-second
-        // ease to every frame we set, so our interpolation would fight a second one and the result
-        // would lag behind the input by a fixed amount.
+        // ease to every frame, so our interpolation would fight a second one and lag behind.
         CATransaction::setDisableActions(true);
         for tile in tiles {
             if let Some(layer) = self.tile_layers.get(&tile.window) {
@@ -240,7 +246,6 @@ impl WorkspaceOverlay {
             }
         }
         CATransaction::commit();
-        self.present();
     }
 
     /// Shows the overlay. Costs about 0.36ms, measured, because it is only an alpha change.
@@ -248,10 +253,8 @@ impl WorkspaceOverlay {
         if self.visible {
             return;
         }
-        let _ = self.window.set_alpha(1.0);
-        // Ordering above nothing raises it over every other window without naming one, which avoids
-        // needing the ordering privilege that yabai's scripting addition exists to provide.
-        let _ = self.window.order_above(None);
+        self.window.setAlphaValue(1.0);
+        self.window.orderFrontRegardless();
         self.visible = true;
     }
 
@@ -260,12 +263,12 @@ impl WorkspaceOverlay {
         if !self.visible {
             return;
         }
-        let _ = self.window.set_alpha(0.0);
+        self.window.setAlphaValue(0.0);
         self.visible = false;
     }
 
-    /// Frees the bitmaps without destroying the overlay, so an idle rini is not holding tens of MB
-    /// of window pictures. Each tile is a full-resolution image.
+    /// Frees the tile contents without destroying the overlay, so an idle rini is not holding window
+    /// pictures it no longer needs.
     pub fn release_tiles(&mut self) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
@@ -273,7 +276,18 @@ impl WorkspaceOverlay {
             layer.removeFromSuperlayer();
         }
         CATransaction::commit();
+        let _ = self.mtm;
     }
+}
+
+/// Height of the coordinate space AppKit measures window positions in.
+///
+/// AppKit uses a bottom-left origin anchored to the primary display, while everything else in rini
+/// speaks CoreGraphics top-left coordinates. Flipping needs the primary display's bottom edge, which
+/// is its origin plus its height.
+fn primary_display_height() -> f64 {
+    let bounds = CGDisplayBounds(unsafe { CGMainDisplayID() });
+    bounds.origin.y + bounds.size.height
 }
 
 #[cfg(test)]

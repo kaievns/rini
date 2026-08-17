@@ -30,6 +30,7 @@ use crate::actor;
 use crate::actor::app::WindowId;
 use crate::sys::run_loop::RepeatingTimer;
 use crate::sys::window_server::WindowServerId;
+use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::ui::window_snapshot::{SnapshotCache, WindowSnapshot, capture_via_skylight};
 use crate::ui::workspace_overlay::{OverlayTile, WorkspaceOverlay};
 
@@ -62,6 +63,11 @@ pub enum Event {
     DebugSlide { dx: f64, dy: f64, duration: Duration },
     /// One frame of the running animation. Posted by the run loop timer, not by any other actor.
     Tick,
+    /// A background capture has landed. Posted by the snapshot service, not by another actor.
+    SnapshotsReady,
+    /// Capture every managed window that SkyLight cannot serve, so the cache is warm before the next
+    /// animation. Safe to call at any time; it only queues background work.
+    WarmCache,
 }
 
 pub type Sender = actor::Sender<Event>;
@@ -105,18 +111,31 @@ pub struct WorkspaceAnimation {
     mtm: MainThreadMarker,
     overlay: Option<WorkspaceOverlay>,
     cache: SnapshotCache,
+    /// Full-size captures for windows SkyLight cannot serve. Results are collected into `cache`
+    /// rather than read directly, so a capture landing mid-animation cannot change what is drawn.
+    service: SnapshotService,
     display: Option<(CGRect, f64)>,
     running: Option<RunningAnimation>,
 }
 
 impl WorkspaceAnimation {
     pub fn new(rx: Receiver, tx: Sender, mtm: MainThreadMarker) -> Self {
+        // The service completes captures on a background queue, so it wakes this actor through the
+        // same channel every other event arrives on rather than touching the cache itself.
+        let notify_tx = tx.clone();
+        let service = SnapshotService::new(
+            2.0,
+            std::sync::Arc::new(move || {
+                _ = notify_tx.send(Event::SnapshotsReady);
+            }),
+        );
         Self {
             rx,
             tx,
             mtm,
             overlay: None,
             cache: SnapshotCache::new(),
+            service,
             display: None,
             running: None,
         }
@@ -139,11 +158,54 @@ impl WorkspaceAnimation {
             Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
+            Event::SnapshotsReady => self.collect_snapshots(),
+            Event::WarmCache => self.warm_cache(),
         }
+    }
+
+    /// Moves completed background captures into the cache.
+    ///
+    /// `SnapshotCache::insert` refuses to replace a usable capture with a clipped one, so a result
+    /// that lands late cannot downgrade what is already held.
+    fn collect_snapshots(&mut self) {
+        let landed = self.service.collect();
+        if landed.is_empty() {
+            return;
+        }
+        debug!(count = landed.len(), "background snapshots collected");
+        for (window, snapshot) in landed {
+            self.cache.insert(window, snapshot);
+        }
+    }
+
+    /// Queues background captures for every window on the display that SkyLight cannot serve.
+    ///
+    /// Cheap to call repeatedly: the service drops targets that are already in flight, and the cache
+    /// keeps what it has until something better arrives.
+    fn warm_cache(&mut self) {
+        let Some((display_frame, _)) = self.display else {
+            warn!("no display geometry yet; cannot warm the snapshot cache");
+            return;
+        };
+        let windows = crate::sys::window_server::visible_windows_on_display(display_frame);
+        let targets: Vec<SnapshotTarget> = windows
+            .into_iter()
+            .map(|(server_id, frame)| SnapshotTarget {
+                window: synthetic_window_id(server_id),
+                server_id,
+                size: frame.size,
+            })
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        debug!(count = targets.len(), "warming the snapshot cache");
+        self.service.request(targets);
     }
 
     fn set_display(&mut self, frame: CGRect, scale: f64) {
         self.display = Some((frame, scale));
+        self.service.set_scale(scale);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_frame(frame, scale);
         }
@@ -216,8 +278,23 @@ impl WorkspaceAnimation {
 
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
+        let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
         for request in &windows {
-            match self.snapshot_for(request) {
+            let snapshot = self.snapshot_for(request);
+            // Anything SkyLight could not serve at full size needs a real capture before it can be
+            // animated. Queue it now so the next switch has pixels, even if this one does not.
+            if snapshot
+                .as_ref()
+                .is_none_or(|s| s.source == crate::ui::window_snapshot::SnapshotSource::SkyLight
+                    && !s.is_usable())
+            {
+                needs_capture.push(SnapshotTarget {
+                    window: request.window,
+                    server_id: request.server_id,
+                    size: request.from.size,
+                });
+            }
+            match snapshot {
                 Some(snapshot) => tiles.push(OverlayTile {
                     window: request.window,
                     from: to_overlay_space(request.from, display_frame),
@@ -228,6 +305,13 @@ impl WorkspaceAnimation {
                 // simply appear at its destination when the overlay drops.
                 None => skipped += 1,
             }
+        }
+        if !needs_capture.is_empty() {
+            debug!(
+                count = needs_capture.len(),
+                "queueing background captures for windows SkyLight could not serve"
+            );
+            self.service.request(needs_capture);
         }
         if skipped > 0 {
             debug!(skipped, total = windows.len(), "windows animated without a usable snapshot");
@@ -262,14 +346,15 @@ impl WorkspaceAnimation {
     }
 
     fn step(&mut self) {
-        let Some(running) = self.running.as_ref() else { return };
-        let progress = running.progress();
-        let done = running.is_done();
-
-        if let Some(overlay) = self.overlay.as_ref() {
-            overlay.draw_frame(&running.tiles, progress);
-        }
-
+        let done = {
+            let Self { overlay, running, .. } = self;
+            let Some(running) = running.as_ref() else { return };
+            let progress = running.progress();
+            if let Some(overlay) = overlay.as_mut() {
+                overlay.draw_frame(&running.tiles, progress);
+            }
+            running.is_done()
+        };
         if done {
             self.finish();
         }
@@ -277,8 +362,11 @@ impl WorkspaceAnimation {
 
     /// Jumps to the end and tears down, for the case where no frame clock could be created.
     fn step_to_end(&mut self) {
-        if let (Some(overlay), Some(running)) = (self.overlay.as_ref(), self.running.as_ref()) {
-            overlay.draw_frame(&running.tiles, 1.0);
+        {
+            let Self { overlay, running, .. } = self;
+            if let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_ref()) {
+                overlay.draw_frame(&running.tiles, 1.0);
+            }
         }
         self.finish();
     }
@@ -308,12 +396,7 @@ impl WorkspaceAnimation {
         let requests: Vec<AnimationRequest> = windows
             .into_iter()
             .map(|(server_id, frame)| AnimationRequest {
-                // A synthetic WindowId: the debug path never talks to the real window, and tiles are
-                // only keyed by it, so any stable per-window value works.
-                window: WindowId {
-                    pid: 0,
-                    idx: std::num::NonZeroU32::new(server_id.as_u32().max(1)).unwrap(),
-                },
+                window: synthetic_window_id(server_id),
                 server_id,
                 from: CGRect::new(
                     CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
@@ -325,6 +408,15 @@ impl WorkspaceAnimation {
         debug!(count = requests.len(), dx, dy, "running debug slide");
         self.start(requests, duration);
     }
+}
+
+/// A stable [`WindowId`] derived from a window server id.
+///
+/// The debug paths work from the window server rather than from rini's own window table, so they need
+/// a key that is consistent between capturing and drawing. Using pid 0 keeps these clear of real
+/// window ids, which always carry a real pid.
+fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
+    WindowId { pid: 0, idx: std::num::NonZeroU32::new(server_id.as_u32().max(1)).unwrap() }
 }
 
 /// Converts a display-space rect into the overlay's own coordinate space.

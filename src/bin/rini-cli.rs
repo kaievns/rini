@@ -167,6 +167,11 @@ enum ExecuteCommands {
     },
     /// Print layout tree debugging output in the running rini instance
     Debug,
+    /// Fill the animation snapshot cache for windows the framebuffer route cannot capture
+    ///
+    /// Background work only. Nothing is drawn and no window is moved. Run this, then run
+    /// debug-overlay-slide, to see the animation with every window drawn.
+    DebugWarmSnapshots,
     /// Slide every visible window in from an offset, using the capture-based overlay
     ///
     /// For judging animation quality by eye. Draws pictures of the windows and never moves a real
@@ -696,6 +701,9 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::Debug => {
             CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::Debug))
         }
+        ExecuteCommands::DebugWarmSnapshots => CliCommand::Reactor(reactor::Command::Reactor(
+            reactor::ReactorCommand::DebugWarmSnapshots,
+        )),
         ExecuteCommands::DebugOverlaySlide { dx, dy, duration_ms } => CliCommand::Reactor(
             reactor::Command::Reactor(reactor::ReactorCommand::DebugOverlaySlide {
                 dx,

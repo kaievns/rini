@@ -26,6 +26,7 @@ use std::ffi::c_int;
 
 use objc2_core_foundation::{CFArray, CFRetained};
 use objc2_core_graphics::CGImage;
+use objc2_io_surface::IOSurfaceRef;
 
 use crate::actor::app::WindowId;
 use crate::sys::skylight::{SLSHWCaptureWindowList, SLSMainConnectionID};
@@ -87,10 +88,33 @@ pub fn should_replace(existing: Option<Coverage>, incoming: Coverage) -> bool {
     }
 }
 
+/// A window's pixels, whichever API produced them.
+///
+/// Kept as two cases rather than normalised to one, because converting between them costs exactly
+/// what each API is good at avoiding. A `CGImage` from SkyLight is already a CPU-side bitmap, and an
+/// `IOSurface` from ScreenCaptureKit already lives where the compositor wants it. Core Animation
+/// accepts either as layer contents, so there is nothing to gain by picking one.
+///
+/// The difference matters for memory. A single 859x1081pt window at 2x is 1718x2162 pixels, which is
+/// about 14.9MB as a CPU bitmap. Holding twenty of those would be roughly 280MB of resident memory
+/// for a window manager, which is why the cache prefers surfaces.
+#[derive(Clone)]
+pub enum SnapshotImage {
+    /// CPU-side bitmap, from `SLSHWCaptureWindowList`.
+    Bitmap(CFRetained<CGImage>),
+    /// GPU-side surface, from ScreenCaptureKit. Does not occupy the process's heap.
+    Surface(CFRetained<IOSurfaceRef>),
+}
+
+// IOSurface is explicitly shareable across threads and processes, and the ScreenCaptureKit capture
+// completes on a background queue. The retained reference keeps it alive until the main thread
+// attaches it to a layer.
+unsafe impl Send for SnapshotImage {}
+
 /// A window's pixels, plus how much of the window they cover.
 #[derive(Clone)]
 pub struct WindowSnapshot {
-    pub image: CFRetained<CGImage>,
+    pub image: SnapshotImage,
     pub coverage: Coverage,
     pub source: SnapshotSource,
 }
@@ -138,7 +162,7 @@ pub fn capture_via_skylight(
     let scale = if scale > 0.0 { scale } else { 1.0 };
 
     Some(WindowSnapshot {
-        image,
+        image: SnapshotImage::Bitmap(image),
         coverage: Coverage {
             covered: (px_w / scale, px_h / scale),
             window: window_size,
