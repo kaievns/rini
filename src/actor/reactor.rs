@@ -4037,7 +4037,20 @@ impl Reactor {
 
         let low = from_index.min(to_index);
         let high = from_index.max(to_index);
-        let height = screen.frame.size.height;
+
+        // Strips are stacked with a GAP between them equal to the menu bar inset, so a switch reads as
+        // one strip sliding up out of view just above the bar while the next arrives from below,
+        // rather than two strips welded edge to edge.
+        //
+        // The inset is the difference between the display's full height and its usable height, which
+        // is exactly the space the menu bar and the bar sitting in it occupy. Adding it to the usable
+        // height makes the row pitch the FULL display height.
+        let full_height =
+            objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()).size.height;
+        let usable_height = screen.frame.size.height;
+        let menu_inset = (full_height - usable_height).max(0.0);
+        let row_pitch = usable_height + menu_inset;
+        let height = row_pitch;
 
         let mut windows: Vec<crate::actor::workspace_animation::CanvasWindow> = Vec::new();
         let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
@@ -4053,9 +4066,9 @@ impl Reactor {
                 horiz,
                 vert,
             );
-            // Stacked below the workspace above it, and expressed relative to the display's own
-            // origin so the overlay's coordinate space needs no further translation.
-            let row = (index - low) as f64 * height;
+            // Stacked below the workspace above it, separated by the menu bar inset, and expressed
+            // relative to the display's own origin so the overlay's space needs no further translation.
+            let row = (index - low) as f64 * row_pitch;
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };

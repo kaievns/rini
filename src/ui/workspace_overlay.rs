@@ -28,8 +28,8 @@ use std::collections::HashMap;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSPopUpMenuWindowLevel, NSView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSPopUpMenuWindowLevel, NSView, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
@@ -136,6 +136,10 @@ impl WorkspaceOverlay {
             )
         };
         window.setOpaque(true);
+        // Without this the canvas between strips renders as a bare grey slab, which reads as a glitch
+        // rather than as empty space. Opaque is required so the real windows being repositioned
+        // underneath stay hidden, so the background has to be drawn rather than left transparent.
+        window.setBackgroundColor(Some(&NSColor::blackColor()));
         window.setHasShadow(false);
         // Must never take focus: a workspace animation that changes the active app is a bug.
         window.setIgnoresMouseEvents(true);

@@ -729,6 +729,25 @@ impl WorkspaceAnimation {
             return;
         }
 
+        // Carry over whatever the running animation had left to travel, so a rapid sequence of
+        // presses reads as one continuous scroll instead of a series of restarts.
+        let from_offset = match self.canvas.as_ref() {
+            Some(running) => {
+                let eased = crate::ui::workspace_overlay::ease_out_cubic(running.progress());
+                let current = running.offset_at(eased);
+                let residual = CGPoint::new(
+                    current.x - running.to_offset.x,
+                    current.y - running.to_offset.y,
+                );
+                debug!(
+                    residual = format!("{:.0},{:.0}", residual.x, residual.y),
+                    "chaining onto an animation already in flight"
+                );
+                CGPoint::new(from_offset.x + residual.x, from_offset.y + residual.y)
+            }
+            None => from_offset,
+        };
+
         let Some(overlay) = self.ensure_overlay() else {
             self.request_frames(final_frames);
             return;
