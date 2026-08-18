@@ -594,3 +594,75 @@ frames=87  elapsed=1501ms  duration=1500ms  travel="0,1117 -> 0,0"
 ```
 
 60fps in every case, and travel proportional to the number of rows crossed.
+
+## The bar is dozens of windows, so a composite of it starts partway across
+
+sketchybar is not one window. Measured on this machine, it is about 30 windows
+at layer -20, most 14pt to 131pt wide, plus a few parked at -9999,-9999:
+
+```
+wid=3508  layer=-20  217,0   56x32   sketchybar
+wid=3510  layer=-20  1589,0 131x32   sketchybar
+wid=3575  layer=-20  -9999,-9999 1x1 sketchybar
+...
+```
+
+`SLSHWCaptureWindowList` composites into an image covering the UNION of the
+windows given, so the capture covers x=217 to x=1721, not the whole display. It
+was then drawn at the overlay's top-left, putting the captured strip 217pt to
+the left of the real bar. Against the correctly placed copy inside the desktop
+render, that is the second, offset bar. `bar_strip` now returns the union so the
+layer can be positioned at its true origin.
+
+## A capture can be usable and still be the wrong shape
+
+Two different questions, and the code only asked the first for a long time:
+
+- Does the capture cover the window it was taken FROM? That is
+  `Coverage::is_usable`, and both sizes in it are recorded at capture time.
+- Does the picture match the frame it is about to be drawn INTO? Nothing asked.
+
+A cached picture routinely fails only the second. A window that was full width
+when captured and half width in the new layout has a perfect picture of the
+wrong shape, and `contentsGravity` defaults to resize, so it is squashed to
+fill. Measured over 1114 logged tiles, 75 were in this state:
+
+```
+drawn into  859x1081  but picture covers 1720x1081   squashed to half width
+drawn into 1499x1656  but picture covers 1720x1081   squashed and stretched at once
+```
+
+`fits_frame` now rejects those. A window left undrawn appears at its destination
+when the overlay lifts, which is far less noticeable than a warped one, and the
+refresh after an animation captures at the frame the window was sent to, so the
+next switch has a correctly shaped picture.
+
+### 1499x1656 is not a frame this display can hold
+
+Worth following up separately. The laptop display is 1728x1117 points, so a tile
+frame 1656pt tall cannot belong to it; it fits the external 3008x1692. Windows
+homed on the other display are turning up in this display's canvas carrying
+their own frames, which is both a stretched tile and a real window being resized
+to a size that does not fit the screen it is on.
+
+## What the overlay is NOT doing
+
+Recorded because it took a long time to establish and would otherwise be
+re-investigated. Reported as "the windows are scaled", the overlay's tiles were
+measured and are not the cause:
+
+- Every tile's rendered rect equals the frame it was given. Checked with
+  `convertRect:toLayer:` through the whole chain, which accounts for every
+  transform: `asked="4,2266 1720x1081"`, `on_root="4,2266 1720x1081"`.
+- The window, its content view, the view's bounds and the root layer are all
+  1728x1117 points at backing scale 2. Nothing in the chain scales.
+- Tile frames over 1218 logged tiles are only ever 859x1081, 1720x1081, 723x879,
+  1499x1656 or 943x1081. None is half-size.
+- ScreenCaptureKit fills the buffer it is asked for, 100% by 100%, whether asked
+  in points or pixels and at either resolution setting. So a surface is never
+  partly painted, which would have drawn the content at half size in a corner.
+- The backdrop and the bar, which are siblings of the canvas, render 1:1.
+
+A `check_geometry` call now asserts the first point on every animation and logs
+only when it fails, so a scale introduced in the layer tree cannot go unnoticed
+again.

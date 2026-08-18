@@ -679,31 +679,74 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
 /// on top of itself and keep it visible while the strips move underneath, since the overlay now spans
 /// the whole display and would otherwise cover it.
 pub fn bar_windows(display: CGRect) -> Vec<WindowServerId> {
+    bar_strip(display).windows
+}
+
+/// The bar's windows and the rect they occupy together.
+pub struct BarStrip {
+    pub windows: Vec<WindowServerId>,
+    /// Union of those windows' bounds, or `None` when there is no bar.
+    ///
+    /// Needed because a composite capture covers only the union, not the whole display, and drawing it
+    /// at the overlay's top-left puts it in the wrong place. sketchybar is not one window: it is dozens
+    /// of small ones, measured here spanning x=217 to x=1721, so the union starts 217pt in and the
+    /// captured strip was landing 217pt to the left of the real bar. That is the second bar.
+    pub bounds: Option<CGRect>,
+}
+
+/// The bar sitting in the menu bar strip, with the rect it occupies.
+pub fn bar_strip(display: CGRect) -> BarStrip {
     /// Above the desktop backdrop.
     const ABOVE_BACKDROP: i64 = -2147483600;
 
-    get_windows_raw::<CFDictionary<CFString, CFType>>(
+    let mut windows = Vec::new();
+    let mut bounds: Option<CGRect> = None;
+    for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
         CGWindowListOption::OptionOnScreenOnly,
         kCGNullWindowID,
     )
     .iter()
-    .filter_map(|window| {
-        let layer = get_num(&window, unsafe { kCGWindowLayer })?;
+    {
+        let Some(layer) = get_num(&window, unsafe { kCGWindowLayer }) else {
+            continue;
+        };
         // Strictly between the backdrop and normal windows.
         if layer <= ABOVE_BACKDROP || layer >= 0 {
-            return None;
+            continue;
         }
-        let bounds = window
-            .get(unsafe { kCGWindowBounds })?
-            .downcast::<CFDictionary>()
-            .ok()
-            .and_then(bounds_from_dict)?;
-        if !overlaps(bounds, display) {
-            return None;
+        let Some(frame) = window
+            .get(unsafe { kCGWindowBounds })
+            .and_then(|bounds| bounds.downcast::<CFDictionary>().ok())
+            .and_then(bounds_from_dict)
+        else {
+            continue;
+        };
+        if !overlaps(frame, display) {
+            continue;
         }
-        Some(WindowServerId::new(get_num(&window, unsafe { kCGWindowNumber })? as u32))
-    })
-    .collect()
+        let Some(id) = get_num(&window, unsafe { kCGWindowNumber }) else {
+            continue;
+        };
+        bounds = Some(match bounds {
+            Some(union) => union_rect(union, frame),
+            None => frame,
+        });
+        windows.push(WindowServerId::new(id as u32));
+    }
+    BarStrip { windows, bounds }
+}
+
+/// Smallest rect containing both. Written out rather than using `CGRectExt`, which is only imported
+/// outside test builds and would make this untestable.
+fn union_rect(a: CGRect, b: CGRect) -> CGRect {
+    let x0 = a.origin.x.min(b.origin.x);
+    let y0 = a.origin.y.min(b.origin.y);
+    let x1 = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
+    let y1 = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
+    CGRect::new(
+        objc2_core_foundation::CGPoint::new(x0, y0),
+        objc2_core_foundation::CGSize::new(x1 - x0, y1 - y0),
+    )
 }
 
 /// Front-to-back position of every on-screen window, keyed by window server id, 0 being frontmost.

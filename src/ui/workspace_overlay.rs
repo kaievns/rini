@@ -35,6 +35,7 @@ use objc2_app_kit::{
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
 use objc2_quartz_core::{CALayer, CATransaction};
+use tracing::debug;
 
 use crate::actor::app::WindowId;
 use crate::sys::screen::CoordinateConverter;
@@ -264,21 +265,20 @@ impl WorkspaceOverlay {
 
     /// Sets the still image drawn ON TOP of the moving canvas, for the bar.
     ///
-    /// Positioned from the image's own covered size at the top of the display, because that is where
-    /// a menu bar strip lives. A failed capture leaves whatever was there rather than hiding it, so
-    /// the bar does not blink.
+    /// Positioned at `at`, which must be the origin of the region the capture covers. A failed capture
+    /// leaves whatever was there rather than hiding it, so the bar does not blink.
     ///
     /// The layer is not geometryFlipped, so its contents draw the right way up while its position is
     /// still interpreted in the flipped root's top-left space.
-    pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>) {
+    pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>, at: CGPoint) {
         let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let (covered_w, covered_h) = snapshot.coverage.covered;
-        self.foreground.setFrame(CGRect::new(
-            CGPoint::new(0.0, 0.0),
-            CGSize::new(covered_w, covered_h),
-        ));
+        // Positioned at the captured region's own origin, not the overlay's corner. A composite covers
+        // only the union of the windows in it, and sketchybar is dozens of small windows starting 217pt
+        // in, so drawing the strip at x=0 put a second bar 217pt left of the real one.
+        self.foreground.setFrame(CGRect::new(at, CGSize::new(covered_w, covered_h)));
         self.foreground.setContentsScale(self.scale);
         set_layer_contents(&self.foreground, snapshot);
         self.foreground.setHidden(false);
@@ -374,6 +374,33 @@ impl WorkspaceOverlay {
         }
 
         CATransaction::commit();
+        self.check_geometry(tiles);
+    }
+
+    /// Checks that every tile will be drawn at the frame it was given.
+    ///
+    /// `convertRect:toLayer:` walks the whole transform chain, so this compares what was asked for
+    /// against what the compositor will actually draw. It exists because "the windows look scaled" is
+    /// not measurable from a screenshot when the window is a dark terminal over a dark wallpaper, and
+    /// because a scale introduced anywhere in the layer tree would otherwise be invisible in the logs.
+    /// Silent when everything agrees, which is the normal case.
+    fn check_geometry(&self, tiles: &[CanvasTile]) {
+        for tile in tiles {
+            let Some(layer) = self.tile_layers.get(&tile.window) else { continue };
+            let drawn = layer.convertRect_toLayer(layer.bounds(), Some(&self.root));
+            let off_by = (drawn.size.width - tile.frame.size.width)
+                .abs()
+                .max((drawn.size.height - tile.frame.size.height).abs());
+            if off_by <= 1.0 {
+                continue;
+            }
+            debug!(
+                idx = tile.window.idx.get(),
+                asked = format!("{:.0}x{:.0}", tile.frame.size.width, tile.frame.size.height),
+                drawn = format!("{:.0}x{:.0}", drawn.size.width, drawn.size.height),
+                "a tile will not be drawn at the size it was given"
+            );
+        }
     }
 
     /// Moves the canvas so that `offset` in canvas coordinates sits at the overlay's top-left.

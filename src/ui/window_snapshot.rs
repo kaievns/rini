@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::ffi::c_int;
 
-use objc2_core_foundation::{CFArray, CFRetained};
+use objc2_core_foundation::{CFArray, CFRetained, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
@@ -96,6 +96,41 @@ pub fn should_replace(existing: Option<Coverage>, incoming: Coverage) -> bool {
 /// rounding is normal; anything more means it does not describe this display.
 const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
 
+/// How far a picture may be from the size it is drawn at before the stretch is visible.
+///
+/// A layer's `contentsGravity` defaults to resize, so contents are stretched to fill the layer with no
+/// regard for their own proportions. Half a percent is rounding; more than that is distortion.
+const MAX_STRETCH: f64 = 1.005;
+const MIN_STRETCH: f64 = 0.995;
+
+/// Can this picture be drawn at `frame` without visibly distorting it?
+///
+/// Separate from [`Coverage::is_usable`], and this distinction is the whole point. `is_usable` asks
+/// whether a capture covers the window it was taken from, comparing two sizes both recorded at CAPTURE
+/// time. It cannot answer whether the picture still matches the frame the tile is about to be drawn
+/// into, and a cached picture routinely does not: a window that was full width when captured and is
+/// half width in the new layout has a perfectly usable picture of the wrong shape.
+///
+/// Measured over 1114 logged tiles, 75 were drawn into a frame that did not match their picture:
+///
+/// ```text
+/// drawn into  859x1081  but picture covers 1720x1081   squashed to half width
+/// drawn into 1499x1656  but picture covers 1720x1081   squashed and stretched at once
+/// ```
+///
+/// Stretched to fill, that reads as the window being scaled and warped mid-animation, which is worse
+/// than the window simply not being drawn: a window left out appears at its destination when the overlay
+/// lifts, and the next switch has a correctly sized picture because the refresh after an animation
+/// captures at the frame the window was sent to.
+pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
+    if frame.0 <= 0.0 || frame.1 <= 0.0 {
+        return false;
+    }
+    let wide = covered.0 / frame.0;
+    let tall = covered.1 / frame.1;
+    (MIN_STRETCH..=MAX_STRETCH).contains(&wide) && (MIN_STRETCH..=MAX_STRETCH).contains(&tall)
+}
+
 /// Whether a fresh desktop capture is worth drawing behind the moving strips.
 ///
 /// The desktop is composited from every window at or below the desktop level, and the wallpaper is one
@@ -166,6 +201,11 @@ pub enum SnapshotSource {
 impl WindowSnapshot {
     pub fn is_usable(&self) -> bool {
         self.coverage.is_usable()
+    }
+
+    /// Can this picture be drawn at `size` without visibly distorting it? See [`fits_frame`].
+    pub fn fits(&self, size: CGSize) -> bool {
+        fits_frame(self.coverage.covered, (size.width, size.height))
     }
 }
 
@@ -468,6 +508,45 @@ mod tests {
     #[test]
     fn a_desktop_capture_a_rounding_error_short_is_still_drawn() {
         assert!(is_backdrop_worth_drawing(true, true, (1727.5, 1116.5), (1728.0, 1117.0)));
+    }
+
+    /// The measured failure: a full-width capture drawn into a half-width frame, squashed to fill.
+    #[test]
+    fn a_picture_of_the_wrong_shape_does_not_fit_its_frame() {
+        assert!(!fits_frame((1720.0, 1081.0), (859.0, 1081.0)));
+        assert!(!fits_frame((1720.0, 1081.0), (1499.0, 1656.0)));
+    }
+
+    #[test]
+    fn a_picture_of_the_right_shape_fits() {
+        assert!(fits_frame((859.0, 1081.0), (859.0, 1081.0)));
+    }
+
+    #[test]
+    fn a_picture_a_rounding_error_off_still_fits() {
+        // Captures land a pixel or two short, which is half a point at 2x, and rejecting those would
+        // leave almost every window undrawn.
+        assert!(fits_frame((858.5, 1080.5), (859.0, 1081.0)));
+    }
+
+    #[test]
+    fn a_picture_off_by_a_few_points_does_not_fit() {
+        // Small enough to look like a near miss, large enough to shift the contents visibly.
+        assert!(!fits_frame((820.0, 1081.0), (859.0, 1081.0)));
+    }
+
+    #[test]
+    fn a_zero_sized_frame_never_fits_rather_than_dividing_by_zero() {
+        assert!(!fits_frame((859.0, 1081.0), (0.0, 0.0)));
+    }
+
+    /// A capture can cover its own window exactly and still be the wrong shape for where it is drawn.
+    /// This is what `is_usable` cannot express, and why both checks exist.
+    #[test]
+    fn a_usable_capture_can_still_not_fit_the_frame_it_is_drawn_into() {
+        let full_width = coverage((1720.0, 1081.0), (1720.0, 1081.0));
+        assert!(full_width.is_usable(), "it covers the window it was taken from");
+        assert!(!fits_frame(full_width.covered, (859.0, 1081.0)), "but not the frame it goes into");
     }
 
     #[test]

@@ -448,7 +448,12 @@ impl WorkspaceAnimation {
     /// A window with nothing cached simply does not animate. It is placed at its destination when the
     /// overlay comes down, and a background capture is queued so the next switch has it.
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
-        self.cache.usable(request.window).cloned()
+        // Rejected here rather than drawn distorted, for the same reason as the canvas path: contents
+        // stretch to fill, so a picture of the wrong shape warps the window instead of moving it.
+        self.cache
+            .usable(request.window)
+            .filter(|snapshot| snapshot.fits(request.to.size))
+            .cloned()
     }
 
     /// Does this window appear on screen at ANY point during the animation?
@@ -767,9 +772,15 @@ impl WorkspaceAnimation {
         let depths = crate::sys::window_server::front_to_back_depths();
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
+        let mut misshapen = 0usize;
         for window in &windows {
+            // Two separate questions, and both have to be yes. Whether the cached picture covers the
+            // window it was taken from, and whether it still matches the frame it is about to be drawn
+            // into. A window that was full width when captured and is half width in this layout fails
+            // only the second, and drawing it anyway squashes it to fill, which is the "windows are
+            // scaled and doing weird stuff" everyone sees before anyone measures it.
             match self.cache.usable(window.window).cloned() {
-                Some(snapshot) => tiles.push(CanvasTile {
+                Some(snapshot) if snapshot.fits(window.frame.size) => tiles.push(CanvasTile {
                     window: window.window,
                     frame: window.frame,
                     snapshot,
@@ -778,6 +789,22 @@ impl WorkspaceAnimation {
                         .copied()
                         .unwrap_or(usize::MAX / 2),
                 }),
+                Some(snapshot) => {
+                    misshapen += 1;
+                    debug!(
+                        pid = window.window.pid,
+                        idx = window.window.idx.get(),
+                        frame = format!(
+                            "{:.0}x{:.0}",
+                            window.frame.size.width, window.frame.size.height
+                        ),
+                        picture = format!(
+                            "{:.0}x{:.0}",
+                            snapshot.coverage.covered.0, snapshot.coverage.covered.1
+                        ),
+                        "not drawing a window whose picture is the wrong shape for its frame"
+                    );
+                }
                 None => missing += 1,
             }
         }
@@ -806,6 +833,7 @@ impl WorkspaceAnimation {
             requested = windows.len(),
             tiles = tiles.len(),
             missing,
+            misshapen,
             travel = format!(
                 "{:.0},{:.0} -> {:.0},{:.0}",
                 from_offset.x, from_offset.y, to_offset.x, to_offset.y
@@ -858,7 +886,10 @@ impl WorkspaceAnimation {
             return;
         };
         overlay.set_backdrop(backdrop.as_ref());
-        overlay.set_foreground(foreground.as_ref());
+        match &foreground {
+            Some((snapshot, at)) => overlay.set_foreground(Some(snapshot), *at),
+            None => overlay.set_foreground(None, CGPoint::new(0.0, 0.0)),
+        }
         overlay.set_canvas(&tiles);
         overlay.set_canvas_offset(from_offset);
         overlay.show();
@@ -1095,14 +1126,24 @@ impl WorkspaceAnimation {
     }
 
     /// Captures the bar, so the overlay can redraw it on top of itself.
-    fn capture_bar(&self) -> Option<WindowSnapshot> {
+    ///
+    /// Returns where the capture belongs as well as the pixels. A composite covers only the union of
+    /// the windows in it, so the caller cannot assume it starts at the display's corner.
+    fn capture_bar(&self) -> Option<(WindowSnapshot, CGPoint)> {
         let (display_frame, scale) = self.display?;
-        let windows = crate::sys::window_server::bar_windows(display_frame);
-        crate::ui::window_snapshot::capture_composite_via_skylight(
-            &windows,
-            (display_frame.size.width, display_frame.size.height),
+        let strip = crate::sys::window_server::bar_strip(display_frame);
+        let bounds = strip.bounds?;
+        let snapshot = crate::ui::window_snapshot::capture_composite_via_skylight(
+            &strip.windows,
+            (bounds.size.width, bounds.size.height),
             scale,
-        )
+        )?;
+        // Relative to the overlay, which spans the display.
+        let at = CGPoint::new(
+            bounds.origin.x - display_frame.origin.x,
+            bounds.origin.y - display_frame.origin.y,
+        );
+        Some((snapshot, at))
     }
 
     /// Asks the reactor to place windows at their final frames.
