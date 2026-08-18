@@ -373,6 +373,11 @@ impl SnapshotService {
             state.desktop_in_flight = false;
             match surface {
                 Some(surface) if revision == self.revision.load(Ordering::Acquire) => {
+                    // Marked in use for as long as it is cached. A surface whose pixel buffer has been
+                    // released is eligible to have its backing store reclaimed, and a layer still
+                    // holding it then draws nothing, which is the desktop and the bar going black after
+                    // the overlay has sat idle for a few minutes.
+                    surface.increment_use_count();
                     let width = unsafe { surface.width() } as f64 / scale;
                     let height = unsafe { surface.height() } as f64 / scale;
                     state.desktop = Some(WindowSnapshot {
@@ -473,6 +478,9 @@ impl SnapshotService {
                          are being given in pixels"
                     );
                 }
+                // In use for as long as it is cached, or its backing store can be reclaimed and the
+                // tile draws nothing. See the desktop capture above.
+                surface.increment_use_count();
                 let width = unsafe { surface.width() } as f64 / scale;
                 let height = unsafe { surface.height() } as f64 / scale;
                 state.ready.insert(

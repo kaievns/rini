@@ -959,6 +959,33 @@ already asynchronous, and a landed capture is now applied straight to the tile
 if an animation is still running, which is how it reaches the screen before the
 handover.
 
+### Both drawing paths have to dress the overlay
+
+Only the canvas path set the backdrop and the bar. Focusing a window on a strip
+goes through the per-window path, which set neither, so a horizontal slide
+showed whatever those layers happened to hold: nothing at all until some
+vertical slide had filled them, and the last picture afterwards. That matches
+the report exactly, of horizontal slides being almost black until a vertical
+slide, then working for a while.
+
+The per-window path now dresses the overlay too, reusing the held picture rather
+than capturing. A desktop composite measures 13ms to 36ms for 6 windows, which
+is a frame or two of lag on every window focus change, while re-applying a
+picture already in hand is a pointer assignment. The background refresh keeps
+that picture current.
+
+### Cached surfaces have to be marked in use
+
+Suspected cause of the other half of the same report, that it works for a few
+minutes and then goes black again. An `IOSurface` whose `CVPixelBuffer` has been
+released is eligible to have its backing store reclaimed, and a layer still
+holding it then draws nothing. The overlay sits at alpha 0 between animations,
+so nothing composites those surfaces for minutes at a time.
+
+`increment_use_count` on every cached capture prevents it. This one is reasoned
+rather than reproduced: purging happens on the system's schedule and did not
+reproduce inside a test session.
+
 ### Recapturing the destination once it is on screen
 
 The window being switched INTO cannot be recaptured when a movement starts,

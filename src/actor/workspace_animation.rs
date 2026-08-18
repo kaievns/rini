@@ -274,6 +274,10 @@ pub struct WorkspaceAnimation {
     /// The desktop as ScreenCaptureKit rendered it, which is the only source that reliably includes
     /// the wallpaper. Held here rather than re-requested per animation because it costs about 40ms.
     desktop: Option<WindowSnapshot>,
+    /// Whatever the backdrop is currently showing. The per-window path reuses it rather than capturing:
+    /// a desktop composite measures 13ms to 36ms, which is a frame or two of lag on every window focus
+    /// change, while re-applying a held picture is a pointer assignment.
+    backdrop_shown: Option<WindowSnapshot>,
     /// Used to ask the reactor to place real windows once they are hidden behind the overlay.
     reactor_tx: Option<actor::Sender<crate::actor::reactor::Event>>,
 }
@@ -304,6 +308,7 @@ impl WorkspaceAnimation {
             last_animated: Vec::new(),
             has_backdrop: false,
             desktop: None,
+            backdrop_shown: None,
             reactor_tx: None,
         }
     }
@@ -875,7 +880,17 @@ impl WorkspaceAnimation {
             }
         }
 
+        // The same backdrop and bar as a canvas movement, or the overlay shows a bare black window
+        // behind the tiles. Reused rather than recaptured: this path runs on every window focus change,
+        // and a desktop composite costs a frame or two.
+        let backdrop = self.backdrop_shown.clone().or_else(|| self.capture_backdrop());
+        if backdrop.is_some() {
+            self.backdrop_shown = backdrop.clone();
+        }
+        let strip = self.bar_strip();
         let Some(overlay) = self.ensure_overlay() else { return };
+        overlay.set_backdrop(backdrop.as_ref());
+        overlay.set_foreground(backdrop.as_ref(), strip);
         overlay.set_tiles(&tiles);
         overlay.draw_frame(&tiles, 0.0);
         // Shown at once, holding the windows exactly where they already are, so the real windows can
@@ -1055,6 +1070,10 @@ impl WorkspaceAnimation {
             self.request_frames(final_frames);
             return;
         };
+        if backdrop.is_some() {
+            self.backdrop_shown = backdrop.clone();
+        }
+        let Some(overlay) = self.overlay.as_mut() else { return };
         overlay.set_backdrop(backdrop.as_ref());
         // The same picture as the backdrop, clipped to the bar. Drawing the bar from a separate capture
         // put a second, misaligned copy on screen.
