@@ -18,7 +18,7 @@ use objc2_core_foundation::{CFRetained, CGSize};
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::CVPixelBufferGetIOSurface;
 use objc2_foundation::{NSArray, NSError};
-use objc2_io_surface::{IOSurfaceLockOptions, IOSurfaceRef};
+use objc2_io_surface::IOSurfaceRef;
 use objc2_screen_capture_kit::{
     SCCaptureResolutionType, SCContentFilter, SCScreenshotManager, SCShareableContent,
     SCStreamConfiguration, SCWindow,
@@ -38,6 +38,34 @@ const MAX_CONCURRENT: usize = 4;
 /// a genuinely painted edge is opaque; anything at or below this is untouched buffer.
 const PAINTED_ALPHA: u8 = 8;
 
+/// Do both far edges of a capture have painted pixels?
+///
+/// The rule, separated from the surface so it can be tested without one. Both edges must be reached:
+/// content along one does not rule out underfill in the other direction. Several samples per edge,
+/// since a rounded corner can leave any single point clear.
+fn edges_are_painted(width: usize, height: usize, alpha_at: impl Fn(usize, usize) -> u8) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+    /// How far in from an edge to sample, to clear a rounded corner.
+    const INSET: usize = 4;
+    let right = width.saturating_sub(1 + INSET);
+    let bottom = height.saturating_sub(1 + INSET);
+    let mut reaches_right = false;
+    let mut reaches_bottom = false;
+    for i in 1..8 {
+        let y = height * i / 8;
+        if y < height && alpha_at(right, y) > PAINTED_ALPHA {
+            reaches_right = true;
+        }
+        let x = width * i / 8;
+        if x < width && alpha_at(x, bottom) > PAINTED_ALPHA {
+            reaches_bottom = true;
+        }
+    }
+    reaches_right && reaches_bottom
+}
+
 /// Does a capture's content actually reach the far edge of the buffer it was given?
 ///
 /// A buffer is always the size that was asked for, so only its pixels can reveal an underfilled
@@ -45,52 +73,37 @@ const PAINTED_ALPHA: u8 = 8;
 ///
 /// See "Nominal capture resolution paints a quarter of the buffer" in
 /// `docs/capture-overlay-research.md`.
-fn content_reaches_edges(surface: &IOSurfaceRef) -> Option<bool> {
-    let width = unsafe { surface.width() };
-    let height = unsafe { surface.height() };
+fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<bool> {
+    use objc2_core_video::{
+        CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
+        CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags,
+        CVPixelBufferUnlockBaseAddress,
+    };
+
+    let width = CVPixelBufferGetWidth(buffer);
+    let height = CVPixelBufferGetHeight(buffer);
     if width == 0 || height == 0 {
         return None;
     }
-    // SAFETY: read-only lock, released before returning, and the base address is only read inside it.
-    let locked = unsafe { surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
-    if locked != 0 {
+    // Read-only, and unlocked before returning. Deliberately the pixel buffer rather than the
+    // IOSurface: taking an IOSurface lock from a test thread raced SkyLight's lazy initialisation and
+    // aborted the suite in about 5% of runs.
+    if unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly) } != 0 {
         return None;
     }
-    let stride = surface.bytes_per_row();
-    let base = surface.base_address().as_ptr() as *const u8;
-    if stride < width * 4 {
-        // SAFETY: matching unlock for the successful lock above.
-        unsafe { surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
-        return None;
-    }
-
-    /// How far in from an edge to sample. Far enough past a rounded corner to be inside real content.
-    const INSET: usize = 4;
-    let sample = |x: usize, y: usize| -> u8 {
-        // SAFETY: x and y are bounded by the surface's own dimensions and stride, checked above, and
-        // the surface is locked for reading for the duration of this closure.
-        unsafe { *base.add(y * stride + x * 4 + 3) }
+    let stride = CVPixelBufferGetBytesPerRow(buffer);
+    let base = unsafe { CVPixelBufferGetBaseAddress(buffer) } as *const u8;
+    let painted = if base.is_null() || stride < width * 4 {
+        None
+    } else {
+        Some(edges_are_painted(width, height, |x, y| {
+            // SAFETY: bounded by the buffer's own dimensions and stride, both checked above, while the
+            // buffer is locked for reading.
+            unsafe { *base.add(y * stride + x * 4 + 3) }
+        }))
     };
-    let right = width.saturating_sub(1 + INSET);
-    let bottom = height.saturating_sub(1 + INSET);
-    // Both edges, not either: content along one edge does not rule out underfill in the other
-    // direction. Several samples per edge, since a rounded corner can leave any single point clear.
-    let mut reaches_right = false;
-    let mut reaches_bottom = false;
-    for i in 1..8 {
-        let y = height * i / 8;
-        if y < height && sample(right, y) > PAINTED_ALPHA {
-            reaches_right = true;
-        }
-        let x = width * i / 8;
-        if x < width && sample(x, bottom) > PAINTED_ALPHA {
-            reaches_bottom = true;
-        }
-    }
-    let painted = reaches_right && reaches_bottom;
-    // SAFETY: matching unlock for the successful lock above.
-    unsafe { surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
-    Some(painted)
+    unsafe { CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly) };
+    painted
 }
 
 /// A window to capture, and the size its pixels should represent.
@@ -405,10 +418,11 @@ impl SnapshotService {
             let scale = self.scale();
             let completion =
                 RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
-                    let surface = NonNull::new(sample)
-                        .and_then(|sample| unsafe { sample.as_ref().image_buffer() })
-                        .and_then(|buffer| CVPixelBufferGetIOSurface(Some(&buffer)));
-                    service.finish(target, revision, scale, surface);
+                    let buffer = NonNull::new(sample)
+                        .and_then(|sample| unsafe { sample.as_ref().image_buffer() });
+                    let filled = buffer.as_ref().and_then(|b| content_reaches_edges(b));
+                    let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
+                    service.finish(target, revision, scale, surface, filled);
                 });
             unsafe {
                 SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
@@ -426,6 +440,7 @@ impl SnapshotService {
         revision: u64,
         scale: f64,
         surface: Option<CFRetained<IOSurfaceRef>>,
+        filled: Option<bool>,
     ) {
         let landed = {
             let mut state = self.state.lock().unwrap();
@@ -444,7 +459,7 @@ impl SnapshotService {
             } else if let Some(surface) = surface {
                 // The requested size is guaranteed of the BUFFER only, not of what was painted into
                 // it, hence the check.
-                if content_reaches_edges(&surface) == Some(false) {
+                if filled == Some(false) {
                     warn!(
                         wsid = target.server_id.as_u32(),
                         pid = target.window.pid,
@@ -568,7 +583,7 @@ mod tests {
             state.ready.insert(
                 wid(7),
                 WindowSnapshot {
-                    image: SnapshotImage::Surface(tiny_surface()),
+                    image: SnapshotImage::Bitmap(tiny_bitmap()),
                     coverage: Coverage { covered: (859.0, 1081.0), window: (859.0, 1081.0) },
                     source: SnapshotSource::ScreenCaptureKit,
                 },
@@ -588,94 +603,95 @@ mod tests {
             SnapshotService::new(2.0, Arc::new(move || {
                 counter.fetch_add(1, Ordering::Relaxed);
             }));
-        service.finish(target(1), service.revision.load(Ordering::Acquire), 2.0, None);
+        service.finish(target(1), service.revision.load(Ordering::Acquire), 2.0, None, None);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 
-    /// Builds a real IOSurface and paints its top-left `fill_w` x `fill_h` pixels opaque, leaving the
-    /// rest untouched. That is exactly the shape of the regression: a buffer of the right size holding
-    /// the window in one corner.
-    fn surface_painted(width: usize, height: usize, fill_w: usize, fill_h: usize) -> CFRetained<IOSurfaceRef> {
-        let surface = sized_surface(width, height);
-        // SAFETY: read-write lock released below, and writes stay inside the surface's own bounds.
-        let locked = unsafe { surface.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()) };
-        assert_eq!(locked, 0, "could not lock the test surface");
-        let stride = surface.bytes_per_row();
-        let base = surface.base_address().as_ptr() as *mut u8;
-        for y in 0..height {
-            for x in 0..width {
-                let painted = x < fill_w && y < fill_h;
-                // SAFETY: bounded by the surface's own dimensions and its stride.
-                unsafe { *base.add(y * stride + x * 4 + 3) = if painted { 255 } else { 0 } };
-            }
-        }
-        // SAFETY: matching unlock.
-        unsafe { surface.unlock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()) };
-        surface
+    /// Alpha reader over a plain buffer whose top-left `fill_w` x `fill_h` pixels are painted. That is
+    /// the shape of the regression: a buffer of the right size holding the window in one corner.
+    ///
+    /// Deliberately not a real IOSurface. Creating and locking surfaces from parallel test threads
+    /// raced SkyLight's lazy initialisation and aborted the whole suite in about 8% of runs with
+    /// "Cannot form weak reference to instance of class SLSWindowManagementFallbackBridge".
+    fn painted(fill_w: usize, fill_h: usize) -> impl Fn(usize, usize) -> u8 {
+        move |x, y| if x < fill_w && y < fill_h { 255 } else { 0 }
     }
 
     /// The regression: `captureResolution` set to nominal renders the window at its POINT size into a
-    /// buffer sized in PIXELS, so on a 2x display three quarters of the buffer stays transparent. The
-    /// buffer's own dimensions look correct, so only the pixels can catch it.
+    /// buffer sized in PIXELS, so three quarters of the buffer stays transparent. The buffer's own
+    /// dimensions look correct, so only the pixels can catch it.
     #[test]
     fn a_capture_filling_only_a_corner_of_its_buffer_is_detected() {
-        let surface = surface_painted(64, 64, 32, 32);
-        assert_eq!(content_reaches_edges(&surface), Some(false));
+        assert!(!edges_are_painted(64, 64, painted(32, 32)));
     }
 
     #[test]
     fn a_capture_filling_its_buffer_passes() {
-        let surface = surface_painted(64, 64, 64, 64);
-        assert_eq!(content_reaches_edges(&surface), Some(true));
+        assert!(edges_are_painted(64, 64, painted(64, 64)));
     }
 
     #[test]
     fn a_capture_a_few_pixels_short_still_passes() {
-        // Rounded corners and rounding leave the very edge transparent on a correct capture, so the
-        // check samples inside the edge. Being strict here would reject every real window.
-        let surface = surface_painted(64, 64, 62, 62);
-        assert_eq!(content_reaches_edges(&surface), Some(true));
+        // Rounded corners leave the very edge clear on a correct capture, so sampling is inset. Being
+        // strict here would reject every real window.
+        assert!(edges_are_painted(64, 64, painted(62, 62)));
     }
 
     #[test]
     fn a_capture_short_in_only_one_direction_is_detected() {
-        // Width right, height half: what a buffer sized in pixels but rendered in points looks like if
-        // only one axis were wrong. Checking a single corner would miss half of these.
-        assert_eq!(content_reaches_edges(&surface_painted(64, 64, 64, 32)), Some(false));
-        assert_eq!(content_reaches_edges(&surface_painted(64, 64, 32, 64)), Some(false));
+        // Checking either edge rather than both missed these, which a test caught.
+        assert!(!edges_are_painted(64, 64, painted(64, 32)));
+        assert!(!edges_are_painted(64, 64, painted(32, 64)));
     }
 
     #[test]
     fn a_fully_transparent_capture_is_detected() {
-        assert_eq!(content_reaches_edges(&surface_painted(64, 64, 0, 0)), Some(false));
+        assert!(!edges_are_painted(64, 64, painted(0, 0)));
     }
 
-    /// A real 4x4 IOSurface, which is what the production path actually stores. No test here
-    /// inspects the pixels; the surface only has to exist so a `WindowSnapshot` can be built.
-    fn tiny_surface() -> CFRetained<IOSurfaceRef> {
-        sized_surface(4, 4)
+    #[test]
+    fn a_zero_sized_buffer_is_not_painted() {
+        assert!(!edges_are_painted(0, 0, painted(0, 0)));
     }
 
-    fn sized_surface(width: usize, height: usize) -> CFRetained<IOSurfaceRef> {
-        use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
+    /// A 1x1 CPU bitmap, which is all the drain test needs: something a `WindowSnapshot` can hold.
+    ///
+    /// Not an IOSurface. Creating one from a test thread raced SkyLight's lazy initialisation and
+    /// aborted the whole suite in roughly 3% of runs with "Cannot form weak reference to instance of
+    /// class SLSWindowManagementFallbackBridge". A bitmap touches no window server state.
+    fn tiny_bitmap() -> CFRetained<objc2_core_graphics::CGImage> {
+        use objc2_core_graphics::{
+            CGBitmapInfo, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
+        };
 
-        let pairs: [(&str, i64); 4] = [
-            ("IOSurfaceWidth", width as i64),
-            ("IOSurfaceHeight", height as i64),
-            ("IOSurfaceBytesPerElement", 4),
-            ("IOSurfacePixelFormat", i64::from(u32::from_be_bytes(*b"BGRA"))),
-        ];
-        let keys: Vec<CFRetained<CFString>> =
-            pairs.iter().map(|(key, _)| CFString::from_str(key)).collect();
-        let values: Vec<CFRetained<CFNumber>> =
-            pairs.iter().map(|(_, value)| CFNumber::new_i64(*value)).collect();
-        let key_refs: Vec<&CFString> = keys.iter().map(|key| &**key).collect();
-        let value_refs: Vec<&CFNumber> = values.iter().map(|value| &**value).collect();
-        let properties = CFDictionary::from_slices(&key_refs, &value_refs);
-        // IOSurfaceRef::new takes an untyped CFDictionary, so drop the key and value types.
-        // SAFETY: the dictionary holds the documented IOSurface creation keys, and casting only
-        // erases the generic parameters of a type that is already a CFDictionary.
-        let untyped: CFRetained<CFDictionary> = unsafe { CFRetained::cast_unchecked(properties) };
-        unsafe { IOSurfaceRef::new(&untyped) }.expect("IOSurface creation failed")
+        static PIXEL: [u8; 4] = [0, 0, 0, 255];
+        // SAFETY: the data outlives the provider, being a static, so no release callback is needed.
+        let provider = unsafe {
+            CGDataProvider::with_data(
+                std::ptr::null_mut(),
+                PIXEL.as_ptr() as *const std::ffi::c_void,
+                PIXEL.len(),
+                None,
+            )
+        }
+        .expect("data provider");
+        let space = CGColorSpace::new_device_rgb().expect("colour space");
+        // SAFETY: 1x1 BGRA, and the provider holds exactly those four bytes.
+        unsafe {
+            CGImage::new(
+                1,
+                1,
+                8,
+                32,
+                4,
+                Some(&space),
+                CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0),
+                Some(&provider),
+                std::ptr::null(),
+                false,
+                objc2_core_graphics::CGColorRenderingIntent::RenderingIntentDefault,
+            )
+        }
+        .expect("image")
     }
 }

@@ -805,14 +805,36 @@ the 90% is not in the window's own pixels at all. The server samples what is
 behind the window and blurs it at composite time, and no per-window capture on
 any API can contain that.
 
-There is a faithful fix for it, but not one that works here: an
-`NSVisualEffectView` in `.behindWindow` mode underneath the tile, masked to the
-regions where the captured alpha is fractional. That mask cannot be derived in
-this case, because the capture is fully opaque exactly where the blur belongs.
-So the options are to accept flat translucency during a flight, which is
-invisible over a calm background, or to reconstruct the material from knowledge
-of which one the app uses. yabai accepts it on the bet that nobody notices in
-200ms, and that is a reasonable bet.
+Measured on Outlook's vibrancy sidebar, sampling the same patches through all
+three routes with the window on screen and unoccluded:
+
+```
+patch        SkyLight      ScreenCaptureKit   the screen
+50% x 80%    52, 40, 33    52, 40, 33         52, 40, 33     opaque, identical
+25% x 55%    84, 84, 83    84, 84, 83         55, 59, 53     vibrancy
+75% x 35%    79, 70,141    79, 70,141         79, 70,141     opaque, identical
+50% x 95%    82, 82, 81    82, 82, 81         62, 56, 52     vibrancy
+90% x 65%    33, 33, 33    33, 33, 33         33, 33, 33     opaque, identical
+```
+
+The two per-window routes agree with each other EXACTLY and both differ from the
+screen only in the vibrancy regions, where they return a flat neutral grey about
+25 units too bright and missing the colour cast of the wallpaper behind. Opaque
+regions are pixel-identical everywhere. So no choice of capture API changes
+this. The same comparison on a terminal over a dark background differs by 3 to 4
+units, which is why a sidebar shows this and a terminal barely does.
+
+Masking an `NSVisualEffectView` to the fractional-alpha regions is the textbook
+fix and does not work here: the capture is fully opaque exactly where the blur
+belongs, so there is no mask to derive.
+
+What DOES contain the blur is a display capture cropped to the window, which is
+the third column above, and for an unoccluded on-screen window it is pixel-exact
+including the shadow. It cannot run at switch time, being a ScreenCaptureKit
+call, but it would fit the background refresh, at the cost of baking whatever
+was behind the window into the picture. yabai accepts flat translucency on the
+bet that nobody notices in 200ms, which over a calm background is the right
+call.
 
 ### Shadows are never in the surface
 
@@ -864,3 +886,25 @@ measured above 800MB resident for a single animation, peaking near 856MB.
 Reusing one context did not help, which is what proved the cost was
 rasterisation rather than allocation. A layer-backed `NSWindow` composites on
 the GPU for about 48MB.
+
+## The test suite runs single-threaded on purpose
+
+Several tests reach macOS frameworks that initialise lazily, and initialising
+them from more than one thread at once aborts the whole process:
+
+```
+objc[75992]: Cannot form weak reference to instance of class
+SLSWindowManagementFallbackBridge. It is possible that this object was
+over-released, or is in the process of deallocation.
+```
+
+Measured rates, 40 parallel runs each: none at all before the overlay work, and
+a few percent after it. Narrowing it was misleading, because skipping a test
+changes timing as well as coverage, so two different "confirmed" causes both
+turned out to be sampling noise. Single-threaded runs never reproduced it across
+88 runs.
+
+`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it. The suite goes
+from about 0.4s to 1.25s, which is not a trade worth thinking about. The tests
+that build capture fixtures also avoid `IOSurface` entirely for the same reason
+and use a CPU bitmap instead.

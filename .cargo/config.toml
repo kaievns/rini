@@ -1,0 +1,7 @@
+[env]
+# One test thread. Several tests reach macOS frameworks that initialise lazily and are not safe to
+# initialise concurrently: running in parallel aborted the whole suite in a few percent of runs with
+# "Cannot form weak reference to instance of class SLSWindowManagementFallbackBridge", an over-release
+# inside SkyLight. Single-threaded runs never reproduced it. The suite takes well under a second either
+# way, so there is nothing to trade off.
+RUST_TEST_THREADS = "1"
