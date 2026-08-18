@@ -845,6 +845,26 @@ was behind the window into the picture. yabai accepts flat translucency on the
 bet that nobody notices in 200ms, which over a calm background is the right
 call.
 
+### Plain transparency IS capturable, so the blur can be traded away
+
+Measured on two Ghostty windows, one launched with `--background-blur=false` and
+one with the configured `background-blur = macos-glass-regular`, both at
+`background-opacity = 0.9`:
+
+```
+blur off   centre pixel alpha 230   99.16% of pixels partial
+blur on    centre pixel alpha 255   99.98% of pixels opaque
+```
+
+230 is 0.9 of 255. With the material disabled the app draws its background with
+real per-pixel alpha in its own surface, which every capture route preserves,
+and a tile drawn over the desktop backdrop then reproduces the real appearance.
+
+So the blur discrepancy is a choice rather than a wall: an app configured for
+plain transparency animates correctly, and one configured for a system material
+cannot. Worth knowing before building anything elaborate to approximate the
+material.
+
 ### Shadows are never in the surface
 
 On any API. The window server generates a shadow at composite time from the
@@ -917,6 +937,27 @@ turned out to be sampling noise. Single-threaded runs never reproduced it across
 from about 0.4s to 1.25s, which is not a trade worth thinking about. The tests
 that build capture fixtures also avoid `IOSurface` entirely for the same reason
 and use a CPU bitmap instead.
+
+### A clipped destination needs ScreenCaptureKit, not SkyLight
+
+The recapture below cannot use SkyLight when the destination is mid-slide,
+because SkyLight reads the framebuffer and returns only what is visible.
+Measured while focusing an adjacent window on a strip:
+
+```
+destination recapture rejected, idx=54, covered="40x1081", wanted="1147x1081"
+```
+
+40pt of a 1147pt window, correctly rejected as a sliver. A workspace switch does
+not hit this, because the destination workspace's windows are already at their
+final positions and simply hidden, which is why the vertical case worked first
+time and focusing an adjacent window still arrived unfocused.
+
+So a clipped destination is routed to ScreenCaptureKit instead, which returns
+the window's own surface at full size whatever its visibility. That path is
+already asynchronous, and a landed capture is now applied straight to the tile
+if an animation is still running, which is how it reaches the screen before the
+handover.
 
 ### Recapturing the destination once it is on screen
 

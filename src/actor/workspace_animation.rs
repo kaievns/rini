@@ -123,6 +123,11 @@ const MAX_FRESH_CAPTURES: usize = 3;
 /// because the destination workspace's windows are only shown once the reactor has acted on the switch.
 const REFRESH_DESTINATION_AT: f64 = 0.12;
 
+/// A second attempt, later in the flight. An app repaints as focused on its own schedule, and the
+/// first attempt can land before it has: the tile then still slides in dimmed. Still before the real
+/// windows are placed, so the corrected picture is on screen before the handover.
+const REFRESH_DESTINATION_AGAIN_AT: f64 = 0.5;
+
 /// How many windows to recapture mid-flight. One: this exists for the window being switched into, and
 /// each capture costs a frame.
 const MAX_DESTINATION_CAPTURES: usize = 1;
@@ -134,11 +139,13 @@ const MAX_DESTINATION_CAPTURES: usize = 1;
 fn refresh_order(
     candidates: &[(WindowId, u32)],
     depths: &HashMap<u32, usize>,
-    on_screen: &[u32],
+    on_screen: Option<&[u32]>,
     max: usize,
 ) -> Vec<WindowId> {
-    let mut ordered: Vec<&(WindowId, u32)> =
-        candidates.iter().filter(|(_, wsid)| on_screen.contains(wsid)).collect();
+    let mut ordered: Vec<&(WindowId, u32)> = candidates
+        .iter()
+        .filter(|(_, wsid)| on_screen.is_none_or(|ids| ids.contains(wsid)))
+        .collect();
     ordered.sort_by_key(|(_, wsid)| depths.get(wsid).copied().unwrap_or(usize::MAX));
     ordered.into_iter().take(max).map(|(window, _)| *window).collect()
 }
@@ -167,12 +174,12 @@ struct RunningCanvas {
     /// The windows on the canvas, with their server ids and drawn sizes, so the one being switched into
     /// can be found again mid-flight.
     tiles: Vec<(WindowId, WindowServerId, CGSize)>,
-    /// Whether the window being switched INTO has been recaptured since it came on screen.
+    /// How many times the window being switched into has been recaptured.
     ///
     /// It cannot be recaptured when the movement starts, because the destination workspace's windows are
     /// not on screen yet, so its picture is whatever it last had. If that was taken while the app was
     /// unfocused, the tile slides in dimmed and snaps to focused at the handover.
-    destination_refreshed: bool,
+    destination_refreshed: u8,
     _clock: Option<RepeatingTimer>,
 }
 
@@ -201,6 +208,8 @@ struct RunningAnimation {
     /// `None` while still collecting windows. The animation is on screen but not yet moving.
     started: Option<Instant>,
     duration: Duration,
+    /// How many times the window being focused has been recaptured. See `refresh_destination_among`.
+    destination_refreshed: u8,
     /// Dropped when the animation ends, which invalidates the timer and stops the wakeups.
     _clock: Option<RepeatingTimer>,
 }
@@ -377,7 +386,15 @@ impl WorkspaceAnimation {
                 usable = snapshot.is_usable(),
                 "background snapshot landed"
             );
-            self.cache.insert(window, snapshot);
+            let running = self.canvas.is_some() || self.running.is_some();
+            self.cache.insert(window, snapshot.clone());
+            // Straight onto the tile when an animation is mid-flight. That is how a ScreenCaptureKit
+            // capture requested for a clipped destination reaches the screen before the handover.
+            if running && snapshot.is_usable() {
+                if let Some(overlay) = self.overlay.as_mut() {
+                    overlay.set_tile_picture(window, &snapshot);
+                }
+            }
         }
     }
 
@@ -533,24 +550,39 @@ impl WorkspaceAnimation {
     /// mid-flight. That is the trade: one hitch against a step change in brightness on the window being
     /// looked at.
     fn refresh_destination(&mut self) {
-        let Some((display, scale)) = self.display else { return };
         let Some(canvas) = self.canvas.as_ref() else { return };
+        let tiles = canvas.tiles.clone();
+        self.refresh_destination_among(&tiles);
+    }
+
+    /// Recaptures the frontmost of `tiles`, whichever drawing path is running.
+    ///
+    /// Both paths need this. A workspace switch animates the canvas, but focusing an adjacent window on
+    /// a strip goes through the per-window path, and that is the case where the flicker is most obvious
+    /// because both windows are the same app side by side.
+    fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
+        let Some((_, scale)) = self.display else { return };
         let candidates: Vec<(WindowId, u32)> =
-            canvas.tiles.iter().map(|(w, s, _)| (*w, s.as_u32())).collect();
+            tiles.iter().map(|(w, s, _)| (*w, s.as_u32())).collect();
         if candidates.is_empty() {
             return;
         }
+        // No visibility filter here, unlike the pre-flight refresh. During a slide the destination is
+        // mid-scroll and only partly on screen, so requiring it to be fully visible skipped it entirely,
+        // which is why switching between adjacent windows still arrived unfocused. A clipped capture is
+        // rejected below anyway; the cost of trying is one background thread.
         let depths = crate::sys::window_server::front_to_back_depths();
-        let on_screen: Vec<u32> = crate::sys::window_server::visible_windows_on_display(display)
-            .into_iter()
-            .filter(|(_, frame)| on_screen_fraction(*frame, display) >= FRESH_CAPTURE_MIN_ON_SCREEN)
-            .map(|(id, _)| id.as_u32())
-            .collect();
-        let wanted = refresh_order(&candidates, &depths, &on_screen, MAX_DESTINATION_CAPTURES);
+        let wanted = refresh_order(&candidates, &depths, None, MAX_DESTINATION_CAPTURES);
+        debug!(
+            candidates = candidates.len(),
+            wanted = wanted.len(),
+            first = wanted.first().map(|w| w.idx.get()).unwrap_or(0),
+            "destination recapture considering"
+        );
 
         for window in wanted {
             let Some((_, server_id, size)) =
-                self.canvas.as_ref().and_then(|c| c.tiles.iter().find(|(w, _, _)| *w == window).copied())
+                tiles.iter().find(|(w, _, _)| *w == window).copied()
             else {
                 continue;
             };
@@ -569,6 +601,15 @@ impl WorkspaceAnimation {
                         return;
                     };
                     if !snapshot.is_usable() || !snapshot.fits(size) {
+                        debug!(
+                            idx = window.idx.get(),
+                            covered = format!(
+                                "{:.0}x{:.0}",
+                                snapshot.coverage.covered.0, snapshot.coverage.covered.1
+                            ),
+                            wanted = format!("{:.0}x{:.0}", size.width, size.height),
+                            "destination recapture rejected"
+                        );
                         return;
                     }
                     debug!(
@@ -585,8 +626,8 @@ impl WorkspaceAnimation {
     /// Takes a mid-flight recapture and swaps it into the tile that is already on screen.
     fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot) {
         self.cache.insert(window, snapshot.clone());
-        // Only worth drawing while the movement that asked for it is still running.
-        if self.canvas.is_none() {
+        // Only worth drawing while the animation that asked for it is still running.
+        if self.canvas.is_none() && self.running.is_none() {
             return;
         }
         if let Some(overlay) = self.overlay.as_mut() {
@@ -857,6 +898,7 @@ impl WorkspaceAnimation {
             frames_applied: false,
             started: None,
             duration,
+            destination_refreshed: 0,
             _clock: clock,
         });
 
@@ -1041,7 +1083,7 @@ impl WorkspaceAnimation {
                 .iter()
                 .map(|tile| (tile.window, WindowServerId::from(tile.window), tile.frame.size))
                 .collect(),
-            destination_refreshed: false,
+            destination_refreshed: 0,
             _clock: clock,
         });
 
@@ -1065,9 +1107,13 @@ impl WorkspaceAnimation {
             if place_now {
                 canvas.frames_applied = true;
             }
-            let refresh_now = !canvas.destination_refreshed && progress >= REFRESH_DESTINATION_AT;
+            let refresh_now = match canvas.destination_refreshed {
+                0 => progress >= REFRESH_DESTINATION_AT,
+                1 => progress >= REFRESH_DESTINATION_AGAIN_AT,
+                _ => false,
+            };
             if refresh_now {
-                canvas.destination_refreshed = true;
+                canvas.destination_refreshed += 1;
             }
             (progress >= 1.0, place_now, refresh_now)
         };
@@ -1133,7 +1179,7 @@ impl WorkspaceAnimation {
     }
 
     fn step(&mut self) {
-        let (done, place_now) = {
+        let (done, place_now, refresh_now) = {
             let Self { overlay, running, .. } = self;
             let Some(running) = running.as_mut() else { return };
             let progress = running.progress();
@@ -1144,8 +1190,30 @@ impl WorkspaceAnimation {
             if place_now {
                 running.frames_applied = true;
             }
-            (running.is_done(), place_now)
+            let refresh_now = match running.destination_refreshed {
+                0 => progress >= REFRESH_DESTINATION_AT,
+                1 => progress >= REFRESH_DESTINATION_AGAIN_AT,
+                _ => false,
+            };
+            if refresh_now {
+                running.destination_refreshed += 1;
+            }
+            (running.is_done(), place_now, refresh_now)
         };
+        if refresh_now {
+            let tiles: Vec<(WindowId, WindowServerId, CGSize)> = self
+                .running
+                .as_ref()
+                .map(|running| {
+                    running
+                        .tiles
+                        .iter()
+                        .map(|tile| (tile.window, WindowServerId::from(tile.window), tile.to.size))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.refresh_destination_among(&tiles);
+        }
         if place_now {
             let frames = self
                 .running
@@ -1425,7 +1493,7 @@ mod tests {
             let order = refresh_order(
                 &candidates,
                 &depths(&[(10, 5), (20, 0), (30, 2)]),
-                &[10, 20, 30],
+                Some(&[10, 20, 30]),
                 3,
             );
             assert_eq!(order, vec![wid(20), wid(30), wid(10)]);
@@ -1436,7 +1504,7 @@ mod tests {
             // Each capture costs a frame, so the cap is what keeps the hitch bounded.
             let candidates = [(wid(10), 10), (wid(20), 20), (wid(30), 30)];
             let order =
-                refresh_order(&candidates, &depths(&[(10, 2), (20, 0), (30, 1)]), &[10, 20, 30], 1);
+                refresh_order(&candidates, &depths(&[(10, 2), (20, 0), (30, 1)]), Some(&[10, 20, 30]), 1);
             assert_eq!(order, vec![wid(20)]);
         }
 
@@ -1445,21 +1513,30 @@ mod tests {
             // SkyLight reads the framebuffer, so capturing one of these would return a sliver and be
             // rejected anyway, after paying for it.
             let candidates = [(wid(10), 10), (wid(20), 20)];
-            let order = refresh_order(&candidates, &depths(&[(10, 0), (20, 1)]), &[20], 2);
+            let order = refresh_order(&candidates, &depths(&[(10, 0), (20, 1)]), Some(&[20]), 2);
             assert_eq!(order, vec![wid(20)]);
+        }
+
+        /// The destination path passes None, because during a horizontal slide the window being switched
+        /// into is mid-scroll and would fail a visibility test that it should not be subject to.
+        #[test]
+        fn no_filter_considers_everything() {
+            let candidates = [(wid(10), 10), (wid(20), 20)];
+            let order = refresh_order(&candidates, &depths(&[(10, 1), (20, 0)]), None, 2);
+            assert_eq!(order, vec![wid(20), wid(10)]);
         }
 
         #[test]
         fn is_empty_when_nothing_is_on_screen() {
             let candidates = [(wid(10), 10)];
-            assert!(refresh_order(&candidates, &depths(&[(10, 0)]), &[], 2).is_empty());
+            assert!(refresh_order(&candidates, &depths(&[(10, 0)]), Some(&[]), 2).is_empty());
         }
 
         #[test]
         fn a_window_with_no_known_depth_sorts_last_rather_than_first() {
             // Unknown depth must not outrank a window the window server actually reported as frontmost.
             let candidates = [(wid(10), 10), (wid(20), 20)];
-            let order = refresh_order(&candidates, &depths(&[(20, 3)]), &[10, 20], 1);
+            let order = refresh_order(&candidates, &depths(&[(20, 3)]), Some(&[10, 20]), 1);
             assert_eq!(order, vec![wid(20)]);
         }
     }
@@ -1509,6 +1586,7 @@ mod tests {
             frames_applied: false,
             started: Some(Instant::now()),
             duration: Duration::ZERO,
+            destination_refreshed: 0,
             _clock: None,
         };
         assert_eq!(running.progress(), 1.0);
@@ -1523,6 +1601,7 @@ mod tests {
             frames_applied: false,
             started: Some(Instant::now()),
             duration: Duration::from_millis(180),
+            destination_refreshed: 0,
             _clock: None,
         };
         assert!(running.progress() < 0.2, "just started");
@@ -1533,6 +1612,7 @@ mod tests {
             frames_applied: false,
             started: Some(Instant::now() - Duration::from_secs(5)),
             duration: Duration::from_millis(180),
+            destination_refreshed: 0,
             _clock: None,
         };
         // Clamped rather than allowed past 1.0, since the easing would otherwise overshoot the
