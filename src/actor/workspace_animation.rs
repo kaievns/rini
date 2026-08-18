@@ -883,11 +883,13 @@ impl WorkspaceAnimation {
         // The same backdrop and bar as a canvas movement, or the overlay shows a bare black window
         // behind the tiles. Reused rather than recaptured: this path runs on every window focus change,
         // and a desktop composite costs a frame or two.
+        let held = self.backdrop_shown.is_some();
         let backdrop = self.backdrop_shown.clone().or_else(|| self.capture_backdrop());
         if backdrop.is_some() {
             self.backdrop_shown = backdrop.clone();
         }
         let strip = self.bar_strip();
+        Self::log_dressing("per-window", backdrop.as_ref(), strip, held);
         let Some(overlay) = self.ensure_overlay() else { return };
         overlay.set_backdrop(backdrop.as_ref());
         overlay.set_foreground(backdrop.as_ref(), strip);
@@ -1070,9 +1072,11 @@ impl WorkspaceAnimation {
             self.request_frames(final_frames);
             return;
         };
+        let held = self.backdrop_shown.is_some();
         if backdrop.is_some() {
             self.backdrop_shown = backdrop.clone();
         }
+        Self::log_dressing("canvas", backdrop.as_ref(), strip, held);
         let Some(overlay) = self.overlay.as_mut() else { return };
         overlay.set_backdrop(backdrop.as_ref());
         // The same picture as the backdrop, clipped to the bar. Drawing the bar from a separate capture
@@ -1342,6 +1346,26 @@ impl WorkspaceAnimation {
                 None
             }
         }
+    }
+
+    /// Records what the overlay was dressed with. Kept because the backdrop going black is only ever
+    /// diagnosable after the fact: it depends on which capture route served the desktop and what size it
+    /// covered, neither of which can be recovered from a screenshot.
+    fn log_dressing(path: &str, backdrop: Option<&WindowSnapshot>, strip: Option<CGRect>, held: bool) {
+        debug!(
+            path,
+            held,
+            backdrop = backdrop
+                .map(|b| format!(
+                    "{:.0}x{:.0} {:?}",
+                    b.coverage.covered.0, b.coverage.covered.1, b.source
+                ))
+                .unwrap_or_else(|| "NONE".to_string()),
+            strip = strip
+                .map(|r| format!("{:.0},{:.0} {:.0}x{:.0}", r.origin.x, r.origin.y, r.size.width, r.size.height))
+                .unwrap_or_else(|| "none".to_string()),
+            "overlay dressed"
+        );
     }
 
     /// Where the bar sits, in the overlay's own coordinates, or `None` when there is no bar.
