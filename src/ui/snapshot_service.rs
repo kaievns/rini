@@ -1,26 +1,10 @@
 //! Background window capture through ScreenCaptureKit, for windows SkyLight cannot serve.
 //!
-//! # Why this exists
+//! Fills a cache rather than capturing on demand: a capture is far too slow to run at switch time.
+//! Nothing polls, so an idle rini costs nothing. Results are `IOSurface` rather than bitmaps to keep a
+//! warm cache off the heap.
 //!
-//! `SLSHWCaptureWindowList` is cheap but reads the FRAMEBUFFER, so it only ever returns the visible
-//! portion of a window. Measured on a real scrolling strip, of 11 windows reported on screen only 2
-//! captured at full size; the rest came back as 1pt to 2pt slivers because they were parked off-strip,
-//! or clipped because a neighbour overlapped them. A window on a workspace that is not showing comes
-//! back 1x28.
-//!
-//! ScreenCaptureKit captures the window's own surface, at full size, whatever its visibility. That is
-//! the only way to get pixels for a window that is about to slide into view. It costs about 40ms fixed
-//! plus 14.5ms per window and does not get faster past four concurrent captures, so it cannot run at
-//! switch time and has to fill a cache ahead of the need.
-//!
-//! # Cost
-//!
-//! Nothing here polls. Captures happen only when asked for, so an idle rini costs zero: no timer, no
-//! wakeups, no CPU. A refresh of one to three windows is roughly 20ms to 70ms of work on a background
-//! queue. Even a pathological full sweep once a minute is well under one percent of a core.
-//!
-//! Results are `IOSurface`, not bitmaps, so a warm cache does not sit on the process heap. Twenty
-//! windows as CPU bitmaps would be around 280MB.
+//! Capture API constraints and costs are measured in `docs/capture-overlay-research.md`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ptr::NonNull;
@@ -56,20 +40,11 @@ const PAINTED_ALPHA: u8 = 8;
 
 /// Does a capture's content actually reach the far edge of the buffer it was given?
 ///
-/// This is the invariant that broke, and it broke silently. `SCStreamConfiguration.width` and `.height`
-/// are in PIXELS, and a capture is requested at the window's point size times the backing scale. With
-/// `captureResolution` set to `.nominal`, ScreenCaptureKit renders the window at its POINT size into
-/// that pixel-sized buffer, so on a 2x display the window fills only the top-left quarter and the rest
-/// stays transparent. A layer draws the whole surface, so every window appeared at half size pinned to a
-/// corner of a tile that was itself exactly the right size.
+/// A buffer is always the size that was asked for, so only its pixels can reveal an underfilled
+/// capture. `None` means the surface could not be inspected, which callers treat as fine.
 ///
-/// Nothing about the surface's declared dimensions reveals it: the buffer is exactly the size asked
-/// for. Only the pixels tell the truth, so they are sampled here. A band inside the right edge and one
-/// inside the bottom edge is enough, because underfilling leaves entire edges untouched; there is no
-/// need to walk the whole surface.
-///
-/// Returns `None` when the surface cannot be inspected, which is not a failure: the caller treats an
-/// unknown result as fine rather than throwing away a capture it cannot check.
+/// See "Nominal capture resolution paints a quarter of the buffer" in
+/// `docs/capture-overlay-research.md`.
 fn content_reaches_edges(surface: &IOSurfaceRef) -> Option<bool> {
     let width = unsafe { surface.width() };
     let height = unsafe { surface.height() };
@@ -98,12 +73,8 @@ fn content_reaches_edges(surface: &IOSurfaceRef) -> Option<bool> {
     };
     let right = width.saturating_sub(1 + INSET);
     let bottom = height.saturating_sub(1 + INSET);
-    // Both edges have to be reached, not either one. A buffer underfilled in only one direction still
-    // has content along the other edge, so accepting either was enough to miss a capture that was full
-    // width and half height. A test caught that.
-    //
-    // Several samples per edge rather than one, because a rounded corner or a dark scrollbar can leave
-    // any single point transparent on a perfectly good capture.
+    // Both edges, not either: content along one edge does not rule out underfill in the other
+    // direction. Several samples per edge, since a rounded corner can leave any single point clear.
     let mut reaches_right = false;
     let mut reaches_bottom = false;
     for i in 1..8 {
@@ -210,9 +181,8 @@ impl SnapshotService {
 
     /// Requests captures for `targets`, skipping any already in flight.
     ///
-    /// Enumeration is the expensive part of ScreenCaptureKit, so every target in one call shares a
-    /// single `SCShareableContent` lookup. `onScreenWindowsOnly` is false, without which windows on a
-    /// workspace that is not showing are not enumerated at all and so cannot be captured.
+    /// One `SCShareableContent` lookup for the whole batch, since enumeration is the expensive part.
+    /// `onScreenWindowsOnly` must be false or windows on a hidden workspace are never enumerated.
     pub fn request(&self, targets: Vec<SnapshotTarget>) {
         let revision = self.revision.load(Ordering::Acquire);
         let targets: Vec<SnapshotTarget> = {
@@ -275,18 +245,8 @@ impl SnapshotService {
                     // Not opaque: rounded corners must stay transparent, or every tile animates as a
                     // rectangle with black corners.
                     config.setShouldBeOpaque(false);
-                    // Best, not Nominal. Nominal renders the window at its POINT size into a buffer
-                    // sized in PIXELS, so on a 2x display the window occupies the top-left quarter of
-                    // the surface and the rest is transparent. Drawing that surface into a layer then
-                    // shows the window at half size in a corner, which is the "windows are scaled"
-                    // report. Measured on one window, same 1718x2162 buffer each time:
-                    //
-                    //   nominal   -> painted  859x1081 of 1718x2162   50% x 50%
-                    //   best      -> painted 1718x2162 of 1718x2162  100% x 100%
-                    //   automatic -> painted 1718x2162 of 1718x2162  100% x 100%
-                    //
-                    // Cropping the surface to the painted quarter instead gets the size right but at
-                    // half the resolution, which reads as blurry. This gets the pixels.
+                    // Best, not Nominal: Nominal renders at POINT size into a buffer sized in PIXELS
+                    // and leaves three quarters of it transparent. See docs/capture-overlay-research.md.
                     config.setCaptureResolution(SCCaptureResolutionType::Best);
                 }
                 queued.push(PendingCapture { target: *target, filter, config, revision });
@@ -308,15 +268,9 @@ impl SnapshotService {
 
     /// Requests a capture of the desktop: the display with every app window excluded.
     ///
-    /// This exists because the wallpaper is not reliably a window. Compositing everything at or below
-    /// the desktop level through SkyLight worked while the wallpaper had its own window, but with a
-    /// second display attached that window disappears from the window server listing altogether, and
-    /// the composite comes back holding the icons on black. Measured: brightness 24.7 with one display
-    /// against 7.8 with two, and ScreenCaptureKit rendering the same desktop at 23.4.
-    ///
-    /// ScreenCaptureKit renders a DISPLAY rather than a set of windows, so the wallpaper is included
-    /// whether or not anything lists it. The cost is why this is a background request feeding a cache:
-    /// the desktop changes rarely, so a capture a few seconds old is indistinguishable from a fresh one.
+    /// Renders a DISPLAY rather than a set of windows, because the wallpaper is not reliably a window
+    /// and cannot be composited from one. See "The wallpaper is not reliably a window" in
+    /// `docs/capture-overlay-research.md`.
     pub fn request_desktop(&self, display_id: u32, size: CGSize) {
         {
             let mut state = self.state.lock().unwrap();
@@ -345,8 +299,7 @@ impl SnapshotService {
                 return;
             };
 
-            // Everything at or above the normal window level, which is every window the overlay might
-            // animate. What is left is the wallpaper, the desktop icons and the widgets.
+            // Leaves the wallpaper, the desktop icons and the widgets.
             let windows = unsafe { content.windows() };
             let excluded: Vec<Retained<SCWindow>> =
                 windows.iter().filter(|window| unsafe { window.windowLayer() } >= 0).collect();
@@ -489,12 +442,8 @@ impl SnapshotService {
                 );
                 false
             } else if let Some(surface) = surface {
-                // ScreenCaptureKit returns the window's own surface at the requested size, so the
-                // capture covers the whole window by construction. That is the entire reason for
-                // using it over SkyLight, which returns only what is on screen.
-                //
-                // "At the requested size" is only true of the BUFFER, and that is what made this
-                // worth checking rather than assuming. See `content_reaches_edges`.
+                // The requested size is guaranteed of the BUFFER only, not of what was painted into
+                // it, hence the check.
                 if content_reaches_edges(&surface) == Some(false) {
                     warn!(
                         wsid = target.server_id.as_u32(),

@@ -780,3 +780,32 @@ defined against whatever is BEHIND the window, and a window-only capture has no
 behind. The framebuffer route does contain the composited result, but only for
 windows that are on screen, which is the same set that can already be recaptured
 fresh. Off-strip windows will draw solid.
+
+## Three numbers the design rests on
+
+Recorded here because they used to live in source comments, and they are the
+whole argument for three decisions that otherwise look arbitrary.
+
+**Cross-app tear, 100px to 150px.** Measured between neighbouring windows mid
+scroll, with the old engine writing `AXPosition` to every animating window on
+every frame. Each write is a synchronous request into a different process and
+those processes answer at their own speeds, so the windows never landed
+together. Per-app batching reduced it and could not remove it. This is why the
+overlay draws pictures instead of moving real windows: one composited frame
+cannot tear.
+
+**Stretching a clipped capture, 13.5pt out.** Accepting a capture that covered
+92% of its window and stretching it to full size put the animation 13.5pt off
+vertically on a live switch, which read as the whole animation being misaligned
+and jumpy. Hence `MIN_USABLE_COVERAGE` at 0.995, which is strict enough to
+reject anything genuinely clipped while still absorbing a pixel or two of
+rounding.
+
+**Manual rasterisation, over 800MB resident.** A raw window server window cannot
+have its layer tree bound here, since `SLSSetWindowLayerContext` fails with
+`kCGErrorFailure`, which leaves a manual `renderInContext` fallback. That
+fallback rasterises every tile's `IOSurface` into CPU memory on every frame and
+measured above 800MB resident for a single animation, peaking near 856MB.
+Reusing one context did not help, which is what proved the cost was
+rasterisation rather than allocation. A layer-backed `NSWindow` composites on
+the GPU for about 48MB.

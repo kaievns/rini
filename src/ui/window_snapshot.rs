@@ -1,25 +1,9 @@
 //! Bitmap snapshots of windows, for the capture-based animation overlay.
 //!
-//! The animation overlay draws pictures of windows rather than moving the real ones. Moving real
-//! windows means one `AXPosition` write per window per frame, each a synchronous request into a
-//! different process, and those processes answer at different speeds. That is the cross-app tear.
-//! Drawing pictures replaces N unsynchronised writes with one composited frame that cannot tear.
+//! Two capture APIs, because neither is sufficient alone: SkyLight for what is on screen, captured
+//! fresh, and ScreenCaptureKit for everything else, served from a background cache.
 //!
-//! Two capture APIs exist and neither is sufficient alone, so this module uses both. The measured
-//! constraints are recorded in `docs/capture-overlay-research.md`; the short version:
-//!
-//! - `SLSHWCaptureWindowList` is cheap, about 16ms per window, and needs only the Screen Recording
-//!   grant. But it captures the FRAMEBUFFER, so it returns only the visible portion of a window. A
-//!   window scrolled to a 40pt sliver comes back 40pt wide, and one on a hidden workspace comes back
-//!   1x28. Passing several window ids returns a single flattened composite rather than one image per
-//!   window, so it cannot be batched for per-window animation either.
-//! - ScreenCaptureKit returns the window's own surface at full size whatever its visibility, which
-//!   is the only way to get pixels for a window that is about to slide in. It costs about 40ms fixed
-//!   plus 14.5ms per window, far too slow to run at switch time.
-//!
-//! Hence: SkyLight for what is on screen, captured fresh, and ScreenCaptureKit for everything else,
-//! served from a cache refreshed in the background. Staleness only ever lands on windows that are
-//! currently a sliver, where it cannot be seen.
+//! Constraints and costs of both are measured in `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 use std::ffi::c_int;
@@ -40,14 +24,8 @@ const CAPTURE_OPTIONS: u32 = (1 << 11) | (1 << 8);
 
 /// How much smaller than its real size a capture may be before it is not worth drawing.
 ///
-/// A layer draws its contents stretched to fill, so a capture covering less than the whole window is
-/// scaled up when drawn, and the picture no longer lines up with where the real window is. Measured
-/// on a live switch: accepting 92% coverage put the animation 13.5pt off vertically, which read as
-/// the whole animation being misaligned and jumpy.
-///
-/// So this is deliberately strict. 0.995 rather than exactly 1.0 only because captures land a pixel
-/// or two short from rounding, which is half a point at 2x. Anything genuinely clipped is left to
-/// ScreenCaptureKit, which returns the window's own surface at full size.
+/// Strict, because contents stretch to fill and a clipped capture then sits visibly out of register
+/// with the real window. Short of 1.0 only to absorb a pixel or two of rounding.
 const MIN_USABLE_COVERAGE: f64 = 0.995;
 
 /// How much of a window a capture actually covers.
@@ -80,11 +58,8 @@ impl Coverage {
 
 /// Should an incoming capture replace what is already cached?
 ///
-/// The rule that matters: never downgrade a usable capture to a clipped one. Without it, a
-/// background refresh that happens to run while a window is scrolled off-strip overwrites good
-/// pixels with a sliver, and that window animates as a smear from then on. A clipped capture is
-/// still accepted when there is nothing better, since the caller can decline to draw it and a later
-/// refresh can upgrade it.
+/// Never downgrades a usable capture to a clipped one, but accepts a clipped one when there is
+/// nothing better, since the caller can decline to draw it and a later refresh can upgrade it.
 pub fn should_replace(existing: Option<Coverage>, incoming: Coverage) -> bool {
     match existing {
         Some(existing) if existing.is_usable() && !incoming.is_usable() => false,
@@ -105,23 +80,10 @@ const MIN_STRETCH: f64 = 0.995;
 
 /// Can this picture be drawn at `frame` without visibly distorting it?
 ///
-/// Separate from [`Coverage::is_usable`], and this distinction is the whole point. `is_usable` asks
-/// whether a capture covers the window it was taken from, comparing two sizes both recorded at CAPTURE
-/// time. It cannot answer whether the picture still matches the frame the tile is about to be drawn
-/// into, and a cached picture routinely does not: a window that was full width when captured and is
-/// half width in the new layout has a perfectly usable picture of the wrong shape.
-///
-/// Measured over 1114 logged tiles, 75 were drawn into a frame that did not match their picture:
-///
-/// ```text
-/// drawn into  859x1081  but picture covers 1720x1081   squashed to half width
-/// drawn into 1499x1656  but picture covers 1720x1081   squashed and stretched at once
-/// ```
-///
-/// Stretched to fill, that reads as the window being scaled and warped mid-animation, which is worse
-/// than the window simply not being drawn: a window left out appears at its destination when the overlay
-/// lifts, and the next switch has a correctly sized picture because the refresh after an animation
-/// captures at the frame the window was sent to.
+/// Distinct from [`Coverage::is_usable`], which compares a capture against the window it was taken
+/// FROM. This compares it against the frame it is drawn INTO, which a cached picture routinely no
+/// longer matches. See "A capture can be usable and still be the wrong shape" in
+/// `docs/capture-overlay-research.md`.
 pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
     if frame.0 <= 0.0 || frame.1 <= 0.0 {
         return false;
@@ -133,21 +95,10 @@ pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
 
 /// Whether a fresh desktop capture is worth drawing behind the moving strips.
 ///
-/// The desktop is composited from every window at or below the desktop level, and the wallpaper is one
-/// of those windows. macOS recreates it, so a capture taken at the wrong moment comes back holding the
-/// icons and widgets with nothing behind them, which draws as a black screen for the length of the
-/// animation. That was measured rather than guessed: on a recording of a vertical switch, every
-/// wallpaper sample point inside the overlay was 0,0,0 while the real screen showed the photo, and the
-/// desktop icons were present and correctly placed in the same frame.
-///
-/// A capture that does not span the whole display is rejected for a different reason. The layer draws it
-/// from the top-left at its own size, so a short one leaves the rest of the screen black and puts the
-/// captured bar strip partway up the display, which is what made a copy of the bar appear near the
-/// bottom of the screen.
-///
-/// Rejecting a capture means keeping whatever is already drawn, so a capture with no wallpaper is still
-/// accepted when there is nothing to keep: a desktop without its wallpaper is poor, but it beats the
-/// bare black window underneath.
+/// Rejects a composite whose wallpaper window was missing, and one that does not span the display,
+/// since either draws as a black screen for the length of an animation. Rejecting means keeping
+/// whatever is already drawn, so a wallpaperless capture is still accepted when there is nothing to
+/// keep. See "The wallpaper is not reliably a window" in `docs/capture-overlay-research.md`.
 pub fn is_backdrop_worth_drawing(
     have_one_already: bool,
     has_wallpaper: bool,
@@ -161,14 +112,8 @@ pub fn is_backdrop_worth_drawing(
 
 /// A window's pixels, whichever API produced them.
 ///
-/// Kept as two cases rather than normalised to one, because converting between them costs exactly
-/// what each API is good at avoiding. A `CGImage` from SkyLight is already a CPU-side bitmap, and an
-/// `IOSurface` from ScreenCaptureKit already lives where the compositor wants it. Core Animation
-/// accepts either as layer contents, so there is nothing to gain by picking one.
-///
-/// The difference matters for memory. A single 859x1081pt window at 2x is 1718x2162 pixels, which is
-/// about 14.9MB as a CPU bitmap. Holding twenty of those would be roughly 280MB of resident memory
-/// for a window manager, which is why the cache prefers surfaces.
+/// Two cases rather than one normalised form: Core Animation accepts either, and converting would cost
+/// exactly what each API is good at avoiding. Surfaces are preferred because they stay off the heap.
 #[derive(Clone)]
 pub enum SnapshotImage {
     /// CPU-side bitmap, from `SLSHWCaptureWindowList`.
@@ -211,12 +156,9 @@ impl WindowSnapshot {
 
 /// Captures one window from the framebuffer through SkyLight.
 ///
-/// Deliberately one window per call. Passing a list returns a single flattened composite of all of
-/// them, which cannot drive per-window animation. yabai passes a count of 1 for the same reason.
-///
-/// Returns `None` when the window server declines, which happens for a window with no backing
-/// store and, notably, whenever the display is asleep. Callers must treat `None` as normal and fall
-/// back to the cache rather than reporting an error.
+/// One window per call: a list returns a single flattened composite, which cannot drive per-window
+/// animation. `None` is normal, including whenever the display is asleep, and callers fall back to the
+/// cache rather than treating it as an error.
 pub fn capture_via_skylight(
     window: WindowServerId,
     window_size: (f64, f64),
@@ -267,10 +209,8 @@ impl HasCoverage for Coverage {
 
 /// Captures several windows as ONE composited image.
 ///
-/// Used for the desktop backdrop, where the wallpaper and the icon layer have to end up in a single
-/// picture. This is the one case where SkyLight's batching behaviour is what is wanted: passing a list
-/// returns a single flattened composite rather than one image per window, which is useless for
-/// animating windows separately but exactly right for a backdrop.
+/// The one case where SkyLight's flattening is wanted: a backdrop needs the wallpaper and the icon
+/// layer in a single picture.
 pub fn capture_composite_via_skylight(
     windows: &[WindowServerId],
     covers: (f64, f64),

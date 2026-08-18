@@ -1,24 +1,14 @@
 //! Drives the capture-based animation overlay.
 //!
 //! Owns the overlay and the snapshot cache, and runs on the main thread because Core Animation
-//! requires it. See `crate::ui::workspace_overlay` for why the animation draws pictures instead of
-//! moving windows, and `docs/capture-overlay-research.md` for the measurements behind it.
+//! requires it.
 //!
-//! The shape of one animation:
+//! One animation: capture the participating windows, build a tile each, show the overlay, let the
+//! caller place the real windows underneath while they are covered, step the tiles over the duration,
+//! then hide the overlay. The frame clock is time-based rather than a frame counter, so a late frame
+//! skips instead of slowing the animation down.
 //!
-//! 1. Capture every participating window. Fresh from SkyLight when the window is fully on screen,
-//!    from the cache otherwise, because the only API that can capture an off-strip window costs
-//!    about 40ms plus 14.5ms per window and cannot run at switch time.
-//! 2. Build a tile per window with its start and end frames, show the overlay, and let the caller
-//!    place the real windows at their final frames underneath. They are covered, so the fact that
-//!    each app answers Accessibility at its own speed stops being visible.
-//! 3. Step the tiles to the target over the animation duration, one Core Animation transaction per
-//!    frame, so the windows cannot tear against each other.
-//! 4. Hide the overlay, revealing real windows already in place.
-//!
-//! The frame clock is time-based rather than a frame counter. A counter assumes every frame is
-//! delivered on time, and when one is late the animation silently slows down instead of skipping,
-//! which is what made the old engine feel inconsistent.
+//! Measurements behind all of this are in `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -75,12 +65,8 @@ pub enum Event {
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
     /// Move the viewport across a canvas holding every window involved, rather than moving each window
-    /// separately.
-    ///
-    /// This is the shape a scrolling strip and a stack of workspaces actually have. Animating windows
-    /// individually could not convey distance: a jump from workspace 1 to 4, or across the whole
-    /// strip, looked exactly like a step to the neighbour because everything in between was off screen
-    /// at both ends and so never drawn. Moving one canvas scrolls all of it past.
+    /// separately, so a long jump scrolls past everything in between instead of cutting to the
+    /// destination.
     AnimateCanvas {
         windows: Vec<CanvasWindow>,
         from_offset: CGPoint,
@@ -96,11 +82,9 @@ pub enum Event {
     /// A background capture has landed. Posted by the snapshot service, not by another actor.
     SnapshotsReady,
     /// Capture every managed window that SkyLight cannot serve, so the cache is warm before the next
-    /// animation. Safe to call at any time; it only queues background work.
+    /// animation. Only queues background work, so it is safe to call at any time.
     ///
-    /// Targets come from the reactor because only it knows each window's real [`WindowId`]. Deriving
-    /// ids from the window server instead produced keys that never matched the ones an animation
-    /// looks up, so the cache filled and was never read.
+    /// Targets come from the reactor because only it knows each window's real [`WindowId`].
     WarmWindows(Vec<SnapshotTarget>),
     /// Warm from the window server rather than from rini's own window table. Only for the debug
     /// command, where there is no reactor-supplied window set.
@@ -118,38 +102,24 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// How long to keep collecting windows before the animation starts moving.
 ///
-/// The reactor arranges a layout over SEVERAL passes, and each pass reports only the windows it
-/// resolved. Measured on one workspace switch: three passes of a single window, then a fourth of
-/// four. Treating each pass as its own animation restarted the motion four times.
-///
-/// So the overlay goes up immediately, showing every window at the position it is leaving, and the
-/// clock only starts once the passes settle. Because nothing has moved yet, windows joining during
-/// this window cannot pop. One frame is enough to absorb the passes and is imperceptible.
+/// The reactor arranges a layout over several passes, and treating each as its own animation restarted
+/// the motion. The overlay goes up immediately and the clock starts once the passes settle, so windows
+/// joining in between cannot pop. One frame is enough and is imperceptible.
 const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 
 /// How many windows may be captured fresh at switch time.
 ///
-/// Capturing everything is what made the first version feel laggy: 18 windows at 12ms to 24ms each is
-/// roughly 400ms before anything moves. But SkyLight can only capture what is ON SCREEN, and those are
-/// exactly the windows whose staleness is visible, because they are the ones being looked at. There are
-/// rarely more than two, so this bounds the cost at roughly one frame while removing the case that
-/// reads as broken: the window you were just typing in animating out with the content it had when you
-/// arrived, because the cache was last refreshed at the end of the previous switch.
+/// Capturing everything cost roughly 400ms before anything moved. SkyLight can only capture what is on
+/// screen anyway, and that is the set whose staleness is visible, so this bounds the cost at about a
+/// frame.
 const MAX_FRESH_CAPTURES: usize = 3;
 
-/// How much of a window must be on screen before a fresh capture is worth attempting.
-///
-/// SkyLight reads the framebuffer, so a partly covered window comes back clipped and is rejected
-/// anyway. Only asking about windows that are fully visible avoids paying for a capture that cannot be
-/// used.
+/// How much of a window must be on screen before a fresh capture is worth attempting. A partly covered
+/// window comes back clipped and would be rejected anyway.
 const FRESH_CAPTURE_MIN_ON_SCREEN: f64 = 0.99;
 
-/// How far through the animation the real windows are placed.
-///
-/// Late enough that the overlay is certainly covering them, and early enough that the Accessibility
-/// writes have time to land before it comes down. Each write is a synchronous request into another
-/// process, and the slowest apps measured around 24ms, so this leaves roughly a fifth of the
-/// animation for them to finish.
+/// How far through the animation the real windows are placed. Late enough that the overlay is
+/// certainly covering them, early enough that the Accessibility writes land before it lifts.
 const APPLY_FRAMES_AT: f64 = 0.75;
 
 /// A canvas movement in flight: the tiles never move, the viewport does.
@@ -449,21 +419,11 @@ impl WorkspaceAnimation {
         self.overlay.as_mut()
     }
 
-    /// Recaptures the windows that are on screen right now, just before they start moving.
+    /// Recaptures the windows that are on screen right now, just before they start moving, so the window
+    /// being typed in does not animate out with content from the previous switch.
     ///
-    /// The cache is otherwise refreshed after an animation finishes, which means a picture shows the
-    /// window as it was at the END of the previous switch. For anything off screen that is invisible and
-    /// fine. For the window being looked at and typed in it is not: it animates out holding content from
-    /// whenever the workspace was last entered. Bounded by [`MAX_FRESH_CAPTURES`] so this cannot grow
-    /// back into the 400ms stall that made capturing at switch time a bad idea in the first place.
-    /// Measured: one window, 32ms to 35ms once warm.
-    ///
-    /// This does NOT help the window being switched INTO. SkyLight reads the framebuffer, and the
-    /// destination workspace's windows are not on screen yet when an animation starts, so they keep
-    /// whatever picture they last had. If that picture was taken while the app was unfocused, the tile
-    /// slides in showing the unfocused rendering and snaps to focused at the handover. Fixing that needs
-    /// a capture after focus has landed, which means either paying for one mid-animation or accepting
-    /// that the first arrival is wrong.
+    /// Does NOT help the window being switched INTO, which is not on screen yet. See "A picture is not
+    /// the window" in `docs/capture-overlay-research.md`.
     fn refresh_visible(
         &mut self,
         windows: &[CanvasWindow],
@@ -532,13 +492,8 @@ impl WorkspaceAnimation {
 
     /// The snapshot to draw for one window, from the cache only.
     ///
-    /// Deliberately captures NOTHING here. Capturing at switch time was the single worst thing about
-    /// the first version: a SkyLight capture costs 12ms to 24ms and runs on the main thread, so an
-    /// 18 window workspace spent roughly 400ms capturing before the animation could start. That is
-    /// the lag between pressing the key and seeing anything move.
-    ///
-    /// A window with nothing cached simply does not animate. It is placed at its destination when the
-    /// overlay comes down, and a background capture is queued so the next switch has it.
+    /// A window with nothing cached does not animate: it is placed at its destination when the overlay
+    /// comes down, and a background capture is queued so the next switch has it.
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
         // Rejected here rather than drawn distorted, for the same reason as the canvas path: contents
         // stretch to fill, so a picture of the wrong shape warps the window instead of moving it.
@@ -550,21 +505,11 @@ impl WorkspaceAnimation {
 
     /// Does this window appear on screen at ANY point during the animation?
     ///
-    /// Testing only the endpoints was wrong in a way that mattered. On a scrolling strip, jumping
-    /// between distant columns moves intermediate windows straight across the display, and those are
-    /// exactly the windows that show how far the strip travelled. Excluding them made a jump across
-    /// the whole strip look identical to a jump between neighbours, with the new column simply
-    /// appearing from one side and no sense of distance at all.
-    ///
-    /// So the whole path is sampled, not just its ends. A window parked off-strip that never crosses
-    /// the display is still excluded, which is what stopped the slivers flickering in along both
-    /// edges, but one that sweeps through is now drawn.
+    /// The whole path is sampled, not just its ends: a window that sweeps across mid-animation is
+    /// exactly what conveys how far the strip travelled, and testing endpoints alone excluded it.
     fn is_worth_animating(&self, from: CGRect, to: CGRect, display: CGRect) -> bool {
-        /// Fraction of the window that must be on screen at some sampled moment.
-        ///
-        /// Lower than an endpoint test would need, because a window crossing the display is only
-        /// partly on it for most of the crossing, and clipping it out would leave a gap in the very
-        /// motion that conveys distance.
+        /// Fraction of the window that must be on screen at some sampled moment. Low, because a window
+        /// crossing the display is only partly on it for most of the crossing.
         const MIN_ON_SCREEN: f64 = 0.25;
         /// Samples along the path. Enough that a window cannot cross the display between two of them:
         /// the fastest realistic travel is a few display widths, so eleven samples leave any crossing
@@ -582,12 +527,8 @@ impl WorkspaceAnimation {
         })
     }
 
-    /// Queues windows for a background capture once the current animation finishes, keeping whatever
-    /// is already queued.
-    ///
-    /// A canvas movement records its own windows when it starts, and a later layout pass must add to
-    /// that list rather than replace it: replacing it left the canvas's own windows without a refreshed
-    /// picture, so the next switch had to fall back to a clipped capture for them.
+    /// Queues windows for a background capture once the current animation finishes, keeping whatever is
+    /// already queued rather than replacing it.
     fn remember_for_warming(&mut self, windows: Vec<AnimationRequest>) {
         for request in windows {
             if self.last_animated.iter().any(|target| target.window == request.window) {
@@ -615,18 +556,9 @@ impl WorkspaceAnimation {
         let final_frames: Vec<(WindowId, CGRect)> =
             windows.iter().map(|request| (request.window, request.to)).collect();
 
-        // A canvas movement already covers this ground, and it owns the tile layers.
-        //
-        // Both paths draw from one pool of layers but hang them off different parents in different
-        // coordinate systems: the canvas places tiles in canvas coordinates and translates their
-        // parent, while this path places them in the overlay's own space. The reactor lays a workspace
-        // switch out over several passes, so a later pass arriving here re-framed the canvas's own
-        // tiles into the wrong space while the canvas still had them translated by up to a full
-        // workspace row. Measured on a live switch: tiles drawn at half size in the wrong place, and a
-        // 2621pt jump when the overlay lifted.
-        //
-        // The destinations still matter, because a later pass can change where a window ends up. So
-        // they are merged into the canvas, which is what actually places the real windows.
+        // A canvas movement already covers this ground and owns the tile layers, so this path must not
+        // touch them. Its destinations still matter, since a later pass can move a window, so they are
+        // merged into the canvas instead. See docs/capture-overlay-research.md.
         if let Some(canvas) = self.canvas.as_mut() {
             for (window, frame) in &final_frames {
                 match canvas.final_frames.iter_mut().find(|(w, _)| w == window) {
@@ -757,15 +689,8 @@ impl WorkspaceAnimation {
             return;
         }
 
-        // Merge into the animation already in flight rather than replacing it. Two reasons.
-        //
-        // The reactor arranges a layout over several passes, so treating each as its own animation
-        // restarted the motion four times on a measured switch.
-        //
-        // And a later pass can CHANGE where a window is going, which is why retargeting is allowed
-        // even after the motion has started. Ignoring those updates left the animation ending
-        // somewhere the windows did not, so the real windows visibly shifted at the handover, by a
-        // little for the focused window and a lot for its neighbours.
+        // Merge into the animation in flight rather than replacing it: the reactor lays a layout out
+        // over several passes, and a later pass can also change where a window is going.
         if let Some(running) = self.running.as_mut() {
             {
                 for (window, frame) in final_frames {
@@ -869,11 +794,8 @@ impl WorkspaceAnimation {
         let mut missing = 0usize;
         let mut misshapen = 0usize;
         for window in &windows {
-            // Two separate questions, and both have to be yes. Whether the cached picture covers the
-            // window it was taken from, and whether it still matches the frame it is about to be drawn
-            // into. A window that was full width when captured and is half width in this layout fails
-            // only the second, and drawing it anyway squashes it to fill, which is the "windows are
-            // scaled and doing weird stuff" everyone sees before anyone measures it.
+            // Two questions, both of which must be yes: does the picture cover the window it was taken
+            // from, and does it still match the frame it is drawn into.
             match self.cache.usable(window.window).cloned() {
                 Some(snapshot) if snapshot.fits(window.frame.size) => tiles.push(CanvasTile {
                     window: window.window,
@@ -1167,16 +1089,9 @@ impl WorkspaceAnimation {
 
     /// The desktop to draw behind the moving strips.
     ///
-    /// Prefers the SkyLight composite, which is captured here and now for a few milliseconds, but only
-    /// when it actually contains the wallpaper. The wallpaper is not reliably a window: with a second
-    /// display attached it disappears from the window server listing entirely and the composite comes
-    /// back holding the desktop icons on black, which is what made the screen go dark for the length of
-    /// every vertical switch. Measured, same machine and same desktop: composite brightness 24.7 with
-    /// one display, 7.8 with two, and the ScreenCaptureKit render 23.4.
-    ///
-    /// So the fallback is the cached ScreenCaptureKit desktop, which renders a display rather than a
-    /// list of windows and therefore always has the wallpaper. A refresh is queued either way, so the
-    /// cache stays current for the next switch.
+    /// Prefers the SkyLight composite, which is cheap enough to capture here, but only when it actually
+    /// contains the wallpaper. Otherwise falls back to the cached ScreenCaptureKit render, which always
+    /// does. See "The wallpaper is not reliably a window" in `docs/capture-overlay-research.md`.
     fn capture_backdrop(&mut self) -> Option<WindowSnapshot> {
         let (display_frame, scale) = self.display?;
         let display_size = (display_frame.size.width, display_frame.size.height);

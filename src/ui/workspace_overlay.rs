@@ -1,27 +1,10 @@
 //! The animation overlay: one rini-owned window holding a picture of every animating window.
 //!
-//! Replaces per-frame Accessibility writes. The old path wrote `AXPosition` to every animating
-//! window on every frame, and since each write is a synchronous request into a different process
-//! that answers at its own speed, the windows never landed together. That is the cross-app tear,
-//! measured at 100 to 150px between neighbouring windows mid-scroll.
+//! Nothing real moves during an animation. Real windows are placed at their final frames once,
+//! underneath an opaque overlay, and every layer inside it is repositioned in a single Core Animation
+//! transaction, so windows cannot tear against each other the way per-frame `AXPosition` writes did.
 //!
-//! Here nothing real moves during the animation. Real windows are placed at their final frames once,
-//! underneath an opaque overlay, and what the eye follows is a layer per window inside that overlay.
-//! Every layer is repositioned in a single Core Animation transaction, so they cannot tear against
-//! each other by construction.
-//!
-//! Design constraints, all measured. See `docs/capture-overlay-research.md`.
-//!
-//! - **Size to the usable display frame, not the whole screen.** sketchybar sits at CG layer -20,
-//!   below normal windows, and is visible only because nothing occupies the menu bar strip. A
-//!   full-screen overlay covers the user's bar and flickers it on every switch. Managed windows all
-//!   sit at layer 0 inside the usable frame, so leaving that strip alone costs no coverage.
-//! - **Toggle alpha, never order in and out.** Ordering costs about 14ms each way, a full frame at
-//!   60fps. An alpha toggle costs 0.36ms. So the overlay is created once and stays ordered in at
-//!   alpha 0 forever. Alpha works because rini owns this window; on foreign windows it does nothing.
-//! - **Never transform a foreign window.** `SLSSetWindowTransform` returns success on someone else's
-//!   window and is silently discarded, and `SLSMoveWindow` even updates `SLSGetWindowBounds` while
-//!   the window does not move. Transforms only work on windows we created, which is what this is.
+//! Design constraints, all measured, in `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 
@@ -47,17 +30,8 @@ use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 const OVERLAY_LEVEL: isize = NSPopUpMenuWindowLevel as isize;
 
 define_class!(
-    /// An `NSView` with a top-left origin.
-    ///
-    /// Everything in rini reasons about window frames in CoreGraphics coordinates, which put the
-    /// origin at the top left. AppKit puts it at the bottom left, and `setGeometryFlipped(true)` on a
-    /// VIEW-BACKED layer does not change that: AppKit owns that layer and manages its geometry, so the
-    /// flag was silently ineffective and every child was positioned in bottom-left space while the
-    /// arithmetic assumed top-left.
-    ///
-    /// That was measurable rather than theoretical: the bar layer, positioned at (0, 0), rendered along
-    /// the BOTTOM of the screen. Overriding `isFlipped` on the view is the sanctioned way to get a
-    /// top-left system, and it makes the whole layer tree agree with the rest of the codebase.
+    /// An `NSView` with a top-left origin, so the layer tree agrees with the CoreGraphics coordinates
+    /// used everywhere else. `setGeometryFlipped` on a view-backed layer is silently ineffective.
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
     #[name = "RiniFlippedOverlayView"]
@@ -73,10 +47,8 @@ define_class!(
 
 /// One window's picture at a fixed position on the canvas.
 ///
-/// Canvas coordinates, not screen coordinates. The canvas holds every window across every workspace
-/// laid out side by side and stacked, and an animation moves the CANVAS rather than the windows on it.
-/// That is what makes a jump across the strip, or from workspace 1 to workspace 4, scroll past
-/// everything in between instead of cutting straight to the destination.
+/// Canvas coordinates, not screen. An animation moves the canvas rather than the tiles on it, which is
+/// what makes a long jump scroll past everything in between.
 pub struct CanvasTile {
     pub window: WindowId,
     /// Fixed position on the canvas. Never interpolated.
@@ -94,11 +66,8 @@ pub struct OverlayTile {
     /// Where the window ends up, in the overlay's coordinate space.
     pub to: CGRect,
     pub snapshot: WindowSnapshot,
-    /// Front-to-back position on screen, 0 being frontmost.
-    ///
-    /// Without this the tiles stack in whatever order the layout happened to list them, so the window
-    /// that is really in front can be drawn behind. The overlay then drops and the real front window
-    /// appears to jump forward, which is what made a switch end with a visible pop.
+    /// Front-to-back position on screen, 0 being frontmost. Without it a tile can be drawn behind a
+    /// window it is really in front of, and the handover pops.
     pub depth: usize,
 }
 
@@ -129,19 +98,11 @@ pub struct WorkspaceOverlay {
     /// transform per frame regardless of how many windows are on screen, and the tiles cannot drift
     /// against each other because they are siblings under one parent that moves as a unit.
     canvas: Retained<CALayer>,
-    /// The real desktop, drawn behind everything and held still while the canvas moves.
-    ///
-    /// The overlay has to be opaque so the real windows being repositioned underneath stay hidden,
-    /// which meant the gaps between and around strips were a flat colour. That flat area appearing and
-    /// disappearing reads as flickering, and on a workspace holding one half-width window it was half
-    /// the screen. Showing the actual desktop there makes those gaps look like the desktop, because
-    /// they are.
+    /// The real desktop, drawn behind everything and held still while the canvas moves, so the gaps
+    /// around strips look like the desktop instead of flickering as a flat colour.
     backdrop: Retained<CALayer>,
-    /// The bar, redrawn on top and held still while the canvas moves beneath it.
-    ///
-    /// The overlay spans the whole display so the desktop fits at its true size and strips can travel
-    /// through the full height. That covers the user's bar, so it is drawn back on top rather than
-    /// left hidden for the duration of every animation.
+    /// The bar, redrawn on top and held still while the canvas moves beneath it. The overlay spans the
+    /// whole display, so it covers the real bar and has to put it back.
     foreground: Retained<CALayer>,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
@@ -155,16 +116,9 @@ pub struct WorkspaceOverlay {
 impl WorkspaceOverlay {
     /// Creates the overlay once, ordered in but fully transparent.
     ///
-    /// `frame` must be the display's FULL bounds in CoreGraphics (top-left origin) coordinates. Sizing
-    /// it to the usable frame instead forced the captured desktop to be squashed into a shorter box,
-    /// and left a vertical animation invisible in the strip beneath the bar. The bar is drawn back on
-    /// top by `set_foreground` so covering it costs nothing.
-    ///
-    /// Built on `NSWindow` rather than a raw window server window. A raw window needs its layer tree
-    /// bound through `SLSSetWindowLayerContext`, which fails with `kCGErrorFailure` here, leaving only
-    /// a manual `renderInContext` fallback. That fallback has to rasterise every tile's `IOSurface`
-    /// into CPU memory on every frame, which measured at over 800MB resident for one animation. A
-    /// layer-backed `NSWindow` composites on the GPU instead, which is both correct and free.
+    /// `frame` must be the display's FULL bounds in CoreGraphics coordinates, or vertical animations are
+    /// invisible in the strip beneath the bar. Built on `NSWindow` rather than a raw window server
+    /// window, which cannot have its layer tree bound here and would need a rasterising fallback.
     pub fn new(frame: CGRect, scale: f64, mtm: MainThreadMarker) -> Option<Self> {
         let converter = CoordinateConverter::from_height(primary_display_height());
         let cocoa_frame = converter.convert_rect(frame)?;
@@ -214,11 +168,8 @@ impl WorkspaceOverlay {
         // both would cancel out.
         root.setContentsScale(scale);
 
-        // Behind the canvas, and never moved: the desktop does not scroll with the workspaces.
-        //
-        // Deliberately NOT geometryFlipped. That property flips a layer's own contents as well as its
-        // children's coordinates, so setting it here drew the captured desktop upside down, which put
-        // the menu bar strip along the bottom of the screen and made a dark wallpaper look black.
+        // Behind the canvas and never moved. Not geometryFlipped: that flips a layer's own contents
+        // too, which drew the captured desktop upside down.
         let backdrop = CALayer::layer();
         backdrop.setAnchorPoint(CGPoint::new(0.0, 0.0));
         backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
@@ -265,11 +216,8 @@ impl WorkspaceOverlay {
 
     /// Sets the still image drawn ON TOP of the moving canvas, for the bar.
     ///
-    /// Positioned at `at`, which must be the origin of the region the capture covers. A failed capture
-    /// leaves whatever was there rather than hiding it, so the bar does not blink.
-    ///
-    /// The layer is not geometryFlipped, so its contents draw the right way up while its position is
-    /// still interpreted in the flipped root's top-left space.
+    /// `at` must be the origin of the region the capture covers. A failed capture leaves whatever was
+    /// there rather than hiding it, so the bar does not blink.
     pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>, at: CGPoint) {
         let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
@@ -287,14 +235,8 @@ impl WorkspaceOverlay {
 
     /// Sets the still image drawn behind the moving canvas.
     ///
-    /// Positioned from the image's own covered size rather than stretched to the overlay. The desktop
-    /// spans the FULL display while the overlay covers only the usable frame, so drawing it to the
-    /// overlay's bounds squashed it by the menu bar inset and left it visibly out of register with the
-    /// real desktop. The difference in height IS that inset, so the image is placed that far above the
-    /// overlay's top edge at its true size.
-    ///
-    /// A failed capture keeps whatever was there before. Hiding it instead made the desktop blink in
-    /// and out whenever one capture did not land.
+    /// Sized from the image's own covered size rather than stretched to the overlay, so it stays in
+    /// register with the real desktop. A failed capture keeps whatever was there, or the desktop blinks.
     pub fn set_backdrop(&mut self, snapshot: Option<&WindowSnapshot>) {
         let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
@@ -377,13 +319,8 @@ impl WorkspaceOverlay {
         self.check_geometry(tiles);
     }
 
-    /// Checks that every tile will be drawn at the frame it was given.
-    ///
-    /// `convertRect:toLayer:` walks the whole transform chain, so this compares what was asked for
-    /// against what the compositor will actually draw. It exists because "the windows look scaled" is
-    /// not measurable from a screenshot when the window is a dark terminal over a dark wallpaper, and
-    /// because a scale introduced anywhere in the layer tree would otherwise be invisible in the logs.
-    /// Silent when everything agrees, which is the normal case.
+    /// Checks that every tile will be drawn at the frame it was given, so a scale introduced anywhere
+    /// in the layer tree cannot go unnoticed. Silent when everything agrees.
     fn check_geometry(&self, tiles: &[CanvasTile]) {
         for tile in tiles {
             let Some(layer) = self.tile_layers.get(&tile.window) else { continue };
@@ -405,9 +342,7 @@ impl WorkspaceOverlay {
 
     /// Moves the canvas so that `offset` in canvas coordinates sits at the overlay's top-left.
     ///
-    /// This is the entire animation: one property on one layer. Because every tile is a child of the
-    /// canvas, they move together exactly, which is what makes relative drift between windows
-    /// impossible rather than merely unlikely.
+    /// The entire animation: one property on one layer, so tiles cannot drift against each other.
     pub fn set_canvas_offset(&mut self, offset: CGPoint) {
         CATransaction::begin();
         // Implicit animations off, or Core Animation adds its own ease on top of ours and the result
@@ -419,9 +354,8 @@ impl WorkspaceOverlay {
 
     /// Installs the tiles for one animation and draws frame zero.
     ///
-    /// Layers are reused across animations for the same window, since creating a `CALayer` and giving
-    /// it a bitmap is the expensive part. Tiles absent from `tiles` are removed, or the previous
-    /// switch's windows linger as ghosts behind the current one.
+    /// Layers are pooled per window, since handing one a bitmap is the expensive part. Anything absent
+    /// is removed, or the previous switch's windows linger as ghosts.
     pub fn set_tiles(&mut self, tiles: &[OverlayTile]) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
@@ -512,12 +446,8 @@ impl WorkspaceOverlay {
 
 /// Moves `layer` under `container` unless it is already there.
 ///
-/// Tile layers are pooled and reused across animations because handing a layer a bitmap is the
-/// expensive part, but the two drawing paths hang them off different parents: canvas tiles live under
-/// the canvas, which is translated to animate, while per-window tiles live under the root and are moved
-/// individually. A layer created by one path and reused by the other kept its original parent, so it
-/// was positioned with the other path's arithmetic. In canvas coordinates that is a whole workspace row
-/// out, which put the tile off screen entirely.
+/// The two drawing paths pool the same layers but hang them off different parents, in different
+/// coordinate systems. A layer left under the wrong one is positioned with the wrong arithmetic.
 fn reparent(layer: &CALayer, container: &CALayer) {
     let already = layer
         .superlayer()
