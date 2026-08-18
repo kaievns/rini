@@ -908,3 +908,26 @@ turned out to be sampling noise. Single-threaded runs never reproduced it across
 from about 0.4s to 1.25s, which is not a trade worth thinking about. The tests
 that build capture fixtures also avoid `IOSurface` entirely for the same reason
 and use a CPU bitmap instead.
+
+### Recapturing the destination once it is on screen
+
+The window being switched INTO cannot be recaptured when a movement starts,
+because the destination workspace's windows are not on screen yet. Its picture
+is therefore whatever it last had, and if that was taken while the app was
+unfocused the tile slides in dimmed and snaps to focused at the handover.
+Ghostty greys out noticeably, so this was the most visible flicker left after
+the sizing fixes.
+
+Fixed by recapturing it at 12% progress, by which point the reactor has shown
+the workspace and moved focus, so SkyLight returns the focused rendering.
+
+On the main thread this cost too much. Measured over a 494ms flight, capture
+times of 38ms to 179ms dropped the frame count from 30 to as low as 26. Moving
+it to its own thread removes that entirely: 17ms to 56ms of capture, and 30 of
+30 frames on every switch. `SLSHWCaptureWindowList` is safe off the main thread,
+which yabai relies on as well, capturing on a pthread per window at
+`window_manager.c:666`. The picture arrives back as an event a few frames later
+and replaces contents only, never geometry, so a late arrival cannot disturb the
+movement.
+
+This does nothing for blur, which no capture contains. See the section above.

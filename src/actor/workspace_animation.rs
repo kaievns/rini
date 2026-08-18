@@ -81,6 +81,9 @@ pub enum Event {
     StartMoving,
     /// A background capture has landed. Posted by the snapshot service, not by another actor.
     SnapshotsReady,
+    /// A mid-flight recapture of the window being switched into has landed. Posted by the capture
+    /// thread, not by another actor.
+    PictureReady { window: WindowId, snapshot: WindowSnapshot },
     /// Capture every managed window that SkyLight cannot serve, so the cache is warm before the next
     /// animation. Only queues background work, so it is safe to call at any time.
     ///
@@ -114,6 +117,32 @@ const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 /// frame.
 const MAX_FRESH_CAPTURES: usize = 3;
 
+/// How far into a movement to recapture the window being switched into.
+///
+/// Early, so the corrected picture is on screen for most of the flight, but not on the very first frame,
+/// because the destination workspace's windows are only shown once the reactor has acted on the switch.
+const REFRESH_DESTINATION_AT: f64 = 0.12;
+
+/// How many windows to recapture mid-flight. One: this exists for the window being switched into, and
+/// each capture costs a frame.
+const MAX_DESTINATION_CAPTURES: usize = 1;
+
+/// Which of `candidates` to recapture, frontmost first, capped at `max`.
+///
+/// Frontmost first because the front window is the one being switched INTO, and the one whose picture
+/// matters most. Capped because each capture costs a frame.
+fn refresh_order(
+    candidates: &[(WindowId, u32)],
+    depths: &HashMap<u32, usize>,
+    on_screen: &[u32],
+    max: usize,
+) -> Vec<WindowId> {
+    let mut ordered: Vec<&(WindowId, u32)> =
+        candidates.iter().filter(|(_, wsid)| on_screen.contains(wsid)).collect();
+    ordered.sort_by_key(|(_, wsid)| depths.get(wsid).copied().unwrap_or(usize::MAX));
+    ordered.into_iter().take(max).map(|(window, _)| *window).collect()
+}
+
 /// How much of a window must be on screen before a fresh capture is worth attempting. A partly covered
 /// window comes back clipped and would be rejected anyway.
 const FRESH_CAPTURE_MIN_ON_SCREEN: f64 = 0.99;
@@ -135,6 +164,15 @@ struct RunningCanvas {
     /// and that cannot be recovered from a screen recording: macOS records at a variable rate and emits
     /// nothing while the screen is unchanged.
     frames: u32,
+    /// The windows on the canvas, with their server ids and drawn sizes, so the one being switched into
+    /// can be found again mid-flight.
+    tiles: Vec<(WindowId, WindowServerId, CGSize)>,
+    /// Whether the window being switched INTO has been recaptured since it came on screen.
+    ///
+    /// It cannot be recaptured when the movement starts, because the destination workspace's windows are
+    /// not on screen yet, so its picture is whatever it last had. If that was taken while the app was
+    /// unfocused, the tile slides in dimmed and snaps to focused at the handover.
+    destination_refreshed: bool,
     _clock: Option<RepeatingTimer>,
 }
 
@@ -299,6 +337,7 @@ impl WorkspaceAnimation {
             }
             Event::StartMoving => self.start_moving(),
             Event::SnapshotsReady => self.collect_snapshots(),
+            Event::PictureReady { window, snapshot } => self.picture_ready(window, snapshot),
             Event::WarmCache => self.warm_cache(),
             Event::WarmWindows(targets) => self.warm_windows(targets),
         }
@@ -480,6 +519,78 @@ impl WorkspaceAnimation {
                 took_ms = started.elapsed().as_millis(),
                 "recaptured on-screen windows, frontmost first, so they do not animate stale or unfocused"
             );
+        }
+    }
+
+    /// Recaptures the window being switched into, now that it is on screen, and swaps its tile.
+    ///
+    /// Runs once per movement. By this point the reactor has shown the destination workspace and moved
+    /// focus, so a SkyLight capture gets the app's FOCUSED rendering, which is what the real window will
+    /// look like when the overlay lifts. Without this the tile slides in with whatever the picture held,
+    /// and an app that dims when unfocused visibly snaps at the handover.
+    ///
+    /// Costs one capture on the main thread, measured at 32ms to 35ms warm, so it drops a frame or two
+    /// mid-flight. That is the trade: one hitch against a step change in brightness on the window being
+    /// looked at.
+    fn refresh_destination(&mut self) {
+        let Some((display, scale)) = self.display else { return };
+        let Some(canvas) = self.canvas.as_ref() else { return };
+        let candidates: Vec<(WindowId, u32)> =
+            canvas.tiles.iter().map(|(w, s, _)| (*w, s.as_u32())).collect();
+        if candidates.is_empty() {
+            return;
+        }
+        let depths = crate::sys::window_server::front_to_back_depths();
+        let on_screen: Vec<u32> = crate::sys::window_server::visible_windows_on_display(display)
+            .into_iter()
+            .filter(|(_, frame)| on_screen_fraction(*frame, display) >= FRESH_CAPTURE_MIN_ON_SCREEN)
+            .map(|(id, _)| id.as_u32())
+            .collect();
+        let wanted = refresh_order(&candidates, &depths, &on_screen, MAX_DESTINATION_CAPTURES);
+
+        for window in wanted {
+            let Some((_, server_id, size)) =
+                self.canvas.as_ref().and_then(|c| c.tiles.iter().find(|(w, _, _)| *w == window).copied())
+            else {
+                continue;
+            };
+            // On its own thread. A capture of a large window measured 38ms to 179ms, which on the main
+            // thread dropped up to four frames of a 494ms flight. yabai captures on per-window pthreads
+            // too (`window_manager.c:666`), so the call is safe off the main thread. The picture arrives
+            // as an event a few frames later, which is fine: it replaces contents, not geometry.
+            let tx = self.tx.clone();
+            std::thread::Builder::new()
+                .name("destination-recapture".to_string())
+                .spawn(move || {
+                    let started = Instant::now();
+                    let Some(snapshot) =
+                        capture_via_skylight(server_id, (size.width, size.height), scale)
+                    else {
+                        return;
+                    };
+                    if !snapshot.is_usable() || !snapshot.fits(size) {
+                        return;
+                    }
+                    debug!(
+                        idx = window.idx.get(),
+                        took_ms = started.elapsed().as_millis(),
+                        "recaptured the window being switched into, off the main thread"
+                    );
+                    _ = tx.send(Event::PictureReady { window, snapshot });
+                })
+                .ok();
+        }
+    }
+
+    /// Takes a mid-flight recapture and swaps it into the tile that is already on screen.
+    fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot) {
+        self.cache.insert(window, snapshot.clone());
+        // Only worth drawing while the movement that asked for it is still running.
+        if self.canvas.is_none() {
+            return;
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.set_tile_picture(window, &snapshot);
         }
     }
 
@@ -927,6 +1038,11 @@ impl WorkspaceAnimation {
             started: Instant::now(),
             duration,
             frames: 0,
+            tiles: tiles
+                .iter()
+                .map(|tile| (tile.window, WindowServerId::from(tile.window), tile.frame.size))
+                .collect(),
+            destination_refreshed: false,
             _clock: clock,
         });
 
@@ -937,7 +1053,7 @@ impl WorkspaceAnimation {
     }
 
     fn step_canvas(&mut self) {
-        let (done, place_now) = {
+        let (done, place_now, refresh_now) = {
             let Self { overlay, canvas, .. } = self;
             let Some(canvas) = canvas.as_mut() else { return };
             let progress = canvas.progress();
@@ -950,8 +1066,15 @@ impl WorkspaceAnimation {
             if place_now {
                 canvas.frames_applied = true;
             }
-            (progress >= 1.0, place_now)
+            let refresh_now = !canvas.destination_refreshed && progress >= REFRESH_DESTINATION_AT;
+            if refresh_now {
+                canvas.destination_refreshed = true;
+            }
+            (progress >= 1.0, place_now, refresh_now)
         };
+        if refresh_now {
+            self.refresh_destination();
+        }
         if place_now {
             let frames =
                 self.canvas.as_ref().map(|c| c.final_frames.clone()).unwrap_or_default();
@@ -1287,6 +1410,64 @@ pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod refresh {
+        use super::*;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn depths(pairs: &[(u32, usize)]) -> HashMap<u32, usize> {
+            pairs.iter().copied().collect()
+        }
+
+        /// Frontmost first, because the front window is the one being switched into and the only one
+        /// whose unfocused rendering is worth paying a capture to correct.
+        #[test]
+        fn orders_frontmost_first() {
+            let candidates = [(wid(10), 10), (wid(20), 20), (wid(30), 30)];
+            let order = refresh_order(
+                &candidates,
+                &depths(&[(10, 5), (20, 0), (30, 2)]),
+                &[10, 20, 30],
+                3,
+            );
+            assert_eq!(order, vec![wid(20), wid(30), wid(10)]);
+        }
+
+        #[test]
+        fn takes_only_as_many_as_asked_for() {
+            // Each capture costs a frame, so the cap is what keeps the hitch bounded.
+            let candidates = [(wid(10), 10), (wid(20), 20), (wid(30), 30)];
+            let order =
+                refresh_order(&candidates, &depths(&[(10, 2), (20, 0), (30, 1)]), &[10, 20, 30], 1);
+            assert_eq!(order, vec![wid(20)]);
+        }
+
+        #[test]
+        fn skips_windows_that_are_not_on_screen() {
+            // SkyLight reads the framebuffer, so capturing one of these would return a sliver and be
+            // rejected anyway, after paying for it.
+            let candidates = [(wid(10), 10), (wid(20), 20)];
+            let order = refresh_order(&candidates, &depths(&[(10, 0), (20, 1)]), &[20], 2);
+            assert_eq!(order, vec![wid(20)]);
+        }
+
+        #[test]
+        fn is_empty_when_nothing_is_on_screen() {
+            let candidates = [(wid(10), 10)];
+            assert!(refresh_order(&candidates, &depths(&[(10, 0)]), &[], 2).is_empty());
+        }
+
+        #[test]
+        fn a_window_with_no_known_depth_sorts_last_rather_than_first() {
+            // Unknown depth must not outrank a window the window server actually reported as frontmost.
+            let candidates = [(wid(10), 10), (wid(20), 20)];
+            let order = refresh_order(&candidates, &depths(&[(20, 3)]), &[10, 20], 1);
+            assert_eq!(order, vec![wid(20)]);
+        }
+    }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))

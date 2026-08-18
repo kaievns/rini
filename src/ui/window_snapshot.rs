@@ -114,7 +114,7 @@ pub fn is_backdrop_worth_drawing(
 ///
 /// Two cases rather than one normalised form: Core Animation accepts either, and converting would cost
 /// exactly what each API is good at avoiding. Surfaces are preferred because they stay off the heap.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SnapshotImage {
     /// CPU-side bitmap, from `SLSHWCaptureWindowList`.
     Bitmap(CFRetained<CGImage>),
@@ -128,7 +128,7 @@ pub enum SnapshotImage {
 unsafe impl Send for SnapshotImage {}
 
 /// A window's pixels, plus how much of the window they cover.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WindowSnapshot {
     pub image: SnapshotImage,
     pub coverage: Coverage,

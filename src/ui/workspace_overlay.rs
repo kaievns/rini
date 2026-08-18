@@ -340,6 +340,18 @@ impl WorkspaceOverlay {
         }
     }
 
+    /// Replaces one tile's picture, leaving its position alone.
+    ///
+    /// Used mid-flight, once the window being switched into is on screen and can be captured with its
+    /// focused appearance. Contents only: changing the frame here would fight the canvas.
+    pub fn set_tile_picture(&mut self, window: WindowId, snapshot: &WindowSnapshot) {
+        let Some(layer) = self.tile_layers.get(&window) else { return };
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        set_layer_contents(layer, snapshot);
+        CATransaction::commit();
+    }
+
     /// Moves the canvas so that `offset` in canvas coordinates sits at the overlay's top-left.
     ///
     /// The entire animation: one property on one layer, so tiles cannot drift against each other.
