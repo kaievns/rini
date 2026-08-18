@@ -1007,17 +1007,16 @@ impl WorkspaceAnimation {
         // Refreshed per animation: the desktop can change, and it is one cheap framebuffer capture of
         // fully visible windows, which is the case SkyLight handles well.
         let backdrop = self.capture_backdrop();
-        let foreground = self.capture_bar();
+        let strip = self.bar_strip();
 
         let Some(overlay) = self.ensure_overlay() else {
             self.request_frames(final_frames);
             return;
         };
         overlay.set_backdrop(backdrop.as_ref());
-        match &foreground {
-            Some((snapshot, at)) => overlay.set_foreground(Some(snapshot), *at),
-            None => overlay.set_foreground(None, CGPoint::new(0.0, 0.0)),
-        }
+        // The same picture as the backdrop, clipped to the bar. Drawing the bar from a separate capture
+        // put a second, misaligned copy on screen.
+        overlay.set_foreground(backdrop.as_ref(), strip);
         overlay.set_canvas(&tiles);
         overlay.set_canvas_offset(from_offset);
         overlay.show();
@@ -1258,25 +1257,21 @@ impl WorkspaceAnimation {
         }
     }
 
-    /// Captures the bar, so the overlay can redraw it on top of itself.
+    /// Where the bar sits, in the overlay's own coordinates, or `None` when there is no bar.
     ///
-    /// Returns where the capture belongs as well as the pixels. A composite covers only the union of
-    /// the windows in it, so the caller cannot assume it starts at the display's corner.
-    fn capture_bar(&self) -> Option<(WindowSnapshot, CGPoint)> {
-        let (display_frame, scale) = self.display?;
-        let strip = crate::sys::window_server::bar_strip(display_frame);
-        let bounds = strip.bounds?;
-        let snapshot = crate::ui::window_snapshot::capture_composite_via_skylight(
-            &strip.windows,
-            (bounds.size.width, bounds.size.height),
-            scale,
-        )?;
-        // Relative to the overlay, which spans the display.
-        let at = CGPoint::new(
-            bounds.origin.x - display_frame.origin.x,
-            bounds.origin.y - display_frame.origin.y,
-        );
-        Some((snapshot, at))
+    /// A rect only. The pixels come from the desktop capture, which already contains the bar, so nothing
+    /// is captured separately: sketchybar is dozens of small windows and a composite of them covers only
+    /// their union, which cannot be aligned against the copy already in the backdrop.
+    fn bar_strip(&self) -> Option<CGRect> {
+        let (display_frame, _) = self.display?;
+        let bounds = crate::sys::window_server::bar_strip(display_frame).bounds?;
+        Some(CGRect::new(
+            CGPoint::new(
+                bounds.origin.x - display_frame.origin.x,
+                bounds.origin.y - display_frame.origin.y,
+            ),
+            bounds.size,
+        ))
     }
 
     /// Asks the reactor to place windows at their final frames.

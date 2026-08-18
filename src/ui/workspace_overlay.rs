@@ -104,6 +104,10 @@ pub struct WorkspaceOverlay {
     /// The bar, redrawn on top and held still while the canvas moves beneath it. The overlay spans the
     /// whole display, so it covers the real bar and has to put it back.
     foreground: Retained<CALayer>,
+    /// The desktop image inside `foreground`, shifted so the bar shows through the clip.
+    bar: Retained<CALayer>,
+    /// Whether the bar has ever been drawn, so a skipped desktop capture keeps it rather than hiding it.
+    bar_drawn: bool,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
     /// be translated into the overlay's own space.
@@ -184,7 +188,12 @@ impl WorkspaceOverlay {
         foreground.setContentsScale(scale);
         foreground.setZPosition(10_000.0);
         foreground.setHidden(true);
+        foreground.setMasksToBounds(true);
         root.addSublayer(&foreground);
+
+        let bar = CALayer::layer();
+        bar.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        foreground.addSublayer(&bar);
 
         let canvas = CALayer::layer();
         // Anchored at its top-left so setting the position translates the children directly, with no
@@ -201,6 +210,8 @@ impl WorkspaceOverlay {
             root,
             backdrop,
             foreground,
+            bar,
+            bar_drawn: false,
             canvas,
             tile_layers: HashMap::new(),
             frame,
@@ -218,17 +229,32 @@ impl WorkspaceOverlay {
     ///
     /// `at` must be the origin of the region the capture covers. A failed capture leaves whatever was
     /// there rather than hiding it, so the bar does not blink.
-    pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>, at: CGPoint) {
-        let Some(snapshot) = snapshot else { return };
+    pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>, strip: Option<CGRect>) {
+        let Some(strip) = strip else {
+            self.foreground.setHidden(true);
+            return;
+        };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
+        self.foreground.setFrame(strip);
+        self.foreground.setMasksToBounds(true);
+        // A desktop capture is skipped whenever the fresh one is not worth drawing, and the backdrop
+        // keeps whatever it had. The bar has to do the same: hiding it instead left the canvas showing
+        // through the menu bar strip, which is worse than a slightly stale bar.
+        let Some(snapshot) = snapshot else {
+            self.foreground.setHidden(!self.bar_drawn);
+            CATransaction::commit();
+            return;
+        };
         let (covered_w, covered_h) = snapshot.coverage.covered;
-        // Positioned at the captured region's own origin, not the overlay's corner. A composite covers
-        // only the union of the windows in it, and sketchybar is dozens of small windows starting 217pt
-        // in, so drawing the strip at x=0 put a second bar 217pt left of the real one.
-        self.foreground.setFrame(CGRect::new(at, CGSize::new(covered_w, covered_h)));
-        self.foreground.setContentsScale(self.scale);
-        set_layer_contents(&self.foreground, snapshot);
+        // The bar comes from the SAME picture as the backdrop, shifted so that `strip` lands at the
+        // container's origin and clipped to it. That is what makes the two copies align: they are the
+        // same pixels at the same coordinates. A separate capture could not be, because sketchybar is
+        // dozens of small windows and a composite of them covers only their union.
+        self.bar.setContentsScale(self.scale);
+        set_layer_contents(&self.bar, snapshot);
+        self.bar.setFrame(strip_inner_frame(strip, CGSize::new(covered_w, covered_h)));
+        self.bar_drawn = true;
         self.foreground.setHidden(false);
         CATransaction::commit();
     }
@@ -456,6 +482,16 @@ impl WorkspaceOverlay {
     }
 }
 
+/// Where to put a full-display image inside a container clipped to `strip`, so that the part of the
+/// image at `strip` shows through.
+///
+/// Offset by the strip's own origin: the image keeps its full size and slides so the wanted region lands
+/// at the container's corner. Kept separate because getting the sign wrong draws the wrong part of the
+/// desktop, which looks like a second bar in the wrong place rather than like an error.
+fn strip_inner_frame(strip: CGRect, covered: CGSize) -> CGRect {
+    CGRect::new(CGPoint::new(-strip.origin.x, -strip.origin.y), covered)
+}
+
 /// Moves `layer` under `container` unless it is already there.
 ///
 /// The two drawing paths pool the same layers but hang them off different parents, in different
@@ -561,6 +597,34 @@ mod tests {
             assert!(value >= previous, "easing went backwards at t = {}", i);
             previous = value;
         }
+    }
+
+    #[test]
+    fn the_strip_image_slides_by_the_strip_origin() {
+        // The bar sits at the top, so a strip at the origin needs no shift.
+        let at_origin = strip_inner_frame(
+            CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 32.0)),
+            CGSize::new(1728.0, 1117.0),
+        );
+        assert_eq!(at_origin.origin.x, 0.0);
+        assert_eq!(at_origin.origin.y, 0.0);
+        assert_eq!(at_origin.size.width, 1728.0);
+        assert_eq!(at_origin.size.height, 1117.0);
+    }
+
+    #[test]
+    fn a_strip_away_from_the_corner_shifts_the_image_negatively() {
+        // Getting this sign wrong shows the wrong part of the desktop, which reads as a second bar in
+        // the wrong place rather than as an error.
+        let shifted = strip_inner_frame(
+            CGRect::new(CGPoint::new(217.0, 8.0), CGSize::new(1504.0, 24.0)),
+            CGSize::new(1728.0, 1117.0),
+        );
+        assert_eq!(shifted.origin.x, -217.0);
+        assert_eq!(shifted.origin.y, -8.0);
+        // Full size regardless: the container does the cropping.
+        assert_eq!(shifted.size.width, 1728.0);
+        assert_eq!(shifted.size.height, 1117.0);
     }
 
     #[test]

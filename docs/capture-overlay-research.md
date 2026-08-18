@@ -600,24 +600,33 @@ frames=87  elapsed=1501ms  duration=1500ms  travel="0,1117 -> 0,0"
 
 60fps in every case, and travel proportional to the number of rows crossed.
 
-## The bar is dozens of windows, so a composite of it starts partway across
+## The bar is dozens of windows, so do not capture it separately
 
-sketchybar is not one window. Measured on this machine, it is about 30 windows
-at layer -20, most 14pt to 131pt wide, plus a few parked at -9999,-9999:
+sketchybar is not one window. Measured here: about 30 windows at layer -20, most
+14pt to 131pt wide, plus a few parked at -9999,-9999:
 
 ```
 wid=3508  layer=-20  217,0   56x32   sketchybar
 wid=3510  layer=-20  1589,0 131x32   sketchybar
 wid=3575  layer=-20  -9999,-9999 1x1 sketchybar
-...
 ```
 
 `SLSHWCaptureWindowList` composites into an image covering the UNION of the
-windows given, so the capture covers x=217 to x=1721, not the whole display. It
-was then drawn at the overlay's top-left, putting the captured strip 217pt to
-the left of the real bar. Against the correctly placed copy inside the desktop
-render, that is the second, offset bar. `bar_strip` now returns the union so the
-layer can be positioned at its true origin.
+windows it is given, so a capture of the bar covers x=217 to x=1721 rather than
+the display. Drawn at the overlay's top-left that put a second bar 217pt left of
+the real one. Positioning it at the union's origin fixes the offset and still
+leaves two copies, because the desktop render ALREADY contains the bar: it
+excludes windows at layer 0 and above, and the bar is at -20.
+
+So the bar is not captured at all now. The foreground layer is a container
+clipped to the bar's rect, holding the same desktop picture the backdrop uses,
+shifted so the strip lands at the container's corner. One capture, one bar, and
+alignment by construction rather than by arithmetic: it is the same pixels at
+the same coordinates. `bar_strip` survives, but only to report the rect.
+
+A skipped desktop capture keeps the previous bar rather than hiding it. Hiding
+it let the canvas show through the menu bar strip, which is worse than a stale
+bar.
 
 ## A capture can be usable and still be the wrong shape
 
