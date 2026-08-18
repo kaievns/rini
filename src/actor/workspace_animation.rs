@@ -702,6 +702,27 @@ impl WorkspaceAnimation {
                 None => missing += 1,
             }
         }
+        for tile in tiles.iter().take(4) {
+            debug!(
+                pid = tile.window.pid,
+                idx = tile.window.idx.get(),
+                frame = format!(
+                    "{:.0},{:.0} {:.0}x{:.0}",
+                    tile.frame.origin.x, tile.frame.origin.y,
+                    tile.frame.size.width, tile.frame.size.height
+                ),
+                covered = format!(
+                    "{:.0}x{:.0}",
+                    tile.snapshot.coverage.covered.0, tile.snapshot.coverage.covered.1
+                ),
+                window = format!(
+                    "{:.0}x{:.0}",
+                    tile.snapshot.coverage.window.0, tile.snapshot.coverage.window.1
+                ),
+                source = format!("{:?}", tile.snapshot.source),
+                "canvas tile"
+            );
+        }
         debug!(
             requested = windows.len(),
             tiles = tiles.len(),
