@@ -772,23 +772,69 @@ Fixing it needs a capture after focus has landed, which is either one SkyLight
 capture mid-animation, once the destination is on screen behind the overlay and
 costing a frame or two of jank, or accepting that the first arrival is wrong.
 
-### Translucency is flattened at capture
+### Translucency is three things, and only one of them is lost
 
-Measured on a window with background transparency:
+An earlier version of this section claimed translucency is flattened at capture,
+on the strength of a histogram reading 100% opaque. That histogram sampled every
+fourth pixel and rounded, so it missed the corners. Corrected below.
+
+Sampling EVERY pixel of a `.best` capture of a 90%-opacity terminal:
 
 ```
-captureResolution best -> alpha: 100.0% fully opaque, 0.0% partial, 0.0% clear
+kCGWindowAlpha                       1.000
+every pixel   99.9764% opaque, 0.0064% partial, 0.0172% clear
+top-left corner, row 7, columns 10-11        1, 67
+centre pixel                                   255
 ```
 
-`shouldBeOpaque` is already false and it makes no difference. This is not a
-drawing problem and cannot be corrected when drawing: the alpha is gone by the
-time the surface exists.
+**Per-pixel alpha the window owns is preserved.** The corner ramp is right
+there: alpha 0 across the rounded corner, climbing through 1 and 67 as the curve
+ends. The non-opaque share is small only because four corners are a small part
+of a 2294x2162 image. Rounded corners, chromeless windows and genuinely
+transparent regions all come through, given `shouldBeOpaque = false` and a BGRA
+pixel format, both of which the service already sets.
 
-It is close to fundamental. Translucency and vibrancy are compositor effects
-defined against whatever is BEHIND the window, and a window-only capture has no
-behind. The framebuffer route does contain the composited result, but only for
-windows that are on screen, which is the same set that can already be recaptured
-fresh. Off-strip windows will draw solid.
+**Window-level alpha is not in play here.** `kCGWindowAlpha` is 1.000. If a
+window were dimmed below 1.0, captured pixels would come back scaled by it and
+the factor could be divided back out, which is what yabai's
+`cgimage_restore_alpha` does.
+
+**Blur-behind material is the one that is lost**, and it is what this terminal's
+`background-opacity = 0.9` actually uses: the centre pixel is fully opaque, so
+the 90% is not in the window's own pixels at all. The server samples what is
+behind the window and blurs it at composite time, and no per-window capture on
+any API can contain that.
+
+There is a faithful fix for it, but not one that works here: an
+`NSVisualEffectView` in `.behindWindow` mode underneath the tile, masked to the
+regions where the captured alpha is fractional. That mask cannot be derived in
+this case, because the capture is fully opaque exactly where the blur belongs.
+So the options are to accept flat translucency during a flight, which is
+invisible over a calm background, or to reconstruct the material from knowledge
+of which one the app uses. yabai accepts it on the bet that nobody notices in
+200ms, and that is a reasonable bet.
+
+### Shadows are never in the surface
+
+On any API. The window server generates a shadow at composite time from the
+window's shape, so a clone has none. `setIgnoreShadowsSingleWindow(true)` is set
+deliberately: SCK will bake a shadow in if asked, but then the compositor draws
+another one over it, and the image grows by the shadow margins so the content
+sits inset and every tile needs the `contentRect` attachment to stay aligned.
+
+Adding one back, cheapest first: a `CALayer` shadow with `shadowPath` set to a
+rounded rect at the window's corner radius, which is GPU-cheap and close enough
+at flight speeds; a cached `capturesShadowsOnly` pass per window, which caches
+well because a shadow depends on shape and key status rather than content; or
+per-clone windows with `hasShadow = true`, where the system derives a real
+shadow from the clone's alpha for free, at the cost of shadow recomputation if
+anything resizes mid-flight. Nothing here is a reported problem yet.
+
+### Keep alpha premultiplied end to end
+
+These captures are premultiplied. Dark halos around a tile's edges mean it was
+premultiplied twice, light halos mean straight alpha was treated as
+premultiplied. That fringe is the fastest way to locate an alpha bug.
 
 ## Three numbers the design rests on
 
