@@ -140,6 +140,11 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-io-surface = { version = "0.3.2", default-features = false, features = [
 	"IOSurfaceRef",
+	# IOSurfaceTypes and libc are what gate IOSurfaceLock, which the capture-fill check needs to read a
+	# surface's pixels. Without reading pixels there is no way to tell a fully rendered capture from one
+	# that filled only a corner of its buffer, since the buffer is the right size either way.
+	"IOSurfaceTypes",
+	"libc",
 	"objc2",
 	"objc2-core-foundation",
 ] }

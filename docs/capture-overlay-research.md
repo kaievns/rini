@@ -729,3 +729,54 @@ layer property reads correctly, which is why the layer tree looked innocent for
 so long. Tile layers were never wrong: `convertRect:toLayer:` matched the
 requested frame on every tile, and colouring each tile's background showed
 rectangles at exactly the right sizes and positions.
+
+## A picture is not the window, and the differences show at the handover
+
+Three separate reports, one shape: the tile is a picture taken at a different
+moment and in a different context than the real window, so anything the app
+renders differently shows as a flicker when the overlay lifts.
+
+### Stale content
+
+The cache is refreshed after an animation finishes, so a picture shows the
+window as it was at the END of the previous switch. Off screen that is
+invisible. For the window just being typed in it is not: it animates out holding
+content from whenever the workspace was last entered.
+
+Fixed for the windows that are on screen, by recapturing them through SkyLight
+at switch time, frontmost first and capped at three. Measured: one window, 32ms
+to 35ms once warm, against the roughly 400ms that capturing all eighteen used to
+cost.
+
+Not fixed for the window being switched INTO. SkyLight reads the framebuffer and
+the destination workspace's windows are not on screen yet when the animation
+starts.
+
+### Unfocused rendering
+
+Because the destination cannot be recaptured, its picture is whatever it last
+had, and if that was taken while the app was unfocused the tile slides in dimmed
+and snaps to focused at the handover. Ghostty greys out noticeably when
+unfocused.
+
+Fixing it needs a capture after focus has landed, which is either one SkyLight
+capture mid-animation, once the destination is on screen behind the overlay and
+costing a frame or two of jank, or accepting that the first arrival is wrong.
+
+### Translucency is flattened at capture
+
+Measured on a window with background transparency:
+
+```
+captureResolution best -> alpha: 100.0% fully opaque, 0.0% partial, 0.0% clear
+```
+
+`shouldBeOpaque` is already false and it makes no difference. This is not a
+drawing problem and cannot be corrected when drawing: the alpha is gone by the
+time the surface exists.
+
+It is close to fundamental. Translucency and vibrancy are compositor effects
+defined against whatever is BEHIND the window, and a window-only capture has no
+behind. The framebuffer route does contain the composited result, but only for
+windows that are on screen, which is the same set that can already be recaptured
+fresh. Off-strip windows will draw solid.

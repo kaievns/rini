@@ -20,6 +20,7 @@
 //! delivered on time, and when one is late the animation silently slows down instead of skipping,
 //! which is what made the old engine feel inconsistent.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -125,6 +126,23 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// clock only starts once the passes settle. Because nothing has moved yet, windows joining during
 /// this window cannot pop. One frame is enough to absorb the passes and is imperceptible.
 const COALESCE_WINDOW: Duration = Duration::from_millis(25);
+
+/// How many windows may be captured fresh at switch time.
+///
+/// Capturing everything is what made the first version feel laggy: 18 windows at 12ms to 24ms each is
+/// roughly 400ms before anything moves. But SkyLight can only capture what is ON SCREEN, and those are
+/// exactly the windows whose staleness is visible, because they are the ones being looked at. There are
+/// rarely more than two, so this bounds the cost at roughly one frame while removing the case that
+/// reads as broken: the window you were just typing in animating out with the content it had when you
+/// arrived, because the cache was last refreshed at the end of the previous switch.
+const MAX_FRESH_CAPTURES: usize = 3;
+
+/// How much of a window must be on screen before a fresh capture is worth attempting.
+///
+/// SkyLight reads the framebuffer, so a partly covered window comes back clipped and is rejected
+/// anyway. Only asking about windows that are fully visible avoids paying for a capture that cannot be
+/// used.
+const FRESH_CAPTURE_MIN_ON_SCREEN: f64 = 0.99;
 
 /// How far through the animation the real windows are placed.
 ///
@@ -429,6 +447,80 @@ impl WorkspaceAnimation {
             }
         }
         self.overlay.as_mut()
+    }
+
+    /// Recaptures the windows that are on screen right now, just before they start moving.
+    ///
+    /// The cache is otherwise refreshed after an animation finishes, which means a picture shows the
+    /// window as it was at the END of the previous switch. For anything off screen that is invisible and
+    /// fine. For the window being looked at and typed in it is not: it animates out holding content from
+    /// whenever the workspace was last entered. Bounded by [`MAX_FRESH_CAPTURES`] so this cannot grow
+    /// back into the 400ms stall that made capturing at switch time a bad idea in the first place.
+    /// Measured: one window, 32ms to 35ms once warm.
+    ///
+    /// This does NOT help the window being switched INTO. SkyLight reads the framebuffer, and the
+    /// destination workspace's windows are not on screen yet when an animation starts, so they keep
+    /// whatever picture they last had. If that picture was taken while the app was unfocused, the tile
+    /// slides in showing the unfocused rendering and snaps to focused at the handover. Fixing that needs
+    /// a capture after focus has landed, which means either paying for one mid-animation or accepting
+    /// that the first arrival is wrong.
+    fn refresh_visible(
+        &mut self,
+        windows: &[CanvasWindow],
+        depths: &HashMap<u32, usize>,
+        display: CGRect,
+        scale: f64,
+    ) {
+        let started = Instant::now();
+        let on_screen = crate::sys::window_server::visible_windows_on_display(display);
+
+        // Frontmost first. The window at the front is the one being switched INTO, and it is the one
+        // whose picture matters most: focus has already moved to it, so a picture taken before the
+        // switch shows the app's unfocused rendering. Ghostty greys out when it is not focused, so the
+        // tile slid in grey and snapped to black at the handover.
+        let mut order: Vec<&CanvasWindow> = windows.iter().collect();
+        order.sort_by_key(|window| depths.get(&window.server_id.as_u32()).copied().unwrap_or(usize::MAX));
+
+        let mut attempts = 0usize;
+        let mut refreshed = 0usize;
+        for window in order {
+            if attempts >= MAX_FRESH_CAPTURES {
+                break;
+            }
+            // Its CURRENT size, from the window server where known. A canvas frame is in canvas
+            // coordinates and says nothing about where the window is on screen at this moment. Not being
+            // listed is not disqualifying: the destination workspace's windows have only just been
+            // shown, and those are exactly the ones worth recapturing.
+            let size = match on_screen.iter().find(|(id, _)| *id == window.server_id) {
+                Some((_, frame)) => {
+                    if on_screen_fraction(*frame, display) < FRESH_CAPTURE_MIN_ON_SCREEN {
+                        continue;
+                    }
+                    frame.size
+                }
+                None => window.frame.size,
+            };
+            attempts += 1;
+            let Some(snapshot) =
+                capture_via_skylight(window.server_id, (size.width, size.height), scale)
+            else {
+                continue;
+            };
+            // A clipped or wrongly shaped capture is worse than a stale one, and `insert` already
+            // refuses to replace a usable picture with an unusable one.
+            if snapshot.is_usable() && snapshot.fits(window.frame.size) {
+                self.cache.insert(window.window, snapshot);
+                refreshed += 1;
+            }
+        }
+        if attempts > 0 {
+            debug!(
+                attempts,
+                refreshed,
+                took_ms = started.elapsed().as_millis(),
+                "recaptured on-screen windows, frontmost first, so they do not animate stale or unfocused"
+            );
+        }
     }
 
     fn refresh_snapshot(&mut self, window: WindowId, server_id: WindowServerId, size: CGSize) {
@@ -770,6 +862,9 @@ impl WorkspaceAnimation {
             .collect();
 
         let depths = crate::sys::window_server::front_to_back_depths();
+        if let Some((display_frame, scale)) = self.display {
+            self.refresh_visible(&windows, &depths, display_frame, scale);
+        }
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;

@@ -34,13 +34,13 @@ use objc2_core_foundation::{CFRetained, CGSize};
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::CVPixelBufferGetIOSurface;
 use objc2_foundation::{NSArray, NSError};
-use objc2_io_surface::IOSurfaceRef;
+use objc2_io_surface::{IOSurfaceLockOptions, IOSurfaceRef};
 use objc2_screen_capture_kit::{
     SCCaptureResolutionType, SCContentFilter, SCScreenshotManager, SCShareableContent,
     SCStreamConfiguration, SCWindow,
 };
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::actor::app::WindowId;
 use crate::sys::window_server::WindowServerId;
@@ -49,6 +49,78 @@ use crate::ui::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, Window
 /// Concurrent captures. Measured: wall clock stops improving past four, because ScreenCaptureKit
 /// serialises internally. Going wider only queues work and delays the first result.
 const MAX_CONCURRENT: usize = 4;
+
+/// Alpha above which a pixel counts as painted. Window corners are rounded and shadows are excluded, so
+/// a genuinely painted edge is opaque; anything at or below this is untouched buffer.
+const PAINTED_ALPHA: u8 = 8;
+
+/// Does a capture's content actually reach the far edge of the buffer it was given?
+///
+/// This is the invariant that broke, and it broke silently. `SCStreamConfiguration.width` and `.height`
+/// are in PIXELS, and a capture is requested at the window's point size times the backing scale. With
+/// `captureResolution` set to `.nominal`, ScreenCaptureKit renders the window at its POINT size into
+/// that pixel-sized buffer, so on a 2x display the window fills only the top-left quarter and the rest
+/// stays transparent. A layer draws the whole surface, so every window appeared at half size pinned to a
+/// corner of a tile that was itself exactly the right size.
+///
+/// Nothing about the surface's declared dimensions reveals it: the buffer is exactly the size asked
+/// for. Only the pixels tell the truth, so they are sampled here. A band inside the right edge and one
+/// inside the bottom edge is enough, because underfilling leaves entire edges untouched; there is no
+/// need to walk the whole surface.
+///
+/// Returns `None` when the surface cannot be inspected, which is not a failure: the caller treats an
+/// unknown result as fine rather than throwing away a capture it cannot check.
+fn content_reaches_edges(surface: &IOSurfaceRef) -> Option<bool> {
+    let width = unsafe { surface.width() };
+    let height = unsafe { surface.height() };
+    if width == 0 || height == 0 {
+        return None;
+    }
+    // SAFETY: read-only lock, released before returning, and the base address is only read inside it.
+    let locked = unsafe { surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
+    if locked != 0 {
+        return None;
+    }
+    let stride = surface.bytes_per_row();
+    let base = surface.base_address().as_ptr() as *const u8;
+    if stride < width * 4 {
+        // SAFETY: matching unlock for the successful lock above.
+        unsafe { surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
+        return None;
+    }
+
+    /// How far in from an edge to sample. Far enough past a rounded corner to be inside real content.
+    const INSET: usize = 4;
+    let sample = |x: usize, y: usize| -> u8 {
+        // SAFETY: x and y are bounded by the surface's own dimensions and stride, checked above, and
+        // the surface is locked for reading for the duration of this closure.
+        unsafe { *base.add(y * stride + x * 4 + 3) }
+    };
+    let right = width.saturating_sub(1 + INSET);
+    let bottom = height.saturating_sub(1 + INSET);
+    // Both edges have to be reached, not either one. A buffer underfilled in only one direction still
+    // has content along the other edge, so accepting either was enough to miss a capture that was full
+    // width and half height. A test caught that.
+    //
+    // Several samples per edge rather than one, because a rounded corner or a dark scrollbar can leave
+    // any single point transparent on a perfectly good capture.
+    let mut reaches_right = false;
+    let mut reaches_bottom = false;
+    for i in 1..8 {
+        let y = height * i / 8;
+        if y < height && sample(right, y) > PAINTED_ALPHA {
+            reaches_right = true;
+        }
+        let x = width * i / 8;
+        if x < width && sample(x, bottom) > PAINTED_ALPHA {
+            reaches_bottom = true;
+        }
+    }
+    let painted = reaches_right && reaches_bottom;
+    // SAFETY: matching unlock for the successful lock above.
+    unsafe { surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
+    Some(painted)
+}
 
 /// A window to capture, and the size its pixels should represent.
 #[derive(Debug, Clone, Copy)]
@@ -420,6 +492,23 @@ impl SnapshotService {
                 // ScreenCaptureKit returns the window's own surface at the requested size, so the
                 // capture covers the whole window by construction. That is the entire reason for
                 // using it over SkyLight, which returns only what is on screen.
+                //
+                // "At the requested size" is only true of the BUFFER, and that is what made this
+                // worth checking rather than assuming. See `content_reaches_edges`.
+                if content_reaches_edges(&surface) == Some(false) {
+                    warn!(
+                        wsid = target.server_id.as_u32(),
+                        pid = target.window.pid,
+                        surface = format!(
+                            "{}x{}",
+                            unsafe { surface.width() },
+                            unsafe { surface.height() }
+                        ),
+                        "capture did not fill its buffer; windows will draw small and in a corner. \
+                         Check SCStreamConfiguration captureResolution and whether width and height \
+                         are being given in pixels"
+                    );
+                }
                 let width = unsafe { surface.width() } as f64 / scale;
                 let height = unsafe { surface.height() } as f64 / scale;
                 state.ready.insert(
@@ -554,14 +643,76 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 
+    /// Builds a real IOSurface and paints its top-left `fill_w` x `fill_h` pixels opaque, leaving the
+    /// rest untouched. That is exactly the shape of the regression: a buffer of the right size holding
+    /// the window in one corner.
+    fn surface_painted(width: usize, height: usize, fill_w: usize, fill_h: usize) -> CFRetained<IOSurfaceRef> {
+        let surface = sized_surface(width, height);
+        // SAFETY: read-write lock released below, and writes stay inside the surface's own bounds.
+        let locked = unsafe { surface.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()) };
+        assert_eq!(locked, 0, "could not lock the test surface");
+        let stride = surface.bytes_per_row();
+        let base = surface.base_address().as_ptr() as *mut u8;
+        for y in 0..height {
+            for x in 0..width {
+                let painted = x < fill_w && y < fill_h;
+                // SAFETY: bounded by the surface's own dimensions and its stride.
+                unsafe { *base.add(y * stride + x * 4 + 3) = if painted { 255 } else { 0 } };
+            }
+        }
+        // SAFETY: matching unlock.
+        unsafe { surface.unlock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()) };
+        surface
+    }
+
+    /// The regression: `captureResolution` set to nominal renders the window at its POINT size into a
+    /// buffer sized in PIXELS, so on a 2x display three quarters of the buffer stays transparent. The
+    /// buffer's own dimensions look correct, so only the pixels can catch it.
+    #[test]
+    fn a_capture_filling_only_a_corner_of_its_buffer_is_detected() {
+        let surface = surface_painted(64, 64, 32, 32);
+        assert_eq!(content_reaches_edges(&surface), Some(false));
+    }
+
+    #[test]
+    fn a_capture_filling_its_buffer_passes() {
+        let surface = surface_painted(64, 64, 64, 64);
+        assert_eq!(content_reaches_edges(&surface), Some(true));
+    }
+
+    #[test]
+    fn a_capture_a_few_pixels_short_still_passes() {
+        // Rounded corners and rounding leave the very edge transparent on a correct capture, so the
+        // check samples inside the edge. Being strict here would reject every real window.
+        let surface = surface_painted(64, 64, 62, 62);
+        assert_eq!(content_reaches_edges(&surface), Some(true));
+    }
+
+    #[test]
+    fn a_capture_short_in_only_one_direction_is_detected() {
+        // Width right, height half: what a buffer sized in pixels but rendered in points looks like if
+        // only one axis were wrong. Checking a single corner would miss half of these.
+        assert_eq!(content_reaches_edges(&surface_painted(64, 64, 64, 32)), Some(false));
+        assert_eq!(content_reaches_edges(&surface_painted(64, 64, 32, 64)), Some(false));
+    }
+
+    #[test]
+    fn a_fully_transparent_capture_is_detected() {
+        assert_eq!(content_reaches_edges(&surface_painted(64, 64, 0, 0)), Some(false));
+    }
+
     /// A real 4x4 IOSurface, which is what the production path actually stores. No test here
     /// inspects the pixels; the surface only has to exist so a `WindowSnapshot` can be built.
     fn tiny_surface() -> CFRetained<IOSurfaceRef> {
+        sized_surface(4, 4)
+    }
+
+    fn sized_surface(width: usize, height: usize) -> CFRetained<IOSurfaceRef> {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
 
         let pairs: [(&str, i64); 4] = [
-            ("IOSurfaceWidth", 4),
-            ("IOSurfaceHeight", 4),
+            ("IOSurfaceWidth", width as i64),
+            ("IOSurfaceHeight", height as i64),
             ("IOSurfaceBytesPerElement", 4),
             ("IOSurfacePixelFormat", i64::from(u32::from_be_bytes(*b"BGRA"))),
         ];
