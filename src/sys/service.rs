@@ -54,13 +54,23 @@ fn plist_path() -> io::Result<PathBuf> {
     Ok(home.join("Library").join("LaunchAgents").join(format!("{RINI_PLIST}.plist")))
 }
 
+/// Finds the rini binary on `PATH`, resolving symlinks to the real file.
+///
+/// Resolving matters for permissions, not tidiness. TCC identifies a client by the path it was
+/// launched from, so the Accessibility grant given to `~/.local/bin/rini` does not apply to
+/// `/opt/homebrew/bin/rini` even though the second is a symlink to the first. This was measured: with
+/// the agent pointed at the Homebrew symlink it started, logged "Rini still does not have
+/// accessibility permission" on a loop, and never registered its Mach service, which is what left rini
+/// dead after a reboot while a manual launch of the same binary worked.
 fn find_rini_executable_in_path(path_env: &std::ffi::OsStr) -> io::Result<Option<PathBuf>> {
     let mut current_dir: Option<PathBuf> = None;
     for dir in env::split_paths(path_env) {
         let candidate = dir.join("rini");
         if candidate.is_file() {
             if candidate.is_absolute() {
-                return Ok(Some(candidate));
+                // A failure here means the link is dangling, in which case the path as written is the
+                // best available answer and launchd will report the real problem.
+                return Ok(Some(candidate.canonicalize().unwrap_or(candidate)));
             }
 
             let base = match current_dir.as_ref() {
@@ -114,10 +124,21 @@ fn plist_contents() -> io::Result<String> {
         .to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "non-UTF8 executable path"))?;
 
-    let plist = format!(
-        r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
-<plist version=\"1.0\">
+    Ok(plist_xml(exe_str, &path_env, &user))
+}
+
+/// Builds the launch agent plist.
+///
+/// Separated from reading the environment so the document can be checked without a rini on `PATH`.
+fn plist_xml(exe: &str, path_env: &str, user: &str) -> String {
+    format!(
+        // Raw string, so quotes need no escaping. Backslash-escaping them here emitted the
+        // backslashes literally, which is not valid XML: an attribute value cannot contain a bare
+        // backslash before its quote. Apple's own parser accepted it, so `plutil -lint` reported the
+        // installed file as OK and it went unnoticed.
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
 <dict>
     <key>Label</key>
     <string>{name}</string>
@@ -155,12 +176,10 @@ fn plist_contents() -> io::Result<String> {
 </plist>
 "#,
         name = RINI_PLIST,
-        exe = exe_str,
+        exe = exe,
         path_env = path_env,
         user = user
-    );
-
-    Ok(plist)
+    )
 }
 /*<key>MachServices</key>
 <dict>
@@ -409,8 +428,12 @@ mod tests {
 
     use super::*;
 
+    /// Was `find_rini_executable_prefers_stable_symlink_path`, which asserted the opposite. The
+    /// symlink is the more stable path, but stability is worth nothing next to the agent being unable
+    /// to control any window: TCC keys the Accessibility grant to the launch path, so the agent has to
+    /// use the same real file a manual launch does.
     #[test]
-    fn find_rini_executable_prefers_stable_symlink_path() {
+    fn find_rini_executable_resolves_a_symlink_to_the_real_binary() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
 
@@ -430,6 +453,26 @@ mod tests {
         let found = find_rini_executable_in_path(dir.as_os_str())
             .unwrap()
             .expect("expected to find rini in PATH");
-        assert_eq!(found, link);
+        assert_eq!(found, real.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn the_plist_quotes_attributes_without_backslashes() {
+        // The template is a raw string, so escaping its quotes emitted the backslashes literally and
+        // wrote `version=\"1.0\"` into the installed file. `plutil -lint` still reported OK, so this
+        // needs asserting rather than eyeballing.
+        let plist = plist_xml("/Users/x/.local/bin/rini", "/usr/bin", "x");
+        assert!(!plist.contains('\\'), "no backslash belongs anywhere in this document");
+        assert!(plist.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(plist.contains("<plist version=\"1.0\">"));
+    }
+
+    #[test]
+    fn the_plist_carries_the_executable_and_user_through() {
+        let plist = plist_xml("/opt/homebrew/bin/rini", "/usr/bin:/bin", "kai");
+        assert!(plist.contains("<string>/opt/homebrew/bin/rini</string>"));
+        assert!(plist.contains("<string>/usr/bin:/bin</string>"));
+        assert!(plist.contains("/tmp/rini_kai.out.log"));
+        assert!(plist.contains("/tmp/rini_kai.err.log"));
     }
 }
