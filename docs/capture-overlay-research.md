@@ -666,3 +666,66 @@ measured and are not the cause:
 A `check_geometry` call now asserts the first point on every animation and logs
 only when it fails, so a scale introduced in the layer tree cannot go unnoticed
 again.
+
+## Nominal capture resolution paints a quarter of the buffer
+
+The one that caused "the windows are scaled". `SCStreamConfiguration.width` and
+`.height` are in PIXELS, and the service asks for the window's point size times
+the backing scale. With `captureResolution = .nominal` ScreenCaptureKit renders
+the window at its POINT size into that pixel-sized buffer, so on a 2x display
+the window fills the top-left quarter and the rest is transparent. Measured on
+one window, same buffer each time:
+
+```
+window 859x1081 points, buffer 1718x2162 px
+
+  nominal    painted  859x1081 of 1718x2162    50% x 50%
+  best       painted 1718x2162 of 1718x2162   100% x 100%
+  automatic  painted 1718x2162 of 1718x2162   100% x 100%
+```
+
+A layer handed that surface draws the whole buffer, so the window appears at
+half size pinned to a corner of a tile that is itself exactly the right size.
+Which is precisely what it looked like.
+
+### Why fixing it in the layer is the wrong fix
+
+`contentsRect` set to the painted quarter does make the window the right size,
+and it is wrong: that quarter holds 859x1081 pixels being stretched over
+1718x2162 backing pixels, so every window renders soft. Measured by eye
+immediately. The capture has to produce the pixels; the layer cannot invent
+them.
+
+### The two paths do not agree, which is what hid it
+
+`SCScreenshotManager.captureImage` returns a tight, fully painted image at
+`.nominal`, so a spike written against the image path measures 100% fill and
+proves nothing about the path in use. rini uses `captureSampleBufferWithFilter`.
+Only that path underfills, and its sample buffers carry no attachments here, so
+there is nothing to read back:
+
+```
+CMSampleBufferGetSampleAttachmentsArray -> NO attachments
+```
+
+The display filter used for the desktop backdrop does NOT underfill at
+`.nominal`, which is why the wallpaper always looked right and only windows were
+affected.
+
+### What ruled the layer out
+
+Recorded because it took several wrong turns. Four squares of identical size,
+each given the same surface and a coloured background, on a 2x display:
+
+```
+baseline, unit contentsRect        75% of the background still showing
+contentsRect 0,0 0.5x0.5          background down to 104 pixels: fills, but soft
+contentsGravity resize, explicit  same as baseline, so gravity is not the lever
+surface inside a child layer      same as baseline, so it is not the parent
+```
+
+`contentsScale` is not the lever either: 1.0 and 2.0 draw identically. Every
+layer property reads correctly, which is why the layer tree looked innocent for
+so long. Tile layers were never wrong: `convertRect:toLayer:` matched the
+requested frame on every tile, and colouring each tile's background showed
+rectangles at exactly the right sizes and positions.

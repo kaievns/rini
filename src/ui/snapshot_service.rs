@@ -203,7 +203,19 @@ impl SnapshotService {
                     // Not opaque: rounded corners must stay transparent, or every tile animates as a
                     // rectangle with black corners.
                     config.setShouldBeOpaque(false);
-                    config.setCaptureResolution(SCCaptureResolutionType::Nominal);
+                    // Best, not Nominal. Nominal renders the window at its POINT size into a buffer
+                    // sized in PIXELS, so on a 2x display the window occupies the top-left quarter of
+                    // the surface and the rest is transparent. Drawing that surface into a layer then
+                    // shows the window at half size in a corner, which is the "windows are scaled"
+                    // report. Measured on one window, same 1718x2162 buffer each time:
+                    //
+                    //   nominal   -> painted  859x1081 of 1718x2162   50% x 50%
+                    //   best      -> painted 1718x2162 of 1718x2162  100% x 100%
+                    //   automatic -> painted 1718x2162 of 1718x2162  100% x 100%
+                    //
+                    // Cropping the surface to the painted quarter instead gets the size right but at
+                    // half the resolution, which reads as blurry. This gets the pixels.
+                    config.setCaptureResolution(SCCaptureResolutionType::Best);
                 }
                 queued.push(PendingCapture { target: *target, filter, config, revision });
             }
