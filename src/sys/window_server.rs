@@ -609,12 +609,23 @@ fn overlaps(a: CGRect, b: CGRect) -> bool {
         && b.origin.y < a.origin.y + a.size.height
 }
 
+/// The windows making up the desktop backdrop, and whether the wallpaper is among them.
+pub struct DesktopBackdrop {
+    pub windows: Vec<WindowServerId>,
+    /// Whether the wallpaper window itself was found.
+    ///
+    /// macOS recreates the wallpaper window, so a listing taken at the wrong moment holds the icons
+    /// and widgets without it. Compositing that produces a desktop with nothing behind its icons,
+    /// which draws as a black screen for the length of an animation, so the caller needs to know.
+    pub has_wallpaper: bool,
+}
+
 /// Window server ids of the desktop backdrop: the wallpaper and the desktop icons.
 ///
 /// Everything at or below the desktop window level, which is where the wallpaper and Finder's icon
 /// layer live, and nothing else. Captured so the animation overlay can show the real desktop in the
 /// gaps between strips rather than a flat colour, which flickers as it appears and disappears.
-pub fn desktop_backdrop_windows(display: CGRect) -> Vec<WindowServerId> {
+pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
     /// Anything at or below this is backdrop. Read from a live system: the wallpaper sits at
     /// -2147483626 and Finder's desktop icons at -2147483603, while the Dock is far below at
     /// -2147483624 and must not be included or it would be drawn in the middle of the screen.
@@ -622,27 +633,43 @@ pub fn desktop_backdrop_windows(display: CGRect) -> Vec<WindowServerId> {
     /// The Dock's own level, excluded because it is not part of the desktop backdrop.
     const DOCK_LEVEL: i64 = -2147483624;
 
-    get_windows_raw::<CFDictionary<CFString, CFType>>(
+    let mut windows = Vec::new();
+    let mut has_wallpaper = false;
+    for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
         CGWindowListOption::OptionOnScreenOnly,
         kCGNullWindowID,
     )
     .iter()
-    .filter_map(|window| {
-        let layer = get_num(&window, unsafe { kCGWindowLayer })?;
+    {
+        let Some(layer) = get_num(&window, unsafe { kCGWindowLayer }) else {
+            continue;
+        };
         if layer > DESKTOP_CEILING || layer == DOCK_LEVEL {
-            return None;
+            continue;
         }
-        let bounds = window
-            .get(unsafe { kCGWindowBounds })?
-            .downcast::<CFDictionary>()
-            .ok()
-            .and_then(bounds_from_dict)?;
+        let Some(bounds) = window
+            .get(unsafe { kCGWindowBounds })
+            .and_then(|bounds| bounds.downcast::<CFDictionary>().ok())
+            .and_then(bounds_from_dict)
+        else {
+            continue;
+        };
         if !overlaps(bounds, display) {
-            return None;
+            continue;
         }
-        Some(WindowServerId::new(get_num(&window, unsafe { kCGWindowNumber })? as u32))
-    })
-    .collect()
+        let Some(id) = get_num(&window, unsafe { kCGWindowNumber }) else {
+            continue;
+        };
+        // Owned by the wallpaper agent, which on this machine reports its window as "Offscreen
+        // Wallpaper Window" at layer -2147483625.
+        if get_string(&window, unsafe { kCGWindowOwnerName })
+            .is_some_and(|owner| owner.contains("Wallpaper"))
+        {
+            has_wallpaper = true;
+        }
+        windows.push(WindowServerId::new(id as u32));
+    }
+    DesktopBackdrop { windows, has_wallpaper }
 }
 
 /// Window server ids of the bar sitting in the menu bar strip.

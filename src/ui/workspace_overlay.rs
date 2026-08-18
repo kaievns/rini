@@ -357,6 +357,7 @@ impl WorkspaceOverlay {
                 self.canvas.addSublayer(&layer);
                 layer
             });
+            reparent(layer, &self.canvas);
             layer.setContentsScale(self.scale);
             set_layer_contents(layer, &tile.snapshot);
             layer.setFrame(tile.frame);
@@ -412,6 +413,7 @@ impl WorkspaceOverlay {
                 self.root.addSublayer(&layer);
                 layer
             });
+            reparent(layer, &self.root);
             layer.setContentsScale(self.scale);
             set_layer_contents(layer, &tile.snapshot);
             layer.setFrame(tile.from);
@@ -479,6 +481,25 @@ impl WorkspaceOverlay {
         CATransaction::commit();
         let _ = self.mtm;
     }
+}
+
+/// Moves `layer` under `container` unless it is already there.
+///
+/// Tile layers are pooled and reused across animations because handing a layer a bitmap is the
+/// expensive part, but the two drawing paths hang them off different parents: canvas tiles live under
+/// the canvas, which is translated to animate, while per-window tiles live under the root and are moved
+/// individually. A layer created by one path and reused by the other kept its original parent, so it
+/// was positioned with the other path's arithmetic. In canvas coordinates that is a whole workspace row
+/// out, which put the tile off screen entirely.
+fn reparent(layer: &CALayer, container: &CALayer) {
+    let already = layer
+        .superlayer()
+        .is_some_and(|current| std::ptr::eq(&*current as *const CALayer, container as *const CALayer));
+    if already {
+        return;
+    }
+    layer.removeFromSuperlayer();
+    container.addSublayer(layer);
 }
 
 /// Hands a snapshot to a layer as its contents.

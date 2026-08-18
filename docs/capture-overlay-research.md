@@ -5,21 +5,22 @@ capture-based overlay. All numbers below come from spikes in `/tmp/sls-spike`
 run on 2026-08-16, against a live 1728x1117 built-in Retina display at 2x
 backing scale, with 35 real app windows across 4 rini workspaces.
 
-Status: the approach is viable. The design is a hybrid: capture on-screen windows
-fresh through SkyLight at switch time, and serve off-strip and hidden-workspace
-windows from a ScreenCaptureKit cache refreshed in the background.
+Status: the approach is viable. The design is a hybrid: capture on-screen
+windows fresh through SkyLight at switch time, and serve off-strip and
+hidden-workspace windows from a ScreenCaptureKit cache refreshed in the
+background.
 
 ## Verdict
 
-| Question | Answer | Evidence |
-|---|---|---|
-| Can rini capture a window hidden on another workspace? | Yes, full size, real content | `sck.swift`, window 45 |
-| Can rini capture a window parked at a 2pt sliver? | Yes, full size, real content | `sck.swift`, window 28804 |
-| Which API works? | ScreenCaptureKit only | `capdecide.swift`, `sck.swift` |
-| Can rini move a foreign window via SLS? | No, and the calls report success | `tx2.swift`, `mv.swift` |
-| Can rini set a foreign window's alpha? | No | `tx2.swift` |
-| Can captures be taken on demand at switch time? | No | `cksweep.swift` |
-| Does lower resolution reduce cost? | No | `cksweep.swift` |
+| Question                                               | Answer                           | Evidence                       |
+| ------------------------------------------------------ | -------------------------------- | ------------------------------ |
+| Can rini capture a window hidden on another workspace? | Yes, full size, real content     | `sck.swift`, window 45         |
+| Can rini capture a window parked at a 2pt sliver?      | Yes, full size, real content     | `sck.swift`, window 28804      |
+| Which API works?                                       | ScreenCaptureKit only            | `capdecide.swift`, `sck.swift` |
+| Can rini move a foreign window via SLS?                | No, and the calls report success | `tx2.swift`, `mv.swift`        |
+| Can rini set a foreign window's alpha?                 | No                               | `tx2.swift`                    |
+| Can captures be taken on demand at switch time?        | No                               | `cksweep.swift`                |
+| Does lower resolution reduce cost?                     | No                               | `cksweep.swift`                |
 
 ## Capture cost
 
@@ -55,14 +56,14 @@ Two consequences:
 the window's own surface, not a screen region. Verified for 6 windows in 3
 visibility states:
 
-| State | Window | Requested | Returned | Content |
-|---|---|---|---|---|
-| Fully visible | Ghostty 31648 | 859x1081 | 859x1081 | yes |
-| Hidden workspace | Obsidian 45 | 859x1081 | 859x1081 | yes |
-| Off-strip, 40pt visible | Slack 96 | 859x1081 | 859x1081 | yes |
-| Off-strip, 40pt visible | Kiro 26995 | 1720x1081 | 1720x1081 | yes |
-| Parked, 2pt visible | Zen 28804 | 859x1081 | 859x1081 | yes |
-| Off-strip, 40pt visible | Chrome 3508 | 1720x1081 | 1720x1081 | yes |
+| State                   | Window        | Requested | Returned  | Content |
+| ----------------------- | ------------- | --------- | --------- | ------- |
+| Fully visible           | Ghostty 31648 | 859x1081  | 859x1081  | yes     |
+| Hidden workspace        | Obsidian 45   | 859x1081  | 859x1081  | yes     |
+| Off-strip, 40pt visible | Slack 96      | 859x1081  | 859x1081  | yes     |
+| Off-strip, 40pt visible | Kiro 26995    | 1720x1081 | 1720x1081 | yes     |
+| Parked, 2pt visible     | Zen 28804     | 859x1081  | 859x1081  | yes     |
+| Off-strip, 40pt visible | Chrome 3508   | 1720x1081 | 1720x1081 | yes     |
 
 Content was confirmed two ways. A pixel-difference metric scored 0.995 to 1.000
 against a flat-buffer baseline of 0.000. The images were then inspected
@@ -81,17 +82,17 @@ framebuffer, not the window surface. A window with 40pt showing returns a
 40x1081 image. A window on a hidden workspace returns 1x28.
 
 Batched behaviour is worth recording because it surprised us. Passing 19 window
-ids returns 1 composited 3456x2170 image of the display, not 19 images, in
-about 21ms. That composite is correct and full fidelity for on-screen content.
-It remains useful for anything that only needs what is currently displayed. It
+ids returns 1 composited 3456x2170 image of the display, not 19 images, in about
+21ms. That composite is correct and full fidelity for on-screen content. It
+remains useful for anything that only needs what is currently displayed. It
 cannot drive a slide-in, because incoming windows have no pixels yet.
 
 Per-window calls cost about 16ms each, so batching beats them 12 to 1.
 
 ### CGWindowListCreateImage is gone
 
-Not deprecated. Unavailable. It is a hard compile error on this SDK:
-"Please use ScreenCaptureKit instead". There is no pre-macOS-14 fallback.
+Not deprecated. Unavailable. It is a hard compile error on this SDK: "Please use
+ScreenCaptureKit instead". There is no pre-macOS-14 fallback.
 
 The system tool inherited this. `screencapture -l <windowid>` fails with "could
 not create image from window" even for a fully visible window.
@@ -110,23 +111,23 @@ So the call is correct, and any foreign-window failure is a real restriction.
 
 **Foreign window results.** Judged on display pixels, not on return codes:
 
-| Attempt | Return code | Readback held | Pixels changed | Moved |
-|---|---|---|---|---|
-| `SLSSetWindowTransform` plain | 0 `kCGErrorSuccess` | no, reverted | 0.0003 | no |
-| `...AtPlacement` placement 0 | 1000 `kCGErrorFailure` | no | 0.0001 | no |
-| `...AtPlacement` placement 1 | 1000 `kCGErrorFailure` | no | 0.0003 | no |
-| `...AtPlacement` placement 2 | 1000 `kCGErrorFailure` | no | 0.0004 | no |
-| inside `SLSDisableUpdate` | 0 `kCGErrorSuccess` | no, reverted | 0.0003 | no |
-| `SLSMoveWindow` legal 100pt | 0 `kCGErrorSuccess` | see below | 0.0004 | no |
-| `SLSMoveWindow` to y = -300 | 0 `kCGErrorSuccess` | see below | 0.0003 | no |
-| `SLSSetWindowAlpha` 0.3 | 0 `kCGErrorSuccess` | n/a | 0.0003 | no effect |
+| Attempt                       | Return code            | Readback held | Pixels changed | Moved     |
+| ----------------------------- | ---------------------- | ------------- | -------------- | --------- |
+| `SLSSetWindowTransform` plain | 0 `kCGErrorSuccess`    | no, reverted  | 0.0003         | no        |
+| `...AtPlacement` placement 0  | 1000 `kCGErrorFailure` | no            | 0.0001         | no        |
+| `...AtPlacement` placement 1  | 1000 `kCGErrorFailure` | no            | 0.0003         | no        |
+| `...AtPlacement` placement 2  | 1000 `kCGErrorFailure` | no            | 0.0004         | no        |
+| inside `SLSDisableUpdate`     | 0 `kCGErrorSuccess`    | no, reverted  | 0.0003         | no        |
+| `SLSMoveWindow` legal 100pt   | 0 `kCGErrorSuccess`    | see below     | 0.0004         | no        |
+| `SLSMoveWindow` to y = -300   | 0 `kCGErrorSuccess`    | see below     | 0.0003         | no        |
+| `SLSSetWindowAlpha` 0.3       | 0 `kCGErrorSuccess`    | n/a           | 0.0003         | no effect |
 
 `SLSMoveWindow` deserves its own note, because it lies in a more convincing way
 than the others. After the call, `SLSGetWindowBounds` reports the **new**
-position, while `CGWindowListCopyWindowInfo` still reports the **old** one and no
-pixel changes. So SLS stores the requested value against our connection and the
-window server never applies it. Reading back through SLS confirms a move that
-did not happen.
+position, while `CGWindowListCopyWindowInfo` still reports the **old** one and
+no pixel changes. So SLS stores the requested value against our connection and
+the window server never applies it. Reading back through SLS confirms a move
+that did not happen.
 
 `SLSGetWindowTransform` does work, and returns the negated origin. For window
 28809 at origin (-857, 32) it returns `[tx 857 ty -32]`. That explains the
@@ -136,8 +137,8 @@ what was written.
 
 **Corrections to earlier notes in this file's history:**
 
-1. `SLSMoveWindow` on a foreign window returns **0 `kCGErrorSuccess`**, not error
-   1000. The earlier note was wrong.
+1. `SLSMoveWindow` on a foreign window returns **0 `kCGErrorSuccess`**, not
+   error 1000. The earlier note was wrong.
 2. Code 1000 is **`kCGErrorFailure`**, not `kCGErrorIllegalArgument`, which is
    1001.
 
@@ -161,12 +162,13 @@ on read. Verify with `CGWindowListCopyWindowInfo` bounds or with pixels.
 ## What yabai actually does
 
 Read from the source at commit depth 1 of `github.com/koekeishiya/yabai`, not
-from recollection. The relevant code is `window_manager_animate_window_list_async`
-in `src/window_manager.c:604-710`.
+from recollection. The relevant code is
+`window_manager_animate_window_list_async` in `src/window_manager.c:604-710`.
 
 yabai animates **proxy windows it owns**, never the real windows. The sequence:
 
-1. `SLSNewConnection` for a dedicated animation connection (`window_manager.c:607`).
+1. `SLSNewConnection` for a dedicated animation connection
+   (`window_manager.c:607`).
 2. Per window, on its own pthread so captures run in parallel
    (`window_manager.c:666`):
    - `SLSGetWindowBounds` for the start frame
@@ -175,10 +177,11 @@ yabai animates **proxy windows it owns**, never the real windows. The sequence:
    - `SLSNewWindowWithOpaqueShapeAndContext` to create its own window, then
      `SLSSetWindowOpacity`, `SLSSetWindowResolution(2.0)`, `SLSSetWindowAlpha`,
      `SLSSetWindowLevel`, `SLSSetWindowSubLevel`, then `SLWindowContextCreate`
-     and `CGContextDrawImage` to paint the bitmap in (`window_manager.c:463-484`)
+     and `CGContextDrawImage` to paint the bitmap in
+     (`window_manager.c:463-484`)
 3. `pthread_join` on all capture threads (`window_manager.c:679`).
-4. `scripting_addition_swap_window_proxy_in` (`window_manager.c:685`), which asks
-   the injected payload to run
+4. `scripting_addition_swap_window_proxy_in` (`window_manager.c:685`), which
+   asks the injected payload to run
    `SLSTransactionOrderWindowGroup(transaction, proxy_wid, 1, wid)`
    (`src/osax/payload.m:827`). That orders the proxy above the real window.
 5. `window_manager_set_window_frame` moves the real window to its final position
@@ -193,12 +196,12 @@ yabai animates **proxy windows it owns**, never the real windows. The sequence:
    (`window_manager.c:578-594`).
 
 This confirms the measurements in this file rather than contradicting them.
-`SLSSetWindowTransform` appears in exactly 2 files: `src/misc/extern.h`, which is
-only the declaration, and `src/osax/payload.m`, which is the scripting addition
-injected into Dock.app and requires partial SIP disable. yabai's own process
-never transforms a foreign window. Every transform it applies goes to a proxy it
-created itself, which matches the own-window control succeeding here while every
-foreign attempt failed.
+`SLSSetWindowTransform` appears in exactly 2 files: `src/misc/extern.h`, which
+is only the declaration, and `src/osax/payload.m`, which is the scripting
+addition injected into Dock.app and requires partial SIP disable. yabai's own
+process never transforms a foreign window. Every transform it applies goes to a
+proxy it created itself, which matches the own-window control succeeding here
+while every foreign attempt failed.
 
 ### Three things rini should copy
 
@@ -212,8 +215,8 @@ foreign attempt failed.
    cannot eliminate it, because separate apps still answer separately.
 3. **`CVDisplayLink` for the tick.** This is item 39 in the backlog. Note that
    `src/sys/display_link.rs` is currently dead code and its `Drop` is unsound,
-   because `CVDisplayLinkStop` does not wait for an in-flight callback before the
-   `Box` is freed.
+   because `CVDisplayLinkStop` does not wait for an in-flight callback before
+   the `Box` is freed.
 
 ### Two places rini's situation differs
 
@@ -222,15 +225,15 @@ foreign attempt failed.
    proxy directly above its own real window, preserving interleaving with
    unmanaged windows. rini's design only needs one opaque full-screen overlay
    above everything, and setting a level on a window rini owns needs no
-   privilege. This is the reason rini can get the same visual result without
-   SIP disable, and it should be treated as a constraint on the design rather
-   than an accident.
+   privilege. This is the reason rini can get the same visual result without SIP
+   disable, and it should be treated as a constraint on the design rather than
+   an accident.
 2. **rini cannot use `SLSHWCaptureWindowList` the way yabai does.** yabai only
    ever animates windows that are already fully on screen, so a
-   visible-portion-only capture is sufficient for it. rini's incoming windows sit
-   off-strip or on a hidden workspace, where that call returns a 40x1081 or 1x28
-   sliver, as measured above. rini therefore needs ScreenCaptureKit, which costs
-   40ms plus 14.5ms per window against yabai's roughly 16ms per window in
+   visible-portion-only capture is sufficient for it. rini's incoming windows
+   sit off-strip or on a hidden workspace, where that call returns a 40x1081 or
+   1x28 sliver, as measured above. rini therefore needs ScreenCaptureKit, which
+   costs 40ms plus 14.5ms per window against yabai's roughly 16ms per window in
    parallel. That difference is exactly why rini needs a warm cache and yabai
    does not.
 
@@ -248,9 +251,9 @@ excluded. `cksweep.swift:77` enumerates once, outside every measured loop.
 `cksweep` ran them concurrently and unbounded through a `TaskGroup`.
 
 **Rejected: "the `captureSampleBuffer` / IOSurface route reaches 20-40ms for the
-batch."** Measured head to head against `captureImage`, same windows, same scale,
-interleaved and repeated 5 times, stopping at the `IOSurface` without building any
-image:
+batch."** Measured head to head against `captureImage`, same windows, same
+scale, interleaved and repeated 5 times, stopping at the `IOSurface` without
+building any image:
 
 ```
 windows   captureImage   sampleBuffer   result
@@ -262,8 +265,8 @@ windows   captureImage   sampleBuffer   result
 ```
 
 The sample-buffer route is slower once past 2 windows. The cost is the capture
-session `SCScreenshotManager` spins up per call, not image materialisation, so no
-rearrangement of the public API avoids it.
+session `SCScreenshotManager` spins up per call, not image materialisation, so
+no rearrangement of the public API avoids it.
 
 **Rejected: "pass the whole wid array and get a CFArray of CGImages back, so N
 windows costs roughly the same as one."** N windows returns ONE flattened
@@ -281,9 +284,9 @@ drive per-window animation. yabai agrees: it has exactly 1 call site,
 `window_manager.c:521`, and it passes `window_count = 1`. It never batches.
 
 **Rejected: "capture fresh at animation start, no pre-warming, no cache."** This
-is the load-bearing claim and it does not survive rini's layout. The call returns
-only the visible portion, and the option flags do not change that, including
-yabai's exact flags:
+is the load-bearing claim and it does not survive rini's layout. The call
+returns only the visible portion, and the option flags do not change that,
+including yabai's exact flags:
 
 ```
 case         own size       options                returned      full?
@@ -313,9 +316,9 @@ which is exactly the case that returns a sliver.
 - The binding already exists at `src/sys/skylight.rs:495`, so reaching it is
   cheap.
 - Captures exclude the drop shadow, which is why yabai calls
-  `sls_window_disable_shadow` on its proxies to match
-  (`window_manager.c:473`), and it runs `cgimage_restore_alpha` when the source
-  window's alpha is not 1.0 (`window_manager.c:521-523`).
+  `sls_window_disable_shadow` on its proxies to match (`window_manager.c:473`),
+  and it runs `cgimage_restore_alpha` when the source window's alpha is not 1.0
+  (`window_manager.c:521-523`).
 - Version-gate it and fall back to ScreenCaptureKit when the array comes back
   null.
 
@@ -331,9 +334,9 @@ Use each API where it wins, rather than choosing one.
   plus 14.5ms per window it cannot run at switch time. Refresh these in the
   background on focus and resize events.
 
-This keeps fresh pixels for everything the eye is already looking at, and accepts
-staleness only for windows that are currently a 2pt sliver, where staleness is
-unobservable.
+This keeps fresh pixels for everything the eye is already looking at, and
+accepts staleness only for windows that are currently a 2pt sliver, where
+staleness is unobservable.
 
 ## Trap that cost about 40 minutes
 
@@ -371,8 +374,8 @@ instinct that only on-screen and incoming windows need fresh pixels, and the
 rest can be refreshed occasionally.
 
 **Staleness is acceptable.** The bitmap is on screen for the duration of one
-animation and is replaced by the real window at the end. A slightly stale
-moving image is not perceptible.
+animation and is replaced by the real window at the end. A slightly stale moving
+image is not perceptible.
 
 **rini needs the Screen Recording grant.** It does not have it today. This is
 also why Mission Control currently renders black. `src/ui/mission_control.rs`
@@ -391,22 +394,22 @@ swiftc -O -F /System/Library/PrivateFrameworks -framework SkyLight <name>.swift 
 swiftc -O -framework ScreenCaptureKit <name>.swift -o <name>
 ```
 
-| Spike | Question it answers |
-|---|---|
-| `capbench.swift` | SkyLight capture latency and batching behaviour |
-| `capshape.swift` | What a batched SkyLight capture actually contains |
-| `capcontent.swift` | Blank buffer against real pixels, measured |
-| `capdecide.swift` | Visible-portion limit, against rini's own window states |
-| `sck.swift` | Full-size capture of hidden, parked and off-strip windows |
-| `sck2.swift`, `sck3.swift`, `sck4.swift`, `dpy.swift` | The -3811 diagnosis |
-| `tx.swift` | Own-window transform control, proving the call is correct |
-| `tx2.swift` | Foreign-window transform and alpha, verified by pixels |
-| `mv.swift` | Whether SLSMoveWindow moves a foreign window (it does not) |
-| `sbvs.swift` | captureImage against captureSampleBuffer, head to head |
-| `batch.swift` | Whether a batched SLS capture returns per-window images |
-| `flags.swift` | Whether capture option flags change the visible-portion clipping |
-| `ckthru.swift` | Concurrency ceiling |
-| `cksweep.swift` | Cost against set size, 2x against 1x |
+| Spike                                                 | Question it answers                                              |
+| ----------------------------------------------------- | ---------------------------------------------------------------- |
+| `capbench.swift`                                      | SkyLight capture latency and batching behaviour                  |
+| `capshape.swift`                                      | What a batched SkyLight capture actually contains                |
+| `capcontent.swift`                                    | Blank buffer against real pixels, measured                       |
+| `capdecide.swift`                                     | Visible-portion limit, against rini's own window states          |
+| `sck.swift`                                           | Full-size capture of hidden, parked and off-strip windows        |
+| `sck2.swift`, `sck3.swift`, `sck4.swift`, `dpy.swift` | The -3811 diagnosis                                              |
+| `tx.swift`                                            | Own-window transform control, proving the call is correct        |
+| `tx2.swift`                                           | Foreign-window transform and alpha, verified by pixels           |
+| `mv.swift`                                            | Whether SLSMoveWindow moves a foreign window (it does not)       |
+| `sbvs.swift`                                          | captureImage against captureSampleBuffer, head to head           |
+| `batch.swift`                                         | Whether a batched SLS capture returns per-window images          |
+| `flags.swift`                                         | Whether capture option flags change the visible-portion clipping |
+| `ckthru.swift`                                        | Concurrency ceiling                                              |
+| `cksweep.swift`                                       | Cost against set size, 2x against 1x                             |
 
 Ground truth for window states comes from `rini-cli query diagnostics`, which
 reports `is_parked`, `visible_width` and `workspace_name` per window. Do not use
@@ -428,12 +431,12 @@ covers all of them. Verified from the framebuffer with `screencapture`, not from
 cannot answer what is actually on screen.
 
 **Size the overlay to the usable display frame, not the whole screen.**
-sketchybar sits at layer **-20**, below normal windows. It is visible only because
-nothing occupies the top 32pt strip. A full-screen overlay therefore covers the
-user's bar and would make it flicker on every workspace switch. An overlay of
-1728x1085 at the origin leaves that strip live while still covering every window,
-confirmed by screenshot: the bar's workspace indicators, wifi, battery and clock
-all stay visible with the overlay up.
+sketchybar sits at layer **-20**, below normal windows. It is visible only
+because nothing occupies the top 32pt strip. A full-screen overlay therefore
+covers the user's bar and would make it flicker on every workspace switch. An
+overlay of 1728x1085 at the origin leaves that strip live while still covering
+every window, confirmed by screenshot: the bar's workspace indicators, wifi,
+battery and clock all stay visible with the overlay up.
 
 The relevant layers on this machine:
 
@@ -465,8 +468,8 @@ alpha 1 -> 0           0.34ms   0.19ms   8.33ms
 
 Ordering in or out costs a full frame each way at 60fps. Keep the overlay
 permanently ordered in at alpha 0 and toggle `alphaValue`, which is effectively
-free. Alpha works here because rini owns this window; it does not work on foreign
-windows, as recorded above.
+free. Alpha works here because rini owns this window; it does not work on
+foreign windows, as recorded above.
 
 Create the overlay once at startup. First show cost 112ms against a 14ms median,
 which is window creation, and it should not be paid per switch.
@@ -478,7 +481,116 @@ matters: without it the overlay slides along with macOS's own Space animation.
 
 ### Spike gotcha worth remembering
 
-`RunLoop.run(mode:before:)` returns as soon as it handles one input source, so it
-cannot hold for a duration. A timed hold needs `run(until:)`. Two coverage
+`RunLoop.run(mode:before:)` returns as soon as it handles one input source, so
+it cannot hold for a duration. A timed hold needs `run(until:)`. Two coverage
 screenshots were captured against an already dismissed overlay before this was
 spotted.
+
+## The wallpaper is not reliably a window
+
+The overlay draws the desktop behind the moving strips, so the gaps around
+windows look like the desktop rather than a flat colour. That desktop was built
+by compositing every window at or below the desktop level through
+`SLSHWCaptureWindowList`, which worked until a second display was attached.
+
+Measured on the same machine, same desktop, minutes apart:
+
+```
+one display   wid=1056  owner="Wallpaper"  "Offscreen Wallpaper Window"  layer=-2147483625
+              wallpaper window on its own  brightness 17.2
+              composite of 7 desktop windows      brightness 24.7
+
+two displays  NO window owned by "Wallpaper" exists at all
+              composite of 9 desktop windows      brightness  7.8   <- icons on black
+```
+
+`ScreenCaptureKit` does not list a wallpaper window either, in either state. The
+wallpaper is not a window that can be enumerated and captured; it is part of
+what the compositor draws for a display.
+
+So the desktop has to be captured as a DISPLAY, not as a set of windows:
+
+```
+SCContentFilter(display:excludingWindows:)  excluding every window at layer >= 0
+  -> 3456x2234  brightness 23.4   wallpaper, icons, widgets, no app windows
+```
+
+This is why `snapshot_service.rs` has a desktop path. It costs the usual
+ScreenCaptureKit ~40ms, so it fills a cache in the background and an animation
+draws whatever is in hand; the desktop changes rarely enough that a capture a
+few seconds old is indistinguishable.
+
+### How this presented
+
+Every vertical workspace switch went black for the length of the animation, with
+the desktop icons still drawn and correctly placed. Sampling the same screen
+points in a recording, real frame against overlay frame:
+
+```
+point(pt)     real RGB        overlay RGB
+  600,300     13, 17, 18        0,  0,  0
+  900,900     77, 48, 26        0,  0,  0
+ 1100,400     80, 75, 66        0,  0,  0
+```
+
+Pure black, not a dimmed or gamma-shifted wallpaper. The composite simply had
+nothing behind its icons.
+
+## Two drawing paths must not share one pool of tile layers
+
+Tile layers are pooled per window and reused across animations, because handing
+a layer a bitmap is the expensive part. But the canvas path parents them to the
+canvas and positions them in CANVAS coordinates, translating the parent to
+animate, while the per-window path parents them to the root and positions them
+in OVERLAY coordinates, moving each one.
+
+The reactor lays a workspace switch out over several passes, so both paths fire
+for one switch. Measured on a live vertical switch:
+
+```
+0:56:52.485  canvas animation, requested=16, tiles=16, travel="0,0 -> 0,2234"
+0:56:52.739  overlay animation composition, requested=13, tiles=6, offscreen=7
+0:56:53.125  handover mismatch: worst_pt="2621"
+```
+
+The later pass re-framed the canvas's own tiles into the wrong coordinate system
+while the canvas still had them translated by two workspace rows. Tiles measured
+424x500 where the window was 859x1081, and the switch ended with a 2621pt jump
+when the overlay lifted.
+
+Fix: while a canvas movement is in flight the per-window path merges its
+destinations into the canvas and draws nothing. Plus `reparent`, so a pooled
+layer reused by the other path is moved to the right parent rather than
+positioned with the wrong arithmetic.
+
+### The animation was running the whole time
+
+Worth recording, because it was reported as "no sliding animation, windows
+switch instantly" and the first instinct was to look at the frame clock. The
+clock was fine. What was wrong was that it animated a near-black screen holding
+half-size tiles.
+
+macOS screen recordings are VARIABLE frame rate: no frame is emitted while the
+screen does not change, so a gap in the recording is evidence of a static
+screen, and frame timestamps are more informative than frame contents. In the
+reported recording the animation showed up as a textbook ease-out decay:
+
+```
+2.40-2.53   brightness 43.8   change ~0      real workspace, static
+2.5583      brightness 11.3   change 37.4    overlay appears, screen goes dark
+2.56-2.88   brightness 11->34 change 37->1   350ms of ease-out = the animation
+2.9083      brightness 139.6  change 113.5   overlay lifts, real workspace appears
+```
+
+`screencapture -v` records at about 21fps, too coarse to sample a 350ms
+animation. Stretching `animation_duration` and taking ordinary screenshots is a
+better instrument, and the canvas now reports its own frame count when a
+movement finishes:
+
+```
+frames=21  elapsed=351ms   duration=350ms   travel="0,1117 -> 0,0"
+frames=30  elapsed=501ms   duration=494ms   travel="0,0 -> 0,2234"
+frames=87  elapsed=1501ms  duration=1500ms  travel="0,1117 -> 0,0"
+```
+
+60fps in every case, and travel proportional to the number of rows crossed.

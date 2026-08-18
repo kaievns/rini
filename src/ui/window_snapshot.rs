@@ -92,6 +92,38 @@ pub fn should_replace(existing: Option<Coverage>, incoming: Coverage) -> bool {
     }
 }
 
+/// How far a desktop capture may be from the display's size and still be drawable. A point or two of
+/// rounding is normal; anything more means it does not describe this display.
+const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
+
+/// Whether a fresh desktop capture is worth drawing behind the moving strips.
+///
+/// The desktop is composited from every window at or below the desktop level, and the wallpaper is one
+/// of those windows. macOS recreates it, so a capture taken at the wrong moment comes back holding the
+/// icons and widgets with nothing behind them, which draws as a black screen for the length of the
+/// animation. That was measured rather than guessed: on a recording of a vertical switch, every
+/// wallpaper sample point inside the overlay was 0,0,0 while the real screen showed the photo, and the
+/// desktop icons were present and correctly placed in the same frame.
+///
+/// A capture that does not span the whole display is rejected for a different reason. The layer draws it
+/// from the top-left at its own size, so a short one leaves the rest of the screen black and puts the
+/// captured bar strip partway up the display, which is what made a copy of the bar appear near the
+/// bottom of the screen.
+///
+/// Rejecting a capture means keeping whatever is already drawn, so a capture with no wallpaper is still
+/// accepted when there is nothing to keep: a desktop without its wallpaper is poor, but it beats the
+/// bare black window underneath.
+pub fn is_backdrop_worth_drawing(
+    have_one_already: bool,
+    has_wallpaper: bool,
+    covered: (f64, f64),
+    display: (f64, f64),
+) -> bool {
+    let spans_display = (covered.0 - display.0).abs() <= BACKDROP_SIZE_TOLERANCE
+        && (covered.1 - display.1).abs() <= BACKDROP_SIZE_TOLERANCE;
+    spans_display && (has_wallpaper || !have_one_already)
+}
+
 /// A window's pixels, whichever API produced them.
 ///
 /// Kept as two cases rather than normalised to one, because converting between them costs exactly
@@ -399,6 +431,43 @@ mod tests {
         cache.insert(wid(1), coverage((859.0, 1081.0), (859.0, 1081.0)));
         cache.forget(wid(1));
         assert!(cache.is_empty());
+    }
+
+    /// The measured failure: the composite came back with the icons and widgets but no wallpaper, and
+    /// drew as a black screen for the whole animation.
+    #[test]
+    fn a_desktop_capture_missing_its_wallpaper_is_rejected() {
+        assert!(!is_backdrop_worth_drawing(true, false, (1728.0, 1117.0), (1728.0, 1117.0)));
+    }
+
+    #[test]
+    fn a_desktop_capture_with_its_wallpaper_is_drawn() {
+        assert!(is_backdrop_worth_drawing(true, true, (1728.0, 1117.0), (1728.0, 1117.0)));
+    }
+
+    #[test]
+    fn a_wallpaperless_capture_is_still_drawn_when_there_is_nothing_to_keep() {
+        // Rejecting it would leave the bare black window, which is worse than a desktop with no photo.
+        assert!(is_backdrop_worth_drawing(false, false, (1728.0, 1117.0), (1728.0, 1117.0)));
+    }
+
+    #[test]
+    fn a_desktop_capture_shorter_than_the_display_is_rejected() {
+        // Drawn from the top-left at its own size, so the rest of the screen stays black and the
+        // captured bar strip lands partway up the display.
+        assert!(!is_backdrop_worth_drawing(true, true, (1728.0, 1085.0), (1728.0, 1117.0)));
+        assert!(!is_backdrop_worth_drawing(false, true, (1728.0, 1085.0), (1728.0, 1117.0)));
+    }
+
+    #[test]
+    fn a_desktop_capture_spanning_more_than_the_display_is_rejected() {
+        // What a composite of two displays' desktops measures, which cannot be drawn as one backdrop.
+        assert!(!is_backdrop_worth_drawing(true, true, (3456.0, 1117.0), (1728.0, 1117.0)));
+    }
+
+    #[test]
+    fn a_desktop_capture_a_rounding_error_short_is_still_drawn() {
+        assert!(is_backdrop_worth_drawing(true, true, (1727.5, 1116.5), (1728.0, 1117.0)));
     }
 
     #[test]

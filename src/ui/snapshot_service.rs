@@ -33,11 +33,11 @@ use objc2::rc::Retained;
 use objc2_core_foundation::{CFRetained, CGSize};
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::CVPixelBufferGetIOSurface;
-use objc2_foundation::NSError;
+use objc2_foundation::{NSArray, NSError};
 use objc2_io_surface::IOSurfaceRef;
 use objc2_screen_capture_kit::{
     SCCaptureResolutionType, SCContentFilter, SCScreenshotManager, SCShareableContent,
-    SCStreamConfiguration,
+    SCStreamConfiguration, SCWindow,
 };
 
 use tracing::debug;
@@ -79,6 +79,10 @@ struct ServiceState {
     in_flight: HashSet<WindowId>,
     queued: VecDeque<PendingCapture>,
     active: usize,
+    /// The most recent desktop capture, waiting to be collected.
+    desktop: Option<WindowSnapshot>,
+    /// Whether a desktop capture is already running, so a burst of switches queues only one.
+    desktop_in_flight: bool,
 }
 
 /// Captures windows in the background and holds the results until collected.
@@ -210,6 +214,132 @@ impl SnapshotService {
             SCShareableContent::getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler(
                 true, false, &block,
             );
+        }
+    }
+
+    /// Takes the most recent desktop capture, if one has landed since the last call.
+    pub fn take_desktop(&self) -> Option<WindowSnapshot> {
+        self.state.lock().unwrap().desktop.take()
+    }
+
+    /// Requests a capture of the desktop: the display with every app window excluded.
+    ///
+    /// This exists because the wallpaper is not reliably a window. Compositing everything at or below
+    /// the desktop level through SkyLight worked while the wallpaper had its own window, but with a
+    /// second display attached that window disappears from the window server listing altogether, and
+    /// the composite comes back holding the icons on black. Measured: brightness 24.7 with one display
+    /// against 7.8 with two, and ScreenCaptureKit rendering the same desktop at 23.4.
+    ///
+    /// ScreenCaptureKit renders a DISPLAY rather than a set of windows, so the wallpaper is included
+    /// whether or not anything lists it. The cost is why this is a background request feeding a cache:
+    /// the desktop changes rarely, so a capture a few seconds old is indistinguishable from a fresh one.
+    pub fn request_desktop(&self, display_id: u32, size: CGSize) {
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.desktop_in_flight {
+                return;
+            }
+            state.desktop_in_flight = true;
+        }
+
+        let revision = self.revision.load(Ordering::Acquire);
+        let service = self.clone();
+        let scale = self.scale();
+        let block = RcBlock::new(move |content: *mut SCShareableContent, _error: *mut NSError| {
+            let Some(content) = NonNull::new(content) else {
+                debug!("ScreenCaptureKit enumeration returned nothing for the desktop");
+                service.finish_desktop(revision, scale, size, None);
+                return;
+            };
+            let content = unsafe { content.as_ref() };
+            let displays = unsafe { content.displays() };
+            let Some(display) =
+                displays.iter().find(|display| unsafe { display.displayID() } == display_id)
+            else {
+                debug!(display_id, "display not enumerated by ScreenCaptureKit");
+                service.finish_desktop(revision, scale, size, None);
+                return;
+            };
+
+            // Everything at or above the normal window level, which is every window the overlay might
+            // animate. What is left is the wallpaper, the desktop icons and the widgets.
+            let windows = unsafe { content.windows() };
+            let excluded: Vec<Retained<SCWindow>> =
+                windows.iter().filter(|window| unsafe { window.windowLayer() } >= 0).collect();
+            let excluded_refs: Vec<&SCWindow> = excluded.iter().map(|window| &**window).collect();
+            let excluded = NSArray::from_slice(&excluded_refs);
+
+            let filter = unsafe {
+                SCContentFilter::initWithDisplay_excludingWindows(
+                    SCContentFilter::alloc(),
+                    &display,
+                    &excluded,
+                )
+            };
+            let config = unsafe { SCStreamConfiguration::new() };
+            unsafe {
+                config.setWidth(((size.width * scale) as usize).max(1));
+                config.setHeight(((size.height * scale) as usize).max(1));
+                config.setPixelFormat(u32::from_be_bytes(*b"BGRA"));
+                config.setShowsCursor(false);
+                config.setCapturesAudio(false);
+                // The desktop is drawn as the bottom layer, so it wants no transparency of its own.
+                config.setShouldBeOpaque(true);
+                config.setCaptureResolution(SCCaptureResolutionType::Nominal);
+            }
+
+            let service = service.clone();
+            let completion = RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
+                let surface = NonNull::new(sample)
+                    .and_then(|sample| unsafe { sample.as_ref().image_buffer() })
+                    .and_then(|buffer| CVPixelBufferGetIOSurface(Some(&buffer)));
+                service.finish_desktop(revision, scale, size, surface);
+            });
+            unsafe {
+                SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
+                    &filter,
+                    &config,
+                    Some(&completion),
+                );
+            }
+        });
+
+        unsafe {
+            SCShareableContent::getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler(
+                false, false, &block,
+            );
+        }
+    }
+
+    fn finish_desktop(
+        &self,
+        revision: u64,
+        scale: f64,
+        size: CGSize,
+        surface: Option<CFRetained<IOSurfaceRef>>,
+    ) {
+        let landed = {
+            let mut state = self.state.lock().unwrap();
+            state.desktop_in_flight = false;
+            match surface {
+                Some(surface) if revision == self.revision.load(Ordering::Acquire) => {
+                    let width = unsafe { surface.width() } as f64 / scale;
+                    let height = unsafe { surface.height() } as f64 / scale;
+                    state.desktop = Some(WindowSnapshot {
+                        image: SnapshotImage::Surface(surface),
+                        coverage: Coverage {
+                            covered: (width, height),
+                            window: (size.width, size.height),
+                        },
+                        source: SnapshotSource::ScreenCaptureKit,
+                    });
+                    true
+                }
+                _ => false,
+            }
+        };
+        if landed {
+            (self.notify)();
         }
     }
 

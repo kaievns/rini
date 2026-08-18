@@ -64,7 +64,7 @@ pub enum Event {
     Animate { windows: Vec<AnimationRequest>, duration: Duration },
     /// Display geometry for the overlay. Must be the USABLE frame, excluding the menu bar strip,
     /// so the user's bar is not covered and made to flicker.
-    SetDisplay { frame: CGRect, scale: f64 },
+    SetDisplay { id: u32, frame: CGRect, scale: f64 },
     /// Refresh the cached snapshot of one window, for windows that are off-strip and so cannot be
     /// captured usefully at switch time.
     RefreshSnapshot { window: WindowId, server_id: WindowServerId, size: CGSize },
@@ -142,6 +142,11 @@ struct RunningCanvas {
     frames_applied: bool,
     started: Instant,
     duration: Duration,
+    /// Frames actually drawn. Reported when the movement ends, because the difference between a smooth
+    /// animation and one the eye reads as an instant cut is entirely how many frames reached the screen,
+    /// and that cannot be recovered from a screen recording: macOS records at a variable rate and emits
+    /// nothing while the screen is unchanged.
+    frames: u32,
     _clock: Option<RepeatingTimer>,
 }
 
@@ -218,6 +223,9 @@ pub struct WorkspaceAnimation {
     /// rather than read directly, so a capture landing mid-animation cannot change what is drawn.
     service: SnapshotService,
     display: Option<(CGRect, f64)>,
+    /// Which display the overlay is on, so the desktop can be captured for that screen. Kept beside
+    /// `display` rather than folded into it because only the desktop capture needs it.
+    display_id: Option<u32>,
     running: Option<RunningAnimation>,
     /// A canvas movement in flight, which supersedes the per-window path while it runs.
     canvas: Option<RunningCanvas>,
@@ -225,6 +233,12 @@ pub struct WorkspaceAnimation {
     coalesce: Option<RepeatingTimer>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
     last_animated: Vec<SnapshotTarget>,
+    /// Whether a usable desktop has ever been drawn behind the strips. Until one has, even a capture
+    /// missing its wallpaper is worth drawing, because the alternative is the bare black window.
+    has_backdrop: bool,
+    /// The desktop as ScreenCaptureKit rendered it, which is the only source that reliably includes
+    /// the wallpaper. Held here rather than re-requested per animation because it costs about 40ms.
+    desktop: Option<WindowSnapshot>,
     /// Used to ask the reactor to place real windows once they are hidden behind the overlay.
     reactor_tx: Option<actor::Sender<crate::actor::reactor::Event>>,
 }
@@ -248,10 +262,13 @@ impl WorkspaceAnimation {
             cache: SnapshotCache::new(),
             service,
             display: None,
+            display_id: None,
             running: None,
             canvas: None,
             coalesce: None,
             last_animated: Vec::new(),
+            has_backdrop: false,
+            desktop: None,
             reactor_tx: None,
         }
     }
@@ -270,7 +287,7 @@ impl WorkspaceAnimation {
 
     fn handle(&mut self, event: Event) {
         match event {
-            Event::SetDisplay { frame, scale } => self.set_display(frame, scale),
+            Event::SetDisplay { id, frame, scale } => self.set_display(id, frame, scale),
             Event::Animate { windows, duration } => self.start(windows, duration),
             Event::AnimateCanvas {
                 windows,
@@ -304,6 +321,16 @@ impl WorkspaceAnimation {
     /// `SnapshotCache::insert` refuses to replace a usable capture with a clipped one, so a result
     /// that lands late cannot downgrade what is already held.
     fn collect_snapshots(&mut self) {
+        if let Some(desktop) = self.service.take_desktop() {
+            debug!(
+                covered = format!(
+                    "{:.0}x{:.0}",
+                    desktop.coverage.covered.0, desktop.coverage.covered.1
+                ),
+                "desktop capture landed"
+            );
+            self.desktop = Some(desktop);
+        }
         let landed = self.service.collect();
         if landed.is_empty() {
             return;
@@ -369,10 +396,11 @@ impl WorkspaceAnimation {
         self.service.request(targets);
     }
 
-    fn set_display(&mut self, frame: CGRect, scale: f64) {
+    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64) {
         let first = self.display.is_none();
-        let changed = self.display != Some((frame, scale));
+        let changed = self.display != Some((frame, scale)) || self.display_id != Some(id);
         self.display = Some((frame, scale));
+        self.display_id = Some(id);
         self.service.set_scale(scale);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_frame(frame, scale);
@@ -381,6 +409,9 @@ impl WorkspaceAnimation {
         // rather than being the one that fills the cache for later switches.
         if first || changed {
             self.warm_cache();
+            // The desktop capture is the backdrop's only reliable source, and it takes about 40ms,
+            // so it has to be in hand before the first switch rather than requested during one.
+            self.warm_desktop();
         }
     }
 
@@ -454,6 +485,25 @@ impl WorkspaceAnimation {
         })
     }
 
+    /// Queues windows for a background capture once the current animation finishes, keeping whatever
+    /// is already queued.
+    ///
+    /// A canvas movement records its own windows when it starts, and a later layout pass must add to
+    /// that list rather than replace it: replacing it left the canvas's own windows without a refreshed
+    /// picture, so the next switch had to fall back to a clipped capture for them.
+    fn remember_for_warming(&mut self, windows: Vec<AnimationRequest>) {
+        for request in windows {
+            if self.last_animated.iter().any(|target| target.window == request.window) {
+                continue;
+            }
+            self.last_animated.push(SnapshotTarget {
+                window: request.window,
+                server_id: request.server_id,
+                size: request.to.size,
+            });
+        }
+    }
+
     fn start(&mut self, windows: Vec<AnimationRequest>, duration: Duration) {
         if windows.is_empty() {
             return;
@@ -467,6 +517,35 @@ impl WorkspaceAnimation {
         // not drawn, but it still has to be placed.
         let final_frames: Vec<(WindowId, CGRect)> =
             windows.iter().map(|request| (request.window, request.to)).collect();
+
+        // A canvas movement already covers this ground, and it owns the tile layers.
+        //
+        // Both paths draw from one pool of layers but hang them off different parents in different
+        // coordinate systems: the canvas places tiles in canvas coordinates and translates their
+        // parent, while this path places them in the overlay's own space. The reactor lays a workspace
+        // switch out over several passes, so a later pass arriving here re-framed the canvas's own
+        // tiles into the wrong space while the canvas still had them translated by up to a full
+        // workspace row. Measured on a live switch: tiles drawn at half size in the wrong place, and a
+        // 2621pt jump when the overlay lifted.
+        //
+        // The destinations still matter, because a later pass can change where a window ends up. So
+        // they are merged into the canvas, which is what actually places the real windows.
+        if let Some(canvas) = self.canvas.as_mut() {
+            for (window, frame) in &final_frames {
+                match canvas.final_frames.iter_mut().find(|(w, _)| w == window) {
+                    Some(existing) => existing.1 = *frame,
+                    None => canvas.final_frames.push((*window, *frame)),
+                }
+            }
+            // The destinations changed, so anything already placed is stale. Ask again.
+            canvas.frames_applied = false;
+            debug!(
+                windows = windows.len(),
+                "a canvas movement is in flight; merging destinations into it rather than drawing"
+            );
+            self.remember_for_warming(windows);
+            return;
+        }
 
         // Front-to-back order straight from the window server, so the overlay stacks tiles the way
         // the screen is actually stacked.
@@ -799,6 +878,7 @@ impl WorkspaceAnimation {
             frames_applied: false,
             started: Instant::now(),
             duration,
+            frames: 0,
             _clock: clock,
         });
 
@@ -816,6 +896,7 @@ impl WorkspaceAnimation {
             let eased = crate::ui::workspace_overlay::ease_out_cubic(progress);
             if let Some(overlay) = overlay.as_mut() {
                 overlay.set_canvas_offset(canvas.offset_at(eased));
+                canvas.frames += 1;
             }
             let place_now = !canvas.frames_applied && progress >= APPLY_FRAMES_AT;
             if place_now {
@@ -843,6 +924,21 @@ impl WorkspaceAnimation {
     }
 
     fn finish_canvas(&mut self) {
+        if let Some(canvas) = self.canvas.as_ref() {
+            debug!(
+                frames = canvas.frames,
+                elapsed_ms = canvas.started.elapsed().as_millis(),
+                duration_ms = canvas.duration.as_millis(),
+                travel = format!(
+                    "{:.0},{:.0} -> {:.0},{:.0}",
+                    canvas.from_offset.x,
+                    canvas.from_offset.y,
+                    canvas.to_offset.x,
+                    canvas.to_offset.y
+                ),
+                "canvas movement finished"
+            );
+        }
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.hide();
             overlay.release_tiles();
@@ -932,14 +1028,70 @@ impl WorkspaceAnimation {
     }
 
     /// Captures the desktop wallpaper and icons as one image, for the overlay's backdrop.
-    fn capture_backdrop(&self) -> Option<WindowSnapshot> {
+    /// Asks for a fresh desktop capture in the background.
+    ///
+    /// Cheap to call: the service ignores the request when one is already in flight, and the desktop
+    /// changes rarely enough that a capture a few seconds old is indistinguishable from a fresh one.
+    fn warm_desktop(&self) {
+        let (Some((frame, _)), Some(id)) = (self.display, self.display_id) else {
+            return;
+        };
+        self.service.request_desktop(id, frame.size);
+    }
+
+    /// The desktop to draw behind the moving strips.
+    ///
+    /// Prefers the SkyLight composite, which is captured here and now for a few milliseconds, but only
+    /// when it actually contains the wallpaper. The wallpaper is not reliably a window: with a second
+    /// display attached it disappears from the window server listing entirely and the composite comes
+    /// back holding the desktop icons on black, which is what made the screen go dark for the length of
+    /// every vertical switch. Measured, same machine and same desktop: composite brightness 24.7 with
+    /// one display, 7.8 with two, and the ScreenCaptureKit render 23.4.
+    ///
+    /// So the fallback is the cached ScreenCaptureKit desktop, which renders a display rather than a
+    /// list of windows and therefore always has the wallpaper. A refresh is queued either way, so the
+    /// cache stays current for the next switch.
+    fn capture_backdrop(&mut self) -> Option<WindowSnapshot> {
         let (display_frame, scale) = self.display?;
-        let windows = crate::sys::window_server::desktop_backdrop_windows(display_frame);
-        crate::ui::window_snapshot::capture_composite_via_skylight(
-            &windows,
-            (display_frame.size.width, display_frame.size.height),
+        let display_size = (display_frame.size.width, display_frame.size.height);
+        let desktop = crate::sys::window_server::desktop_backdrop_windows(display_frame);
+        let composite = crate::ui::window_snapshot::capture_composite_via_skylight(
+            &desktop.windows,
+            display_size,
             scale,
-        )
+        );
+
+        let usable = composite.filter(|snapshot| {
+            crate::ui::window_snapshot::is_backdrop_worth_drawing(
+                self.has_backdrop || self.desktop.is_some(),
+                desktop.has_wallpaper,
+                snapshot.coverage.covered,
+                display_size,
+            )
+        });
+
+        if let Some(snapshot) = usable {
+            self.has_backdrop = true;
+            return Some(snapshot);
+        }
+
+        // Keep the render current for the next switch, whether or not one is in hand for this one.
+        self.warm_desktop();
+        match self.desktop.clone() {
+            Some(rendered) => {
+                self.has_backdrop = true;
+                Some(rendered)
+            }
+            None => {
+                debug!(
+                    windows = desktop.windows.len(),
+                    has_wallpaper = desktop.has_wallpaper,
+                    wanted = format!("{:.0}x{:.0}", display_size.0, display_size.1),
+                    "no drawable desktop yet; keeping whatever the backdrop already holds"
+                );
+                None
+            }
+        }
     }
 
     /// Captures the bar, so the overlay can redraw it on top of itself.

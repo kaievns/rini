@@ -4224,6 +4224,7 @@ impl Reactor {
             return;
         };
         _ = tx.send(crate::actor::workspace_animation::Event::SetDisplay {
+            id: screen.id.as_u32(),
             frame: objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()),
             // Backing scale is not carried on ScreenInfo. Every display rini has been run on is
             // Retina, and a wrong scale only affects bitmap crispness rather than geometry, so 2.0
