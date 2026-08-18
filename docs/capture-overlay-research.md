@@ -430,13 +430,18 @@ covers all of them. Verified from the framebuffer with `screencapture`, not from
 `SLSHWCaptureWindowList`, which composites only the windows it is handed and so
 cannot answer what is actually on screen.
 
-**Size the overlay to the usable display frame, not the whole screen.**
-sketchybar sits at layer **-20**, below normal windows. It is visible only
-because nothing occupies the top 32pt strip. A full-screen overlay therefore
-covers the user's bar and would make it flicker on every workspace switch. An
-overlay of 1728x1085 at the origin leaves that strip live while still covering
-every window, confirmed by screenshot: the bar's workspace indicators, wifi,
-battery and clock all stay visible with the overlay up.
+**The overlay spans the FULL display.** This reverses an earlier decision and
+the reasoning for the original is worth keeping, because it is nearly right.
+sketchybar sits at layer **-20**, below normal windows, and is visible only
+because nothing occupies the top 32pt strip, so an overlay sized to the usable
+frame of 1728x1085 leaves the bar live while still covering every window. That
+was measured and it works.
+
+It was still wrong. A shorter overlay squashes the captured desktop into a box
+the wrong shape, and it leaves a vertical animation invisible in the strip
+beneath the bar, which is exactly where a workspace is supposed to slide out of
+view. So the overlay covers the whole display and redraws the bar on top of
+itself instead. See "The bar is dozens of windows" for what that costs.
 
 The relevant layers on this machine:
 
@@ -658,9 +663,13 @@ measured and are not the cause:
   1728x1117 points at backing scale 2. Nothing in the chain scales.
 - Tile frames over 1218 logged tiles are only ever 859x1081, 1720x1081, 723x879,
   1499x1656 or 943x1081. None is half-size.
-- ScreenCaptureKit fills the buffer it is asked for, 100% by 100%, whether asked
-  in points or pixels and at either resolution setting. So a surface is never
-  partly painted, which would have drawn the content at half size in a corner.
+- ~~ScreenCaptureKit fills the buffer it is asked for, at either resolution
+  setting.~~ WRONG, and this is the error that cost hours. It was measured
+  against `SCScreenshotManager.captureImage`, which rini does not use. The
+  sample buffer path underfills at `.nominal`, and that is precisely what drew
+  the content at half size in a corner. See "Nominal capture resolution paints a
+  quarter of the buffer". The lesson generalises: measure the API the code
+  actually calls.
 - The backdrop and the bar, which are siblings of the canvas, render 1:1.
 
 A `check_geometry` call now asserts the first point on every animation and logs
