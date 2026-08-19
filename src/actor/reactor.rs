@@ -1200,6 +1200,10 @@ impl Reactor {
                 if !self.is_space_active(reported_space) {
                     return Ok(EventOutcome::default());
                 }
+                // An app activation picked its own window, and it may not be the one the user was in.
+                if let Some(redirect) = self.activation_redirect(window, reported_space) {
+                    return Ok(redirect);
+                }
                 // Follow focus to the window's own workspace.
                 //
                 // Auto-switching only happened on APP activation, so cmd-` — which cycles
@@ -4047,7 +4051,7 @@ impl Reactor {
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
 
-        self.publish_animation_display();
+        self.publish_animation_display_for(Some(space));
         _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {
             windows,
             from_offset,
@@ -4192,7 +4196,7 @@ impl Reactor {
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
         );
 
-        self.publish_animation_display();
+        self.publish_animation_display_for(Some(space));
         _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {
             windows,
             from_offset,
@@ -4206,14 +4210,26 @@ impl Reactor {
     }
 
     pub(crate) fn publish_animation_display(&self) {
+        self.publish_animation_display_for(None);
+    }
+
+    /// Points the animation overlay at the display holding `space`.
+    ///
+    /// There is one overlay, so it has to sit on the display whose windows are about to move. Choosing the
+    /// ACTIVE display instead put a built-in workspace switch on the external screen whenever the cursor
+    /// was over there: the external showed the built-in's windows sliding while the built-in's own windows
+    /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
+    /// have no particular display in mind.
+    pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) {
         let Some(tx) = &self.communication_manager.workspace_animation_tx else {
             return;
         };
+        let wanted = space.or_else(|| self.active_display_space());
         let Some(screen) = self
             .space_state
             .screens
             .iter()
-            .find(|screen| screen.space == self.active_display_space())
+            .find(|screen| screen.space == wanted)
             .or_else(|| self.space_state.screens.first())
         else {
             return;
@@ -4791,6 +4807,59 @@ impl Reactor {
         };
 
         self.maybe_auto_switch_to_window_workspace(pid, app_window_id, window_space)
+    }
+
+    /// Sends focus back to the window the app was in, when an activation picked a parked one.
+    ///
+    /// macOS chooses the window on cmd-tab, and it chose a window rini had parked off screen for a
+    /// workspace it was not showing. Following that switched the parked window's workspace, animated a
+    /// display the user had not asked to move, and landed them in the wrong terminal. Only ever avoids a
+    /// switch: it acts when the pick is parked and the remembered window is visible.
+    fn activation_redirect(&mut self, picked: WindowId, picked_space: SpaceId) -> Option<EventOutcome> {
+        let remembered = self.main_window_tracker.take_activation_target(picked.pid)?;
+        let target = main_window::activation_focus_target(
+            picked,
+            self.window_is_in_active_workspace(picked, Some(picked_space)),
+            Some(remembered),
+            self.window_is_standard(remembered)
+                && self.window_is_in_active_workspace(remembered, None),
+        )?;
+        debug!(
+            ?picked,
+            ?target,
+            "app activation picked a parked window; focusing the one it was in instead"
+        );
+        let mut app_handles = HashMap::default();
+        if let Some(app) = self.app_manager.apps.get(&target.pid) {
+            app_handles.insert(target.pid, app.handle.clone());
+        }
+        let space = self.best_space_for_window_id(target);
+        let mut outcome =
+            EventOutcome::default().with_raise_request(crate::actor::raise_manager::Event::RaiseRequest(
+                crate::actor::raise_manager::RaiseRequest {
+                    raise_windows: vec![vec![target]],
+                    focus_window: Some((target, None)),
+                    app_handles,
+                    focus_quiet: Quiet::No,
+                },
+            ));
+        if let Some(space) = space {
+            outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, target));
+        }
+        Some(outcome)
+    }
+
+    /// Whether `window` is in the active workspace of the space it belongs to.
+    fn window_is_in_active_workspace(&self, window: WindowId, space: Option<SpaceId>) -> bool {
+        let Some(space) = space.or_else(|| self.best_space_for_window_id(window)) else {
+            return false;
+        };
+        self.is_space_active(space)
+            && self.layout_manager.layout_engine.is_window_in_active_workspace(
+                &self.state.windows,
+                space,
+                window,
+            )
     }
 
     fn maybe_auto_switch_to_window_workspace(

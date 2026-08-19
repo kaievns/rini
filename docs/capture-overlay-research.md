@@ -672,6 +672,43 @@ for the strip is rejected by the same `fits` test the tiles use. A failed captur
 keeps the previous picture rather than hiding the bar: hiding it let the canvas
 show through the menu bar strip, which is worse than a slightly stale bar.
 
+## There is one overlay, so it follows the space being animated
+
+The overlay is a single window on a single display. Which display it sits on was
+chosen from the ACTIVE display, meaning wherever the menu bar and cursor are, and
+that is not necessarily the display whose windows are about to move.
+
+Measured over one session of cmd-tabbing between two windows of the BUILT-IN
+display, with the cursor left over on the external one:
+
+```
+strip="0,0 1728x32"   167 animations   overlay on the built-in display
+strip="0,0 3008x32"    17 animations   overlay on the external display
+```
+
+Those 17 animated space 1's windows, whose canvas was built in the built-in
+display's coordinates, on an overlay covering the external display. The external
+screen showed the built-in's windows sliding around, its own windows disappeared
+behind an opaque overlay for the length of the animation, and the built-in's real
+windows snapped to their new frames with no animation at all.
+
+Both canvas builders already resolve the screen from the space they are animating,
+so they now publish THAT display. `publish_animation_display()` without a space
+survives for the debug commands and a config reload, which have no display in
+mind.
+
+The other half of the same bug: moving the overlay to another display invalidates
+every picture it holds. A display change cleared only the bar, and one frame later
+the log showed
+
+```
+overlay dressed  backdrop="3008x1692 ScreenCaptureKit"  bar="1728x32"
+```
+
+an external display's desktop drawn behind a built-in display's strips. The four
+held pictures are one struct now, forgotten as a unit by assignment, so a new one
+cannot be left behind.
+
 ## A capture can be usable and still be the wrong shape
 
 Two different questions, and the code only asked the first for a long time:

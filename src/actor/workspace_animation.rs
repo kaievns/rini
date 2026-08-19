@@ -255,6 +255,35 @@ impl RunningAnimation {
     }
 }
 
+/// The pictures that only make sense for the display the overlay is on.
+///
+/// One struct rather than four fields, and forgotten as a unit, because a display change used to clear only
+/// the bar. The overlay then drew an external display's desktop, 3008x1692, behind a built-in display's
+/// strips on a 1728x1117 overlay.
+#[derive(Default)]
+struct DisplayPictures {
+    /// Whatever the backdrop is currently showing. The per-window path reuses it rather than capturing: a
+    /// desktop composite measures 13ms to 36ms, which is a frame or two of lag on every window focus
+    /// change, while re-applying a held picture is a pointer assignment.
+    shown: Option<WindowSnapshot>,
+    /// The desktop as ScreenCaptureKit rendered it, which is the only source that reliably includes the
+    /// wallpaper. Held rather than re-requested per animation because it costs about 40ms.
+    desktop: Option<WindowSnapshot>,
+    /// The last usable picture of the bar. Held because the bar can only be captured while the overlay is
+    /// not covering it, so a switch chained onto one already in flight has to reuse this one.
+    bar: Option<WindowSnapshot>,
+    /// Whether a usable desktop has ever been drawn behind the strips. Until one has, even a capture
+    /// missing its wallpaper is worth drawing, because the alternative is the bare black window.
+    drawn_once: bool,
+}
+
+impl DisplayPictures {
+    /// Drops every held picture. Assigns the whole struct so a new field cannot be left behind.
+    fn forget(&mut self) {
+        *self = Self::default();
+    }
+}
+
 pub struct WorkspaceAnimation {
     rx: Receiver,
     /// Used by the frame timer to post `Tick` back into this actor's own queue, so frames arrive
@@ -277,19 +306,8 @@ pub struct WorkspaceAnimation {
     coalesce: Option<RepeatingTimer>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
     last_animated: Vec<SnapshotTarget>,
-    /// Whether a usable desktop has ever been drawn behind the strips. Until one has, even a capture
-    /// missing its wallpaper is worth drawing, because the alternative is the bare black window.
-    has_backdrop: bool,
-    /// The desktop as ScreenCaptureKit rendered it, which is the only source that reliably includes
-    /// the wallpaper. Held here rather than re-requested per animation because it costs about 40ms.
-    desktop: Option<WindowSnapshot>,
-    /// Whatever the backdrop is currently showing. The per-window path reuses it rather than capturing:
-    /// a desktop composite measures 13ms to 36ms, which is a frame or two of lag on every window focus
-    /// change, while re-applying a held picture is a pointer assignment.
-    backdrop_shown: Option<WindowSnapshot>,
-    /// The last usable picture of the bar. Held because the bar can only be captured while the overlay is
-    /// not covering it, so a switch chained onto one already in flight has to reuse this one.
-    bar_shown: Option<WindowSnapshot>,
+    /// Everything held that is a picture of one particular display.
+    pictures: DisplayPictures,
     /// Fires once after an animation, to recapture the bar away from the critical path.
     bar_refresh: Option<RepeatingTimer>,
     /// Used to ask the reactor to place real windows once they are hidden behind the overlay.
@@ -320,10 +338,7 @@ impl WorkspaceAnimation {
             canvas: None,
             coalesce: None,
             last_animated: Vec::new(),
-            has_backdrop: false,
-            desktop: None,
-            backdrop_shown: None,
-            bar_shown: None,
+            pictures: DisplayPictures::default(),
             bar_refresh: None,
             reactor_tx: None,
         }
@@ -391,7 +406,7 @@ impl WorkspaceAnimation {
                 ),
                 "desktop capture landed"
             );
-            self.desktop = Some(desktop);
+            self.pictures.desktop = Some(desktop);
         }
         let landed = self.service.collect();
         if landed.is_empty() {
@@ -482,8 +497,7 @@ impl WorkspaceAnimation {
             // The desktop capture is the backdrop's only reliable source, and it takes about 40ms,
             // so it has to be in hand before the first switch rather than requested during one.
             self.warm_desktop();
-            // The bar moves and resizes with the display, so the held picture is the wrong shape now.
-            self.bar_shown = None;
+            self.pictures.forget();
             self.arm_bar_refresh();
         }
     }
@@ -908,10 +922,10 @@ impl WorkspaceAnimation {
         // The same backdrop and bar as a canvas movement, or the overlay shows a bare black window
         // behind the tiles. Reused rather than recaptured: this path runs on every window focus change,
         // and a desktop composite costs a frame or two.
-        let held = self.backdrop_shown.is_some();
-        let backdrop = self.backdrop_shown.clone().or_else(|| self.capture_backdrop());
+        let held = self.pictures.shown.is_some();
+        let backdrop = self.pictures.shown.clone().or_else(|| self.capture_backdrop());
         if backdrop.is_some() {
-            self.backdrop_shown = backdrop.clone();
+            self.pictures.shown = backdrop.clone();
         }
         let (bar, strip) = self.bar_picture();
         Self::log_dressing("per-window", backdrop.as_ref(), bar.as_ref(), strip, held);
@@ -1097,9 +1111,9 @@ impl WorkspaceAnimation {
             self.request_frames(final_frames);
             return;
         };
-        let held = self.backdrop_shown.is_some();
+        let held = self.pictures.shown.is_some();
         if backdrop.is_some() {
-            self.backdrop_shown = backdrop.clone();
+            self.pictures.shown = backdrop.clone();
         }
         Self::log_dressing("canvas", backdrop.as_ref(), bar.as_ref(), strip, held);
         let Some(overlay) = self.overlay.as_mut() else { return };
@@ -1341,7 +1355,7 @@ impl WorkspaceAnimation {
 
         let usable = composite.filter(|snapshot| {
             crate::ui::window_snapshot::is_backdrop_worth_drawing(
-                self.has_backdrop || self.desktop.is_some(),
+                self.pictures.drawn_once || self.pictures.desktop.is_some(),
                 desktop.has_wallpaper,
                 snapshot.coverage.covered,
                 display_size,
@@ -1349,15 +1363,15 @@ impl WorkspaceAnimation {
         });
 
         if let Some(snapshot) = usable {
-            self.has_backdrop = true;
+            self.pictures.drawn_once = true;
             return Some(snapshot);
         }
 
         // Keep the render current for the next switch, whether or not one is in hand for this one.
         self.warm_desktop();
-        match self.desktop.clone() {
+        match self.pictures.desktop.clone() {
             Some(rendered) => {
-                self.has_backdrop = true;
+                self.pictures.drawn_once = true;
                 Some(rendered)
             }
             None => {
@@ -1411,7 +1425,7 @@ impl WorkspaceAnimation {
         let Some((display_frame, _)) = self.display else { return (None, None) };
         let strip = crate::sys::window_server::bar_strip(display_frame);
         let Some(bounds) = strip.bounds else { return (None, None) };
-        if self.bar_shown.is_none() {
+        if self.pictures.bar.is_none() {
             self.refresh_bar();
         }
         let at = CGRect::new(
@@ -1421,7 +1435,7 @@ impl WorkspaceAnimation {
             ),
             bounds.size,
         );
-        (self.bar_shown.clone(), Some(at))
+        (self.pictures.bar.clone(), Some(at))
     }
 
     /// Asks for the bar to be recaptured once things have settled.
@@ -1460,7 +1474,7 @@ impl WorkspaceAnimation {
         )
         .filter(|snapshot| snapshot.fits(bounds.size));
         if fresh.is_some() {
-            self.bar_shown = fresh;
+            self.pictures.bar = fresh;
         }
     }
 
@@ -1596,6 +1610,24 @@ pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Moving the overlay to another display invalidates every picture it holds, not just the bar. Clearing
+    /// them one field at a time is what left an external display's desktop behind a built-in display's
+    /// strips, so they go as a unit.
+    #[test]
+    fn forgetting_a_display_leaves_no_picture_behind() {
+        let mut pictures = DisplayPictures {
+            shown: None,
+            desktop: None,
+            bar: None,
+            drawn_once: true,
+        };
+        pictures.forget();
+        assert!(pictures.shown.is_none());
+        assert!(pictures.desktop.is_none());
+        assert!(pictures.bar.is_none());
+        assert!(!pictures.drawn_once, "a display we have never drawn has no backdrop to keep");
+    }
 
     mod refresh {
         use super::*;

@@ -6278,3 +6278,44 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
         );
     }
 }
+
+/// The overlay is one window, so it has to be on the display whose windows are about to move.
+///
+/// Measured on a two-display setup: cmd-tabbing between two windows of the BUILT-IN display animated the
+/// EXTERNAL screen, because the cursor was over there and the overlay followed the active display. Same
+/// switch, wrong screen: the external showed the built-in's windows sliding, and the built-in snapped.
+#[test]
+fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display() {
+    let (_apps, mut reactor) = test_context();
+    let built_in = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let external = CGRect::new(CGPoint::new(-670., -1692.), CGSize::new(3008., 1692.));
+    let built_in_space = SpaceId::new(1);
+    let external_space = SpaceId::new(519);
+
+    reactor.handle_event(space_state_event(
+        vec![built_in, external],
+        vec![Some(built_in_space), Some(external_space)],
+    ));
+    // The cursor is on the external display, which is what used to decide this.
+    reactor.handle_event(Event::ActiveDisplayChanged {
+        menu_bar_space: Some(external_space),
+        command_space: Some(external_space),
+    });
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    reactor.publish_animation_display_for(Some(built_in_space));
+    let (_, published) = animation_rx.try_recv().expect("a display should be published");
+    let crate::actor::workspace_animation::Event::SetDisplay { id, .. } = published else {
+        panic!("expected SetDisplay, got {published:?}");
+    };
+    assert_eq!(id, 0, "the built-in display is screen 0, and its space is the one animating");
+
+    reactor.publish_animation_display();
+    let (_, published) = animation_rx.try_recv().expect("a display should be published");
+    let crate::actor::workspace_animation::Event::SetDisplay { id, .. } = published else {
+        panic!("expected SetDisplay, got {published:?}");
+    };
+    assert_eq!(id, 1, "with no space in mind the active display is still the right answer");
+}

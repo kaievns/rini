@@ -8,6 +8,37 @@ pub(crate) struct MainWindowTracker {
     global_frontmost: Option<pid_t>,
     window_server_focus: Option<WindowId>,
     window_server_focus_authoritative: bool,
+    /// Which window of each app rini last saw focused. macOS picks a window of its own on activation,
+    /// and that pick is not always this one.
+    last_focused_by_app: HashMap<pid_t, WindowId>,
+    /// The app that has just been activated, with whatever it had focused BEFORE the activation.
+    ///
+    /// Snapshotted because the activation immediately overwrites the live record: macOS reports its own
+    /// choice of main window a few milliseconds later, and the pre-activation window is what tells rini
+    /// whether that choice matches where the user actually was.
+    pending_activation: Option<(pid_t, Option<WindowId>)>,
+}
+
+/// Which window an app activation should really focus, or `None` to accept macOS's choice.
+///
+/// macOS picks the window on cmd-tab, and it can pick one rini has parked off screen for a workspace it is
+/// not showing. Following that costs a workspace switch on the parked window's display, even when the app
+/// has a perfectly visible window that the user was last in. Redirecting only ever AVOIDS a switch: it
+/// applies when the pick is parked and the remembered window is not, so it can never cause one.
+pub(crate) fn activation_focus_target(
+    picked: WindowId,
+    picked_is_visible: bool,
+    remembered: Option<WindowId>,
+    remembered_is_visible: bool,
+) -> Option<WindowId> {
+    if picked_is_visible {
+        return None;
+    }
+    let remembered = remembered?;
+    if remembered == picked || !remembered_is_visible {
+        return None;
+    }
+    Some(remembered)
 }
 
 struct AppState {
@@ -60,6 +91,11 @@ impl MainWindowTracker {
                 return None;
             }
             &Event::ApplicationActivated(pid, quiet) => {
+                // A quiet activation is rini's own raise. Redirecting the focus change that follows would
+                // undo whatever rini just asked for.
+                if quiet == Quiet::Yes && self.pending_activation.is_some_and(|(p, _)| p == pid) {
+                    self.pending_activation = None;
+                }
                 let app = self.apps.get_mut(&pid)?;
                 app.is_frontmost = true;
                 app.frontmost_is_quiet = quiet;
@@ -71,6 +107,13 @@ impl MainWindowTracker {
                 return None;
             }
             &Event::ApplicationGloballyActivated(pid) => {
+                // Only a real activation edge snapshots. A duplicate arrives while the app is already
+                // frontmost, and re-snapshotting there would capture the window this activation just
+                // focused rather than the one before it.
+                if self.global_frontmost != Some(pid) {
+                    self.pending_activation =
+                        Some((pid, self.last_focused_by_app.get(&pid).copied()));
+                }
                 self.global_frontmost = Some(pid);
                 let Some(app) = self.apps.get_mut(&pid) else {
                     return None;
@@ -95,6 +138,7 @@ impl MainWindowTracker {
             &Event::WindowServerFocusChanged(wid, _) => {
                 self.window_server_focus_authoritative = true;
                 self.window_server_focus = Some(wid);
+                self.last_focused_by_app.insert(wid.pid, wid);
                 return None;
             }
             _ => return None,
@@ -134,6 +178,24 @@ impl MainWindowTracker {
     pub fn is_globally_frontmost(&self, pid: pid_t) -> bool {
         self.global_frontmost == Some(pid)
     }
+
+    /// The window `pid` had focused before it was just activated, once per activation.
+    ///
+    /// `None` when this focus change is not the one macOS produced for an activation, which is how cmd-`
+    /// window cycling stays untouched: rini raises those itself and no activation edge is involved.
+    pub(crate) fn take_activation_target(&mut self, pid: pid_t) -> Option<WindowId> {
+        let (pending_pid, remembered) = self.pending_activation?;
+        if pending_pid != pid {
+            return None;
+        }
+        self.pending_activation = None;
+        remembered
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remember_focus_for_test(&mut self, window: WindowId) {
+        self.last_focused_by_app.insert(window.pid, window);
+    }
 }
 
 #[cfg(test)]
@@ -143,8 +205,105 @@ mod tests {
 
     use super::super::testing::{Apps, make_windows, space_state_event};
     use super::super::{Event, Quiet, Reactor, SpaceId, WindowId};
-    use super::{AppState, MainWindowTracker};
+    use super::{AppState, MainWindowTracker, activation_focus_target};
     use crate::layout_engine::LayoutEngine;
+
+    /// The measured case: cmd-tab to Ghostty, and macOS makes the built-in display's window main even
+    /// though the user was in the external display's one. Following the pick would switch the built-in
+    /// display's workspace to reveal a window the user did not ask for.
+    #[test]
+    fn a_parked_pick_defers_to_the_window_the_app_was_in() {
+        let parked = WindowId::new(954, 11333);
+        let visible = WindowId::new(954, 9607);
+        assert_eq!(activation_focus_target(parked, false, Some(visible), true), Some(visible));
+    }
+
+    #[test]
+    fn a_visible_pick_is_always_accepted() {
+        // Nothing to gain: no workspace has to move to show it, so macOS's choice stands even when rini
+        // remembers a different window.
+        let visible = WindowId::new(954, 9607);
+        let other = WindowId::new(954, 11333);
+        assert_eq!(activation_focus_target(visible, true, Some(other), true), None);
+    }
+
+    /// The redirect must never CAUSE a workspace switch, only avoid one. A remembered window that is
+    /// itself parked would have to be revealed, which is a switch the user did not ask for either.
+    #[test]
+    fn a_parked_remembered_window_is_not_worth_a_switch() {
+        let parked = WindowId::new(954, 11333);
+        let also_parked = WindowId::new(954, 9607);
+        assert_eq!(activation_focus_target(parked, false, Some(also_parked), false), None);
+    }
+
+    #[test]
+    fn nothing_remembered_or_the_same_window_leaves_focus_alone() {
+        let parked = WindowId::new(954, 11333);
+        assert_eq!(activation_focus_target(parked, false, None, false), None);
+        assert_eq!(activation_focus_target(parked, false, Some(parked), true), None);
+    }
+
+    #[test]
+    fn an_activation_target_is_offered_once_and_only_to_its_own_app() {
+        let mut tracker = MainWindowTracker::default();
+        let window = WindowId::new(954, 9607);
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
+        let _ = tracker.handle_event(&Event::WindowServerFocusChanged(window, SpaceId::new(519)));
+        let _ = tracker.handle_event(&Event::ApplicationGloballyActivated(954));
+        assert_eq!(tracker.take_activation_target(1073), None, "another app's focus change");
+        assert_eq!(tracker.take_activation_target(954), Some(window));
+        assert_eq!(tracker.take_activation_target(954), None, "consumed");
+    }
+
+    /// cmd-` cycles windows inside the app rini has already activated, so there is no activation edge and
+    /// the switch that reveals a parked window still happens.
+    #[test]
+    fn a_focus_change_without_an_activation_offers_nothing() {
+        let mut tracker = MainWindowTracker::default();
+        let window = WindowId::new(954, 9607);
+        let _ = tracker.handle_event(&Event::WindowServerFocusChanged(window, SpaceId::new(519)));
+        assert_eq!(tracker.take_activation_target(954), None);
+    }
+
+    /// A raise rini asked for arrives as a quiet activation. Redirecting the focus change behind it would
+    /// undo the raise.
+    #[test]
+    fn a_quiet_activation_drops_the_pending_target() {
+        let mut tracker = MainWindowTracker::default();
+        let window = WindowId::new(954, 9607);
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
+        let _ = tracker.handle_event(&Event::WindowServerFocusChanged(window, SpaceId::new(519)));
+        let _ = tracker.handle_event(&Event::ApplicationGloballyActivated(954));
+        let _ = tracker.handle_event(&Event::ApplicationActivated(954, Quiet::Yes));
+        assert_eq!(tracker.take_activation_target(954), None);
+    }
+
+    /// A duplicate global activation must not re-snapshot: by then the window the activation focused is
+    /// the live record, and the pre-activation window would be lost.
+    #[test]
+    fn a_duplicate_activation_keeps_the_original_target() {
+        let mut tracker = MainWindowTracker::default();
+        let was_in = WindowId::new(954, 9607);
+        let picked = WindowId::new(954, 11333);
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
+        let _ = tracker.handle_event(&Event::WindowServerFocusChanged(was_in, SpaceId::new(519)));
+        let _ = tracker.handle_event(&Event::ApplicationGloballyActivated(954));
+        let _ = tracker.handle_event(&Event::WindowServerFocusChanged(picked, SpaceId::new(1)));
+        let _ = tracker.handle_event(&Event::ApplicationGloballyActivated(954));
+        assert_eq!(tracker.take_activation_target(954), Some(was_in));
+    }
 
     #[test]
     fn window_server_focus_supersedes_ax_focus_events() {

@@ -331,7 +331,7 @@ impl AnimationManager {
             {
                 // The canvas owns it, including placing the real windows once it covers them.
             } else if use_overlay {
-                reactor.publish_animation_display();
+                reactor.publish_animation_display_for(Some(space));
                 if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
                     let duration = std::time::Duration::from_secs_f64(
                         reactor.config.settings.animation_duration.max(0.0),
