@@ -451,14 +451,22 @@ pub fn window_is_sticky(id: WindowServerId) -> bool {
     spaces_cf.len() > 1
 }
 
+/// The spaces the window server places this window on.
+///
+/// A test with no override gets nothing: window server ids collide with real ones. See "A unit test must
+/// not read the live window server" in `docs/testing.md`.
+#[cfg(test)]
 pub fn window_spaces(id: WindowServerId) -> Vec<crate::sys::screen::SpaceId> {
-    #[cfg(test)]
-    if let Some(override_spaces) =
-        TEST_WINDOW_SPACES_OVERRIDE.with(|spaces| spaces.borrow().get(&id.as_u32()).cloned())
-    {
-        return override_spaces.into_iter().map(crate::sys::screen::SpaceId::new).collect();
-    }
+    TEST_WINDOW_SPACES_OVERRIDE
+        .with(|spaces| spaces.borrow().get(&id.as_u32()).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .map(crate::sys::screen::SpaceId::new)
+        .collect()
+}
 
+#[cfg(not(test))]
+pub fn window_spaces(id: WindowServerId) -> Vec<crate::sys::screen::SpaceId> {
     let cf_windows = cf_array_from_ids(&[id]);
     let space_list_ref = unsafe {
         SLSCopySpacesForWindows(*G_CONNECTION, 0x7, CFRetained::as_ptr(&cf_windows).as_ptr())
@@ -489,14 +497,18 @@ pub fn window_space(id: WindowServerId) -> Option<crate::sys::screen::SpaceId> {
         .or_else(|| spaces.into_iter().next())
 }
 
+/// Whether the window server has this window ordered in.
+///
+/// `None` means unanswerable, and `Some(false)` retires the window, so a test with no override gets `None`.
+/// See "A unit test must not read the live window server" in `docs/testing.md`.
+#[cfg(test)]
 pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
-    #[cfg(test)]
-    if let Some(ordered) = TEST_WINDOW_ORDERED_IN_OVERRIDE
+    TEST_WINDOW_ORDERED_IN_OVERRIDE
         .with(|override_ordered| override_ordered.borrow().get(&id.as_u32()).copied())
-    {
-        return Some(ordered);
-    }
+}
 
+#[cfg(not(test))]
+pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
     let mut ordered: u8 = 0;
     if let Ok(_) = cg_ok(unsafe { SLSWindowIsOrderedIn(*G_CONNECTION, id.as_u32(), &mut ordered) })
     {
@@ -952,16 +964,19 @@ pub fn window_sub_level(wid: u32) -> c_int {
 }
 
 /// Returns the typed Skylight tags exposed by a window-query iterator.
+#[cfg_attr(test, allow(dead_code))]
 fn iterator_window_tags(iterator: *mut CFType) -> SLSWindowTags {
     SLSWindowTags::from_bits_retain(unsafe { SLSWindowIteratorGetTags(iterator) })
 }
 
 /// Returns whether the tags describe a document or floating app window.
+#[cfg_attr(test, allow(dead_code))]
 fn tags_match_app_window_role(tags: SLSWindowTags) -> bool {
     tags.contains(SLSWindowTags::DOCUMENT) || tags.contains(SLSWindowTags::FLOATING)
 }
 
 /// Returns whether the iterator points at a top-level application window.
+#[cfg_attr(test, allow(dead_code))]
 fn iterator_window_suitable(iterator: *mut CFType) -> bool {
     let tags = iterator_window_tags(iterator);
     let parent_wid = unsafe { SLSWindowIteratorGetParentID(iterator) };
@@ -971,27 +986,42 @@ fn iterator_window_suitable(iterator: *mut CFType) -> bool {
     parent_wid == 0 && tags_match_app_window_role(tags)
 }
 
-// credit to yabai
+/// The windows the window server reports on `spaces`.
+///
+/// Callers treat this as authoritative membership, so a test answers from its overrides only and gets
+/// nothing when none is set. See "A unit test must not read the live window server" in `docs/testing.md`.
 pub fn space_window_list_for_connection(
     spaces: &[u64],
     owner: u32,
     include_minimized: bool,
 ) -> Vec<u32> {
     #[cfg(test)]
-    if spaces.len() == 1
-        && let Some(override_ids) = TEST_SPACE_WINDOW_LIST_BY_SPACE_OVERRIDE
-            .with(|ids| ids.borrow().get(&spaces[0]).cloned())
     {
-        let _ = (owner, include_minimized);
-        return override_ids;
+        if spaces.len() == 1
+            && let Some(override_ids) = TEST_SPACE_WINDOW_LIST_BY_SPACE_OVERRIDE
+                .with(|ids| ids.borrow().get(&spaces[0]).cloned())
+        {
+            let _ = (owner, include_minimized);
+            return override_ids;
+        }
+        if let Some(override_ids) = TEST_SPACE_WINDOW_LIST_OVERRIDE.with(|ids| ids.borrow().clone())
+        {
+            let _ = (spaces, owner, include_minimized);
+            return override_ids;
+        }
+        Vec::new()
     }
+    #[cfg(not(test))]
+    space_window_list_from_window_server(spaces, owner, include_minimized)
+}
 
-    #[cfg(test)]
-    if let Some(override_ids) = TEST_SPACE_WINDOW_LIST_OVERRIDE.with(|ids| ids.borrow().clone()) {
-        let _ = (spaces, owner, include_minimized);
-        return override_ids;
-    }
-
+// credit to yabai
+#[cfg(not(test))]
+fn space_window_list_from_window_server(
+    spaces: &[u64],
+    owner: u32,
+    include_minimized: bool,
+) -> Vec<u32> {
     let cf_space_array = cf_array_from_u64s(spaces);
 
     let mut set_tags: u64 = 0;
@@ -1131,6 +1161,16 @@ pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>)
     });
 }
 
+/// Whether the window server considers this a top-level application window.
+///
+/// `None` means unanswerable, which is no evidence either way, while `Some(false)` retires the window. A
+/// test gets `None`. See "A unit test must not read the live window server" in `docs/testing.md`.
+#[cfg(test)]
+pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> {
+    None
+}
+
+#[cfg(not(test))]
 pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
     let query = WindowIterator::new(&[id])?;
 
@@ -1199,7 +1239,34 @@ pub unsafe fn switch_space(direction: crate::layout_engine::Direction) {
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::{WindowServerId, is_bar_layer, overlaps};
+    use super::{
+        WindowServerId, app_window_suitability, is_bar_layer, overlaps,
+        set_window_ordered_in_override, space_window_list_for_connection, window_ordered_in,
+        window_spaces,
+    };
+
+    /// A query with no override must answer "unknown", never the truth about the developer's screen.
+    ///
+    /// An unanswerable query is no evidence, while a negative one retires the window. See "A unit test must
+    /// not read the live window server" in `docs/testing.md`.
+    #[test]
+    fn a_test_never_reads_the_live_window_server() {
+        let id = WindowServerId::new(10001);
+        assert_eq!(app_window_suitability(id), None);
+        assert_eq!(window_ordered_in(id), None);
+        assert!(window_spaces(id).is_empty());
+        // Space 1 is the space every reactor test uses, and the one a real machine is most likely to have.
+        assert!(space_window_list_for_connection(&[1], 0, false).is_empty());
+    }
+
+    #[test]
+    fn an_override_is_still_honoured() {
+        let id = WindowServerId::new(10002);
+        set_window_ordered_in_override(id, Some(false));
+        assert_eq!(window_ordered_in(id), Some(false));
+        set_window_ordered_in_override(id, None);
+        assert_eq!(window_ordered_in(id), None);
+    }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
