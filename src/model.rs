@@ -1,6 +1,7 @@
 pub mod app_rules;
 pub mod display_affinity;
 pub mod floating_position_store;
+pub mod canvas_stack;
 pub mod hidden_window_placement;
 pub mod selection;
 pub mod server;

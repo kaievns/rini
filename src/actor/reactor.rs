@@ -4144,19 +4144,18 @@ impl Reactor {
             );
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
-            let row = (index - low) as f64 * row_pitch;
+            let row = crate::model::canvas_stack::row_of(index, from_index, to_index);
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };
                 windows.push(crate::actor::workspace_animation::CanvasWindow {
                     window: wid,
                     server_id,
-                    frame: CGRect::new(
-                        CGPoint::new(
-                            frame.origin.x - display_bounds.origin.x,
-                            (frame.origin.y - display_bounds.origin.y) + row,
-                        ),
-                        frame.size,
+                    frame: crate::model::canvas_stack::canvas_frame(
+                        frame,
+                        display_bounds.origin,
+                        row,
+                        row_pitch,
                     ),
                 });
                 let _ = &mut final_frames;
@@ -4187,14 +4186,10 @@ impl Reactor {
             return false;
         }
 
-        let from_offset = CGPoint::new(0.0, (from_index - low) as f64 * height);
-        let to_offset = CGPoint::new(0.0, (to_index - low) as f64 * height);
-        let rows = (to_index as f64 - from_index as f64).abs().max(1.0);
-        // Grows with distance but sublinearly and capped, so a four-workspace jump reads as further
-        // than a one-workspace step without becoming tedious.
-        let stretch = rows.sqrt().min(2.5);
+        let travel = crate::model::canvas_stack::travel(from_index, to_index, height);
+        let (from_offset, to_offset) = (travel.from, travel.to);
         let duration = std::time::Duration::from_secs_f64(
-            (self.config.settings.animation_duration.max(0.0)) * stretch,
+            (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
         );
 
         self.publish_animation_display();

@@ -121,7 +121,7 @@ const MAX_FRESH_CAPTURES: usize = 3;
 ///
 /// Early, so the corrected picture is on screen for most of the flight, but not on the very first frame,
 /// because the destination workspace's windows are only shown once the reactor has acted on the switch.
-const REFRESH_DESTINATION_AT: f64 = 0.12;
+const REFRESH_DESTINATION_AT: f64 = 0.0;
 
 /// A second attempt, later in the flight. An app repaints as focused on its own schedule, and the
 /// first attempt can land before it has: the tile then still slides in dimmed. Still before the real
@@ -578,12 +578,14 @@ impl WorkspaceAnimation {
         // rejected below anyway; the cost of trying is one background thread.
         let depths = crate::sys::window_server::front_to_back_depths();
         let wanted = refresh_order(&candidates, &depths, None, MAX_DESTINATION_CAPTURES);
-        debug!(
-            candidates = candidates.len(),
-            wanted = wanted.len(),
-            first = wanted.first().map(|w| w.idx.get()).unwrap_or(0),
-            "destination recapture considering"
-        );
+        let fully_visible: Vec<u32> = match self.display {
+            Some((display, _)) => crate::sys::window_server::visible_windows_on_display(display)
+                .into_iter()
+                .filter(|(_, frame)| on_screen_fraction(*frame, display) >= FRESH_CAPTURE_MIN_ON_SCREEN)
+                .map(|(id, _)| id.as_u32())
+                .collect(),
+            None => Vec::new(),
+        };
 
         for window in wanted {
             let Some((_, server_id, size)) =
@@ -595,6 +597,14 @@ impl WorkspaceAnimation {
             // thread dropped up to four frames of a 494ms flight. yabai captures on per-window pthreads
             // too (`window_manager.c:666`), so the call is safe off the main thread. The picture arrives
             // as an event a few frames later, which is fine: it replaces contents, not geometry.
+            // Both routes, always. ScreenCaptureKit works whatever the window's visibility but takes
+            // long enough that it can miss the handover on a short flight; SkyLight is fast but can only
+            // serve a window that is fully on screen, and during a slide the destination is mid-scroll.
+            // Racing them means whichever can answer does, and a later arrival overwrites an earlier one.
+            self.service.request(vec![SnapshotTarget { window, server_id, size }]);
+            if !fully_visible.contains(&server_id.as_u32()) {
+                continue;
+            }
             let tx = self.tx.clone();
             std::thread::Builder::new()
                 .name("destination-recapture".to_string())
@@ -606,15 +616,6 @@ impl WorkspaceAnimation {
                         return;
                     };
                     if !snapshot.is_usable() || !snapshot.fits(size) {
-                        debug!(
-                            idx = window.idx.get(),
-                            covered = format!(
-                                "{:.0}x{:.0}",
-                                snapshot.coverage.covered.0, snapshot.coverage.covered.1
-                            ),
-                            wanted = format!("{:.0}x{:.0}", size.width, size.height),
-                            "destination recapture rejected"
-                        );
                         return;
                     }
                     debug!(
