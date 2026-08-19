@@ -84,6 +84,8 @@ pub enum Event {
     /// A mid-flight recapture of the window being switched into has landed. Posted by the capture
     /// thread, not by another actor.
     PictureReady { window: WindowId, snapshot: WindowSnapshot },
+    /// Recapture the bar, now that nothing is animating over it. Posted by the refresh timer.
+    RefreshBar,
     /// Capture every managed window that SkyLight cannot serve, so the cache is warm before the next
     /// animation. Only queues background work, so it is safe to call at any time.
     ///
@@ -131,6 +133,13 @@ const REFRESH_DESTINATION_AGAIN_AT: f64 = 0.5;
 /// How many windows to recapture mid-flight. One: this exists for the window being switched into, and
 /// each capture costs a frame.
 const MAX_DESTINATION_CAPTURES: usize = 1;
+
+/// How long after an animation to recapture the bar.
+///
+/// A bar composite measures 31ms median, so it cannot be paid at the start of a switch. Long enough after
+/// the overlay hides that the compositor has dropped it out of the framebuffer, and long enough that a
+/// burst of switches only pays it once, at the end.
+const BAR_REFRESH_DELAY: Duration = Duration::from_millis(250);
 
 /// Which of `candidates` to recapture, frontmost first, capped at `max`.
 ///
@@ -278,6 +287,11 @@ pub struct WorkspaceAnimation {
     /// a desktop composite measures 13ms to 36ms, which is a frame or two of lag on every window focus
     /// change, while re-applying a held picture is a pointer assignment.
     backdrop_shown: Option<WindowSnapshot>,
+    /// The last usable picture of the bar. Held because the bar can only be captured while the overlay is
+    /// not covering it, so a switch chained onto one already in flight has to reuse this one.
+    bar_shown: Option<WindowSnapshot>,
+    /// Fires once after an animation, to recapture the bar away from the critical path.
+    bar_refresh: Option<RepeatingTimer>,
     /// Used to ask the reactor to place real windows once they are hidden behind the overlay.
     reactor_tx: Option<actor::Sender<crate::actor::reactor::Event>>,
 }
@@ -309,6 +323,8 @@ impl WorkspaceAnimation {
             has_backdrop: false,
             desktop: None,
             backdrop_shown: None,
+            bar_shown: None,
+            bar_refresh: None,
             reactor_tx: None,
         }
     }
@@ -350,6 +366,11 @@ impl WorkspaceAnimation {
                 }
             }
             Event::StartMoving => self.start_moving(),
+            Event::RefreshBar => {
+                // One shot: dropping the timer stops it repeating.
+                self.bar_refresh = None;
+                self.refresh_bar();
+            }
             Event::SnapshotsReady => self.collect_snapshots(),
             Event::PictureReady { window, snapshot } => self.picture_ready(window, snapshot),
             Event::WarmCache => self.warm_cache(),
@@ -461,6 +482,9 @@ impl WorkspaceAnimation {
             // The desktop capture is the backdrop's only reliable source, and it takes about 40ms,
             // so it has to be in hand before the first switch rather than requested during one.
             self.warm_desktop();
+            // The bar moves and resizes with the display, so the held picture is the wrong shape now.
+            self.bar_shown = None;
+            self.arm_bar_refresh();
         }
     }
 
@@ -889,11 +913,11 @@ impl WorkspaceAnimation {
         if backdrop.is_some() {
             self.backdrop_shown = backdrop.clone();
         }
-        let strip = self.bar_strip();
-        Self::log_dressing("per-window", backdrop.as_ref(), strip, held);
+        let (bar, strip) = self.bar_picture();
+        Self::log_dressing("per-window", backdrop.as_ref(), bar.as_ref(), strip, held);
         let Some(overlay) = self.ensure_overlay() else { return };
         overlay.set_backdrop(backdrop.as_ref());
-        overlay.set_foreground(backdrop.as_ref(), strip);
+        overlay.set_bar(bar.as_ref(), strip);
         overlay.set_tiles(&tiles);
         overlay.draw_frame(&tiles, 0.0);
         // Shown at once, holding the windows exactly where they already are, so the real windows can
@@ -1067,7 +1091,7 @@ impl WorkspaceAnimation {
         // Refreshed per animation: the desktop can change, and it is one cheap framebuffer capture of
         // fully visible windows, which is the case SkyLight handles well.
         let backdrop = self.capture_backdrop();
-        let strip = self.bar_strip();
+        let (bar, strip) = self.bar_picture();
 
         let Some(overlay) = self.ensure_overlay() else {
             self.request_frames(final_frames);
@@ -1077,12 +1101,10 @@ impl WorkspaceAnimation {
         if backdrop.is_some() {
             self.backdrop_shown = backdrop.clone();
         }
-        Self::log_dressing("canvas", backdrop.as_ref(), strip, held);
+        Self::log_dressing("canvas", backdrop.as_ref(), bar.as_ref(), strip, held);
         let Some(overlay) = self.overlay.as_mut() else { return };
         overlay.set_backdrop(backdrop.as_ref());
-        // The same picture as the backdrop, clipped to the bar. Drawing the bar from a separate capture
-        // put a second, misaligned copy on screen.
-        overlay.set_foreground(backdrop.as_ref(), strip);
+        overlay.set_bar(bar.as_ref(), strip);
         overlay.set_canvas(&tiles);
         overlay.set_canvas_offset(from_offset);
         overlay.show();
@@ -1184,6 +1206,7 @@ impl WorkspaceAnimation {
             overlay.release_tiles();
         }
         self.canvas = None;
+        self.arm_bar_refresh();
         let targets = std::mem::take(&mut self.last_animated);
         if !targets.is_empty() {
             self.warm_windows(targets);
@@ -1352,7 +1375,13 @@ impl WorkspaceAnimation {
     /// Records what the overlay was dressed with. Kept because the backdrop going black is only ever
     /// diagnosable after the fact: it depends on which capture route served the desktop and what size it
     /// covered, neither of which can be recovered from a screenshot.
-    fn log_dressing(path: &str, backdrop: Option<&WindowSnapshot>, strip: Option<CGRect>, held: bool) {
+    fn log_dressing(
+        path: &str,
+        backdrop: Option<&WindowSnapshot>,
+        bar: Option<&WindowSnapshot>,
+        strip: Option<CGRect>,
+        held: bool,
+    ) {
         debug!(
             path,
             held,
@@ -1362,6 +1391,9 @@ impl WorkspaceAnimation {
                     b.coverage.covered.0, b.coverage.covered.1, b.source
                 ))
                 .unwrap_or_else(|| "NONE".to_string()),
+            bar = bar
+                .map(|b| format!("{:.0}x{:.0}", b.coverage.covered.0, b.coverage.covered.1))
+                .unwrap_or_else(|| "NONE".to_string()),
             strip = strip
                 .map(|r| format!("{:.0},{:.0} {:.0}x{:.0}", r.origin.x, r.origin.y, r.size.width, r.size.height))
                 .unwrap_or_else(|| "none".to_string()),
@@ -1369,21 +1401,67 @@ impl WorkspaceAnimation {
         );
     }
 
-    /// Where the bar sits, in the overlay's own coordinates, or `None` when there is no bar.
+    /// The bar's picture to draw for this animation, and where it sits in the overlay's coordinates.
     ///
-    /// A rect only. The pixels come from the desktop capture, which already contains the bar, so nothing
-    /// is captured separately: sketchybar is dozens of small windows and a composite of them covers only
-    /// their union, which cannot be aligned against the copy already in the backdrop.
-    fn bar_strip(&self) -> Option<CGRect> {
-        let (display_frame, _) = self.display?;
-        let bounds = crate::sys::window_server::bar_strip(display_frame).bounds?;
-        Some(CGRect::new(
+    /// Held rather than captured here: a bar composite measures 31ms median, which is two frames on the
+    /// main thread before the overlay can even be shown, and the per-window path runs on every window
+    /// focus change. [`Self::refresh_bar`] pays it after an animation instead. Only the very first one
+    /// captures inline, since the alternative is a switch with no bar at all.
+    fn bar_picture(&mut self) -> (Option<WindowSnapshot>, Option<CGRect>) {
+        let Some((display_frame, _)) = self.display else { return (None, None) };
+        let strip = crate::sys::window_server::bar_strip(display_frame);
+        let Some(bounds) = strip.bounds else { return (None, None) };
+        if self.bar_shown.is_none() {
+            self.refresh_bar();
+        }
+        let at = CGRect::new(
             CGPoint::new(
                 bounds.origin.x - display_frame.origin.x,
                 bounds.origin.y - display_frame.origin.y,
             ),
             bounds.size,
-        ))
+        );
+        (self.bar_shown.clone(), Some(at))
+    }
+
+    /// Asks for the bar to be recaptured once things have settled.
+    ///
+    /// Not straight after the overlay hides: the alpha change is applied by the compositor, so a capture
+    /// taken in the same breath still reads the overlay's own pixels back out of the framebuffer. The
+    /// delay also means a burst of switches captures once, at the end, rather than between each pair.
+    fn arm_bar_refresh(&mut self) {
+        let tx = self.tx.clone();
+        self.bar_refresh = RepeatingTimer::every(BAR_REFRESH_DELAY, move || {
+            _ = tx.send(Event::RefreshBar);
+        });
+    }
+
+    /// Recaptures the bar, for the next animation to draw.
+    ///
+    /// Captured on its own rather than lifted out of the desktop picture, because the bar's translucency
+    /// is per-pixel alpha, measured at 224 of 255, and a bar-only capture keeps it. The strips then show
+    /// through the bar as they scroll under it, which a flattened bar-over-desktop could not do: that
+    /// covered them at the bar's edge.
+    ///
+    /// SkyLight reads the framebuffer, so this is a no-op while the overlay is on top of the bar. The
+    /// previous picture is kept in that case, and one that comes back the wrong size for the strip is
+    /// rejected the same way a window's is.
+    fn refresh_bar(&mut self) {
+        let Some((display_frame, scale)) = self.display else { return };
+        if self.overlay.as_ref().is_some_and(WorkspaceOverlay::is_visible) {
+            return;
+        }
+        let strip = crate::sys::window_server::bar_strip(display_frame);
+        let Some(bounds) = strip.bounds else { return };
+        let fresh = crate::ui::window_snapshot::capture_composite_via_skylight(
+            &strip.windows,
+            (bounds.size.width, bounds.size.height),
+            scale,
+        )
+        .filter(|snapshot| snapshot.fits(bounds.size));
+        if fresh.is_some() {
+            self.bar_shown = fresh;
+        }
     }
 
     /// Asks the reactor to place windows at their final frames.
@@ -1420,6 +1498,7 @@ impl WorkspaceAnimation {
         // Dropping the animation drops its timer, which stops the wakeups.
         self.running = None;
         self.coalesce = None;
+        self.arm_bar_refresh();
 
         // Capture what just became visible, so switching back has pixels ready. Event-driven, once
         // per animation, never on a timer.

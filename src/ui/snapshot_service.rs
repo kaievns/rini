@@ -312,10 +312,17 @@ impl SnapshotService {
                 return;
             };
 
-            // Leaves the wallpaper, the desktop icons and the widgets.
+            // Leaves the wallpaper, the desktop icons and the widgets. The bar goes too, even though it
+            // sits below layer 0: the overlay draws it from its own capture, and a copy baked in here
+            // would sit under that one and hide the strips scrolling past.
             let windows = unsafe { content.windows() };
-            let excluded: Vec<Retained<SCWindow>> =
-                windows.iter().filter(|window| unsafe { window.windowLayer() } >= 0).collect();
+            let excluded: Vec<Retained<SCWindow>> = windows
+                .iter()
+                .filter(|window| {
+                    let layer = unsafe { window.windowLayer() } as i64;
+                    layer >= 0 || crate::sys::window_server::is_bar_layer(layer)
+                })
+                .collect();
             let excluded_refs: Vec<&SCWindow> = excluded.iter().map(|window| &**window).collect();
             let excluded = NSArray::from_slice(&excluded_refs);
 

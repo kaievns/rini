@@ -672,14 +672,18 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
     DesktopBackdrop { windows, has_wallpaper }
 }
 
-/// Window server ids of the bar sitting in the menu bar strip.
+/// Whether a window at this level belongs to the bar in the menu bar strip.
 ///
-/// Anything above the desktop backdrop but below normal windows, which is where a status bar like
-/// sketchybar lives: measured at layer -20 on this machine. Captured so the overlay can redraw the bar
-/// on top of itself and keep it visible while the strips move underneath, since the overlay now spans
-/// the whole display and would otherwise cover it.
-pub fn bar_windows(display: CGRect) -> Vec<WindowServerId> {
-    bar_strip(display).windows
+/// Strictly between the desktop backdrop and normal windows, which is where a status bar like
+/// sketchybar lives: measured at -20 here, 24 windows of it across the strip.
+///
+/// Both capture routes need this. The overlay draws the bar from a capture of the bar's own windows,
+/// which keeps its translucency, so a second copy baked into the desktop picture would sit underneath
+/// that one and hide the strips scrolling past.
+pub fn is_bar_layer(layer: i64) -> bool {
+    /// Above the desktop backdrop.
+    const ABOVE_BACKDROP: i64 = -2147483600;
+    layer > ABOVE_BACKDROP && layer < 0
 }
 
 /// The bar's windows and the rect they occupy together.
@@ -689,16 +693,14 @@ pub struct BarStrip {
     ///
     /// Needed because a composite capture covers only the union, not the whole display, and drawing it
     /// at the overlay's top-left puts it in the wrong place. sketchybar is not one window: it is dozens
-    /// of small ones, measured here spanning x=217 to x=1721, so the union starts 217pt in and the
-    /// captured strip was landing 217pt to the left of the real bar. That is the second bar.
+    /// of small ones, and the union is whatever they happen to span. Measured here as the full display
+    /// width, 0,0 1728x32, but a bar with no full-width background behind its items spans only its
+    /// items, and drawing that at the overlay's corner is what put a second bar on screen.
     pub bounds: Option<CGRect>,
 }
 
 /// The bar sitting in the menu bar strip, with the rect it occupies.
 pub fn bar_strip(display: CGRect) -> BarStrip {
-    /// Above the desktop backdrop.
-    const ABOVE_BACKDROP: i64 = -2147483600;
-
     let mut windows = Vec::new();
     let mut bounds: Option<CGRect> = None;
     for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
@@ -710,8 +712,7 @@ pub fn bar_strip(display: CGRect) -> BarStrip {
         let Some(layer) = get_num(&window, unsafe { kCGWindowLayer }) else {
             continue;
         };
-        // Strictly between the backdrop and normal windows.
-        if layer <= ABOVE_BACKDROP || layer >= 0 {
+        if !is_bar_layer(layer) {
             continue;
         }
         let Some(frame) = window
@@ -1198,10 +1199,31 @@ pub unsafe fn switch_space(direction: crate::layout_engine::Direction) {
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::{WindowServerId, overlaps};
+    use super::{WindowServerId, is_bar_layer, overlaps};
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    /// Every level measured on this machine, so the two capture routes cannot drift apart: the bar has to
+    /// be in the bar's picture and out of the desktop's, or the menu bar strip either goes dark or gets a
+    /// second copy of the bar depending on which route served the backdrop.
+    #[test]
+    fn only_the_status_bar_counts_as_the_bar() {
+        assert!(is_bar_layer(-20), "sketchybar, 24 windows across the strip");
+        assert!(!is_bar_layer(0), "normal windows");
+        assert!(!is_bar_layer(101), "rini's own overlay");
+        assert!(!is_bar_layer(-2147483601), "Notification Center widgets");
+        assert!(!is_bar_layer(-2147483603), "Finder's desktop icons");
+        assert!(!is_bar_layer(-2147483624), "the wallpaper, owned by Dock");
+        assert!(!is_bar_layer(-2147483626), "the display backstop");
+    }
+
+    #[test]
+    fn the_bar_range_excludes_both_of_its_own_edges() {
+        assert!(!is_bar_layer(-2147483600), "the desktop ceiling itself is backdrop");
+        assert!(is_bar_layer(-2147483599));
+        assert!(is_bar_layer(-1));
     }
 
     #[test]

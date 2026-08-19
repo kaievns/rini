@@ -509,11 +509,38 @@ two displays  NO window owned by "Wallpaper" exists at all
               composite of 9 desktop windows      brightness  7.8   <- icons on black
 ```
 
-`ScreenCaptureKit` does not list a wallpaper window either, in either state. The
-wallpaper is not a window that can be enumerated and captured; it is part of
-what the compositor draws for a display.
+`ScreenCaptureKit` does not list a wallpaper window either, in either state.
 
-So the desktop has to be captured as a DISPLAY, not as a set of windows:
+Measured again with one display attached, and the wallpaper IS a window. It is
+just not owned by anything called "Wallpaper":
+
+```
+-2147483626  Window Server  "Display 1 Backstop"                0,0 1728x1117
+-2147483624  Dock           "Wallpaper-EEB523A2-7133-497B-..."  0,0 1728x1117
+-2147483603  Finder         desktop icons                       0,0 1728x1117
+-2147483602  Window Server  "underbelly"                        0,0 1728x94
+-2147483601  Notification Center  Featured / Forecast / Month   widgets
+        -20  sketchybar     24 windows across the strip
+```
+
+Two consequences, both still live in the code:
+
+- `desktop_backdrop_windows` excludes -2147483624 as `DOCK_LEVEL`, on the earlier
+  reading that the Dock lives there. On this system that level holds the
+  wallpaper, so the composite route drops the one window it most needs.
+- `has_wallpaper` looks for an OWNER name containing "Wallpaper". The owner is
+  "Dock" and it is the window NAME that carries the "Wallpaper-" prefix, so the
+  flag is always false.
+
+Together those mean the composite route cannot produce a wallpaper here at all:
+`is_backdrop_worth_drawing` accepts its wallpaperless output once, before
+anything better exists, and rejects it every time after. So every backdrop after
+the first animation is the ScreenCaptureKit display render. Left alone for now
+rather than fixed in passing, because it changes which route serves the backdrop,
+and that is where every black-screen report so far has come from.
+
+Either way the desktop has to be capturable as a DISPLAY, not only as a set of
+windows:
 
 ```
 SCContentFilter(display:excludingWindows:)  excluding every window at layer >= 0
@@ -600,33 +627,50 @@ frames=87  elapsed=1501ms  duration=1500ms  travel="0,1117 -> 0,0"
 
 60fps in every case, and travel proportional to the number of rows crossed.
 
-## The bar is dozens of windows, so do not capture it separately
+## The bar has to be captured on its own, at the union's origin
 
-sketchybar is not one window. Measured here: about 30 windows at layer -20, most
-14pt to 131pt wide, plus a few parked at -9999,-9999:
-
-```
-wid=3508  layer=-20  217,0   56x32   sketchybar
-wid=3510  layer=-20  1589,0 131x32   sketchybar
-wid=3575  layer=-20  -9999,-9999 1x1 sketchybar
-```
+sketchybar is not one window. Measured here: 24 windows at layer -20 across the
+strip, most 14pt to 131pt wide, plus more parked at -9999,-9999.
 
 `SLSHWCaptureWindowList` composites into an image covering the UNION of the
-windows it is given, so a capture of the bar covers x=217 to x=1721 rather than
-the display. Drawn at the overlay's top-left that put a second bar 217pt left of
-the real one. Positioning it at the union's origin fixes the offset and still
-leaves two copies, because the desktop render ALREADY contains the bar: it
-excludes windows at layer 0 and above, and the bar is at -20.
+windows it is given, so where that union starts matters. Drawn at the overlay's
+top-left instead, the bar landed left of the real one — that was the second bar
+on screen. Placing it at the union's origin fixes the offset.
 
-So the bar is not captured at all now. The foreground layer is a container
-clipped to the bar's rect, holding the same desktop picture the backdrop uses,
-shifted so the strip lands at the container's corner. One capture, one bar, and
-alignment by construction rather than by arithmetic: it is the same pixels at
-the same coordinates. `bar_strip` survives, but only to report the rect.
+The reason to capture the bar at all, rather than clipping its rect out of the
+desktop picture the backdrop already holds, is alpha:
 
-A skipped desktop capture keeps the previous bar rather than hiding it. Hiding
-it let the canvas show through the menu bar strip, which is worse than a stale
-bar.
+```
+24 windows, union 0,0 1728x32   ->  3456x64 px, exactly 2x the union
+body pixels    18,20,23  a=224   sketchybar's 0xe015171a, premultiplied
+alpha          98.3% at 201-254, 1.7% opaque (the glyphs), 0% clear
+```
+
+224 of 255 is the 88% the bar's config asks for, and the RGB does not vary with
+the wallpaper behind it. These are the bar's own pixels, not a composite, and
+the bar's translucency is per-pixel alpha it owns — the one kind of translucency
+a capture keeps.
+
+So the strips show THROUGH the bar as they scroll under it. The alternative,
+which shipped briefly, was to clip the strip out of the desktop picture and draw
+that on top: one bar, aligned by construction, but opaque. Windows sliding up a
+vertical switch were then cut off at the bar's lower edge instead of passing
+under it, which reads as them disappearing INTO the bar.
+
+The bar is therefore excluded from BOTH desktop capture routes. The composite
+route already dropped it, since layer -20 is above the desktop ceiling; the
+ScreenCaptureKit render had to be told, because it excluded only layer 0 and
+above. While the two disagreed, the strip's appearance depended on which route
+served the backdrop for that switch — dark when the composite won, correct when
+the render did. That is the whole of the intermittent "black menu bar on
+horizontal slides, fine on vertical".
+
+SkyLight reads the framebuffer, so the bar can only be captured while the
+overlay is not on top of it. A switch chained onto one still in flight reuses
+the picture the first switch took, and a capture that comes back the wrong size
+for the strip is rejected by the same `fits` test the tiles use. A failed capture
+keeps the previous picture rather than hiding the bar: hiding it let the canvas
+show through the menu bar strip, which is worse than a slightly stale bar.
 
 ## A capture can be usable and still be the wrong shape
 

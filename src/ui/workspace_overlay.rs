@@ -103,10 +103,11 @@ pub struct WorkspaceOverlay {
     backdrop: Retained<CALayer>,
     /// The bar, redrawn on top and held still while the canvas moves beneath it. The overlay spans the
     /// whole display, so it covers the real bar and has to put it back.
-    foreground: Retained<CALayer>,
-    /// The desktop image inside `foreground`, shifted so the bar shows through the clip.
+    ///
+    /// Drawn from a capture of the bar's own windows, which keeps the bar's own alpha, so the strips show
+    /// through it as they scroll under rather than vanishing at its edge.
     bar: Retained<CALayer>,
-    /// Whether the bar has ever been drawn, so a skipped desktop capture keeps it rather than hiding it.
+    /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
@@ -183,17 +184,12 @@ impl WorkspaceOverlay {
 
         // Above the canvas, and never moved: the bar does not scroll with the workspaces. Not
         // geometryFlipped, for the same reason as the backdrop.
-        let foreground = CALayer::layer();
-        foreground.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        foreground.setContentsScale(scale);
-        foreground.setZPosition(10_000.0);
-        foreground.setHidden(true);
-        foreground.setMasksToBounds(true);
-        root.addSublayer(&foreground);
-
         let bar = CALayer::layer();
         bar.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        foreground.addSublayer(&bar);
+        bar.setContentsScale(scale);
+        bar.setZPosition(10_000.0);
+        bar.setHidden(true);
+        root.addSublayer(&bar);
 
         let canvas = CALayer::layer();
         // Anchored at its top-left so setting the position translates the children directly, with no
@@ -209,7 +205,6 @@ impl WorkspaceOverlay {
             window,
             root,
             backdrop,
-            foreground,
             bar,
             bar_drawn: false,
             canvas,
@@ -225,37 +220,32 @@ impl WorkspaceOverlay {
         self.frame
     }
 
-    /// Sets the still image drawn ON TOP of the moving canvas, for the bar.
+    /// Draws the bar on top of the moving canvas, from a picture of the bar itself.
     ///
-    /// `at` must be the origin of the region the capture covers. A failed capture leaves whatever was
-    /// there rather than hiding it, so the bar does not blink.
-    pub fn set_foreground(&mut self, snapshot: Option<&WindowSnapshot>, strip: Option<CGRect>) {
+    /// `strip` is where the bar sits in the overlay's coordinates. The picture keeps its own alpha, so the
+    /// strips show through the bar as they scroll under it instead of being cut off at its edge. A failed
+    /// capture leaves whatever was there rather than hiding it, so the bar does not blink.
+    pub fn set_bar(&mut self, snapshot: Option<&WindowSnapshot>, strip: Option<CGRect>) {
         let Some(strip) = strip else {
-            self.foreground.setHidden(true);
+            self.bar.setHidden(true);
             return;
         };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        self.foreground.setFrame(strip);
-        self.foreground.setMasksToBounds(true);
-        // A desktop capture is skipped whenever the fresh one is not worth drawing, and the backdrop
-        // keeps whatever it had. The bar has to do the same: hiding it instead left the canvas showing
-        // through the menu bar strip, which is worse than a slightly stale bar.
-        let Some(snapshot) = snapshot else {
-            self.foreground.setHidden(!self.bar_drawn);
-            CATransaction::commit();
-            return;
-        };
-        let (covered_w, covered_h) = snapshot.coverage.covered;
-        // The bar comes from the SAME picture as the backdrop, shifted so that `strip` lands at the
-        // container's origin and clipped to it. That is what makes the two copies align: they are the
-        // same pixels at the same coordinates. A separate capture could not be, because sketchybar is
-        // dozens of small windows and a composite of them covers only their union.
-        self.bar.setContentsScale(self.scale);
-        set_layer_contents(&self.bar, snapshot);
-        self.bar.setFrame(strip_inner_frame(strip, CGSize::new(covered_w, covered_h)));
-        self.bar_drawn = true;
-        self.foreground.setHidden(false);
+        match snapshot {
+            Some(snapshot) => {
+                let (covered_w, covered_h) = snapshot.coverage.covered;
+                self.bar.setContentsScale(self.scale);
+                set_layer_contents(&self.bar, snapshot);
+                self.bar.setFrame(bar_frame(strip, CGSize::new(covered_w, covered_h)));
+                self.bar_drawn = true;
+                self.bar.setHidden(false);
+            }
+            // A capture is skipped whenever the bar is not fully visible to be captured, and hiding the
+            // bar instead left the canvas showing through the menu bar strip, which is worse than a
+            // slightly stale bar.
+            None => self.bar.setHidden(!self.bar_drawn),
+        }
         CATransaction::commit();
     }
 
@@ -482,14 +472,14 @@ impl WorkspaceOverlay {
     }
 }
 
-/// Where to put a full-display image inside a container clipped to `strip`, so that the part of the
-/// image at `strip` shows through.
+/// Where the bar's picture goes: at the strip's origin, at the size the picture actually covers.
 ///
-/// Offset by the strip's own origin: the image keeps its full size and slides so the wanted region lands
-/// at the container's corner. Kept separate because getting the sign wrong draws the wrong part of the
-/// desktop, which looks like a second bar in the wrong place rather than like an error.
-fn strip_inner_frame(strip: CGRect, covered: CGSize) -> CGRect {
-    CGRect::new(CGPoint::new(-strip.origin.x, -strip.origin.y), covered)
+/// Never stretched to the strip. A composite covers the union of the bar's windows, which is not always
+/// the strip the caller measured, and a bar stretched to fit reads as a rendering fault while one drawn
+/// slightly short just leaves a gap. Kept separate because drawing it at the overlay's corner instead of
+/// the strip's is what put a second bar on screen.
+fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
+    CGRect::new(strip.origin, covered)
 }
 
 /// Moves `layer` under `container` unless it is already there.
@@ -600,31 +590,29 @@ mod tests {
     }
 
     #[test]
-    fn the_strip_image_slides_by_the_strip_origin() {
-        // The bar sits at the top, so a strip at the origin needs no shift.
-        let at_origin = strip_inner_frame(
-            CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 32.0)),
-            CGSize::new(1728.0, 1117.0),
-        );
-        assert_eq!(at_origin.origin.x, 0.0);
-        assert_eq!(at_origin.origin.y, 0.0);
-        assert_eq!(at_origin.size.width, 1728.0);
-        assert_eq!(at_origin.size.height, 1117.0);
+    fn the_bar_is_drawn_at_the_strip_it_occupies() {
+        // Measured strip and capture on this machine: the bar spans the display, 32pt tall.
+        let placed = bar_frame(rect(0.0, 0.0, 1728.0, 32.0), CGSize::new(1728.0, 32.0));
+        assert_eq!(placed, rect(0.0, 0.0, 1728.0, 32.0));
     }
 
     #[test]
-    fn a_strip_away_from_the_corner_shifts_the_image_negatively() {
-        // Getting this sign wrong shows the wrong part of the desktop, which reads as a second bar in
-        // the wrong place rather than as an error.
-        let shifted = strip_inner_frame(
-            CGRect::new(CGPoint::new(217.0, 8.0), CGSize::new(1504.0, 24.0)),
-            CGSize::new(1728.0, 1117.0),
-        );
-        assert_eq!(shifted.origin.x, -217.0);
-        assert_eq!(shifted.origin.y, -8.0);
-        // Full size regardless: the container does the cropping.
-        assert_eq!(shifted.size.width, 1728.0);
-        assert_eq!(shifted.size.height, 1117.0);
+    fn a_bar_that_does_not_start_at_the_corner_is_drawn_where_it_is() {
+        // Drawing this at the overlay's corner instead is what put a second bar on screen: a composite
+        // covers only the union of the bar's windows, which starts wherever its leftmost item does.
+        let placed = bar_frame(rect(217.0, 8.0, 1504.0, 24.0), CGSize::new(1504.0, 24.0));
+        assert_eq!(placed.origin.x, 217.0);
+        assert_eq!(placed.origin.y, 8.0);
+    }
+
+    #[test]
+    fn the_bar_picture_is_never_stretched_to_the_strip() {
+        // The strip is measured now and the picture was captured earlier, so the two disagree whenever
+        // an item has appeared or gone. Stretching to fit smears the whole bar; drawing it at its own
+        // size leaves a gap at one end, which the backdrop already fills.
+        let placed = bar_frame(rect(0.0, 0.0, 1728.0, 32.0), CGSize::new(1504.0, 32.0));
+        assert_eq!(placed.size.width, 1504.0);
+        assert_eq!(placed.size.height, 32.0);
     }
 
     #[test]
