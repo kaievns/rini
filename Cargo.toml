@@ -123,6 +123,8 @@ objc2-core-graphics = { version = "0.3.2", default-features = false, features = 
 	"CGDirectDisplay",
 	"CGImage",
 	"CGError",
+	# CGPath gives the animation tiles a rounded-rect shadow silhouette.
+	"CGPath",
 	"CGEvent",
 	"CGEventSource",
 	"CGEventTypes",

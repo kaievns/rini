@@ -946,21 +946,79 @@ plain transparency animates correctly, and one configured for a system material
 cannot. Worth knowing before building anything elaborate to approximate the
 material.
 
+### A tile is pixel-identical to its window, except for the shadow
+
+Worth measuring before adding anything to a capture, because the answer was that
+nothing is missing. Slack, 1720x1081, opaque, on the built-in display, comparing
+the tile capture against the same rect of the screen at native pixels:
+
+```
+region              pixels     mean diff   worst
+outer ring (2px)     22024       0.201     162
+edge band (8px)      66072       0.000       0
+corner box (24px)     2304      12.472     162
+interior           7346880       0.000       0
+```
+
+The interior and the 8px edge band are identical to the value. There is no
+border, hairline or outline to add: whatever chrome the window draws is in its own
+surface and comes back in the capture. The corner boxes differ only because a
+tile's corners are TRANSPARENT, being the window's own rounded corners, so the
+comparison there is between a tile pixel and whatever the screen has behind the
+window. On screen that transparency shows the desktop, and in the overlay it shows
+the backdrop, which is a picture of the same desktop.
+
 ### Shadows are never in the surface
 
 On any API. The window server generates a shadow at composite time from the
-window's shape, so a clone has none. `setIgnoreShadowsSingleWindow(true)` is set
-deliberately: SCK will bake a shadow in if asked, but then the compositor draws
-another one over it, and the image grows by the shadow margins so the content
-sits inset and every tile needs the `contentRect` attachment to stay aligned.
+window's shape, so a clone has none.
 
-Adding one back, cheapest first: a `CALayer` shadow with `shadowPath` set to a
-rounded rect at the window's corner radius, which is GPU-cheap and close enough
-at flight speeds; a cached `capturesShadowsOnly` pass per window, which caches
-well because a shadow depends on shape and key status rather than content; or
-per-clone windows with `hasShadow = true`, where the system derives a real
-shadow from the clone's alpha for free, at the cost of shadow recomputation if
-anything resizes mid-flight. Nothing here is a reported problem yet.
+Asking SCK for one is a bad trade, measured. `ignoreShadowsSingleWindow = false`
+does not grow the image, because the buffer is whatever `width` and `height` say.
+It fits the window PLUS its shadow into that buffer instead, so the content ends
+up inset and smaller:
+
+```
+Slack 1720x1081, buffer asked 160pt larger than the window on both axes
+content starts (from each buffer edge): left 68px  top 52px  right 252px  bottom 268px
+```
+
+Every tile would then need the `contentRect` attachment to know its own inset,
+and the sample buffers rini captures through carry no attachments at all.
+
+So the shadow is drawn by Core Animation instead, from the shape of the real one.
+Read out of that same shadow-inclusive capture, as a share of black at distances
+from the window edge:
+
+```
+3.5pt  0.180      the peak, right at the edge
+  7pt  0.129
+ 14pt  0.059
+ 17pt  0.035
+```
+
+The bottom reaches about twice as far as the top, which is a downward offset. That
+fits `shadowOpacity = 0.4`, `shadowRadius = 9`, `shadowOffset = (0, 5)`, with
+positive y meaning down because the tiles hang off a flipped view. `shadowPath` is
+an explicit rounded rect at a 10pt corner radius, measured from where a capture's
+own alpha starts along its top row: transparent for the first 18px to 20px at 2x.
+An explicit path rather than letting Core Animation derive one from the contents
+alpha, which is exact for an oddly shaped window but recomputed whenever the
+contents change.
+
+`masksToBounds` had to come off the tile layers to allow this: it clips the layer's
+own shadow away. Nothing was lost, because Core Animation resizes contents to the
+layer's bounds, so a picture cannot spill regardless.
+
+Verified mid-flight, luminance across a tile boundary where one tile's shadow falls
+on the tile behind it:
+
+```
+x=1080..1125   lum 32 -> 27 over 22pt, smooth      the shadow
+x=1126         lum 14, hard step                   the next tile's content
+```
+
+16% darkening at the edge against the 18% measured on a real window.
 
 ### Keep alpha premultiplied end to end
 

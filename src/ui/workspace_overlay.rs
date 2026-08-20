@@ -81,6 +81,21 @@ pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
     )
 }
 
+/// The shadow a real window casts, as three Core Animation numbers.
+///
+/// Every capture API returns the window without its shadow, so a tile has none and the handover to the real
+/// window pops. Fitted to a shadow read out of a ScreenCaptureKit capture that included one: 18% of black
+/// 3.5pt out from the edge, 13% at 7pt, 6% at 14pt, 3.5% at 17pt, and the bottom reaching about twice as far
+/// as the top. See "Shadows are never in the surface" in `docs/capture-overlay-research.md`.
+const SHADOW_OPACITY: f32 = 0.4;
+const SHADOW_RADIUS: f64 = 9.0;
+/// Positive is downward: the tiles hang off a flipped view, so the layer's y axis points down.
+const SHADOW_OFFSET_Y: f64 = 5.0;
+
+/// Corner radius of a macOS window, measured from where a capture's own alpha starts along its top row:
+/// transparent for the first 18px to 20px at 2x backing scale.
+const CORNER_RADIUS: f64 = 10.0;
+
 /// Ease-out cubic. Fast at the start and settling at the end, which reads as the strip being flicked
 /// rather than dragged, and matches what niri does.
 pub fn ease_out_cubic(t: f64) -> f64 {
@@ -304,21 +319,15 @@ impl WorkspaceOverlay {
         let mut keep = Vec::with_capacity(tiles.len());
         for tile in tiles {
             keep.push(tile.window);
-            let layer = self.tile_layers.entry(tile.window).or_insert_with(|| {
-                let layer = CALayer::layer();
-                layer.setMasksToBounds(true);
-                // SAFETY: Core Animation's own filter-name constants.
-                unsafe {
-                    layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
-                    layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
-                }
-                self.canvas.addSublayer(&layer);
-                layer
-            });
+            let layer = self
+                .tile_layers
+                .entry(tile.window)
+                .or_insert_with(|| new_tile_layer(&self.canvas));
             reparent(layer, &self.canvas);
             layer.setContentsScale(self.scale);
             set_layer_contents(layer, &tile.snapshot);
             layer.setFrame(tile.frame);
+            set_tile_shadow(layer, tile.frame.size);
             layer.setZPosition(-(tile.depth as f64));
             layer.setHidden(false);
         }
@@ -391,21 +400,17 @@ impl WorkspaceOverlay {
         let mut keep = Vec::with_capacity(tiles.len());
         for tile in tiles {
             keep.push(tile.window);
-            let layer = self.tile_layers.entry(tile.window).or_insert_with(|| {
-                let layer = CALayer::layer();
-                layer.setMasksToBounds(true);
-                // SAFETY: Core Animation's own filter-name constants.
-                unsafe {
-                    layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
-                    layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
-                }
-                self.root.addSublayer(&layer);
-                layer
-            });
+            let layer = self
+                .tile_layers
+                .entry(tile.window)
+                .or_insert_with(|| new_tile_layer(&self.root));
             reparent(layer, &self.root);
             layer.setContentsScale(self.scale);
             set_layer_contents(layer, &tile.snapshot);
             layer.setFrame(tile.from);
+            // The destination size, which is what the window will be at the handover. A switch does not
+            // resize, so the two agree; a resize keeps the silhouette it is heading for.
+            set_tile_shadow(layer, tile.to.size);
             // Negated so a smaller depth, meaning nearer the front, draws on top.
             layer.setZPosition(-(tile.depth as f64));
             layer.setHidden(false);
@@ -480,6 +485,48 @@ impl WorkspaceOverlay {
 /// the strip's is what put a second bar on screen.
 fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
+}
+
+/// A tile layer, with the shadow a real window would cast.
+///
+/// No `masksToBounds`: it clips the layer's own shadow away, and the contents cannot spill regardless
+/// because Core Animation resizes them to the layer's bounds.
+fn new_tile_layer(container: &CALayer) -> Retained<CALayer> {
+    let layer = CALayer::layer();
+    // SAFETY: Core Animation's own filter-name constants.
+    unsafe {
+        layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
+        layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
+    }
+    // Shadow colour is left alone: a CALayer's default is opaque black, which is what a window casts.
+    layer.setShadowOpacity(SHADOW_OPACITY);
+    layer.setShadowRadius(SHADOW_RADIUS);
+    layer.setShadowOffset(CGSize::new(0.0, SHADOW_OFFSET_Y));
+    container.addSublayer(&layer);
+    layer
+}
+
+/// Gives `layer` the shadow silhouette of a window of `size`.
+///
+/// An explicit path rather than letting Core Animation derive one from the picture's alpha. Deriving is
+/// exact for an oddly shaped window, but it is recomputed whenever the contents change, and every window
+/// rini manages is a rounded rect.
+fn set_tile_shadow(layer: &CALayer, size: CGSize) {
+    let radius = tile_corner_radius(size);
+    let bounds = CGRect::new(CGPoint::new(0.0, 0.0), size);
+    // SAFETY: a null transform means the path is taken as given.
+    let path =
+        unsafe { objc2_core_graphics::CGPath::with_rounded_rect(bounds, radius, radius, std::ptr::null()) };
+    layer.setShadowPath(Some(&path));
+}
+
+/// The corner radius to draw a tile's shadow with.
+///
+/// Clamped to half the shorter side. A rounded rect cannot have corners larger than that, and Core Graphics
+/// clamps silently, so a small tile would otherwise get a silhouette nobody chose.
+fn tile_corner_radius(size: CGSize) -> f64 {
+    let shorter = size.width.min(size.height);
+    CORNER_RADIUS.min(shorter / 2.0).max(0.0)
 }
 
 /// Moves `layer` under `container` unless it is already there.
@@ -587,6 +634,34 @@ mod tests {
             assert!(value >= previous, "easing went backwards at t = {}", i);
             previous = value;
         }
+    }
+
+    /// The tile's shadow silhouette has to match the window's own rounded corners, or the shadow shows
+    /// through the transparent corner as a hard square.
+    #[test]
+    fn a_normal_window_gets_the_measured_corner_radius() {
+        assert_eq!(tile_corner_radius(CGSize::new(859.0, 1081.0)), CORNER_RADIUS);
+        assert_eq!(tile_corner_radius(CGSize::new(1720.0, 1081.0)), CORNER_RADIUS);
+    }
+
+    #[test]
+    fn a_tile_thinner_than_the_radius_is_clamped_to_half_its_shorter_side() {
+        // Core Graphics clamps this silently, so doing it here keeps the silhouette predictable.
+        assert_eq!(tile_corner_radius(CGSize::new(12.0, 400.0)), 6.0);
+        assert_eq!(tile_corner_radius(CGSize::new(400.0, 8.0)), 4.0);
+    }
+
+    #[test]
+    fn a_zero_sized_tile_has_no_corners_rather_than_negative_ones() {
+        assert_eq!(tile_corner_radius(CGSize::new(0.0, 0.0)), 0.0);
+        assert_eq!(tile_corner_radius(CGSize::new(-10.0, 100.0)), 0.0);
+    }
+
+    #[test]
+    fn the_shadow_falls_downward() {
+        // The tiles hang off a flipped view, so a positive y offset is down the screen. Getting the sign
+        // wrong lights the window from below, which reads as wrong without being obviously wrong.
+        assert!(SHADOW_OFFSET_Y > 0.0);
     }
 
     #[test]
