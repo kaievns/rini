@@ -672,6 +672,65 @@ for the strip is rejected by the same `fits` test the tiles use. A failed captur
 keeps the previous picture rather than hiding the bar: hiding it let the canvas
 show through the menu bar strip, which is worse than a slightly stale bar.
 
+## A one-point size change sent the whole strip to the Accessibility engine
+
+The overlay animates a picture, so a real size change would stretch that picture
+instead of re-rendering the window. Those go to the Accessibility engine, which
+resizes for real. The test for "real" was 1pt, and the layout rounds.
+
+Measured on one `MoveFocus` along a 16-column strip. The layout took one window
+from 918pt to 917pt wide, which is what a strip re-fit does:
+
+```
+idx=104  width: 918.0 ... 917.3475 ... 917.0896 ... 917.0022 ... 917.0
+```
+
+`|918 - 917| < 1.0` is false, so `all_translations` was false, so the ENTIRE
+layout went to the Accessibility engine. What that costs, from the same recording:
+
+```
+612 request=AnimationFrames        per window, per frame, one IPC each
+ 60 request=BeginWindowAnimation
+ 60 request=EndWindowAnimation
+  0 overlay animations
+```
+
+Every window is then written separately and applied on its own app's schedule, so
+the strip visibly comes apart: the terminals arrive while the Electron windows are
+still in transit, which reads as windows expanding at different speeds from under
+each other. The overlay exists precisely to make that impossible.
+
+The threshold is now the one the overlay already uses to decide whether a cached
+picture still fits a frame, +-0.5%, so the two agree by construction. Rounding is
+no longer a resize. A genuine column resize still goes to the Accessibility
+engine, and still tears; nobody has complained about that yet, and fixing it means
+choosing between a stretched picture and torn motion.
+
+## macOS will not park a window further off the left edge than 40pt
+
+Not an overlay problem, recorded here because it looks like one. At rest, every
+window scrolled off the viewport sits with exactly 40pt showing:
+
+```
+6 windows  x=-819   w=859    -819 + 859 = 40
+3 windows  x=-1680  w=1720   -1680 + 1720 = 40
+2 windows  x=1688   w=1720   1728 - 1688 = 40
+```
+
+Exactly 40pt regardless of width, which is the signature of a rule about the
+window rather than about the layout. rini asks for the real strip coordinates:
+the frame writes in the log carry x values from -12396 to 15848 for a strip
+16 columns wide. The window server puts them at 40pt and rini learns the clamped
+position back through Accessibility.
+
+The workspace-hide path does better, and how is the clue: it parks windows off the
+RIGHT edge, `screen.max().x - 1.0`, and they sit there with 1pt showing. So the
+constraint is asymmetric. A window may go almost entirely off the right, but not
+off the left.
+
+Inferred, not proven by a direct write test: the clamp keeps a window's left
+portion reachable, which is where its titlebar controls are.
+
 ## There is one overlay, so it follows the space being animated
 
 The overlay is a single window on a single display. Which display it sits on was

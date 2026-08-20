@@ -305,14 +305,8 @@ impl AnimationManager {
             // Ordering matters. The overlay is asked to animate FIRST, and its first frame draws the
             // windows at the positions they are leaving, so even if the real windows land before the
             // overlay is visible the picture stays continuous.
-            // Movement only. The overlay animates a PICTURE of each window, so a size change stretches
-            // that picture rather than re-rendering the window, and a stretched window is exactly as
-            // wrong as it sounds. Any size change hands the whole layout to the Accessibility engine,
-            // which resizes for real.
-            let all_translations = overlay_requests.iter().all(|request| {
-                (request.from.size.width - request.to.size.width).abs() < 1.0
-                    && (request.from.size.height - request.to.size.height).abs() < 1.0
-            });
+            let all_translations =
+                overlay_requests.iter().all(|request| !is_a_resize(request.from.size, request.to.size));
             let use_overlay = reactor.config.settings.overlay_animations
                 && !skip_anim
                 && !overlay_requests.is_empty()
@@ -1105,6 +1099,33 @@ mod tests {
         Config::default()
     }
 
+    /// The measured case. A strip re-fit took a window from 918pt to 917pt, and treating that one point as a
+    /// resize sent the whole layout to the Accessibility engine, which writes every window separately and
+    /// lets the strip come apart.
+    #[test]
+    fn a_point_of_rounding_is_not_a_resize() {
+        assert!(!is_a_resize(CGSize::new(918.0, 1081.0), CGSize::new(917.0, 1081.0)));
+        assert!(!is_a_resize(CGSize::new(1720.0, 1081.0), CGSize::new(1719.0, 1081.0)));
+        assert!(!is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(859.0, 1081.0)));
+    }
+
+    /// A real resize still has to go to the Accessibility engine: the overlay would stretch a picture of the
+    /// old size instead of re-rendering the window at the new one.
+    #[test]
+    fn a_column_changing_width_is_a_resize() {
+        assert!(is_a_resize(CGSize::new(1440.0, 1081.0), CGSize::new(859.0, 1081.0)));
+        assert!(is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(1720.0, 1081.0)));
+        assert!(is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(859.0, 540.0)));
+    }
+
+    /// The tolerance is proportional, so a point means more on a small window than a large one. That is the
+    /// right way round: a point of stretch is invisible across 918pt and obvious across 40pt.
+    #[test]
+    fn the_tolerance_scales_with_the_window() {
+        assert!(!is_a_resize(CGSize::new(400.0, 400.0), CGSize::new(401.0, 400.0)));
+        assert!(is_a_resize(CGSize::new(40.0, 400.0), CGSize::new(41.0, 400.0)));
+    }
+
     fn animation(handle: &AppThreadHandle, wid: WindowId, from: CGRect, to: CGRect) -> Animation {
         let mut animation = Animation::new(config());
         animation.add_window(handle, wid, from, to, false, TransactionId::default());
@@ -1771,6 +1792,23 @@ mod tests {
             "expected the window to travel, got {positions:?}"
         );
     }
+}
+
+/// Whether this window is being resized, rather than merely moved.
+///
+/// The overlay animates a PICTURE of each window, so a real size change would stretch that picture instead
+/// of re-rendering the window, and a stretched window is exactly as wrong as it sounds. A real one goes to
+/// the Accessibility engine, which resizes for real.
+///
+/// Rounding is not a real size change, and treating it as one had a cost out of all proportion. A strip
+/// re-fit took one window from 918pt to 917pt wide, and that single point sent the WHOLE layout to the
+/// Accessibility engine, where every window is written per frame by its own app: 612 frame writes for one
+/// focus move, with the Electron windows lagging the terminals so the strip visibly came apart. The
+/// threshold is the one the overlay already uses to decide whether a cached picture still fits a frame, so
+/// the two agree by construction. See "A one-point size change sent the whole strip to the Accessibility
+/// engine" in `docs/capture-overlay-research.md`.
+fn is_a_resize(from: CGSize, to: CGSize) -> bool {
+    !crate::ui::window_snapshot::fits_frame((from.width, from.height), (to.width, to.height))
 }
 
 /// The common movement vector if every request shares one, else None.
