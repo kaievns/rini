@@ -324,7 +324,14 @@ impl AnimationManager {
                 .iter()
                 .find(|screen| screen.space == Some(space))
                 .map(|screen| objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
-            let pan_delta = display.and_then(|display| strip_pan_delta(&overlay_requests, display));
+            // The strip's own scroll offset says exactly how far it is travelling, once per press. Reading
+            // it off the windows instead answered differently on each of the several layout passes a single
+            // keystroke produces: one press retargeted the canvas five times, with the distance jumping
+            // between 6315pt, 9471pt and -7749pt, which is visible as the strip jerking.
+            let pan_delta = match reactor.take_strip_movement(space) {
+                Some(moved) => (moved.x.abs() >= 1.0).then_some(moved),
+                None => display.and_then(|display| strip_pan_delta(&overlay_requests, display)),
+            };
             if use_overlay
                 && let Some(delta) = pan_delta
                 && reactor.start_canvas_pan(space, active_ws, layout, skip_wid, delta)

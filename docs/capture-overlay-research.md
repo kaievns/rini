@@ -672,6 +672,91 @@ for the strip is rejected by the same `fits` test the tiles use. A failed captur
 keeps the previous picture rather than hiding the bar: hiding it let the canvas
 show through the menu bar strip, which is worse than a slightly stale bar.
 
+## Nothing may be captured on the way in
+
+The design said it from the start: at switch time rini captures nothing, it
+composites bitmaps it already holds. The code had drifted, because a stale or
+unfocused picture looks wrong and the cheapest fix was to grab a fresh one first.
+Measured cost of that, per press:
+
+```
+recaptured on-screen windows, attempts=3, refreshed=3, took_ms=71
+recaptured on-screen windows, attempts=3, refreshed=3, took_ms=59
+recaptured on-screen windows, attempts=3, refreshed=3, took_ms=67
+```
+
+Three SkyLight captures on the main thread, 59ms to 71ms, before the overlay could
+be shown, plus a 35ms desktop composite on the canvas path. So a keypress moved
+nothing for about a tenth of a second, which reads as software that is thinking
+rather than responding, and on a redirection mid-flight it stalls the animation
+already running.
+
+Both are gone. The destination is still recaptured, but only mid-flight and only
+off the main thread, where it costs no frames and arrives as an event that swaps a
+tile's contents without touching its geometry. The desktop is held and refreshed in
+the background. Measured after, command to first frame:
+
+```
+1:04:44.994967  cmd=MoveFocus(Right)
+1:04:44.997095  canvas animation, requested=19, tiles=19, missing=0
+```
+
+2ms, against 56ms to 459ms before, with every tile present because the cache is
+warmed after each animation instead of during the next one.
+
+The trade is honest and worth stating: the destination now animates with whatever
+the cache holds, which for an app that dims when unfocused means it can slide in
+dim and correct itself as the off-thread capture lands. That capture measured 280ms
+on one occasion, which is most of a flight. Snappiness was the explicit preference.
+
+## One press must move the strip once
+
+A single `MoveFocus` produces several layout passes, and the pan distance was being
+read off the windows on each one. Every pass saw different frames, because the
+previous pass had already written new ones and macOS had clamped some of them, so
+one press retargeted the canvas five times in 110ms:
+
+```
+travel="6315,0 -> 0,0"
+travel="9471,0 -> 0,0"   chaining, residual="4385,0"
+travel="-7749,0 -> 0,0"  chaining, residual="9172,0"     <- and the sign flips
+travel="2583,0 -> 0,0"   chaining, residual="1292,0"
+travel="1722,0 -> 0,0"   chaining, residual="3645,0"
+```
+
+Each retarget is individually continuous, so nothing tears, but the destination
+keeps changing and the strip visibly jerks.
+
+The distance now comes from the strip's own scroll offset, which the layout owns:
+`strip_scroll_offset(space)` before and after, negated because windows travel
+opposite to the viewport. It changes exactly once per press, and it needs no
+reference to any window's real frame, so the clamp is irrelevant to it. A pass that
+did not move the strip reports zero and starts nothing:
+
+```
+1:04:44.994  cmd=MoveFocus(Right)
+1:04:44.997  canvas animation, requested=19, tiles=19
+1:04:45.174  cmd=MoveFocus(Right)      focus moved within the visible pair, no scroll, no animation
+1:04:45.347  cmd=MoveFocus(Right)
+1:04:45.351  canvas movement finished, frames=21, elapsed_ms=350
+```
+
+Reading it off the windows survives as the fallback for a layout with no strip.
+
+### What the remaining delay is
+
+Worth recording so it is not mistaken for rini. Pressing right three times quickly
+produced a fourth animation a second later, and the log names the cause:
+
+```
+1:04:45.347  cmd=MoveFocus(Right)
+1:04:46.290  Carbon: App front switched (1077)     Electron app, 940ms after the press
+1:04:46.403  canvas animation
+```
+
+macOS took most of a second to make the app frontmost. rini follows focus, so the
+strip moves when the activation lands, not when the key is pressed.
+
 ## A strip scroll is one movement, so it has to be one canvas
 
 The per-window path interpolates each tile from its own real frame to its own

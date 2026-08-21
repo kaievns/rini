@@ -547,6 +547,17 @@ impl ScrollingLayoutSystem {
         state.request_center_on_selected();
     }
 
+    /// How far along the strip the viewport currently sits, in points.
+    ///
+    /// A window at strip position p is drawn at p minus this. The animation path uses the CHANGE in this
+    /// number as the distance the strip has to travel, because it is the only description of the movement
+    /// that does not depend on where each window really is: macOS clamps windows it will not place off
+    /// screen, and the layout is recomputed several times per keystroke.
+    pub fn scroll_offset(&self, layout: LayoutId) -> Option<f64> {
+        self.layout_state(layout)
+            .map(|state| f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed)))
+    }
+
     fn layout_state(&self, layout: LayoutId) -> Option<&LayoutState> {
         self.layouts.get(layout)
     }

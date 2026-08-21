@@ -318,6 +318,13 @@ pub struct Reactor {
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
     space_state: ForwardedSpaceState,
+    /// Where each space's strip viewport sat the last time a layout pass looked.
+    ///
+    /// The animation path needs the DISTANCE the strip is moving. Reading that off the windows is
+    /// unreliable: macOS clamps the ones it will not place off screen, and the layout is recomputed several
+    /// times per keystroke, so the same press produced five different answers. The scroll offset is the
+    /// layout's own description of the movement and changes exactly once per press.
+    last_strip_offset: HashMap<SpaceId, f64>,
     space_activation_policy: SpaceActivationPolicy,
     main_window_tracker: MainWindowTracker,
     drag_manager: managers::DragManager,
@@ -425,6 +432,7 @@ impl Reactor {
             layout_manager: managers::LayoutManager { layout_engine },
             state: RiniState::default(),
             space_state: ForwardedSpaceState::default(),
+            last_strip_offset: HashMap::default(),
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
             drag_manager: managers::DragManager {
@@ -4207,6 +4215,17 @@ impl Reactor {
         // Every workspace, so the next switch in any direction has both strips drawn.
         self.warm_all_workspaces(space);
         true
+    }
+
+    /// How far `space`'s strip has moved since the last layout pass looked, and remember where it is now.
+    ///
+    /// `None` when the space has no strip. `Some(0)` is meaningful and different: it says the strip did not
+    /// move, so whatever else the layout did is not a pan. Windows move OPPOSITE to the viewport, so the
+    /// sign is negated: scrolling the viewport further along the strip carries the windows left.
+    pub(crate) fn take_strip_movement(&mut self, space: SpaceId) -> Option<CGPoint> {
+        let now = self.layout_manager.layout_engine.strip_scroll_offset(space)?;
+        let before = self.last_strip_offset.insert(space, now);
+        Some(CGPoint::new(-(now - before.unwrap_or(now)), 0.0))
     }
 
     pub(crate) fn publish_animation_display(&self) {

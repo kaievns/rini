@@ -112,13 +112,6 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// joining in between cannot pop. One frame is enough and is imperceptible.
 const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 
-/// How many windows may be captured fresh at switch time.
-///
-/// Capturing everything cost roughly 400ms before anything moved. SkyLight can only capture what is on
-/// screen anyway, and that is the set whose staleness is visible, so this bounds the cost at about a
-/// frame.
-const MAX_FRESH_CAPTURES: usize = 3;
-
 /// How far into a movement to recapture the window being switched into.
 ///
 /// Early, so the corrected picture is on screen for most of the flight, but not on the very first frame,
@@ -516,70 +509,6 @@ impl WorkspaceAnimation {
             }
         }
         self.overlay.as_mut()
-    }
-
-    /// Recaptures the windows that are on screen right now, just before they start moving, so the window
-    /// being typed in does not animate out with content from the previous switch.
-    ///
-    /// Does NOT help the window being switched INTO, which is not on screen yet. See "A picture is not
-    /// the window" in `docs/capture-overlay-research.md`.
-    fn refresh_visible(
-        &mut self,
-        windows: &[CanvasWindow],
-        depths: &HashMap<u32, usize>,
-        display: CGRect,
-        scale: f64,
-    ) {
-        let started = Instant::now();
-        let on_screen = crate::sys::window_server::visible_windows_on_display(display);
-
-        // Frontmost first. The window at the front is the one being switched INTO, and it is the one
-        // whose picture matters most: focus has already moved to it, so a picture taken before the
-        // switch shows the app's unfocused rendering. Ghostty greys out when it is not focused, so the
-        // tile slid in grey and snapped to black at the handover.
-        let mut order: Vec<&CanvasWindow> = windows.iter().collect();
-        order.sort_by_key(|window| depths.get(&window.server_id.as_u32()).copied().unwrap_or(usize::MAX));
-
-        let mut attempts = 0usize;
-        let mut refreshed = 0usize;
-        for window in order {
-            if attempts >= MAX_FRESH_CAPTURES {
-                break;
-            }
-            // Its CURRENT size, from the window server where known. A canvas frame is in canvas
-            // coordinates and says nothing about where the window is on screen at this moment. Not being
-            // listed is not disqualifying: the destination workspace's windows have only just been
-            // shown, and those are exactly the ones worth recapturing.
-            let size = match on_screen.iter().find(|(id, _)| *id == window.server_id) {
-                Some((_, frame)) => {
-                    if on_screen_fraction(*frame, display) < FRESH_CAPTURE_MIN_ON_SCREEN {
-                        continue;
-                    }
-                    frame.size
-                }
-                None => window.frame.size,
-            };
-            attempts += 1;
-            let Some(snapshot) =
-                capture_via_skylight(window.server_id, (size.width, size.height), scale)
-            else {
-                continue;
-            };
-            // A clipped or wrongly shaped capture is worse than a stale one, and `insert` already
-            // refuses to replace a usable picture with an unusable one.
-            if snapshot.is_usable() && snapshot.fits(window.frame.size) {
-                self.cache.insert(window.window, snapshot);
-                refreshed += 1;
-            }
-        }
-        if attempts > 0 {
-            debug!(
-                attempts,
-                refreshed,
-                took_ms = started.elapsed().as_millis(),
-                "recaptured on-screen windows, frontmost first, so they do not animate stale or unfocused"
-            );
-        }
     }
 
     /// Recaptures the window being switched into, now that it is on screen, and swaps its tile.
@@ -996,9 +925,6 @@ impl WorkspaceAnimation {
             .collect();
 
         let depths = crate::sys::window_server::front_to_back_depths();
-        if let Some((display_frame, scale)) = self.display {
-            self.refresh_visible(&windows, &depths, display_frame, scale);
-        }
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
@@ -1102,9 +1028,17 @@ impl WorkspaceAnimation {
             None => from_offset,
         };
 
-        // Refreshed per animation: the desktop can change, and it is one cheap framebuffer capture of
-        // fully visible windows, which is the case SkyLight handles well.
-        let backdrop = self.capture_backdrop();
+        // Held, not recaptured. A desktop composite measures 35ms median, which is two frames of delay
+        // between the keypress and anything moving, on a picture that changes only when the wallpaper or
+        // the desktop icons do. `warm_desktop` keeps it current in the background instead.
+        let held_backdrop = self.pictures.shown.clone();
+        let backdrop = match held_backdrop {
+            Some(held) => Some(held),
+            None => self.capture_backdrop(),
+        };
+        if backdrop.is_some() {
+            self.warm_desktop();
+        }
         let (bar, strip) = self.bar_picture();
 
         let Some(overlay) = self.ensure_overlay() else {

@@ -388,6 +388,16 @@ impl LayoutEngine {
         }
     }
 
+    /// Where the strip's viewport sits on `space`, in points along the strip.
+    ///
+    /// `None` when the space has no active workspace. Callers compare it against the value they last saw to
+    /// learn how far the strip moved, which is exact and needs no reference to any window's real frame.
+    pub fn strip_scroll_offset(&self, space: SpaceId) -> Option<f64> {
+        let (ws_id, layout) = self.workspace_and_layout(space)?;
+        let LayoutSystemKind::Scrolling(system) = self.workspace_tree(ws_id);
+        system.scroll_offset(layout)
+    }
+
     pub fn layout_mode_at(&self, space: SpaceId) -> &'static str {
         if let Some(ws_id) = self.virtual_workspace_manager.active_workspace(space) {
             let LayoutSystemKind::Scrolling(_) = self.workspace_tree(ws_id);
