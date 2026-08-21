@@ -672,6 +672,64 @@ for the strip is rejected by the same `fits` test the tiles use. A failed captur
 keeps the previous picture rather than hiding the bar: hiding it let the canvas
 show through the menu bar strip, which is worse than a slightly stale bar.
 
+## A strip scroll is one movement, so it has to be one canvas
+
+The per-window path interpolates each tile from its own real frame to its own
+layout frame. For a one-column step that is indistinguishable from a pan, because
+every window moves by the same vector. For a jump over several columns it is not:
+the tiles arrive at different times and overlap, which reads as the strip
+telescoping out like an antenna rather than sliding. Pressing again before the
+first move finishes makes it worse, because every tile is retargeted
+independently from wherever it happens to be.
+
+The canvas path has neither problem by construction. Tiles are assembled at their
+strip positions and the VIEWPORT moves, so there is one animated property for the
+whole strip and nothing to drift or race. It was already the vertical switch's
+mechanism; the horizontal scroll simply was not choosing it.
+
+What stopped it was the test for "is this one movement": every window had to agree
+on a movement vector, and windows parked at the macOS clamp cannot. Their real
+frame is 40pt off the left edge while their layout frame is thousands of points
+away, so their apparent movement is nothing like the strip's, and one of them
+disqualified the whole strip. Only windows at least a quarter on screen vote now.
+They are never clamped, so they are the honest witnesses.
+
+Measured on three `MoveFocus(Right)` presses 120ms apart, which is faster than the
+350ms animation:
+
+```
+before:  overlay animation composition, requested=16, tiles=3     per-window
+after:   canvas animation, requested=18, tiles=18, travel="-58,0 -> 0,0"
+         canvas animation, requested=18, tiles=18, travel="-1722,0 -> 0,0"
+                chaining onto an animation already in flight, residual="0,0"
+         canvas animation, requested=18, tiles=18, travel="-1722,0 -> 0,0"
+                chaining onto an animation already in flight, residual="-98,0"
+```
+
+-1722 is exactly two columns of 861pt as one viewport slide, and the third press
+picked up 98pt short of the second finishing.
+
+### Why retargeting mid-flight is continuous
+
+Worth writing down, because it is the property that makes rapid presses safe and
+it is not obvious from the code. Let `c` be a window's position in the CURRENT
+layout, so its screen position is `c - offset`.
+
+```
+press 1   d1 = new1 - old1,  from = d1,  to = 0
+          t=0:  screen = new1 - d1 = old1                  starts where it was
+mid-flight at eased e:  offset = d1(1-e)
+press 2   d2 = new2 - new1,  canvas rebuilt so c = new2
+          residual = current - to = d1(1-e)
+          from = d2 + residual
+          t=0:  screen = new2 - (new2 - new1) - d1(1-e)
+                       = new1 - d1(1-e)                    exactly the frame before
+```
+
+So each press sets a new destination for the same viewport rather than restarting
+anything, which is what the sign of `from_offset = delta` buys. Reversing it would
+start every chained press on the wrong side.
+
 ## A one-point size change sent the whole strip to the Accessibility engine
 
 The overlay animates a picture, so a real size change would stretch that picture

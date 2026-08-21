@@ -318,7 +318,13 @@ impl AnimationManager {
             // canvas pan gives the same sense of distance and the same freedom from per-window drift.
             // A layout where windows move by DIFFERENT vectors (a window inserted, a column resized
             // pushing neighbours) is not a pan and falls back to the per-window path.
-            let pan_delta = uniform_delta(&overlay_requests);
+            let display = reactor
+                .space_state
+                .screens
+                .iter()
+                .find(|screen| screen.space == Some(space))
+                .map(|screen| objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
+            let pan_delta = display.and_then(|display| strip_pan_delta(&overlay_requests, display));
             if use_overlay
                 && let Some(delta) = pan_delta
                 && reactor.start_canvas_pan(space, active_ws, layout, skip_wid, delta)
@@ -1099,6 +1105,73 @@ mod tests {
         Config::default()
     }
 
+    fn display() -> CGRect {
+        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0))
+    }
+
+    /// A strip column, as the animation path describes one: where it is now, where the layout wants it.
+    fn moving(from_x: f64, to_x: f64) -> crate::actor::workspace_animation::AnimationRequest {
+        crate::actor::workspace_animation::AnimationRequest {
+            window: WindowId::new(1, (from_x.abs() as u32).max(1)),
+            server_id: crate::sys::window_server::WindowServerId::new(1),
+            from: CGRect::new(CGPoint::new(from_x, 32.0), CGSize::new(859.0, 1081.0)),
+            to: CGRect::new(CGPoint::new(to_x, 32.0), CGSize::new(859.0, 1081.0)),
+        }
+    }
+
+    #[test]
+    fn a_strip_scroll_is_one_pan() {
+        let requests = vec![moving(4.0, -857.0), moving(865.0, 4.0), moving(1726.0, 865.0)];
+        let delta = strip_pan_delta(&requests, display()).expect("a strip scroll is a pan");
+        assert_eq!(delta.x, -861.0);
+        assert_eq!(delta.y, 0.0);
+    }
+
+    /// The measured failure. Windows parked at the macOS clamp move nothing like the strip, because their
+    /// real position is 40pt off the edge while their layout position is thousands of points away. Letting
+    /// them vote sent a multi-column jump to the per-window path, where the strip telescopes.
+    #[test]
+    fn windows_stuck_at_the_clamp_do_not_get_a_vote() {
+        let requests = vec![
+            moving(4.0, -4301.0),      // on screen, jumping five columns left
+            moving(865.0, -3440.0),    // on screen, same jump
+            moving(-819.0, -6884.0),   // clamped off the left edge: apparent move is nothing like it
+            moving(-819.0, -7745.0),   // and another, with a different apparent move again
+        ];
+        let delta = strip_pan_delta(&requests, display()).expect("the visible windows agree");
+        assert_eq!(delta.x, -4305.0, "five columns at 861pt");
+    }
+
+    #[test]
+    fn windows_rearranging_relative_to_each_other_are_not_a_pan() {
+        // A swap or an insertion moves visible windows by different vectors, which a viewport slide cannot
+        // express. Those still go to the per-window path.
+        let requests = vec![moving(4.0, 865.0), moving(865.0, 4.0)];
+        assert!(strip_pan_delta(&requests, display()).is_none());
+    }
+
+    #[test]
+    fn a_point_of_rounding_between_columns_is_still_a_pan() {
+        let requests = vec![moving(4.0, -857.0), moving(865.0, 3.0)];
+        assert!(strip_pan_delta(&requests, display()).is_some());
+    }
+
+    #[test]
+    fn a_layout_that_moves_nothing_is_not_a_pan() {
+        let requests = vec![moving(4.0, 4.0), moving(865.0, 865.0)];
+        assert!(strip_pan_delta(&requests, display()).is_none());
+    }
+
+    /// With nothing on screen there is no honest witness, so every window votes. That is the old rule, kept
+    /// for the case where the whole workspace is off screen and the layout is arriving from nowhere.
+    #[test]
+    fn with_nothing_visible_every_window_votes() {
+        let requests = vec![moving(-4301.0, -3440.0), moving(-3440.0, -2579.0)];
+        assert_eq!(strip_pan_delta(&requests, display()).map(|d| d.x), Some(861.0));
+        let disagreeing = vec![moving(-4301.0, -3440.0), moving(-3440.0, -1000.0)];
+        assert!(strip_pan_delta(&disagreeing, display()).is_none());
+    }
+
     /// The measured case. A strip re-fit took a window from 918pt to 917pt, and treating that one point as a
     /// resize sent the whole layout to the Accessibility engine, which writes every window separately and
     /// lets the strip come apart.
@@ -1811,25 +1884,53 @@ fn is_a_resize(from: CGSize, to: CGSize) -> bool {
     !crate::ui::window_snapshot::fits_frame((from.width, from.height), (to.width, to.height))
 }
 
-/// The common movement vector if every request shares one, else None.
+/// How far the strip is moving, judged from the windows the user can actually see.
 ///
-/// A shared vector means the whole set is being panned, which the canvas can do as a single viewport
-/// move. Distinct vectors mean windows are rearranging relative to each other, which a pan cannot
-/// express and which stays on the per-window path.
-fn uniform_delta(
+/// A shared movement vector means the whole set is being panned, which the canvas can do as a single
+/// viewport move: the tiles are assembled at their strip positions and the viewport slides, so nothing can
+/// drift, telescope, or race against its neighbours.
+///
+/// Only the windows on screen get a vote. macOS will not place a window further off the left edge than
+/// 40pt, so a window whose strip position is thousands of points away sits at that clamp instead, and its
+/// apparent movement is nothing like the strip's. Letting those vote meant one of them disqualified the
+/// whole strip: a multi-column jump then went to the per-window path, where each tile interpolates from its
+/// own real frame, which telescopes like an antenna and overlaps on rapid presses. Windows on screen are
+/// never clamped, so they are the honest witnesses.
+///
+/// See "A strip scroll is one movement, so it has to be one canvas" in
+/// `docs/capture-overlay-research.md`.
+fn strip_pan_delta(
     requests: &[crate::actor::workspace_animation::AnimationRequest],
+    display: CGRect,
 ) -> Option<objc2_core_foundation::CGPoint> {
-    let first = requests.first()?;
+    /// How much of a window must be on screen for its movement to describe the strip's.
+    const MIN_ON_SCREEN: f64 = 0.25;
+    /// Slack between two windows' movements. The layout rounds, and a column boundary can land a point
+    /// either side of its neighbour without the strip having done anything but slide.
+    const TOLERANCE: f64 = 2.0;
+
+    let on_screen: Vec<_> = requests
+        .iter()
+        .filter(|request| {
+            crate::actor::workspace_animation::on_screen_fraction(request.from, display)
+                >= MIN_ON_SCREEN
+        })
+        .collect();
+    // Nothing visible to judge by, so fall back to asking everything, which is the old rule.
+    let voters: Vec<_> =
+        if on_screen.is_empty() { requests.iter().collect() } else { on_screen };
+
+    let first = voters.first()?;
     let dx = first.to.origin.x - first.from.origin.x;
     let dy = first.to.origin.y - first.from.origin.y;
     // A pan of zero is not a pan; let those fall through rather than animating a non-movement.
     if dx.abs() < 1.0 && dy.abs() < 1.0 {
         return None;
     }
-    for request in requests.iter().skip(1) {
+    for request in voters.iter().skip(1) {
         let ddx = request.to.origin.x - request.from.origin.x;
         let ddy = request.to.origin.y - request.from.origin.y;
-        if (ddx - dx).abs() > 1.0 || (ddy - dy).abs() > 1.0 {
+        if (ddx - dx).abs() > TOLERANCE || (ddy - dy).abs() > TOLERANCE {
             return None;
         }
     }

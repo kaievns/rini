@@ -1552,7 +1552,7 @@ impl WorkspaceAnimation {
 }
 
 /// What fraction of `frame`'s area lies inside `display`.
-fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
+pub(crate) fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
     let area = frame.size.width * frame.size.height;
     if area <= 0.0 {
         return 0.0;
