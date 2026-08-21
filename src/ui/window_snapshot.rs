@@ -93,6 +93,18 @@ pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
     (MIN_STRETCH..=MAX_STRETCH).contains(&wide) && (MIN_STRETCH..=MAX_STRETCH).contains(&tall)
 }
 
+/// Whether a window needs a fresh capture before it can be drawn at `size`.
+///
+/// Having a drawable picture is not enough: it also has to match the size the window is now. A window
+/// resized from 859pt to 1147pt keeps a perfectly usable 859pt picture, and skipping it on that basis left
+/// it permanently the wrong shape, so every animation either stretched it or dropped it.
+pub fn needs_capture(cached: Option<Coverage>, size: (f64, f64)) -> bool {
+    match cached {
+        None => true,
+        Some(coverage) => !fits_frame(coverage.covered, size),
+    }
+}
+
 /// Whether a fresh desktop capture is worth drawing behind the moving strips.
 ///
 /// Rejects a composite whose wallpaper window was missing, and one that does not span the display,
@@ -326,6 +338,28 @@ mod tests {
         // Captures land a pixel or two off from rounding, and a window overlapped at the very edge
         // is still perfectly drawable. Rejecting these would discard almost every real capture.
         assert!(coverage((857.0, 1079.0), (859.0, 1081.0)).is_usable());
+    }
+
+    #[test]
+    fn a_window_with_no_picture_needs_one() {
+        assert!(needs_capture(None, (859.0, 1081.0)));
+    }
+
+    /// The measured case: a strip re-fit widened a window from 859pt to 1147pt and its picture was never
+    /// refreshed, so it was dropped from every animation as the wrong shape and visibly vanished.
+    #[test]
+    fn a_resized_window_needs_a_new_picture_even_though_the_old_one_is_usable() {
+        let old = coverage((859.0, 1081.0), (859.0, 1081.0));
+        assert!(old.is_usable(), "the old picture is perfectly good for the old size");
+        assert!(needs_capture(Some(old), (1147.0, 1081.0)));
+    }
+
+    #[test]
+    fn a_picture_that_still_fits_needs_nothing() {
+        let current = coverage((1147.0, 1081.0), (1147.0, 1081.0));
+        assert!(!needs_capture(Some(current), (1147.0, 1081.0)));
+        // Rounding is not a resize, the same tolerance the rest of the overlay uses.
+        assert!(!needs_capture(Some(current), (1146.0, 1081.0)));
     }
 
     #[test]

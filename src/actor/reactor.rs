@@ -4029,6 +4029,9 @@ impl Reactor {
                     ),
                     frame.size,
                 ),
+                // A floating window is not in the strip. Panning it with the strip dragged it sideways
+                // and snapped it back at the handover.
+                pinned: self.layout_manager.layout_engine.is_window_floating(*wid),
             });
         }
         if windows.is_empty() {
@@ -4169,6 +4172,9 @@ impl Reactor {
                         row,
                         row_pitch,
                     ),
+                    // Never pinned here. A floating window belongs to a workspace, so it leaves with the
+                    // one being left and arrives with the one being entered.
+                    pinned: false,
                 });
                 let _ = &mut final_frames;
             }

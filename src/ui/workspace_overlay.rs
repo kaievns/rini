@@ -56,6 +56,8 @@ pub struct CanvasTile {
     pub snapshot: WindowSnapshot,
     /// Front-to-back position on screen, 0 being frontmost.
     pub depth: usize,
+    /// Drawn over the canvas and held still while it moves, for a window that is not part of the strip.
+    pub pinned: bool,
 }
 
 /// One window's picture inside the overlay, and where it should be drawn.
@@ -95,6 +97,15 @@ const SHADOW_OFFSET_Y: f64 = 5.0;
 /// Corner radius of a macOS window, measured from where a capture's own alpha starts along its top row:
 /// transparent for the first 18px to 20px at 2x backing scale.
 const CORNER_RADIUS: f64 = 10.0;
+
+/// Where a pinned tile sits: above every strip tile, below the bar.
+const PINNED_Z: f64 = 5_000.0;
+
+/// Where the bar sits: above everything the overlay draws.
+const BAR_Z: f64 = 10_000.0;
+
+/// Where the desktop sits: below everything.
+const BACKDROP_Z: f64 = -10_000.0;
 
 /// Ease-out cubic. Fast at the start and settling at the end, which reads as the strip being flicked
 /// rather than dragged, and matches what niri does.
@@ -194,7 +205,7 @@ impl WorkspaceOverlay {
         backdrop.setAnchorPoint(CGPoint::new(0.0, 0.0));
         backdrop.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
         backdrop.setContentsScale(scale);
-        backdrop.setZPosition(-10_000.0);
+        backdrop.setZPosition(BACKDROP_Z);
         root.addSublayer(&backdrop);
 
         // Above the canvas, and never moved: the bar does not scroll with the workspaces. Not
@@ -202,7 +213,7 @@ impl WorkspaceOverlay {
         let bar = CALayer::layer();
         bar.setAnchorPoint(CGPoint::new(0.0, 0.0));
         bar.setContentsScale(scale);
-        bar.setZPosition(10_000.0);
+        bar.setZPosition(BAR_Z);
         bar.setHidden(true);
         root.addSublayer(&bar);
 
@@ -319,16 +330,23 @@ impl WorkspaceOverlay {
         let mut keep = Vec::with_capacity(tiles.len());
         for tile in tiles {
             keep.push(tile.window);
+            // A pinned tile hangs off the root, so the canvas slides underneath it rather than carrying it.
+            // Its canvas frame is already its position on screen, since a pan builds the canvas with no row
+            // offset.
+            let container = if tile.pinned { &self.root } else { &self.canvas };
             let layer = self
                 .tile_layers
                 .entry(tile.window)
-                .or_insert_with(|| new_tile_layer(&self.canvas));
-            reparent(layer, &self.canvas);
+                .or_insert_with(|| new_tile_layer(container));
+            reparent(layer, container);
             layer.setContentsScale(self.scale);
             set_layer_contents(layer, &tile.snapshot);
             layer.setFrame(tile.frame);
             set_tile_shadow(layer, tile.frame.size);
-            layer.setZPosition(-(tile.depth as f64));
+            // Above the strip, below the bar: a floating window sits over the tiling, and the bar over
+            // everything.
+            let z = if tile.pinned { PINNED_Z } else { 0.0 };
+            layer.setZPosition(z - (tile.depth as f64));
             layer.setHidden(false);
         }
 
@@ -655,6 +673,17 @@ mod tests {
     fn a_zero_sized_tile_has_no_corners_rather_than_negative_ones() {
         assert_eq!(tile_corner_radius(CGSize::new(0.0, 0.0)), 0.0);
         assert_eq!(tile_corner_radius(CGSize::new(-10.0, 100.0)), 0.0);
+    }
+
+    /// A floating window is drawn over the strip and under the bar. Above the bar it would cover the menu
+    /// bar strip; below the strip it would be hidden by the very tiles it floats over.
+    #[test]
+    fn a_pinned_tile_sits_between_the_strip_and_the_bar() {
+        let deepest_strip_tile = -64.0;
+        assert!(PINNED_Z > 0.0);
+        assert!(PINNED_Z > deepest_strip_tile);
+        assert!(PINNED_Z < BAR_Z);
+        assert!(BACKDROP_Z < deepest_strip_tile, "the desktop is under every tile");
     }
 
     #[test]

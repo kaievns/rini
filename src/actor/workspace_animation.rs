@@ -35,6 +35,11 @@ pub struct CanvasWindow {
     pub server_id: WindowServerId,
     /// Position on the canvas, never interpolated.
     pub frame: CGRect,
+    /// Held still while the canvas moves under it.
+    ///
+    /// A floating window does not belong to the strip, so a strip scroll must not carry it along. It does
+    /// belong to a workspace, so a switch between workspaces DOES move it, and that path leaves this false.
+    pub pinned: bool,
 }
 
 /// One window's part in an animation, as the caller describes it.
@@ -439,8 +444,16 @@ impl WorkspaceAnimation {
     fn warm_windows(&mut self, targets: Vec<SnapshotTarget>) {
         let wanted: Vec<SnapshotTarget> = targets
             .into_iter()
-            // Anything already drawable needs nothing. Everything else is worth a real capture.
-            .filter(|target| self.cache.usable(target.window).is_none())
+            // Drawable is not enough: the picture also has to match the size the window is now. A window
+            // resized from 859pt to 1147pt keeps a perfectly usable 859pt picture, and this used to skip
+            // it forever, so it was dropped from every animation as the wrong shape and visibly vanished
+            // for the length of each one. `target.size` is the size the layout just gave it.
+            .filter(|target| {
+                crate::ui::window_snapshot::needs_capture(
+                    self.cache.usable(target.window).map(|snapshot| snapshot.coverage),
+                    (target.size.width, target.size.height),
+                )
+            })
             .collect();
         if wanted.is_empty() {
             return;
@@ -932,30 +945,37 @@ impl WorkspaceAnimation {
             // Two questions, both of which must be yes: does the picture cover the window it was taken
             // from, and does it still match the frame it is drawn into.
             match self.cache.usable(window.window).cloned() {
-                Some(snapshot) if snapshot.fits(window.frame.size) => tiles.push(CanvasTile {
-                    window: window.window,
-                    frame: window.frame,
-                    snapshot,
-                    depth: depths
-                        .get(&window.server_id.as_u32())
-                        .copied()
-                        .unwrap_or(usize::MAX / 2),
-                }),
                 Some(snapshot) => {
-                    misshapen += 1;
-                    debug!(
-                        pid = window.window.pid,
-                        idx = window.window.idx.get(),
-                        frame = format!(
-                            "{:.0}x{:.0}",
-                            window.frame.size.width, window.frame.size.height
-                        ),
-                        picture = format!(
-                            "{:.0}x{:.0}",
-                            snapshot.coverage.covered.0, snapshot.coverage.covered.1
-                        ),
-                        "not drawing a window whose picture is the wrong shape for its frame"
-                    );
+                    // A picture of the wrong shape is stretched to the frame rather than dropped. Dropping
+                    // it left a hole the size of a window in an opaque overlay, so the window appeared to
+                    // vanish for the whole animation, which is far worse than 350ms of a stretched picture.
+                    // It should be rare: `warm_windows` recaptures anything whose picture no longer fits.
+                    if !snapshot.fits(window.frame.size) {
+                        misshapen += 1;
+                        debug!(
+                            pid = window.window.pid,
+                            idx = window.window.idx.get(),
+                            frame = format!(
+                                "{:.0}x{:.0}",
+                                window.frame.size.width, window.frame.size.height
+                            ),
+                            picture = format!(
+                                "{:.0}x{:.0}",
+                                snapshot.coverage.covered.0, snapshot.coverage.covered.1
+                            ),
+                            "stretching a picture that is the wrong shape for its frame"
+                        );
+                    }
+                    tiles.push(CanvasTile {
+                        window: window.window,
+                        frame: window.frame,
+                        snapshot,
+                        depth: depths
+                            .get(&window.server_id.as_u32())
+                            .copied()
+                            .unwrap_or(usize::MAX / 2),
+                        pinned: window.pinned,
+                    });
                 }
                 None => missing += 1,
             }

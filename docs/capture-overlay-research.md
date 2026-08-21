@@ -672,6 +672,60 @@ for the strip is rejected by the same `fits` test the tiles use. A failed captur
 keeps the previous picture rather than hiding the bar: hiding it let the canvas
 show through the menu bar strip, which is worse than a slightly stale bar.
 
+## A window that was resized keeps a usable picture, and vanishes
+
+Three windows were dropped from every single animation:
+
+```
+canvas animation, requested=20, tiles=17, missing=0, misshapen=3
+  idx=11333 frame="1147x1081" picture="859x1081"
+  idx=19914 frame="1147x1081" picture="859x1081"
+  idx=20205 frame="1720x1081" picture="859x1081"
+```
+
+The overlay is opaque, so a dropped tile is a window-shaped hole for the length of
+the animation. The windows appeared to vanish and come back.
+
+The cause was one word in the warm filter. `warm_windows` skipped any window that
+already had a "usable" picture, and usable means the picture covers the window it
+was taken FROM, not that it fits the window's size NOW. A strip re-fit had widened
+these from 859pt to 1147pt, so their 859pt pictures stayed usable, stayed
+un-refreshed, and failed the fit test on every animation forever. The resize itself
+goes to the Accessibility engine, which does not warm anything, so nothing else
+ever corrected them.
+
+`needs_capture` now asks the question the caller means: does the picture fit the
+size the layout just gave this window. And a picture of the wrong shape is
+stretched onto the frame rather than dropped, because 350ms of a stretched window
+is a great deal better than 350ms of a hole. After both:
+
+```
+canvas animation, requested=20, tiles=20, missing=0, misshapen=0
+```
+
+## A floating window is not part of the strip
+
+Floating windows were in the canvas, so a strip scroll carried them sideways and
+snapped them back at the handover. They belong to a workspace but not to its strip:
+a scroll must leave them alone, while a switch between workspaces must take them
+along.
+
+So a canvas tile can be pinned. A pinned tile hangs off the overlay's root rather
+than the moving canvas, at a z between the strip tiles and the bar, and its canvas
+frame is already its position on screen because a pan builds the canvas with no row
+offset. `start_canvas_pan` pins whatever the layout engine calls floating;
+`start_canvas_switch` pins nothing.
+
+Verified by pixel, on the left edge of a floating window during a scroll:
+
+```
+at rest    x=72: lum 86   x=73: lum 75   x=74: lum 28    <- edge between 73 and 74
+mid-pan    x=72: lum 52   x=73: lum 36   x=74: lum 27    <- same place
+```
+
+The luminance differs because the tile carries the shadow and the window's content
+is live video. The edge does not move.
+
 ## Nothing may be captured on the way in
 
 The design said it from the start: at switch time rini captures nothing, it
