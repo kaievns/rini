@@ -710,13 +710,25 @@ snapped them back at the handover. They belong to a workspace but not to its str
 a scroll must leave them alone, while a switch between workspaces must take them
 along.
 
-So a canvas tile can be pinned. A pinned tile hangs off the overlay's root rather
-than the moving canvas, at a z between the strip tiles and the bar, and its canvas
-frame is already its position on screen because a pan builds the canvas with no row
-offset. `start_canvas_pan` pins whatever the layout engine calls floating;
-`start_canvas_switch` pins nothing.
+So a canvas tile can be pinned. `start_canvas_pan` pins whatever the layout engine
+calls floating; `start_canvas_switch` pins nothing.
 
-Verified by pixel, on the left edge of a floating window during a scroll:
+The first attempt lifted pinned tiles out of the canvas and hung them off the
+overlay's root, above every strip tile. That is wrong twice over, and both ways were
+reported straight away. A floating window is not necessarily in FRONT: this one sits
+behind the terminal that overlaps it, so it popped over the strip on every
+transition. And a strip window with per-pixel alpha, a terminal at 95%, shows
+whatever is behind it, so lifting the floating window out took away what used to
+show through and left the backdrop showing instead.
+
+A pinned tile therefore stays in the canvas, keeping the z-position it gets from the
+window server's real front-to-back order like every other tile, and is counter-moved
+instead: at canvas offset o it is placed at its screen frame plus o, which cancels
+the canvas's own movement exactly. Two layer writes per frame at most, since only
+floating windows pin.
+
+Verified by pixel, on the left edge of a floating window during a scroll, before the
+z-order was corrected:
 
 ```
 at rest    x=72: lum 86   x=73: lum 75   x=74: lum 28    <- edge between 73 and 74

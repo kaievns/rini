@@ -98,9 +98,6 @@ const SHADOW_OFFSET_Y: f64 = 5.0;
 /// transparent for the first 18px to 20px at 2x backing scale.
 const CORNER_RADIUS: f64 = 10.0;
 
-/// Where a pinned tile sits: above every strip tile, below the bar.
-const PINNED_Z: f64 = 5_000.0;
-
 /// Where the bar sits: above everything the overlay draws.
 const BAR_Z: f64 = 10_000.0;
 
@@ -136,6 +133,8 @@ pub struct WorkspaceOverlay {
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
     tile_layers: HashMap<WindowId, Retained<CALayer>>,
+    /// Tiles that must stand still while the canvas moves, with the screen frame each one holds.
+    pinned: Vec<(WindowId, CGRect)>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
     /// be translated into the overlay's own space.
     frame: CGRect,
@@ -235,6 +234,7 @@ impl WorkspaceOverlay {
             bar_drawn: false,
             canvas,
             tile_layers: HashMap::new(),
+            pinned: Vec::new(),
             frame,
             scale,
             visible: false,
@@ -328,26 +328,27 @@ impl WorkspaceOverlay {
         CATransaction::setDisableActions(true);
 
         let mut keep = Vec::with_capacity(tiles.len());
+        let mut pinned = Vec::new();
         for tile in tiles {
             keep.push(tile.window);
-            // A pinned tile hangs off the root, so the canvas slides underneath it rather than carrying it.
-            // Its canvas frame is already its position on screen, since a pan builds the canvas with no row
-            // offset.
-            let container = if tile.pinned { &self.root } else { &self.canvas };
             let layer = self
                 .tile_layers
                 .entry(tile.window)
-                .or_insert_with(|| new_tile_layer(container));
-            reparent(layer, container);
+                .or_insert_with(|| new_tile_layer(&self.canvas));
+            reparent(layer, &self.canvas);
             layer.setContentsScale(self.scale);
             set_layer_contents(layer, &tile.snapshot);
             layer.setFrame(tile.frame);
             set_tile_shadow(layer, tile.frame.size);
-            // Above the strip, below the bar: a floating window sits over the tiling, and the bar over
-            // everything.
-            let z = if tile.pinned { PINNED_Z } else { 0.0 };
-            layer.setZPosition(z - (tile.depth as f64));
+            layer.setZPosition(-(tile.depth as f64));
             layer.setHidden(false);
+            // A pinned tile stays in the canvas, so it keeps its place in the stack, and is counter-moved
+            // every frame instead. Lifting it out of the canvas put it above the whole strip, which is
+            // wrong twice: a background window appeared over the windows in front of it, and a translucent
+            // strip window lost what used to show through it.
+            if tile.pinned {
+                pinned.push((tile.window, tile.frame));
+            }
         }
 
         let stale: Vec<WindowId> =
@@ -357,6 +358,7 @@ impl WorkspaceOverlay {
                 layer.removeFromSuperlayer();
             }
         }
+        self.pinned = pinned;
 
         CATransaction::commit();
         self.check_geometry(tiles);
@@ -404,6 +406,13 @@ impl WorkspaceOverlay {
         // lags the input by a fixed amount.
         CATransaction::setDisableActions(true);
         self.canvas.setPosition(CGPoint::new(-offset.x, -offset.y));
+        // Whatever is pinned moves the other way by the same amount, so it stands still on screen while
+        // keeping its place in the stack. Two layer writes per frame at most: only floating windows pin.
+        for (window, fixed) in &self.pinned {
+            if let Some(layer) = self.tile_layers.get(window) {
+                layer.setFrame(pinned_canvas_frame(*fixed, offset));
+            }
+        }
         CATransaction::commit();
     }
 
@@ -503,6 +512,17 @@ impl WorkspaceOverlay {
 /// the strip's is what put a second bar on screen.
 fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
+}
+
+/// Where a pinned tile has to sit on the canvas so that it appears at `fixed` on screen.
+///
+/// The canvas is positioned at the negated offset, so a child at canvas coordinate c is drawn at c minus
+/// the offset. Adding the offset therefore cancels the canvas's movement exactly.
+fn pinned_canvas_frame(fixed: CGRect, offset: CGPoint) -> CGRect {
+    CGRect::new(
+        CGPoint::new(fixed.origin.x + offset.x, fixed.origin.y + offset.y),
+        fixed.size,
+    )
 }
 
 /// A tile layer, with the shadow a real window would cast.
@@ -675,14 +695,32 @@ mod tests {
         assert_eq!(tile_corner_radius(CGSize::new(-10.0, 100.0)), 0.0);
     }
 
-    /// A floating window is drawn over the strip and under the bar. Above the bar it would cover the menu
-    /// bar strip; below the strip it would be hidden by the very tiles it floats over.
+    /// A pinned tile stays where it is on screen while the canvas slides under it.
     #[test]
-    fn a_pinned_tile_sits_between_the_strip_and_the_bar() {
+    fn a_pinned_tile_cancels_the_canvas_movement() {
+        let fixed = rect(136.0, 32.0, 1370.0, 1081.0);
+        assert_eq!(pinned_canvas_frame(fixed, CGPoint::new(0.0, 0.0)), fixed);
+        // Mid-scroll the canvas sits 861pt to the left, so the tile has to sit 861pt to the right of where
+        // it should appear.
+        let mid = pinned_canvas_frame(fixed, CGPoint::new(861.0, 0.0));
+        assert_eq!(mid.origin.x, 136.0 + 861.0);
+        assert_eq!(mid.origin.y, 32.0);
+        // A vertical switch moves the canvas the other way, and the same cancellation applies.
+        assert_eq!(pinned_canvas_frame(fixed, CGPoint::new(0.0, -2234.0)).origin.y, 32.0 - 2234.0);
+    }
+
+    #[test]
+    fn pinning_never_resizes_a_tile() {
+        let fixed = rect(136.0, 32.0, 1370.0, 1081.0);
+        let moved = pinned_canvas_frame(fixed, CGPoint::new(-4305.0, 0.0));
+        assert_eq!(moved.size.width, 1370.0);
+        assert_eq!(moved.size.height, 1081.0);
+    }
+
+    #[test]
+    fn the_bar_is_drawn_over_every_tile_and_the_desktop_under_them() {
         let deepest_strip_tile = -64.0;
-        assert!(PINNED_Z > 0.0);
-        assert!(PINNED_Z > deepest_strip_tile);
-        assert!(PINNED_Z < BAR_Z);
+        assert!(BAR_Z > 0.0);
         assert!(BACKDROP_Z < deepest_strip_tile, "the desktop is under every tile");
     }
 
