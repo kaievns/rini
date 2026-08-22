@@ -532,12 +532,24 @@ Two consequences, both still live in the code:
   "Dock" and it is the window NAME that carries the "Wallpaper-" prefix, so the
   flag is always false.
 
-Together those mean the composite route cannot produce a wallpaper here at all:
-`is_backdrop_worth_drawing` accepts its wallpaperless output once, before
-anything better exists, and rejects it every time after. So every backdrop after
-the first animation is the ScreenCaptureKit display render. Left alone for now
-rather than fixed in passing, because it changes which route serves the backdrop,
-and that is where every black-screen report so far has come from.
+Together those meant the composite route could not produce a wallpaper here at all,
+and `is_backdrop_worth_drawing` only accepts a wallpaperless composite when nothing
+better exists. So every backdrop was the ScreenCaptureKit display render, and the
+composite route was dead code in practice.
+
+That held until a display change started clearing the held pictures, which reset
+"we already have a good one" and let the wallpaperless composite through. The whole
+background then went almost black for the length of every animation, which is the
+symptom this section predicted.
+
+Both halves are fixed. `is_desktop_layer` includes -2147483624, and the wallpaper is
+recognised by window NAME as well as owner name. Verified: the composite now picks up
+7 windows including `Dock / Wallpaper-`, and its mean brightness is 31.16 against
+29.85 for the same region captured as a display. The remaining 1.3 is the widgets'
+vibrancy, which no capture reproduces.
+
+The composite is the cheaper route and now the primary one, with the display render
+as the fallback.
 
 Either way the desktop has to be capturable as a DISPLAY, not only as a set of
 windows:

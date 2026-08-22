@@ -638,12 +638,6 @@ pub struct DesktopBackdrop {
 /// layer live, and nothing else. Captured so the animation overlay can show the real desktop in the
 /// gaps between strips rather than a flat colour, which flickers as it appears and disappears.
 pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
-    /// Anything at or below this is backdrop. Read from a live system: the wallpaper sits at
-    /// -2147483626 and Finder's desktop icons at -2147483603, while the Dock is far below at
-    /// -2147483624 and must not be included or it would be drawn in the middle of the screen.
-    const DESKTOP_CEILING: i64 = -2147483600;
-    /// The Dock's own level, excluded because it is not part of the desktop backdrop.
-    const DOCK_LEVEL: i64 = -2147483624;
 
     let mut windows = Vec::new();
     let mut has_wallpaper = false;
@@ -656,7 +650,7 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
         let Some(layer) = get_num(&window, unsafe { kCGWindowLayer }) else {
             continue;
         };
-        if layer > DESKTOP_CEILING || layer == DOCK_LEVEL {
+        if !is_desktop_layer(layer) {
             continue;
         }
         let Some(bounds) = window
@@ -672,16 +666,36 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
         let Some(id) = get_num(&window, unsafe { kCGWindowNumber }) else {
             continue;
         };
-        // Owned by the wallpaper agent, which on this machine reports its window as "Offscreen
-        // Wallpaper Window" at layer -2147483625.
-        if get_string(&window, unsafe { kCGWindowOwnerName })
-            .is_some_and(|owner| owner.contains("Wallpaper"))
-        {
+        // Either name can carry it. A wallpaper agent reports an owner called "Wallpaper"; the Dock
+        // process reports an owner of "Dock" and a window NAME of "Wallpaper-<uuid>". Checking only the
+        // owner missed the second, so `has_wallpaper` was always false here and every composite was
+        // treated as the wallpaperless kind.
+        let names_wallpaper = |key| {
+            get_string(&window, key).is_some_and(|value: String| value.contains("Wallpaper"))
+        };
+        if names_wallpaper(unsafe { kCGWindowOwnerName }) || names_wallpaper(unsafe { kCGWindowName }) {
             has_wallpaper = true;
         }
         windows.push(WindowServerId::new(id as u32));
     }
     DesktopBackdrop { windows, has_wallpaper }
+}
+
+/// Anything at or below this level is the desktop behind every app window.
+const DESKTOP_CEILING: i64 = -2147483600;
+
+/// Whether a window at this level is part of the desktop rather than something drawn over it.
+///
+/// Measured on a live system: the display backstop at -2147483626, the wallpaper at -2147483624, Finder's
+/// desktop icons at -2147483603, the window server's "underbelly" at -2147483602, Notification Center's
+/// widgets at -2147483601.
+///
+/// -2147483624 was excluded for a while as "the Dock", on an earlier reading of the same list. It is where
+/// the WALLPAPER lives, owned by the Dock process, and excluding it left a composite of desktop icons on a
+/// black backstop: the whole background went almost black for the length of every animation. The Dock's own
+/// strip sits above layer 0 and is nowhere near this range.
+pub fn is_desktop_layer(layer: i64) -> bool {
+    layer <= DESKTOP_CEILING
 }
 
 /// Whether a window at this level belongs to the bar in the menu bar strip.
@@ -693,9 +707,7 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
 /// which keeps its translucency, so a second copy baked into the desktop picture would sit underneath
 /// that one and hide the strips scrolling past.
 pub fn is_bar_layer(layer: i64) -> bool {
-    /// Above the desktop backdrop.
-    const ABOVE_BACKDROP: i64 = -2147483600;
-    layer > ABOVE_BACKDROP && layer < 0
+    !is_desktop_layer(layer) && layer < 0
 }
 
 /// The bar's windows and the rect they occupy together.
@@ -1240,7 +1252,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     use super::{
-        WindowServerId, app_window_suitability, is_bar_layer, overlaps,
+        DESKTOP_CEILING, WindowServerId, app_window_suitability, is_bar_layer, is_desktop_layer, overlaps,
         set_window_ordered_in_override, space_window_list_for_connection, window_ordered_in,
         window_spaces,
     };
@@ -1284,6 +1296,31 @@ mod tests {
         assert!(!is_bar_layer(-2147483603), "Finder's desktop icons");
         assert!(!is_bar_layer(-2147483624), "the wallpaper, owned by Dock");
         assert!(!is_bar_layer(-2147483626), "the display backstop");
+    }
+
+    /// Every level measured on this machine. The wallpaper's belongs here: leaving it out is what made the
+    /// whole background go almost black during animations, because the composite was then desktop icons on
+    /// a bare backstop.
+    #[test]
+    fn the_desktop_is_everything_at_or_below_the_ceiling() {
+        assert!(is_desktop_layer(-2147483626), "the display backstop");
+        assert!(is_desktop_layer(-2147483624), "the wallpaper, owned by Dock");
+        assert!(is_desktop_layer(-2147483603), "Finder's desktop icons");
+        assert!(is_desktop_layer(-2147483602), "the window server's underbelly");
+        assert!(is_desktop_layer(-2147483601), "Notification Center's widgets");
+        assert!(is_desktop_layer(DESKTOP_CEILING), "the ceiling itself");
+        assert!(!is_desktop_layer(-20), "sketchybar");
+        assert!(!is_desktop_layer(0), "normal windows");
+        assert!(!is_desktop_layer(101), "rini's own overlay");
+    }
+
+    /// The desktop and the bar are what the two capture routes have to agree on, and nothing may be both:
+    /// a window counted twice is composited twice.
+    #[test]
+    fn no_level_is_both_desktop_and_bar() {
+        for layer in [-2147483626, -2147483624, -2147483603, -2147483600, -2147483599, -20, -1, 0, 101] {
+            assert!(!(is_desktop_layer(layer) && is_bar_layer(layer)), "layer {layer} counted twice");
+        }
     }
 
     #[test]
