@@ -1208,6 +1208,9 @@ impl Reactor {
                 if !self.is_space_active(reported_space) {
                     return Ok(EventOutcome::default());
                 }
+                // Whichever window gains or loses focus renders differently now, so both need a fresh
+                // picture before the next animation draws them.
+                self.refresh_focus_pictures(window);
                 // An app activation picked its own window, and it may not be the one the user was in.
                 if let Some(redirect) = self.activation_redirect(window, reported_space) {
                     return Ok(redirect);
@@ -4221,6 +4224,32 @@ impl Reactor {
         // Every workspace, so the next switch in any direction has both strips drawn.
         self.warm_all_workspaces(space);
         true
+    }
+
+    /// Asks for fresh pictures of the window gaining focus and the one losing it.
+    ///
+    /// A window's appearance depends on focus and none of the difference is a size change: measured on a 1pt
+    /// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window
+    /// whose picture no longer FITS, so an unfocused capture stayed forever and its tile popped to the
+    /// focused rendering when the overlay lifted. Background work, so this costs nothing on the way in.
+    fn refresh_focus_pictures(&mut self, gaining: WindowId) {
+        let Some(tx) = &self.communication_manager.workspace_animation_tx else { return };
+        let losing = self
+            .layout_manager
+            .layout_engine
+            .focused_window()
+            .filter(|previous| *previous != gaining);
+        for window in [Some(gaining), losing].into_iter().flatten() {
+            let Some(state) = self.state.windows.window(window) else { continue };
+            let Some(server_id) = state.info.sys_id else { continue };
+            _ = tx.send(crate::actor::workspace_animation::Event::RefreshFocus(
+                crate::ui::snapshot_service::SnapshotTarget {
+                    window,
+                    server_id,
+                    size: state.frame_monotonic.size,
+                },
+            ));
+        }
     }
 
     /// How far `space`'s strip has moved since the last layout pass looked, and remember where it is now.

@@ -1327,18 +1327,63 @@ shadow on the tile      +2.1     gap AND under the window
 masked caster           +1.2     gap only
 ```
 
-### There is no outline to add
+### The outline is captured, but it can be the wrong one
 
-Asked for alongside the shadow, and there is nothing missing. A tile compared
-against the same rect of the screen at native pixels, for two different windows:
+Asked for alongside the shadow. Nothing is missing from the capture: a tile compared
+against the same rect of the screen at native pixels gives
 
 ```
 edge band (8px)   mean 0.000    identical to the value
 left edge, pixel by pixel:  tile 21,23,26  screen 21,23,26   diff 0
 ```
 
-Whatever border a window draws is in its own surface and comes back in the capture.
-What flickered in at the handover was the shadow, which no capture carries.
+But a window's border depends on focus. Profiled across the 2pt gap between two
+Ghostty windows, one focused and one not, at 2px per point:
+
+```
+lum 17-18   the focused window's interior
+lum 65      its 1pt border                  <- bright
+lum 1-23    the gap: shadow, then wallpaper
+lum 42      the unfocused window's border   <- dim
+lum 13      its interior
+```
+
+65 against 42 of 255, on a 1pt line, and none of it is a size change. The ordinary
+warm only recaptures a window whose picture no longer FITS its frame, so a capture
+taken while a window was unfocused stayed forever, and its tile popped from the dim
+border to the bright one when the overlay lifted. That is the flicker that prompted
+the request in the first place; the shadow was only half of it.
+
+A focus change now asks for a fresh picture of BOTH windows, the one gaining focus
+and the one losing it, straight to the capture service with no size test in the way.
+Background work, so it costs nothing on the way into an animation.
+
+## A render of the wrong display, drawn at its own size
+
+The wallpaper appeared to zoom in during some animations and not others. Two
+compounding causes, both about a desktop render outliving the display it was taken
+of:
+
+- `SnapshotService::set_scale` was the only invalidation, and it acts on the backing
+  scale. Both displays here are 2x, so moving the overlay between them invalidated
+  nothing, and a render already in flight for one display landed as the cached
+  desktop for the other.
+- `capture_backdrop` size-checked the SkyLight composite but handed the cached
+  ScreenCaptureKit render over unchecked.
+
+The backdrop layer is sized from the picture rather than from the overlay, which is
+what keeps it in register with the real desktop. Given a 3008x1692 render of the
+external display, that lays the wallpaper out at 3008x1692 inside a 1728x1117
+overlay, so only its top-left corner is visible: the wallpaper looks zoomed in until
+the right render arrives, which is exactly the intermittence that was reported.
+
+`spans_display` now guards both routes, and a display change invalidates whatever is
+in flight.
+
+Two things this rules out, both measured while chasing it. The desktop capture fills
+its buffer at nominal resolution, unlike a window capture: painted to 100% x 100%
+through `captureSampleBuffer`, the same API rini uses. And nominal against best for a
+display capture is identical to the value, mean 0.000.
 
 ### Keep alpha premultiplied end to end
 

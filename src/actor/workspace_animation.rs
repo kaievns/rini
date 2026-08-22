@@ -91,6 +91,13 @@ pub enum Event {
     PictureReady { window: WindowId, snapshot: WindowSnapshot },
     /// Recapture the bar, now that nothing is animating over it. Posted by the refresh timer.
     RefreshBar,
+    /// Recapture this window because focus has just moved to or from it, whatever its cached picture says.
+    ///
+    /// A window renders differently when it is focused, and none of it is a size change: measured on a
+    /// 1pt window border, 65 of 255 focused against 42 unfocused. The size test that guards the ordinary
+    /// warm cannot see that, so a picture taken while a window was unfocused stayed forever and its tile
+    /// popped to the focused rendering at the handover.
+    RefreshFocus(SnapshotTarget),
     /// Capture every managed window that SkyLight cannot serve, so the cache is warm before the next
     /// animation. Only queues background work, so it is safe to call at any time.
     ///
@@ -388,6 +395,9 @@ impl WorkspaceAnimation {
             Event::PictureReady { window, snapshot } => self.picture_ready(window, snapshot),
             Event::WarmCache => self.warm_cache(),
             Event::WarmWindows(targets) => self.warm_windows(targets),
+            // Straight to the service, with no size test in the way. Background work, so a focus change
+            // costs nothing on the main thread.
+            Event::RefreshFocus(target) => self.service.request(vec![target]),
         }
     }
 
@@ -503,6 +513,9 @@ impl WorkspaceAnimation {
             // The desktop capture is the backdrop's only reliable source, and it takes about 40ms,
             // so it has to be in hand before the first switch rather than requested during one.
             self.warm_desktop();
+            // Anything in flight was requested for the display we just left, and the desktop render is
+            // sized to the display it was taken of.
+            self.service.invalidate();
             self.pictures.forget();
             self.arm_bar_refresh();
         }
@@ -1323,7 +1336,17 @@ impl WorkspaceAnimation {
 
         // Keep the render current for the next switch, whether or not one is in hand for this one.
         self.warm_desktop();
-        match self.pictures.desktop.clone() {
+        // Size-checked like the composite is. A render requested while the overlay was on the other display
+        // can land here afterwards, and drawing it sizes the backdrop layer to ITS size, which showed the
+        // external display's wallpaper zoomed into the built-in display's overlay.
+        match self
+            .pictures
+            .desktop
+            .clone()
+            .filter(|rendered| {
+                crate::ui::window_snapshot::spans_display(rendered.coverage.covered, display_size)
+            })
+        {
             Some(rendered) => {
                 self.pictures.drawn_once = true;
                 Some(rendered)

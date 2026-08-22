@@ -167,8 +167,19 @@ impl SnapshotService {
         }
     }
 
-    /// Invalidates everything in flight. Called when the display configuration changes, because a
-    /// capture sized for the old geometry would be cached at the wrong resolution.
+    /// Invalidates everything in flight, so a capture requested for the old geometry cannot be cached
+    /// against the new one.
+    ///
+    /// `set_scale` alone was not enough: both displays here are 2x, so moving the overlay between them
+    /// changed nothing it looks at, and a desktop render of one display landed as the cached desktop for
+    /// the other. The backdrop layer is sized from the picture, so that showed the wrong display's
+    /// wallpaper at its own size, zoomed in, until the right render arrived.
+    pub fn invalidate(&self) {
+        self.revision.fetch_add(1, Ordering::Release);
+    }
+
+    /// Invalidates everything in flight when the backing scale changes, because a capture sized for the old
+    /// scale would be cached at the wrong resolution.
     pub fn set_scale(&self, scale: f64) {
         let mut current = self.scale.lock().unwrap();
         if (*current - scale).abs() < f64::EPSILON {

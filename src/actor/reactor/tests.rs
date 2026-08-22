@@ -6319,3 +6319,59 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
     };
     assert_eq!(id, 1, "with no space in mind the active display is still the right answer");
 }
+
+/// A window renders differently focused, and none of the difference is a size change: measured on a 1pt
+/// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window whose
+/// picture no longer fits its frame, so without this both tiles keep the wrong focus state and the border
+/// pops when the overlay lifts.
+#[test]
+fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let leaving = WindowId::new(1, 1);
+    let arriving = WindowId::new(1, 2);
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    reactor.handle_event(Event::WindowServerFocusChanged(arriving, space));
+
+    let mut refreshed = Vec::new();
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        if let crate::actor::workspace_animation::Event::RefreshFocus(target) = event {
+            refreshed.push(target.window);
+        }
+    }
+    assert!(refreshed.contains(&arriving), "the window gaining focus: {refreshed:?}");
+    assert!(refreshed.contains(&leaving), "the window losing it: {refreshed:?}");
+}
+
+/// Focus landing where it already is changes no appearance, so it is not worth a capture.
+#[test]
+fn focus_that_does_not_move_asks_for_nothing() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let window = WindowId::new(1, 1);
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.refresh_focus_pictures(window);
+
+    let mut refreshed = Vec::new();
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        if let crate::actor::workspace_animation::Event::RefreshFocus(target) = event {
+            refreshed.push(target.window);
+        }
+    }
+    assert_eq!(refreshed, vec![window], "only the window itself, not a phantom second one");
+}

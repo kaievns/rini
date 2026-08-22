@@ -117,9 +117,19 @@ pub fn is_backdrop_worth_drawing(
     covered: (f64, f64),
     display: (f64, f64),
 ) -> bool {
-    let spans_display = (covered.0 - display.0).abs() <= BACKDROP_SIZE_TOLERANCE
-        && (covered.1 - display.1).abs() <= BACKDROP_SIZE_TOLERANCE;
-    spans_display && (has_wallpaper || !have_one_already)
+    spans_display(covered, display) && (has_wallpaper || !have_one_already)
+}
+
+/// Whether a desktop picture is the size of the display it is about to be drawn on.
+///
+/// The backdrop layer is sized from the picture rather than from the overlay, which keeps it in register
+/// with the real desktop. That only holds if the two agree: a picture of the EXTERNAL display, 3008x1692,
+/// drawn on the built-in display's overlay is laid out at its own size, so only its top-left corner is
+/// visible and the wallpaper looks zoomed in. That happened intermittently, because a render requested for
+/// one display could land after the overlay had moved to the other.
+pub fn spans_display(covered: (f64, f64), display: (f64, f64)) -> bool {
+    (covered.0 - display.0).abs() <= BACKDROP_SIZE_TOLERANCE
+        && (covered.1 - display.1).abs() <= BACKDROP_SIZE_TOLERANCE
 }
 
 /// A window's pixels, whichever API produced them.
@@ -338,6 +348,22 @@ mod tests {
         // Captures land a pixel or two off from rounding, and a window overlapped at the very edge
         // is still perfectly drawable. Rejecting these would discard almost every real capture.
         assert!(coverage((857.0, 1079.0), (859.0, 1081.0)).is_usable());
+    }
+
+    /// The measured case. A 3008x1692 render of the external display reached the built-in display's
+    /// overlay, which sized the backdrop layer to the picture, so the wallpaper was drawn at its own size
+    /// and only its corner was visible: the wallpaper appeared to zoom in for the length of an animation.
+    #[test]
+    fn a_picture_of_another_display_does_not_span_this_one() {
+        assert!(!spans_display((3008.0, 1692.0), (1728.0, 1117.0)));
+        assert!(!spans_display((1728.0, 1117.0), (3008.0, 1692.0)));
+    }
+
+    #[test]
+    fn a_picture_of_this_display_spans_it_including_a_point_of_rounding() {
+        assert!(spans_display((1728.0, 1117.0), (1728.0, 1117.0)));
+        assert!(spans_display((1729.0, 1116.0), (1728.0, 1117.0)));
+        assert!(!spans_display((1725.0, 1117.0), (1728.0, 1117.0)), "3pt short is not the display");
     }
 
     #[test]
