@@ -94,6 +94,10 @@ const SHADOW_RADIUS: f64 = 9.0;
 /// Positive is downward: the tiles hang off a flipped view, so the layer's y axis points down.
 const SHADOW_OFFSET_Y: f64 = 5.0;
 
+/// How far the shadow can reach from a window's edge, which is what the mask has to leave room for. The
+/// measured ramp is spent by 17pt; 40pt is generous enough that no blur is clipped at the edge of the ring.
+const SHADOW_REACH: f64 = 40.0;
+
 /// Corner radius of a macOS window, measured from where a capture's own alpha starts along its top row:
 /// transparent for the first 18px to 20px at 2x backing scale.
 const CORNER_RADIUS: f64 = 10.0;
@@ -110,6 +114,18 @@ pub fn ease_out_cubic(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     let inv = 1.0 - t;
     1.0 - inv * inv * inv
+}
+
+/// One window's two layers: the picture, and a caster behind it that carries nothing but the shadow.
+///
+/// Two layers because a Core Animation shadow is drawn behind the WHOLE layer, including under its own
+/// area. Under an opaque window that is invisible, but a window with per-pixel alpha shows it through the
+/// glass as a wash across the entire window, which is not what a real shadow does: the window server clips
+/// a window's shadow to the outside of its shape. The caster is masked to a ring outside the tile, so the
+/// shadow reaches the desktop and the neighbours and nothing else.
+struct Tile {
+    picture: Retained<CALayer>,
+    shadow: Retained<CALayer>,
 }
 
 pub struct WorkspaceOverlay {
@@ -132,7 +148,7 @@ pub struct WorkspaceOverlay {
     bar: Retained<CALayer>,
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
-    tile_layers: HashMap<WindowId, Retained<CALayer>>,
+    tile_layers: HashMap<WindowId, Tile>,
     /// Tiles that must stand still while the canvas moves, with the screen frame each one holds.
     pinned: Vec<(WindowId, CGRect)>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
@@ -331,17 +347,17 @@ impl WorkspaceOverlay {
         let mut pinned = Vec::new();
         for tile in tiles {
             keep.push(tile.window);
-            let layer = self
+            let entry = self
                 .tile_layers
                 .entry(tile.window)
-                .or_insert_with(|| new_tile_layer(&self.canvas));
-            reparent(layer, &self.canvas);
-            layer.setContentsScale(self.scale);
-            set_layer_contents(layer, &tile.snapshot);
-            layer.setFrame(tile.frame);
-            set_tile_shadow(layer, tile.frame.size);
-            layer.setZPosition(-(tile.depth as f64));
-            layer.setHidden(false);
+                .or_insert_with(|| new_tile(&self.canvas));
+            reparent(&entry.picture, &self.canvas);
+            reparent(&entry.shadow, &self.canvas);
+            entry.picture.setContentsScale(self.scale);
+            set_layer_contents(&entry.picture, &tile.snapshot);
+            place_tile(entry, tile.frame, -(tile.depth as f64));
+            entry.picture.setHidden(false);
+            entry.shadow.setHidden(false);
             // A pinned tile stays in the canvas, so it keeps its place in the stack, and is counter-moved
             // every frame instead. Lifting it out of the canvas put it above the whole strip, which is
             // wrong twice: a background window appeared over the windows in front of it, and a translucent
@@ -354,8 +370,9 @@ impl WorkspaceOverlay {
         let stale: Vec<WindowId> =
             self.tile_layers.keys().copied().filter(|w| !keep.contains(w)).collect();
         for window in stale {
-            if let Some(layer) = self.tile_layers.remove(&window) {
-                layer.removeFromSuperlayer();
+            if let Some(entry) = self.tile_layers.remove(&window) {
+                entry.picture.removeFromSuperlayer();
+                entry.shadow.removeFromSuperlayer();
             }
         }
         self.pinned = pinned;
@@ -368,7 +385,8 @@ impl WorkspaceOverlay {
     /// in the layer tree cannot go unnoticed. Silent when everything agrees.
     fn check_geometry(&self, tiles: &[CanvasTile]) {
         for tile in tiles {
-            let Some(layer) = self.tile_layers.get(&tile.window) else { continue };
+            let Some(entry) = self.tile_layers.get(&tile.window) else { continue };
+            let layer = &entry.picture;
             let drawn = layer.convertRect_toLayer(layer.bounds(), Some(&self.root));
             let off_by = (drawn.size.width - tile.frame.size.width)
                 .abs()
@@ -390,10 +408,10 @@ impl WorkspaceOverlay {
     /// Used mid-flight, once the window being switched into is on screen and can be captured with its
     /// focused appearance. Contents only: changing the frame here would fight the canvas.
     pub fn set_tile_picture(&mut self, window: WindowId, snapshot: &WindowSnapshot) {
-        let Some(layer) = self.tile_layers.get(&window) else { return };
+        let Some(entry) = self.tile_layers.get(&window) else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        set_layer_contents(layer, snapshot);
+        set_layer_contents(&entry.picture, snapshot);
         CATransaction::commit();
     }
 
@@ -409,8 +427,10 @@ impl WorkspaceOverlay {
         // Whatever is pinned moves the other way by the same amount, so it stands still on screen while
         // keeping its place in the stack. Two layer writes per frame at most: only floating windows pin.
         for (window, fixed) in &self.pinned {
-            if let Some(layer) = self.tile_layers.get(window) {
-                layer.setFrame(pinned_canvas_frame(*fixed, offset));
+            if let Some(entry) = self.tile_layers.get(window) {
+                let frame = pinned_canvas_frame(*fixed, offset);
+                entry.picture.setFrame(frame);
+                entry.shadow.setFrame(frame);
             }
         }
         CATransaction::commit();
@@ -427,27 +447,26 @@ impl WorkspaceOverlay {
         let mut keep = Vec::with_capacity(tiles.len());
         for tile in tiles {
             keep.push(tile.window);
-            let layer = self
+            let entry = self
                 .tile_layers
                 .entry(tile.window)
-                .or_insert_with(|| new_tile_layer(&self.root));
-            reparent(layer, &self.root);
-            layer.setContentsScale(self.scale);
-            set_layer_contents(layer, &tile.snapshot);
-            layer.setFrame(tile.from);
-            // The destination size, which is what the window will be at the handover. A switch does not
-            // resize, so the two agree; a resize keeps the silhouette it is heading for.
-            set_tile_shadow(layer, tile.to.size);
+                .or_insert_with(|| new_tile(&self.root));
+            reparent(&entry.picture, &self.root);
+            reparent(&entry.shadow, &self.root);
+            entry.picture.setContentsScale(self.scale);
+            set_layer_contents(&entry.picture, &tile.snapshot);
             // Negated so a smaller depth, meaning nearer the front, draws on top.
-            layer.setZPosition(-(tile.depth as f64));
-            layer.setHidden(false);
+            place_tile(entry, tile.from, -(tile.depth as f64));
+            entry.picture.setHidden(false);
+            entry.shadow.setHidden(false);
         }
 
         let stale: Vec<WindowId> =
             self.tile_layers.keys().copied().filter(|w| !keep.contains(w)).collect();
         for window in stale {
-            if let Some(layer) = self.tile_layers.remove(&window) {
-                layer.removeFromSuperlayer();
+            if let Some(entry) = self.tile_layers.remove(&window) {
+                entry.picture.removeFromSuperlayer();
+                entry.shadow.removeFromSuperlayer();
             }
         }
 
@@ -465,8 +484,8 @@ impl WorkspaceOverlay {
         // ease to every frame, so our interpolation would fight a second one and lag behind.
         CATransaction::setDisableActions(true);
         for tile in tiles {
-            if let Some(layer) = self.tile_layers.get(&tile.window) {
-                layer.setFrame(lerp_rect(tile.from, tile.to, eased));
+            if let Some(entry) = self.tile_layers.get(&tile.window) {
+                place_tile(entry, lerp_rect(tile.from, tile.to, eased), -(tile.depth as f64));
             }
         }
         CATransaction::commit();
@@ -496,8 +515,9 @@ impl WorkspaceOverlay {
     pub fn release_tiles(&mut self) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        for (_, layer) in self.tile_layers.drain() {
-            layer.removeFromSuperlayer();
+        for (_, entry) in self.tile_layers.drain() {
+            entry.picture.removeFromSuperlayer();
+            entry.shadow.removeFromSuperlayer();
         }
         CATransaction::commit();
         let _ = self.mtm;
@@ -525,37 +545,105 @@ fn pinned_canvas_frame(fixed: CGRect, offset: CGPoint) -> CGRect {
     )
 }
 
-/// A tile layer, with the shadow a real window would cast.
+/// A tile: the picture, plus a caster behind it holding the shadow.
 ///
-/// No `masksToBounds`: it clips the layer's own shadow away, and the contents cannot spill regardless
-/// because Core Animation resizes them to the layer's bounds.
-fn new_tile_layer(container: &CALayer) -> Retained<CALayer> {
-    let layer = CALayer::layer();
+/// No `masksToBounds` on the picture: it clips the layer's own shadow away, and the contents cannot spill
+/// regardless because Core Animation resizes them to the layer's bounds.
+fn new_tile(container: &CALayer) -> Tile {
+    let shadow = CALayer::layer();
+    shadow.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    // Shadow colour is left alone: a CALayer's default is opaque black, which is what a window casts. The
+    // caster has no contents and no background, so the shadow is all it ever draws.
+    shadow.setShadowOpacity(SHADOW_OPACITY);
+    shadow.setShadowRadius(SHADOW_RADIUS);
+    shadow.setShadowOffset(CGSize::new(0.0, SHADOW_OFFSET_Y));
+    container.addSublayer(&shadow);
+
+    let picture = CALayer::layer();
+    picture.setAnchorPoint(CGPoint::new(0.0, 0.0));
     // SAFETY: Core Animation's own filter-name constants.
     unsafe {
-        layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
-        layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
+        picture.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
+        picture.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
     }
-    // Shadow colour is left alone: a CALayer's default is opaque black, which is what a window casts.
-    layer.setShadowOpacity(SHADOW_OPACITY);
-    layer.setShadowRadius(SHADOW_RADIUS);
-    layer.setShadowOffset(CGSize::new(0.0, SHADOW_OFFSET_Y));
-    container.addSublayer(&layer);
-    layer
+    container.addSublayer(&picture);
+
+    Tile { picture, shadow }
 }
 
-/// Gives `layer` the shadow silhouette of a window of `size`.
+/// Puts both of a tile's layers at `frame`, with the caster just behind the picture.
+///
+/// The shadow's shape is rebuilt only when the size changes, which is once per animation rather than once
+/// per frame: a movement changes where a tile is, not how big it is.
+fn place_tile(tile: &Tile, frame: CGRect, z: f64) {
+    let resized = tile.shadow.bounds().size != frame.size;
+    tile.picture.setFrame(frame);
+    tile.picture.setZPosition(z);
+    tile.shadow.setFrame(frame);
+    // Behind its own picture, but still in front of whatever the next tile back is: depths are whole
+    // numbers, so half a step cannot collide with another tile.
+    tile.shadow.setZPosition(z - 0.5);
+    if resized {
+        set_tile_shadow(&tile.shadow, frame.size);
+    }
+}
+
+/// Gives the caster the shadow of a window of `size`, clipped to a ring outside it.
 ///
 /// An explicit path rather than letting Core Animation derive one from the picture's alpha. Deriving is
 /// exact for an oddly shaped window, but it is recomputed whenever the contents change, and every window
 /// rini manages is a rounded rect.
+///
+/// The mask is what keeps the shadow off the window itself. Without it a Core Animation shadow covers the
+/// whole layer, so a window with per-pixel alpha shows it through the glass as a wash over the entire
+/// window. Measured side by side against a masked caster over white: 0.45 grey unmasked against 0.62
+/// masked, where the window's own colour over white is 0.55.
 fn set_tile_shadow(layer: &CALayer, size: CGSize) {
     let radius = tile_corner_radius(size);
-    let bounds = CGRect::new(CGPoint::new(0.0, 0.0), size);
+    let silhouette = CGRect::new(CGPoint::new(0.0, 0.0), size);
     // SAFETY: a null transform means the path is taken as given.
-    let path =
-        unsafe { objc2_core_graphics::CGPath::with_rounded_rect(bounds, radius, radius, std::ptr::null()) };
+    let path = unsafe {
+        objc2_core_graphics::CGPath::with_rounded_rect(silhouette, radius, radius, std::ptr::null())
+    };
     layer.setShadowPath(Some(&path));
+
+    let mask_frame = shadow_mask_frame(size);
+    let mask = objc2_quartz_core::CAShapeLayer::layer();
+    mask.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    mask.setFrame(mask_frame);
+    // The ring: the whole mask, minus the window's own shape, wound so the inside is the hole.
+    let ring = objc2_core_graphics::CGMutablePath::new();
+    unsafe {
+        objc2_core_graphics::CGMutablePath::add_rect(
+            Some(&ring),
+            std::ptr::null(),
+            CGRect::new(CGPoint::new(0.0, 0.0), mask_frame.size),
+        );
+        objc2_core_graphics::CGMutablePath::add_rounded_rect(
+            Some(&ring),
+            std::ptr::null(),
+            CGRect::new(CGPoint::new(SHADOW_REACH, SHADOW_REACH), size),
+            radius,
+            radius,
+        );
+    }
+    mask.setPath(Some(&ring));
+    // SAFETY: Core Animation's own fill-rule constant, and a mask layer we just created and own.
+    unsafe {
+        mask.setFillRule(objc2_quartz_core::kCAFillRuleEvenOdd);
+        layer.setMask(Some(&mask));
+    }
+}
+
+/// The rect the shadow's mask has to cover, in the caster's own coordinates.
+///
+/// Wide enough for the shadow to reach its full extent on every side, and offset so the window's own shape
+/// sits `SHADOW_REACH` inside it, which is where the ring's hole goes.
+fn shadow_mask_frame(size: CGSize) -> CGRect {
+    CGRect::new(
+        CGPoint::new(-SHADOW_REACH, -SHADOW_REACH),
+        CGSize::new(size.width + 2.0 * SHADOW_REACH, size.height + 2.0 * SHADOW_REACH),
+    )
 }
 
 /// The corner radius to draw a tile's shadow with.
@@ -722,6 +810,25 @@ mod tests {
         let deepest_strip_tile = -64.0;
         assert!(BAR_Z > 0.0);
         assert!(BACKDROP_Z < deepest_strip_tile, "the desktop is under every tile");
+    }
+
+    /// The mask has to leave room for the shadow on every side, with the window's own shape sitting exactly
+    /// one reach inside it, because that inset is where the ring's hole is punched.
+    #[test]
+    fn the_shadow_mask_surrounds_the_window_by_one_reach() {
+        let size = CGSize::new(859.0, 1081.0);
+        let frame = shadow_mask_frame(size);
+        assert_eq!(frame.origin.x, -SHADOW_REACH);
+        assert_eq!(frame.origin.y, -SHADOW_REACH);
+        assert_eq!(frame.size.width, 859.0 + 2.0 * SHADOW_REACH);
+        assert_eq!(frame.size.height, 1081.0 + 2.0 * SHADOW_REACH);
+    }
+
+    /// The reach has to outrun the blur, or the ring clips the shadow before it has faded and leaves a
+    /// visible straight edge in it. The measured ramp is spent by 17pt.
+    #[test]
+    fn the_mask_reaches_further_than_the_shadow_does() {
+        assert!(SHADOW_REACH > SHADOW_RADIUS * 2.0 + SHADOW_OFFSET_Y);
     }
 
     #[test]

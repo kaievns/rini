@@ -179,6 +179,9 @@ objc2-screen-capture-kit = { version = "0.3.2", default-features = false, featur
 	"objc2-core-media",
 ] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+	# CAShapeLayer masks each tile's shadow to a ring outside the window, so it cannot wash under a
+	# translucent one.
+	"CAShapeLayer",
 	"CAAnimation",
 	"CABase",
 	"CAEAGLLayer",

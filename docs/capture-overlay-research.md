@@ -1288,6 +1288,58 @@ x=1126         lum 14, hard step                   the next tile's content
 
 16% darkening at the edge against the 18% measured on a real window.
 
+### A layer shadow covers the whole layer, which is not what a window shadow does
+
+The first version put the shadow on the tile itself, and that is wrong for any
+window with per-pixel alpha. Core Animation draws a shadow behind the WHOLE layer,
+including under its own area. Under an opaque window that is invisible. Under a
+terminal at 95% it shows through the glass as a wash across the entire window,
+which was reported immediately and is visible at a glance with the terminal set to
+`background-opacity = 0`: the window's background goes translucent-dark rather than
+showing the desktop.
+
+The window server does not do this. It clips a window's shadow to the outside of
+its shape, precisely because windows can be translucent.
+
+Measured in a spike, two arrangements side by side over white, each under a 50%
+grey stand-in for a translucent window:
+
+```
+shadow on the tile itself   interior 0.45 grey     washed dark
+masked caster behind it     interior 0.62 grey     clean
+the window's own colour over white would be 0.55
+```
+
+So a tile is two layers now: the picture, and a caster behind it carrying nothing
+but the shadow, masked by a `CAShapeLayer` whose path is the mask's own rect plus
+the window's rounded rect, wound even-odd, so only the ring outside the window is
+drawn. `SHADOW_REACH` is 40pt, comfortably past the 17pt where the measured ramp is
+spent, so the ring never clips the blur into a straight edge.
+
+The shape is rebuilt only when a tile's size changes, which is once per animation:
+a movement changes where a tile is, not how big it is.
+
+Verified against the screen, signed difference in the 4pt gap at a window's left
+edge, positive meaning the overlay is darker:
+
+```
+shadow on the tile      +2.1     gap AND under the window
+masked caster           +1.2     gap only
+```
+
+### There is no outline to add
+
+Asked for alongside the shadow, and there is nothing missing. A tile compared
+against the same rect of the screen at native pixels, for two different windows:
+
+```
+edge band (8px)   mean 0.000    identical to the value
+left edge, pixel by pixel:  tile 21,23,26  screen 21,23,26   diff 0
+```
+
+Whatever border a window draws is in its own surface and comes back in the capture.
+What flickered in at the handover was the shadow, which no capture carries.
+
 ### Keep alpha premultiplied end to end
 
 These captures are premultiplied. Dark halos around a tile's edges mean it was
