@@ -874,11 +874,10 @@ impl WorkspaceAnimation {
             }
         }
 
-        // The same backdrop and bar as a canvas movement, or the overlay shows a bare black window
-        // behind the tiles. Reused rather than recaptured: this path runs on every window focus change,
-        // and a desktop composite costs a frame or two.
+        // The same backdrop and bar as a canvas movement, or the overlay shows a bare black window behind
+        // the tiles. Cheap for the same reason: the cached render is a clone.
         let held = self.pictures.shown.is_some();
-        let backdrop = self.pictures.shown.clone().or_else(|| self.capture_backdrop());
+        let backdrop = self.capture_backdrop().or_else(|| self.pictures.shown.clone());
         if backdrop.is_some() {
             self.pictures.shown = backdrop.clone();
         }
@@ -1061,17 +1060,11 @@ impl WorkspaceAnimation {
             None => from_offset,
         };
 
-        // Held, not recaptured. A desktop composite measures 35ms median, which is two frames of delay
-        // between the keypress and anything moving, on a picture that changes only when the wallpaper or
-        // the desktop icons do. `warm_desktop` keeps it current in the background instead.
-        let held_backdrop = self.pictures.shown.clone();
-        let backdrop = match held_backdrop {
-            Some(held) => Some(held),
-            None => self.capture_backdrop(),
-        };
-        if backdrop.is_some() {
-            self.warm_desktop();
-        }
+        // Cheap in the steady state: `capture_backdrop` hands back the cached render, which is a clone and
+        // an asynchronous refresh request. It only pays for a composite before the first render lands.
+        // Holding the previous picture instead meant the cold-start composite was kept forever, so the
+        // render that matches the real desktop never got its turn.
+        let backdrop = self.capture_backdrop();
         let (bar, strip) = self.bar_picture();
 
         let Some(overlay) = self.ensure_overlay() else {
@@ -1313,43 +1306,47 @@ impl WorkspaceAnimation {
     fn capture_backdrop(&mut self) -> Option<WindowSnapshot> {
         let (display_frame, scale) = self.display?;
         let display_size = (display_frame.size.width, display_frame.size.height);
+
+        // Keep the render current whether or not one is in hand for this switch.
+        self.warm_desktop();
+
+        // The ScreenCaptureKit render first, because it is the compositor's own output and therefore matches
+        // the real desktop exactly. Measured against the SkyLight composite of the same desktop: identical
+        // everywhere below the top band, and up to 26 of 255 different inside it, where the widgets' and the
+        // menu bar's vibrancy live. That band shows through the bar, so a composite there flickers every
+        // time the overlay appears.
+        //
+        // Size-checked: a render requested while the overlay was on the other display can land afterwards,
+        // and drawing it sizes the backdrop layer to ITS size, which showed the external display's wallpaper
+        // zoomed into the built-in display's overlay.
+        if let Some(rendered) = self.pictures.desktop.clone().filter(|rendered| {
+            crate::ui::window_snapshot::spans_display(rendered.coverage.covered, display_size)
+        }) {
+            self.pictures.drawn_once = true;
+            return Some(rendered);
+        }
+
+        // No render yet, which is the first switch after starting or after moving to another display. A
+        // composite of the desktop's own windows is right everywhere except that top band, and it is
+        // available synchronously, so it covers the gap rather than leaving the overlay black.
         let desktop = crate::sys::window_server::desktop_backdrop_windows(display_frame);
         let composite = crate::ui::window_snapshot::capture_composite_via_skylight(
             &desktop.windows,
             display_size,
             scale,
         );
-
         let usable = composite.filter(|snapshot| {
             crate::ui::window_snapshot::is_backdrop_worth_drawing(
-                self.pictures.drawn_once || self.pictures.desktop.is_some(),
+                self.pictures.drawn_once,
                 desktop.has_wallpaper,
                 snapshot.coverage.covered,
                 display_size,
             )
         });
-
-        if let Some(snapshot) = usable {
-            self.pictures.drawn_once = true;
-            return Some(snapshot);
-        }
-
-        // Keep the render current for the next switch, whether or not one is in hand for this one.
-        self.warm_desktop();
-        // Size-checked like the composite is. A render requested while the overlay was on the other display
-        // can land here afterwards, and drawing it sizes the backdrop layer to ITS size, which showed the
-        // external display's wallpaper zoomed into the built-in display's overlay.
-        match self
-            .pictures
-            .desktop
-            .clone()
-            .filter(|rendered| {
-                crate::ui::window_snapshot::spans_display(rendered.coverage.covered, display_size)
-            })
-        {
-            Some(rendered) => {
+        match usable {
+            Some(snapshot) => {
                 self.pictures.drawn_once = true;
-                Some(rendered)
+                Some(snapshot)
             }
             None => {
                 debug!(

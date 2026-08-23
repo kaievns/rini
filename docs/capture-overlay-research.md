@@ -548,8 +548,38 @@ recognised by window NAME as well as owner name. Verified: the composite now pic
 29.85 for the same region captured as a display. The remaining 1.3 is the widgets'
 vibrancy, which no capture reproduces.
 
-The composite is the cheaper route and now the primary one, with the display render
-as the fallback.
+### Which route serves, and why the render wins
+
+The composite is cheaper and synchronous, so it looked like the natural primary.
+Compared pixel for pixel against the display render of the same desktop, it is not:
+
+```
+mean |difference| per cell, 12 by 8 grid
+row 0 (top 140pt)   17.0  7.2  1.1  18.5  9.3  12.2  26.1  1.4  3.6  10.8  7.3  7.4
+rows 1 to 7          0.0  0.0  0.0   0.0  0.0   0.0   0.0  0.0  0.0   0.0  0.0  0.0
+best alignment: dx 0 dy 0
+```
+
+Identical everywhere below the top band, and up to 26 of 255 inside it. That band is
+the menu bar strip and Notification Center's widgets, whose vibrancy no capture of a
+window's own surface can reproduce. It is also exactly the band that shows through
+the bar, so a composite there changes the moment the overlay appears and the
+background visibly flickers.
+
+The render is the compositor's own output, so it matches by construction. The order
+is therefore: cached render if it spans this display, composite only when no render
+has landed yet, which is the first switch after starting or after moving to another
+display. Observed over five animations from a cold start:
+
+```
+1 backdrop="1728x1117 SkyLight"            the first switch
+4 backdrop="1728x1117 ScreenCaptureKit"    every switch after
+```
+
+Reusing the previous picture instead of asking again is what kept the cold-start
+composite in place forever, so the render never got its turn. Asking every time is
+cheap now: in the steady state `capture_backdrop` clones the cached render and posts
+an asynchronous refresh, and only pays for a composite before the first render lands.
 
 Either way the desktop has to be capturable as a DISPLAY, not only as a set of
 windows:
