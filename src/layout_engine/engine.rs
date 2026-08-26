@@ -1070,6 +1070,11 @@ impl LayoutEngine {
             if !self.workspace_tree(assigned_workspace).contains_window(layout, wid) {
                 self.workspace_tree_mut(assigned_workspace)
                     .add_window_after_selection(layout, wid);
+                // A fresh column starts at the display's default ratio, so re-apply whatever this
+                // window last had here. Without this a relaunched window was recorded and looked up
+                // correctly and still opened at the default: the width reached the affinity record and
+                // never reached the layout, which is the thing that decides how wide the column is.
+                self.apply_remembered_column_width(space, assigned_workspace, layout, wid);
             }
         } else {
             warn!(

@@ -2521,6 +2521,17 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
         Some(ColumnWidth::FullWidth),
         "at the width it had there"
     );
+    // The record is not the thing that decides how wide the column is. Reported live: the window opened
+    // full sized and was instantly resized to half, because the width reached the affinity record and
+    // never reached the layout.
+    let layout = engine
+        .workspace_layouts
+        .active(space, elsewhere)
+        .expect("the workspace it landed in has a layout");
+    assert!(
+        engine.workspace_tree(elsewhere).is_window_full_width(layout, after_relaunch),
+        "and the LAYOUT is what has to know it, not just the record"
+    );
 }
 
 /// The measured failure. The projection asked which space a window was in with a lookup that only
