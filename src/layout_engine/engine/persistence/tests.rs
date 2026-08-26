@@ -2357,3 +2357,76 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
          leave it alone entirely"
     );
 }
+
+/// The whole point of the durable key is that it outlives the process, so it has to be in the file. A
+/// window's own records are keyed by pid and are expected to be useless on the next boot; these are not.
+#[test]
+fn launch_memory_survives_a_save_and_load() {
+    use crate::model::display_affinity::ColumnWidth;
+    use crate::model::launch_memory::{Slot, topology_key};
+
+    let mut engine = test_engine();
+    let docked = topology_key(&["built-in".into(), "external".into()]);
+    let alone = topology_key(&["built-in".into()]);
+    engine.launch_memory.remember(
+        "com.mitchellh.ghostty",
+        &docked,
+        vec![Slot {
+            title: Some("~/projects/rini".into()),
+            display_uuid: "external".into(),
+            workspace_index: 2,
+            width: Some(ColumnWidth::Offset(0.25)),
+        }],
+    );
+    engine.launch_memory.remember(
+        "com.mitchellh.ghostty",
+        &alone,
+        vec![Slot {
+            title: Some("~/projects/rini".into()),
+            display_uuid: "built-in".into(),
+            workspace_index: 0,
+            width: Some(ColumnWidth::FullWidth),
+        }],
+    );
+
+    let path = std::env::temp_dir()
+        .join(format!("rini-launch-memory-test-{}.ron", std::process::id()));
+    engine.save(path.clone()).unwrap();
+    let loaded = LayoutEngine::load(path.clone()).unwrap();
+    let _ = std::fs::remove_file(path);
+
+    let docked_slots = loaded.launch_memory.slots("com.mitchellh.ghostty", &docked);
+    assert_eq!(docked_slots.len(), 1);
+    assert_eq!(docked_slots[0].display_uuid, "external");
+    assert_eq!(docked_slots[0].workspace_index, 2);
+    assert_eq!(docked_slots[0].width, Some(ColumnWidth::Offset(0.25)));
+
+    let alone_slots = loaded.launch_memory.slots("com.mitchellh.ghostty", &alone);
+    assert_eq!(alone_slots[0].display_uuid, "built-in");
+    assert_eq!(alone_slots[0].width, Some(ColumnWidth::FullWidth));
+}
+
+/// A layout file written before this existed must still load, or an upgrade wipes the layout.
+#[test]
+fn a_file_without_launch_memory_still_loads() {
+    let mut engine = test_engine();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(5);
+    let _ = engine.handle_event(
+        &mut window_store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+    );
+    let path = std::env::temp_dir()
+        .join(format!("rini-launch-memory-legacy-{}.ron", std::process::id()));
+    engine.save(path.clone()).unwrap();
+
+    // Strip the field back out, as a file from before this change would be.
+    let written = std::fs::read_to_string(&path).unwrap();
+    let stripped = written.replace(r#""launch_memory":(apps:{}),"#, "");
+    assert_ne!(stripped, written, "the field is written, so this test is checking something");
+    std::fs::write(&path, stripped).unwrap();
+
+    let loaded = LayoutEngine::load(path.clone()).unwrap();
+    let _ = std::fs::remove_file(path);
+    assert!(loaded.launch_memory.is_empty());
+}

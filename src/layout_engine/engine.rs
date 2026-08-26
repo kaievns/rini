@@ -117,6 +117,9 @@ pub struct LayoutEngine {
     /// display each window belongs to. Replaces the former `space_display_map` /
     /// `display_last_space` pair, which could disagree with each other.
     display_affinity: DisplayAffinity,
+    /// Where each application's windows belong, under a key that survives the application. See
+    /// `docs/launch-memory.md`.
+    launch_memory: crate::model::launch_memory::LaunchMemory,
     /// Direction of the in-flight workspace switch per display, consumed by the animation.
     #[allow(clippy::type_complexity)]
     workspace_switch_directions: HashMap<SpaceId, crate::model::reactor::WorkspaceSwitchDirection>,
@@ -1457,6 +1460,7 @@ impl LayoutEngine {
             layout_settings: layout_settings.clone(),
             broadcast_tx,
             display_affinity: DisplayAffinity::default(),
+            launch_memory: crate::model::launch_memory::LaunchMemory::default(),
             workspace_switch_directions: HashMap::default(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,

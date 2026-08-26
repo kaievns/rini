@@ -20,6 +20,8 @@ pub(super) struct PersistedLayout {
     pub(super) virtual_workspace_manager: WorkspaceStore,
     #[serde(default)]
     pub(super) display_affinity: DisplayAffinity,
+    #[serde(default)]
+    pub(super) launch_memory: crate::model::launch_memory::LaunchMemory,
     /// Schema v2 and earlier. Folded into `display_affinity` on load; never written.
     #[serde(default)]
     pub(super) space_display_map: HashMap<SpaceId, Option<String>>,
@@ -39,6 +41,7 @@ struct PersistedLayoutRef<'a> {
     floating_positions: &'a FloatingPositionStore,
     virtual_workspace_manager: &'a WorkspaceStore,
     display_affinity: &'a DisplayAffinity,
+    launch_memory: &'a crate::model::launch_memory::LaunchMemory,
     #[serde(flatten)]
     persistence: &'a PersistenceState,
 }
@@ -56,6 +59,7 @@ impl PersistedLayout {
             floating_positions: &engine.floating_positions,
             virtual_workspace_manager: &engine.virtual_workspace_manager,
             display_affinity: &engine.display_affinity,
+            launch_memory: &engine.launch_memory,
             persistence: &engine.persistence,
         })
         .expect("persisted layout serialization must support all engine layout state")
@@ -82,6 +86,7 @@ impl PersistedLayout {
             layout_settings: LayoutSettings::default(),
             broadcast_tx: None,
             display_affinity: self.display_affinity,
+            launch_memory: self.launch_memory,
             workspace_switch_directions: HashMap::default(),
             persistence: self.persistence,
             startup_restore_pending: false,
