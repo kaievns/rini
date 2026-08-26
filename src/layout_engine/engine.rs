@@ -1074,6 +1074,15 @@ impl LayoutEngine {
                 // window last had here. Without this a relaunched window was recorded and looked up
                 // correctly and still opened at the default: the width reached the affinity record and
                 // never reached the layout, which is the thing that decides how wide the column is.
+                debug!(
+                    idx = wid.idx.get(),
+                    remembered = remembered.is_some(),
+                    affinity = ?self
+                        .display_affinity
+                        .display_for_space(space)
+                        .and_then(|d| self.display_affinity.window_width(d, wid)),
+                    "adding a window to a tree; re-applying its remembered width"
+                );
                 self.apply_remembered_column_width(space, assigned_workspace, layout, wid);
             }
         } else {
@@ -1206,7 +1215,15 @@ impl LayoutEngine {
             // their normal insertion semantics, so preserve the selection
             // explicitly across discovery-driven synchronization.
             let selected_window = self.workspace_tree(ws_id).selected_window(layout);
+            // Windows entering the tree here, which is where a launching application's windows arrive.
+            // A fresh column starts at the display's default ratio, so each one needs whatever it last
+            // had re-applied — the record alone does not decide how wide a column is.
+            let arriving: Vec<WindowId> =
+                desired.iter().copied().filter(|wid| !current.contains(wid)).collect();
             self.workspace_tree_mut(ws_id).set_windows_for_app(layout, pid, desired);
+            for wid in arriving {
+                self.apply_remembered_column_width(space, ws_id, layout, wid);
+            }
             if let Some(selected_window) = selected_window
                 && self.workspace_tree(ws_id).contains_window(layout, selected_window)
             {
@@ -1538,7 +1555,10 @@ impl LayoutEngine {
         else {
             return;
         };
-        let Some(width) = self.display_affinity.window_width(&display, window) else {
+        let found = self.display_affinity.window_width(&display, window);
+        let on_display = display.clone();
+        debug!(idx = window.idx.get(), on_display, width = ?found, "applying a remembered width");
+        let Some(width) = found else {
             return;
         };
         match width {
