@@ -1307,7 +1307,23 @@ impl LayoutEngine {
                         .list_workspaces(info.space)
                         .iter()
                         .position(|(id, _)| *id == info.workspace_id)?;
-                    let width = self.display_affinity.window_width(&display, window_id);
+                    // The width the window actually has, taken from its own layout rather than from
+                    // the affinity map. That map is only written by explicit width COMMANDS, so a window
+                    // whose width came from the layout itself never appeared in it — measured live with
+                    // `window_width:{}` in the file and every slot recording no width at all, which is
+                    // why a relaunched window came back at the default.
+                    let width = self
+                        .workspace_layouts
+                        .active(info.space, info.workspace_id)
+                        .and_then(|layout| {
+                            let tree = self.workspace_tree(info.workspace_id);
+                            if tree.is_window_full_width(layout, window_id) {
+                                Some(ColumnWidth::FullWidth)
+                            } else {
+                                tree.column_width_offset(layout, window_id).map(ColumnWidth::Offset)
+                            }
+                        })
+                        .or_else(|| self.display_affinity.window_width(&display, window_id));
                     Some(Slot {
                         title: (!window.info.title.trim().is_empty())
                             .then(|| window.info.title.clone()),

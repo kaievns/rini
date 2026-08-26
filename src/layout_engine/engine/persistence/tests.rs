@@ -2748,3 +2748,71 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
         "and given the width it had there"
     );
 }
+
+/// The width has to come from the window's own layout, not from the affinity map. That map is only written
+/// by explicit width COMMANDS, so a window whose width came from the layout itself never appeared in it —
+/// measured live as `window_width:{}` in the file with every slot recording no width, which is why a
+/// relaunched window came back at the default no matter what it had been.
+#[test]
+fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
+    use crate::model::display_affinity::ColumnWidth;
+    use crate::model::launch_memory::topology_key;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let mut engine = test_engine();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(51);
+    let window = WindowId::new(900, 2);
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    window_store.insert_window(
+        window,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Zen Browser".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(9002)),
+                bundle_id: Some("app.zen-browser.zen".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        },
+    );
+    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+
+    // Full width in the LAYOUT with nothing in the affinity map, which is the state the file was actually
+    // in: `window_width:{}` and every slot recording no width at all.
+    let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
+    let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
+    engine.workspace_tree_mut(ws_id).set_window_full_width(layout, window, true);
+    assert!(engine.workspace_tree(ws_id).is_window_full_width(layout, window), "setup");
+    assert_eq!(engine.display_affinity.window_width(DISPLAY, window), None, "setup");
+
+    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+
+    let topology = topology_key(&[DISPLAY.to_owned()]);
+    let slots = engine.launch_memory.slots("app.zen-browser.zen", &topology);
+    assert_eq!(slots.len(), 1);
+    assert_eq!(
+        slots[0].width,
+        Some(ColumnWidth::FullWidth),
+        "the width came from the layout, with nothing in the affinity map"
+    );
+}
