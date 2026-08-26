@@ -2597,3 +2597,154 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
     assert_eq!(slots.len(), 1, "a parked window still has a slot");
     assert_eq!(slots[0].workspace_index, parked_index, "and it names the workspace it is parked in");
 }
+
+/// A display home is written once, on first sighting, and only if the space's display was known by then.
+/// A window that appeared before that mapping existed has none, forever — measured live on a window that
+/// rini tracked and had assigned to a workspace. Gating the projection on the home meant such a window
+/// was never remembered at all, so the space's own display stands in for it.
+#[test]
+fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let mut engine = test_engine();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(31);
+    let window = WindowId::new(700, 4);
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    window_store.insert_window(
+        window,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Untitled".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(8610)),
+                bundle_id: Some("com.apple.TextEdit".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        },
+    );
+    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+
+    // Exactly the state seen live: tracked, assigned, no home.
+    engine.display_affinity.forget_window(window);
+    assert_eq!(engine.display_affinity.window_home(window), None);
+
+    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+
+    let topology = crate::model::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    let slots = engine.launch_memory.slots("com.apple.TextEdit", &topology);
+    assert_eq!(slots.len(), 1, "remembered even with no home of its own");
+    assert_eq!(slots[0].display_uuid, DISPLAY, "against the display its space is on");
+}
+
+/// The first sighting of a launching application's window happens while the app rules are applied, and the
+/// window is NOT in the window store yet at that point. Reading its bundle id and title from the store
+/// there is why the whole feature silently did nothing: the lookup returned early, before it had even
+/// consulted the memory. Identity has to come from the caller, which has it.
+///
+/// The window is deliberately inserted here WITHOUT a bundle id, so a lookup that consults the store
+/// cannot pass.
+#[test]
+fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
+    use crate::model::display_affinity::ColumnWidth;
+    use crate::model::launch_memory::{Slot, topology_key};
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let mut engine = test_engine();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(41);
+    let window = WindowId::new(800, 5);
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    window_store.insert_window(
+        window,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: String::new(),
+                frame,
+                sys_id: Some(WindowServerId::new(8769)),
+                bundle_id: None,
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        },
+    );
+
+    let topology = topology_key(&[DISPLAY.to_owned()]);
+    engine.launch_memory.remember(
+        "com.apple.TextEdit",
+        &topology,
+        vec![Slot {
+            title: Some("Untitled".into()),
+            display_uuid: DISPLAY.to_owned(),
+            workspace_index: 1,
+            width: Some(ColumnWidth::FullWidth),
+        }],
+    );
+
+    let result = engine
+        .assign_window_with_app_info(
+            &mut window_store,
+            window,
+            space,
+            Some("com.apple.TextEdit"),
+            Some("TextEdit"),
+            Some("Untitled"),
+            None,
+            None,
+        )
+        .expect("assignment should succeed");
+
+    let workspaces: Vec<_> = engine
+        .virtual_workspace_manager
+        .list_workspaces(space)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    match result {
+        crate::model::AppRuleResult::Managed(effects) => {
+            assert_eq!(effects.workspace_id, workspaces[1], "placed in the remembered workspace");
+        }
+        other => panic!("expected a managed placement, got {other:?}"),
+    }
+    assert_eq!(
+        engine.display_affinity.window_width(DISPLAY, window),
+        Some(ColumnWidth::FullWidth),
+        "and given the width it had there"
+    );
+}

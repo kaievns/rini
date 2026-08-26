@@ -1019,7 +1019,12 @@ impl LayoutEngine {
             .virtual_workspace_manager
             .workspace_for_window(window_store, space, wid)
             .is_none()
-            .then(|| self.launch_slot_for_new_window(window_store, wid))
+            .then(|| {
+                let state = window_store.window(wid)?;
+                let app_id = state.info.bundle_id.clone()?;
+                let title = state.info.title.clone();
+                self.launch_slot_for_new_window(window_store, wid, &app_id, Some(title.as_str()))
+            })
             .flatten();
         if let Some(slot) = &remembered {
             let workspaces = self.virtual_workspace_manager.list_workspaces(space);
@@ -1281,7 +1286,6 @@ impl LayoutEngine {
                 .into_iter()
                 .filter_map(|(_, window_id)| {
                     let window = window_store.window(window_id)?;
-                    let display = self.display_affinity.window_home(window_id)?.to_owned();
                     // The window's OWN space and workspace, which is not the same question as which
                     // workspace is showing: a window sitting in a workspace nobody is looking at still
                     // belongs to it, and using an active-workspace-only lookup here meant every
@@ -1289,6 +1293,15 @@ impl LayoutEngine {
                     let info = self
                         .virtual_workspace_manager
                         .workspace_info_for_window_any(window_store, window_id)?;
+                    // Its recorded home, or the display its space is on. A home is written once, on
+                    // first sighting, and only if the space's display was known by then — so a window
+                    // that appeared before that mapping existed has none, forever. Measured live on a
+                    // window that was tracked, assigned to a workspace, and had no home at all.
+                    let display = self
+                        .display_affinity
+                        .window_home(window_id)
+                        .or_else(|| self.display_affinity.display_for_space(info.space))?
+                        .to_owned();
                     let index = self
                         .virtual_workspace_manager
                         .list_workspaces(info.space)
@@ -1323,12 +1336,16 @@ impl LayoutEngine {
         &self,
         window_store: &WindowStore,
         window: WindowId,
+        app_id: &str,
+        title: Option<&str>,
     ) -> Option<crate::model::launch_memory::Slot> {
         use crate::model::launch_memory::{slot_for_window, topology_key};
 
-        let app_id = window_store.window(window)?.info.bundle_id.clone()?;
+        // Identity comes from the caller, not from the window store. The first sighting of a launching
+        // application's window happens while the rules are being applied, and the window is not in the
+        // store yet at that point — reading it there is why this silently did nothing.
         let topology = topology_key(&self.connected_displays);
-        let slots = self.launch_memory.slots(&app_id, &topology);
+        let slots = self.launch_memory.slots(app_id, &topology);
         if slots.is_empty() {
             return None;
         }
@@ -1338,7 +1355,7 @@ impl LayoutEngine {
             .iter_windows()
             .filter(|(other, state)| {
                 *other != window
-                    && state.info.bundle_id.as_deref() == Some(app_id.as_str())
+                    && state.info.bundle_id.as_deref() == Some(app_id)
                     && self.display_affinity.window_home(*other).is_some()
             })
             .map(|(other, _)| (other.idx.get(), other))
@@ -1353,8 +1370,14 @@ impl LayoutEngine {
             }
         }
 
-        let title = window_store.window(window).map(|state| state.info.title.as_str());
         let index = slot_for_window(slots, title, siblings.len(), &claimed)?;
+        debug!(
+            idx = window.idx.get(),
+            app_id,
+            slot = index,
+            of = slots.len(),
+            "a relaunched window matched a remembered slot"
+        );
         slots.get(index).cloned()
     }
 
@@ -3056,6 +3079,51 @@ impl LayoutEngine {
             ax_role,
             ax_subrole,
         });
+
+        // Where this application's windows were, but only when the config had nothing to say and the
+        // window has no assignment already. This is the first sighting of a launching application's
+        // window, well before `WindowAdded`, so it is the only place the answer can still be changed.
+        if decision == crate::model::AppRuleDecision::NoMatch
+            && self
+                .virtual_workspace_manager
+                .workspace_for_window(window_store, space, window_id)
+                .is_none()
+            && let Some(app_id) = app_bundle_id
+            && let Some(slot) =
+                self.launch_slot_for_new_window(window_store, window_id, app_id, window_title)
+            && let Some(workspace_id) = self
+                .virtual_workspace_manager
+                .list_workspaces(space)
+                .get(slot.workspace_index)
+                .map(|(id, _)| *id)
+        {
+            if self.virtual_workspace_manager.assign_window_to_workspace(
+                window_store,
+                space,
+                window_id,
+                workspace_id,
+            ) {
+                self.display_affinity.set_window_home_if_absent(window_id, &slot.display_uuid);
+                if let Some(width) = slot.width {
+                    self.display_affinity.set_window_width(&slot.display_uuid, window_id, width);
+                }
+                debug!(
+                    idx = window_id.idx.get(),
+                    workspace = slot.workspace_index,
+                    width = ?slot.width,
+                    "placing a relaunched window where it was"
+                );
+                return Ok(AppRuleResult::Managed(AppRuleEffects {
+                    workspace_id,
+                    floating: self.floating.is_floating(window_id),
+                    position: None,
+                    size: None,
+                    focus: false,
+                    prev_rule_decision: false,
+                }));
+            }
+        }
+
         self.virtual_workspace_manager.apply_app_rule_decision(
             window_store,
             window_id,

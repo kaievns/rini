@@ -70,4 +70,43 @@ Explicit configuration wins over anything learned:
 
 The memory is a projection of live state, computed when the layout is saved rather than
 maintained by hooks on every move and resize. One write path instead of five, and no new
-work in the hot paths that place windows.
+work in the hot paths that place windows. The autosave runs within 5s of any layout
+change, so the file is current when the machine goes down.
+
+An EMPTY projection is ignored rather than written. Producing no slots for an
+application means its windows could not be read, not that it should be forgotten, and
+forgetting is the one outcome nothing can recover from — holding the arrangement while
+the application is not running is the entire point. Measured live: TextEdit was
+recorded in workspace 1, then vanished from the file, because rini had stopped tracking
+its window while the process was still alive and the projection had produced nothing.
+
+Two lookups also have to be right, and both were wrong first time:
+
+- The window's space comes from `workspace_info_for_window_any`, not
+  `space_with_window`. The latter searches each space's ACTIVE workspace tree, so a
+  window parked in a workspace nobody was looking at was invisible to it.
+- Its display is `window_home`, falling back to the display its space is on. A home is
+  written once, on first sighting, and only if the space's display was known by then, so
+  a window that appeared before that mapping existed has none — forever. Seen live on a
+  window rini tracked and had assigned to a workspace.
+
+## Applying, and where the first sighting actually happens
+
+Not `WindowAdded`. A launching application's windows are first seen while the app rules
+are applied, from `WindowsOnScreenUpdated`, and **the window is not in the window store
+yet at that point**. The first version read the bundle id and title from the store
+there, found nothing, and returned before it had even consulted the memory — the whole
+feature was silently dead, with no log line to say so. Identity comes from the caller,
+which has both as parameters.
+
+Verified live, end to end. TextEdit moved to workspace 1, recorded, quit, and relaunched
+while workspace 3 was active:
+
+```
+placing a relaunched window where it was, idx=8784, workspace=1
+TextEdit: ws 1        active workspace before the relaunch: 3
+```
+
+Not yet verified: the two-topology case, which needs the external display physically
+plugged and unplugged. The keying and the per-topology answers are unit tested; what has
+not been observed on real hardware is a second topology being recorded and chosen.
