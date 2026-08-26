@@ -2522,3 +2522,78 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
         "at the width it had there"
     );
 }
+
+/// The measured failure. The projection asked which space a window was in with a lookup that only
+/// consults each space's ACTIVE workspace, so a window parked in a workspace nobody was looking at
+/// produced no slot — and an application whose windows were all parked had its entry wiped on the next
+/// save. Seen live: TextEdit moved to another workspace, then gone from the file entirely.
+#[test]
+fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let mut engine = test_engine();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(21);
+    let window = WindowId::new(600, 3);
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+
+    let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+    window_store.insert_window(
+        window,
+        WindowState {
+            info: WindowInfo {
+                is_standard: true,
+                is_root: true,
+                is_minimized: false,
+                is_resizable: true,
+                min_size: None,
+                max_size: None,
+                title: "Untitled".into(),
+                frame,
+                sys_id: Some(WindowServerId::new(8571)),
+                bundle_id: Some("com.apple.TextEdit".into()),
+                path: None,
+                ax_role: None,
+                ax_subrole: None,
+            },
+            frame_monotonic: frame,
+            is_manageable: true,
+            ignore_app_rule: false,
+        },
+    );
+    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+
+    // Park it in a workspace that is not the active one, through the command the user runs, so its tree
+    // membership really moves. Reassigning it in the store alone leaves it in the active workspace's tree,
+    // where the old lookup could still find it and the test would prove nothing.
+    let parked_index = 2usize;
+    let _ = engine.handle_virtual_workspace_command(
+        &mut window_store,
+        space,
+        &crate::layout_engine::LayoutCommand::MoveWindowToWorkspace {
+            workspace: crate::common::config::WorkspaceSelector::Index(parked_index),
+            follow: false,
+            window_id: Some(window.idx.get()),
+        },
+    );
+    let workspaces: Vec<_> = engine
+        .virtual_workspace_manager
+        .list_workspaces(space)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let active = engine.virtual_workspace_manager.active_workspace(space).unwrap();
+    assert_ne!(workspaces[parked_index], active, "parked away from the active workspace");
+
+    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+
+    let topology = crate::model::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    let slots = engine.launch_memory.slots("com.apple.TextEdit", &topology);
+    assert_eq!(slots.len(), 1, "a parked window still has a slot");
+    assert_eq!(slots[0].workspace_index, parked_index, "and it names the workspace it is parked in");
+}

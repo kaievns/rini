@@ -1282,15 +1282,18 @@ impl LayoutEngine {
                 .filter_map(|(_, window_id)| {
                     let window = window_store.window(window_id)?;
                     let display = self.display_affinity.window_home(window_id)?.to_owned();
-                    let workspace = self
+                    // The window's OWN space and workspace, which is not the same question as which
+                    // workspace is showing: a window sitting in a workspace nobody is looking at still
+                    // belongs to it, and using an active-workspace-only lookup here meant every
+                    // application whose windows were all parked lost its memory on the next save.
+                    let info = self
                         .virtual_workspace_manager
-                        .workspace_for_window_any(window_store, window_id)?;
-                    let space = self.space_with_window(window_id)?;
+                        .workspace_info_for_window_any(window_store, window_id)?;
                     let index = self
                         .virtual_workspace_manager
-                        .list_workspaces(space)
+                        .list_workspaces(info.space)
                         .iter()
-                        .position(|(id, _)| *id == workspace)?;
+                        .position(|(id, _)| *id == info.workspace_id)?;
                     let width = self.display_affinity.window_width(&display, window_id);
                     Some(Slot {
                         title: (!window.info.title.trim().is_empty())

@@ -51,14 +51,13 @@ impl LaunchMemory {
     /// A whole-set replacement rather than a merge: the slots are a projection of the windows the
     /// application had, so a window that is gone should not leave a slot behind for the next launch to
     /// match against.
+    ///
+    /// An EMPTY set is ignored rather than treated as a replacement. A projection that produced nothing
+    /// means the windows could not be read, not that the application is meant to be forgotten — and
+    /// forgetting is the one outcome that cannot be recovered from, since the whole point is to hold the
+    /// arrangement across the application not running at all.
     pub fn remember(&mut self, app_id: &str, topology: &str, slots: Vec<Slot>) {
         if slots.is_empty() {
-            if let Some(topologies) = self.apps.get_mut(app_id) {
-                topologies.remove(topology);
-                if topologies.is_empty() {
-                    self.apps.remove(app_id);
-                }
-            }
             return;
         }
         self.apps
@@ -235,12 +234,15 @@ mod tests {
         assert_eq!(memory.slots("app", "one").len(), 1);
     }
 
+    /// The measured failure: the projection could not read the windows of an application whose windows
+    /// were all in workspaces nobody was looking at, produced nothing for it, and wiped the entry — which
+    /// is the one outcome that cannot be recovered, since holding the arrangement while the application
+    /// is not running is the entire point.
     #[test]
-    fn remembering_nothing_forgets_the_application() {
+    fn remembering_nothing_leaves_what_is_known_alone() {
         let mut memory = LaunchMemory::default();
         memory.remember("app", "one", vec![slot("a", BUILT_IN, 0)]);
         memory.remember("app", "one", Vec::new());
-        assert!(memory.slots("app", "one").is_empty());
-        assert!(memory.is_empty(), "and leaves nothing behind to grow the file");
+        assert_eq!(memory.slots("app", "one").len(), 1, "the entry survives an empty projection");
     }
 }
