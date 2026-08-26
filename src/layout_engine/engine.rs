@@ -1074,15 +1074,6 @@ impl LayoutEngine {
                 // window last had here. Without this a relaunched window was recorded and looked up
                 // correctly and still opened at the default: the width reached the affinity record and
                 // never reached the layout, which is the thing that decides how wide the column is.
-                debug!(
-                    idx = wid.idx.get(),
-                    remembered = remembered.is_some(),
-                    affinity = ?self
-                        .display_affinity
-                        .display_for_space(space)
-                        .and_then(|d| self.display_affinity.window_width(d, wid)),
-                    "adding a window to a tree; re-applying its remembered width"
-                );
                 self.apply_remembered_column_width(space, assigned_workspace, layout, wid);
             }
         } else {

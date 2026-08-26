@@ -99,6 +99,35 @@ there, found nothing, and returned before it had even consulted the memory — t
 feature was silently dead, with no log line to say so. Identity comes from the caller,
 which has both as parameters.
 
+### The record is not what decides the width
+
+Three attempts at the width, and the lookup was right in all three. The log said so:
+
+```
+matched a remembered slot, idx=9789, app_id="com.apple.TextEdit", slot=0, of=1
+placing a relaunched window where it was, idx=9789, workspace=1, width=Some(FullWidth)
+```
+
+The workspace was applied and the width was not, because the width was being written to the
+`DisplayAffinity` record and nothing was telling the LAYOUT. `apply_remembered_column_width`
+exists for exactly that and was wired only to the paths that MOVE a window between
+workspaces or displays.
+
+Wiring it into `add_window_to_layout` was still wrong, and the absence of a log line is what
+proved it: a launching application's windows never go through that function. They arrive in
+bulk through `sync_tiled_windows_for_app` -> `set_windows_for_app`, driven by the same
+app-rule discovery as the workspace. The width is applied there, to the difference between
+the desired and current membership, so an existing window's width is never re-applied over
+something the user has just changed.
+
+Two things follow from this that are easy to get wrong again:
+
+- A width is read from the window's own layout, not from the affinity record. That record is
+  only written by explicit width COMMANDS, so a window whose width came from the layout never
+  appeared in it — the file read `window_width:{}` while every window on screen had a width.
+- `is_window_full_width` and the tree's `is_fullscreen_within_gaps` are the same flag under
+  two names. `ColumnWidth::FullWidth` is that flag, not a ratio.
+
 Verified live, end to end. TextEdit moved to workspace 1, recorded, quit, and relaunched
 while workspace 3 was active:
 

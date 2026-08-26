@@ -77,9 +77,14 @@ not yet mine to fix.
 ## Building
 
 ```sh
-cargo build --release          # produces target/release/rini and rini-cli
+./bin/build.sh                     # build, then re-sign with the stable local identity
 ./target/release/rini --validate   # parse config + layout file, exit
 ```
+
+Use the script rather than `cargo build --release` directly. macOS grants Accessibility to a code
+identity, and an ad-hoc signature — which is what cargo leaves — makes that identity the hash of the
+binary, so every plain rebuild costs an Accessibility re-grant and rini manages nothing until it is
+given. `docs/signing.md` has the detail and how to create the certificate.
 
 Requires a Rust toolchain and macOS. Does **not** require disabling SIP. Works with
 "Displays have separate Spaces" enabled — in fact it assumes it.
