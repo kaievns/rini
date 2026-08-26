@@ -1,4 +1,4 @@
-use objc2_core_foundation::CGSize;
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
 use crate::actor::app::WindowInfo;
@@ -2429,4 +2429,96 @@ fn a_file_without_launch_memory_still_loads() {
     let loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
     assert!(loaded.launch_memory.is_empty());
+}
+
+/// The whole feature, end to end: a window is placed, moved, sized, and remembered; then the application
+/// relaunches with a new pid and the window has to land back where it was rather than in whatever
+/// workspace happens to be active at the time.
+#[test]
+fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
+    use crate::model::display_affinity::ColumnWidth;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    let mut engine = test_engine();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(11);
+    let before_quit = WindowId::new(500, 1);
+    let after_relaunch = WindowId::new(900, 7);
+
+    let _ = engine.handle_event(
+        &mut window_store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+
+    let insert = |store: &mut WindowStore, window: WindowId| {
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+        store.insert_window(
+            window,
+            WindowState {
+                info: WindowInfo {
+                    is_standard: true,
+                    is_root: true,
+                    is_minimized: false,
+                    is_resizable: true,
+                    min_size: None,
+                    max_size: None,
+                    title: "~/projects/rini".into(),
+                    frame,
+                    sys_id: Some(WindowServerId::new(window.idx.get())),
+                    bundle_id: Some("com.mitchellh.ghostty".into()),
+                    path: None,
+                    ax_role: None,
+                    ax_subrole: None,
+                },
+                frame_monotonic: frame,
+                is_manageable: true,
+                ignore_app_rule: false,
+            },
+        );
+    };
+
+    // The window as it was before the application quit: moved off the active workspace and made full
+    // width, which are the two things that used to be forgotten.
+    insert(&mut window_store, before_quit);
+    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, before_quit));
+    let workspaces: Vec<_> = engine
+        .virtual_workspace_manager
+        .list_workspaces(space)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    let elsewhere = workspaces[2];
+    assert!(engine.virtual_workspace_manager.assign_window_to_workspace(
+        &mut window_store,
+        space,
+        before_quit,
+        elsewhere,
+    ));
+    engine.display_affinity.set_window_width(DISPLAY, before_quit, ColumnWidth::FullWidth);
+
+    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+
+    // The application quits and comes back with a different pid and window server id.
+    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowRemoved(before_quit));
+
+    insert(&mut window_store, after_relaunch);
+    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, after_relaunch));
+
+    assert_eq!(
+        engine.virtual_workspace_manager.workspace_for_window_any(&window_store, after_relaunch),
+        Some(elsewhere),
+        "back in the workspace it was in, not the active one"
+    );
+    assert_eq!(
+        engine.display_affinity.window_home(after_relaunch),
+        Some(DISPLAY),
+        "and on the display it belonged to"
+    );
+    assert_eq!(
+        engine.display_affinity.window_width(DISPLAY, after_relaunch),
+        Some(ColumnWidth::FullWidth),
+        "at the width it had there"
+    );
 }

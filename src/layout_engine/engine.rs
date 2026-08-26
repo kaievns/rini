@@ -120,6 +120,9 @@ pub struct LayoutEngine {
     /// Where each application's windows belong, under a key that survives the application. See
     /// `docs/launch-memory.md`.
     launch_memory: crate::model::launch_memory::LaunchMemory,
+    /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
+    /// layout, and it is what the launch memory is keyed by.
+    connected_displays: Vec<String>,
     /// Direction of the in-flight workspace switch per display, consumed by the animation.
     #[allow(clippy::type_complexity)]
     workspace_switch_directions: HashMap<SpaceId, crate::model::reactor::WorkspaceSwitchDirection>,
@@ -1009,6 +1012,28 @@ impl LayoutEngine {
     ) -> bool {
         let active_space_before = self.space_with_window(wid);
 
+        // Where this application's windows were the last time this set of displays was attached. Only
+        // consulted for a window with no workspace yet, so it cannot override an explicit rule or a
+        // window rini has already placed. See `docs/launch-memory.md`.
+        let remembered = self
+            .virtual_workspace_manager
+            .workspace_for_window(window_store, space, wid)
+            .is_none()
+            .then(|| self.launch_slot_for_new_window(window_store, wid))
+            .flatten();
+        if let Some(slot) = &remembered {
+            let workspaces = self.virtual_workspace_manager.list_workspaces(space);
+            if let Some((workspace_id, _)) = workspaces.get(slot.workspace_index) {
+                let workspace_id = *workspace_id;
+                self.virtual_workspace_manager
+                    .assign_window_to_workspace(window_store, space, wid, workspace_id);
+            }
+            self.display_affinity.set_window_home_if_absent(wid, &slot.display_uuid);
+            if let Some(width) = slot.width {
+                self.display_affinity.set_window_width(&slot.display_uuid, wid, width);
+            }
+        }
+
         let assigned_workspace =
             match self.virtual_workspace_manager.workspace_for_window(window_store, space, wid) {
                 Some(workspace_id) => workspace_id,
@@ -1226,6 +1251,110 @@ impl LayoutEngine {
     }
 
     /// Record a home for a newly seen window, leaving an existing home untouched.
+    /// Projects live windows into the launch memory, so their next launch can find them.
+    ///
+    /// A projection computed before each save rather than hooks on every move and resize: one write
+    /// path, and no new work in the paths that place windows. See `docs/launch-memory.md`.
+    ///
+    /// `connected` is the display UUIDs currently attached, which is the topology the answer is filed
+    /// under. Nothing is recorded without it, since an answer with no topology cannot be looked up.
+    pub fn remember_launch_slots(&mut self, window_store: &WindowStore, connected: &[String]) {
+        use crate::model::launch_memory::{Slot, topology_key};
+
+        if connected.is_empty() {
+            return;
+        }
+        let topology = topology_key(connected);
+
+        // Grouped by bundle identifier, ordered by window server id, which is creation order. A
+        // relaunched application creates its windows in the same order, so the Nth window can find the
+        // Nth slot when its title is no help.
+        let mut by_app: HashMap<String, Vec<(u32, WindowId)>> = HashMap::default();
+        for (window_id, window) in window_store.iter_windows() {
+            let Some(app_id) = window.info.bundle_id.clone() else { continue };
+            by_app.entry(app_id).or_default().push((window_id.idx.get(), window_id));
+        }
+
+        for (app_id, mut windows) in by_app {
+            windows.sort_unstable();
+            let slots: Vec<Slot> = windows
+                .into_iter()
+                .filter_map(|(_, window_id)| {
+                    let window = window_store.window(window_id)?;
+                    let display = self.display_affinity.window_home(window_id)?.to_owned();
+                    let workspace = self
+                        .virtual_workspace_manager
+                        .workspace_for_window_any(window_store, window_id)?;
+                    let space = self.space_with_window(window_id)?;
+                    let index = self
+                        .virtual_workspace_manager
+                        .list_workspaces(space)
+                        .iter()
+                        .position(|(id, _)| *id == workspace)?;
+                    let width = self.display_affinity.window_width(&display, window_id);
+                    Some(Slot {
+                        title: (!window.info.title.trim().is_empty())
+                            .then(|| window.info.title.clone()),
+                        display_uuid: display,
+                        workspace_index: index,
+                        width,
+                    })
+                })
+                .collect();
+            self.launch_memory.remember(&app_id, &topology, slots);
+        }
+    }
+
+    /// The displays attached right now, which is the topology the launch memory is keyed by.
+    pub fn set_connected_displays(&mut self, uuids: Vec<String>) {
+        self.connected_displays = uuids;
+    }
+
+    /// The slot a window appearing for the first time should take, if its application left one.
+    ///
+    /// The window's position among its application's windows, and which slots its siblings already took,
+    /// are recomputed from the siblings themselves rather than tracked. Placement order is window server
+    /// id order, so replaying the same matching over the siblings gives the same answers it gave them,
+    /// and two windows cannot land on one slot.
+    fn launch_slot_for_new_window(
+        &self,
+        window_store: &WindowStore,
+        window: WindowId,
+    ) -> Option<crate::model::launch_memory::Slot> {
+        use crate::model::launch_memory::{slot_for_window, topology_key};
+
+        let app_id = window_store.window(window)?.info.bundle_id.clone()?;
+        let topology = topology_key(&self.connected_displays);
+        let slots = self.launch_memory.slots(&app_id, &topology);
+        if slots.is_empty() {
+            return None;
+        }
+
+        // Siblings already placed, in the order they were placed.
+        let mut siblings: Vec<(u32, WindowId)> = window_store
+            .iter_windows()
+            .filter(|(other, state)| {
+                *other != window
+                    && state.info.bundle_id.as_deref() == Some(app_id.as_str())
+                    && self.display_affinity.window_home(*other).is_some()
+            })
+            .map(|(other, _)| (other.idx.get(), other))
+            .collect();
+        siblings.sort_unstable();
+
+        let mut claimed = Vec::with_capacity(siblings.len());
+        for (ordinal, (_, sibling)) in siblings.iter().enumerate() {
+            let title = window_store.window(*sibling).map(|state| state.info.title.as_str());
+            if let Some(index) = slot_for_window(slots, title, ordinal, &claimed) {
+                claimed.push(index);
+            }
+        }
+
+        let title = window_store.window(window).map(|state| state.info.title.as_str());
+        let index = slot_for_window(slots, title, siblings.len(), &claimed)?;
+        slots.get(index).cloned()
+    }
+
     pub fn note_window_display_home(&mut self, window: WindowId, space: SpaceId) {
         if let Some(display) = self.display_affinity.display_for_space(space) {
             let display = display.to_owned();
@@ -1461,6 +1590,7 @@ impl LayoutEngine {
             broadcast_tx,
             display_affinity: DisplayAffinity::default(),
             launch_memory: crate::model::launch_memory::LaunchMemory::default(),
+            connected_displays: Vec::new(),
             workspace_switch_directions: HashMap::default(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,

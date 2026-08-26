@@ -78,14 +78,6 @@ impl LaunchMemory {
     pub fn is_empty(&self) -> bool {
         self.apps.is_empty()
     }
-
-    /// Drops everything remembered for applications not in `keep`.
-    ///
-    /// Without this the file grows for every application ever launched. Called with the applications
-    /// currently running, at save time.
-    pub fn retain_apps(&mut self, keep: &dyn Fn(&str) -> bool) {
-        self.apps.retain(|app_id, _| keep(app_id));
-    }
 }
 
 /// Which remembered slot a newly appeared window should take.
@@ -250,15 +242,5 @@ mod tests {
         memory.remember("app", "one", Vec::new());
         assert!(memory.slots("app", "one").is_empty());
         assert!(memory.is_empty(), "and leaves nothing behind to grow the file");
-    }
-
-    #[test]
-    fn applications_that_are_gone_are_dropped() {
-        let mut memory = LaunchMemory::default();
-        memory.remember("kept", "one", vec![slot("a", BUILT_IN, 0)]);
-        memory.remember("dropped", "one", vec![slot("b", BUILT_IN, 0)]);
-        memory.retain_apps(&|app_id| app_id == "kept");
-        assert!(!memory.slots("kept", "one").is_empty());
-        assert!(memory.slots("dropped", "one").is_empty());
     }
 }

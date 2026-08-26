@@ -2775,6 +2775,15 @@ impl Reactor {
             }
         }
         self.space_state.screens = screens;
+        // The topology the launch memory is keyed by. Set from here because this is the one place the
+        // attached set is authoritatively replaced.
+        let connected: Vec<String> = self
+            .space_state
+            .screens
+            .iter()
+            .filter_map(|screen| screen.display_uuid_owned())
+            .collect();
+        self.layout_manager.layout_engine.set_connected_displays(connected);
         // Cursor warping is derived from display geometry, so it has to be told whenever
         // that geometry changes — docking, undocking, or rearranging in System Settings.
         // Pushing it from here rather than having the actor poll CGDisplayBounds keeps one
@@ -6117,6 +6126,17 @@ impl Reactor {
             return;
         };
         let active_space = self.workspace_command_space();
+        // Recorded here rather than by hooks on every move and resize: the memory is a projection of
+        // where the windows are now, and this is the moment it gets written down.
+        let connected: Vec<String> = self
+            .space_state
+            .screens
+            .iter()
+            .filter_map(|screen| screen.display_uuid_owned())
+            .collect();
+        self.layout_manager
+            .layout_engine
+            .remember_launch_slots(&self.state.windows, &connected);
         // autosave_current_layout, NOT save_current_layout: the latter also
         // normalizes floating-versus-tiled ownership and rewrites stored floating
         // frames, which are mutations to live state. Running them on every layout
