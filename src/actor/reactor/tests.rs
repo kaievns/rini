@@ -2101,6 +2101,10 @@ fn it_ignores_windows_on_nonzero_layers() {
     reactor.handle_event(Event::WindowDestroyed(WindowId::new(1, 2)));
 }
 
+/// Two columns per screen on purpose. A third would overflow the strip, and a column with nothing on its
+/// own display is parked in a corner and dropped from the raise list — which would take one of the groups
+/// this is here to check with it. App 2 straddles both screens, which is the case that matters: one app,
+/// two groups.
 #[test]
 fn handle_layout_response_groups_windows_by_app_and_screen() {
     let (mut apps, mut reactor) = test_context();
@@ -2113,7 +2117,7 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
         vec![Some(SpaceId::new(1)), Some(SpaceId::new(2))],
     ));
 
-    reactor.handle_events(apps.make_app(1, make_windows(2)));
+    reactor.handle_events(apps.make_app(1, make_windows(1)));
 
     let mut windows = make_windows(2);
     windows[1].frame.origin = CGPoint::new(1100., 100.);
@@ -2127,7 +2131,6 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
             changed: true,
             raise_windows: vec![
                 WindowId::new(1, 1),
-                WindowId::new(1, 2),
                 WindowId::new(2, 1),
                 WindowId::new(2, 2),
             ],
@@ -2143,7 +2146,7 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
         }) => {
             let raise_windows: HashSet<Vec<WindowId>> = raise_windows.into_iter().collect();
             let expected = [
-                vec![WindowId::new(1, 1), WindowId::new(1, 2)],
+                vec![WindowId::new(1, 1)],
                 vec![WindowId::new(2, 1)],
                 vec![WindowId::new(2, 2)],
             ]
@@ -6374,4 +6377,169 @@ fn focus_that_does_not_move_asks_for_nothing() {
         }
     }
     assert_eq!(refreshed, vec![window], "only the window itself, not a phantom second one");
+}
+
+/// The measured artefact: a floating window re-placed by one point animated on its own, and because the
+/// overlay is opaque and spans the display, every OTHER window on screen was replaced by wallpaper for
+/// 350ms. Windows a pass does not move still have to be handed over, so the overlay can draw them.
+#[test]
+fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = true;
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    // Two windows moving by opposite vectors, so this is not a strip pan and goes to the per-window
+    // path. The third keeps the frame it already has.
+    let held = WindowId::new(1, 3);
+    let mut layout = Vec::new();
+    for idx in 1..=3u32 {
+        let wid = WindowId::new(1, idx);
+        let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+        let target = match idx {
+            1 => CGRect::new(CGPoint::new(frame.origin.x + 120., frame.origin.y), frame.size),
+            2 => CGRect::new(CGPoint::new(frame.origin.x - 120., frame.origin.y), frame.size),
+            _ => frame,
+        };
+        layout.push((wid, target));
+    }
+
+    super::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
+
+    let mut animated: Vec<crate::actor::workspace_animation::AnimationRequest> = Vec::new();
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        match event {
+            crate::actor::workspace_animation::Event::Animate { windows, .. } => animated = windows,
+            // Opposite vectors are not a pan, so this must not reach the canvas path: that path takes
+            // its windows from the layout and so never had this bug to begin with.
+            crate::actor::workspace_animation::Event::AnimateCanvas { .. } => {
+                panic!("a layout that is not a pan must go to the per-window path")
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(animated.len(), 3, "every window on the display, not just the movers: {animated:?}");
+    let still = animated.iter().find(|request| request.window == held).expect("the still window");
+    assert_eq!(still.from, still.to, "it is handed over to be drawn, not to be moved");
+}
+
+/// A floating window oscillated between x = 502 and x = 503 on every space-state refresh. Animating that
+/// covers the display for 350ms and buys nothing, so a pass with no visible travel is placed instead.
+#[test]
+fn a_one_point_move_is_placed_rather_than_animated() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = true;
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    let mut layout = Vec::new();
+    for idx in 1..=2u32 {
+        let wid = WindowId::new(1, idx);
+        let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+        let target = if idx == 1 {
+            CGRect::new(CGPoint::new(frame.origin.x + 1., frame.origin.y), frame.size)
+        } else {
+            frame
+        };
+        layout.push((wid, target));
+    }
+
+    super::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
+
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        assert!(
+            !matches!(
+                event,
+                crate::actor::workspace_animation::Event::Animate { .. }
+                    | crate::actor::workspace_animation::Event::AnimateCanvas { .. }
+            ),
+            "a one-point move must not run an animation: {event:?}"
+        );
+    }
+    assert!(
+        apps.requests().iter().any(|request| matches!(
+            request,
+            Request::SetWindowFrame(..) | Request::SetBatchWindowFrame(..)
+        )),
+        "the window still has to be placed"
+    );
+}
+
+/// A raise walks the whole workspace and macOS reports a focus change for every window it touches. Taking
+/// those at face value moved the layout's selection down the raise list, and the strip scrolled to each in
+/// turn: eight scroll targets from one keypress, ending where it started.
+#[test]
+fn a_focus_report_from_rinis_own_raise_does_not_move_the_selection() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let intended = WindowId::new(1, 1);
+    let echoed = WindowId::new(1, 2);
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, intended));
+    assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(intended));
+
+    reactor.raise_echo.expect(
+        [intended, echoed].into_iter(),
+        Some(intended),
+        std::time::Instant::now(),
+    );
+    reactor.handle_event(Event::WindowServerFocusChanged(echoed, space));
+    assert_eq!(
+        reactor.layout_manager.layout_engine.focused_window(),
+        Some(intended),
+        "the echo must not become the selection"
+    );
+
+    // The user going somewhere is still honoured, even to a window the same raise touched, once the
+    // cascade is over.
+    reactor.raise_echo = super::main_window::RaiseEcho::default();
+    reactor.handle_event(Event::WindowServerFocusChanged(echoed, space));
+    assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(echoed));
+}
+
+/// Every workspace has its own strip, so the offsets of two of them are not comparable. Keyed by space
+/// alone, the first pass after a switch read the destination's offset as a movement of the difference
+/// between the two and panned sideways after the vertical slide had already landed.
+#[test]
+fn a_workspace_switch_is_not_a_strip_movement() {
+    let (mut apps, mut reactor) = test_context_with_workspace_count(2);
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    // Enough columns that the strip is longer than the display and therefore scrolled.
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(6));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 6)));
+
+    let first = reactor.take_strip_movement(space);
+    assert_eq!(first, Some(CGPoint::new(0., 0.)), "the first look at a strip reports no movement");
+    let settled = reactor.take_strip_movement(space);
+    assert_eq!(settled, Some(CGPoint::new(0., 0.)), "and a strip that has not moved reports none");
+
+    reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
+
+    assert_eq!(
+        reactor.take_strip_movement(space),
+        Some(CGPoint::new(0., 0.)),
+        "arriving on another workspace is a vertical switch, not a horizontal pan"
+    );
 }

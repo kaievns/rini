@@ -58,6 +58,31 @@ impl HiddenWindowPlacement {
         }
     }
 
+    /// Whether a frame has nothing at all on the display.
+    ///
+    /// A strip position thousands of points along the strip is off screen, and macOS will not honour it:
+    /// asked for x = -12396 it places the window with 40pt showing instead, which is the row of slivers
+    /// down each edge. Those frames get a corner park instead, which macOS does honour at 1pt. A frame with
+    /// ANY part on screen is left alone, since a column peeking in at the edge is meant to be seen.
+    pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
+        Self::intersection_area(window, screen) <= 0.0
+    }
+
+    /// Where a parked window should start an animation that brings it back on screen.
+    ///
+    /// Its real frame is a corner, so animating from there flies it in diagonally from the bottom of the
+    /// display. It belongs to the strip, so it comes back the way it left: same row as its destination, just
+    /// past the edge it was parked against.
+    pub fn entry_frame(park: CGRect, destination: CGRect, display: CGRect) -> CGRect {
+        let from_the_left = park.mid().x < display.mid().x;
+        let x = if from_the_left {
+            display.origin.x - destination.size.width
+        } else {
+            display.max().x
+        };
+        CGRect::new(CGPoint::new(x, destination.origin.y), destination.size)
+    }
+
     pub fn is_hidden(screen: CGRect, window: CGRect, other_screens: &[CGRect]) -> bool {
         [HideCorner::BottomLeft, HideCorner::BottomRight]
             .into_iter()
@@ -83,6 +108,58 @@ mod tests {
 
     fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
+    }
+
+    /// A strip coordinate thousands of points along the strip has nothing on screen, which is the frame
+    /// macOS refuses and turns into a 40pt sliver. Measured strip positions from this desktop.
+    #[test]
+    fn a_strip_position_far_along_the_strip_is_off_screen() {
+        let screen = rect(0.0, 0.0, 1728.0, 1117.0);
+        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-12396.0, 32.0, 859.0, 1081.0)));
+        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(15848.0, 32.0, 1720.0, 1081.0)));
+        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-859.0, 32.0, 859.0, 1081.0)));
+    }
+
+    /// A column peeking in at the edge is meant to be seen, so it keeps the position the layout gave it.
+    #[test]
+    fn a_column_with_any_part_on_screen_is_left_alone() {
+        let screen = rect(0.0, 0.0, 1728.0, 1117.0);
+        assert!(!HiddenWindowPlacement::is_off_screen(screen, rect(-800.0, 32.0, 859.0, 1081.0)));
+        assert!(!HiddenWindowPlacement::is_off_screen(screen, rect(1700.0, 32.0, 859.0, 1081.0)));
+        assert!(!HiddenWindowPlacement::is_off_screen(screen, rect(4.0, 32.0, 859.0, 1081.0)));
+    }
+
+    /// Parked windows come back the way they left. Without this the window flies up from the bottom corner,
+    /// because that is where its real frame is.
+    #[test]
+    fn a_window_parked_on_the_left_comes_back_from_the_left() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let park = rect(-858.0, 1116.0, 859.0, 1081.0);
+        let destination = rect(4.0, 32.0, 859.0, 1081.0);
+        let entry = HiddenWindowPlacement::entry_frame(park, destination, display);
+        assert_eq!(entry.origin.x, -859.0, "just past the left edge");
+        assert_eq!(entry.origin.y, 32.0, "on its destination's row, not at the bottom");
+        assert_eq!(entry.size, destination.size);
+    }
+
+    #[test]
+    fn a_window_parked_on_the_right_comes_back_from_the_right() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let park = rect(1727.0, 1116.0, 859.0, 1081.0);
+        let destination = rect(865.0, 32.0, 859.0, 1081.0);
+        let entry = HiddenWindowPlacement::entry_frame(park, destination, display);
+        assert_eq!(entry.origin.x, 1728.0, "just past the right edge");
+        assert_eq!(entry.origin.y, 32.0);
+    }
+
+    /// A display that is not at the origin: the edges are the display's own, not the global zero.
+    #[test]
+    fn entry_is_relative_to_the_display_it_happens_on() {
+        let display = rect(-670.0, -1692.0, 3008.0, 1692.0);
+        let park = rect(2337.0, -1.0, 859.0, 1081.0);
+        let destination = rect(-666.0, -1660.0, 859.0, 1081.0);
+        let entry = HiddenWindowPlacement::entry_frame(park, destination, display);
+        assert_eq!(entry.origin.x, 2338.0, "past the right edge of THAT display");
     }
 
     #[test]

@@ -44,6 +44,10 @@ activation only. No timer is involved:
   The app is already frontmost, so there is no activation edge and no snapshot.
 - A raise rini asked for arrives as a quiet activation, which drops the pending
   snapshot. Redirecting behind rini's own raise would undo it.
+- `RaiseEcho` sits earlier in the same handler and returns a raise's own focus
+  reports before the redirect is considered at all, so only the window the raise
+  meant to focus reaches this. See "The offset is honest, and it still moved eight
+  times per press" in `docs/capture-overlay-research.md`.
 
 The pure decision is `activation_focus_target` in
 `src/actor/reactor/main_window.rs`, so the four cases are tested without replaying

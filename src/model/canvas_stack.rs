@@ -23,6 +23,15 @@ pub fn canvas_frame(frame: CGRect, display_origin: CGPoint, row: usize, row_pitc
     )
 }
 
+/// Whether a window will be on screen when a switch finishes.
+///
+/// A switch travels only in y, so the destination row has to be laid out at a scroll that already shows the
+/// window being switched to. Otherwise the strip pans sideways afterwards to reveal it, which is the second
+/// movement a switch exists to avoid. The viewport ends at canvas x = 0, so the band is the display's width.
+pub fn lands_in_view(frame: CGRect, viewport_width: f64) -> bool {
+    frame.origin.x < viewport_width && frame.origin.x + frame.size.width > 0.0
+}
+
 /// The viewport offsets a switch travels between, and how far to stretch its duration.
 #[derive(Debug, PartialEq)]
 pub struct CanvasTravel {
@@ -66,6 +75,27 @@ mod tests {
 
     fn origin() -> CGPoint {
         CGPoint::new(0.0, 0.0)
+    }
+
+    /// The switch is vertical, so the destination row has to arrive already scrolled to the window being
+    /// switched to. A target outside this band means a sideways pan has to follow, which is the artefact.
+    #[test]
+    fn a_target_the_destination_row_already_shows_lands_in_view() {
+        assert!(lands_in_view(rect(4.0, 32.0, 859.0, 1081.0), 1728.0));
+        assert!(lands_in_view(rect(865.0, 32.0, 859.0, 1081.0), 1728.0));
+        // Half on screen at either edge still counts: part of it is visible when the slide lands.
+        assert!(lands_in_view(rect(-400.0, 32.0, 859.0, 1081.0), 1728.0));
+        assert!(lands_in_view(rect(1700.0, 32.0, 859.0, 1081.0), 1728.0));
+    }
+
+    #[test]
+    fn a_target_the_destination_row_has_scrolled_past_does_not() {
+        // The measured case: the target sat 9763pt along its own strip while the row was drawn at 0.
+        assert!(!lands_in_view(rect(9763.0, 32.0, 859.0, 1081.0), 1728.0));
+        assert!(!lands_in_view(rect(-1718.0, 32.0, 859.0, 1081.0), 1728.0));
+        // Exactly abutting either edge is not visible.
+        assert!(!lands_in_view(rect(1728.0, 32.0, 859.0, 1081.0), 1728.0));
+        assert!(!lands_in_view(rect(-859.0, 32.0, 859.0, 1081.0), 1728.0));
     }
 
     #[test]

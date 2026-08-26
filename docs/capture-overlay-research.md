@@ -745,6 +745,124 @@ is a great deal better than 350ms of a hole. After both:
 canvas animation, requested=20, tiles=20, missing=0, misshapen=0
 ```
 
+## The overlay has to draw everything it covers
+
+The per-window path drew only the windows it was asked to animate. The overlay is
+opaque and spans the display, so every window it was NOT asked about was replaced by
+the backdrop — which is the desktop, wallpaper and icons and nothing else.
+
+That is invisible when a switch moves everything on screen, and catastrophic when a
+layout pass moves one window. The trigger was mundane: a floating System Settings
+window oscillated between x = 502 and x = 503 on every space-state refresh.
+
+```
+0:51:00.689  overlay animation composition, requested=1, tiles=1
+0:51:00.691  overlay dressed, path="per-window", backdrop="1728x1117", bar="1728x32"
+```
+
+A frame pulled out of a screen recording during those 350ms shows the wallpaper, the
+desktop icons, the widgets, the bar, and the single Settings window. Slack, the
+terminal, the browser — every other window on the display — are simply gone, and back
+a third of a second later. This is what "windows disappear and then reappear when I
+click on things" was.
+
+Two fixes, both needed:
+
+- The reactor now sends the windows a pass leaves alone as well, with `from == to`, so
+  the overlay reproduces the whole screen. They are drawn, never placed: asking an
+  application to move a window to where it already is costs an Accessibility round
+  trip and invites another layout pass. `strip_pan_delta` ignores them, since a window
+  that is not moving has no opinion about where the strip is going.
+- A pass where nothing travels 2pt or more is not animated at all. Animating a
+  one-point move buys nothing and costs 350ms of frozen pictures over the whole
+  display.
+
+## The stack has to be the one the overlay hands back to
+
+Tile order came straight from `front_to_back_depths()`, sampled when the animation
+starts — which for a focus change is BEFORE the raise. rini asks for the animation
+first, deliberately, so the first frame can draw the windows where they still are; the
+raise lands milliseconds later.
+
+So the tiles were stacked in the pre-switch order. With a floating window frontmost —
+System Settings, just used — the window sliding in was drawn UNDERNEATH it, and the
+stack corrected itself the instant the overlay lifted. Photographed mid-animation: the
+Settings panel sits over the arriving Chrome window, and 350ms later it is behind it.
+
+`tile_depth` puts the window that is gaining focus at the front and shifts everything
+else back one, so the stack the overlay draws is the stack the real windows will be in
+when it hands over. The focus target comes from `LayoutEngine::focused_window()`, which
+is the layout's own answer to where focus is going, rather than the window server's
+answer to where it has been.
+
+## The strip is one z-order group
+
+macOS raises the window that was clicked. The strip is a single surface, so that is the
+wrong unit: clicking one half of a 50/50 pair lifts it over a floating window and
+leaves the other half behind it, even though the two sit side by side on screen.
+Measured with System Settings floating over two Ghostty terminals:
+
+```
+after clicking the LEFT terminal (idx 90):
+  0  wsid 90     Ghostty            4,32     <- clicked, in front
+  1  wsid 5830   System Settings  383,126    <- floating, sandwiched
+  2  wsid 89     Ghostty         -857,32
+  3  wsid 91     Ghostty          865,32     <- its 50/50 partner, behind Settings
+```
+
+Settings spans x = 383 to 1106 and idx 91 spans 865 to 1724, so the overlap is real
+and visible. The rule is in `model::z_group`: focusing any window on the strip puts
+the whole strip in front of everything off it, and focusing something off the strip
+puts that in front of the whole strip. Within a group the window server's own order
+is kept, since windows in one group really can overlap.
+
+It decides two separate things:
+
+- **Tile order.** `tile_depth` puts the focus target first, then the rest of its
+  group, then the other group, with a stride between groups wide enough that no
+  window count can make them interleave. Without it, the animation drew the floating
+  window over the columns sliding past underneath.
+- **Real order.** `strip_regroup` returns the strip windows back to front when
+  something off the strip is in front of any of them, and nothing at all when the
+  order already obeys the rule — the common case, and it must cost nothing, because
+  putting it back costs one Accessibility raise per window on screen. Only on-screen
+  windows are raised: a parked column's place in the order cannot be seen, and the
+  layout pass that scrolls it back into view raises it anyway.
+
+The windows off the strip are LEFT OUT of the regroup raise rather than raised first.
+Everything raised in one sequence lands in front of everything not raised, but the
+order within a sequence is up to whichever app answers first, so raising both groups
+together would leave exactly the interleaving this is fixing.
+
+### Both routes into focus need it, for different reasons
+
+A keyboard focus move raises through `handle_layout_response`, and the engine's raise
+list is only ever the window it landed on — measured, `MoveFocus(Right)` raises
+exactly one window. So the list is EXTENDED with the strip group.
+
+A click is raised by macOS, not by rini, and produces only a
+`WindowServerFocusChanged`. Nothing else in that path issues a raise, so it gets one
+of its own.
+
+Verified on the same desktop that produced the trace above. After a focus move the
+50/50 pair sits at depths 0 and 1 with Settings below the strip entirely; after an app
+activation the whole strip occupies depths 0 to 12 and Settings sits at 13.
+
+One gap, left alone deliberately: `rini-cli execute window focus --window-id` on a
+window the engine ALREADY considers focused returns early from the focus handler, so
+it does not regroup. Nothing a user does reaches that path — a click always changes
+the engine's idea of focus first.
+
+### Rejected: filtering the layout's raise lists by group
+
+Before extending the list, the opposite was tried: filtering the focused window's
+group OUT of raise lists that mixed both. No such list exists. Every raise list the
+engine produces comes from `visible_windows_in_layout` or `move_focus`, which both
+walk the strip tree, and floating windows are not in it — a floating window can only
+reach a raise list as the `focus_window`. Two attempts to write a test that
+distinguished the filter from its absence both passed without it, which is what
+proved the point. Removed rather than kept as untestable insurance.
+
 ## A floating window is not part of the strip
 
 Floating windows were in the canvas, so a strip scroll carried them sideways and
@@ -837,9 +955,9 @@ keeps changing and the strip visibly jerks.
 
 The distance now comes from the strip's own scroll offset, which the layout owns:
 `strip_scroll_offset(space)` before and after, negated because windows travel
-opposite to the viewport. It changes exactly once per press, and it needs no
-reference to any window's real frame, so the clamp is irrelevant to it. A pass that
-did not move the strip reports zero and starts nothing:
+opposite to the viewport. It needs no reference to any window's real frame, so the
+clamp is irrelevant to it. A pass that did not move the strip reports zero and
+starts nothing:
 
 ```
 1:04:44.994  cmd=MoveFocus(Right)
@@ -850,6 +968,42 @@ did not move the strip reports zero and starts nothing:
 ```
 
 Reading it off the windows survives as the fallback for a layout with no strip.
+
+### The offset is honest, and it still moved eight times per press
+
+Taking the distance from the layout fixed the arithmetic but not the count, because
+the offset follows the layout's SELECTION and the selection was being moved by
+rini's own raises.
+
+A raise walks every window of the workspace, so the window server's z-order matches
+the strip order. macOS reports a focus change for each window it touches on the way,
+and `WindowServerFocusChanged` was taken at face value: each report moved the
+selection to that window and the strip scrolled to it. One `MoveFocus(Right)` press,
+with a floating window focused beforehand, measured on 18 windows:
+
+```
+0:27.628  cmd=MoveFocus(Right)
+0:27.631  strip movement  now=12548  focused=idx 58     <- the real target, no movement
+0:27.696  strip movement  now=1722   focused=idx 68     <- raise echo
+0:27.734  strip movement  now=14270  focused=idx 92     <- raise echo
+0:27.855  strip movement  now=0      focused=idx 71     <- raise echo
+0:27.869  strip movement  now=9104   focused=idx 119    <- raise echo
+0:27.909  strip movement  now=9965   focused=idx 89     <- raise echo
+0:27.936  strip movement  now=12548  focused=idx 58     <- back where it started
+```
+
+Eleven `RaiseCompleted` events, all `sequence_id: 11`, all from that one press. Seven
+scroll targets in 276ms, up to 14,270pt apart, ending on the offset it started from:
+the press moved the strip nowhere and swept it across the whole workspace six times
+to get there. Coalescing cannot fix this — 276ms is longer than any window that
+would still feel immediate — and the retargeting itself was working correctly. The
+destinations were garbage.
+
+`RaiseEcho` records the windows each raise is about to touch, minus the one that is
+meant to end up focused, and focus reports for those are dropped for 400ms. The
+target's own report is never dropped, so the press still lands. Costs: a click that
+lands on a just-raised window within 400ms of a keystroke does not scroll the strip
+to it.
 
 ### What the remaining delay is
 
@@ -864,6 +1018,35 @@ produced a fourth animation a second later, and the log names the cause:
 
 macOS took most of a second to make the app frontmost. rini follows focus, so the
 strip moves when the activation lands, not when the key is pressed.
+
+## A workspace switch is not a strip movement
+
+Switching to a window in another workspace that its own strip had scrolled away from
+moved diagonally, or slid vertically and then panned sideways. Both shapes are one
+bug, and it is not in the switch: `travel()` has always returned `from.x == to.x ==
+0`, so the switch itself only ever moves in y.
+
+The strip offset was remembered per SPACE, while `strip_scroll_offset(space)` returns
+whichever workspace is currently ACTIVE. So the first layout pass after a switch
+compared the destination workspace's offset against the departed one's and reported
+the difference as a movement no window had made. Measured in a test on two
+workspaces, six columns: **5529.6pt of phantom horizontal pan** for a switch that
+moved nothing sideways.
+
+- Landing after the slide, that pan is the "sideways" half.
+- Landing while the slide is still in flight, chaining folds it into the residual and
+  the whole thing goes diagonal.
+
+Two changes. The offset is now keyed by `(space, workspace)`, because every workspace
+has its own strip and two of them are not comparable. And a switch CLAIMS the
+destination's offset as it builds the canvas, because the destination row is drawn at
+that scroll already — the strip arrives with the target window in view, so revealing
+it afterwards is not something left to do.
+
+The claim is exactly the offset the rows were drawn from, so a genuine scroll after
+the switch still animates. What the claim would hide is a destination row that was
+never scrolled to the target in the first place: `lands_in_view` checks for that at
+build time and logs it, since the target would then simply never be revealed.
 
 ## A strip scroll is one movement, so it has to be one canvas
 
@@ -981,6 +1164,40 @@ off the left.
 
 Inferred, not proven by a direct write test: the clamp keeps a window's left
 portion reachable, which is where its titlebar controls are.
+
+### So off-strip columns are parked, not written at their strip coordinate
+
+The strip coordinate is never sent for a column with nothing on screen. It gets the
+same corner park the workspace-hide path uses, which macOS honours, and the result on
+the same desktop is 1pt instead of 40:
+
+```
+before:  6 windows x=-819  (40pt showing)   3 x=-1680 (40pt)   2 x=1688 (40pt)
+after:  13 windows x=1727, y≈1080          (1pt, bottom-right corner)
+```
+
+Three things make this safe, and each one was a reason it could not have been done
+before the overlay existed:
+
+- **The strip's geometry is untouched.** `calculate_layout_for_workspace` still
+  answers with real strip coordinates, and that is what the animation canvas is built
+  from. Only the physical placement changes.
+- **The windows are still captured.** Verified after the change: `tiles=17,
+  missing=0`. A corner-parked window is a full-size window that happens to be off
+  screen, and ScreenCaptureKit re-renders it regardless.
+- **They are NOT resized.** A stub-sized window would invalidate its cached picture,
+  and every park and unpark would cost an application relayout. Moving a full-size
+  window achieves the same 1pt result with neither.
+
+The park corner records which side the column was on, so `entry_frame` can bring it
+back in from that edge. Without that, a window returning to the strip animates from
+its real frame and flies in diagonally from the bottom of the display.
+`calculate_hidden_position_multi` may flip the corner to keep the park off a second
+display, and then the side is lost and the entry is guessed from the destination.
+
+A column with ANY part on screen keeps the position the layout gave it. Measured
+after the change: one column sat at x = 1726 with 2pt showing, which is the strip
+genuinely continuing past the edge rather than a parked window.
 
 ## There is one overlay, so it follows the space being animated
 

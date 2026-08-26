@@ -40,6 +40,9 @@ pub struct CanvasWindow {
     /// A floating window does not belong to the strip, so a strip scroll must not carry it along. It does
     /// belong to a workspace, so a switch between workspaces DOES move it, and that path leaves this false.
     pub pinned: bool,
+    /// Off the strip, and so in the other z-order group. Separate from `pinned`, which is about whether the
+    /// canvas carries the window along: a workspace switch moves floating windows without unpinning them.
+    pub floating: bool,
 }
 
 /// One window's part in an animation, as the caller describes it.
@@ -51,13 +54,15 @@ pub struct AnimationRequest {
     pub from: CGRect,
     /// Frame the window is arriving at, in display coordinates.
     pub to: CGRect,
+    /// Off the strip, and so in the other z-order group.
+    pub floating: bool,
 }
 
 #[derive(Debug)]
 pub enum Event {
     /// Animate a set of windows. The caller must have already placed the real windows at their
     /// final frames, or arrange to do so immediately after sending this.
-    Animate { windows: Vec<AnimationRequest>, duration: Duration },
+    Animate { windows: Vec<AnimationRequest>, focus: Option<WindowId>, duration: Duration },
     /// Display geometry for the overlay. Must be the USABLE frame, excluding the menu bar strip,
     /// so the user's bar is not covered and made to flicker.
     SetDisplay { id: u32, frame: CGRect, scale: f64 },
@@ -78,6 +83,8 @@ pub enum Event {
         to_offset: CGPoint,
         /// Real screen frames to apply once the overlay is covering them.
         final_frames: Vec<(WindowId, CGRect)>,
+        /// The window that will hold focus once this settles, drawn in front of the rest.
+        focus: Option<WindowId>,
         duration: Duration,
     },
     /// One frame of the running animation. Posted by the run loop timer, not by any other actor.
@@ -364,14 +371,17 @@ impl WorkspaceAnimation {
     fn handle(&mut self, event: Event) {
         match event {
             Event::SetDisplay { id, frame, scale } => self.set_display(id, frame, scale),
-            Event::Animate { windows, duration } => self.start(windows, duration),
+            Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
             Event::AnimateCanvas {
                 windows,
                 from_offset,
                 to_offset,
                 final_frames,
+                focus,
                 duration,
-            } => self.start_canvas(windows, from_offset, to_offset, final_frames, duration),
+            } => {
+                self.start_canvas(windows, from_offset, to_offset, final_frames, focus, duration)
+            }
             Event::RefreshSnapshot { window, server_id, size } => {
                 self.refresh_snapshot(window, server_id, size)
             }
@@ -659,9 +669,6 @@ impl WorkspaceAnimation {
     /// The whole path is sampled, not just its ends: a window that sweeps across mid-animation is
     /// exactly what conveys how far the strip travelled, and testing endpoints alone excluded it.
     fn is_worth_animating(&self, from: CGRect, to: CGRect, display: CGRect) -> bool {
-        /// Fraction of the window that must be on screen at some sampled moment. Low, because a window
-        /// crossing the display is only partly on it for most of the crossing.
-        const MIN_ON_SCREEN: f64 = 0.25;
         /// Samples along the path. Enough that a window cannot cross the display between two of them:
         /// the fastest realistic travel is a few display widths, so eleven samples leave any crossing
         /// window on screen for at least one of them.
@@ -671,10 +678,11 @@ impl WorkspaceAnimation {
         if area <= 0.0 {
             return false;
         }
+        let enough = min_on_screen(is_moving(from, to));
         (0..SAMPLES).any(|step| {
             let t = step as f64 / (SAMPLES - 1) as f64;
             let at = crate::ui::workspace_overlay::lerp_rect(from, to, t);
-            on_screen_fraction(at, display) >= MIN_ON_SCREEN
+            on_screen_fraction(at, display) >= enough
         })
     }
 
@@ -693,7 +701,12 @@ impl WorkspaceAnimation {
         }
     }
 
-    fn start(&mut self, windows: Vec<AnimationRequest>, duration: Duration) {
+    fn start(
+        &mut self,
+        windows: Vec<AnimationRequest>,
+        focus: Option<WindowId>,
+        duration: Duration,
+    ) {
         if windows.is_empty() {
             return;
         }
@@ -702,10 +715,14 @@ impl WorkspaceAnimation {
             return;
         };
 
-        // Every window's destination, whether or not it has a picture. A window with no snapshot is
-        // not drawn, but it still has to be placed.
-        let final_frames: Vec<(WindowId, CGRect)> =
-            windows.iter().map(|request| (request.window, request.to)).collect();
+        // Every window's destination, whether or not it has a picture: one with no snapshot is not drawn
+        // but still has to be placed. Windows standing still are excluded, because asking an application
+        // to move a window to where it already is costs a round trip and invites another layout pass.
+        let final_frames: Vec<(WindowId, CGRect)> = windows
+            .iter()
+            .filter(|request| is_moving(request.from, request.to))
+            .map(|request| (request.window, request.to))
+            .collect();
 
         // A canvas movement already covers this ground and owns the tile layers, so this path must not
         // touch them. Its destinations still matter, since a later pass can move a window, so they are
@@ -730,13 +747,14 @@ impl WorkspaceAnimation {
         // Front-to-back order straight from the window server, so the overlay stacks tiles the way
         // the screen is actually stacked.
         let depths = crate::sys::window_server::front_to_back_depths();
+        let focused_group = focus_group(focus, windows.iter().map(|r| (r.window, r.floating)));
 
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
         let mut offscreen = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
         for request in &windows {
-            let start = actual_start(request);
+            let start = actual_start(request, display_frame);
             // Parked slivers are excluded on the way in AND on the way out: a window arriving from
             // off-strip has no visible starting point, and one leaving has no visible destination.
             if !self.is_worth_animating(start, request.to, display_frame) {
@@ -785,12 +803,12 @@ impl WorkspaceAnimation {
                     from: to_overlay_space(start, display_frame),
                     to: to_overlay_space(request.to, display_frame),
                     snapshot,
-                    // Unknown windows sort behind everything known, which is the safe default: a tile
-                    // drawn too far back is far less noticeable than one drawn over the front window.
-                    depth: depths
-                        .get(&request.server_id.as_u32())
-                        .copied()
-                        .unwrap_or(usize::MAX / 2),
+                    depth: crate::model::z_group::tile_depth(
+                        depths.get(&request.server_id.as_u32()).copied(),
+                        focus == Some(request.window),
+                        group_of(request.floating),
+                        focused_group,
+                    ),
                 }),
                 // No usable picture. Better to leave the window out than to draw a smear: it will
                 // simply appear at its destination when the overlay drops.
@@ -936,6 +954,7 @@ impl WorkspaceAnimation {
         from_offset: CGPoint,
         to_offset: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
+        focus: Option<WindowId>,
         duration: Duration,
     ) {
         // Remember these before anything can fail, so a window with no picture is still placed and
@@ -950,6 +969,7 @@ impl WorkspaceAnimation {
             .collect();
 
         let depths = crate::sys::window_server::front_to_back_depths();
+        let focused_group = focus_group(focus, windows.iter().map(|w| (w.window, w.floating)));
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
@@ -982,10 +1002,12 @@ impl WorkspaceAnimation {
                         window: window.window,
                         frame: window.frame,
                         snapshot,
-                        depth: depths
-                            .get(&window.server_id.as_u32())
-                            .copied()
-                            .unwrap_or(usize::MAX / 2),
+                        depth: crate::model::z_group::tile_depth(
+                            depths.get(&window.server_id.as_u32()).copied(),
+                            focus == Some(window.window),
+                            group_of(window.floating),
+                            focused_group,
+                        ),
                         pinned: window.pinned,
                     });
                 }
@@ -1513,6 +1535,9 @@ impl WorkspaceAnimation {
             .map(|(server_id, frame)| AnimationRequest {
                 window: synthetic_window_id(server_id),
                 server_id,
+                // The debug slide works from the window server and knows nothing about the layout, so
+                // everything it finds is treated as being on the strip.
+                floating: false,
                 from: CGRect::new(
                     CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
                     frame.size,
@@ -1521,7 +1546,8 @@ impl WorkspaceAnimation {
             })
             .collect();
         debug!(count = requests.len(), dx, dy, "running debug slide");
-        self.start(requests, duration);
+        // No focus target: the debug slide moves everything and changes nothing about focus.
+        self.start(requests, None, duration);
     }
 }
 
@@ -1550,11 +1576,61 @@ pub(crate) fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
 ///
 /// The window server always knows the truth, and asking it is a read rather than a round trip into
 /// the owning application.
-fn actual_start(request: &AnimationRequest) -> CGRect {
-    match crate::sys::window_server::get_window(request.server_id) {
+fn actual_start(request: &AnimationRequest, display: CGRect) -> CGRect {
+    let real = match crate::sys::window_server::get_window(request.server_id) {
         Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => info.frame,
         _ => request.from,
+    };
+    // A parked window's real frame is a corner of the display, so animating from it would fly the window in
+    // diagonally from the bottom. It belongs to the strip and comes back in from the edge it was parked
+    // against.
+    if crate::model::HiddenWindowPlacement::is_off_screen(display, real) {
+        return crate::model::HiddenWindowPlacement::entry_frame(real, request.to, display);
     }
+    real
+}
+
+/// How much of a window has to be on screen for the overlay to bother with it.
+///
+/// A window being moved needs a real share, or every parked sliver becomes a tile. A window standing still
+/// needs only to be visible at all, because whatever shows of it turns into wallpaper otherwise.
+fn min_on_screen(moving: bool) -> f64 {
+    if moving { 0.25 } else { f64::MIN_POSITIVE }
+}
+
+/// Which group a window belongs to.
+fn group_of(floating: bool) -> crate::model::z_group::StackGroup {
+    if floating {
+        crate::model::z_group::StackGroup::Floating
+    } else {
+        crate::model::z_group::StackGroup::Strip
+    }
+}
+
+/// The group the window gaining focus belongs to, which decides which group is drawn in front.
+///
+/// Falls back to the strip when the focus target is not among the windows being animated, since that is
+/// where focus lands for every movement the strip itself makes.
+fn focus_group(
+    focus: Option<WindowId>,
+    mut windows: impl Iterator<Item = (WindowId, bool)>,
+) -> crate::model::z_group::StackGroup {
+    let Some(focus) = focus else { return crate::model::z_group::StackGroup::Strip };
+    windows
+        .find(|(window, _)| *window == focus)
+        .map(|(_, floating)| group_of(floating))
+        .unwrap_or(crate::model::z_group::StackGroup::Strip)
+}
+
+/// Whether a request actually moves its window.
+///
+/// Requests with the same start and end are there to be drawn, not moved. Half a point, because the layout
+/// rounds to whole points.
+fn is_moving(from: CGRect, to: CGRect) -> bool {
+    (to.origin.x - from.origin.x).abs() >= 0.5
+        || (to.origin.y - from.origin.y).abs() >= 0.5
+        || (to.size.width - from.size.width).abs() >= 0.5
+        || (to.size.height - from.size.height).abs() >= 0.5
 }
 
 /// A stable [`WindowId`] derived from a window server id.
@@ -1608,6 +1684,36 @@ mod tests {
 
         fn wid(idx: u32) -> WindowId {
             WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        /// A request whose start and end match is in the list to be drawn, not to be moved. Placing it
+        /// would be an Accessibility round trip that asks an application to put a window where it
+        /// already is, and every such write invites another layout pass.
+        #[test]
+        fn a_window_that_is_not_going_anywhere_is_not_moving() {
+            let frame = CGRect::new(CGPoint::new(502.0, 135.0), CGSize::new(723.0, 879.0));
+            assert!(!is_moving(frame, frame));
+        }
+
+        /// A window standing still with a sliver on screen still has to be drawn: whatever shows of it
+        /// would otherwise be replaced by wallpaper for the length of the animation. A window being moved
+        /// needs a real share of the display, or every parked sliver ends up as a tile.
+        #[test]
+        fn a_still_window_earns_its_tile_with_any_part_on_screen() {
+            assert!(min_on_screen(false) < min_on_screen(true));
+            assert!(min_on_screen(false) > 0.0, "entirely off screen is still not worth drawing");
+            assert_eq!(min_on_screen(true), 0.25);
+        }
+
+        #[test]
+        fn a_window_that_changes_position_or_size_is_moving() {
+            let frame = CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(859.0, 1081.0));
+            let moved = CGRect::new(CGPoint::new(865.0, 32.0), CGSize::new(859.0, 1081.0));
+            let lowered = CGRect::new(CGPoint::new(4.0, 1149.0), CGSize::new(859.0, 1081.0));
+            let widened = CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(1720.0, 1081.0));
+            assert!(is_moving(frame, moved));
+            assert!(is_moving(frame, lowered));
+            assert!(is_moving(frame, widened));
         }
 
         fn depths(pairs: &[(u32, usize)]) -> HashMap<u32, usize> {

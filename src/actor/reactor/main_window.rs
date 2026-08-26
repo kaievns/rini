@@ -19,6 +19,40 @@ pub(crate) struct MainWindowTracker {
     pending_activation: Option<(pid_t, Option<WindowId>)>,
 }
 
+/// The focus reports rini's own raises are about to produce.
+///
+/// macOS reports a focus change for every window a raise touches, and a raise walks the whole workspace.
+/// The window meant to end up focused is never swallowed. Cascade measured in
+/// `docs/capture-overlay-research.md`, "The offset is honest, and it still moved eight times per press".
+#[derive(Debug, Default)]
+pub(crate) struct RaiseEcho {
+    windows: Vec<WindowId>,
+    since: Option<std::time::Instant>,
+}
+
+impl RaiseEcho {
+    /// Long enough to outlast the cascade, which measured 276ms, and short enough not to swallow a click
+    /// that follows the keystroke.
+    const WINDOW: std::time::Duration = std::time::Duration::from_millis(400);
+
+    /// Records the windows a raise is about to touch, superseding the previous raise.
+    pub(crate) fn expect(
+        &mut self,
+        raised: impl Iterator<Item = WindowId>,
+        target: Option<WindowId>,
+        now: std::time::Instant,
+    ) {
+        self.windows = raised.filter(|window| Some(*window) != target).collect();
+        self.since = Some(now);
+    }
+
+    /// Whether this focus report is rini's own raise coming back, rather than the user going somewhere.
+    pub(crate) fn swallows(&self, window: WindowId, now: std::time::Instant) -> bool {
+        self.since.is_some_and(|since| now.duration_since(since) < Self::WINDOW)
+            && self.windows.contains(&window)
+    }
+}
+
 /// Which window an app activation should really focus, or `None` to accept macOS's choice.
 ///
 /// macOS picks the window on cmd-tab, and it can pick one rini has parked off screen for a workspace it is
@@ -205,8 +239,76 @@ mod tests {
 
     use super::super::testing::{Apps, make_windows, space_state_event};
     use super::super::{Event, Quiet, Reactor, SpaceId, WindowId};
-    use super::{AppState, MainWindowTracker, activation_focus_target};
+    use super::{AppState, MainWindowTracker, RaiseEcho, activation_focus_target};
     use crate::layout_engine::LayoutEngine;
+
+    mod raise_echo {
+        use std::time::{Duration, Instant};
+
+        use super::{RaiseEcho, WindowId};
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId::new(1, idx)
+        }
+
+        /// The measured cascade: one press raised eleven windows, and each raise came back as a focus
+        /// report that moved the layout's selection and scrolled the strip to that window.
+        #[test]
+        fn a_raised_window_reporting_focus_is_rinis_own_echo() {
+            let now = Instant::now();
+            let mut echo = RaiseEcho::default();
+            echo.expect([wid(68), wid(92), wid(58)].into_iter(), Some(wid(58)), now);
+            assert!(echo.swallows(wid(68), now));
+            assert!(echo.swallows(wid(92), now));
+        }
+
+        /// The one report that matters. Swallowing the target too would leave the layout's selection
+        /// behind wherever it was, so the press would do nothing at all.
+        #[test]
+        fn the_window_meant_to_end_up_focused_is_never_swallowed() {
+            let now = Instant::now();
+            let mut echo = RaiseEcho::default();
+            echo.expect([wid(68), wid(58)].into_iter(), Some(wid(58)), now);
+            assert!(!echo.swallows(wid(58), now));
+        }
+
+        #[test]
+        fn a_window_this_raise_never_touched_is_the_user_going_somewhere() {
+            let now = Instant::now();
+            let mut echo = RaiseEcho::default();
+            echo.expect([wid(68)].into_iter(), Some(wid(58)), now);
+            assert!(!echo.swallows(wid(120), now));
+        }
+
+        /// A click that lands well after the cascade has finished is the user, whatever it lands on.
+        #[test]
+        fn the_echo_stops_being_believed_once_the_cascade_is_over() {
+            let now = Instant::now();
+            let mut echo = RaiseEcho::default();
+            echo.expect([wid(68)].into_iter(), Some(wid(58)), now);
+            assert!(echo.swallows(wid(68), now + Duration::from_millis(276)));
+            assert!(!echo.swallows(wid(68), now + Duration::from_millis(500)));
+        }
+
+        /// Rapid presses: the second raise supersedes the first, and its own target must get through even
+        /// though the previous raise had it down as an echo.
+        #[test]
+        fn a_newer_raise_supersedes_the_one_before_it() {
+            let now = Instant::now();
+            let mut echo = RaiseEcho::default();
+            echo.expect([wid(68), wid(92)].into_iter(), Some(wid(58)), now);
+            let later = now + Duration::from_millis(50);
+            echo.expect([wid(58), wid(92)].into_iter(), Some(wid(92)), later);
+            assert!(!echo.swallows(wid(92), later), "the new target gets through");
+            assert!(echo.swallows(wid(58), later), "and the new echoes are swallowed");
+            assert!(!echo.swallows(wid(68), later), "the old raise is forgotten");
+        }
+
+        #[test]
+        fn nothing_is_swallowed_before_any_raise() {
+            assert!(!RaiseEcho::default().swallows(wid(68), Instant::now()));
+        }
+    }
 
     /// The measured case: cmd-tab to Ghostty, and macOS makes the built-in display's window main even
     /// though the user was in the external display's one. Following the pick would switch the built-in

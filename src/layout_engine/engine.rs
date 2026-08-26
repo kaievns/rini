@@ -2344,7 +2344,31 @@ impl LayoutEngine {
                 );
 
                 for (wid, rect) in tiled_positions {
-                    positions.insert(wid, rect);
+                    // A column scrolled right off the strip is parked in a corner rather than written at
+                    // its strip coordinate. macOS refuses the coordinate and leaves 40pt of the window
+                    // showing at the edge; it honours the corner at 1pt. The strip's own geometry is
+                    // untouched — `calculate_layout_for_workspace` still answers with the real position,
+                    // which is what the animation canvas is built from. See "macOS will not park a window
+                    // further off the left edge than 40pt" in `docs/capture-overlay-research.md`.
+                    let placed = if crate::model::HiddenWindowPlacement::is_off_screen(screen, rect) {
+                        // The corner records which side of the strip the column was on, so an animation
+                        // can bring it back in from that edge instead of up from the bottom.
+                        let corner = if rect.max().x <= screen.origin.x {
+                            HideCorner::BottomLeft
+                        } else {
+                            HideCorner::BottomRight
+                        };
+                        self.virtual_workspace_manager.calculate_hidden_position_multi(
+                            screen,
+                            rect,
+                            corner,
+                            None,
+                            all_screens,
+                        )
+                    } else {
+                        rect
+                    };
+                    positions.insert(wid, placed);
                 }
             }
 

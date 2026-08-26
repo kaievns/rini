@@ -173,6 +173,10 @@ impl AnimationManager {
         // will slide in on a later switch. Real WindowIds, which is the whole point: ids derived from
         // the window server never match what an animation looks up.
         let mut warm_targets: Vec<crate::ui::snapshot_service::SnapshotTarget> = Vec::new();
+        // The windows this pass leaves where they are. They still have to be DRAWN: the overlay is opaque
+        // and covers the display, so anything it omits vanishes for the length of the animation. See "The
+        // overlay has to draw everything it covers" in `docs/capture-overlay-research.md`.
+        let mut unmoved: Vec<(WindowId, CGRect, WindowServerId)> = Vec::new();
 
         for &(wid, target_frame) in layout {
             if skip_wid == Some(wid) {
@@ -191,6 +195,9 @@ impl AnimationManager {
                     Some(window) => {
                         let current_frame = window.frame_monotonic;
                         if target_frame.same_as(current_frame) {
+                            if let Some(wsid) = window.info.sys_id {
+                                unmoved.push((wid, current_frame, wsid));
+                            }
                             continue;
                         }
                         let wsid = window.info.sys_id;
@@ -201,6 +208,9 @@ impl AnimationManager {
                                 .is_some_and(|pending| pending.same_as(target_frame))
                             {
                                 trace!(?wid, ?target_frame, "Skipping redundant layout request");
+                                // Already on its way from an earlier pass, so this pass is not moving it
+                                // either, and the overlay still has to draw it.
+                                unmoved.push((wid, current_frame, wsid));
                                 continue;
                             }
                         }
@@ -247,6 +257,7 @@ impl AnimationManager {
                         server_id: wsid,
                         from: current_frame,
                         to: target_frame,
+                        floating: reactor.layout_manager.layout_engine.is_window_floating(wid),
                     });
                 }
                 if let Some(wsid) = window_server_id {
@@ -297,7 +308,39 @@ impl AnimationManager {
             // Only a real interactive drag should skip. is_in_drag() is the existing
             // signal for that, already used to suppress arrange passes mid-drag in
             // reactor.rs.
-            let skip_anim = (is_resize && reactor.is_in_drag()) || !layout_animate || low_power;
+            //
+            // A move nobody can see is not worth covering the display for. Guarded on the list being
+            // non-empty, because a window with no window server id never reaches it and an empty list
+            // must not read as "nothing is moving".
+            let motionless = !overlay_requests.is_empty() && !travels_visibly(&overlay_requests);
+            let skip_anim =
+                (is_resize && reactor.is_in_drag()) || !layout_animate || low_power || motionless;
+            if motionless {
+                debug!(
+                    windows = overlay_requests.len(),
+                    "no window travels far enough to see; placing rather than animating"
+                );
+            }
+
+            // Added after the movement tests above, which must judge only the windows going somewhere.
+            for (wid, frame, wsid) in unmoved {
+                let in_active_workspace = reactor
+                    .layout_manager
+                    .layout_engine
+                    .virtual_workspace_manager()
+                    .workspace_for_window(&reactor.state.windows, space, wid)
+                    .is_some_and(|ws| ws == active_ws);
+                if !in_active_workspace {
+                    continue;
+                }
+                overlay_requests.push(crate::actor::workspace_animation::AnimationRequest {
+                    window: wid,
+                    server_id: wsid,
+                    from: frame,
+                    to: frame,
+                    floating: reactor.layout_manager.layout_engine.is_window_floating(wid),
+                });
+            }
 
             // The overlay engine replaces the per-frame Accessibility writes entirely: the real
             // windows are placed once, and the motion the eye follows is drawn in the overlay.
@@ -346,6 +389,7 @@ impl AnimationManager {
                     let count = overlay_requests.len();
                     _ = tx.send(crate::actor::workspace_animation::Event::Animate {
                         windows: overlay_requests,
+                        focus: reactor.layout_manager.layout_engine.focused_window(),
                         duration,
                     });
                     trace!(count, "handed the layout to the overlay animation engine");
@@ -1123,6 +1167,7 @@ mod tests {
             server_id: crate::sys::window_server::WindowServerId::new(1),
             from: CGRect::new(CGPoint::new(from_x, 32.0), CGSize::new(859.0, 1081.0)),
             to: CGRect::new(CGPoint::new(to_x, 32.0), CGSize::new(859.0, 1081.0)),
+            floating: false,
         }
     }
 
@@ -1167,6 +1212,50 @@ mod tests {
     fn a_layout_that_moves_nothing_is_not_a_pan() {
         let requests = vec![moving(4.0, 4.0), moving(865.0, 865.0)];
         assert!(strip_pan_delta(&requests, display()).is_none());
+    }
+
+    /// Windows standing still are in the request list so the overlay can DRAW them, and the overlay has to
+    /// draw everything it covers. They must not be read as disagreeing with the pan, or adding them would
+    /// send every scroll to the per-window path.
+    #[test]
+    fn windows_standing_still_do_not_veto_a_pan() {
+        let requests = vec![
+            moving(4.0, -857.0),
+            moving(865.0, 4.0),
+            // The floating window and the parked columns, drawn where they already are.
+            moving(502.0, 502.0),
+            moving(-819.0, -819.0),
+        ];
+        let delta = strip_pan_delta(&requests, display()).expect("the moving windows agree");
+        assert_eq!(delta.x, -861.0);
+    }
+
+    /// A one-point move is the measured case, not a hypothetical: a floating window oscillated between
+    /// x = 502 and x = 503 on every space-state refresh, and each of those ran a full-screen animation that
+    /// blanked every other window for 350ms.
+    #[test]
+    fn a_move_of_a_single_point_is_not_worth_animating() {
+        assert!(!travels_visibly(&[moving(502.0, 503.0)]));
+        assert!(!travels_visibly(&[moving(503.0, 502.0)]));
+        assert!(!travels_visibly(&[]));
+    }
+
+    #[test]
+    fn a_real_move_is_worth_animating() {
+        // A column step on this display, and the smallest move that counts.
+        assert!(travels_visibly(&[moving(4.0, 865.0)]));
+        assert!(travels_visibly(&[moving(4.0, 6.0)]));
+        // One window going somewhere is enough, however many are standing still around it.
+        assert!(travels_visibly(&[moving(502.0, 502.0), moving(4.0, 865.0)]));
+    }
+
+    /// Vertical movement counts too: a workspace switch travels in y, and reading only x would treat one as
+    /// motionless and place every window instantly.
+    #[test]
+    fn travel_is_measured_on_both_axes() {
+        let mut vertical = moving(4.0, 4.0);
+        vertical.to.origin.y = 32.0 + 1117.0;
+        assert!(travels_visibly(&[vertical]));
     }
 
     /// With nothing on screen there is no honest witness, so every window votes. That is the old rule, kept
@@ -1891,6 +1980,26 @@ fn is_a_resize(from: CGSize, to: CGSize) -> bool {
     !crate::ui::window_snapshot::fits_frame((from.width, from.height), (to.width, to.height))
 }
 
+/// How far one window is travelling, as a single distance.
+///
+/// Diagonal moves are rare in a tiling layout, so the larger of the two axes is the honest measure and
+/// avoids paying for a square root on every window of every layout pass.
+fn travel(request: &crate::actor::workspace_animation::AnimationRequest) -> f64 {
+    let dx = request.to.origin.x - request.from.origin.x;
+    let dy = request.to.origin.y - request.from.origin.y;
+    dx.abs().max(dy.abs())
+}
+
+/// Whether any window in this pass moves far enough for the movement to be worth showing.
+///
+/// The threshold is about cost, not precision: an animation covers the display for its duration, so a
+/// one-point move buys nothing and freezes everything. Two points, because the layout rounds to whole
+/// points and a column boundary can land either side of where it was without anything having moved.
+fn travels_visibly(requests: &[crate::actor::workspace_animation::AnimationRequest]) -> bool {
+    const MIN_VISIBLE_TRAVEL: f64 = 2.0;
+    requests.iter().any(|request| travel(request) >= MIN_VISIBLE_TRAVEL)
+}
+
 /// How far the strip is moving, judged from the windows the user can actually see.
 ///
 /// A shared movement vector means the whole set is being panned, which the canvas can do as a single
@@ -1916,16 +2025,19 @@ fn strip_pan_delta(
     /// either side of its neighbour without the strip having done anything but slide.
     const TOLERANCE: f64 = 2.0;
 
-    let on_screen: Vec<_> = requests
+    // A window standing still has no opinion about where the strip is going, and counting one as a voter
+    // would make every pan look non-uniform.
+    let moving: Vec<_> = requests.iter().filter(|request| travel(request) >= 1.0).collect();
+    let on_screen: Vec<_> = moving
         .iter()
+        .copied()
         .filter(|request| {
             crate::actor::workspace_animation::on_screen_fraction(request.from, display)
                 >= MIN_ON_SCREEN
         })
         .collect();
-    // Nothing visible to judge by, so fall back to asking everything, which is the old rule.
-    let voters: Vec<_> =
-        if on_screen.is_empty() { requests.iter().collect() } else { on_screen };
+    // Nothing visible to judge by, so fall back to asking everything that moves, which is the old rule.
+    let voters: Vec<_> = if on_screen.is_empty() { moving } else { on_screen };
 
     let first = voters.first()?;
     let dx = first.to.origin.x - first.from.origin.x;

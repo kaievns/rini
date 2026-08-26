@@ -9,6 +9,7 @@ pub mod tree;
 pub mod tx_store;
 pub mod virtual_workspace;
 pub mod window_store;
+pub mod z_group;
 pub use app_rules::{
     AppRuleDecision, AppRuleEffects, AppRuleEngine, AppRuleResult, WindowRuleContext,
 };

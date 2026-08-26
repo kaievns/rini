@@ -318,15 +318,22 @@ pub struct Reactor {
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
     space_state: ForwardedSpaceState,
-    /// Where each space's strip viewport sat the last time a layout pass looked.
+    /// Where each WORKSPACE's strip viewport sat the last time a layout pass looked.
     ///
     /// The animation path needs the DISTANCE the strip is moving. Reading that off the windows is
     /// unreliable: macOS clamps the ones it will not place off screen, and the layout is recomputed several
     /// times per keystroke, so the same press produced five different answers. The scroll offset is the
-    /// layout's own description of the movement and changes exactly once per press.
-    last_strip_offset: HashMap<SpaceId, f64>,
+    /// layout's own description of the movement.
+    ///
+    /// Keyed by workspace, not by space, because every workspace has its own strip. Keyed by space alone,
+    /// the first pass after a workspace switch compared the new workspace's offset against the old one's
+    /// and animated the difference as a horizontal pan that no window had made.
+    last_strip_offset: HashMap<(SpaceId, crate::model::VirtualWorkspaceId), f64>,
     space_activation_policy: SpaceActivationPolicy,
     main_window_tracker: MainWindowTracker,
+    /// The focus reports rini's own raises are about to produce, so they are not mistaken for the user
+    /// moving. See [`main_window::RaiseEcho`].
+    raise_echo: main_window::RaiseEcho,
     drag_manager: managers::DragManager,
     workspace_switch_manager: managers::WorkspaceSwitchManager,
     recording_manager: managers::RecordingManager,
@@ -435,6 +442,7 @@ impl Reactor {
             last_strip_offset: HashMap::default(),
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
+            raise_echo: main_window::RaiseEcho::default(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
                 drag_swap_manager: crate::actor::drag_swap::DragManager::new(
@@ -1208,6 +1216,12 @@ impl Reactor {
                 if !self.is_space_active(reported_space) {
                     return Ok(EventOutcome::default());
                 }
+                // rini's own raise, coming back as a focus report. Following it moves the layout's
+                // selection to a window the user did not ask for, and the strip scrolls to it.
+                if self.raise_echo.swallows(window, std::time::Instant::now()) {
+                    trace!(?window, "ignoring a focus report provoked by rini's own raise");
+                    return Ok(EventOutcome::default());
+                }
                 // Whichever window gains or loses focus renders differently now, so both need a fresh
                 // picture before the next animation draws them.
                 self.refresh_focus_pictures(window);
@@ -1227,8 +1241,14 @@ impl Reactor {
                 if outcome.arrange.requested {
                     return Ok(outcome);
                 }
-                return Ok(EventOutcome::default()
-                    .with_layout_event(LayoutEvent::WindowFocused(reported_space, window)));
+                // A click raises only the window under the cursor, which splits the strip around a
+                // floating window. The strip is one group, so lift all of it.
+                let mut outcome = EventOutcome::default()
+                    .with_layout_event(LayoutEvent::WindowFocused(reported_space, window));
+                if let Some(regroup) = self.regroup_strip_for_focus(reported_space, window) {
+                    outcome = outcome.with_raise_request(regroup);
+                }
+                return Ok(outcome);
             }
             Event::RegisterWmSender(sender) => {
                 return Ok(system_workflow::handle_register_wm_sender(
@@ -2161,9 +2181,7 @@ impl Reactor {
         }
 
         for request in outcome.raise_requests {
-            if let Err(error) = self.communication_manager.raise_manager_tx.try_send(request) {
-                warn!(%error, "failed to send raise request");
-            }
+            self.dispatch_raise(request);
         }
 
         if let Some((space, window)) =
@@ -4035,6 +4053,7 @@ impl Reactor {
                 // A floating window is not in the strip. Panning it with the strip dragged it sideways
                 // and snapped it back at the handover.
                 pinned: self.layout_manager.layout_engine.is_window_floating(*wid),
+                floating: self.layout_manager.layout_engine.is_window_floating(*wid),
             });
         }
         if windows.is_empty() {
@@ -4071,6 +4090,7 @@ impl Reactor {
             from_offset,
             to_offset,
             final_frames,
+            focus: self.layout_manager.layout_engine.focused_window(),
             duration,
         });
         true
@@ -4178,6 +4198,7 @@ impl Reactor {
                     // Never pinned here. A floating window belongs to a workspace, so it leaves with the
                     // one being left and arrives with the one being entered.
                     pinned: false,
+                    floating: self.layout_manager.layout_engine.is_window_floating(wid),
                 });
                 let _ = &mut final_frames;
             }
@@ -4213,12 +4234,38 @@ impl Reactor {
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
         );
 
+        // The switch owns the destination's horizontal position. Its row is drawn at that scroll already, so
+        // the strip arrives with the target window in view and the only movement the eye sees is vertical.
+        // Without claiming it, the next pass reads the destination's offset as a fresh movement and pans
+        // sideways after the slide has landed.
+        if let Some(destination) = self.layout_manager.layout_engine.active_workspace(space)
+            && let Some(offset) = self.layout_manager.layout_engine.strip_scroll_offset(space)
+        {
+            self.last_strip_offset.insert((space, destination), offset);
+        }
+
+        // That claim suppresses the pan that would otherwise reveal the target, so if the destination row
+        // was NOT drawn scrolled to it, the target stays off screen. That would be a layout problem rather
+        // than an animation one, and it is silent, so say so.
+        if let Some(target) = self.layout_manager.layout_engine.focused_window()
+            && let Some(placed) = windows.iter().find(|window| window.window == target)
+            && !crate::model::canvas_stack::lands_in_view(placed.frame, display_bounds.size.width)
+        {
+            tracing::debug!(
+                idx = target.idx.get(),
+                x = placed.frame.origin.x,
+                width = display_bounds.size.width,
+                "the switch target is off the destination row's viewport and will not be revealed"
+            );
+        }
+
         self.publish_animation_display_for(Some(space));
         _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {
             windows,
             from_offset,
             to_offset,
             final_frames,
+            focus: self.layout_manager.layout_engine.focused_window(),
             duration,
         });
         // Every workspace, so the next switch in any direction has both strips drawn.
@@ -4252,14 +4299,25 @@ impl Reactor {
         }
     }
 
-    /// How far `space`'s strip has moved since the last layout pass looked, and remember where it is now.
+    /// How far the ACTIVE workspace's strip has moved since a pass last looked at that strip, and remember
+    /// where it is now.
     ///
     /// `None` when the space has no strip. `Some(0)` is meaningful and different: it says the strip did not
     /// move, so whatever else the layout did is not a pan. Windows move OPPOSITE to the viewport, so the
     /// sign is negated: scrolling the viewport further along the strip carries the windows left.
+    ///
+    /// The first look at a workspace reports no movement, which is what a switch onto it needs: the switch
+    /// itself is vertical, and the destination's own scroll is drawn into the canvas rather than panned to.
     pub(crate) fn take_strip_movement(&mut self, space: SpaceId) -> Option<CGPoint> {
+        let workspace = self.layout_manager.layout_engine.active_workspace(space)?;
         let now = self.layout_manager.layout_engine.strip_scroll_offset(space)?;
-        let before = self.last_strip_offset.insert(space, now);
+        let before = self.last_strip_offset.insert((space, workspace), now);
+        tracing::debug!(
+            now,
+            before = before.unwrap_or(now),
+            focused = format!("{:?}", self.layout_manager.layout_engine.focused_window()),
+            "strip movement"
+        );
         Some(CGPoint::new(-(now - before.unwrap_or(now)), 0.0))
     }
 
@@ -5179,6 +5237,20 @@ impl Reactor {
             raise_windows.retain(|wid| !self.is_window_parked_offscreen(*wid));
         }
 
+        // The strip goes up as one group. A focus move raises only the window it lands on, which leaves a
+        // floating window in front of the columns beside it. See `model::z_group`.
+        if let Some(target) = focus_window {
+            let space = self.best_space_for_window_id(target);
+            if let Some(space) = space {
+                for wid in self.strip_group_to_lift(space, target) {
+                    if !raise_windows.contains(&wid) {
+                        self.insert_app_handle_for_window(&mut app_handles, wid);
+                        raise_windows.push(wid);
+                    }
+                }
+            }
+        }
+
         let focus_window = focus_window.filter(|wid| self.is_window_on_active_space(*wid));
         if let Some(space) = workspace_switch_space {
             self.layout_manager.layout_engine.commit_workspace_focus(
@@ -5211,15 +5283,112 @@ impl Reactor {
             (wid, warp)
         });
 
-        let msg = raise_manager::Event::RaiseRequest(RaiseRequest {
+        self.dispatch_raise(raise_manager::Event::RaiseRequest(RaiseRequest {
             raise_windows: windows_by_app_and_screen.into_values().collect(),
             focus_window: focus_window_with_warp,
             app_handles,
             focus_quiet,
-        });
+        }));
+    }
 
-        if let Err(e) = self.communication_manager.raise_manager_tx.try_send(msg) {
-            warn!("Failed to send raise request to raise manager: {}", e);
+    /// Which z-order group a window belongs to.
+    fn stack_group_of(&self, window: WindowId) -> crate::model::z_group::StackGroup {
+        if self.layout_manager.layout_engine.is_window_floating(window) {
+            crate::model::z_group::StackGroup::Floating
+        } else {
+            crate::model::z_group::StackGroup::Strip
+        }
+    }
+
+    /// Puts the strip back in front of the windows that are not on it, after focus lands on the strip.
+    ///
+    /// macOS raises the one window that was clicked, so clicking one half of a 50/50 pair lifts it over a
+    /// floating window and leaves the other half behind it. The strip is one surface and has to be one
+    /// group. `None` when the order already obeys the rule, which is the common case and costs nothing:
+    /// putting it back costs an Accessibility raise per window on screen.
+    ///
+    /// Only the on-screen windows are raised. A parked column is invisible, so its place in the order
+    /// cannot be seen, and it is raised anyway by the layout pass that scrolls it back into view.
+    fn strip_group_to_lift(&mut self, space: SpaceId, focused: WindowId) -> Vec<WindowId> {
+        use crate::model::z_group::StackGroup;
+
+        // A floating window taking focus is already in front: macOS put it there, and that matches the rule.
+        if self.stack_group_of(focused) == StackGroup::Floating {
+            return Vec::new();
+        }
+
+        let depths = crate::sys::window_server::front_to_back_depths();
+        let mut on_screen: Vec<(usize, WindowId, StackGroup)> = self
+            .layout_manager
+            .layout_engine
+            .windows_in_active_workspace(&self.state.windows, space)
+            .into_iter()
+            .filter(|wid| !self.is_window_parked_offscreen(*wid))
+            .filter_map(|wid| {
+                let server_id = self.state.windows.window(wid)?.info.sys_id?;
+                let depth = depths.get(&server_id.as_u32()).copied()?;
+                Some((depth, wid, self.stack_group_of(wid)))
+            })
+            .collect();
+        on_screen.sort_by_key(|(depth, _, _)| *depth);
+
+        let order: Vec<(WindowId, StackGroup)> =
+            on_screen.iter().map(|(_, wid, group)| (*wid, *group)).collect();
+        crate::model::z_group::strip_regroup(&order)
+    }
+
+    /// The raise that puts the strip back in front, for a focus change that carries no raise of its own.
+    ///
+    /// A click is raised by macOS, not by rini, so nothing else in this path will fix the order.
+    fn regroup_strip_for_focus(
+        &mut self,
+        space: SpaceId,
+        focused: WindowId,
+    ) -> Option<raise_manager::Event> {
+        let to_raise = self.strip_group_to_lift(space, focused);
+        if to_raise.is_empty() {
+            return None;
+        }
+
+        let mut app_handles = HashMap::default();
+        let mut by_app: HashMap<(pid_t, Option<SpaceId>), Vec<WindowId>> = HashMap::default();
+        for wid in &to_raise {
+            self.insert_app_handle_for_window(&mut app_handles, *wid);
+            by_app.entry((wid.pid, self.best_space_for_window_id(*wid))).or_default().push(*wid);
+        }
+        if by_app.is_empty() {
+            return None;
+        }
+        self.insert_app_handle_for_window(&mut app_handles, focused);
+        debug!(
+            focused = focused.idx.get(),
+            windows = by_app.values().map(Vec::len).sum::<usize>(),
+            "a floating window was in front of the strip; lifting the whole strip over it"
+        );
+        Some(raise_manager::Event::RaiseRequest(RaiseRequest {
+            raise_windows: by_app.into_values().collect(),
+            focus_window: Some((focused, None)),
+            app_handles,
+            // rini's own doing, so the activation it provokes must not be read as the user moving.
+            focus_quiet: Quiet::Yes,
+        }))
+    }
+
+    /// Sends a raise request, remembering the focus reports it is about to provoke.
+    ///
+    /// The single place raises leave the reactor, so nothing can issue one without its echo being recorded.
+    /// See [`main_window::RaiseEcho`].
+    fn dispatch_raise(&mut self, request: raise_manager::Event) {
+        if let raise_manager::Event::RaiseRequest(details) = &request {
+            let touched: Vec<WindowId> = details.raise_windows.iter().flatten().copied().collect();
+            self.raise_echo.expect(
+                touched.into_iter(),
+                details.focus_window.map(|(wid, _)| wid),
+                std::time::Instant::now(),
+            );
+        }
+        if let Err(error) = self.communication_manager.raise_manager_tx.try_send(request) {
+            warn!(%error, "failed to send raise request");
         }
     }
 
