@@ -240,6 +240,25 @@ fade_enabled = false
 # native macos mission control fade is about 180ms
 fade_duration_ms = 180.0
 
+# Window borders drawn on the animation overlay's tiles.
+#
+# Border tools (JankyBorders and kin) draw their borders as separate windows tracking
+# the real ones, which sit parked behind the opaque overlay for the length of every
+# animation — so the borders vanish for the flight and pop back at the handover.
+# Mirror your border tool's settings here and the tiles wear the same border during
+# animations. Colors use the JankyBorders 0xAARRGGBB form, so a bordersrc copies
+# across verbatim. Hot-reloads.
+[settings.ui.animation_borders]
+enabled = false
+# stroke width in points, matching the border tool's `width`
+width = 1.5
+# "square" hugs the frame; "round" follows the window's ~10pt corner radius
+style = "round"
+# focused window border, 0xAARRGGBB
+active_color = "0xffffffff"
+# every other window, 0xAARRGGBB
+inactive_color = "0x80808080"
+
 # Trackpad gestures
 [settings.gestures]
 # Enable horizontal swipes to switch virtual workspaces

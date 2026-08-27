@@ -6308,18 +6308,23 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
     let (animation_tx, mut animation_rx) = actor::channel();
     reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
 
-    reactor.publish_animation_display_for(Some(built_in_space));
-    let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::actor::workspace_animation::Event::SetDisplay { id, .. } = published else {
-        panic!("expected SetDisplay, got {published:?}");
+    // The publish carries the border spec alongside the geometry; this test cares only about
+    // which display the geometry names.
+    let published_display = |rx: &mut actor::Receiver<crate::actor::workspace_animation::Event>| {
+        while let Ok((_, event)) = rx.try_recv() {
+            if let crate::actor::workspace_animation::Event::SetDisplay { id, .. } = event {
+                return id;
+            }
+        }
+        panic!("a display should be published");
     };
+
+    reactor.publish_animation_display_for(Some(built_in_space));
+    let id = published_display(&mut animation_rx);
     assert_eq!(id, 0, "the built-in display is screen 0, and its space is the one animating");
 
     reactor.publish_animation_display();
-    let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::actor::workspace_animation::Event::SetDisplay { id, .. } = published else {
-        panic!("expected SetDisplay, got {published:?}");
-    };
+    let id = published_display(&mut animation_rx);
     assert_eq!(id, 1, "with no space in mind the active display is still the right answer");
 }
 

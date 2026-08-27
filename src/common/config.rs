@@ -523,6 +523,81 @@ pub struct UiSettings {
     pub stack_line: StackLineSettings,
     #[serde(default)]
     pub mission_control: MissionControlSettings,
+    #[serde(default)]
+    pub animation_borders: AnimationBorderSettings,
+}
+
+/// Window borders drawn on the animation overlay's tiles.
+///
+/// Border tools (JankyBorders and kin) draw their borders as separate windows tracking the real
+/// ones, and the real ones sit parked behind the opaque overlay for the length of every animation —
+/// so the borders vanish for the flight and pop back at the handover. Tiles dressed with a matching
+/// stroke close that gap. A CALayer border is an outline only, transparent in the middle, so
+/// nothing shows through a translucent window's glass.
+///
+/// Off by default: rini cannot know whether a border tool runs or what it draws. Colors use the
+/// JankyBorders `0xAARRGGBB` form so a bordersrc can be copied across verbatim.
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AnimationBorderSettings {
+    #[serde(default = "no")]
+    pub enabled: bool,
+    /// Stroke width in points, matching the border tool's `width`.
+    #[serde(default = "default_border_width")]
+    pub width: f64,
+    /// `square` hugs the frame; `round` follows the window's ~10pt corner radius.
+    #[serde(default)]
+    pub style: BorderStyle,
+    /// Border of the focused window, `0xAARRGGBB`.
+    #[serde(default = "default_border_active")]
+    pub active_color: String,
+    /// Border of every other window, `0xAARRGGBB`.
+    #[serde(default = "default_border_inactive")]
+    pub inactive_color: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BorderStyle {
+    #[default]
+    Round,
+    Square,
+}
+
+impl Default for AnimationBorderSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            width: default_border_width(),
+            style: BorderStyle::default(),
+            active_color: default_border_active(),
+            inactive_color: default_border_inactive(),
+        }
+    }
+}
+
+fn default_border_width() -> f64 {
+    1.5
+}
+fn default_border_active() -> String {
+    "0xffffffff".into()
+}
+fn default_border_inactive() -> String {
+    "0x80808080".into()
+}
+
+/// Parses a JankyBorders-style `0xAARRGGBB` color into (alpha, red, green, blue), each 0.0..=1.0.
+///
+/// `None` for anything malformed, which callers treat as "draw no border" rather than guessing a
+/// color to paint around every window on screen.
+pub fn parse_argb(color: &str) -> Option<(f64, f64, f64, f64)> {
+    let hex = color.strip_prefix("0x").or_else(|| color.strip_prefix("0X"))?;
+    if hex.len() != 8 {
+        return None;
+    }
+    let value = u32::from_str_radix(hex, 16).ok()?;
+    let channel = |shift: u32| f64::from((value >> shift) & 0xff) / 255.0;
+    Some((channel(24), channel(16), channel(8), channel(0)))
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -1932,6 +2007,31 @@ mod tests {
         let cfg = Config::parse(toml).unwrap();
         // We expect keys to be parsed into hotkeys
         assert!(!cfg.keys.is_empty());
+    }
+
+    #[test]
+    fn animation_border_colors_parse_the_jankyborders_form() {
+        // The user's own bordersrc values, which must copy across verbatim.
+        assert_eq!(
+            parse_argb("0xff5a4d33"),
+            Some((1.0, 90.0 / 255.0, 77.0 / 255.0, 51.0 / 255.0))
+        );
+        let (alpha, red, green, blue) = parse_argb("0x8054546d").unwrap();
+        assert!((alpha - 128.0 / 255.0).abs() < 1e-9);
+        assert!((red - 84.0 / 255.0).abs() < 1e-9);
+        assert!((green - 84.0 / 255.0).abs() < 1e-9);
+        assert!((blue - 109.0 / 255.0).abs() < 1e-9);
+        assert_eq!(parse_argb("0X8054546D"), parse_argb("0x8054546d"));
+    }
+
+    /// Malformed colors mean "no border", never a guessed one painted around every window.
+    #[test]
+    fn a_malformed_border_color_is_rejected() {
+        assert_eq!(parse_argb("ff5a4d33"), None, "missing 0x prefix");
+        assert_eq!(parse_argb("0xff5a4d"), None, "RGB without alpha");
+        assert_eq!(parse_argb("0xff5a4d331"), None, "too long");
+        assert_eq!(parse_argb("0xzz5a4d33"), None, "not hex");
+        assert_eq!(parse_argb(""), None);
     }
 
     #[test]
