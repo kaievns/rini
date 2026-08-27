@@ -93,11 +93,17 @@ const SHADOW_REACH: f64 = 40.0;
 /// transparent for the first 18px to 20px at 2x backing scale.
 const CORNER_RADIUS: f64 = 10.0;
 
-/// Where the bar sits: above everything the overlay draws.
+/// Where the bar sits: above everything the overlay draws. Tiles sit at `-depth`, which never
+/// exceeds zero, so any positive value clears them.
 const BAR_Z: f64 = 10_000.0;
 
-/// Where the desktop sits: below everything.
-const BACKDROP_Z: f64 = -10_000.0;
+/// Where the desktop sits: below everything — including the DEEPEST possible tile.
+///
+/// Derived from the depth model rather than guessed: `tile_depth` reaches almost two group
+/// strides for the back group's unreported windows, and a backdrop above that swallowed every
+/// floating tile — the Settings window behind the strip was drawn in every animation and visible
+/// in none, because its picture sat behind the wallpaper.
+const BACKDROP_Z: f64 = -((crate::model::z_group::MAX_TILE_DEPTH + 1024) as f64);
 
 /// Ease-out cubic. Fast at the start and settling at the end, which reads as the strip being flicked
 /// rather than dragged, and matches what niri does.
@@ -788,6 +794,21 @@ mod tests {
     fn a_zero_sized_tile_has_no_corners_rather_than_negative_ones() {
         assert_eq!(tile_corner_radius(CGSize::new(0.0, 0.0)), 0.0);
         assert_eq!(tile_corner_radius(CGSize::new(-10.0, 100.0)), 0.0);
+    }
+
+    /// The measured miss: the floating Settings window's tile, in the back z-group, landed at
+    /// zPosition about -(1<<20) while the backdrop sat at -10000 — drawn in every animation,
+    /// visible in none, because it was behind the desktop picture. The backdrop must sit behind
+    /// the DEEPEST depth the grouping can produce, and the bar in front of the shallowest.
+    #[test]
+    fn every_possible_tile_draws_between_the_backdrop_and_the_bar() {
+        use crate::model::z_group::{StackGroup, tile_depth};
+        let deepest = tile_depth(None, false, StackGroup::Floating, StackGroup::Strip);
+        let shallowest = tile_depth(Some(0), true, StackGroup::Strip, StackGroup::Strip);
+        assert!(-(deepest as f64) > BACKDROP_Z, "the deepest tile clears the backdrop");
+        assert!(-(shallowest as f64) < BAR_Z, "the shallowest tile stays under the bar");
+        // The shadow caster sits half a step behind its picture and must clear the backdrop too.
+        assert!(-(deepest as f64) - 0.5 > BACKDROP_Z);
     }
 
     #[test]

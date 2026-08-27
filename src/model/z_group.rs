@@ -22,7 +22,16 @@ pub enum StackGroup {
 
 /// Room for every window of one group before the next group starts, so no member of the group behind can
 /// ever be drawn in front of a member of the group in front.
-const GROUP_STRIDE: usize = 1 << 20;
+///
+/// Public because the overlay derives its backdrop depth from it: the deepest possible tile is just
+/// short of two strides, and the backdrop has to sit behind THAT, not behind some smaller constant.
+/// The floating group's tiles used to land at zPosition about -(1<<20) while the backdrop sat at
+/// -10000, so every floating tile was drawn behind the desktop picture — present in every
+/// composition and visible in none.
+pub const GROUP_STRIDE: usize = 1 << 20;
+
+/// The deepest depth `tile_depth` can produce: the unreported-window fallback of the back group.
+pub const MAX_TILE_DEPTH: usize = 2 * GROUP_STRIDE - 1;
 
 /// Front-to-back position for a tile, 0 being frontmost.
 ///
@@ -41,7 +50,12 @@ pub fn tile_depth(
     if gaining_focus {
         return 0;
     }
-    let within = server_order.map(|order| order + 1).unwrap_or(GROUP_STRIDE - 1).min(GROUP_STRIDE - 1);
+    // Saturating: the server's order is untrusted input, and `usize::MAX + 1` is a debug-build
+    // abort for a value that only needed to mean "the back of the band".
+    let within = server_order
+        .map(|order| order.saturating_add(1))
+        .unwrap_or(GROUP_STRIDE - 1)
+        .min(GROUP_STRIDE - 1);
     if group == focused_group { within } else { GROUP_STRIDE + within }
 }
 

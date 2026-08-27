@@ -122,6 +122,17 @@ Mechanics worth remembering:
 - `NSValue::valueWithPoint` (the from/to carrier) is gated behind the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
 
+Found on the first live run of the dissolved strip path: **floating tiles
+were drawn behind the desktop backdrop.** The z-grouping puts the back group
+nearly two `GROUP_STRIDE`s deep (about 1<<20), tiles draw at `zPosition =
+-depth`, and the backdrop sat at -10000 — so the floating Settings window's
+tile was in every composition and visible in none, and never appeared to
+ride workspace switches (it rode, behind the wallpaper). `BACKDROP_Z` is now
+derived from `z_group::MAX_TILE_DEPTH` instead of guessed, pinned by
+`every_possible_tile_draws_between_the_backdrop_and_the_bar`. During strip
+pans a floating window deliberately stands still (`pinned`); during switches
+it rides its workspace row.
+
 Still open from the canvas dissolution: the reactor-side pan classifier
 (`strip_pan_delta`, `take_strip_movement`) only exists to decide
 strip-vs-per-window routing, and both routes now land in the same machinery.
