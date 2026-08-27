@@ -405,6 +405,7 @@ impl SnapshotService {
                             window: (size.width, size.height),
                         },
                         source: SnapshotSource::ScreenCaptureKit,
+                        dressing: None,
                     });
                     true
                 }
@@ -445,7 +446,13 @@ impl SnapshotService {
                         .and_then(|sample| unsafe { sample.as_ref().image_buffer() });
                     let filled = buffer.as_ref().and_then(|b| content_reaches_edges(b));
                     let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
-                    service.finish(target, revision, scale, surface, filled);
+                    // On the capture queue, not under the state lock: the framed capture behind the
+                    // harvest measures 16-24ms. Only for a window that produced pixels, since the
+                    // dressing lands with the snapshot.
+                    let dressing = surface.is_some().then(|| {
+                        crate::ui::edge_dressing::harvest_edge_dressing(target.server_id, scale)
+                    });
+                    service.finish(target, revision, scale, surface, filled, dressing.flatten());
                 });
             unsafe {
                 SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
@@ -464,6 +471,7 @@ impl SnapshotService {
         scale: f64,
         surface: Option<CFRetained<IOSurfaceRef>>,
         filled: Option<bool>,
+        dressing: Option<crate::ui::edge_dressing::EdgeDressing>,
     ) {
         let landed = {
             let mut state = self.state.lock().unwrap();
@@ -510,6 +518,7 @@ impl SnapshotService {
                             window: (target.size.width, target.size.height),
                         },
                         source: SnapshotSource::ScreenCaptureKit,
+                        dressing,
                     },
                 );
                 true
@@ -612,6 +621,7 @@ mod tests {
                     image: SnapshotImage::Bitmap(tiny_bitmap()),
                     coverage: Coverage { covered: (859.0, 1081.0), window: (859.0, 1081.0) },
                     source: SnapshotSource::ScreenCaptureKit,
+                    dressing: None,
                 },
             );
         }
@@ -629,7 +639,7 @@ mod tests {
             SnapshotService::new(2.0, Arc::new(move || {
                 counter.fetch_add(1, Ordering::Relaxed);
             }));
-        service.finish(target(1), service.revision.load(Ordering::Acquire), 2.0, None, None);
+        service.finish(target(1), service.revision.load(Ordering::Acquire), 2.0, None, None, None);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 

@@ -1473,11 +1473,10 @@ plain transparency animates correctly, and one configured for a system material
 cannot. Worth knowing before building anything elaborate to approximate the
 material.
 
-### A tile is pixel-identical to its window, except for the shadow
+### A tile is pixel-identical to its window, except for the shadow and the hairline
 
-Worth measuring before adding anything to a capture, because the answer was that
-nothing is missing. Slack, 1720x1081, opaque, on the built-in display, comparing
-the tile capture against the same rect of the screen at native pixels:
+Slack, 1720x1081, opaque, on the built-in display, comparing the tile capture
+against the same rect of the screen at native pixels:
 
 ```
 region              pixels     mean diff   worst
@@ -1487,13 +1486,56 @@ corner box (24px)     2304      12.472     162
 interior           7346880       0.000       0
 ```
 
-The interior and the 8px edge band are identical to the value. There is no
-border, hairline or outline to add: whatever chrome the window draws is in its own
-surface and comes back in the capture. The corner boxes differ only because a
-tile's corners are TRANSPARENT, being the window's own rounded corners, so the
-comparison there is between a tile pixel and whatever the screen has behind the
-window. On screen that transparency shows the desktop, and in the overlay it shows
-the backdrop, which is a picture of the same desktop.
+The interior and the 8px edge band are identical to the value: whatever chrome
+the window draws is in its own surface and comes back in the capture. The corner
+boxes differ only because a tile's corners are TRANSPARENT, being the window's
+own rounded corners, so the comparison there is between a tile pixel and whatever
+the screen has behind the window. On screen that transparency shows the desktop,
+and in the overlay it shows the backdrop, which is a picture of the same desktop.
+
+The outer ring's 0.201 mean diff was originally dismissed as noise. It is not:
+it is the window server's hairline outline, missing from every surface capture.
+See "The hairline is composited outside every capture" below.
+
+### The hairline is composited outside every capture
+
+macOS composites a 1pt hairline over every window's outermost point, and no
+surface capture carries it — not ScreenCaptureKit's per-window filter, not its
+display filter cropped to the window rect, not `SLSHWCaptureWindowList` under
+any option bit probed (0, 1<<4..1<<13, 1<<16, 1<<19). Like the shadow, it is
+drawn at composite time outside the app's surface.
+
+Unlike the shadow it cannot be synthesised as a constant, because its value
+depends on what it lands on. Lossless screenshots of this display, focused
+windows, hairline against the window's own edge pixel:
+
+```
+window                          edge pixel   hairline   white-alpha fit
+Kiro (opaque, dark)              21,23,26    80,81,83   0.25
+Outlook calendar (opaque)        42,42,40    80,80,79   none (0.25 gives 95)
+Ghostty (translucent)            15,16,18    44,45,46   ~0.13 — while focused
+```
+
+A drawn 0.25-alpha white border matched the opaque editor exactly and missed
+the translucent terminal by 2x, which read as a visible pop at the handover.
+
+The one API that composites framing into its output is the obsoleted
+`CGWindowListCreateImage` (alive in the dylib, deprecated since 14.0, removed
+from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
+
+- A rect-bounded call (window's own bounds) returns exactly the window rect,
+  hairline composited opaque on the outermost point of every edge, 16-24ms
+  after warmup. A null rect pads the image with the shadow instead (asymmetric
+  margins), so the rect-bounded form is the useful one.
+- It only renders windows that are actually composited: a parked window (a
+  1pt sliver at the display edge) returns a fully transparent image of the
+  right size. A window with only a couple of points visible has been seen to
+  return full content WITH the hairline, so visibility is necessary but the
+  exact threshold is the compositor's business; the harvest validates alpha
+  instead of guessing geometry.
+- The hairline rides INSIDE the window bounds: the capture's outermost pixel
+  pair at 2x is the hairline over the app's own edge pixel, which is exactly
+  what the screen shows at rest.
 
 ### Shadows are never in the surface
 

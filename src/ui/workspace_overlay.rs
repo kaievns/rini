@@ -26,6 +26,7 @@ use objc2_quartz_core::{
 use crate::actor::app::WindowId;
 use crate::sys::geometry::SameAs;
 use crate::sys::screen::CoordinateConverter;
+use crate::ui::edge_dressing::{self, dressing_layout, tile_corner_radius};
 use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 
 
@@ -65,8 +66,6 @@ pub struct OverlayTile {
     /// A border window riding the window it traces: drawn a quarter-step in front of its window's
     /// depth, and without a shadow, because the real border window casts none.
     pub companion: bool,
-    /// Whether this window holds (or is about to hold) focus, which brightens its outline.
-    pub focused: bool,
 }
 
 impl OverlayTile {
@@ -75,29 +74,6 @@ impl OverlayTile {
     pub(crate) fn z(&self) -> f64 {
         -(self.depth as f64) + if self.companion { 0.25 } else { 0.0 }
     }
-}
-
-/// The hairline outline macOS composites around every window, which no capture can carry: the
-/// window server draws it outside the app's own surface, exactly like the shadow. Without it every
-/// tile reads flat and the outline pops back at the handover.
-///
-/// Measured, not styled. Width: 2 device pixels at 2x. Alpha: from a recording of this display,
-/// the outline over rgb~9 content read rgb 55, so 55 = 9(1-a) + 255a gives a ~= 0.19 for an
-/// unfocused window; and the earlier in-repo measurement of the same outline read 65/255 focused
-/// against 42/255 unfocused. 0.25 and 0.16 fit both within the compression noise.
-const OUTLINE_WIDTH: f64 = 1.0;
-const OUTLINE_ALPHA_FOCUSED: f64 = 0.25;
-const OUTLINE_ALPHA: f64 = 0.16;
-
-/// The outline alpha a tile wears, `None` for no outline.
-///
-/// Companions are border-tool windows: borderless overlays in reality, so dressing them would draw
-/// an outline that does not exist on screen.
-fn outline_alpha(focused: bool, companion: bool) -> Option<f64> {
-    if companion {
-        return None;
-    }
-    Some(if focused { OUTLINE_ALPHA_FOCUSED } else { OUTLINE_ALPHA })
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -124,10 +100,6 @@ const SHADOW_OFFSET_Y: f64 = 5.0;
 /// How far the shadow can reach from a window's edge, which is what the mask has to leave room for. The
 /// measured ramp is spent by 17pt; 40pt is generous enough that no blur is clipped at the edge of the ring.
 const SHADOW_REACH: f64 = 40.0;
-
-/// Corner radius of a macOS window, measured from where a capture's own alpha starts along its top row:
-/// transparent for the first 18px to 20px at 2x backing scale.
-const CORNER_RADIUS: f64 = 10.0;
 
 /// Where the bar sits: above everything the overlay draws. Tiles sit at `-depth`, which never
 /// exceeds zero, so any positive value clears them.
@@ -185,6 +157,8 @@ fn position_animation(from: CGPoint, to: CGPoint, seconds: f64) -> Retained<CABa
 struct Tile {
     picture: Retained<CALayer>,
     shadow: Retained<CALayer>,
+    /// The hairline sublayers riding the picture, replaced whenever the picture is re-dressed.
+    dressing: Vec<Retained<CALayer>>,
 }
 
 pub struct WorkspaceOverlay {
@@ -383,10 +357,17 @@ impl WorkspaceOverlay {
     /// Used mid-flight, once the window being switched into is on screen and can be captured with its
     /// focused appearance. Contents only: changing the frame here would fight the running movement.
     pub fn set_tile_picture(&mut self, window: WindowId, snapshot: &WindowSnapshot) {
-        let Some(entry) = self.tile_layers.get(&window) else { return };
+        let scale = self.scale;
+        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         set_layer_contents(&entry.picture, snapshot);
+        // A recapture can carry a fresh hairline too — the focus recapture is exactly the one
+        // that changes it.
+        if snapshot.dressing.is_some() {
+            let size = entry.picture.bounds().size;
+            apply_edge_dressing(entry, snapshot, size, scale);
+        }
         CATransaction::commit();
     }
 
@@ -431,7 +412,7 @@ impl WorkspaceOverlay {
         reparent(&entry.shadow, &self.root);
         entry.picture.setContentsScale(self.scale);
         set_layer_contents(&entry.picture, &tile.snapshot);
-        apply_window_outline(&entry.picture, tile, tile.from.size);
+        apply_edge_dressing(entry, &tile.snapshot, tile.from.size, self.scale);
         // Negated so a smaller depth, meaning nearer the front, draws on top.
         place_tile(entry, tile.from, tile.z());
         entry.picture.setHidden(false);
@@ -576,23 +557,43 @@ fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
 }
 
-/// Dresses a tile with the macOS window outline, or strips it bare.
+/// Dresses a tile with its window's harvested hairline, or strips it bare.
 ///
-/// A `CALayer` border is a stroke and nothing else — the middle stays fully transparent, so a
-/// translucent window shows what is genuinely behind it. Set explicitly in both directions
-/// because tile layers are pooled. Rounding follows the window's own corner radius, without
-/// `masksToBounds`, so nothing else is clipped.
-fn apply_window_outline(picture: &CALayer, tile: &OverlayTile, size: CGSize) {
-    let Some(alpha) = outline_alpha(tile.focused, tile.companion) else {
-        picture.setBorderWidth(0.0);
-        picture.setCornerRadius(0.0);
+/// The ring rides the picture as thin sublayers — four straight runs and four corner boxes, in
+/// [`crate::ui::edge_dressing::DressingLayout`] order — so every movement animation carries it for
+/// free. Replaced wholesale because tile layers are pooled: a tile must not wear another window's
+/// edge, or a stale one after a recapture.
+fn apply_edge_dressing(tile: &mut Tile, snapshot: &WindowSnapshot, size: CGSize, scale: f64) {
+    for layer in tile.dressing.drain(..) {
+        layer.removeFromSuperlayer();
+    }
+    let Some(dressing) = &snapshot.dressing else { return };
+    let Some(layout) = dressing_layout(size, edge_dressing::RING_PT, edge_dressing::CORNER_RADIUS)
+    else {
         return;
     };
-    let color = objc2_core_graphics::CGColor::new_srgb(1.0, 1.0, 1.0, alpha);
-    // SAFETY: a CGColor created above, live for the call; Core Animation copies it.
-    unsafe { picture.setBorderColor(Some(&color)) };
-    picture.setBorderWidth(OUTLINE_WIDTH);
-    picture.setCornerRadius(tile_corner_radius(size));
+    let pieces = dressing
+        .strips
+        .iter()
+        .zip(layout.strips)
+        .chain(dressing.corners.iter().zip(layout.corners));
+    for (image, frame) in pieces {
+        let Some(image) = image else { continue };
+        if frame.size.width <= 0.0 || frame.size.height <= 0.0 {
+            continue;
+        }
+        let layer = CALayer::layer();
+        layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        layer.setFrame(frame);
+        layer.setContentsScale(scale);
+        // SAFETY: a retained CGImage; Core Animation retains what it draws.
+        unsafe {
+            let raw: *const objc2_core_graphics::CGImage = &**image;
+            let _: () = msg_send![&*layer, setContents: raw];
+        }
+        tile.picture.addSublayer(&layer);
+        tile.dressing.push(layer);
+    }
 }
 
 /// A tile: the picture, plus a caster behind it holding the shadow.
@@ -618,7 +619,7 @@ fn new_tile(container: &CALayer) -> Tile {
     }
     container.addSublayer(&picture);
 
-    Tile { picture, shadow }
+    Tile { picture, shadow, dressing: Vec::new() }
 }
 
 /// Puts both of a tile's layers at `frame`, with the caster just behind the picture.
@@ -694,15 +695,6 @@ fn shadow_mask_frame(size: CGSize) -> CGRect {
         CGPoint::new(-SHADOW_REACH, -SHADOW_REACH),
         CGSize::new(size.width + 2.0 * SHADOW_REACH, size.height + 2.0 * SHADOW_REACH),
     )
-}
-
-/// The corner radius to draw a tile's shadow with.
-///
-/// Clamped to half the shorter side. A rounded rect cannot have corners larger than that, and Core Graphics
-/// clamps silently, so a small tile would otherwise get a silhouette nobody chose.
-fn tile_corner_radius(size: CGSize) -> f64 {
-    let shorter = size.width.min(size.height);
-    CORNER_RADIUS.min(shorter / 2.0).max(0.0)
 }
 
 /// Moves `layer` under `container` unless it is already there.
@@ -830,27 +822,6 @@ mod tests {
             assert!(value >= previous, "easing went backwards at t = {}", i);
             previous = value;
         }
-    }
-
-    /// The tile's shadow silhouette has to match the window's own rounded corners, or the shadow shows
-    /// through the transparent corner as a hard square.
-    #[test]
-    fn a_normal_window_gets_the_measured_corner_radius() {
-        assert_eq!(tile_corner_radius(CGSize::new(859.0, 1081.0)), CORNER_RADIUS);
-        assert_eq!(tile_corner_radius(CGSize::new(1720.0, 1081.0)), CORNER_RADIUS);
-    }
-
-    #[test]
-    fn a_tile_thinner_than_the_radius_is_clamped_to_half_its_shorter_side() {
-        // Core Graphics clamps this silently, so doing it here keeps the silhouette predictable.
-        assert_eq!(tile_corner_radius(CGSize::new(12.0, 400.0)), 6.0);
-        assert_eq!(tile_corner_radius(CGSize::new(400.0, 8.0)), 4.0);
-    }
-
-    #[test]
-    fn a_zero_sized_tile_has_no_corners_rather_than_negative_ones() {
-        assert_eq!(tile_corner_radius(CGSize::new(0.0, 0.0)), 0.0);
-        assert_eq!(tile_corner_radius(CGSize::new(-10.0, 100.0)), 0.0);
     }
 
     /// The measured miss: the floating Settings window's tile, in the back z-group, landed at

@@ -1,4 +1,5 @@
 pub mod common;
+pub mod edge_dressing;
 pub mod menu_bar;
 pub mod mission_control;
 pub mod snapshot_service;

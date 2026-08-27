@@ -14,6 +14,7 @@ use objc2_io_surface::IOSurfaceRef;
 
 use crate::actor::app::WindowId;
 use crate::sys::skylight::{SLSHWCaptureWindowList, SLSMainConnectionID};
+use crate::ui::edge_dressing::dressing_after_insert;
 use crate::sys::window_server::WindowServerId;
 
 /// Capture options cribbed verbatim from yabai (`window_manager.c:521`). The bits are undocumented,
@@ -155,6 +156,10 @@ pub struct WindowSnapshot {
     pub image: SnapshotImage,
     pub coverage: Coverage,
     pub source: SnapshotSource,
+    /// The window-server hairline this window wore when last seen composited, or `None` if it has
+    /// not been harvested yet. Carried across cache refreshes by [`SnapshotCache::insert`]: see
+    /// [`crate::ui::edge_dressing`].
+    pub dressing: Option<crate::ui::edge_dressing::EdgeDressing>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -208,6 +213,7 @@ pub fn capture_via_skylight(
             window: window_size,
         },
         source: SnapshotSource::SkyLight,
+        dressing: None,
     })
 }
 
@@ -217,9 +223,32 @@ pub trait HasCoverage {
     fn coverage(&self) -> Coverage;
 }
 
+/// State a cache payload keeps alive across captures, independently of the pixel replacement rule.
+///
+/// The hairline dressing is harvested from the screen composite rather than from the capture
+/// buffer, so the two replace independently: a clipped capture can carry a good ring, and a good
+/// capture of a parked window carries none. Both hooks default to nothing for payloads that carry
+/// nothing.
+pub trait CarriesOver: Sized {
+    /// Called on an incoming payload that is about to replace `previous`.
+    fn inherit(&mut self, _previous: &Self) {}
+    /// Called on the kept payload when `refused` lost to the replacement rule.
+    fn absorb(&mut self, _refused: Self) {}
+}
+
 impl HasCoverage for WindowSnapshot {
     fn coverage(&self) -> Coverage {
         self.coverage
+    }
+}
+
+impl CarriesOver for WindowSnapshot {
+    fn inherit(&mut self, previous: &Self) {
+        self.dressing = dressing_after_insert(previous.dressing.clone(), self.dressing.take());
+    }
+
+    fn absorb(&mut self, refused: Self) {
+        self.dressing = dressing_after_insert(self.dressing.take(), refused.dressing);
     }
 }
 
@@ -228,6 +257,8 @@ impl HasCoverage for Coverage {
         *self
     }
 }
+
+impl CarriesOver for Coverage {}
 
 /// Captures several windows as ONE composited image.
 ///
@@ -259,6 +290,7 @@ pub fn capture_composite_via_skylight(
         image: SnapshotImage::Bitmap(image),
         coverage: Coverage { covered: (px_w / scale, px_h / scale), window: covers },
         source: SnapshotSource::SkyLight,
+        dressing: None,
     })
 }
 
@@ -276,16 +308,20 @@ impl<T: HasCoverage> Default for SnapshotCache<T> {
     }
 }
 
-impl<T: HasCoverage> SnapshotCache<T> {
+impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Stores a snapshot, subject to [`should_replace`].
-    pub fn insert(&mut self, window: WindowId, snapshot: T) {
-        let existing = self.entries.get(&window).map(|s| s.coverage());
-        if !should_replace(existing, snapshot.coverage()) {
-            return;
+    /// Stores a snapshot, subject to [`should_replace`] for its pixels, with [`CarriesOver`]
+    /// deciding what survives of the rest either way.
+    pub fn insert(&mut self, window: WindowId, mut snapshot: T) {
+        if let Some(existing) = self.entries.get_mut(&window) {
+            if !should_replace(Some(existing.coverage()), snapshot.coverage()) {
+                existing.absorb(snapshot);
+                return;
+            }
+            snapshot.inherit(existing);
         }
         self.entries.insert(window, snapshot);
     }
@@ -446,6 +482,58 @@ mod tests {
         let a = coverage((40.0, 1081.0), (859.0, 1081.0));
         let b = coverage((2.0, 1081.0), (859.0, 1081.0));
         assert!(should_replace(Some(a), b));
+    }
+
+    /// A payload with carried state, standing in for `WindowSnapshot` and its dressing: the same
+    /// `dressing_after_insert` rule, without needing a bitmap.
+    #[derive(Clone, Copy)]
+    struct Dressed {
+        coverage: Coverage,
+        dressing: Option<u32>,
+    }
+
+    impl HasCoverage for Dressed {
+        fn coverage(&self) -> Coverage {
+            self.coverage
+        }
+    }
+
+    impl CarriesOver for Dressed {
+        fn inherit(&mut self, previous: &Self) {
+            self.dressing =
+                crate::ui::edge_dressing::dressing_after_insert(previous.dressing, self.dressing);
+        }
+
+        fn absorb(&mut self, refused: Self) {
+            self.dressing =
+                crate::ui::edge_dressing::dressing_after_insert(self.dressing, refused.dressing);
+        }
+    }
+
+    #[test]
+    fn a_refused_capture_still_delivers_its_dressing() {
+        // The harvest reads the screen composite, not the capture buffer: a clipped capture of an
+        // on-screen window carries a perfectly good ring, and dropping it with the pixels would
+        // leave the tile wearing last week's hairline.
+        let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
+        let good = coverage((859.0, 1081.0), (859.0, 1081.0));
+        let sliver = coverage((40.0, 1081.0), (859.0, 1081.0));
+        cache.insert(wid(1), Dressed { coverage: good, dressing: Some(1) });
+        cache.insert(wid(1), Dressed { coverage: sliver, dressing: Some(2) });
+        let held = cache.get(wid(1)).unwrap();
+        assert_eq!(held.coverage.covered.0, 859.0, "the pixels were refused");
+        assert_eq!(held.dressing, Some(2), "but the fresher ring was kept");
+    }
+
+    #[test]
+    fn an_accepted_capture_without_a_harvest_inherits_the_worn_dressing() {
+        // A window captured while parked harvests nothing; it keeps the ring from when it was last
+        // composited, the same staleness model as the pictures themselves.
+        let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
+        let good = coverage((859.0, 1081.0), (859.0, 1081.0));
+        cache.insert(wid(1), Dressed { coverage: good, dressing: Some(1) });
+        cache.insert(wid(1), Dressed { coverage: good, dressing: None });
+        assert_eq!(cache.get(wid(1)).unwrap().dressing, Some(1));
     }
 
     #[test]

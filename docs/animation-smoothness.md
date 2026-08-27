@@ -153,20 +153,29 @@ because the border's identity was misdiagnosed twice:
    wrong target: the `borders` process turned out not to be running at all
    (`bordersrc` exists, nothing draws it). Live enumeration showed zero
    border windows.
-3. **The border that actually flickers is macOS's own window outline**,
-   measured from a recording of this display: a 2-device-pixel hairline at
-   rgb(55,55,58) over rgb(~9) content — white at ~19% alpha — present at
-   rest on every window, absent on every tile mid-flight. The window server
-   composites it OUTSIDE the app's surface, exactly like the shadow, so no
-   capture can ever carry it.
+3. **The border that actually flickers is macOS's own window outline**: a
+   1pt hairline the window server composites over every window's outermost
+   point, present at rest on every window, absent on every tile mid-flight,
+   because it is drawn outside the app's surface exactly like the shadow.
 
-So tiles are dressed with the outline, as a measured platform constant, not
-a setting (`apply_window_outline`): 1pt white stroke, 0.25 alpha focused
-against 0.16 unfocused (fitting both this recording and the earlier in-repo
-border measurement of 65/255 focused vs 42/255 unfocused), rounded to the
-window's own corner radius. A `CALayer` border is an outline with a fully
-transparent middle — nothing washes through a translucent window's glass,
-the constraint that killed attempt 1's shadow-adjacent cousins.
+A fourth attempt — drawing it as a measured constant (1pt white stroke,
+0.25 alpha focused / 0.16 unfocused) — was pixel-exact on opaque windows
+and wrong by 2x on translucent ones: lossless captures read the focused
+hairline at rgb 80 on an opaque editor but rgb 44-46 on a see-through
+terminal, because the composite depends on the window's own edge pixels
+and translucency. No drawn constant can match every window.
+
+So the real composited pixels are harvested instead (`edge_dressing`):
+`CGWindowListCreateImage` is the one capture API that composites framing
+into its output, and a rect-bounded call returns exactly the window rect
+with the hairline on its outermost point, at 16-24ms. The ring — four
+straight runs plus four corner boxes clipped to the rounded silhouette,
+~200KB against the 28MB framed capture it is cropped from — is cached on
+the snapshot and worn by the tile as sublayers. It only renders windows
+actually composited, so a parked window harvests transparent pixels and is
+rejected by an alpha check, keeping the ring from when it was last seen:
+the picture cache's own staleness model. The focus recapture harvests too,
+which is how the ring brightens with focus mid-flight.
 
 The companion-tile machinery from attempt 2 stays (`companion_of` /
 `companion_tiles`): it is the right answer for anyone whose border tool IS
@@ -188,8 +197,9 @@ running, carrying real border windows as tiles:
   so no companion matches — which is what the real screen does, since the
   border tool only catches up after the window lands.
 - Companions are excluded from the mid-flight destination recapture, which
-  exists for the window the eye is on — and wear no drawn outline, since the
-  real border windows are borderless overlays.
+  exists for the window the eye is on. They wear no harvested hairline
+  either: a border window's ring is transparent almost everywhere, so the
+  harvest's alpha check rejects it without a special case.
 
 No configuration in either mechanism: the outline is the platform's, and the
 companions reproduce whatever a border tool draws, or nothing.
