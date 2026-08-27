@@ -62,6 +62,17 @@ pub struct OverlayTile {
     /// Front-to-back position on screen, 0 being frontmost. Without it a tile can be drawn behind a
     /// window it is really in front of, and the handover pops.
     pub depth: usize,
+    /// A border window riding the window it traces: drawn a quarter-step in front of its window's
+    /// depth, and without a shadow, because the real border window casts none.
+    pub companion: bool,
+}
+
+impl OverlayTile {
+    /// The zPosition this tile draws at. A companion sits just in front of the window it traces —
+    /// a quarter of a depth step, clear of the half-step the shadow casters sit behind.
+    pub(crate) fn z(&self) -> f64 {
+        -(self.depth as f64) + if self.companion { 0.25 } else { 0.0 }
+    }
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -396,9 +407,10 @@ impl WorkspaceOverlay {
         entry.picture.setContentsScale(self.scale);
         set_layer_contents(&entry.picture, &tile.snapshot);
         // Negated so a smaller depth, meaning nearer the front, draws on top.
-        place_tile(entry, tile.from, -(tile.depth as f64));
+        place_tile(entry, tile.from, tile.z());
         entry.picture.setHidden(false);
-        entry.shadow.setHidden(false);
+        // A border window casts no shadow, so its tile must not either.
+        entry.shadow.setHidden(tile.companion);
     }
 
     /// Adds one tile to an animation already in flight and starts its movement.
@@ -410,7 +422,7 @@ impl WorkspaceOverlay {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         self.install_tile(tile);
-        self.animate_tile_movement(tile.window, tile.from, tile.to, tile.depth, duration);
+        self.animate_tile_movement(tile.window, tile.from, tile.to, tile.z(), duration);
         CATransaction::commit();
     }
 
@@ -433,7 +445,7 @@ impl WorkspaceOverlay {
             if tile.from.same_as(tile.to) {
                 continue;
             }
-            self.animate_tile_movement(tile.window, tile.from, tile.to, tile.depth, duration);
+            self.animate_tile_movement(tile.window, tile.from, tile.to, tile.z(), duration);
         }
         CATransaction::commit();
     }
@@ -444,7 +456,7 @@ impl WorkspaceOverlay {
     /// The presentation tree is the truth about the current position — the model already sits at
     /// the old destination — and re-adding under the same key replaces the old animation, so the
     /// tile bends toward the new target instead of restarting. Same chaining pattern as the canvas.
-    pub fn retarget_tile(&mut self, window: WindowId, to: CGRect, depth: usize, duration: Duration) {
+    pub fn retarget_tile(&mut self, window: WindowId, to: CGRect, z: f64, duration: Duration) {
         let Some(entry) = self.tile_layers.get(&window) else { return };
         // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
         let current = unsafe { entry.picture.presentationLayer() }
@@ -453,7 +465,7 @@ impl WorkspaceOverlay {
         let from = CGRect::new(current, to.size);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        self.animate_tile_movement(window, from, to, depth, duration);
+        self.animate_tile_movement(window, from, to, z, duration);
         CATransaction::commit();
     }
 
@@ -464,11 +476,11 @@ impl WorkspaceOverlay {
         window: WindowId,
         from: CGRect,
         to: CGRect,
-        depth: usize,
+        z: f64,
         duration: Duration,
     ) {
         let Some(entry) = self.tile_layers.get(&window) else { return };
-        place_tile(entry, to, -(depth as f64));
+        place_tile(entry, to, z);
         // Anchor points are (0,0), so position is the frame origin; this path never changes a
         // tile's size. addAnimation copies, so one instance serves picture and shadow.
         let animation = position_animation(from.origin, to.origin, duration.as_secs_f64());
@@ -489,7 +501,7 @@ impl WorkspaceOverlay {
         CATransaction::setDisableActions(true);
         for tile in tiles {
             if let Some(entry) = self.tile_layers.get(&tile.window) {
-                place_tile(entry, lerp_rect(tile.from, tile.to, eased), -(tile.depth as f64));
+                place_tile(entry, lerp_rect(tile.from, tile.to, eased), tile.z());
             }
         }
         CATransaction::commit();

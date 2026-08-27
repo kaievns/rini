@@ -196,6 +196,45 @@ enum GroupStart {
     Immediate,
 }
 
+/// How much larger than the window it traces a border window may be, per axis. JankyBorders draws
+/// its stroke on a sibling window a few points larger than the traced one (2x the stroke width,
+/// plus rounding); 8pt covers any plausible stroke without reaching the next column over.
+const COMPANION_EXPANSION: f64 = 8.0;
+
+/// How far the centers may disagree. The border window is centered on what it traces.
+const COMPANION_CENTER_SLACK: f64 = 4.0;
+
+/// The unmanaged window tracing `frame` as its border, if any.
+///
+/// Border tools (JankyBorders and kin) draw each border as its own window hugging the window it
+/// traces. Those are real windows with real pixels, so the animation carries them as companion
+/// tiles instead of trying to redraw the border itself — a drawn border is an approximation, and
+/// any approximation flickers against the real one at the handover.
+///
+/// The trace test is geometric: same center, same-or-slightly-larger size. Candidates must already
+/// exclude every managed window, or a stacked twin would match its sibling.
+fn companion_of(
+    frame: CGRect,
+    candidates: &[(WindowServerId, CGRect)],
+) -> Option<(WindowServerId, CGRect)> {
+    let center = |r: CGRect| {
+        (r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0)
+    };
+    let (cx, cy) = center(frame);
+    candidates
+        .iter()
+        .find(|(_, candidate)| {
+            let dw = candidate.size.width - frame.size.width;
+            let dh = candidate.size.height - frame.size.height;
+            let (kx, ky) = center(*candidate);
+            (-1.0..=COMPANION_EXPANSION).contains(&dw)
+                && (-1.0..=COMPANION_EXPANSION).contains(&dh)
+                && (kx - cx).abs() <= COMPANION_CENTER_SLACK
+                && (ky - cy).abs() <= COMPANION_CENTER_SLACK
+        })
+        .copied()
+}
+
 /// Where each tile of a strip movement starts and ends on screen, in overlay coordinates.
 ///
 /// The strip surface is fixed; the viewport travels from `from_offset` to `to_offset`, so every
@@ -294,6 +333,7 @@ impl RunningAnimation {
                 existing.to = tile.to;
                 existing.snapshot = tile.snapshot;
                 existing.depth = tile.depth;
+                existing.companion = tile.companion;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -699,6 +739,66 @@ impl WorkspaceAnimation {
         })
     }
 
+    /// Tiles for the border windows tracing the windows being animated (JankyBorders and kin).
+    ///
+    /// Each anchor is the window's real frame in display space plus its tile's from/to/depth. The
+    /// border window rides at the same relative offset for the whole flight and lands exactly
+    /// where the real border window reappears — its own pixels, so there is nothing to mismatch at
+    /// the handover. A drawn border was tried first and rejected: any approximation flickers
+    /// against the real one.
+    ///
+    /// Returns the tiles plus a warm target per matched border, picture or not: borders recolor
+    /// with focus, so they are refreshed after every flight the way windows are.
+    fn companion_tiles(
+        &mut self,
+        display: CGRect,
+        anchors: &[(CGRect, CGRect, CGRect, usize)],
+        exclude: &std::collections::HashSet<u32>,
+        needs_capture: &mut Vec<SnapshotTarget>,
+    ) -> (Vec<OverlayTile>, Vec<SnapshotTarget>) {
+        if anchors.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let candidates: Vec<(WindowServerId, CGRect)> =
+            crate::sys::window_server::visible_windows_on_display(display)
+                .into_iter()
+                .filter(|(id, _)| !exclude.contains(&id.as_u32()))
+                .collect();
+        let mut claimed: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut tiles = Vec::new();
+        let mut targets = Vec::new();
+        for &(real, from, to, depth) in anchors {
+            let Some((server_id, frame)) = companion_of(real, &candidates) else { continue };
+            // One border traces one window: stacked twins share a frame and must not all claim
+            // the same border window.
+            if !claimed.insert(server_id.as_u32()) {
+                continue;
+            }
+            let window = synthetic_window_id(server_id);
+            targets.push(SnapshotTarget { window, server_id, size: frame.size });
+            let offset = (frame.origin.x - real.origin.x, frame.origin.y - real.origin.y);
+            let follow = |rect: CGRect| {
+                CGRect::new(
+                    CGPoint::new(rect.origin.x + offset.0, rect.origin.y + offset.1),
+                    frame.size,
+                )
+            };
+            match self.cache.usable(window).cloned() {
+                Some(snapshot) => tiles.push(OverlayTile {
+                    window,
+                    from: follow(from),
+                    to: follow(to),
+                    snapshot,
+                    depth,
+                    companion: true,
+                }),
+                // Like a window with no picture: skipped this flight, warmed for the next.
+                None => needs_capture.push(SnapshotTarget { window, server_id, size: frame.size }),
+            }
+        }
+        (tiles, targets)
+    }
+
     fn start(
         &mut self,
         windows: Vec<AnimationRequest>,
@@ -731,6 +831,7 @@ impl WorkspaceAnimation {
         let mut skipped = 0usize;
         let mut offscreen = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
+        let mut anchors: Vec<(CGRect, CGRect, CGRect, usize)> = Vec::new();
         for request in &windows {
             let start = actual_start(request, display_frame);
             // Parked slivers are excluded on the way in AND on the way out: a window arriving from
@@ -776,23 +877,33 @@ impl WorkspaceAnimation {
                 );
             }
             match snapshot {
-                Some(snapshot) => tiles.push(OverlayTile {
-                    window: request.window,
-                    from: to_overlay_space(start, display_frame),
-                    to: to_overlay_space(request.to, display_frame),
-                    snapshot,
-                    depth: crate::model::z_group::tile_depth(
-                        depths.get(&request.server_id.as_u32()).copied(),
-                        focus == Some(request.window),
-                        group_of(request.floating),
-                        focused_group,
-                    ),
-                }),
+                Some(snapshot) => {
+                    let tile = OverlayTile {
+                        window: request.window,
+                        from: to_overlay_space(start, display_frame),
+                        to: to_overlay_space(request.to, display_frame),
+                        snapshot,
+                        depth: crate::model::z_group::tile_depth(
+                            depths.get(&request.server_id.as_u32()).copied(),
+                            focus == Some(request.window),
+                            group_of(request.floating),
+                            focused_group,
+                        ),
+                        companion: false,
+                    };
+                    anchors.push((start, tile.from, tile.to, tile.depth));
+                    tiles.push(tile);
+                }
                 // No usable picture. Better to leave the window out than to draw a smear: it will
                 // simply appear at its destination when the overlay drops.
                 None => skipped += 1,
             }
         }
+        let exclude: std::collections::HashSet<u32> =
+            windows.iter().map(|request| request.server_id.as_u32()).collect();
+        let (companions, companion_targets) =
+            self.companion_tiles(display_frame, &anchors, &exclude, &mut needs_capture);
+        tiles.extend(companions);
         if !needs_capture.is_empty() {
             debug!(
                 count = needs_capture.len(),
@@ -815,7 +926,9 @@ impl WorkspaceAnimation {
             "overlay animation composition"
         );
         // Remember the real ids so the refresh after this animation, and the one triggered when
-        // nothing was drawable, both use keys an animation will actually look up.
+        // nothing was drawable, both use keys an animation will actually look up. Companions
+        // included: a border recolors when focus moves, so its picture is refreshed whenever its
+        // window's is.
         self.last_animated = windows
             .iter()
             .map(|request| SnapshotTarget {
@@ -823,6 +936,7 @@ impl WorkspaceAnimation {
                 server_id: request.server_id,
                 size: request.to.size,
             })
+            .chain(companion_targets)
             .collect();
 
         self.begin_group(tiles, final_frames, duration, "per-window", GroupStart::Coalesced);
@@ -848,7 +962,7 @@ impl WorkspaceAnimation {
         // later pass can also change where a window is going.
         if self.running.is_some() {
             let in_flight;
-            let mut retargets: Vec<(WindowId, CGRect, usize)> = Vec::new();
+            let mut retargets: Vec<(WindowId, CGRect, f64)> = Vec::new();
             let mut joined: Vec<OverlayTile> = Vec::new();
             {
                 let running = self.running.as_mut().expect("checked above");
@@ -869,7 +983,7 @@ impl WorkspaceAnimation {
                         // flight already has. Touching nothing is what keeps chained presses from
                         // restarting or extending the animation forever.
                         Admitted::Redundant => {}
-                        Admitted::Retargeted => retargets.push((copy.window, copy.to, copy.depth)),
+                        Admitted::Retargeted => retargets.push((copy.window, copy.to, copy.z())),
                         Admitted::Joined => joined.push(copy),
                     }
                 }
@@ -879,8 +993,8 @@ impl WorkspaceAnimation {
                 // Tiles already animating bend toward their new targets from wherever they are
                 // drawn; newcomers start their whole movement now. Both get the fresh duration.
                 if let Some(overlay) = self.overlay.as_mut() {
-                    for (window, to, depth) in retargets {
-                        overlay.retarget_tile(window, to, depth, duration);
+                    for (window, to, z) in retargets {
+                        overlay.retarget_tile(window, to, z, duration);
                     }
                     for tile in &joined {
                         overlay.add_tile(tile, duration);
@@ -1026,6 +1140,8 @@ impl WorkspaceAnimation {
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
+        let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
+        let mut anchors: Vec<(CGRect, CGRect, CGRect, usize)> = Vec::new();
         for window in &windows {
             let (from, to) = strip_travel(window.frame, from_offset, to_offset, window.pinned);
             match self.cache.usable(window.window).cloned() {
@@ -1038,23 +1154,44 @@ impl WorkspaceAnimation {
                     if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
+                    let depth = crate::model::z_group::tile_depth(
+                        depths.get(&window.server_id.as_u32()).copied(),
+                        focus == Some(window.window),
+                        group_of(window.floating),
+                        focused_group,
+                    );
+                    // The border rides only where the window genuinely is: an arriving row's
+                    // window sits parked, its real border parked with it, so no companion matches
+                    // — matching reality, where the border reappears once its tool catches up.
+                    if let Some(info) = crate::sys::window_server::get_window(window.server_id) {
+                        anchors.push((info.frame, from, to, depth));
+                    }
                     tiles.push(OverlayTile {
                         window: window.window,
                         from,
                         to,
                         snapshot,
-                        depth: crate::model::z_group::tile_depth(
-                            depths.get(&window.server_id.as_u32()).copied(),
-                            focus == Some(window.window),
-                            group_of(window.floating),
-                            focused_group,
-                        ),
+                        depth,
+                        companion: false,
                     });
                 }
                 // No usable picture. The window is still placed by final_frames, and warmed once
                 // the movement settles.
                 None => missing += 1,
             }
+        }
+        let exclude: std::collections::HashSet<u32> =
+            windows.iter().map(|window| window.server_id.as_u32()).collect();
+        let (companions, companion_targets) = match self.display {
+            Some((display_frame, _)) => {
+                self.companion_tiles(display_frame, &anchors, &exclude, &mut needs_capture)
+            }
+            None => (Vec::new(), Vec::new()),
+        };
+        tiles.extend(companions);
+        self.last_animated.extend(companion_targets);
+        if !needs_capture.is_empty() {
+            self.service.request(needs_capture);
         }
         debug!(
             requested = windows.len(),
@@ -1127,6 +1264,9 @@ impl WorkspaceAnimation {
                     running
                         .tiles
                         .iter()
+                        // A border companion must not claim the one mid-flight recapture: the
+                        // window being switched into is what the eye is on.
+                        .filter(|tile| !tile.companion)
                         .map(|tile| (tile.window, WindowServerId::from(tile.window), tile.to.size))
                         .collect()
                 })
@@ -1566,6 +1706,32 @@ mod tests {
         let (from, to) = strip_travel(frame, CGPoint::new(100.0, 0.0), CGPoint::new(-4000.0, 0.0), true);
         assert_eq!(from, frame);
         assert_eq!(to, frame);
+    }
+
+    /// JankyBorders geometry, from the user's bordersrc: width 1.5, style square, drawn on a
+    /// sibling window a few points larger and concentric. That window is the companion; anything
+    /// bigger, smaller, or off-center is not.
+    #[test]
+    fn a_border_window_tracing_a_window_is_its_companion() {
+        let window = rect(4.0, 32.0, 859.0, 1081.0);
+        let border = (WindowServerId::new(9001), rect(1.0, 29.0, 865.0, 1087.0));
+        let neighbor = (WindowServerId::new(9002), rect(867.0, 32.0, 859.0, 1081.0));
+        let zoom = (WindowServerId::new(9003), rect(224.0, 95.0, 1280.0, 960.0));
+        let found = companion_of(window, &[neighbor, zoom, border]);
+        assert_eq!(found.map(|(id, _)| id.as_u32()), Some(9001));
+    }
+
+    /// An identical frame also traces (a tool drawing its stroke inward), but a window merely
+    /// overlapping, or one much larger, must never be mistaken for a border.
+    #[test]
+    fn only_a_concentric_hug_counts_as_a_border() {
+        let window = rect(4.0, 32.0, 859.0, 1081.0);
+        let exact = (WindowServerId::new(1), rect(4.0, 32.0, 859.0, 1081.0));
+        assert!(companion_of(window, &[exact]).is_some());
+        let shifted = (WindowServerId::new(2), rect(24.0, 32.0, 859.0, 1081.0));
+        let larger = (WindowServerId::new(3), rect(-16.0, 12.0, 899.0, 1121.0));
+        let smaller = (WindowServerId::new(4), rect(6.0, 34.0, 855.0, 1077.0));
+        assert!(companion_of(window, &[shifted, larger, smaller]).is_none());
     }
 
     /// The stability property under rapid presses: a later layout pass confirming a destination

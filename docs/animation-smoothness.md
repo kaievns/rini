@@ -141,6 +141,42 @@ pans are the test — the classifier can likely collapse too, though
 `take_strip_movement` also feeds the switch's claim on the destination's
 scroll offset, which needs care.
 
+## Window borders during animations
+
+The long-standing "windows go flat and flicker" complaint: the borders are
+JankyBorders' (`~/.config/borders/bordersrc`), drawn as separate windows
+tracking the real ones. The real windows sit parked behind the opaque overlay
+for the length of every animation, so the border windows vanish with them and
+pop back at the handover.
+
+A config-driven drawn border was tried first and rejected: the tile then
+mismatched reality in the other direction — a redrawn border (color space,
+width, corner treatment) flickers against the real one at the handover just
+as visibly as no border did. The principle that survived: **the overlay must
+show the same pixels the screen shows**, so the border windows are carried as
+**companion tiles** (`companion_of` / `companion_tiles` in
+`workspace_animation.rs`):
+
+- Detection is geometric and tool-agnostic: an unmanaged window concentric
+  with a managed one (centers within 4pt) and the same size or up to 8pt
+  larger is that window's border. Candidates exclude every window in the
+  pass, so stacked twins cannot match each other; one border window traces
+  one window (`claimed`).
+- The companion rides at its real relative offset from the window's tile,
+  drawn a quarter depth-step in front of it (under the next tile forward,
+  clear of the half-step shadow casters), with no shadow of its own.
+- Captured and cached like any window, keyed by synthetic ids; no picture
+  yet means skipped this flight and warmed for the next. Companions join the
+  post-flight warm set because borders recolor with focus.
+- During strip movements the border rides only where the window genuinely
+  is: an arriving row's window sits parked with its real border parked too,
+  so no companion matches — which is what the real screen does, since the
+  border tool only catches up after the window lands.
+- Companions are excluded from the mid-flight destination recapture, which
+  exists for the window the eye is on.
+
+No configuration: rini reproduces whatever the border tool draws, or nothing.
+
 ## Snapshot staleness
 
 Staleness is accepted by construction ("a slightly stale moving image is not
