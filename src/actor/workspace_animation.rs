@@ -107,10 +107,6 @@ pub enum Event {
     PictureReady { window: WindowId, snapshot: WindowSnapshot },
     /// Recapture the bar, now that nothing is animating over it. Posted by the refresh timer.
     RefreshBar,
-    /// The border spec tiles are dressed with, so borders drawn by an external tool (JankyBorders)
-    /// do not vanish for the length of every animation. Sent alongside the display geometry before
-    /// every animation and on config reload, so it is always current.
-    SetBorders(crate::common::config::AnimationBorderSettings),
     /// Recapture this window because focus has just moved to or from it, whatever its cached picture says.
     ///
     /// A window renders differently when it is focused, and none of it is a size change: measured on a
@@ -198,26 +194,6 @@ enum GroupStart {
     /// Move now. Right for strip movements, which arrive exactly once per keystroke and whose
     /// keypress-to-motion latency is the thing the eye notices most.
     Immediate,
-}
-
-/// Converts the config's border block into the overlay's drawable spec.
-///
-/// `None` — disabled, or an unparseable color — means tiles are drawn bare, never with a guessed
-/// color: a wrong border on every window beats no border only when it is actually the right one.
-fn tile_border_spec(
-    settings: &crate::common::config::AnimationBorderSettings,
-) -> Option<crate::ui::workspace_overlay::TileBorder> {
-    if !settings.enabled || settings.width <= 0.0 {
-        return None;
-    }
-    let active = crate::common::config::parse_argb(&settings.active_color)?;
-    let inactive = crate::common::config::parse_argb(&settings.inactive_color)?;
-    Some(crate::ui::workspace_overlay::TileBorder {
-        width: settings.width,
-        round: matches!(settings.style, crate::common::config::BorderStyle::Round),
-        active,
-        inactive,
-    })
 }
 
 /// Where each tile of a strip movement starts and ends on screen, in overlay coordinates.
@@ -318,7 +294,6 @@ impl RunningAnimation {
                 existing.to = tile.to;
                 existing.snapshot = tile.snapshot;
                 existing.depth = tile.depth;
-                existing.focused = tile.focused;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -377,9 +352,6 @@ pub struct WorkspaceAnimation {
     coalesce: Option<RepeatingTimer>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
     last_animated: Vec<SnapshotTarget>,
-    /// The border tiles are dressed with, mirroring the user's border tool. Kept here as well as
-    /// on the overlay because the overlay is created lazily, after the first spec arrives.
-    borders: Option<crate::ui::workspace_overlay::TileBorder>,
     /// Everything held that is a picture of one particular display.
     pictures: DisplayPictures,
     /// Fires once after an animation, to recapture the bar away from the critical path.
@@ -412,7 +384,6 @@ impl WorkspaceAnimation {
 
             coalesce: None,
             last_animated: Vec::new(),
-            borders: None,
             pictures: DisplayPictures::default(),
             bar_refresh: None,
             reactor_tx: None,
@@ -434,13 +405,6 @@ impl WorkspaceAnimation {
     fn handle(&mut self, event: Event) {
         match event {
             Event::SetDisplay { id, frame, scale } => self.set_display(id, frame, scale),
-            Event::SetBorders(settings) => {
-                let spec = tile_border_spec(&settings);
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.set_borders(spec);
-                }
-                self.borders = spec;
-            }
             Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
             Event::AnimateStrip {
                 windows,
@@ -600,10 +564,7 @@ impl WorkspaceAnimation {
         if self.overlay.is_none() {
             let (frame, scale) = self.display?;
             match WorkspaceOverlay::new(frame, scale, self.mtm) {
-                Some(mut overlay) => {
-                    overlay.set_borders(self.borders);
-                    self.overlay = Some(overlay)
-                }
+                Some(overlay) => self.overlay = Some(overlay),
                 None => {
                     warn!("could not create the animation overlay; animations will be skipped");
                     return None;
@@ -826,7 +787,6 @@ impl WorkspaceAnimation {
                         group_of(request.floating),
                         focused_group,
                     ),
-                    focused: focus == Some(request.window),
                 }),
                 // No usable picture. Better to leave the window out than to draw a smear: it will
                 // simply appear at its destination when the overlay drops.
@@ -1089,7 +1049,6 @@ impl WorkspaceAnimation {
                             group_of(window.floating),
                             focused_group,
                         ),
-                        focused: focus == Some(window.window),
                     });
                 }
                 // No usable picture. The window is still placed by final_frames, and warmed once

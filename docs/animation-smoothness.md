@@ -141,33 +141,6 @@ pans are the test — the classifier can likely collapse too, though
 `take_strip_movement` also feeds the switch's claim on the destination's
 scroll offset, which needs care.
 
-## Window borders during animations
-
-The long-standing "windows go flat and flicker" complaint decomposed into two
-parts once the mechanism was found:
-
-- **The borders are JankyBorders'**, not macOS's: separate windows tracking
-  the real ones, configured in `~/.config/borders/bordersrc`. The real
-  windows sit parked behind the opaque overlay for the length of every
-  animation, so the border windows vanish with them and pop back at the
-  handover — the flicker.
-- **The fix is to dress the tiles with the same border**:
-  `[settings.ui.animation_borders]` mirrors the bordersrc (colors in
-  JankyBorders' `0xAARRGGBB` form so they copy verbatim), the reactor sends
-  the spec alongside the display geometry before every animation and on
-  config reload (hot-reloads for tuning), and the overlay strokes each
-  tile's picture layer — active color for the focused tile, inactive for the
-  rest. A `CALayer` border is an outline with a fully transparent middle, so
-  nothing shows through a translucent window's glass — the constraint that
-  killed the earlier focused-shadow attempt, whose semi-transparent body
-  flickered through Ghostty's transparency and stuck out during resizes.
-  Off by default: rini cannot know what a border tool draws, and a wrongly
-  guessed border on every window is worse than none.
-
-Shadows are deliberately untouched: the existing caster is already hollow
-(ring-masked to the outside of the tile), and any future shadow work must
-keep that property.
-
 ## Snapshot staleness
 
 Staleness is accepted by construction ("a slightly stale moving image is not

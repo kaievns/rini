@@ -62,22 +62,6 @@ pub struct OverlayTile {
     /// Front-to-back position on screen, 0 being frontmost. Without it a tile can be drawn behind a
     /// window it is really in front of, and the handover pops.
     pub depth: usize,
-    /// Whether this window holds (or is about to hold) focus, which decides its border color.
-    pub focused: bool,
-}
-
-/// The border tiles are dressed with, mirroring the border tool that draws on the real windows.
-///
-/// A `CALayer` border is a stroke around the layer's edge and nothing else — the middle stays
-/// fully transparent, so nothing shows through a translucent window's glass. Colors are
-/// straight-alpha (alpha, red, green, blue), 0.0..=1.0.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TileBorder {
-    pub width: f64,
-    /// Follow the window's ~10pt corner radius, or hug the frame squarely.
-    pub round: bool,
-    pub active: (f64, f64, f64, f64),
-    pub inactive: (f64, f64, f64, f64),
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -183,8 +167,6 @@ pub struct WorkspaceOverlay {
     bar: Retained<CALayer>,
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
-    /// The border every tile is dressed with, `None` for bare tiles.
-    borders: Option<TileBorder>,
     tile_layers: HashMap<WindowId, Tile>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
     /// be translated into the overlay's own space.
@@ -275,7 +257,6 @@ impl WorkspaceOverlay {
             backdrop,
             bar,
             bar_drawn: false,
-            borders: None,
             tile_layers: HashMap::new(),
             frame,
             scale,
@@ -406,7 +387,6 @@ impl WorkspaceOverlay {
 
     /// Installs one tile at its start position. Callers hold the transaction.
     fn install_tile(&mut self, tile: &OverlayTile) {
-        let borders = self.borders;
         let entry = self
             .tile_layers
             .entry(tile.window)
@@ -415,16 +395,10 @@ impl WorkspaceOverlay {
         reparent(&entry.shadow, &self.root);
         entry.picture.setContentsScale(self.scale);
         set_layer_contents(&entry.picture, &tile.snapshot);
-        apply_tile_border(&entry.picture, borders, tile.focused, tile.from.size);
         // Negated so a smaller depth, meaning nearer the front, draws on top.
         place_tile(entry, tile.from, -(tile.depth as f64));
         entry.picture.setHidden(false);
         entry.shadow.setHidden(false);
-    }
-
-    /// Points every subsequently installed tile at this border spec. `None` draws tiles bare.
-    pub fn set_borders(&mut self, borders: Option<TileBorder>) {
-        self.borders = borders;
     }
 
     /// Adds one tile to an animation already in flight and starts its movement.
@@ -562,26 +536,6 @@ impl WorkspaceOverlay {
 /// the strip's is what put a second bar on screen.
 fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
-}
-
-/// Dresses a tile's picture layer with the window's border, or strips it bare.
-///
-/// The border is a `CALayer` stroke: an outline with a fully transparent middle, so a translucent
-/// window shows what is genuinely behind it rather than a wash. Set explicitly in both directions
-/// because tile layers are pooled and the spec can change between animations. A `round` border
-/// follows the corner radius without `masksToBounds`, so nothing else about the tile is clipped.
-fn apply_tile_border(picture: &CALayer, borders: Option<TileBorder>, focused: bool, size: CGSize) {
-    let Some(border) = borders else {
-        picture.setBorderWidth(0.0);
-        picture.setCornerRadius(0.0);
-        return;
-    };
-    let (alpha, red, green, blue) = if focused { border.active } else { border.inactive };
-    let color = objc2_core_graphics::CGColor::new_srgb(red, green, blue, alpha);
-    // SAFETY: a CGColor created above, retained for the duration of the call; CA copies it.
-    unsafe { picture.setBorderColor(Some(&color)) };
-    picture.setBorderWidth(border.width);
-    picture.setCornerRadius(if border.round { tile_corner_radius(size) } else { 0.0 });
 }
 
 /// A tile: the picture, plus a caster behind it holding the shadow.

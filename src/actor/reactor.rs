@@ -4357,11 +4357,6 @@ impl Reactor {
         let Some(tx) = &self.communication_manager.workspace_animation_tx else {
             return;
         };
-        // The border spec rides along with the geometry: this runs before every animation and on
-        // config reload, so the tiles' borders track the config with no separate update path.
-        _ = tx.send(crate::actor::workspace_animation::Event::SetBorders(
-            self.config.settings.ui.animation_borders.clone(),
-        ));
         let wanted = space.or_else(|| self.active_display_space());
         let Some(screen) = self
             .space_state
