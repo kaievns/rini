@@ -110,12 +110,36 @@ How the CA handoff works:
 - `NSValue::valueWithPoint` (the from/to carrier) is gated behind the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
 
-The per-window path (`Event::Animate`) still draws tile by tile on the manual
-ticks. A halfway measure for it — driving ticks from a CVDisplayLink — would
-fix alignment but not main-thread coupling, and `display_link.rs` is dead code
-with an unsound `Drop` (`CVDisplayLinkStop` does not wait for an in-flight
-callback). Converting it to per-tile CA animations the same way is the better
-follow-up.
+The per-window path (`Event::Animate` — window open/close, column reorder,
+join/unjoin, and any layout change whose windows move by different vectors) is
+CA-driven the same way, per tile:
+
+- `start_moving` (after the 25ms coalesce window) hands every tile to Core
+  Animation in ONE transaction (`animate_tiles`): one commit, one timebase,
+  one curve, so tiles start on the same beat and cannot tear against each
+  other. Model layers jump to their destinations; the animations carry the
+  presentation. The tick loop paces only the mid-flight work.
+- Mid-flight passes are classified per tile (`merge_action`, tested):
+  **redundant** (same destination within `same_as` tolerance — touched not at
+  all, which is what keeps rapid presses from restarting or extending the
+  flight), **retargeted** (the tile bends from its presentation position to
+  the new destination over a fresh duration, canvas-chaining style), or
+  **joined** (installed and animated from its own start, full duration). Any
+  real change restarts the orchestration clock so the frame placement and the
+  teardown cover the newest flights.
+- `set_tiles` is pre-flight only: it places tiles at their START, which would
+  end an in-flight tile's animation on the wrong frame. Mid-flight changes go
+  through `retarget_tile`/`add_tile`.
+
+With that, nothing in the overlay is hand-drawn — canvas and tiles are both
+render-server-driven — and the open question is whether the canvas path is
+still needed at all: per-tile animations in one transaction share clock and
+curve, so a rigid group slide should hold together without the canvas's
+single-layer guarantee. The deciding test is chained retargeting under rapid
+presses (15 tiles staying coherent through repeated replacement). If it
+holds, the canvas AND the entire pan classifier (`strip_pan_delta`,
+`take_strip_movement`) collapse into the per-tile path; if it shows seams,
+the canvas stays.
 
 ## Snapshot staleness
 
@@ -218,8 +242,10 @@ the resize question again with whichever engine earned it.
 1. ~~CA-driven canvas animation~~ — done, see the overlay section above.
 2. ~~Steady ticker + matching curve for the AX engine~~ — done, see the
    detour note.
-3. CA-driven per-window overlay path (same pattern, per-tile animations).
-4. Shared `motion` module + wire or delete `animation_easing` (small; the
+3. ~~CA-driven per-window overlay path~~ — done, see the overlay section.
+4. Canvas replacement trial: if per-tile chaining stays coherent under rapid
+   presses, collapse the canvas path and the pan classifier into per-tile.
+5. Shared `motion` module + wire or delete `animation_easing` (small; the
    curves already agree, the definitions should live in one place).
 5. Staleness: change-driven warming or a stream pool; measure the mid-flight
    refresh cap first since it is nearly free.

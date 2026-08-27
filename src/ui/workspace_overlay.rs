@@ -25,6 +25,7 @@ use objc2_quartz_core::{
 use tracing::debug;
 
 use crate::actor::app::WindowId;
+use crate::sys::geometry::SameAs;
 use crate::sys::screen::CoordinateConverter;
 use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 
@@ -65,6 +66,7 @@ pub struct CanvasTile {
 }
 
 /// One window's picture inside the overlay, and where it should be drawn.
+#[derive(Clone)]
 pub struct OverlayTile {
     pub window: WindowId,
     /// Where the window starts, in the overlay's coordinate space.
@@ -123,6 +125,9 @@ pub fn ease_out_cubic(t: f64) -> f64 {
 /// One key for every canvas movement, so a retarget replaces the animation in flight rather than
 /// stacking a second one on the same property.
 const CANVAS_ANIMATION_KEY: &str = "rini.canvas.move";
+
+/// One key for every per-tile movement, for the same reason.
+const TILE_ANIMATION_KEY: &str = "rini.tile.move";
 
 /// `ease_out_cubic` in Core Animation form — exactly, not approximately. Derivation in
 /// `docs/animation-smoothness.md`; the identity is pinned by test.
@@ -529,6 +534,11 @@ impl WorkspaceOverlay {
     ///
     /// Layers are pooled per window, since handing one a bitmap is the expensive part. Anything absent
     /// is removed, or the previous switch's windows linger as ghosts.
+    ///
+    /// Pre-flight only: this places every tile at its START. A tile already animating must not pass
+    /// through here — its model sits at the destination while Core Animation carries the
+    /// presentation, and re-placing it at `from` would end the flight on the wrong frame. Mid-flight
+    /// changes go through `retarget_tile` and `add_tile`.
     pub fn set_tiles(&mut self, tiles: &[OverlayTile]) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
@@ -536,18 +546,7 @@ impl WorkspaceOverlay {
         let mut keep = Vec::with_capacity(tiles.len());
         for tile in tiles {
             keep.push(tile.window);
-            let entry = self
-                .tile_layers
-                .entry(tile.window)
-                .or_insert_with(|| new_tile(&self.root));
-            reparent(&entry.picture, &self.root);
-            reparent(&entry.shadow, &self.root);
-            entry.picture.setContentsScale(self.scale);
-            set_layer_contents(&entry.picture, &tile.snapshot);
-            // Negated so a smaller depth, meaning nearer the front, draws on top.
-            place_tile(entry, tile.from, -(tile.depth as f64));
-            entry.picture.setHidden(false);
-            entry.shadow.setHidden(false);
+            self.install_tile(tile);
         }
 
         let stale: Vec<WindowId> =
@@ -560,6 +559,98 @@ impl WorkspaceOverlay {
         }
 
         CATransaction::commit();
+    }
+
+    /// Installs one tile at its start position. Callers hold the transaction.
+    fn install_tile(&mut self, tile: &OverlayTile) {
+        let entry = self
+            .tile_layers
+            .entry(tile.window)
+            .or_insert_with(|| new_tile(&self.root));
+        reparent(&entry.picture, &self.root);
+        reparent(&entry.shadow, &self.root);
+        entry.picture.setContentsScale(self.scale);
+        set_layer_contents(&entry.picture, &tile.snapshot);
+        // Negated so a smaller depth, meaning nearer the front, draws on top.
+        place_tile(entry, tile.from, -(tile.depth as f64));
+        entry.picture.setHidden(false);
+        entry.shadow.setHidden(false);
+    }
+
+    /// Adds one tile to an animation already in flight and starts its movement.
+    ///
+    /// The reactor lays a layout out over several passes, so a window can join after the others
+    /// have left. It gets the full duration from where it stands: joining at the group's current
+    /// progress would snap it to a mid-flight position first, which is the worse artifact.
+    pub fn add_tile(&mut self, tile: &OverlayTile, duration: Duration) {
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.install_tile(tile);
+        self.animate_tile_movement(tile.window, tile.from, tile.to, tile.depth, duration);
+        CATransaction::commit();
+    }
+
+    /// Hands every tile's movement to Core Animation, in ONE transaction.
+    ///
+    /// One commit, one timebase, one curve: the render server starts every animation on the same
+    /// beat and interpolates them vsync-locked at the display's native refresh, so tiles cannot
+    /// tear against each other and a busy actor thread cannot drop drawn frames. The model layers
+    /// jump straight to their destinations; the animations carry the presentation and are removed
+    /// on completion, revealing the model — same pattern as `animate_canvas_offset`.
+    pub fn animate_tiles(&mut self, tiles: &[OverlayTile], duration: Duration) {
+        // Core Animation reads a zero duration as "use the default 0.25s".
+        if duration.is_zero() {
+            self.draw_frame(tiles, 1.0);
+            return;
+        }
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        for tile in tiles {
+            if tile.from.same_as(tile.to) {
+                continue;
+            }
+            self.animate_tile_movement(tile.window, tile.from, tile.to, tile.depth, duration);
+        }
+        CATransaction::commit();
+    }
+
+    /// Retargets one tile mid-flight: continues from wherever it is DRAWN right now to the new
+    /// destination, over a fresh duration.
+    ///
+    /// The presentation tree is the truth about the current position — the model already sits at
+    /// the old destination — and re-adding under the same key replaces the old animation, so the
+    /// tile bends toward the new target instead of restarting. Same chaining pattern as the canvas.
+    pub fn retarget_tile(&mut self, window: WindowId, to: CGRect, depth: usize, duration: Duration) {
+        let Some(entry) = self.tile_layers.get(&window) else { return };
+        // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
+        let current = unsafe { entry.picture.presentationLayer() }
+            .map(|presented| presented.position())
+            .unwrap_or_else(|| entry.picture.position());
+        let from = CGRect::new(current, to.size);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.animate_tile_movement(window, from, to, depth, duration);
+        CATransaction::commit();
+    }
+
+    /// Places one tile's model at its destination and installs the movement animation on both of
+    /// its layers. Callers hold the transaction.
+    fn animate_tile_movement(
+        &mut self,
+        window: WindowId,
+        from: CGRect,
+        to: CGRect,
+        depth: usize,
+        duration: Duration,
+    ) {
+        let Some(entry) = self.tile_layers.get(&window) else { return };
+        place_tile(entry, to, -(depth as f64));
+        // Anchor points are (0,0), so position is the frame origin; this path never changes a
+        // tile's size. addAnimation copies, so one instance serves picture and shadow.
+        let animation = position_animation(from.origin, to.origin, duration.as_secs_f64());
+        let key = NSString::from_str(TILE_ANIMATION_KEY);
+        entry.picture.addAnimation_forKey(&animation, Some(&key));
+        entry.shadow.addAnimation_forKey(&animation, Some(&key));
     }
 
     /// Positions every tile for a given progress through the animation, in ONE transaction.

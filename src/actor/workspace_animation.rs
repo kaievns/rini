@@ -23,6 +23,7 @@ use tracing::{debug, warn};
 
 use crate::actor;
 use crate::actor::app::WindowId;
+use crate::sys::geometry::SameAs;
 use crate::sys::run_loop::RepeatingTimer;
 use crate::sys::window_server::WindowServerId;
 use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
@@ -236,6 +237,28 @@ struct RunningAnimation {
     _clock: Option<RepeatingTimer>,
 }
 
+/// What became of a tile offered to an animation in flight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admitted {
+    /// Same window, same destination: a redundant layout pass. Nothing changes, and crucially
+    /// nothing restarts — rapid presses produce a stream of these, and restarting on them is what
+    /// held animations up forever.
+    Redundant,
+    /// Same window, new destination: the tile bends toward it mid-flight.
+    Retargeted,
+    /// A window this animation had not seen yet.
+    Joined,
+}
+
+/// The merge decision, separated from the bookkeeping so it can be tested on plain rects.
+fn merge_action(current_to: Option<CGRect>, incoming_to: CGRect) -> Admitted {
+    match current_to {
+        Some(to) if to.same_as(incoming_to) => Admitted::Redundant,
+        Some(_) => Admitted::Retargeted,
+        None => Admitted::Joined,
+    }
+}
+
 impl RunningAnimation {
     /// Progress from the clock, not from a frame count, so a late frame skips ahead instead of
     /// stretching the animation.
@@ -254,17 +277,30 @@ impl RunningAnimation {
         self.started.is_some() && self.progress() >= 1.0
     }
 
-    /// Adds or retargets one window without disturbing anything already moving.
-    fn merge(&mut self, tile: OverlayTile) {
-        if let Some(existing) = self.tiles.iter_mut().find(|t| t.window == tile.window) {
-            // Keep the original start so a window already moving is not yanked backwards, and take
-            // the newer destination so the animation ends where the window really goes.
-            existing.to = tile.to;
-            existing.snapshot = tile.snapshot;
-            existing.depth = tile.depth;
-        } else {
-            self.tiles.push(tile);
+    /// Adds or retargets one window without disturbing anything already moving, reporting which of
+    /// the two happened so the caller knows whether any real work follows.
+    fn merge(&mut self, tile: OverlayTile) -> Admitted {
+        let action = merge_action(
+            self.tiles.iter().find(|t| t.window == tile.window).map(|t| t.to),
+            tile.to,
+        );
+        match action {
+            Admitted::Redundant => {}
+            Admitted::Retargeted => {
+                let existing = self
+                    .tiles
+                    .iter_mut()
+                    .find(|t| t.window == tile.window)
+                    .expect("retarget implies the tile exists");
+                // Keep the original start so a window already moving is not yanked backwards, and
+                // take the newer destination so the animation ends where the window really goes.
+                existing.to = tile.to;
+                existing.snapshot = tile.snapshot;
+                existing.depth = tile.depth;
+            }
+            Admitted::Joined => self.tiles.push(tile),
         }
+        action
     }
 }
 
@@ -861,8 +897,13 @@ impl WorkspaceAnimation {
 
         // Merge into the animation in flight rather than replacing it: the reactor lays a layout out
         // over several passes, and a later pass can also change where a window is going.
-        if let Some(running) = self.running.as_mut() {
+        if self.running.is_some() {
+            let in_flight;
+            let mut retargets: Vec<(WindowId, CGRect, usize)> = Vec::new();
+            let mut joined: Vec<OverlayTile> = Vec::new();
             {
+                let running = self.running.as_mut().expect("checked above");
+                in_flight = running.started.is_some();
                 for (window, frame) in final_frames {
                     if let Some(existing) =
                         running.final_frames.iter_mut().find(|(w, _)| *w == window)
@@ -873,24 +914,57 @@ impl WorkspaceAnimation {
                     }
                 }
                 for tile in tiles {
-                    running.merge(tile);
+                    let copy = tile.clone();
+                    match running.merge(tile) {
+                        // The common rapid-press case: a later pass confirming destinations the
+                        // flight already has. Touching nothing is what keeps chained presses from
+                        // restarting or extending the animation forever.
+                        Admitted::Redundant => {}
+                        Admitted::Retargeted => retargets.push((copy.window, copy.to, copy.depth)),
+                        Admitted::Joined => joined.push(copy),
+                    }
                 }
-                // A window joining or retargeting mid-flight is drawn at the CURRENT progress, so it
-                // lands with everything else rather than snapping when the overlay lifts.
-                let progress = running.progress();
-                let tiles = std::mem::take(&mut running.tiles);
+            }
+            let changed = !(retargets.is_empty() && joined.is_empty());
+            if in_flight {
+                // Tiles already animating bend toward their new targets from wherever they are
+                // drawn; newcomers start their whole movement now. Both get the fresh duration.
+                if let Some(overlay) = self.overlay.as_mut() {
+                    for (window, to, depth) in retargets {
+                        overlay.retarget_tile(window, to, depth, duration);
+                    }
+                    for tile in &joined {
+                        overlay.add_tile(tile, duration);
+                    }
+                }
+                if changed {
+                    let running = self.running.as_mut().expect("checked above");
+                    // A real change restarts the orchestration clock so the frame placement and
+                    // the teardown cover the flights that just began; without this the overlay
+                    // lifts while a retargeted tile is still travelling.
+                    running.started = Some(Instant::now());
+                    running.duration = duration;
+                    // The destinations changed, so the frames already requested are stale. Ask
+                    // again once the animation is far enough along.
+                    running.frames_applied = false;
+                }
+            } else {
+                // Still collecting behind the coalesce window: compose statically at frame zero,
+                // exactly as a fresh start does. The animations are installed once by
+                // `start_moving`.
+                let tiles = {
+                    let running = self.running.as_mut().expect("checked above");
+                    std::mem::take(&mut running.tiles)
+                };
                 if let Some(overlay) = self.overlay.as_mut() {
                     overlay.set_tiles(&tiles);
-                    overlay.draw_frame(&tiles, progress);
+                    overlay.draw_frame(&tiles, 0.0);
                 }
                 if let Some(running) = self.running.as_mut() {
                     running.tiles = tiles;
-                    // The destinations changed, so the frames already requested are stale. Ask again
-                    // once the animation is far enough along.
-                    running.frames_applied = false;
                 }
-                return;
             }
+            return;
         }
 
         // The same backdrop and bar as a canvas movement, or the overlay shows a bare black window behind
@@ -1221,7 +1295,10 @@ impl WorkspaceAnimation {
         }
     }
 
-    /// Starts the clock on an animation that is on screen but not yet moving.
+    /// Starts an animation that is on screen but not yet moving: the clock, and the movements.
+    ///
+    /// This is the moment the tiles are handed to Core Animation, all in one transaction, so the
+    /// passes collected behind the coalesce window travel as one group from one beat.
     fn start_moving(&mut self) {
         // Dropping the timer stops it repeating; it only ever needed to fire once.
         self.coalesce = None;
@@ -1231,16 +1308,23 @@ impl WorkspaceAnimation {
         }
         debug!(windows = running.tiles.len(), "starting the animation after coalescing");
         running.started = Some(Instant::now());
+        let tiles = std::mem::take(&mut running.tiles);
+        let duration = running.duration;
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.animate_tiles(&tiles, duration);
+        }
+        if let Some(running) = self.running.as_mut() {
+            running.tiles = tiles;
+        }
     }
 
     fn step(&mut self) {
         let (done, place_now, refresh_now) = {
-            let Self { overlay, running, .. } = self;
-            let Some(running) = running.as_mut() else { return };
+            let Some(running) = self.running.as_mut() else { return };
             let progress = running.progress();
-            if let Some(overlay) = overlay.as_mut() {
-                overlay.draw_frame(&running.tiles, progress);
-            }
+            // Nothing is drawn here; Core Animation carries the tiles (see `animate_tiles`). The
+            // tick only paces the mid-flight work, so a late tick delays a recapture or the frame
+            // placement, never the motion.
             let place_now = !running.frames_applied && progress >= APPLY_FRAMES_AT;
             if place_now {
                 running.frames_applied = true;
@@ -1672,6 +1756,27 @@ pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The stability property under rapid presses: a later layout pass confirming a destination
+    /// the flight already has must change NOTHING — no retarget, no clock restart — or chained
+    /// presses hold the overlay up and re-ease tiles forever. The 0.1pt tolerance is `same_as`'s,
+    /// because the layout recomputes destinations bit-for-bit only most of the time.
+    #[test]
+    fn a_pass_confirming_the_destination_is_redundant() {
+        let to = rect(4.0, 32.0, 859.0, 1081.0);
+        let confirming = rect(4.05, 32.0, 859.0, 1081.0);
+        assert_eq!(merge_action(Some(to), confirming), Admitted::Redundant);
+    }
+
+    #[test]
+    fn a_new_destination_retargets_and_a_new_window_joins() {
+        let to = rect(4.0, 32.0, 859.0, 1081.0);
+        assert_eq!(
+            merge_action(Some(to), rect(865.0, 32.0, 859.0, 1081.0)),
+            Admitted::Retargeted
+        );
+        assert_eq!(merge_action(None, to), Admitted::Joined);
+    }
 
     /// Moving the overlay to another display invalidates every picture it holds, not just the bar. Clearing
     /// them one field at a time is what left an external display's desktop behind a built-in display's
