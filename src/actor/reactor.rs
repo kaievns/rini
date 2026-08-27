@@ -899,8 +899,20 @@ impl Reactor {
         let event_tap_tx = reactor.communication_manager.event_tap_tx.clone();
         let reactor_task = Self::run_reactor_loop(reactor, events);
         let raise_manager_task = RaiseManager::run(raise_manager_rx, events_tx, event_tap_tx);
-        let animation_task = animation::AnimationManager::run(animation_rx);
-        let _ = tokio::join!(reactor_task, raise_manager_task, animation_task);
+        // On its own thread, not joined with the reactor: the animation ticker shared the
+        // reactor's executor, so a heavy arrange pass delayed ticks and the wall-clock frame
+        // skip turned the delay into dropped frames. The manager only sends channel messages,
+        // so it needs nothing of the reactor's state — only a run loop of its own for its timer.
+        std::thread::Builder::new()
+            .name("animation".into())
+            .spawn(move || {
+                crate::sys::executor::Executor::run(animation::AnimationManager::run(animation_rx));
+                // Reachable only if the reactor dropped the sender, and the reactor never exits
+                // without panicking itself; abort loudly rather than animate nothing quietly.
+                panic!("animation thread exited");
+            })
+            .expect("failed to spawn animation thread");
+        let _ = tokio::join!(reactor_task, raise_manager_task);
     }
 
     async fn run_reactor_loop(mut reactor: Reactor, mut events: Receiver) {

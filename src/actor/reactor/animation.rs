@@ -1130,12 +1130,12 @@ fn get_frame(a: CGRect, b: CGRect, t: f64) -> CGRect {
     }
 }
 
+/// The same curve the overlay engine draws with, so a resize (this engine) next to a pan (the
+/// overlay) from one keystroke reads as one movement. This was a circular ease-in-out, whose slow
+/// start also compounded the keypress-to-motion latency; ease-out is fast off the line and
+/// settles, which is what niri does and what the canvas already does.
 fn ease(t: f64) -> f64 {
-    if t < 0.5 {
-        (1.0 - f64::sqrt(1.0 - f64::powi(2.0 * t, 2))) / 2.0
-    } else {
-        (f64::sqrt(1.0 - f64::powi(-2.0 * t + 2.0, 2)) + 1.0) / 2.0
-    }
+    crate::ui::workspace_overlay::ease_out_cubic(t)
 }
 
 fn blend(a: f64, b: f64, s: f64) -> f64 {

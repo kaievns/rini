@@ -45,10 +45,13 @@ What remains is either consolidation or marginal:
   coalescing collapses most ticks anyway, but each one still costs a channel
   send and an app-thread wakeup. ~60 (or the display refresh rate, which
   `display_link.rs` can query) loses nothing visible. *Estimated.*
-- **The ticker shares the reactor's executor.** `AnimationManager::run` is
-  joined with the reactor loop, so a heavy arrange pass delays ticks; the
-  wall-clock skip hides the timing error but the frames are still dropped.
-  A dedicated thread would keep the cadence steady. *Estimated.*
+- ~~The ticker shares the reactor's executor.~~ Fixed: `AnimationManager::run`
+  now runs on its own `animation` thread with its own run loop, so an arrange
+  pass cannot delay a tick and the wall-clock skip has nothing to skip.
+- ~~The curve disagrees with the overlay.~~ Fixed: the engine's `ease` now
+  delegates to the overlay's `ease_out_cubic`, so a resize (AX) next to a pan
+  (overlay) from one keystroke follows one curve, and the sluggish
+  ease-in-out start is gone.
 - **Cross-app skew is unfixable here.** The real fix is to stop using AX for
   animation entirely — see "Endgame" below.
 
@@ -197,13 +200,29 @@ compromised by the AX top-edge clamp ("instaswap from the top"). At that
 point the trajectory is: promote the overlay to the only engine, keep instant
 placement as the no-animation path, delete the per-frame AX machinery.
 
+## Detour: resizes stay on AX while it gets a fair trial
+
+The first pass at overlay resizes (a `contentsCenter` nine-part draw, then a
+2x2 `contentsRect` crop grid, window entrances, focused shadows and borders,
+park-entry fixes, capture-size fixes) accumulated visual bugs faster than it
+fixed them, and is parked in `git stash` ("overlay resize round 1+2"). The
+trial: give the AX engine — real windows resizing live, real borders,
+shadows and blur, apps re-rendering mid-flight — a steady ticker and the
+right curve (the two fixes above), and judge whether it is good enough for
+resizes. The overlay keeps switches, pans and slides either way. Next after
+the trial: per-tile CA animations for the overlay's per-window path, then
+the resize question again with whichever engine earned it.
+
 ## Order of attack
 
 1. ~~CA-driven canvas animation~~ — done, see the overlay section above.
-2. CA-driven per-window overlay path (same pattern, per-tile animations).
-3. Shared `motion` module + wire or delete `animation_easing` (small, removes
-   the curve inconsistency).
-4. Staleness: change-driven warming or a stream pool; measure the mid-flight
+2. ~~Steady ticker + matching curve for the AX engine~~ — done, see the
+   detour note.
+3. CA-driven per-window overlay path (same pattern, per-tile animations).
+4. Shared `motion` module + wire or delete `animation_easing` (small; the
+   curves already agree, the definitions should live in one place).
+5. Staleness: change-driven warming or a stream pool; measure the mid-flight
    refresh cap first since it is nearly free.
-5. `animate_layout` decomposition, next time selection logic changes anyway.
-6. Overlay resizes, then retire the AX engine.
+6. `animate_layout` decomposition, next time selection logic changes anyway.
+7. The resize question again — un-stash the overlay resize work or keep AX,
+   whichever the trial earns.
