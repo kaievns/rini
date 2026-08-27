@@ -7,7 +7,7 @@ use objc2_core_graphics::{
     CGEvent, CGEventMask, CGEventTapLocation as CGTapLoc, CGEventTapOptions as CGTapOpt,
     CGEventTapPlacement as CGTapPlace, CGEventTapProxy, CGEventType,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 pub type TapCallback = Option<
     unsafe extern "C-unwind" fn(
@@ -18,14 +18,14 @@ pub type TapCallback = Option<
     ) -> *mut CGEvent,
 >;
 
-pub type TapReenabledCallback = Option<unsafe extern "C-unwind" fn(*mut c_void)>;
+pub type TapDisabledCallback = Option<unsafe extern "C-unwind" fn(*mut c_void)>;
 pub type TapInvalidatedCallback = Option<unsafe extern "C-unwind" fn(*mut c_void)>;
 
 struct TrampolineCtx {
     callback: TapCallback,
     original_user_info: *mut c_void,
     original_drop: Option<unsafe fn(*mut c_void)>,
-    reenabled_callback: TapReenabledCallback,
+    disabled_callback: TapDisabledCallback,
     invalidated_callback: TapInvalidatedCallback,
     port_ptr: Option<core::ptr::NonNull<CFMachPort>>,
 }
@@ -57,23 +57,17 @@ extern "C-unwind" fn trampoline_callback(
     // kCGEventTapDisabledByTimeout (-2) & kCGEventTapDisabledByUserInput (-1)
     let ety = etype.0 as i32;
     if ety == -1 || ety == -2 {
-        if let Some(port_ptr) = ctx.port_ptr {
-            let port = unsafe { port_ptr.as_ref() };
-            let reason = if ety == -2 { "timeout" } else { "user input" };
-            warn!(reason, "Event tap was disabled; re-enabling it");
-            CGEvent::tap_enable(port, true);
-            if CGEvent::tap_is_enabled(port) {
-                if let Some(callback) = ctx.reenabled_callback {
-                    unsafe { callback(ctx.original_user_info) };
-                }
-            } else {
-                error!(reason, "Event tap did not re-enable; scheduling tap recreation");
-                if let Some(callback) = ctx.invalidated_callback {
-                    unsafe { callback(ctx.original_user_info) };
-                }
-            }
+        // NEVER re-enabled from here. A disable is the OS reporting that this tap stopped being
+        // serviced; re-enabling in the callback re-inserted a stalled active tap at the head of
+        // the event path and froze all input system-wide until a reboot. The owner decides from
+        // its own thread, through [`ReEnableGovernor`] — which also means a genuinely stuck
+        // thread cannot re-enable anything until it is healthy again. See "A revoked
+        // screen-recording grant froze all input" in docs/permissions-and-the-launch-agent.md.
+        let reason = if ety == -2 { "timeout" } else { "user input" };
+        warn!(reason, "Event tap was disabled; deferring to the owner's governor");
+        if let Some(callback) = ctx.disabled_callback {
+            unsafe { callback(ctx.original_user_info) };
         }
-
         return event_ref.as_ptr();
     }
 
@@ -104,6 +98,61 @@ pub struct EventTap {
     drop_ctx: Option<unsafe fn(*mut c_void)>,
 }
 
+/// Whether a disabled tap may be re-armed right away, or has to sit out a cooldown first.
+///
+/// A tap disable is the OS reporting that the callback was not serviced in time. One is routine —
+/// wake from sleep, a long garbage-collection-ish stall — and re-enabling immediately is right. A
+/// burst means the servicing thread is genuinely stuck (measured: a revoked screen-recording grant
+/// stalling SkyLight calls inside the callback), and re-enabling just re-freezes every input
+/// device in the session for another timeout round. The cooldown keeps input flowing without rini
+/// while whatever is stalling clears; hotkeys and gestures come back when the tap re-arms.
+pub struct ReEnableGovernor {
+    disables: std::collections::VecDeque<std::time::Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ReEnableDecision {
+    Now,
+    After(std::time::Duration),
+}
+
+/// Disables this frequent mean the tap is stalled, not unlucky. Three within the window requires
+/// three consecutive timeout rounds, which ordinary load has never produced.
+const DISABLE_BURST_LIMIT: usize = 3;
+const DISABLE_BURST_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+/// Long enough that a stalled system stays usable (input flows while the tap is down), short
+/// enough that hotkeys returning is not an event.
+const REENABLE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl Default for ReEnableGovernor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReEnableGovernor {
+    pub fn new() -> Self {
+        Self { disables: std::collections::VecDeque::new() }
+    }
+
+    /// Records a disable at `now` and decides how to respond.
+    pub fn on_disabled(&mut self, now: std::time::Instant) -> ReEnableDecision {
+        self.disables.push_back(now);
+        while let Some(&oldest) = self.disables.front() {
+            if now.duration_since(oldest) > DISABLE_BURST_WINDOW {
+                self.disables.pop_front();
+            } else {
+                break;
+            }
+        }
+        if self.disables.len() >= DISABLE_BURST_LIMIT {
+            ReEnableDecision::After(REENABLE_COOLDOWN)
+        } else {
+            ReEnableDecision::Now
+        }
+    }
+}
+
 impl EventTap {
     unsafe fn create(
         location: CGTapLoc,
@@ -112,14 +161,14 @@ impl EventTap {
         callback: TapCallback,
         user_info: *mut c_void,
         drop_ctx: Option<unsafe fn(*mut c_void)>,
-        reenabled_callback: TapReenabledCallback,
+        disabled_callback: TapDisabledCallback,
         invalidated_callback: TapInvalidatedCallback,
     ) -> Option<Self> {
         let tramp = Box::new(TrampolineCtx {
             callback,
             original_user_info: user_info,
             original_drop: drop_ctx,
-            reenabled_callback,
+            disabled_callback,
             invalidated_callback,
             port_ptr: None,
         });
@@ -183,8 +232,8 @@ impl EventTap {
         }
     }
 
-    /// Creates an event tap at `location` and reports both successful
-    /// re-enables and failures that require the owner to recreate the tap.
+    /// Creates an event tap at `location` that reports disables and Mach-port invalidations to
+    /// its owner, which re-enables through [`EventTap::re_enable`] under its own policy.
     pub unsafe fn new_at_location_with_options_and_recovery_callbacks(
         location: CGTapLoc,
         options: CGTapOpt,
@@ -192,7 +241,7 @@ impl EventTap {
         callback: TapCallback,
         user_info: *mut c_void,
         drop_ctx: Option<unsafe fn(*mut c_void)>,
-        reenabled_callback: TapReenabledCallback,
+        disabled_callback: TapDisabledCallback,
         invalidated_callback: TapInvalidatedCallback,
     ) -> Option<Self> {
         unsafe {
@@ -203,7 +252,7 @@ impl EventTap {
                 callback,
                 user_info,
                 drop_ctx,
-                reenabled_callback,
+                disabled_callback,
                 invalidated_callback,
             )
         }
@@ -228,15 +277,15 @@ impl EventTap {
         }
     }
 
-    /// Creates a session event tap that invokes `reenabled_callback` immediately
-    /// after Core Graphics reports and the trampoline recovers a disabled tap.
+    /// Creates a session event tap that reports disables (`disabled_callback`) and Mach-port
+    /// invalidations (`invalidated_callback`) to its owner instead of recovering in the callback.
     pub unsafe fn new_with_options_and_recovery_callbacks(
         options: CGTapOpt,
         mask: CGEventMask,
         callback: TapCallback,
         user_info: *mut c_void,
         drop_ctx: Option<unsafe fn(*mut c_void)>,
-        reenabled_callback: TapReenabledCallback,
+        disabled_callback: TapDisabledCallback,
         invalidated_callback: TapInvalidatedCallback,
     ) -> Option<Self> {
         unsafe {
@@ -247,10 +296,17 @@ impl EventTap {
                 callback,
                 user_info,
                 drop_ctx,
-                reenabled_callback,
+                disabled_callback,
                 invalidated_callback,
             )
         }
+    }
+
+    /// Re-arms a tap the OS disabled. `false` means the port is dead and the tap
+    /// has to be recreated.
+    pub fn re_enable(&self) -> bool {
+        CGEvent::tap_enable(&self.port, true);
+        CGEvent::tap_is_enabled(&self.port)
     }
 
     pub unsafe fn new_listen_only(
@@ -300,5 +356,77 @@ impl Drop for EventTap {
         if let Some(dropper) = self.drop_ctx {
             unsafe { dropper(self.user_info) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    #[test]
+    fn an_isolated_disable_re_enables_immediately() {
+        // The routine case: wake from sleep, a one-off stall. Waiting here would just be ten
+        // seconds of dead hotkeys for nothing.
+        let mut governor = ReEnableGovernor::new();
+        assert_eq!(governor.on_disabled(Instant::now()), ReEnableDecision::Now);
+    }
+
+    #[test]
+    fn a_burst_of_disables_backs_off() {
+        // The measured freeze: a revoked screen-recording grant stalls the callback, the OS
+        // disables the tap, and each instant re-enable re-freezes every input device for another
+        // timeout round. The third disable in the window has to stand down instead.
+        let mut governor = ReEnableGovernor::new();
+        let start = Instant::now();
+        assert_eq!(governor.on_disabled(start), ReEnableDecision::Now);
+        assert_eq!(governor.on_disabled(start + Duration::from_secs(2)), ReEnableDecision::Now);
+        assert_eq!(
+            governor.on_disabled(start + Duration::from_secs(4)),
+            ReEnableDecision::After(REENABLE_COOLDOWN)
+        );
+    }
+
+    #[test]
+    fn the_burst_keeps_backing_off_while_the_stall_lasts() {
+        // While the underlying stall persists, every re-arm gets disabled again; each of those
+        // must keep deferring, or the freeze returns at full duty cycle.
+        let mut governor = ReEnableGovernor::new();
+        let start = Instant::now();
+        governor.on_disabled(start);
+        governor.on_disabled(start + Duration::from_secs(2));
+        governor.on_disabled(start + Duration::from_secs(4));
+        assert_eq!(
+            governor.on_disabled(start + Duration::from_secs(15)),
+            ReEnableDecision::After(REENABLE_COOLDOWN)
+        );
+    }
+
+    #[test]
+    fn disables_spread_beyond_the_window_stay_immediate() {
+        // One disable every few minutes is a busy machine, not a stalled tap.
+        let mut governor = ReEnableGovernor::new();
+        let start = Instant::now();
+        for minutes in [0u64, 3, 6, 9] {
+            assert_eq!(
+                governor.on_disabled(start + Duration::from_secs(minutes * 60)),
+                ReEnableDecision::Now
+            );
+        }
+    }
+
+    #[test]
+    fn the_governor_recovers_after_a_quiet_spell() {
+        // Once the stall clears and the window drains, the tap goes back to immediate re-enables.
+        let mut governor = ReEnableGovernor::new();
+        let start = Instant::now();
+        governor.on_disabled(start);
+        governor.on_disabled(start + Duration::from_secs(1));
+        governor.on_disabled(start + Duration::from_secs(2));
+        assert_eq!(
+            governor.on_disabled(start + Duration::from_secs(120)),
+            ReEnableDecision::Now
+        );
     }
 }

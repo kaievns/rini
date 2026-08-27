@@ -105,3 +105,42 @@ rini runs as a terminal-launched process, which has Accessibility by inheritance
 and a reachable Mach service. It does not survive a reboot. Making it survive
 one needs both of the open items above: an explicit Accessibility grant for the
 binary, and `MachServices` check-in so the CLI still works.
+
+## A revoked screen-recording grant froze all input
+
+Observed: removing rini's Screen Recording entry in System Settings while rini
+runs froze every mouse click and key press in the session. The screen kept
+compositing — animation in other windows was visible — but nothing responded,
+including the TCC dialog that would have fixed it. Only a reboot recovered.
+
+The mechanism, in three parts:
+
+1. rini owns two ACTIVE CGEventTaps: the session tap (all mouse buttons, plus
+   keyboard whenever any hotkey is bound — effectively always) and the HID
+   gesture tap. An active tap sits in the delivery path: the window server
+   holds each matching event until the tap's callback answers.
+2. The callbacks make synchronous SkyLight calls per event (hit tests,
+   occlusion checks) over the same SLS connection the capture paths use. When
+   tccd re-evaluates the process after the grant change, those calls stall —
+   and the callback stalls holding an event, so all input queues behind it.
+3. macOS has a safety valve: it disables an unresponsive tap
+   (`kCGEventTapDisabledByTimeout`) and lets input flow again. rini defeated
+   it — the tap trampoline re-enabled the tap unconditionally, inside the
+   callback, the moment its thread could breathe. Stalled tap back in, another
+   timeout round, forever. The freeze survives until reboot because killing
+   rini needs input, and launchd would resurrect it anyway
+   (`KeepAlive Crashed=true`).
+
+The fix moves re-enabling out of the callback entirely. A disable is now only
+REPORTED to the owning actor, which re-arms under `ReEnableGovernor`: an
+isolated disable re-enables immediately (wake from sleep, a one-off stall); a
+third disable within 30s means the tap is genuinely stuck, so it stands down
+for 10s per round — input flows without rini while the stall lasts, hotkeys
+return when it clears. The reporting itself is the backpressure: a truly stuck
+input thread cannot deliver the message, so the tap stays down exactly as long
+as the thread is unhealthy.
+
+Residual, deliberately not addressed here: the synchronous SLS hit tests
+inside the tap callbacks are still the thing that stalls. Moving them off the
+event path (or onto a separate SLS connection) would remove the freeze
+trigger rather than the freeze amplifier, and is queued as follow-up work.

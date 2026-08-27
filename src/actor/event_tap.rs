@@ -151,6 +151,10 @@ struct CallbackCtx {
 
 #[derive(Clone, Copy, Debug)]
 enum Recovery {
+    /// The OS disabled the tap (timeout or user input); the governor decides when to re-arm.
+    TapDisabled(u64),
+    /// A deferred re-arm's cooldown ran out.
+    CooldownElapsed(u64),
     TapInvalidated(u64),
 }
 
@@ -207,7 +211,7 @@ impl EventTap {
                 Some(mouse_callback),
                 ctx_ptr,
                 Some(drop_mouse_ctx),
-                Some(event_tap_reenabled),
+                Some(event_tap_disabled),
                 Some(event_tap_invalidated),
             )
         };
@@ -335,11 +339,48 @@ impl EventTap {
             }
         }
 
+        // Local to the input thread on purpose: the cooldown timer is a CFRunLoop timer for THIS
+        // thread's run loop, and the governor's whole point is that only a healthy input thread
+        // gets to re-arm the tap.
+        let mut governor = crate::sys::event_tap::ReEnableGovernor::new();
+        let mut _cooldown: Option<crate::sys::run_loop::RepeatingTimer> = None;
+
         loop {
             tokio::select! {
                 maybe_recovery = recovery_rx.recv() => {
                     let Some(recovery) = maybe_recovery else { break };
                     match recovery {
+                        Recovery::TapDisabled(generation) => {
+                            if generation != this.tap_generation.get() {
+                                continue;
+                            }
+                            match governor.on_disabled(std::time::Instant::now()) {
+                                crate::sys::event_tap::ReEnableDecision::Now => {
+                                    this.re_enable_tap(generation, &recovery_tx);
+                                }
+                                crate::sys::event_tap::ReEnableDecision::After(wait) => {
+                                    warn!(
+                                        ?wait,
+                                        "Event tap is being disabled repeatedly; standing down \
+                                         so input keeps flowing without it"
+                                    );
+                                    let tx = recovery_tx.clone();
+                                    _cooldown = crate::sys::run_loop::RepeatingTimer::every(wait, move || {
+                                        _ = tx.send(Recovery::CooldownElapsed(generation));
+                                    });
+                                    if _cooldown.is_none() {
+                                        error!("Could not start the re-enable cooldown; re-arming immediately");
+                                        this.re_enable_tap(generation, &recovery_tx);
+                                    }
+                                }
+                            }
+                        }
+                        Recovery::CooldownElapsed(generation) => {
+                            _cooldown = None;
+                            if generation == this.tap_generation.get() {
+                                this.re_enable_tap(generation, &recovery_tx);
+                            }
+                        }
                         Recovery::TapInvalidated(generation) => {
                             this.rebuild_invalidated_event_tap(generation, &recovery_tx);
                         }
@@ -351,6 +392,22 @@ impl EventTap {
                     this.on_request(request, &recovery_tx);
                 }
             }
+        }
+    }
+
+    /// Re-arms a disabled tap, falling back to recreation when the port is dead.
+    fn re_enable_tap(
+        self: &Arc<Self>,
+        generation: u64,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+    ) {
+        let re_enabled = self.tap.borrow().as_ref().is_some_and(|tap| tap.re_enable());
+        if re_enabled {
+            warn!(generation, "Re-enabled the event tap");
+            self.reconcile_after_tap_reenabled();
+        } else {
+            error!(generation, "Event tap did not re-enable; recreating it");
+            self.rebuild_invalidated_event_tap(generation, recovery_tx);
         }
     }
 
@@ -858,16 +915,12 @@ unsafe extern "C-unwind" fn mouse_callback(
     }
 }
 
-unsafe extern "C-unwind" fn event_tap_reenabled(user_info: *mut std::ffi::c_void) {
+unsafe extern "C-unwind" fn event_tap_disabled(user_info: *mut std::ffi::c_void) {
     if user_info.is_null() {
         return;
     }
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
-    if std::panic::catch_unwind(AssertUnwindSafe(|| ctx.this.reconcile_after_tap_reenabled()))
-        .is_err()
-    {
-        error!("Panic while reconciling input state after event tap recovery");
-    }
+    let _ = ctx.recovery_tx.send(Recovery::TapDisabled(ctx.tap_generation));
 }
 
 unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_void) {
