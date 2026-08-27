@@ -161,13 +161,17 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 	"NSEnumerator",
 	"NSAttributedString",
 	"NSDistributedNotificationCenter",
+	# NSGeometry plus objc2-core-foundation gate NSValue::valueWithPoint, which is how a CGPoint is
+	# handed to a CABasicAnimation's from/to values for the Core Animation-driven canvas movement.
+	"NSGeometry",
 	"NSString",
 	"NSKeyValueCoding",
 	"NSNotification",
 	"NSError",
 	"NSProcessInfo",
 	"NSURL",
-	"NSValue"
+	"NSValue",
+	"objc2-core-foundation"
 ]}
 objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = [
 	"SCScreenshotManager",

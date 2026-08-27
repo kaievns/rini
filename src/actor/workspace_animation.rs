@@ -4,9 +4,13 @@
 //! requires it.
 //!
 //! One animation: capture the participating windows, build a tile each, show the overlay, let the
-//! caller place the real windows underneath while they are covered, step the tiles over the duration,
+//! caller place the real windows underneath while they are covered, move the tiles over the duration,
 //! then hide the overlay. The frame clock is time-based rather than a frame counter, so a late frame
 //! skips instead of slowing the animation down.
+//!
+//! Canvas movements (workspace switches and strip pans) are drawn by Core Animation; the tick loop
+//! only paces their mid-flight orchestration. The per-window path still draws tile by tile on the
+//! ticks. See `docs/animation-smoothness.md`.
 //!
 //! Measurements behind all of this are in `docs/capture-overlay-research.md`.
 
@@ -118,10 +122,9 @@ pub enum Event {
 pub type Sender = actor::Sender<Event>;
 pub type Receiver = actor::Receiver<Event>;
 
-/// Frame interval. 60fps rather than 120 because the previous engine was configured at 120 and the
-/// per-frame work could not keep up, so frames were dropped and the result was less smooth than a
-/// slower rate that always lands. Nothing here writes to another process, so this may be worth
-/// revisiting once the overlay is doing the drawing.
+/// Tick interval. Canvas movements draw through Core Animation and use ticks only for mid-flight
+/// orchestration; the per-window path still draws on them. 60fps rather than 120 because a prior
+/// engine at 120 dropped frames and read worse than a slower rate that always lands.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// How long to keep collecting windows before the animation starts moving.
@@ -187,10 +190,8 @@ struct RunningCanvas {
     frames_applied: bool,
     started: Instant,
     duration: Duration,
-    /// Frames actually drawn. Reported when the movement ends, because the difference between a smooth
-    /// animation and one the eye reads as an instant cut is entirely how many frames reached the screen,
-    /// and that cannot be recovered from a screen recording: macOS records at a variable rate and emits
-    /// nothing while the screen is unchanged.
+    /// Orchestration ticks that ran. Not drawn frames — the render server owns those and does not
+    /// report them — so this only tells whether the tick loop had room for the mid-flight work.
     frames: u32,
     /// The windows on the canvas, with their server ids and drawn sizes, so the one being switched into
     /// can be found again mid-flight.
@@ -1067,8 +1068,17 @@ impl WorkspaceAnimation {
         // presses reads as one continuous scroll instead of a series of restarts.
         let from_offset = match self.canvas.as_ref() {
             Some(running) => {
-                let eased = crate::ui::workspace_overlay::ease_out_cubic(running.progress());
-                let current = running.offset_at(eased);
+                // The presentation tree says where the canvas is drawn right now; model
+                // arithmetic covers the gap before the first presentation frame exists.
+                let current = self
+                    .overlay
+                    .as_ref()
+                    .and_then(|overlay| overlay.current_canvas_offset())
+                    .unwrap_or_else(|| {
+                        let eased =
+                            crate::ui::workspace_overlay::ease_out_cubic(running.progress());
+                        running.offset_at(eased)
+                    });
                 let residual = CGPoint::new(
                     current.x - running.to_offset.x,
                     current.y - running.to_offset.y,
@@ -1104,7 +1114,11 @@ impl WorkspaceAnimation {
         overlay.set_canvas(&tiles);
         overlay.set_canvas_offset(from_offset);
         overlay.show();
+        // Committed in the same run loop turn as the show, so the first presented frame is the
+        // animation's first frame at `from_offset` — no gap for the destination to flash through.
+        overlay.animate_canvas_offset(from_offset, to_offset, duration);
 
+        // Ticks pace the mid-flight work in `step_canvas` only; the drawing is Core Animation's.
         let tx = self.tx.clone();
         let clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
             _ = tx.send(Event::Tick);
@@ -1129,7 +1143,8 @@ impl WorkspaceAnimation {
             _clock: clock,
         });
 
-        // With no clock nothing would advance, so land it immediately.
+        // With no clock the drawing would still run, but the real windows would never be placed
+        // and the overlay would never come down, so land it immediately instead.
         if self.canvas.as_ref().is_some_and(|c| c._clock.is_none()) {
             self.step_canvas_to_end();
         }
@@ -1137,14 +1152,11 @@ impl WorkspaceAnimation {
 
     fn step_canvas(&mut self) {
         let (done, place_now, refresh_now) = {
-            let Self { overlay, canvas, .. } = self;
-            let Some(canvas) = canvas.as_mut() else { return };
+            let Some(canvas) = self.canvas.as_mut() else { return };
             let progress = canvas.progress();
-            let eased = crate::ui::workspace_overlay::ease_out_cubic(progress);
-            if let Some(overlay) = overlay.as_mut() {
-                overlay.set_canvas_offset(canvas.offset_at(eased));
-                canvas.frames += 1;
-            }
+            // Nothing is drawn here; a late tick delays a recapture or the frame placement,
+            // never the motion.
+            canvas.frames += 1;
             let place_now = !canvas.frames_applied && progress >= APPLY_FRAMES_AT;
             if place_now {
                 canvas.frames_applied = true;
@@ -1184,7 +1196,7 @@ impl WorkspaceAnimation {
     fn finish_canvas(&mut self) {
         if let Some(canvas) = self.canvas.as_ref() {
             debug!(
-                frames = canvas.frames,
+                ticks = canvas.frames,
                 elapsed_ms = canvas.started.elapsed().as_millis(),
                 duration_ms = canvas.duration.as_millis(),
                 travel = format!(

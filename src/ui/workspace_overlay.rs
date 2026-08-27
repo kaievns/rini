@@ -7,6 +7,7 @@
 //! Design constraints, all measured, in `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
@@ -17,7 +18,10 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
-use objc2_quartz_core::{CALayer, CATransaction};
+use objc2_foundation::{NSString, NSValue};
+use objc2_quartz_core::{
+    CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction,
+};
 use tracing::debug;
 
 use crate::actor::app::WindowId;
@@ -114,6 +118,32 @@ pub fn ease_out_cubic(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     let inv = 1.0 - t;
     1.0 - inv * inv * inv
+}
+
+/// One key for every canvas movement, so a retarget replaces the animation in flight rather than
+/// stacking a second one on the same property.
+const CANVAS_ANIMATION_KEY: &str = "rini.canvas.move";
+
+/// `ease_out_cubic` in Core Animation form — exactly, not approximately. Derivation in
+/// `docs/animation-smoothness.md`; the identity is pinned by test.
+fn ease_out_cubic_timing() -> Retained<CAMediaTimingFunction> {
+    CAMediaTimingFunction::functionWithControlPoints(1.0 / 3.0, 1.0, 2.0 / 3.0, 1.0)
+}
+
+/// An explicit position animation from `from` to `to`, in layer coordinates. The caller sets the
+/// model to the destination; this carries the presentation there and is removed on completion,
+/// revealing the model value — no snap-back, no completion delegate.
+fn position_animation(from: CGPoint, to: CGPoint, seconds: f64) -> Retained<CABasicAnimation> {
+    let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
+    // SAFETY: an NSValue holding a CGPoint is the value type Core Animation expects for the
+    // "position" key path.
+    unsafe {
+        animation.setFromValue(Some(&NSValue::valueWithPoint(from)));
+        animation.setToValue(Some(&NSValue::valueWithPoint(to)));
+    }
+    animation.setTimingFunction(Some(&ease_out_cubic_timing()));
+    animation.setDuration(seconds);
+    animation
 }
 
 /// One window's two layers: the picture, and a caster behind it that carries nothing but the shadow.
@@ -415,14 +445,15 @@ impl WorkspaceOverlay {
         CATransaction::commit();
     }
 
-    /// Moves the canvas so that `offset` in canvas coordinates sits at the overlay's top-left.
-    ///
-    /// The entire animation: one property on one layer, so tiles cannot drift against each other.
+    /// Moves the canvas so that `offset` in canvas coordinates sits at the overlay's top-left,
+    /// with no animation. Cancels any movement in flight first: the model already sits at that
+    /// movement's destination, so a bare set would change nothing visible until it ended.
     pub fn set_canvas_offset(&mut self, offset: CGPoint) {
         CATransaction::begin();
-        // Implicit animations off, or Core Animation adds its own ease on top of ours and the result
-        // lags the input by a fixed amount.
+        // Implicit animations off, or Core Animation adds its own ease on top of the change and the
+        // result lags the input by a fixed amount.
         CATransaction::setDisableActions(true);
+        self.remove_canvas_animations();
         self.canvas.setPosition(CGPoint::new(-offset.x, -offset.y));
         // Whatever is pinned moves the other way by the same amount, so it stands still on screen while
         // keeping its place in the stack. Two layer writes per frame at most: only floating windows pin.
@@ -434,6 +465,64 @@ impl WorkspaceOverlay {
             }
         }
         CATransaction::commit();
+    }
+
+    /// Hands a canvas movement to Core Animation: vsync-locked at native refresh, immune to
+    /// main-thread stalls. Pinned tiles are counter-animated in the same transaction so they
+    /// cannot drift against the canvas. Why this replaced manual ticking:
+    /// `docs/animation-smoothness.md`.
+    pub fn animate_canvas_offset(&mut self, from: CGPoint, to: CGPoint, duration: Duration) {
+        // Core Animation reads a zero duration as "use the default 0.25s".
+        if duration.is_zero() {
+            self.set_canvas_offset(to);
+            return;
+        }
+        let seconds = duration.as_secs_f64();
+        let key = NSString::from_str(CANVAS_ANIMATION_KEY);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.canvas.setPosition(CGPoint::new(-to.x, -to.y));
+        self.canvas.addAnimation_forKey(
+            &position_animation(
+                CGPoint::new(-from.x, -from.y),
+                CGPoint::new(-to.x, -to.y),
+                seconds,
+            ),
+            Some(&key),
+        );
+        for (window, fixed) in &self.pinned {
+            let Some(entry) = self.tile_layers.get(window) else { continue };
+            let finish = pinned_canvas_frame(*fixed, to);
+            let start = pinned_canvas_frame(*fixed, from).origin;
+            entry.picture.setFrame(finish);
+            entry.shadow.setFrame(finish);
+            // Anchor points are (0,0), so position is the frame origin. addAnimation copies, so
+            // one instance serves both layers.
+            let animation = position_animation(start, finish.origin, seconds);
+            entry.picture.addAnimation_forKey(&animation, Some(&key));
+            entry.shadow.addAnimation_forKey(&animation, Some(&key));
+        }
+        CATransaction::commit();
+    }
+
+    /// Where the canvas is currently drawn. The model sits at the destination for the whole
+    /// flight, so chaining must read the presentation tree, not the model.
+    pub fn current_canvas_offset(&self) -> Option<CGPoint> {
+        // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
+        let presented = unsafe { self.canvas.presentationLayer() }?;
+        let position = presented.position();
+        Some(CGPoint::new(-position.x, -position.y))
+    }
+
+    /// Removes the movement animations from the canvas and every pooled tile — not just the
+    /// currently pinned ones, because a chained movement replaces `pinned` before the cancel runs.
+    fn remove_canvas_animations(&self) {
+        let key = NSString::from_str(CANVAS_ANIMATION_KEY);
+        self.canvas.removeAnimationForKey(&key);
+        for entry in self.tile_layers.values() {
+            entry.picture.removeAnimationForKey(&key);
+            entry.shadow.removeAnimationForKey(&key);
+        }
     }
 
     /// Installs the tiles for one animation and draws frame zero.
@@ -741,6 +830,26 @@ mod tests {
     fn easing_is_pinned_at_both_ends() {
         assert_eq!(ease_out_cubic(0.0), 0.0);
         assert_eq!(ease_out_cubic(1.0), 1.0);
+    }
+
+    /// The Bezier control points in `ease_out_cubic_timing` must trace `ease_out_cubic` exactly,
+    /// or a chained retarget starts with a visible jump. Derivation in
+    /// `docs/animation-smoothness.md`.
+    #[test]
+    fn the_core_animation_curve_is_exactly_ease_out_cubic() {
+        let (c1x, c1y, c2x, c2y) = (1.0 / 3.0, 1.0, 2.0 / 3.0, 1.0);
+        for step in 0..=1000 {
+            let t = step as f64 / 1000.0;
+            let b = |p1: f64, p2: f64| {
+                3.0 * (1.0 - t).powi(2) * t * p1 + 3.0 * (1.0 - t) * t.powi(2) * p2 + t.powi(3)
+            };
+            // x controls at the thirds make x(t) = t, so y(t) is progress as a function of time.
+            assert!((b(c1x, c2x) - t).abs() < 1e-12, "x(t) is not the identity at t={t}");
+            assert!(
+                (b(c1y, c2y) - ease_out_cubic(t)).abs() < 1e-12,
+                "the curves diverge at t={t}"
+            );
+        }
     }
 
     #[test]
