@@ -334,6 +334,7 @@ impl RunningAnimation {
                 existing.snapshot = tile.snapshot;
                 existing.depth = tile.depth;
                 existing.companion = tile.companion;
+                existing.focused = tile.focused;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -795,6 +796,7 @@ impl WorkspaceAnimation {
                     snapshot,
                     depth,
                     companion: true,
+                    focused: false,
                 }),
                 // Like a window with no picture: skipped this flight, warmed for the next.
                 None => needs_capture.push(SnapshotTarget { window, server_id, size: frame.size }),
@@ -894,6 +896,7 @@ impl WorkspaceAnimation {
                             focused_group,
                         ),
                         companion: false,
+                        focused: focus == Some(request.window),
                     };
                     anchors.push((start, tile.from, tile.to, tile.depth));
                     tiles.push(tile);
@@ -1177,6 +1180,7 @@ impl WorkspaceAnimation {
                         snapshot,
                         depth,
                         companion: false,
+                        focused: focus == Some(window.window),
                     });
                 }
                 // No usable picture. The window is still placed by final_frames, and warmed once

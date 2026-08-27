@@ -66,6 +66,8 @@ pub struct OverlayTile {
     /// A border window riding the window it traces: drawn a quarter-step in front of its window's
     /// depth, and without a shadow, because the real border window casts none.
     pub companion: bool,
+    /// Whether this window holds (or is about to hold) focus, which deepens its shadow.
+    pub focused: bool,
 }
 
 impl OverlayTile {
@@ -89,17 +91,29 @@ pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
 /// The shadow a real window casts, as three Core Animation numbers.
 ///
 /// Every capture API returns the window without its shadow, so a tile has none and the handover to the real
-/// window pops. Fitted to a shadow read out of a ScreenCaptureKit capture that included one: 18% of black
-/// 3.5pt out from the edge, 13% at 7pt, 6% at 14pt, 3.5% at 17pt, and the bottom reaching about twice as far
-/// as the top. See "Shadows are never in the surface" in `docs/capture-overlay-research.md`.
-const SHADOW_OPACITY: f32 = 0.4;
-const SHADOW_RADIUS: f64 = 9.0;
-/// Positive is downward: the tiles hang off a flipped view, so the layer's y axis points down.
-const SHADOW_OFFSET_Y: f64 = 5.0;
+/// window pops. Two styles because macOS draws two: the key window's shadow is measurably heavier —
+/// 1.65x darker at the edge, reaching half again as far, and biased further downward. Both fitted to
+/// alpha falloffs read out of shadow-inclusive framed captures of this display; the numbers are in
+/// "Shadows are never in the surface" in `docs/capture-overlay-research.md`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct ShadowStyle {
+    opacity: f32,
+    radius: f64,
+    /// Positive is downward: the tiles hang off a flipped view, so the layer's y axis points down.
+    offset_y: f64,
+}
 
-/// How far the shadow can reach from a window's edge, which is what the mask has to leave room for. The
-/// measured ramp is spent by 17pt; 40pt is generous enough that no blur is clipped at the edge of the ring.
-const SHADOW_REACH: f64 = 40.0;
+const UNFOCUSED_SHADOW: ShadowStyle = ShadowStyle { opacity: 0.4, radius: 9.0, offset_y: 5.0 };
+const FOCUSED_SHADOW: ShadowStyle = ShadowStyle { opacity: 0.65, radius: 14.0, offset_y: 12.0 };
+
+fn tile_shadow_style(focused: bool) -> ShadowStyle {
+    if focused { FOCUSED_SHADOW } else { UNFOCUSED_SHADOW }
+}
+
+/// How far the shadow can reach from a window's edge, which is what the mask has to leave room for.
+/// The focused ramp is spent by about 54pt (three radii plus the offset); 70pt is generous enough
+/// that no blur is clipped at the edge of the ring, for either style.
+const SHADOW_REACH: f64 = 70.0;
 
 /// Where the bar sits: above everything the overlay draws. Tiles sit at `-depth`, which never
 /// exceeds zero, so any positive value clears them.
@@ -413,6 +427,12 @@ impl WorkspaceOverlay {
         entry.picture.setContentsScale(self.scale);
         set_layer_contents(&entry.picture, &tile.snapshot);
         apply_edge_dressing(entry, &tile.snapshot, tile.from.size, self.scale);
+        // Set explicitly in both directions, because tile layers are pooled: a tile that carried
+        // focus last flight must not keep the deep shadow for an unfocused window.
+        let style = tile_shadow_style(tile.focused);
+        entry.shadow.setShadowOpacity(style.opacity);
+        entry.shadow.setShadowRadius(style.radius);
+        entry.shadow.setShadowOffset(CGSize::new(0.0, style.offset_y));
         // Negated so a smaller depth, meaning nearer the front, draws on top.
         place_tile(entry, tile.from, tile.z());
         entry.picture.setHidden(false);
@@ -604,10 +624,8 @@ fn new_tile(container: &CALayer) -> Tile {
     let shadow = CALayer::layer();
     shadow.setAnchorPoint(CGPoint::new(0.0, 0.0));
     // Shadow colour is left alone: a CALayer's default is opaque black, which is what a window casts. The
-    // caster has no contents and no background, so the shadow is all it ever draws.
-    shadow.setShadowOpacity(SHADOW_OPACITY);
-    shadow.setShadowRadius(SHADOW_RADIUS);
-    shadow.setShadowOffset(CGSize::new(0.0, SHADOW_OFFSET_Y));
+    // caster has no contents and no background, so the shadow is all it ever draws. The style numbers
+    // are per-tile (focus deepens them) and applied at install.
     container.addSublayer(&shadow);
 
     let picture = CALayer::layer();
@@ -859,17 +877,36 @@ mod tests {
     }
 
     /// The reach has to outrun the blur, or the ring clips the shadow before it has faded and leaves a
-    /// visible straight edge in it. The measured ramp is spent by 17pt.
+    /// visible straight edge in it. Three radii is where a gaussian ramp is visually spent.
     #[test]
-    fn the_mask_reaches_further_than_the_shadow_does() {
-        assert!(SHADOW_REACH > SHADOW_RADIUS * 2.0 + SHADOW_OFFSET_Y);
+    fn the_mask_reaches_further_than_either_shadow_does() {
+        for style in [UNFOCUSED_SHADOW, FOCUSED_SHADOW] {
+            assert!(SHADOW_REACH > style.radius * 3.0 + style.offset_y);
+        }
     }
 
     #[test]
-    fn the_shadow_falls_downward() {
+    fn the_shadows_fall_downward() {
         // The tiles hang off a flipped view, so a positive y offset is down the screen. Getting the sign
         // wrong lights the window from below, which reads as wrong without being obviously wrong.
-        assert!(SHADOW_OFFSET_Y > 0.0);
+        assert!(UNFOCUSED_SHADOW.offset_y > 0.0);
+        assert!(FOCUSED_SHADOW.offset_y > 0.0);
+    }
+
+    /// Focus dresses a shadow up, never down: darker, softer-edged, and deeper below the window,
+    /// which is the measured relationship between the two real shadows (1.65x edge darkness, 1.5x
+    /// falloff length). A focused style lighter in any dimension means the constants were swapped.
+    #[test]
+    fn focus_deepens_the_shadow_in_every_dimension() {
+        assert!(FOCUSED_SHADOW.opacity > UNFOCUSED_SHADOW.opacity);
+        assert!(FOCUSED_SHADOW.radius > UNFOCUSED_SHADOW.radius);
+        assert!(FOCUSED_SHADOW.offset_y > UNFOCUSED_SHADOW.offset_y);
+    }
+
+    #[test]
+    fn focus_picks_the_deep_style() {
+        assert_eq!(tile_shadow_style(true), FOCUSED_SHADOW);
+        assert_eq!(tile_shadow_style(false), UNFOCUSED_SHADOW);
     }
 
     #[test]

@@ -1556,19 +1556,28 @@ Every tile would then need the `contentRect` attachment to know its own inset,
 and the sample buffers rini captures through carry no attachments at all.
 
 So the shadow is drawn by Core Animation instead, from the shape of the real one.
-Read out of that same shadow-inclusive capture, as a share of black at distances
-from the window edge:
+macOS draws two shadows — the key window's is much heavier — so both were read
+out of shadow-inclusive framed captures (`CGWindowListCreateImage`, null rect,
+whose margins hold the shadow as premultiplied alpha), as a share of black at
+distances from the window's side edge at mid-height:
 
 ```
-3.5pt  0.180      the peak, right at the edge
-  7pt  0.129
- 14pt  0.059
- 17pt  0.035
+            unfocused   focused
+  2pt         0.200      0.330     the peak, right at the edge
+  7pt         0.129      0.255
+ 14pt         0.055      0.169
+ 21pt         0.020      0.102
+ 28pt         0.004      0.055
+ 42pt             0      0.008
 ```
 
-The bottom reaches about twice as far as the top, which is a downward offset. That
-fits `shadowOpacity = 0.4`, `shadowRadius = 9`, `shadowOffset = (0, 5)`, with
-positive y meaning down because the tiles hang off a flipped view. `shadowPath` is
+Below the window the focused shadow peaks at 0.56 and is still at 0.08 by 42pt;
+above it barely reaches 0.11 — a strong downward offset, roughly half again the
+unfocused bias. Unfocused fits `shadowOpacity = 0.4`, `shadowRadius = 9`,
+`shadowOffset = (0, 5)`; focused is 1.65x darker at the edge with a 1.5x longer
+falloff, fitting `shadowOpacity = 0.65`, `shadowRadius = 14`,
+`shadowOffset = (0, 12)`. Positive y means down because the tiles hang off a
+flipped view. `shadowPath` is
 an explicit rounded rect at a 10pt corner radius, measured from where a capture's
 own alpha starts along its top row: transparent for the first 18px to 20px at 2x.
 An explicit path rather than letting Core Animation derive one from the contents
