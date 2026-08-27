@@ -9,11 +9,11 @@ use objc2_core_foundation::{CGPoint, CGRect};
 /// Longest a switch may be stretched for distance, as a multiple of the configured duration.
 const MAX_DURATION_STRETCH: f64 = 2.5;
 
-/// Where a window sits on the canvas.
+/// Where a window sits on the strip surface.
 ///
 /// `row` is the workspace's position in the stack counted from the first one involved, not its absolute
 /// index, so a switch only ever builds the rows between the two ends.
-pub fn canvas_frame(frame: CGRect, display_origin: CGPoint, row: usize, row_pitch: f64) -> CGRect {
+pub fn strip_frame(frame: CGRect, display_origin: CGPoint, row: usize, row_pitch: f64) -> CGRect {
     CGRect::new(
         CGPoint::new(
             frame.origin.x - display_origin.x,
@@ -27,14 +27,14 @@ pub fn canvas_frame(frame: CGRect, display_origin: CGPoint, row: usize, row_pitc
 ///
 /// A switch travels only in y, so the destination row has to be laid out at a scroll that already shows the
 /// window being switched to. Otherwise the strip pans sideways afterwards to reveal it, which is the second
-/// movement a switch exists to avoid. The viewport ends at canvas x = 0, so the band is the display's width.
+/// movement a switch exists to avoid. The viewport ends at strip-surface x = 0, so the band is the display's width.
 pub fn lands_in_view(frame: CGRect, viewport_width: f64) -> bool {
     frame.origin.x < viewport_width && frame.origin.x + frame.size.width > 0.0
 }
 
 /// The viewport offsets a switch travels between, and how far to stretch its duration.
 #[derive(Debug, PartialEq)]
-pub struct CanvasTravel {
+pub struct StripTravel {
     pub from: CGPoint,
     pub to: CGPoint,
     /// Multiplier on the configured animation duration.
@@ -51,10 +51,10 @@ pub fn row_of(index: usize, from_index: usize, to_index: usize) -> usize {
 /// The offset for a workspace is its row times the pitch, so the distance is exactly the number of
 /// workspaces crossed. Duration grows with distance but sublinearly and capped, so a four-workspace
 /// jump reads as further than a one-workspace step without becoming tedious.
-pub fn travel(from_index: usize, to_index: usize, row_pitch: f64) -> CanvasTravel {
+pub fn travel(from_index: usize, to_index: usize, row_pitch: f64) -> StripTravel {
     let low = from_index.min(to_index);
     let rows = (to_index as f64 - from_index as f64).abs().max(1.0);
-    CanvasTravel {
+    StripTravel {
         from: CGPoint::new(0.0, (from_index - low) as f64 * row_pitch),
         to: CGPoint::new(0.0, (to_index - low) as f64 * row_pitch),
         duration_stretch: rows.sqrt().min(MAX_DURATION_STRETCH),
@@ -101,9 +101,9 @@ mod tests {
     #[test]
     fn strips_are_stacked_one_display_height_apart() {
         let window = rect(4.0, 32.0, 859.0, 1081.0);
-        assert_eq!(canvas_frame(window, origin(), 0, PITCH).origin.y, 32.0);
-        assert_eq!(canvas_frame(window, origin(), 1, PITCH).origin.y, 32.0 + PITCH);
-        assert_eq!(canvas_frame(window, origin(), 3, PITCH).origin.y, 32.0 + 3.0 * PITCH);
+        assert_eq!(strip_frame(window, origin(), 0, PITCH).origin.y, 32.0);
+        assert_eq!(strip_frame(window, origin(), 1, PITCH).origin.y, 32.0 + PITCH);
+        assert_eq!(strip_frame(window, origin(), 3, PITCH).origin.y, 32.0 + 3.0 * PITCH);
     }
 
     /// The pitch is the FULL display height, not the usable height, which is what leaves a gap the size
@@ -111,8 +111,8 @@ mod tests {
     #[test]
     fn the_row_gap_is_the_menu_bar_inset() {
         let window = rect(4.0, 32.0, 859.0, 1081.0);
-        let first = canvas_frame(window, origin(), 0, PITCH);
-        let second = canvas_frame(window, origin(), 1, PITCH);
+        let first = strip_frame(window, origin(), 0, PITCH);
+        let second = strip_frame(window, origin(), 1, PITCH);
         let gap = second.origin.y - (first.origin.y + first.size.height);
         assert_eq!(gap, PITCH - 1081.0);
         assert_eq!(gap, 36.0);
@@ -125,7 +125,7 @@ mod tests {
         for x in [-4301.0, -857.0, 4.0, 865.0, 5170.0] {
             let window = rect(x, 32.0, 859.0, 1081.0);
             for row in 0..4 {
-                assert_eq!(canvas_frame(window, origin(), row, PITCH).origin.x, x);
+                assert_eq!(strip_frame(window, origin(), row, PITCH).origin.x, x);
             }
         }
     }
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn stacking_never_changes_size() {
         let window = rect(4.0, 32.0, 1720.0, 1081.0);
-        let placed = canvas_frame(window, origin(), 2, PITCH);
+        let placed = strip_frame(window, origin(), 2, PITCH);
         assert_eq!(placed.size.width, 1720.0);
         assert_eq!(placed.size.height, 1081.0);
     }
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn a_window_hanging_off_the_edge_is_placed_unchanged() {
         let hanging = rect(1400.0, 32.0, 859.0, 1081.0);
-        let placed = canvas_frame(hanging, origin(), 1, PITCH);
+        let placed = strip_frame(hanging, origin(), 1, PITCH);
         assert_eq!(placed.origin.x, 1400.0);
         assert_eq!(placed.size.width, 859.0);
         assert!(placed.origin.x + placed.size.width > 1728.0, "still hangs off the right");
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn a_display_that_is_not_at_the_origin_is_made_relative() {
         let window = rect(-670.0, -1660.0, 859.0, 1081.0);
-        let placed = canvas_frame(window, CGPoint::new(-670.0, -1692.0), 0, PITCH);
+        let placed = strip_frame(window, CGPoint::new(-670.0, -1692.0), 0, PITCH);
         assert_eq!(placed.origin.x, 0.0);
         assert_eq!(placed.origin.y, 32.0);
     }
@@ -165,7 +165,7 @@ mod tests {
         assert_eq!((down.to.y - down.from.y).abs(), PITCH);
     }
 
-    /// Moving DOWN the stack increases the offset. The canvas is positioned at the negated offset, so a
+    /// Moving DOWN the stack increases the offset. A tile at strip-surface coordinate c is drawn at c minus the offset, so a
     /// rising offset slides the strips UP and brings the next one in from below, which is the direction
     /// the stack implies.
     #[test]
@@ -182,7 +182,7 @@ mod tests {
     }
 
     /// A long jump scrolls past every strip in between rather than cutting to the destination, which is
-    /// the whole reason the canvas holds all of them. Distance must therefore scale with the gap.
+    /// the whole reason the strip surface holds all of them. Distance must therefore scale with the gap.
     #[test]
     fn a_longer_jump_travels_proportionally_further() {
         assert_eq!((travel(0, 1, PITCH).to.y - travel(0, 1, PITCH).from.y).abs(), PITCH);

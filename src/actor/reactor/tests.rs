@@ -6418,9 +6418,9 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
             crate::actor::workspace_animation::Event::Animate { windows, .. } => animated = windows,
-            // Opposite vectors are not a pan, so this must not reach the canvas path: that path takes
+            // Opposite vectors are not a pan, so this must not reach the strip path: that path takes
             // its windows from the layout and so never had this bug to begin with.
-            crate::actor::workspace_animation::Event::AnimateCanvas { .. } => {
+            crate::actor::workspace_animation::Event::AnimateStrip { .. } => {
                 panic!("a layout that is not a pan must go to the per-window path")
             }
             _ => {}
@@ -6467,7 +6467,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
             !matches!(
                 event,
                 crate::actor::workspace_animation::Event::Animate { .. }
-                    | crate::actor::workspace_animation::Event::AnimateCanvas { .. }
+                    | crate::actor::workspace_animation::Event::AnimateStrip { .. }
             ),
             "a one-point move must not run an animation: {event:?}"
         );

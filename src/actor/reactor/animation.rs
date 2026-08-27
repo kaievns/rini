@@ -358,7 +358,7 @@ impl AnimationManager {
 
             // A strip scroll moves every window by the SAME vector, which is a viewport pan over the
             // one workspace, the horizontal twin of the vertical workspace switch. Treating it as one
-            // canvas pan gives the same sense of distance and the same freedom from per-window drift.
+            // strip pan gives the same sense of distance and the same freedom from per-window drift.
             // A layout where windows move by DIFFERENT vectors (a window inserted, a column resized
             // pushing neighbours) is not a pan and falls back to the per-window path.
             let display = reactor
@@ -369,7 +369,7 @@ impl AnimationManager {
                 .map(|screen| objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()));
             // The strip's own scroll offset says exactly how far it is travelling, once per press. Reading
             // it off the windows instead answered differently on each of the several layout passes a single
-            // keystroke produces: one press retargeted the canvas five times, with the distance jumping
+            // keystroke produces: one press retargeted the strip surface five times, with the distance jumping
             // between 6315pt, 9471pt and -7749pt, which is visible as the strip jerking.
             let pan_delta = match reactor.take_strip_movement(space) {
                 Some(moved) => (moved.x.abs() >= 1.0).then_some(moved),
@@ -377,9 +377,9 @@ impl AnimationManager {
             };
             if use_overlay
                 && let Some(delta) = pan_delta
-                && reactor.start_canvas_pan(space, active_ws, layout, skip_wid, delta)
+                && reactor.start_strip_pan(space, active_ws, layout, skip_wid, delta)
             {
-                // The canvas owns it, including placing the real windows once it covers them.
+                // The strip movement owns it, including placing the real windows once it covers them.
             } else if use_overlay {
                 reactor.publish_animation_display_for(Some(space));
                 if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
@@ -466,16 +466,16 @@ impl AnimationManager {
         let direction = reactor.layout_manager.layout_engine.take_workspace_switch_direction(space);
         let animate = reactor.config.settings.animate && !power::is_low_power_mode_enabled();
 
-        // Animate the switch as ONE canvas movement across every workspace between the two, so a jump
+        // Animate the switch as ONE strip movement across every workspace between the two, so a jump
         // from 1 to 4 scrolls past 2 and 3. Moving each window separately could not do this: the
         // intermediate workspaces are off screen at both ends of every window's path, so none of them
         // was ever drawn and a four-workspace jump looked exactly like a one-workspace step.
         if reactor.config.settings.overlay_animations
             && animate
             && let Some((from_index, to_index)) = reactor.workspace_switch_indices(space)
-            && reactor.start_canvas_switch(space, from_index, to_index, layout, skip_wid)
+            && reactor.start_strip_switch(space, from_index, to_index, layout, skip_wid)
         {
-            // The canvas owns this movement, including placing the real windows once it covers them.
+            // The strip movement owns this movement, including placing the real windows once it covers them.
             return true;
         }
         // The direction distinguishes a real workspace switch (which animates) from a
@@ -1133,7 +1133,7 @@ fn get_frame(a: CGRect, b: CGRect, t: f64) -> CGRect {
 /// The same curve the overlay engine draws with, so a resize (this engine) next to a pan (the
 /// overlay) from one keystroke reads as one movement. This was a circular ease-in-out, whose slow
 /// start also compounded the keypress-to-motion latency; ease-out is fast off the line and
-/// settles, which is what niri does and what the canvas already does.
+/// settles, which is what niri does and what the strip surface already does.
 fn ease(t: f64) -> f64 {
     crate::ui::workspace_overlay::ease_out_cubic(t)
 }
@@ -2002,7 +2002,7 @@ fn travels_visibly(requests: &[crate::actor::workspace_animation::AnimationReque
 
 /// How far the strip is moving, judged from the windows the user can actually see.
 ///
-/// A shared movement vector means the whole set is being panned, which the canvas can do as a single
+/// A shared movement vector means the whole set is being panned, which the strip surface can do as a single
 /// viewport move: the tiles are assembled at their strip positions and the viewport slides, so nothing can
 /// drift, telescope, or race against its neighbours.
 ///

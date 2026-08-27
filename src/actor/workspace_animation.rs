@@ -8,9 +8,9 @@
 //! then hide the overlay. The frame clock is time-based rather than a frame counter, so a late frame
 //! skips instead of slowing the animation down.
 //!
-//! Canvas movements (workspace switches and strip pans) are drawn by Core Animation; the tick loop
-//! only paces their mid-flight orchestration. The per-window path still draws tile by tile on the
-//! ticks. See `docs/animation-smoothness.md`.
+//! Every movement — layout changes and strip travel alike — becomes one group of per-tile Core
+//! Animation animations committed in a single transaction (`begin_group`); the tick loop only
+//! paces the mid-flight orchestration. See `docs/animation-smoothness.md`.
 //!
 //! Measurements behind all of this are in `docs/capture-overlay-research.md`.
 
@@ -28,25 +28,26 @@ use crate::sys::run_loop::RepeatingTimer;
 use crate::sys::window_server::WindowServerId;
 use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::ui::window_snapshot::{SnapshotCache, WindowSnapshot, capture_via_skylight};
-use crate::ui::workspace_overlay::{CanvasTile, OverlayTile, WorkspaceOverlay};
+use crate::ui::workspace_overlay::{OverlayTile, WorkspaceOverlay};
 
-/// One window's fixed place on the canvas.
+/// One window's fixed place on the strip surface.
 ///
-/// The canvas holds every window across every workspace involved in a movement, laid out as one
-/// continuous surface: x is the strip position, y is the workspace stacked below the one above it.
+/// The surface holds every window across every workspace involved in a movement, laid out as one
+/// continuous plane: x is the strip position, y is the workspace stacked below the one above it.
+/// A group movement translates every window on it by the viewport's travel.
 #[derive(Debug, Clone)]
-pub struct CanvasWindow {
+pub struct StripWindow {
     pub window: WindowId,
     pub server_id: WindowServerId,
-    /// Position on the canvas, never interpolated.
+    /// Position on the strip surface, never interpolated.
     pub frame: CGRect,
-    /// Held still while the canvas moves under it.
+    /// Held still while the strip moves under it.
     ///
     /// A floating window does not belong to the strip, so a strip scroll must not carry it along. It does
     /// belong to a workspace, so a switch between workspaces DOES move it, and that path leaves this false.
     pub pinned: bool,
     /// Off the strip, and so in the other z-order group. Separate from `pinned`, which is about whether the
-    /// canvas carries the window along: a workspace switch moves floating windows without unpinning them.
+    /// strip carries the window along: a workspace switch moves floating windows without unpinning them.
     pub floating: bool,
 }
 
@@ -79,11 +80,14 @@ pub enum Event {
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
-    /// Move the viewport across a canvas holding every window involved, rather than moving each window
-    /// separately, so a long jump scrolls past everything in between instead of cutting to the
-    /// destination.
-    AnimateCanvas {
-        windows: Vec<CanvasWindow>,
+    /// Move the whole strip surface — every window involved, translated by the same travel — so a
+    /// long jump scrolls past everything in between instead of cutting to the destination.
+    ///
+    /// Drawn as one per-tile group in a single transaction; the visual destinations (`frame` minus
+    /// `to_offset`) are deliberately distinct from `final_frames`, because a window leaving the
+    /// screen animates off it while its real frame goes to a park.
+    AnimateStrip {
+        windows: Vec<StripWindow>,
         from_offset: CGPoint,
         to_offset: CGPoint,
         /// Real screen frames to apply once the overlay is covering them.
@@ -123,9 +127,8 @@ pub enum Event {
 pub type Sender = actor::Sender<Event>;
 pub type Receiver = actor::Receiver<Event>;
 
-/// Tick interval. Canvas movements draw through Core Animation and use ticks only for mid-flight
-/// orchestration; the per-window path still draws on them. 60fps rather than 120 because a prior
-/// engine at 120 dropped frames and read worse than a slower rate that always lands.
+/// Tick interval. Nothing is drawn on ticks — Core Animation carries every movement — so this only
+/// paces the mid-flight orchestration: frame placement, destination recaptures, teardown.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// How long to keep collecting windows before the animation starts moving.
@@ -183,43 +186,37 @@ const FRESH_CAPTURE_MIN_ON_SCREEN: f64 = 0.99;
 /// certainly covering them, early enough that the Accessibility writes land before it lifts.
 const APPLY_FRAMES_AT: f64 = 0.75;
 
-/// A canvas movement in flight: the tiles never move, the viewport does.
-struct RunningCanvas {
-    from_offset: CGPoint,
-    to_offset: CGPoint,
-    final_frames: Vec<(WindowId, CGRect)>,
-    frames_applied: bool,
-    started: Instant,
-    duration: Duration,
-    /// Orchestration ticks that ran. Not drawn frames — the render server owns those and does not
-    /// report them — so this only tells whether the tick loop had room for the mid-flight work.
-    frames: u32,
-    /// The windows on the canvas, with their server ids and drawn sizes, so the one being switched into
-    /// can be found again mid-flight.
-    tiles: Vec<(WindowId, WindowServerId, CGSize)>,
-    /// How many times the window being switched into has been recaptured.
-    ///
-    /// It cannot be recaptured when the movement starts, because the destination workspace's windows are
-    /// not on screen yet, so its picture is whatever it last had. If that was taken while the app was
-    /// unfocused, the tile slides in dimmed and snaps to focused at the handover.
-    destination_refreshed: u8,
-    _clock: Option<RepeatingTimer>,
+/// How a fresh group of tiles begins moving.
+enum GroupStart {
+    /// Wait one `COALESCE_WINDOW` for the reactor's layout passes to settle, then move. Right for
+    /// layout changes, which arrive as several passes per keystroke.
+    Coalesced,
+    /// Move now. Right for strip movements, which arrive exactly once per keystroke and whose
+    /// keypress-to-motion latency is the thing the eye notices most.
+    Immediate,
 }
 
-impl RunningCanvas {
-    fn progress(&self) -> f64 {
-        if self.duration.is_zero() {
-            return 1.0;
-        }
-        (self.started.elapsed().as_secs_f64() / self.duration.as_secs_f64()).clamp(0.0, 1.0)
+/// Where each tile of a strip movement starts and ends on screen, in overlay coordinates.
+///
+/// The strip surface is fixed; the viewport travels from `from_offset` to `to_offset`, so every
+/// unpinned window translates by the opposite of that travel. A pinned window stands still — and a
+/// standing tile still has to exist, because the overlay is opaque and anything it omits vanishes.
+fn strip_travel(
+    frame: CGRect,
+    from_offset: CGPoint,
+    to_offset: CGPoint,
+    pinned: bool,
+) -> (CGRect, CGRect) {
+    if pinned {
+        return (frame, frame);
     }
-
-    fn offset_at(&self, eased: f64) -> CGPoint {
-        CGPoint::new(
-            self.from_offset.x + (self.to_offset.x - self.from_offset.x) * eased,
-            self.from_offset.y + (self.to_offset.y - self.from_offset.y) * eased,
+    let at = |offset: CGPoint| {
+        CGRect::new(
+            CGPoint::new(frame.origin.x - offset.x, frame.origin.y - offset.y),
+            frame.size,
         )
-    }
+    };
+    (at(from_offset), at(to_offset))
 }
 
 struct RunningAnimation {
@@ -349,8 +346,8 @@ pub struct WorkspaceAnimation {
     /// `display` rather than folded into it because only the desktop capture needs it.
     display_id: Option<u32>,
     running: Option<RunningAnimation>,
-    /// A canvas movement in flight, which supersedes the per-window path while it runs.
-    canvas: Option<RunningCanvas>,
+
+
     /// Fires once after the layout passes settle, to start the animation moving.
     coalesce: Option<RepeatingTimer>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
@@ -384,7 +381,7 @@ impl WorkspaceAnimation {
             display: None,
             display_id: None,
             running: None,
-            canvas: None,
+
             coalesce: None,
             last_animated: Vec::new(),
             pictures: DisplayPictures::default(),
@@ -409,7 +406,7 @@ impl WorkspaceAnimation {
         match event {
             Event::SetDisplay { id, frame, scale } => self.set_display(id, frame, scale),
             Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
-            Event::AnimateCanvas {
+            Event::AnimateStrip {
                 windows,
                 from_offset,
                 to_offset,
@@ -417,21 +414,14 @@ impl WorkspaceAnimation {
                 focus,
                 duration,
             } => {
-                self.start_canvas(windows, from_offset, to_offset, final_frames, focus, duration)
+                self.start_strip(windows, from_offset, to_offset, final_frames, focus, duration)
             }
             Event::RefreshSnapshot { window, server_id, size } => {
                 self.refresh_snapshot(window, server_id, size)
             }
             Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
-            Event::Tick => {
-                // A canvas movement owns the frame clock while it runs.
-                if self.canvas.is_some() {
-                    self.step_canvas();
-                } else {
-                    self.step();
-                }
-            }
+            Event::Tick => self.step(),
             Event::StartMoving => self.start_moving(),
             Event::RefreshBar => {
                 // One shot: dropping the timer stops it repeating.
@@ -482,7 +472,7 @@ impl WorkspaceAnimation {
                 usable = snapshot.is_usable(),
                 "background snapshot landed"
             );
-            let running = self.canvas.is_some() || self.running.is_some();
+            let running = self.running.is_some();
             self.cache.insert(window, snapshot.clone());
             // Straight onto the tile when an animation is mid-flight. That is how a ScreenCaptureKit
             // capture requested for a clipped destination reaches the screen before the handover.
@@ -586,25 +576,11 @@ impl WorkspaceAnimation {
 
     /// Recaptures the window being switched into, now that it is on screen, and swaps its tile.
     ///
-    /// Runs once per movement. By this point the reactor has shown the destination workspace and moved
-    /// focus, so a SkyLight capture gets the app's FOCUSED rendering, which is what the real window will
-    /// look like when the overlay lifts. Without this the tile slides in with whatever the picture held,
-    /// and an app that dims when unfocused visibly snaps at the handover.
-    ///
-    /// Costs one capture on the main thread, measured at 32ms to 35ms warm, so it drops a frame or two
-    /// mid-flight. That is the trade: one hitch against a step change in brightness on the window being
-    /// looked at.
-    fn refresh_destination(&mut self) {
-        let Some(canvas) = self.canvas.as_ref() else { return };
-        let tiles = canvas.tiles.clone();
-        self.refresh_destination_among(&tiles);
-    }
-
-    /// Recaptures the frontmost of `tiles`, whichever drawing path is running.
-    ///
-    /// Both paths need this. A workspace switch animates the canvas, but focusing an adjacent window on
-    /// a strip goes through the per-window path, and that is the case where the flicker is most obvious
-    /// because both windows are the same app side by side.
+    /// Runs twice per movement (see `REFRESH_DESTINATION_AT` / `_AGAIN_AT`). By that point the
+    /// reactor has shown the destination and moved focus, so a fresh capture gets the app's
+    /// FOCUSED rendering, which is what the real window will look like when the overlay lifts.
+    /// Without this the tile slides in with whatever the picture held, and an app that dims when
+    /// unfocused visibly snaps at the handover.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
         let Some((_, scale)) = self.display else { return };
         let candidates: Vec<(WindowId, u32)> =
@@ -673,7 +649,7 @@ impl WorkspaceAnimation {
     fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot) {
         self.cache.insert(window, snapshot.clone());
         // Only worth drawing while the animation that asked for it is still running.
-        if self.canvas.is_none() && self.running.is_none() {
+        if self.running.is_none() {
             return;
         }
         if let Some(overlay) = self.overlay.as_mut() {
@@ -693,7 +669,7 @@ impl WorkspaceAnimation {
     /// A window with nothing cached does not animate: it is placed at its destination when the overlay
     /// comes down, and a background capture is queued so the next switch has it.
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
-        // Rejected here rather than drawn distorted, for the same reason as the canvas path: contents
+        // Rejected here rather than drawn distorted, for the same reason as the strip surface path: contents
         // stretch to fill, so a picture of the wrong shape warps the window instead of moving it.
         self.cache
             .usable(request.window)
@@ -723,21 +699,6 @@ impl WorkspaceAnimation {
         })
     }
 
-    /// Queues windows for a background capture once the current animation finishes, keeping whatever is
-    /// already queued rather than replacing it.
-    fn remember_for_warming(&mut self, windows: Vec<AnimationRequest>) {
-        for request in windows {
-            if self.last_animated.iter().any(|target| target.window == request.window) {
-                continue;
-            }
-            self.last_animated.push(SnapshotTarget {
-                window: request.window,
-                server_id: request.server_id,
-                size: request.to.size,
-            });
-        }
-    }
-
     fn start(
         &mut self,
         windows: Vec<AnimationRequest>,
@@ -760,26 +721,6 @@ impl WorkspaceAnimation {
             .filter(|request| is_moving(request.from, request.to))
             .map(|request| (request.window, request.to))
             .collect();
-
-        // A canvas movement already covers this ground and owns the tile layers, so this path must not
-        // touch them. Its destinations still matter, since a later pass can move a window, so they are
-        // merged into the canvas instead. See docs/capture-overlay-research.md.
-        if let Some(canvas) = self.canvas.as_mut() {
-            for (window, frame) in &final_frames {
-                match canvas.final_frames.iter_mut().find(|(w, _)| w == window) {
-                    Some(existing) => existing.1 = *frame,
-                    None => canvas.final_frames.push((*window, *frame)),
-                }
-            }
-            // The destinations changed, so anything already placed is stale. Ask again.
-            canvas.frames_applied = false;
-            debug!(
-                windows = windows.len(),
-                "a canvas movement is in flight; merging destinations into it rather than drawing"
-            );
-            self.remember_for_warming(windows);
-            return;
-        }
 
         // Front-to-back order straight from the window server, so the overlay stacks tiles the way
         // the screen is actually stacked.
@@ -884,19 +825,27 @@ impl WorkspaceAnimation {
             })
             .collect();
 
-        if tiles.is_empty() {
-            // Nothing drawable, so there is no overlay to hide behind: place the windows at once
-            // rather than leaving them where they are.
-            self.request_frames(final_frames);
-            // Warm anyway, or this deadlocks: the cache only ever filled when an animation completed,
-            // and no animation could run with an empty cache.
-            let targets = std::mem::take(&mut self.last_animated);
-            self.warm_windows(targets);
-            return;
-        }
+        self.begin_group(tiles, final_frames, duration, "per-window", GroupStart::Coalesced);
+    }
 
-        // Merge into the animation in flight rather than replacing it: the reactor lays a layout out
-        // over several passes, and a later pass can also change where a window is going.
+    /// Runs one group of tiles through the shared animation machinery: merge into a flight already
+    /// running, or dress the overlay and start a fresh one. Every animated movement — layout
+    /// changes and strip travel alike — ends up here, which is what lets any of them chain onto
+    /// any other.
+    fn begin_group(
+        &mut self,
+        tiles: Vec<OverlayTile>,
+        final_frames: Vec<(WindowId, CGRect)>,
+        duration: Duration,
+        label: &'static str,
+        start: GroupStart,
+    ) {
+        // Merge FIRST, before the empty check: a pass with nothing drawable can still carry fresh
+        // destinations for a flight in progress, and placing its frames immediately would yank
+        // real windows out from behind the running overlay.
+        //
+        // Merge rather than replace: the reactor lays a layout out over several passes, and a
+        // later pass can also change where a window is going.
         if self.running.is_some() {
             let in_flight;
             let mut retargets: Vec<(WindowId, CGRect, usize)> = Vec::new();
@@ -967,16 +916,30 @@ impl WorkspaceAnimation {
             return;
         }
 
-        // The same backdrop and bar as a canvas movement, or the overlay shows a bare black window behind
-        // the tiles. Cheap for the same reason: the cached render is a clone.
+        if tiles.is_empty() {
+            // Nothing drawable, so there is no overlay to hide behind: place the windows at once
+            // rather than leaving them where they are.
+            self.request_frames(final_frames);
+            // Warm anyway, or this deadlocks: the cache only ever filled when an animation completed,
+            // and no animation could run with an empty cache.
+            let targets = std::mem::take(&mut self.last_animated);
+            self.warm_windows(targets);
+            return;
+        }
+
+        // The backdrop and bar, or the overlay shows a bare black window behind the tiles. Cheap in
+        // the steady state: the cached render is a clone.
         let held = self.pictures.shown.is_some();
         let backdrop = self.capture_backdrop().or_else(|| self.pictures.shown.clone());
         if backdrop.is_some() {
             self.pictures.shown = backdrop.clone();
         }
         let (bar, strip) = self.bar_picture();
-        Self::log_dressing("per-window", backdrop.as_ref(), bar.as_ref(), strip, held);
-        let Some(overlay) = self.ensure_overlay() else { return };
+        Self::log_dressing(label, backdrop.as_ref(), bar.as_ref(), strip, held);
+        let Some(overlay) = self.ensure_overlay() else {
+            self.request_frames(final_frames);
+            return;
+        };
         overlay.set_backdrop(backdrop.as_ref());
         overlay.set_bar(bar.as_ref(), strip);
         overlay.set_tiles(&tiles);
@@ -1015,17 +978,32 @@ impl WorkspaceAnimation {
             return;
         }
 
-        // Start moving once the layout passes have settled.
-        let tx = self.tx.clone();
-        self.coalesce = RepeatingTimer::every(COALESCE_WINDOW, move || {
-            _ = tx.send(Event::StartMoving);
-        });
+        match start {
+            // Strip movements arrive once per keystroke, and chained presses merge through the
+            // running-flight path, so there is nothing to coalesce and keypress-to-motion latency
+            // is the thing the eye notices most.
+            GroupStart::Immediate => self.start_moving(),
+            // Layout changes arrive as several passes; start moving once they settle.
+            GroupStart::Coalesced => {
+                let tx = self.tx.clone();
+                self.coalesce = RepeatingTimer::every(COALESCE_WINDOW, move || {
+                    _ = tx.send(Event::StartMoving);
+                });
+            }
+        }
     }
 
-    /// Animates the viewport across a canvas of every window involved.
-    fn start_canvas(
+    /// Animates the whole strip surface: every window translated by the viewport's travel, as one
+    /// per-tile group in one transaction.
+    ///
+    /// This replaced a dedicated canvas layer that glued the tiles down and moved as a single
+    /// unit. A per-tile group committed in one transaction shares one timebase and one curve, so
+    /// it holds together exactly as rigidly; expressing it per tile buys one machinery for every
+    /// movement, so a switch chaining onto a slide — or the reverse — merges instead of
+    /// superseding it with a visible snap.
+    fn start_strip(
         &mut self,
-        windows: Vec<CanvasWindow>,
+        windows: Vec<StripWindow>,
         from_offset: CGPoint,
         to_offset: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
@@ -1049,33 +1027,21 @@ impl WorkspaceAnimation {
         let mut missing = 0usize;
         let mut misshapen = 0usize;
         for window in &windows {
-            // Two questions, both of which must be yes: does the picture cover the window it was taken
-            // from, and does it still match the frame it is drawn into.
+            let (from, to) = strip_travel(window.frame, from_offset, to_offset, window.pinned);
             match self.cache.usable(window.window).cloned() {
                 Some(snapshot) => {
-                    // A picture of the wrong shape is stretched to the frame rather than dropped. Dropping
-                    // it left a hole the size of a window in an opaque overlay, so the window appeared to
-                    // vanish for the whole animation, which is far worse than 350ms of a stretched picture.
-                    // It should be rare: `warm_windows` recaptures anything whose picture no longer fits.
+                    // A picture of the wrong shape is stretched to the frame rather than dropped.
+                    // Dropping it left a hole the size of a window in an opaque overlay, so the
+                    // window appeared to vanish for the whole animation, which is far worse than
+                    // 350ms of a stretched picture. It should be rare: `warm_windows` recaptures
+                    // anything whose picture no longer fits.
                     if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
-                        debug!(
-                            pid = window.window.pid,
-                            idx = window.window.idx.get(),
-                            frame = format!(
-                                "{:.0}x{:.0}",
-                                window.frame.size.width, window.frame.size.height
-                            ),
-                            picture = format!(
-                                "{:.0}x{:.0}",
-                                snapshot.coverage.covered.0, snapshot.coverage.covered.1
-                            ),
-                            "stretching a picture that is the wrong shape for its frame"
-                        );
                     }
-                    tiles.push(CanvasTile {
+                    tiles.push(OverlayTile {
                         window: window.window,
-                        frame: window.frame,
+                        from,
+                        to,
                         snapshot,
                         depth: crate::model::z_group::tile_depth(
                             depths.get(&window.server_id.as_u32()).copied(),
@@ -1083,32 +1049,12 @@ impl WorkspaceAnimation {
                             group_of(window.floating),
                             focused_group,
                         ),
-                        pinned: window.pinned,
                     });
                 }
+                // No usable picture. The window is still placed by final_frames, and warmed once
+                // the movement settles.
                 None => missing += 1,
             }
-        }
-        for tile in tiles.iter().take(4) {
-            debug!(
-                pid = tile.window.pid,
-                idx = tile.window.idx.get(),
-                frame = format!(
-                    "{:.0},{:.0} {:.0}x{:.0}",
-                    tile.frame.origin.x, tile.frame.origin.y,
-                    tile.frame.size.width, tile.frame.size.height
-                ),
-                covered = format!(
-                    "{:.0}x{:.0}",
-                    tile.snapshot.coverage.covered.0, tile.snapshot.coverage.covered.1
-                ),
-                window = format!(
-                    "{:.0}x{:.0}",
-                    tile.snapshot.coverage.window.0, tile.snapshot.coverage.window.1
-                ),
-                source = format!("{:?}", tile.snapshot.source),
-                "canvas tile"
-            );
         }
         debug!(
             requested = windows.len(),
@@ -1119,180 +1065,14 @@ impl WorkspaceAnimation {
                 "{:.0},{:.0} -> {:.0},{:.0}",
                 from_offset.x, from_offset.y, to_offset.x, to_offset.y
             ),
-            "canvas animation"
+            "strip group animation"
         );
 
-        if tiles.is_empty() {
-            // Nothing to draw. If a canvas is already running, leave it alone: cancelling a good
-            // animation to show nothing is worse than ignoring this request. Placing the real frames
-            // now would also yank them out from behind the running overlay.
-            if self.canvas.is_some() {
-                let targets = std::mem::take(&mut self.last_animated);
-                self.warm_windows(targets);
-                return;
-            }
-            // Otherwise there is no cover, so place the windows rather than leaving them adrift.
-            self.request_frames(final_frames);
-            let targets = std::mem::take(&mut self.last_animated);
-            self.warm_windows(targets);
-            return;
-        }
-
-        // Carry over whatever the running animation had left to travel, so a rapid sequence of
-        // presses reads as one continuous scroll instead of a series of restarts.
-        let from_offset = match self.canvas.as_ref() {
-            Some(running) => {
-                // The presentation tree says where the canvas is drawn right now; model
-                // arithmetic covers the gap before the first presentation frame exists.
-                let current = self
-                    .overlay
-                    .as_ref()
-                    .and_then(|overlay| overlay.current_canvas_offset())
-                    .unwrap_or_else(|| {
-                        let eased =
-                            crate::ui::workspace_overlay::ease_out_cubic(running.progress());
-                        running.offset_at(eased)
-                    });
-                let residual = CGPoint::new(
-                    current.x - running.to_offset.x,
-                    current.y - running.to_offset.y,
-                );
-                debug!(
-                    residual = format!("{:.0},{:.0}", residual.x, residual.y),
-                    "chaining onto an animation already in flight"
-                );
-                CGPoint::new(from_offset.x + residual.x, from_offset.y + residual.y)
-            }
-            None => from_offset,
-        };
-
-        // Cheap in the steady state: `capture_backdrop` hands back the cached render, which is a clone and
-        // an asynchronous refresh request. It only pays for a composite before the first render lands.
-        // Holding the previous picture instead meant the cold-start composite was kept forever, so the
-        // render that matches the real desktop never got its turn.
-        let backdrop = self.capture_backdrop();
-        let (bar, strip) = self.bar_picture();
-
-        let Some(overlay) = self.ensure_overlay() else {
-            self.request_frames(final_frames);
-            return;
-        };
-        let held = self.pictures.shown.is_some();
-        if backdrop.is_some() {
-            self.pictures.shown = backdrop.clone();
-        }
-        Self::log_dressing("canvas", backdrop.as_ref(), bar.as_ref(), strip, held);
-        let Some(overlay) = self.overlay.as_mut() else { return };
-        overlay.set_backdrop(backdrop.as_ref());
-        overlay.set_bar(bar.as_ref(), strip);
-        overlay.set_canvas(&tiles);
-        overlay.set_canvas_offset(from_offset);
-        overlay.show();
-        // Committed in the same run loop turn as the show, so the first presented frame is the
-        // animation's first frame at `from_offset` — no gap for the destination to flash through.
-        overlay.animate_canvas_offset(from_offset, to_offset, duration);
-
-        // Ticks pace the mid-flight work in `step_canvas` only; the drawing is Core Animation's.
-        let tx = self.tx.clone();
-        let clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
-            _ = tx.send(Event::Tick);
-        });
-
-        // Any per-window animation is abandoned: the canvas covers the same ground.
-        self.running = None;
-        self.coalesce = None;
-        self.canvas = Some(RunningCanvas {
-            from_offset,
-            to_offset,
-            final_frames,
-            frames_applied: false,
-            started: Instant::now(),
-            duration,
-            frames: 0,
-            tiles: tiles
-                .iter()
-                .map(|tile| (tile.window, WindowServerId::from(tile.window), tile.frame.size))
-                .collect(),
-            destination_refreshed: 0,
-            _clock: clock,
-        });
-
-        // With no clock the drawing would still run, but the real windows would never be placed
-        // and the overlay would never come down, so land it immediately instead.
-        if self.canvas.as_ref().is_some_and(|c| c._clock.is_none()) {
-            self.step_canvas_to_end();
-        }
-    }
-
-    fn step_canvas(&mut self) {
-        let (done, place_now, refresh_now) = {
-            let Some(canvas) = self.canvas.as_mut() else { return };
-            let progress = canvas.progress();
-            // Nothing is drawn here; a late tick delays a recapture or the frame placement,
-            // never the motion.
-            canvas.frames += 1;
-            let place_now = !canvas.frames_applied && progress >= APPLY_FRAMES_AT;
-            if place_now {
-                canvas.frames_applied = true;
-            }
-            let refresh_now = match canvas.destination_refreshed {
-                0 => progress >= REFRESH_DESTINATION_AT,
-                1 => progress >= REFRESH_DESTINATION_AGAIN_AT,
-                _ => false,
-            };
-            if refresh_now {
-                canvas.destination_refreshed += 1;
-            }
-            (progress >= 1.0, place_now, refresh_now)
-        };
-        if refresh_now {
-            self.refresh_destination();
-        }
-        if place_now {
-            let frames =
-                self.canvas.as_ref().map(|c| c.final_frames.clone()).unwrap_or_default();
-            self.request_frames(frames);
-        }
-        if done {
-            self.finish_canvas();
-        }
-    }
-
-    fn step_canvas_to_end(&mut self) {
-        if let (Some(overlay), Some(canvas)) = (self.overlay.as_mut(), self.canvas.as_ref()) {
-            overlay.set_canvas_offset(canvas.to_offset);
-        }
-        let frames = self.canvas.as_ref().map(|c| c.final_frames.clone()).unwrap_or_default();
-        self.request_frames(frames);
-        self.finish_canvas();
-    }
-
-    fn finish_canvas(&mut self) {
-        if let Some(canvas) = self.canvas.as_ref() {
-            debug!(
-                ticks = canvas.frames,
-                elapsed_ms = canvas.started.elapsed().as_millis(),
-                duration_ms = canvas.duration.as_millis(),
-                travel = format!(
-                    "{:.0},{:.0} -> {:.0},{:.0}",
-                    canvas.from_offset.x,
-                    canvas.from_offset.y,
-                    canvas.to_offset.x,
-                    canvas.to_offset.y
-                ),
-                "canvas movement finished"
-            );
-        }
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.hide();
-            overlay.release_tiles();
-        }
-        self.canvas = None;
-        self.arm_bar_refresh();
-        let targets = std::mem::take(&mut self.last_animated);
-        if !targets.is_empty() {
-            self.warm_windows(targets);
-        }
+        // Chaining needs no special handling here: a strip movement arriving while anything is in
+        // flight merges through `begin_group`, and each tile bends from its PRESENTATION position
+        // toward its new destination — the same continuity the old canvas got from reading its
+        // single layer's presentation offset, per tile.
+        self.begin_group(tiles, final_frames, duration, "strip", GroupStart::Immediate);
     }
 
     /// Starts an animation that is on screen but not yet moving: the clock, and the movements.
@@ -1756,6 +1536,37 @@ pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rigidity property the old canvas layer guaranteed structurally: every unpinned window
+    /// of a strip movement translates by exactly the same vector, so tiles animated per-tile from
+    /// these rects cannot drift apart. If this ever fails, the strip tears.
+    #[test]
+    fn a_strip_movement_translates_every_window_by_the_same_vector() {
+        let from_offset = CGPoint::new(0.0, 0.0);
+        let to_offset = CGPoint::new(-861.0, 1117.0);
+        let frames = [
+            rect(4.0, 32.0, 859.0, 1081.0),
+            rect(867.0, 32.0, 859.0, 1081.0),
+            rect(4.0, 1149.0, 1720.0, 1081.0), // the row below, mid-jump
+        ];
+        for frame in frames {
+            let (from, to) = strip_travel(frame, from_offset, to_offset, false);
+            assert_eq!(from, frame, "at rest the viewport offset is zero");
+            assert_eq!(to.origin.x - from.origin.x, 861.0);
+            assert_eq!(to.origin.y - from.origin.y, -1117.0);
+            assert_eq!(to.size, frame.size, "a strip movement never resizes");
+        }
+    }
+
+    /// A floating window does not belong to the strip: a pan leaves it exactly where it stands,
+    /// and a standing tile still exists, because the overlay is opaque and omissions vanish.
+    #[test]
+    fn a_pinned_window_stands_still() {
+        let frame = rect(224.0, 95.0, 1280.0, 960.0);
+        let (from, to) = strip_travel(frame, CGPoint::new(100.0, 0.0), CGPoint::new(-4000.0, 0.0), true);
+        assert_eq!(from, frame);
+        assert_eq!(to, frame);
+    }
 
     /// The stability property under rapid presses: a later layout pass confirming a destination
     /// the flight already has must change NOTHING — no retarget, no clock restart — or chained

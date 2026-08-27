@@ -4011,12 +4011,12 @@ impl Reactor {
     }
 
     /// Animates a strip scroll as one horizontal viewport pan, the horizontal twin of a workspace
-    /// switch. Returns true when the canvas took over.
+    /// switch. Returns true when the strip surface took over.
     ///
-    /// `delta` is how far every window moved. The canvas holds the whole active workspace at its
+    /// `delta` is how far every window moved. The strip surface holds the whole active workspace at its
     /// final positions, and the viewport starts shifted back by `delta` so the strip appears to
     /// arrive from where it was, then settles.
-    fn start_canvas_pan(
+    fn start_strip_pan(
         &mut self,
         space: SpaceId,
         workspace_id: crate::model::VirtualWorkspaceId,
@@ -4057,11 +4057,11 @@ impl Reactor {
 
         // Full-display coordinates, matching the overlay's own space.
         let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
-        let mut windows: Vec<crate::actor::workspace_animation::CanvasWindow> = Vec::new();
+        let mut windows: Vec<crate::actor::workspace_animation::StripWindow> = Vec::new();
         for (wid, frame) in &full {
             let Some(window) = self.state.windows.window(*wid) else { continue };
             let Some(server_id) = window.info.sys_id else { continue };
-            windows.push(crate::actor::workspace_animation::CanvasWindow {
+            windows.push(crate::actor::workspace_animation::StripWindow {
                 window: *wid,
                 server_id,
                 frame: CGRect::new(
@@ -4092,8 +4092,8 @@ impl Reactor {
         // The strip arrives from where it was: start the viewport shifted by the movement, settle at
         // zero.
         //
-        // The sign matters and was wrong. A tile at canvas coordinate c appears on screen at
-        // c - offset, and the canvas is built from the NEW layout, so at t = 0 the tile must appear
+        // The sign matters and was wrong. A tile at strip-surface coordinate c appears on screen at
+        // c - offset, and the strip surface is built from the NEW layout, so at t = 0 the tile must appear
         // where the window currently IS:
         //
         //     new_x - offset = old_x,  and  new_x = old_x + delta,  so  offset = delta
@@ -4106,7 +4106,7 @@ impl Reactor {
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {
+        _ = tx.send(crate::actor::workspace_animation::Event::AnimateStrip {
             windows,
             from_offset,
             to_offset,
@@ -4117,15 +4117,15 @@ impl Reactor {
         true
     }
 
-    /// Builds and starts a canvas animation for a workspace switch, if one is warranted.
+    /// Builds and starts a strip-surface animation for a workspace switch, if one is warranted.
     ///
-    /// Returns true when the canvas took over, in which case the caller must not touch the real
+    /// Returns true when the strip surface took over, in which case the caller must not touch the real
     /// windows: the animation actor asks for them once it is covering them.
     ///
     /// Every workspace between the two is laid out and stacked below the one above it, so a jump from
     /// 1 to 4 scrolls past 2 and 3. Without that, a four-workspace jump looks exactly like a
     /// one-workspace step, which gives no sense of where you have moved to.
-    fn start_canvas_switch(
+    fn start_strip_switch(
         &mut self,
         space: SpaceId,
         from_index: usize,
@@ -4136,7 +4136,7 @@ impl Reactor {
         if from_index == to_index {
             return false;
         }
-        tracing::debug!(from_index, to_index, "canvas switch requested");
+        tracing::debug!(from_index, to_index, "strip switch requested");
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
             return false;
         };
@@ -4180,14 +4180,14 @@ impl Reactor {
         // The inset is the difference between the display's full height and its usable height, which
         // is exactly the space the menu bar and the bar sitting in it occupy. Adding it to the usable
         // height makes the row pitch the FULL display height.
-        // The overlay spans the full display, so the canvas is expressed in full-display coordinates
+        // The overlay spans the full display, so the strip surface is expressed in full-display coordinates
         // and the row pitch is simply the full display height. That pitch already contains the menu
         // bar gap, because each workspace's windows start below the bar within their own row.
         let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
         let row_pitch = display_bounds.size.height;
         let height = row_pitch;
 
-        let mut windows: Vec<crate::actor::workspace_animation::CanvasWindow> = Vec::new();
+        let mut windows: Vec<crate::actor::workspace_animation::StripWindow> = Vec::new();
         let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else { continue };
@@ -4203,14 +4203,14 @@ impl Reactor {
             );
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
-            let row = crate::model::canvas_stack::row_of(index, from_index, to_index);
+            let row = crate::model::strip_stack::row_of(index, from_index, to_index);
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };
-                windows.push(crate::actor::workspace_animation::CanvasWindow {
+                windows.push(crate::actor::workspace_animation::StripWindow {
                     window: wid,
                     server_id,
-                    frame: crate::model::canvas_stack::canvas_frame(
+                    frame: crate::model::strip_stack::strip_frame(
                         frame,
                         display_bounds.origin,
                         row,
@@ -4240,16 +4240,16 @@ impl Reactor {
             from_index,
             to_index,
             workspaces = workspaces.len(),
-            canvas_windows = windows.len(),
+            strip_windows = windows.len(),
             final_frames = final_frames.len(),
             height,
-            "canvas switch build"
+            "strip switch build"
         );
         if windows.is_empty() {
             return false;
         }
 
-        let travel = crate::model::canvas_stack::travel(from_index, to_index, height);
+        let travel = crate::model::strip_stack::travel(from_index, to_index, height);
         let (from_offset, to_offset) = (travel.from, travel.to);
         let duration = std::time::Duration::from_secs_f64(
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
@@ -4270,7 +4270,7 @@ impl Reactor {
         // than an animation one, and it is silent, so say so.
         if let Some(target) = self.layout_manager.layout_engine.focused_window()
             && let Some(placed) = windows.iter().find(|window| window.window == target)
-            && !crate::model::canvas_stack::lands_in_view(placed.frame, display_bounds.size.width)
+            && !crate::model::strip_stack::lands_in_view(placed.frame, display_bounds.size.width)
         {
             tracing::debug!(
                 idx = target.idx.get(),
@@ -4281,7 +4281,7 @@ impl Reactor {
         }
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::AnimateCanvas {
+        _ = tx.send(crate::actor::workspace_animation::Event::AnimateStrip {
             windows,
             from_offset,
             to_offset,
@@ -4328,7 +4328,7 @@ impl Reactor {
     /// sign is negated: scrolling the viewport further along the strip carries the windows left.
     ///
     /// The first look at a workspace reports no movement, which is what a switch onto it needs: the switch
-    /// itself is vertical, and the destination's own scroll is drawn into the canvas rather than panned to.
+    /// itself is vertical, and the destination's own scroll is drawn into the strip surface rather than panned to.
     pub(crate) fn take_strip_movement(&mut self, space: SpaceId) -> Option<CGPoint> {
         let workspace = self.layout_manager.layout_engine.active_workspace(space)?;
         let now = self.layout_manager.layout_engine.strip_scroll_offset(space)?;

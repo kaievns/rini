@@ -1,7 +1,7 @@
 pub mod app_rules;
 pub mod display_affinity;
 pub mod floating_position_store;
-pub mod canvas_stack;
+pub mod strip_stack;
 pub mod hidden_window_placement;
 pub mod launch_memory;
 pub mod selection;

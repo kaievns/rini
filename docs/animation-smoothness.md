@@ -19,7 +19,7 @@ Rini animates through two mechanisms, selected per layout pass in
    `src/ui/workspace_overlay.rs`). Window bitmaps composited in one opaque
    overlay window; the real windows are placed once at 75% progress, hidden
    behind it. Ticked by a CFRunLoopTimer at a fixed 60fps. Handles pure
-   translations: workspace switches (canvas), strip pans (canvas), and
+   translations: workspace switches (strip), strip pans (strip), and
    per-window slides.
 
 ## The AX engine is at its physical ceiling
@@ -55,29 +55,59 @@ What remains is either consolidation or marginal:
 - **Cross-app skew is unfixable here.** The real fix is to stop using AX for
   animation entirely — see "Endgame" below.
 
-## The overlay engine: canvas movements are Core Animation-driven
+## The overlay engine: one per-tile Core Animation machinery
 
-Canvas movements (workspace switches and strip pans) hand their interpolation
-to an explicit `CABasicAnimation` on the canvas layer
-(`WorkspaceOverlay::animate_canvas_offset`). The render server runs it
-vsync-locked at the display's native refresh, immune to main-thread stalls.
+Every overlay movement is a group of per-tile animations handed to the render
+server in ONE `CATransaction` (`begin_group` in `workspace_animation.rs`,
+`animate_tiles` in `workspace_overlay.rs`): one commit, one timebase, one
+curve, so tiles start on the same beat, cannot tear against each other, and
+render vsync-locked at the display's native refresh, immune to main-thread
+stalls. Model layers jump to their destinations; the animations carry the
+presentation and are removed on completion, revealing the model — no
+snap-back, no delegate. The tick loop paces only the mid-flight orchestration
+(frame placement at `APPLY_FRAMES_AT`, destination recaptures, teardown);
+nothing is drawn on ticks.
 
-The manual tick loop it replaced — a `RepeatingTimer` at `FRAME_INTERVAL` =
-16.667ms posting `Event::Tick` into the actor's own queue, with `step_canvas`
-setting the layer position — had three weaknesses:
+This evolved in three steps, each replacing a weakness the previous one
+measured. The original manual tick loop (60Hz `RepeatingTimer` posting into
+the actor queue) was not vsync-aligned, capped at 60fps, and coupled to the
+main thread — dropped drawn frames were the observed difference between
+smooth and "instant cut". A dedicated canvas layer then carried switches and
+pans as one animated property, guaranteeing group rigidity structurally.
+Finally the canvas was dissolved into the per-tile machinery: animations
+committed in one transaction share clock and curve, so a rigid group slide
+holds together without a single-layer guarantee (pinned by
+`a_strip_movement_translates_every_window_by_the_same_vector`), and one
+machinery for every movement means a switch chaining onto a slide — or the
+reverse — merges instead of superseding it with a snap.
 
-1. **Not vsync-aligned.** A free-running 60Hz timer beats against the
-   display's refresh, so frames land just before or just after a vsync
-   boundary and the animation judders even when no tick is late.
-2. **Capped at 60fps.** On a ProMotion display that is half the refresh rate.
-   (The 60fps figure came from a 120fps experiment on the old per-frame AX
-   engine, which could not keep up; the canvas writes one property per frame.)
-3. **Main-thread coupled.** Ticks share the actor queue with
-   `SnapshotsReady` processing and warm filtering, and share the main thread
-   with everything else that must run there. Dropped drawn frames were the
-   observed difference between smooth and "instant cut".
+The two entry points feed the same `begin_group`:
 
-How the CA handoff works:
+- **Layout changes** (`Event::Animate` — window open/close, column reorder,
+  join/unjoin, anything whose windows move by different vectors) start
+  `Coalesced`: the overlay shows at frame zero and the movement begins once
+  the reactor's layout passes settle (25ms), installed by `start_moving`.
+- **Strip movements** (`Event::AnimateStrip` — workspace switches and strip
+  pans; the wire event the reactor builds from the stacked-workspace
+  geometry in `model/strip_stack.rs`) start `Immediate`: they arrive once
+  per keystroke and latency is the enemy. `strip_travel` translates every
+  window on the strip surface by the viewport's travel; pinned (floating)
+  windows get `from == to` and are drawn standing still. Visual destinations
+  are deliberately distinct from `final_frames`: a leaving window animates
+  off-screen while its real frame goes to a park.
+
+Mid-flight passes are classified per tile (`merge_action`, tested):
+**redundant** (same destination within `same_as` tolerance — touched not at
+all, which is what keeps rapid presses from restarting or extending the
+flight), **retargeted** (the tile bends from its presentation position to the
+new destination over a fresh duration), or **joined** (installed and animated
+from its own start). Any real change restarts the orchestration clock so the
+frame placement and teardown cover the newest flights. `set_tiles` is
+pre-flight only: it places tiles at their START, which would end an in-flight
+tile's animation on the wrong frame; mid-flight changes go through
+`retarget_tile`/`add_tile`.
+
+Mechanics worth remembering:
 
 - The curve is preserved exactly. `ease_out_cubic` (`1 - (1-t)^3`) is
   precisely the cubic Bezier timing function with control points
@@ -86,60 +116,19 @@ How the CA handoff works:
   `t[(1-t) + t]^2 = t`), and y(t) with both y-controls at 1 expands to
   `1 - (1-t)^3`. So `CAMediaTimingFunction(controlPoints: 1/3, 1, 2/3, 1)`
   is not an approximation. Pinned by
-  `the_core_animation_curve_is_exactly_ease_out_cubic` in
-  `workspace_overlay.rs`.
-- Pinned (floating) tiles get their own position animations counter-moving
-  them, committed in the same transaction so they run in lockstep with the
-  canvas. `addAnimation` copies, so one instance serves picture and shadow.
-- The model layer is set to its final position up front; the explicit
-  animation carries the presentation from start to finish and is removed on
-  completion, revealing the model value — no snap-back, no delegate needed.
-  The flip side: an instant `set_canvas_offset` must cancel in-flight
-  animations first, across every pooled tile layer, because a chained
-  movement replaces the `pinned` list before the cancel runs.
-- The mid-flight hooks (`APPLY_FRAMES_AT` = 0.75, destination recapture at
-  0.0 and 0.5, finish at 1.0) do not need per-frame ticking. The tick loop
-  survives as orchestration only; its rate no longer affects what is drawn,
-  and `RunningCanvas.frames` now counts ticks, not drawn frames.
-- Chaining a switch onto one in flight reads the presentation layer
-  (`current_canvas_offset`) for the current offset instead of re-deriving it
-  from the model clock, falling back to model arithmetic before the first
-  presentation frame exists.
+  `the_core_animation_curve_is_exactly_ease_out_cubic`.
 - `CAAnimation` treats a zero duration as "use the default 0.25s", so zero
-  durations bypass the animation and set the offset directly.
+  durations bypass the animation and draw the final frame directly.
 - `NSValue::valueWithPoint` (the from/to carrier) is gated behind the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
 
-The per-window path (`Event::Animate` — window open/close, column reorder,
-join/unjoin, and any layout change whose windows move by different vectors) is
-CA-driven the same way, per tile:
-
-- `start_moving` (after the 25ms coalesce window) hands every tile to Core
-  Animation in ONE transaction (`animate_tiles`): one commit, one timebase,
-  one curve, so tiles start on the same beat and cannot tear against each
-  other. Model layers jump to their destinations; the animations carry the
-  presentation. The tick loop paces only the mid-flight work.
-- Mid-flight passes are classified per tile (`merge_action`, tested):
-  **redundant** (same destination within `same_as` tolerance — touched not at
-  all, which is what keeps rapid presses from restarting or extending the
-  flight), **retargeted** (the tile bends from its presentation position to
-  the new destination over a fresh duration, canvas-chaining style), or
-  **joined** (installed and animated from its own start, full duration). Any
-  real change restarts the orchestration clock so the frame placement and the
-  teardown cover the newest flights.
-- `set_tiles` is pre-flight only: it places tiles at their START, which would
-  end an in-flight tile's animation on the wrong frame. Mid-flight changes go
-  through `retarget_tile`/`add_tile`.
-
-With that, nothing in the overlay is hand-drawn — canvas and tiles are both
-render-server-driven — and the open question is whether the canvas path is
-still needed at all: per-tile animations in one transaction share clock and
-curve, so a rigid group slide should hold together without the canvas's
-single-layer guarantee. The deciding test is chained retargeting under rapid
-presses (15 tiles staying coherent through repeated replacement). If it
-holds, the canvas AND the entire pan classifier (`strip_pan_delta`,
-`take_strip_movement`) collapse into the per-tile path; if it shows seams,
-the canvas stays.
+Still open from the canvas dissolution: the reactor-side pan classifier
+(`strip_pan_delta`, `take_strip_movement`) only exists to decide
+strip-vs-per-window routing, and both routes now land in the same machinery.
+Once the strip visuals are validated by eye — rapid chained switches and
+pans are the test — the classifier can likely collapse too, though
+`take_strip_movement` also feeds the switch's claim on the destination's
+scroll offset, which needs care.
 
 ## Snapshot staleness
 
@@ -180,14 +169,12 @@ The engines' mechanisms are genuinely different (per-frame IPC writes vs one
 layer transform), so a trait over the engines themselves would be forced. The
 duplication that hurts is elsewhere:
 
-1. **Three copies of the motion math.** Wall-clock progress with clamp and
-   zero-duration guard: `ActiveAnimation::frame_for_now`,
-   `RunningCanvas::progress`, `RunningAnimation::progress`. Rect
-   interpolation twice: `get_frame`/`blend` (AX) vs `lerp_rect` (overlay).
-   Easing twice, with *different curves*: circular ease-in-out (AX,
-   hardcoded) vs ease-out cubic (overlay). A resize (AX path) next to a pan
-   (overlay path) from the same keystroke follows two different curves.
-   Extract a `motion` module: one progress clock, one lerp, one easing table.
+1. **Two copies of the motion math.** Wall-clock progress with clamp and
+   zero-duration guard: `ActiveAnimation::frame_for_now` and
+   `RunningAnimation::progress`. Rect interpolation twice: `get_frame`/
+   `blend` (AX) vs `lerp_rect` (overlay). The curves agree now (the AX
+   `ease` delegates to the overlay's `ease_out_cubic`), but the definitions
+   should live in one `motion` module.
 2. **`config.settings.animation_easing` is dead.** Plumbed through protocol,
    CLI (`set-animation-easing`), and the config actor — and never read by
    either engine. Wire it into the shared easing table or delete it.
@@ -206,11 +193,11 @@ duplication that hurts is elsewhere:
    `EndWindowAnimation`, `flush_frames`) — one helper. `AnimationFrame`
    (singular) is subsumed by `AnimationFrames`. The `BeginWindowAnimation`
    handler carries two overlapping copies of the same explanatory comment.
-5. **Reactor-side canvas builders share boilerplate.** `start_canvas_switch`,
-   `start_canvas_pan`, and `warm_all_workspaces` each repeat the
+5. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,
+   `start_strip_pan`, and `warm_all_workspaces` each repeat the
    screen-lookup / gaps / `calculate_layout_for_workspace` loop — and
    `warm_all_workspaces` recomputes every workspace's layout immediately
-   after `start_canvas_switch` computed the same layouts.
+   after `start_strip_switch` computed the same layouts.
 
 ## Endgame
 
@@ -239,16 +226,20 @@ the resize question again with whichever engine earned it.
 
 ## Order of attack
 
-1. ~~CA-driven canvas animation~~ — done, see the overlay section above.
+1. ~~CA-driven canvas animation~~ — subsumed by 3 and 4.
 2. ~~Steady ticker + matching curve for the AX engine~~ — done, see the
    detour note.
 3. ~~CA-driven per-window overlay path~~ — done, see the overlay section.
-4. Canvas replacement trial: if per-tile chaining stays coherent under rapid
-   presses, collapse the canvas path and the pan classifier into per-tile.
-5. Shared `motion` module + wire or delete `animation_easing` (small; the
+4. ~~Dissolve the canvas into per-tile groups~~ — done (and renamed: the
+   group event is `AnimateStrip`, the geometry module `strip_stack`).
+   Verdict pending eyes on rapid chained switches and pans.
+5. Pan classifier collapse (`strip_pan_delta`, routing in `animate_layout`),
+   once the strip visuals are validated; `take_strip_movement` also feeds
+   the switch's scroll-offset claim and needs care.
+6. Shared `motion` module + wire or delete `animation_easing` (small; the
    curves already agree, the definitions should live in one place).
-5. Staleness: change-driven warming or a stream pool; measure the mid-flight
+7. Staleness: change-driven warming or a stream pool; measure the mid-flight
    refresh cap first since it is nearly free.
-6. `animate_layout` decomposition, next time selection logic changes anyway.
-7. The resize question again — un-stash the overlay resize work or keep AX,
-   whichever the trial earns.
+8. `animate_layout` decomposition, next time selection logic changes anyway.
+9. The resize question again — un-stash the overlay resize work (re-keyed to
+   the per-tile machinery) or keep AX, whichever the trial earns.

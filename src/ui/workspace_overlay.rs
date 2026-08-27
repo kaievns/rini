@@ -22,12 +22,12 @@ use objc2_foundation::{NSString, NSValue};
 use objc2_quartz_core::{
     CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction,
 };
-use tracing::debug;
 
 use crate::actor::app::WindowId;
 use crate::sys::geometry::SameAs;
 use crate::sys::screen::CoordinateConverter;
 use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
+
 
 /// Window level for the overlay. Managed windows all sit at CG layer 0, so anything above that
 /// covers them. `NSPopUpMenuWindowLevel` is 101, which `mission_control.rs` already uses, and it
@@ -49,21 +49,6 @@ define_class!(
         }
     }
 );
-
-/// One window's picture at a fixed position on the canvas.
-///
-/// Canvas coordinates, not screen. An animation moves the canvas rather than the tiles on it, which is
-/// what makes a long jump scroll past everything in between.
-pub struct CanvasTile {
-    pub window: WindowId,
-    /// Fixed position on the canvas. Never interpolated.
-    pub frame: CGRect,
-    pub snapshot: WindowSnapshot,
-    /// Front-to-back position on screen, 0 being frontmost.
-    pub depth: usize,
-    /// Drawn over the canvas and held still while it moves, for a window that is not part of the strip.
-    pub pinned: bool,
-}
 
 /// One window's picture inside the overlay, and where it should be drawn.
 #[derive(Clone)]
@@ -122,11 +107,8 @@ pub fn ease_out_cubic(t: f64) -> f64 {
     1.0 - inv * inv * inv
 }
 
-/// One key for every canvas movement, so a retarget replaces the animation in flight rather than
+/// One key for every tile movement, so a retarget replaces the animation in flight rather than
 /// stacking a second one on the same property.
-const CANVAS_ANIMATION_KEY: &str = "rini.canvas.move";
-
-/// One key for every per-tile movement, for the same reason.
 const TILE_ANIMATION_KEY: &str = "rini.tile.move";
 
 /// `ease_out_cubic` in Core Animation form — exactly, not approximately. Derivation in
@@ -168,14 +150,10 @@ pub struct WorkspaceOverlay {
     /// The layer every tile is added to. Owned by the window's content view, which is layer-backed,
     /// so AppKit presents it on the GPU with no manual rasterisation.
     root: Retained<CALayer>,
-    /// Holds every tile at its fixed canvas position. Moving THIS layer is the animation: one
-    /// transform per frame regardless of how many windows are on screen, and the tiles cannot drift
-    /// against each other because they are siblings under one parent that moves as a unit.
-    canvas: Retained<CALayer>,
-    /// The real desktop, drawn behind everything and held still while the canvas moves, so the gaps
+    /// The real desktop, drawn behind everything and held still while the tiles move, so the gaps
     /// around strips look like the desktop instead of flickering as a flat colour.
     backdrop: Retained<CALayer>,
-    /// The bar, redrawn on top and held still while the canvas moves beneath it. The overlay spans the
+    /// The bar, redrawn on top and held still while the tiles move beneath it. The overlay spans the
     /// whole display, so it covers the real bar and has to put it back.
     ///
     /// Drawn from a capture of the bar's own windows, which keeps the bar's own alpha, so the strips show
@@ -184,8 +162,6 @@ pub struct WorkspaceOverlay {
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
     tile_layers: HashMap<WindowId, Tile>,
-    /// Tiles that must stand still while the canvas moves, with the screen frame each one holds.
-    pinned: Vec<(WindowId, CGRect)>,
     /// Display frame in CoreGraphics coordinates, which is what callers speak. Kept so tile rects can
     /// be translated into the overlay's own space.
     frame: CGRect,
@@ -214,7 +190,7 @@ impl WorkspaceOverlay {
             )
         };
         window.setOpaque(true);
-        // Without this the canvas between strips renders as a bare grey slab, which reads as a glitch
+        // Without this the gap between strips renders as a bare grey slab, which reads as a glitch
         // rather than as empty space. Opaque is required so the real windows being repositioned
         // underneath stay hidden, so the background has to be drawn rather than left transparent.
         window.setBackgroundColor(Some(&NSColor::blackColor()));
@@ -249,7 +225,7 @@ impl WorkspaceOverlay {
         // both would cancel out.
         root.setContentsScale(scale);
 
-        // Behind the canvas and never moved. Not geometryFlipped: that flips a layer's own contents
+        // Behind the tiles and never moved. Not geometryFlipped: that flips a layer's own contents
         // too, which drew the captured desktop upside down.
         let backdrop = CALayer::layer();
         backdrop.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -258,7 +234,7 @@ impl WorkspaceOverlay {
         backdrop.setZPosition(BACKDROP_Z);
         root.addSublayer(&backdrop);
 
-        // Above the canvas, and never moved: the bar does not scroll with the workspaces. Not
+        // Above the tiles, and never moved: the bar does not scroll with the workspaces. Not
         // geometryFlipped, for the same reason as the backdrop.
         let bar = CALayer::layer();
         bar.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -266,14 +242,6 @@ impl WorkspaceOverlay {
         bar.setZPosition(BAR_Z);
         bar.setHidden(true);
         root.addSublayer(&bar);
-
-        let canvas = CALayer::layer();
-        // Anchored at its top-left so setting the position translates the children directly, with no
-        // half-size offset to reason about.
-        canvas.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        canvas.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
-        canvas.setPosition(CGPoint::new(0.0, 0.0));
-        root.addSublayer(&canvas);
 
         window.orderFrontRegardless();
 
@@ -283,9 +251,7 @@ impl WorkspaceOverlay {
             backdrop,
             bar,
             bar_drawn: false,
-            canvas,
             tile_layers: HashMap::new(),
-            pinned: Vec::new(),
             frame,
             scale,
             visible: false,
@@ -297,7 +263,7 @@ impl WorkspaceOverlay {
         self.frame
     }
 
-    /// Draws the bar on top of the moving canvas, from a picture of the bar itself.
+    /// Draws the bar on top of the moving tiles, from a picture of the bar itself.
     ///
     /// `strip` is where the bar sits in the overlay's coordinates. The picture keeps its own alpha, so the
     /// strips show through the bar as they scroll under it instead of being cut off at its edge. A failed
@@ -319,14 +285,14 @@ impl WorkspaceOverlay {
                 self.bar.setHidden(false);
             }
             // A capture is skipped whenever the bar is not fully visible to be captured, and hiding the
-            // bar instead left the canvas showing through the menu bar strip, which is worse than a
+            // bar instead left the tiles showing through the menu bar strip, which is worse than a
             // slightly stale bar.
             None => self.bar.setHidden(!self.bar_drawn),
         }
         CATransaction::commit();
     }
 
-    /// Sets the still image drawn behind the moving canvas.
+    /// Sets the still image drawn behind the moving tiles.
     ///
     /// Sized from the image's own covered size rather than stretched to the overlay, so it stays in
     /// register with the real desktop. A failed capture keeps whatever was there, or the desktop blinks.
@@ -370,164 +336,16 @@ impl WorkspaceOverlay {
         self.root.setContentsScale(scale);
     }
 
-    /// Installs the canvas for one animation: every tile at a fixed position.
-    ///
-    /// Tiles are reused across animations for the same window, since handing a layer a bitmap is the
-    /// expensive part. Anything absent is removed, or the previous animation's windows linger.
-    pub fn set_canvas(&mut self, tiles: &[CanvasTile]) {
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-
-        let mut keep = Vec::with_capacity(tiles.len());
-        let mut pinned = Vec::new();
-        for tile in tiles {
-            keep.push(tile.window);
-            let entry = self
-                .tile_layers
-                .entry(tile.window)
-                .or_insert_with(|| new_tile(&self.canvas));
-            reparent(&entry.picture, &self.canvas);
-            reparent(&entry.shadow, &self.canvas);
-            entry.picture.setContentsScale(self.scale);
-            set_layer_contents(&entry.picture, &tile.snapshot);
-            place_tile(entry, tile.frame, -(tile.depth as f64));
-            entry.picture.setHidden(false);
-            entry.shadow.setHidden(false);
-            // A pinned tile stays in the canvas, so it keeps its place in the stack, and is counter-moved
-            // every frame instead. Lifting it out of the canvas put it above the whole strip, which is
-            // wrong twice: a background window appeared over the windows in front of it, and a translucent
-            // strip window lost what used to show through it.
-            if tile.pinned {
-                pinned.push((tile.window, tile.frame));
-            }
-        }
-
-        let stale: Vec<WindowId> =
-            self.tile_layers.keys().copied().filter(|w| !keep.contains(w)).collect();
-        for window in stale {
-            if let Some(entry) = self.tile_layers.remove(&window) {
-                entry.picture.removeFromSuperlayer();
-                entry.shadow.removeFromSuperlayer();
-            }
-        }
-        self.pinned = pinned;
-
-        CATransaction::commit();
-        self.check_geometry(tiles);
-    }
-
-    /// Checks that every tile will be drawn at the frame it was given, so a scale introduced anywhere
-    /// in the layer tree cannot go unnoticed. Silent when everything agrees.
-    fn check_geometry(&self, tiles: &[CanvasTile]) {
-        for tile in tiles {
-            let Some(entry) = self.tile_layers.get(&tile.window) else { continue };
-            let layer = &entry.picture;
-            let drawn = layer.convertRect_toLayer(layer.bounds(), Some(&self.root));
-            let off_by = (drawn.size.width - tile.frame.size.width)
-                .abs()
-                .max((drawn.size.height - tile.frame.size.height).abs());
-            if off_by <= 1.0 {
-                continue;
-            }
-            debug!(
-                idx = tile.window.idx.get(),
-                asked = format!("{:.0}x{:.0}", tile.frame.size.width, tile.frame.size.height),
-                drawn = format!("{:.0}x{:.0}", drawn.size.width, drawn.size.height),
-                "a tile will not be drawn at the size it was given"
-            );
-        }
-    }
-
     /// Replaces one tile's picture, leaving its position alone.
     ///
     /// Used mid-flight, once the window being switched into is on screen and can be captured with its
-    /// focused appearance. Contents only: changing the frame here would fight the canvas.
+    /// focused appearance. Contents only: changing the frame here would fight the running movement.
     pub fn set_tile_picture(&mut self, window: WindowId, snapshot: &WindowSnapshot) {
         let Some(entry) = self.tile_layers.get(&window) else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         set_layer_contents(&entry.picture, snapshot);
         CATransaction::commit();
-    }
-
-    /// Moves the canvas so that `offset` in canvas coordinates sits at the overlay's top-left,
-    /// with no animation. Cancels any movement in flight first: the model already sits at that
-    /// movement's destination, so a bare set would change nothing visible until it ended.
-    pub fn set_canvas_offset(&mut self, offset: CGPoint) {
-        CATransaction::begin();
-        // Implicit animations off, or Core Animation adds its own ease on top of the change and the
-        // result lags the input by a fixed amount.
-        CATransaction::setDisableActions(true);
-        self.remove_canvas_animations();
-        self.canvas.setPosition(CGPoint::new(-offset.x, -offset.y));
-        // Whatever is pinned moves the other way by the same amount, so it stands still on screen while
-        // keeping its place in the stack. Two layer writes per frame at most: only floating windows pin.
-        for (window, fixed) in &self.pinned {
-            if let Some(entry) = self.tile_layers.get(window) {
-                let frame = pinned_canvas_frame(*fixed, offset);
-                entry.picture.setFrame(frame);
-                entry.shadow.setFrame(frame);
-            }
-        }
-        CATransaction::commit();
-    }
-
-    /// Hands a canvas movement to Core Animation: vsync-locked at native refresh, immune to
-    /// main-thread stalls. Pinned tiles are counter-animated in the same transaction so they
-    /// cannot drift against the canvas. Why this replaced manual ticking:
-    /// `docs/animation-smoothness.md`.
-    pub fn animate_canvas_offset(&mut self, from: CGPoint, to: CGPoint, duration: Duration) {
-        // Core Animation reads a zero duration as "use the default 0.25s".
-        if duration.is_zero() {
-            self.set_canvas_offset(to);
-            return;
-        }
-        let seconds = duration.as_secs_f64();
-        let key = NSString::from_str(CANVAS_ANIMATION_KEY);
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        self.canvas.setPosition(CGPoint::new(-to.x, -to.y));
-        self.canvas.addAnimation_forKey(
-            &position_animation(
-                CGPoint::new(-from.x, -from.y),
-                CGPoint::new(-to.x, -to.y),
-                seconds,
-            ),
-            Some(&key),
-        );
-        for (window, fixed) in &self.pinned {
-            let Some(entry) = self.tile_layers.get(window) else { continue };
-            let finish = pinned_canvas_frame(*fixed, to);
-            let start = pinned_canvas_frame(*fixed, from).origin;
-            entry.picture.setFrame(finish);
-            entry.shadow.setFrame(finish);
-            // Anchor points are (0,0), so position is the frame origin. addAnimation copies, so
-            // one instance serves both layers.
-            let animation = position_animation(start, finish.origin, seconds);
-            entry.picture.addAnimation_forKey(&animation, Some(&key));
-            entry.shadow.addAnimation_forKey(&animation, Some(&key));
-        }
-        CATransaction::commit();
-    }
-
-    /// Where the canvas is currently drawn. The model sits at the destination for the whole
-    /// flight, so chaining must read the presentation tree, not the model.
-    pub fn current_canvas_offset(&self) -> Option<CGPoint> {
-        // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
-        let presented = unsafe { self.canvas.presentationLayer() }?;
-        let position = presented.position();
-        Some(CGPoint::new(-position.x, -position.y))
-    }
-
-    /// Removes the movement animations from the canvas and every pooled tile — not just the
-    /// currently pinned ones, because a chained movement replaces `pinned` before the cancel runs.
-    fn remove_canvas_animations(&self) {
-        let key = NSString::from_str(CANVAS_ANIMATION_KEY);
-        self.canvas.removeAnimationForKey(&key);
-        for entry in self.tile_layers.values() {
-            entry.picture.removeAnimationForKey(&key);
-            entry.shadow.removeAnimationForKey(&key);
-        }
     }
 
     /// Installs the tiles for one animation and draws frame zero.
@@ -596,7 +414,7 @@ impl WorkspaceOverlay {
     /// beat and interpolates them vsync-locked at the display's native refresh, so tiles cannot
     /// tear against each other and a busy actor thread cannot drop drawn frames. The model layers
     /// jump straight to their destinations; the animations carry the presentation and are removed
-    /// on completion, revealing the model — same pattern as `animate_canvas_offset`.
+    /// on completion, revealing the model — the same handoff the whole overlay uses.
     pub fn animate_tiles(&mut self, tiles: &[OverlayTile], duration: Duration) {
         // Core Animation reads a zero duration as "use the default 0.25s".
         if duration.is_zero() {
@@ -712,17 +530,6 @@ impl WorkspaceOverlay {
 /// the strip's is what put a second bar on screen.
 fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
-}
-
-/// Where a pinned tile has to sit on the canvas so that it appears at `fixed` on screen.
-///
-/// The canvas is positioned at the negated offset, so a child at canvas coordinate c is drawn at c minus
-/// the offset. Adding the offset therefore cancels the canvas's movement exactly.
-fn pinned_canvas_frame(fixed: CGRect, offset: CGPoint) -> CGRect {
-    CGRect::new(
-        CGPoint::new(fixed.origin.x + offset.x, fixed.origin.y + offset.y),
-        fixed.size,
-    )
 }
 
 /// A tile: the picture, plus a caster behind it holding the shadow.
@@ -981,28 +788,6 @@ mod tests {
     fn a_zero_sized_tile_has_no_corners_rather_than_negative_ones() {
         assert_eq!(tile_corner_radius(CGSize::new(0.0, 0.0)), 0.0);
         assert_eq!(tile_corner_radius(CGSize::new(-10.0, 100.0)), 0.0);
-    }
-
-    /// A pinned tile stays where it is on screen while the canvas slides under it.
-    #[test]
-    fn a_pinned_tile_cancels_the_canvas_movement() {
-        let fixed = rect(136.0, 32.0, 1370.0, 1081.0);
-        assert_eq!(pinned_canvas_frame(fixed, CGPoint::new(0.0, 0.0)), fixed);
-        // Mid-scroll the canvas sits 861pt to the left, so the tile has to sit 861pt to the right of where
-        // it should appear.
-        let mid = pinned_canvas_frame(fixed, CGPoint::new(861.0, 0.0));
-        assert_eq!(mid.origin.x, 136.0 + 861.0);
-        assert_eq!(mid.origin.y, 32.0);
-        // A vertical switch moves the canvas the other way, and the same cancellation applies.
-        assert_eq!(pinned_canvas_frame(fixed, CGPoint::new(0.0, -2234.0)).origin.y, 32.0 - 2234.0);
-    }
-
-    #[test]
-    fn pinning_never_resizes_a_tile() {
-        let fixed = rect(136.0, 32.0, 1370.0, 1081.0);
-        let moved = pinned_canvas_frame(fixed, CGPoint::new(-4305.0, 0.0));
-        assert_eq!(moved.size.width, 1370.0);
-        assert_eq!(moved.size.height, 1081.0);
     }
 
     #[test]
