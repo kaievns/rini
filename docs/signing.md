@@ -26,8 +26,29 @@ designated => identifier "git.kaievns.rini" and certificate leaf = H"bfbde802...
 ```
 
 Neither half changes when the binary does, so the grant survives a rebuild. This is the same
-workaround yabai documents for the same reason. `bin/build.sh` builds and re-signs in one step and
-fails loudly if the requirement comes out without a certificate in it.
+workaround yabai documents for the same reason.
+
+## The signing rides every cargo build
+
+Signing used to live only in `bin/build.sh`, which made it a discipline: any bare `cargo build
+--release` — a compile check, an editor task — overwrote the binary with an ad-hoc signature, and
+because the launch agent points at the build output with KeepAlive, the next service start cost a
+re-grant. Measured cost of forgetting: two re-grant rounds in one evening.
+
+Now `.cargo/config.toml` sets `build.rustc-workspace-wrapper = "bin/sign-rustc.sh"`, which signs
+the `rini` bin as part of every build, whoever runs it. Two placements that do NOT work, both
+tried:
+
+- **A linker wrapper is too early.** `strip = true` in the release profile makes rustc run strip
+  AFTER the linker, and Apple's strip re-signs the binary ad-hoc, clobbering anything the linker
+  stage applied. The rustc wrapper returns only after rustc's whole link-and-strip pipeline, and
+  cargo copies the artifact out of `deps/` after that.
+- **A build.rs cannot do it at all**: it runs before the binary exists.
+
+The wrapper signs only the `rini` bin artifact and skips silently when the certificate is absent
+(CI, another machine), so it never breaks a build. `bin/build.sh` remains the deploy entry: it
+still verifies the designated requirement came out with a certificate in it and fails loudly if
+not.
 
 ## Recreating the certificate
 

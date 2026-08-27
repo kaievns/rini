@@ -5,3 +5,9 @@
 # inside SkyLight. Single-threaded runs never reproduced it. The suite takes well under a second either
 # way, so there is nothing to trade off.
 RUST_TEST_THREADS = "1"
+
+# Build through the signing wrapper, so a bare `cargo build` cannot leave the rini binary ad-hoc
+# signed. TCC keys the Accessibility grant to the code identity, the launch agent points at the
+# build output, and an ad-hoc rebuild costs a re-grant at the next restart. See docs/signing.md.
+[build]
+rustc-workspace-wrapper = "bin/sign-rustc.sh"
