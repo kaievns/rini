@@ -1601,6 +1601,9 @@ fn actual_start(request: &AnimationRequest, display: CGRect) -> CGRect {
         Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => info.frame,
         _ => request.from,
     };
+    if start_is_synthetic(real, request.from, request.to) {
+        return request.from;
+    }
     // A parked window's real frame is a corner of the display, so animating from it would fly the window in
     // diagonally from the bottom. It belongs to the strip and comes back in from the edge it was parked
     // against.
@@ -1608,6 +1611,15 @@ fn actual_start(request: &AnimationRequest, display: CGRect) -> CGRect {
         return crate::model::HiddenWindowPlacement::entry_frame(real, request.to, display);
     }
     real
+}
+
+/// Is a request's start a deliberate fiction rather than drift to correct?
+///
+/// A window already sitting at its destination has no drift, so a request that still asks for
+/// motion can only be a synthetic start (the debug slide, which invents one). Overriding it with
+/// the real frame made `from` equal `to`, which silently killed the whole movement.
+fn start_is_synthetic(real: CGRect, from: CGRect, to: CGRect) -> bool {
+    real.same_as(to) && !from.same_as(to)
 }
 
 /// How much of a window has to be on screen for the overlay to bother with it.
@@ -1700,6 +1712,33 @@ mod tests {
             assert_eq!(to.origin.y - from.origin.y, -1117.0);
             assert_eq!(to.size, frame.size, "a strip movement never resizes");
         }
+    }
+
+    /// The debug slide invents a start for a window already at rest; correcting that "drift" from
+    /// the window server made from equal to and silently killed the whole movement.
+    #[test]
+    fn an_invented_start_for_a_window_at_rest_is_honoured() {
+        let at_rest = rect(4.0, 32.0, 859.0, 1081.0);
+        let offset = rect(-396.0, 32.0, 859.0, 1081.0);
+        assert!(start_is_synthetic(at_rest, offset, at_rest));
+    }
+
+    /// The case `actual_start` exists for: the reactor reports a window at its DESTINATION while
+    /// it really sits elsewhere. The real frame differs from the destination, so it is drift, and
+    /// the window server's answer must win.
+    #[test]
+    fn real_drift_is_not_synthetic() {
+        let reported = rect(4.0, 32.0, 859.0, 1081.0);
+        let destination = rect(867.0, 32.0, 859.0, 1081.0);
+        let really_at = rect(400.0, 32.0, 859.0, 1081.0);
+        assert!(!start_is_synthetic(really_at, reported, destination));
+    }
+
+    /// A request with no motion at all has nothing to honour either way.
+    #[test]
+    fn a_standing_request_is_not_synthetic() {
+        let frame = rect(4.0, 32.0, 859.0, 1081.0);
+        assert!(!start_is_synthetic(frame, frame, frame));
     }
 
     /// A floating window does not belong to the strip: a pan leaves it exactly where it stands,
