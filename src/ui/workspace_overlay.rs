@@ -65,6 +65,8 @@ pub struct OverlayTile {
     /// A border window riding the window it traces: drawn a quarter-step in front of its window's
     /// depth, and without a shadow, because the real border window casts none.
     pub companion: bool,
+    /// Whether this window holds (or is about to hold) focus, which brightens its outline.
+    pub focused: bool,
 }
 
 impl OverlayTile {
@@ -73,6 +75,29 @@ impl OverlayTile {
     pub(crate) fn z(&self) -> f64 {
         -(self.depth as f64) + if self.companion { 0.25 } else { 0.0 }
     }
+}
+
+/// The hairline outline macOS composites around every window, which no capture can carry: the
+/// window server draws it outside the app's own surface, exactly like the shadow. Without it every
+/// tile reads flat and the outline pops back at the handover.
+///
+/// Measured, not styled. Width: 2 device pixels at 2x. Alpha: from a recording of this display,
+/// the outline over rgb~9 content read rgb 55, so 55 = 9(1-a) + 255a gives a ~= 0.19 for an
+/// unfocused window; and the earlier in-repo measurement of the same outline read 65/255 focused
+/// against 42/255 unfocused. 0.25 and 0.16 fit both within the compression noise.
+const OUTLINE_WIDTH: f64 = 1.0;
+const OUTLINE_ALPHA_FOCUSED: f64 = 0.25;
+const OUTLINE_ALPHA: f64 = 0.16;
+
+/// The outline alpha a tile wears, `None` for no outline.
+///
+/// Companions are border-tool windows: borderless overlays in reality, so dressing them would draw
+/// an outline that does not exist on screen.
+fn outline_alpha(focused: bool, companion: bool) -> Option<f64> {
+    if companion {
+        return None;
+    }
+    Some(if focused { OUTLINE_ALPHA_FOCUSED } else { OUTLINE_ALPHA })
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -406,6 +431,7 @@ impl WorkspaceOverlay {
         reparent(&entry.shadow, &self.root);
         entry.picture.setContentsScale(self.scale);
         set_layer_contents(&entry.picture, &tile.snapshot);
+        apply_window_outline(&entry.picture, tile, tile.from.size);
         // Negated so a smaller depth, meaning nearer the front, draws on top.
         place_tile(entry, tile.from, tile.z());
         entry.picture.setHidden(false);
@@ -548,6 +574,25 @@ impl WorkspaceOverlay {
 /// the strip's is what put a second bar on screen.
 fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
+}
+
+/// Dresses a tile with the macOS window outline, or strips it bare.
+///
+/// A `CALayer` border is a stroke and nothing else — the middle stays fully transparent, so a
+/// translucent window shows what is genuinely behind it. Set explicitly in both directions
+/// because tile layers are pooled. Rounding follows the window's own corner radius, without
+/// `masksToBounds`, so nothing else is clipped.
+fn apply_window_outline(picture: &CALayer, tile: &OverlayTile, size: CGSize) {
+    let Some(alpha) = outline_alpha(tile.focused, tile.companion) else {
+        picture.setBorderWidth(0.0);
+        picture.setCornerRadius(0.0);
+        return;
+    };
+    let color = objc2_core_graphics::CGColor::new_srgb(1.0, 1.0, 1.0, alpha);
+    // SAFETY: a CGColor created above, live for the call; Core Animation copies it.
+    unsafe { picture.setBorderColor(Some(&color)) };
+    picture.setBorderWidth(OUTLINE_WIDTH);
+    picture.setCornerRadius(tile_corner_radius(size));
 }
 
 /// A tile: the picture, plus a caster behind it holding the shadow.

@@ -143,19 +143,34 @@ scroll offset, which needs care.
 
 ## Window borders during animations
 
-The long-standing "windows go flat and flicker" complaint: the borders are
-JankyBorders' (`~/.config/borders/bordersrc`), drawn as separate windows
-tracking the real ones. The real windows sit parked behind the opaque overlay
-for the length of every animation, so the border windows vanish with them and
-pop back at the handover.
+The long-standing "windows go flat and flicker" complaint took three attempts
+because the border's identity was misdiagnosed twice:
 
-A config-driven drawn border was tried first and rejected: the tile then
-mismatched reality in the other direction — a redrawn border (color space,
-width, corner treatment) flickers against the real one at the handover just
-as visibly as no border did. The principle that survived: **the overlay must
-show the same pixels the screen shows**, so the border windows are carried as
-**companion tiles** (`companion_of` / `companion_tiles` in
-`workspace_animation.rs`):
+1. A config-driven drawn border (bronze, mirroring the bordersrc) mismatched
+   reality in the other direction — a redrawn border flickers against the
+   real one at the handover just as visibly as no border did.
+2. Companion tiles for JankyBorders' border windows — correct mechanism,
+   wrong target: the `borders` process turned out not to be running at all
+   (`bordersrc` exists, nothing draws it). Live enumeration showed zero
+   border windows.
+3. **The border that actually flickers is macOS's own window outline**,
+   measured from a recording of this display: a 2-device-pixel hairline at
+   rgb(55,55,58) over rgb(~9) content — white at ~19% alpha — present at
+   rest on every window, absent on every tile mid-flight. The window server
+   composites it OUTSIDE the app's surface, exactly like the shadow, so no
+   capture can ever carry it.
+
+So tiles are dressed with the outline, as a measured platform constant, not
+a setting (`apply_window_outline`): 1pt white stroke, 0.25 alpha focused
+against 0.16 unfocused (fitting both this recording and the earlier in-repo
+border measurement of 65/255 focused vs 42/255 unfocused), rounded to the
+window's own corner radius. A `CALayer` border is an outline with a fully
+transparent middle — nothing washes through a translucent window's glass,
+the constraint that killed attempt 1's shadow-adjacent cousins.
+
+The companion-tile machinery from attempt 2 stays (`companion_of` /
+`companion_tiles`): it is the right answer for anyone whose border tool IS
+running, carrying real border windows as tiles:
 
 - Detection is geometric and tool-agnostic: an unmanaged window concentric
   with a managed one (centers within 4pt) and the same size or up to 8pt
@@ -173,9 +188,11 @@ show the same pixels the screen shows**, so the border windows are carried as
   so no companion matches — which is what the real screen does, since the
   border tool only catches up after the window lands.
 - Companions are excluded from the mid-flight destination recapture, which
-  exists for the window the eye is on.
+  exists for the window the eye is on — and wear no drawn outline, since the
+  real border windows are borderless overlays.
 
-No configuration: rini reproduces whatever the border tool draws, or nothing.
+No configuration in either mechanism: the outline is the platform's, and the
+companions reproduce whatever a border tool draws, or nothing.
 
 ## Snapshot staleness
 
