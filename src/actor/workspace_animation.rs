@@ -278,6 +278,13 @@ struct RunningAnimation {
     apply_at: f64,
     /// Windows waiting for a first picture, admitted as growing tiles when it lands.
     entrances: Vec<PendingEntrance>,
+    /// Growing windows whose reveal pixels are still being rendered, with the size that counts as
+    /// ready. The flight holds at frame zero until this empties or `hold_deadline` passes: a grow
+    /// drawn from the old picture is a stretch or a hole, and the only truthful fill is a capture
+    /// of the window at its new size.
+    awaiting: Vec<(WindowId, CGSize)>,
+    /// When to stop waiting for reveal pixels and fly with the placeholder.
+    hold_deadline: Option<Instant>,
     /// How many times the window being focused has been recaptured. See `refresh_destination_among`.
     destination_refreshed: u8,
     /// Dropped when the animation ends, which invalidates the timer and stops the wakeups.
@@ -314,6 +321,19 @@ const APPLY_FRAMES_AT_RESIZE: f64 = 0.5;
 fn apply_frames_at(any_resize: bool) -> f64 {
     if any_resize { APPLY_FRAMES_AT_RESIZE } else { APPLY_FRAMES_AT }
 }
+
+/// How long a grow may hold at frame zero waiting for its reveal pixels, from the flight's
+/// duration. Generous against the measured pipeline — the real resize lands in ~100ms and a
+/// capture takes 16-50ms — while still bounded: an app that will not rerender gets the stretch
+/// placeholder rather than a frozen screen.
+fn reveal_hold_limit(duration: Duration) -> Duration {
+    duration.mul_f64(0.4).max(Duration::from_millis(150))
+}
+
+/// How often the chase thread re-captures a growing window while waiting for it to reach its new
+/// size, and how many times it tries before giving up.
+const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(50);
+const REVEAL_CHASE_ATTEMPTS: usize = 16;
 
 /// What became of a tile offered to an animation in flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -587,6 +607,9 @@ impl WorkspaceAnimation {
             // capture requested for a clipped destination reaches the screen before the handover,
             // and how a window that opened mid-flight gets its entrance.
             if running && snapshot.is_usable() {
+                if self.claim_reveal(window, &snapshot) {
+                    continue;
+                }
                 self.admit_entrance(window, &snapshot);
                 let remaining = self.remaining_flight();
                 if let Some(overlay) = self.overlay.as_mut() {
@@ -783,6 +806,9 @@ impl WorkspaceAnimation {
         if self.running.is_none() {
             return;
         }
+        if self.claim_reveal(window, &snapshot) {
+            return;
+        }
         self.admit_entrance(window, &snapshot);
         let remaining = self.remaining_flight();
         if let Some(overlay) = self.overlay.as_mut() {
@@ -794,6 +820,91 @@ impl WorkspaceAnimation {
     fn remaining_flight(&self) -> Option<Duration> {
         let running = self.running.as_ref()?;
         Some(running.duration.mul_f64((1.0 - running.progress()).max(0.0)))
+    }
+
+    /// Chases the reveal pixels for a holding grow: one thread per window, recapturing until the
+    /// app has rendered at the new size or the attempts run out. `capture_via_skylight` reports
+    /// coverage against the size that counts as ready, so `is_usable` IS the gate: it only passes
+    /// once the real window has reached its destination size.
+    fn chase_reveal_pictures(&self, awaiting: &[(WindowId, CGSize)]) {
+        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
+        for (window, size) in awaiting.iter().copied() {
+            let server_id = WindowServerId::from(window);
+            let tx = self.tx.clone();
+            std::thread::Builder::new()
+                .name("reveal-chase".to_string())
+                .spawn(move || {
+                    for _ in 0..REVEAL_CHASE_ATTEMPTS {
+                        std::thread::sleep(REVEAL_CHASE_INTERVAL);
+                        let Some(mut snapshot) =
+                            capture_via_skylight(server_id, (size.width, size.height), scale)
+                        else {
+                            continue;
+                        };
+                        if !snapshot.is_usable() {
+                            continue;
+                        }
+                        // The window is at its new size and about to be revealed: the fresh
+                        // hairline belongs to this capture.
+                        snapshot.dressing =
+                            crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale);
+                        _ = tx.send(Event::PictureReady { window, snapshot });
+                        return;
+                    }
+                    debug!(
+                        pid = window.pid,
+                        idx = window.idx.get(),
+                        "reveal chase gave up; the hold deadline will fly the placeholder"
+                    );
+                })
+                .ok();
+        }
+    }
+
+    /// Takes a landed picture for a window a holding grow is waiting on. Returns whether the
+    /// picture was claimed by the hold.
+    fn claim_reveal(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
+        let claimed = {
+            let Some(running) = self.running.as_mut() else { return false };
+            if running.started.is_some() {
+                return false;
+            }
+            let Some(position) = running.awaiting.iter().position(|(w, _)| *w == window) else {
+                return false;
+            };
+            let (_, size) = running.awaiting[position];
+            if !snapshot.is_usable() || !snapshot.fits(size) {
+                return false;
+            }
+            running.awaiting.remove(position);
+            if let Some(tile) = running.tiles.iter_mut().find(|tile| tile.window == window) {
+                tile.snapshot = snapshot.clone();
+            }
+            running.awaiting.is_empty()
+        };
+        // Redraw frame zero with the new picture: the tile is standing still, so this is a plain
+        // recompose, and the crop grid now maps the final-size picture — the reveal.
+        let tiles = self
+            .running
+            .as_mut()
+            .map(|running| std::mem::take(&mut running.tiles))
+            .unwrap_or_default();
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.set_tiles(&tiles);
+            overlay.draw_frame(&tiles, 0.0);
+        }
+        if let Some(running) = self.running.as_mut() {
+            running.tiles = tiles;
+        }
+        if claimed {
+            debug!(
+                pid = window.pid,
+                idx = window.idx.get(),
+                "reveal pixels landed; starting the flight"
+            );
+            self.start_moving();
+        }
+        true
     }
 
     /// Adds the tile for a window whose first picture just landed, growing in from nothing.
@@ -971,6 +1082,7 @@ impl WorkspaceAnimation {
         let mut offscreen = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
         let mut entrances: Vec<PendingEntrance> = Vec::new();
+        let mut awaiting: Vec<(WindowId, CGSize)> = Vec::new();
         let mut anchors: Vec<(CGRect, CGRect, CGRect, usize)> = Vec::new();
         for request in &windows {
             let start = actual_start(request, display_frame);
@@ -1018,6 +1130,14 @@ impl WorkspaceAnimation {
             }
             match snapshot {
                 Some(snapshot) => {
+                    // A grow whose picture cannot cover the destination holds for the reveal:
+                    // the truthful pixels only exist once the app renders at the new size.
+                    if crate::ui::window_snapshot::outgrows(
+                        snapshot.coverage.covered,
+                        request.to.size,
+                    ) {
+                        awaiting.push((request.window, request.to.size));
+                    }
                     let tile = OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
@@ -1096,6 +1216,7 @@ impl WorkspaceAnimation {
             GroupStart::Coalesced,
             apply_at,
             entrances,
+            awaiting,
         );
     }
 
@@ -1112,6 +1233,7 @@ impl WorkspaceAnimation {
         start: GroupStart,
         apply_at: f64,
         entrances: Vec<PendingEntrance>,
+        awaiting: Vec<(WindowId, CGSize)>,
     ) {
         // Merge FIRST, before the empty check: a pass with nothing drawable can still carry fresh
         // destinations for a flight in progress, and placing its frames immediately would yank
@@ -1123,6 +1245,7 @@ impl WorkspaceAnimation {
             let in_flight;
             let mut retargets: Vec<(WindowId, CGRect, f64)> = Vec::new();
             let mut joined: Vec<OverlayTile> = Vec::new();
+            let mut hold_frames: Option<Vec<(WindowId, CGRect)>> = None;
             {
                 let running = self.running.as_mut().expect("checked above");
                 in_flight = running.started.is_some();
@@ -1133,6 +1256,26 @@ impl WorkspaceAnimation {
                     if !running.entrances.iter().any(|e| e.window == entrance.window) {
                         running.entrances.push(entrance);
                     }
+                }
+                // A grow can only extend a hold, not stop a flight: one already moving keeps the
+                // placeholder-then-re-key path, since yanking it back to frame zero is worse.
+                if !in_flight && !awaiting.is_empty() {
+                    for (window, size) in awaiting.iter().copied() {
+                        if let Some(waiting) =
+                            running.awaiting.iter_mut().find(|(w, _)| *w == window)
+                        {
+                            waiting.1 = size;
+                        } else {
+                            running.awaiting.push((window, size));
+                        }
+                    }
+                    if running.hold_deadline.is_none() {
+                        running.hold_deadline = Some(Instant::now() + reveal_hold_limit(duration));
+                    }
+                    // The app can only rerender once its real frame is set, so a held merge
+                    // applies the merged destinations now, under the covering overlay.
+                    running.frames_applied = true;
+                    hold_frames = Some(running.final_frames.clone());
                 }
                 for (window, frame) in final_frames {
                     if let Some(existing) =
@@ -1194,6 +1337,10 @@ impl WorkspaceAnimation {
                     running.tiles = tiles;
                 }
             }
+            if let Some(frames) = hold_frames {
+                self.request_frames(frames);
+                self.chase_reveal_pictures(&awaiting);
+            }
             return;
         }
 
@@ -1239,14 +1386,24 @@ impl WorkspaceAnimation {
             warn!("could not start the frame clock; drawing the final frame directly");
         }
 
+        // A holding grow applies the real frames NOW: the overlay is already covering the
+        // windows, so the app can rerender at its new size while the tiles stand still — the
+        // rerender is exactly what the hold is waiting for.
+        let holding = !awaiting.is_empty();
+        if holding {
+            self.request_frames(final_frames.clone());
+            self.chase_reveal_pictures(&awaiting);
+        }
         self.running = Some(RunningAnimation {
             tiles,
             final_frames,
-            frames_applied: false,
+            frames_applied: holding,
             started: None,
             duration,
             apply_at,
             entrances,
+            hold_deadline: holding.then(|| Instant::now() + reveal_hold_limit(duration)),
+            awaiting,
             destination_refreshed: 0,
             _clock: clock,
         });
@@ -1389,6 +1546,7 @@ impl WorkspaceAnimation {
             GroupStart::Immediate,
             apply_frames_at(false),
             Vec::new(),
+            Vec::new(),
         );
     }
 
@@ -1399,6 +1557,33 @@ impl WorkspaceAnimation {
     fn start_moving(&mut self) {
         // Dropping the timer stops it repeating; it only ever needed to fire once.
         self.coalesce = None;
+        // A grow holds at frame zero until its reveal pixels land or the deadline passes: flying
+        // without them shows the stretch placeholder for the whole flight. The nudge timer
+        // re-fires StartMoving at the deadline, so a slow app costs the hold and nothing more.
+        let now = Instant::now();
+        if let Some(running) = self.running.as_ref()
+            && running.started.is_none()
+            && !running.awaiting.is_empty()
+        {
+            if let Some(deadline) = running.hold_deadline
+                && now < deadline
+            {
+                let tx = self.tx.clone();
+                self.coalesce = RepeatingTimer::every(
+                    (deadline - now).max(Duration::from_millis(10)),
+                    move || {
+                        _ = tx.send(Event::StartMoving);
+                    },
+                );
+                return;
+            }
+            let running = self.running.as_mut().expect("checked above");
+            warn!(
+                still_waiting = running.awaiting.len(),
+                "reveal pixels did not arrive in time; flying with the placeholder"
+            );
+            running.awaiting.clear();
+        }
         let Some(running) = self.running.as_mut() else { return };
         if running.started.is_some() {
             return;
@@ -2206,6 +2391,8 @@ mod tests {
             duration: Duration::ZERO,
             apply_at: APPLY_FRAMES_AT,
             entrances: Vec::new(),
+            awaiting: Vec::new(),
+            hold_deadline: None,
             destination_refreshed: 0,
             _clock: None,
         };
@@ -2223,6 +2410,8 @@ mod tests {
             duration: Duration::from_millis(180),
             apply_at: APPLY_FRAMES_AT,
             entrances: Vec::new(),
+            awaiting: Vec::new(),
+            hold_deadline: None,
             destination_refreshed: 0,
             _clock: None,
         };
@@ -2236,6 +2425,8 @@ mod tests {
             duration: Duration::from_millis(180),
             apply_at: APPLY_FRAMES_AT,
             entrances: Vec::new(),
+            awaiting: Vec::new(),
+            hold_deadline: None,
             destination_refreshed: 0,
             _clock: None,
         };

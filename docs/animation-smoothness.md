@@ -184,15 +184,22 @@ changes is how the picture maps onto it (`content_mode` in
   movement reads. Centred zoom was tried and rejected: nothing else on the
   strip inflates. If the capture misses the flight, the window appears when
   the overlay lifts, which is the old behaviour.
-- **Growing past the picture stretches the lead, then re-keys to real
-  pixels.** Reaching past the picture's edge via `contentsRect` extends its
-  outermost pixels, which for a translucent window are near-transparent: the
-  first cut painted a grow as a hole to the backdrop. The lead now stretches
-  the picture's own content (band stays 1:1) until the mid-flight recapture
-  lands, at which point `set_tile_picture` re-keys the whole grid to the
-  new-size picture and re-runs the remaining flight from the PRESENTED state —
-  which also fixes the squash the swap used to cause when new pixels landed in
-  old contentsRect mappings.
+- **A grow holds, then reveals.** Every fill for the not-yet-rendered region
+  of a grow was tried and rejected by eye: `contentsRect` past the picture's
+  edge extends its outermost pixels (a hole to the backdrop on a translucent
+  window), and stretching the lead reads as stretching, because it is. So the
+  truthful pixels are made to exist first: a pass whose destination outgrows
+  its picture (`outgrows`) applies the real frames IMMEDIATELY — the overlay
+  is already covering the windows, so the app rerenders at its new size behind
+  a still frame — while a chase thread recaptures every ~50ms. When a capture
+  at the destination size lands (`claim_reveal`), the tile's grid re-maps to
+  it and the flight begins: the moving edge reveals genuine final-size
+  content, 1:1. Costs ~100-200ms of hold before motion, on grows only; a
+  shrink crops the picture it has and flies immediately. The hold is bounded
+  (`reveal_hold_limit`, 40% of the flight, floor 150ms): an app that will not
+  rerender flies with the stretched-lead placeholder, and if pixels land
+  mid-flight after all, `set_tile_picture` re-keys the grid from the PRESENTED
+  state over the remaining duration.
 - **A fresh picture or hairline swaps in place.** Rebuilding the dressing on a
   mid-flight recapture snapped the border to its final layout while the tile
   was still travelling; a matching harvest now swaps pixels into the existing

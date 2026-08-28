@@ -104,6 +104,17 @@ pub fn is_a_resize(from: CGSize, to: CGSize) -> bool {
     !fits_frame((from.width, from.height), (to.width, to.height))
 }
 
+/// Whether `size` needs pixels this picture does not have: bigger than the capture in either
+/// axis, beyond the stretch tolerance.
+///
+/// The grow-vs-shrink asymmetry of the crop-drawn resize: a shrink crops the picture it has,
+/// which is truthful; a grow needs content that does not exist until the app renders at the new
+/// size, so it holds for a fresh capture (see "Resizes through the overlay" in
+/// `docs/animation-smoothness.md`).
+pub fn outgrows(covered: (f64, f64), size: CGSize) -> bool {
+    size.width > covered.0 * MAX_STRETCH || size.height > covered.1 * MAX_STRETCH
+}
+
 /// Whether a window needs a fresh capture before it can be drawn at `size`.
 ///
 /// Having a drawable picture is not enough: it also has to match the size the window is now. A window
@@ -441,6 +452,20 @@ mod tests {
     fn the_tolerance_scales_with_the_window() {
         assert!(!is_a_resize(CGSize::new(400.0, 400.0), CGSize::new(401.0, 400.0)));
         assert!(is_a_resize(CGSize::new(40.0, 400.0), CGSize::new(41.0, 400.0)));
+    }
+
+    /// A grow needs pixels the picture does not have; a shrink or a match never does. This is
+    /// what decides whether a resize animates immediately (crop) or holds for a fresh capture
+    /// (reveal).
+    #[test]
+    fn a_grow_outgrows_its_picture_and_a_shrink_does_not() {
+        let picture = (859.0, 1081.0);
+        assert!(outgrows(picture, CGSize::new(1147.0, 1081.0)), "wider");
+        assert!(outgrows(picture, CGSize::new(859.0, 1300.0)), "taller");
+        assert!(!outgrows(picture, CGSize::new(859.0, 1081.0)), "same");
+        assert!(!outgrows(picture, CGSize::new(572.0, 1081.0)), "narrower");
+        // Rounding is not a grow, same tolerance as everything else here.
+        assert!(!outgrows(picture, CGSize::new(861.0, 1081.0)));
     }
 
     #[test]
