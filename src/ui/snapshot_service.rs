@@ -118,6 +118,9 @@ pub struct SnapshotTarget {
 
 struct PendingCapture {
     target: SnapshotTarget,
+    /// The window's frame size at enumeration — what the capture is actually of, as opposed to
+    /// `target.size`, which is the size the layout intends. Mid-resize the two differ.
+    size: CGSize,
     filter: Retained<SCContentFilter>,
     config: Retained<SCStreamConfiguration>,
     revision: u64,
@@ -249,6 +252,19 @@ impl SnapshotService {
                     continue;
                 };
 
+                // The buffer is sized from the window as it IS, not as the layout intends it
+                // (`target.size`). During a resize the two disagree, and ScreenCaptureKit fits the
+                // real window into whatever buffer it is given: a 1147pt window asked for at 572pt
+                // came back aspect-fitted into a corner of the buffer, and the tile drew the window
+                // at two-thirds size on black. `target.size` still decides WHETHER to capture
+                // (`needs_capture`); the churn settles because the last capture after a resize is
+                // taken at the settled size.
+                let actual = unsafe { window.frame() }.size;
+                let size = if actual.width >= 1.0 && actual.height >= 1.0 {
+                    actual
+                } else {
+                    target.size
+                };
                 let filter = unsafe {
                     SCContentFilter::initWithDesktopIndependentWindow(
                         SCContentFilter::alloc(),
@@ -257,8 +273,8 @@ impl SnapshotService {
                 };
                 let config = unsafe { SCStreamConfiguration::new() };
                 unsafe {
-                    config.setWidth(((target.size.width * scale) as usize).max(1));
-                    config.setHeight(((target.size.height * scale) as usize).max(1));
+                    config.setWidth(((size.width * scale) as usize).max(1));
+                    config.setHeight(((size.height * scale) as usize).max(1));
                     config.setPixelFormat(u32::from_be_bytes(*b"BGRA"));
                     config.setShowsCursor(false);
                     config.setCapturesAudio(false);
@@ -273,7 +289,7 @@ impl SnapshotService {
                     // and leaves three quarters of it transparent. See docs/capture-overlay-research.md.
                     config.setCaptureResolution(SCCaptureResolutionType::Best);
                 }
-                queued.push(PendingCapture { target: *target, filter, config, revision });
+                queued.push(PendingCapture { target: *target, size, filter, config, revision });
             }
             service.enqueue(queued);
         });
@@ -438,6 +454,7 @@ impl SnapshotService {
         for capture in starting {
             let service = self.clone();
             let target = capture.target;
+            let size = capture.size;
             let revision = capture.revision;
             let scale = self.scale();
             let completion =
@@ -452,7 +469,7 @@ impl SnapshotService {
                     let dressing = surface.is_some().then(|| {
                         crate::ui::edge_dressing::harvest_edge_dressing(target.server_id, scale)
                     });
-                    service.finish(target, revision, scale, surface, filled, dressing.flatten());
+                    service.finish(target, size, revision, scale, surface, filled, dressing.flatten());
                 });
             unsafe {
                 SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
@@ -467,6 +484,7 @@ impl SnapshotService {
     fn finish(
         &self,
         target: SnapshotTarget,
+        size: CGSize,
         revision: u64,
         scale: f64,
         surface: Option<CFRetained<IOSurfaceRef>>,
@@ -480,30 +498,21 @@ impl SnapshotService {
 
             if revision != self.revision.load(Ordering::Acquire) {
                 false
-            } else if surface.is_none() {
-                debug!(
+            } else if filled == Some(false) {
+                // The requested size is guaranteed of the BUFFER only, not of what was painted into
+                // it. An underfilled capture is REJECTED rather than cached: its coverage would
+                // claim the full buffer, pass every fit test, and draw the window small in a corner
+                // on black — through a translucent window, the untouched buffer reads as a gap to
+                // the backdrop. It happens when the window changes size between the request and the
+                // capture, so the next warm — taken once the size settles — replaces it.
+                warn!(
                     wsid = target.server_id.as_u32(),
                     pid = target.window.pid,
-                    "capture produced no surface"
+                    "capture did not fill its buffer; rejected. A persistent repeat means the \
+                     buffer is sized wrongly (captureResolution, or points given as pixels)"
                 );
                 false
             } else if let Some(surface) = surface {
-                // The requested size is guaranteed of the BUFFER only, not of what was painted into
-                // it, hence the check.
-                if filled == Some(false) {
-                    warn!(
-                        wsid = target.server_id.as_u32(),
-                        pid = target.window.pid,
-                        surface = format!(
-                            "{}x{}",
-                            unsafe { surface.width() },
-                            unsafe { surface.height() }
-                        ),
-                        "capture did not fill its buffer; windows will draw small and in a corner. \
-                         Check SCStreamConfiguration captureResolution and whether width and height \
-                         are being given in pixels"
-                    );
-                }
                 // In use for as long as it is cached, or its backing store can be reclaimed and the
                 // tile draws nothing. See the desktop capture above.
                 surface.increment_use_count();
@@ -515,7 +524,9 @@ impl SnapshotService {
                         image: SnapshotImage::Surface(surface),
                         coverage: Coverage {
                             covered: (width, height),
-                            window: (target.size.width, target.size.height),
+                            // The size the capture is actually of, not target.size: mid-resize the
+                            // layout's intended size is not what was on screen.
+                            window: (size.width, size.height),
                         },
                         source: SnapshotSource::ScreenCaptureKit,
                         dressing,
@@ -523,6 +534,11 @@ impl SnapshotService {
                 );
                 true
             } else {
+                debug!(
+                    wsid = target.server_id.as_u32(),
+                    pid = target.window.pid,
+                    "capture produced no surface"
+                );
                 false
             }
         };
@@ -639,7 +655,15 @@ mod tests {
             SnapshotService::new(2.0, Arc::new(move || {
                 counter.fetch_add(1, Ordering::Relaxed);
             }));
-        service.finish(target(1), service.revision.load(Ordering::Acquire), 2.0, None, None, None);
+        service.finish(
+            target(1),
+            CGSize::new(859.0, 1081.0),
+            service.revision.load(Ordering::Acquire),
+            2.0,
+            None,
+            None,
+            None,
+        );
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 

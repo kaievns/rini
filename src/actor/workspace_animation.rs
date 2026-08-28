@@ -149,9 +149,12 @@ const REFRESH_DESTINATION_AT: f64 = 0.0;
 /// windows are placed, so the corrected picture is on screen before the handover.
 const REFRESH_DESTINATION_AGAIN_AT: f64 = 0.5;
 
-/// How many windows to recapture mid-flight. One: this exists for the window being switched into, and
-/// each capture costs a frame.
-const MAX_DESTINATION_CAPTURES: usize = 1;
+/// How many windows to recapture mid-flight, each costing a frame. Two, because a focus change has
+/// two ends: the window being switched into needs its FOCUSED rendering, and the window being left
+/// needs its unfocused one — with one slot the departing tile kept its focused look for the whole
+/// flight, which read as two active windows side by side. Depth order picks exactly these two: the
+/// raise has made the destination frontmost, and the window being left was frontmost before it.
+const MAX_DESTINATION_CAPTURES: usize = 2;
 
 /// How long after an animation to recapture the bar.
 ///
@@ -615,13 +618,15 @@ impl WorkspaceAnimation {
         self.overlay.as_mut()
     }
 
-    /// Recaptures the window being switched into, now that it is on screen, and swaps its tile.
+    /// Recaptures both ends of a focus change mid-flight and swaps their tiles.
     ///
     /// Runs twice per movement (see `REFRESH_DESTINATION_AT` / `_AGAIN_AT`). By that point the
     /// reactor has shown the destination and moved focus, so a fresh capture gets the app's
-    /// FOCUSED rendering, which is what the real window will look like when the overlay lifts.
-    /// Without this the tile slides in with whatever the picture held, and an app that dims when
-    /// unfocused visibly snaps at the handover.
+    /// FOCUSED rendering for the window being switched into and the dimmed one for the window
+    /// being left — which is what the real windows will look like when the overlay lifts.
+    /// Without this the tiles slide with whatever the pictures held: the destination arrives
+    /// unfocused and snaps at the handover, and the departing window keeps its focused look for
+    /// the whole flight, reading as two active windows.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
         let Some((_, scale)) = self.display else { return };
         let candidates: Vec<(WindowId, u32)> =
