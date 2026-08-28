@@ -26,14 +26,18 @@ use objc2_quartz_core::{
 use crate::actor::app::WindowId;
 use crate::sys::geometry::SameAs;
 use crate::sys::screen::CoordinateConverter;
-use crate::ui::edge_dressing::{self, dressing_layout, tile_corner_radius};
+use crate::ui::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 
 
 /// Window level for the overlay. Managed windows all sit at CG layer 0, so anything above that
-/// covers them. `NSPopUpMenuWindowLevel` is 101, which `mission_control.rs` already uses, and it
-/// stays below the assistive and cursor levels so nothing accessibility-related is hidden.
-const OVERLAY_LEVEL: isize = NSPopUpMenuWindowLevel as isize;
+/// covers them.
+///
+/// Above every window the overlay animates, below the system chrome that must stay interactive
+/// and visible while an animation runs. Notification banners sit at level 21 on this system
+/// (measured from the window list; the Dock is 20, the menu bar 24, utility panels 19), and at the
+/// old `NSPopUpMenuWindowLevel` (101) the overlay blotted them out for every animation.
+const OVERLAY_LEVEL: isize = 18;
 
 define_class!(
     /// An `NSView` with a top-left origin, so the layer tree agrees with the CoreGraphics coordinates
@@ -588,10 +592,7 @@ fn apply_edge_dressing(tile: &mut Tile, snapshot: &WindowSnapshot, size: CGSize,
         layer.removeFromSuperlayer();
     }
     let Some(dressing) = &snapshot.dressing else { return };
-    let Some(layout) = dressing_layout(size, edge_dressing::RING_PT, edge_dressing::CORNER_RADIUS)
-    else {
-        return;
-    };
+    let Some(layout) = boundary_layout(size) else { return };
     let pieces = dressing
         .strips
         .iter()
