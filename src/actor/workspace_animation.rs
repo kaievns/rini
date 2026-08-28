@@ -274,10 +274,45 @@ struct RunningAnimation {
     /// `None` while still collecting windows. The animation is on screen but not yet moving.
     started: Option<Instant>,
     duration: Duration,
+    /// Progress at which the real windows are placed: earlier when a resize is in flight.
+    apply_at: f64,
+    /// Windows waiting for a first picture, admitted as growing tiles when it lands.
+    entrances: Vec<PendingEntrance>,
     /// How many times the window being focused has been recaptured. See `refresh_destination_among`.
     destination_refreshed: u8,
     /// Dropped when the animation ends, which invalidates the timer and stops the wakeups.
     _clock: Option<RepeatingTimer>,
+}
+
+/// A window that should join the animation as soon as it has a picture.
+///
+/// A window that just opened has never been captured, and a capture takes ~50-90ms. Rather than
+/// letting it pop in when the overlay lifts, the animation reserves it a place: when its capture
+/// lands mid-flight, a tile is added growing from nothing at its destination.
+#[derive(Debug, Clone)]
+struct PendingEntrance {
+    window: WindowId,
+    /// Destination, in the overlay's coordinate space.
+    to: CGRect,
+}
+
+/// Where an entering window grows in from: zero width at its own left edge, full height.
+///
+/// A resize from nothing to its final width, matching how every other column movement reads —
+/// the crop-drawn tile reveals content rightward as the frame widens. Centred zero-size zoom was
+/// tried first and read as the window inflating, which nothing else on the strip does.
+fn entrance_from(to: CGRect) -> CGRect {
+    CGRect::new(to.origin, CGSize::new(0.0, to.size.height))
+}
+
+/// The earlier apply point for an animation that resizes a window. A resize behind the overlay
+/// costs three synchronous round trips into the owning app (see `flush_frames` in `actor/app.rs`),
+/// so it needs more runway than a move to land before the overlay lifts.
+const APPLY_FRAMES_AT_RESIZE: f64 = 0.5;
+
+/// Which apply point an animation needs.
+fn apply_frames_at(any_resize: bool) -> f64 {
+    if any_resize { APPLY_FRAMES_AT_RESIZE } else { APPLY_FRAMES_AT }
 }
 
 /// What became of a tile offered to an animation in flight.
@@ -549,8 +584,10 @@ impl WorkspaceAnimation {
             let running = self.running.is_some();
             self.cache.insert(window, snapshot.clone());
             // Straight onto the tile when an animation is mid-flight. That is how a ScreenCaptureKit
-            // capture requested for a clipped destination reaches the screen before the handover.
+            // capture requested for a clipped destination reaches the screen before the handover,
+            // and how a window that opened mid-flight gets its entrance.
             if running && snapshot.is_usable() {
+                self.admit_entrance(window, &snapshot);
                 if let Some(overlay) = self.overlay.as_mut() {
                     overlay.set_tile_picture(window, &snapshot);
                 }
@@ -745,9 +782,46 @@ impl WorkspaceAnimation {
         if self.running.is_none() {
             return;
         }
+        self.admit_entrance(window, &snapshot);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_tile_picture(window, &snapshot);
         }
+    }
+
+    /// Adds the tile for a window whose first picture just landed, growing in from nothing.
+    ///
+    /// Reserved by `start` when the window had no picture at all — a window that just opened. The
+    /// tile joins with the full duration from where it stands, the same semantics as any newcomer
+    /// joining a flight, and its entrance is a resize from zero width, so the crop grid reveals
+    /// content rightward as the frame widens.
+    fn admit_entrance(&mut self, window: WindowId, snapshot: &WindowSnapshot) {
+        if !snapshot.is_usable() {
+            return;
+        }
+        let (tile, duration) = {
+            let Some(running) = self.running.as_mut() else { return };
+            let Some(position) = running.entrances.iter().position(|e| e.window == window) else {
+                return;
+            };
+            let entrance = running.entrances.remove(position);
+            // A window that just opened is about to hold focus, so it enters frontmost with the
+            // focused shadow. Getting this wrong is cosmetic and lasts one flight.
+            let tile = OverlayTile {
+                window,
+                from: entrance_from(entrance.to),
+                to: entrance.to,
+                snapshot: snapshot.clone(),
+                depth: 0,
+                companion: false,
+                focused: true,
+            };
+            running.merge(tile.clone());
+            (tile, running.duration)
+        };
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.add_tile(&tile, duration);
+        }
+        debug!(pid = window.pid, idx = window.idx.get(), "window entered mid-flight");
     }
 
     fn refresh_snapshot(&mut self, window: WindowId, server_id: WindowServerId, size: CGSize) {
@@ -759,15 +833,13 @@ impl WorkspaceAnimation {
 
     /// The snapshot to draw for one window, from the cache only.
     ///
-    /// A window with nothing cached does not animate: it is placed at its destination when the overlay
-    /// comes down, and a background capture is queued so the next switch has it.
+    /// Any usable picture, whatever its shape: a picture that no longer matches the frame is drawn
+    /// cropped (`ContentMode::Crop` — corners and bands intact, seam absorbing the difference),
+    /// which beats dropping the tile. Rapid preset cycling used to drop the resized window
+    /// entirely because its cached picture lagged one press behind. A window with nothing cached
+    /// at all gets an entrance reservation instead.
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
-        // Rejected here rather than drawn distorted, for the same reason as the strip surface path: contents
-        // stretch to fill, so a picture of the wrong shape warps the window instead of moving it.
-        self.cache
-            .usable(request.window)
-            .filter(|snapshot| snapshot.fits(request.to.size))
-            .cloned()
+        self.cache.usable(request.window).cloned()
     }
 
     /// Does this window appear on screen at ANY point during the animation?
@@ -881,10 +953,16 @@ impl WorkspaceAnimation {
         let depths = crate::sys::window_server::front_to_back_depths();
         let focused_group = focus_group(focus, windows.iter().map(|r| (r.window, r.floating)));
 
+        let any_resize = windows.iter().any(|request| {
+            crate::ui::window_snapshot::is_a_resize(request.from.size, request.to.size)
+        });
+        let apply_at = apply_frames_at(any_resize);
+
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
         let mut offscreen = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
+        let mut entrances: Vec<PendingEntrance> = Vec::new();
         let mut anchors: Vec<(CGRect, CGRect, CGRect, usize)> = Vec::new();
         for request in &windows {
             let start = actual_start(request, display_frame);
@@ -949,9 +1027,17 @@ impl WorkspaceAnimation {
                     anchors.push((start, tile.from, tile.to, tile.depth));
                     tiles.push(tile);
                 }
-                // No usable picture. Better to leave the window out than to draw a smear: it will
-                // simply appear at its destination when the overlay drops.
-                None => skipped += 1,
+                // No picture at all: almost always a window that just opened, since anything that
+                // has ever been on a workspace was warmed. It cannot be drawn yet, but its capture
+                // is already queued above; reserve it an entrance so the tile joins the animation
+                // the moment its picture lands, growing in from nothing at its destination.
+                None => {
+                    skipped += 1;
+                    entrances.push(PendingEntrance {
+                        window: request.window,
+                        to: to_overlay_space(request.to, display_frame),
+                    });
+                }
             }
         }
         let exclude: std::collections::HashSet<u32> =
@@ -994,7 +1080,15 @@ impl WorkspaceAnimation {
             .chain(companion_targets)
             .collect();
 
-        self.begin_group(tiles, final_frames, duration, "per-window", GroupStart::Coalesced);
+        self.begin_group(
+            tiles,
+            final_frames,
+            duration,
+            "per-window",
+            GroupStart::Coalesced,
+            apply_at,
+            entrances,
+        );
     }
 
     /// Runs one group of tiles through the shared animation machinery: merge into a flight already
@@ -1008,6 +1102,8 @@ impl WorkspaceAnimation {
         duration: Duration,
         label: &'static str,
         start: GroupStart,
+        apply_at: f64,
+        entrances: Vec<PendingEntrance>,
     ) {
         // Merge FIRST, before the empty check: a pass with nothing drawable can still carry fresh
         // destinations for a flight in progress, and placing its frames immediately would yank
@@ -1022,6 +1118,14 @@ impl WorkspaceAnimation {
             {
                 let running = self.running.as_mut().expect("checked above");
                 in_flight = running.started.is_some();
+                // A resize joining mid-flight needs the earlier apply point just as much, and a
+                // window still waiting for its first picture keeps its reservation.
+                running.apply_at = running.apply_at.min(apply_at);
+                for entrance in entrances {
+                    if !running.entrances.iter().any(|e| e.window == entrance.window) {
+                        running.entrances.push(entrance);
+                    }
+                }
                 for (window, frame) in final_frames {
                     if let Some(existing) =
                         running.final_frames.iter_mut().find(|(w, _)| *w == window)
@@ -1133,6 +1237,8 @@ impl WorkspaceAnimation {
             frames_applied: false,
             started: None,
             duration,
+            apply_at,
+            entrances,
             destination_refreshed: 0,
             _clock: clock,
         });
@@ -1265,7 +1371,17 @@ impl WorkspaceAnimation {
         // flight merges through `begin_group`, and each tile bends from its PRESENTATION position
         // toward its new destination — the same continuity the old canvas got from reading its
         // single layer's presentation offset, per tile.
-        self.begin_group(tiles, final_frames, duration, "strip", GroupStart::Immediate);
+        // A strip movement never resizes and never carries a brand-new window: entrances and the
+        // early apply point are the layout path's concerns.
+        self.begin_group(
+            tiles,
+            final_frames,
+            duration,
+            "strip",
+            GroupStart::Immediate,
+            apply_frames_at(false),
+            Vec::new(),
+        );
     }
 
     /// Starts an animation that is on screen but not yet moving: the clock, and the movements.
@@ -1298,7 +1414,7 @@ impl WorkspaceAnimation {
             // Nothing is drawn here; Core Animation carries the tiles (see `animate_tiles`). The
             // tick only paces the mid-flight work, so a late tick delays a recapture or the frame
             // placement, never the motion.
-            let place_now = !running.frames_applied && progress >= APPLY_FRAMES_AT;
+            let place_now = !running.frames_applied && progress >= running.apply_at;
             if place_now {
                 running.frames_applied = true;
             }
@@ -1818,6 +1934,29 @@ mod tests {
         assert!(!start_is_synthetic(frame, frame, frame));
     }
 
+    /// A resize behind the overlay costs three synchronous round trips into the owning app, so it
+    /// gets more runway before the overlay lifts; a plain move keeps the late point that hides the
+    /// real windows longer.
+    #[test]
+    fn a_resize_places_the_real_windows_earlier() {
+        assert!(apply_frames_at(true) < apply_frames_at(false));
+        assert_eq!(apply_frames_at(false), APPLY_FRAMES_AT);
+        assert_eq!(apply_frames_at(true), APPLY_FRAMES_AT_RESIZE);
+    }
+
+    /// An entering window is a resize from zero to its final width: full height, anchored at its
+    /// own left edge, revealing rightward — not a centred zoom, which nothing else on the strip
+    /// does.
+    #[test]
+    fn an_entrance_is_a_resize_from_zero_width() {
+        let to = rect(100.0, 32.0, 859.0, 1081.0);
+        let from = entrance_from(to);
+        assert_eq!(from.origin.x, 100.0);
+        assert_eq!(from.origin.y, 32.0);
+        assert_eq!(from.size.width, 0.0);
+        assert_eq!(from.size.height, 1081.0);
+    }
+
     /// The measured miss: a 1720pt Kiro column at x=1439 on a 1728pt display shows 289pt of real
     /// content but only 17% of its area, so the fraction rule read it as a parked sliver and the
     /// overlay painted desktop over it for the length of the animation.
@@ -2057,6 +2196,8 @@ mod tests {
             frames_applied: false,
             started: Some(Instant::now()),
             duration: Duration::ZERO,
+            apply_at: APPLY_FRAMES_AT,
+            entrances: Vec::new(),
             destination_refreshed: 0,
             _clock: None,
         };
@@ -2072,6 +2213,8 @@ mod tests {
             frames_applied: false,
             started: Some(Instant::now()),
             duration: Duration::from_millis(180),
+            apply_at: APPLY_FRAMES_AT,
+            entrances: Vec::new(),
             destination_refreshed: 0,
             _clock: None,
         };
@@ -2083,6 +2226,8 @@ mod tests {
             frames_applied: false,
             started: Some(Instant::now() - Duration::from_secs(5)),
             duration: Duration::from_millis(180),
+            apply_at: APPLY_FRAMES_AT,
+            entrances: Vec::new(),
             destination_refreshed: 0,
             _clock: None,
         };

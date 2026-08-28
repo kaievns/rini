@@ -13,8 +13,8 @@ Rini animates through two mechanisms, selected per layout pass in
 1. **The AX engine** (`src/actor/reactor/animation.rs` + `src/actor/app.rs`).
    Per-frame `AXPosition`/`AXSize` writes into each owning application, ticked
    by a CFRunLoopTimer at `animation_fps` (default 100). Handles everything the
-   overlay cannot: real resizes, and all animation when `overlay_animations`
-   is off.
+   overlay cannot, which since "Resizes through the overlay" landed means: all
+   animation when `overlay_animations` is off.
 2. **The overlay engine** (`src/actor/workspace_animation.rs` +
    `src/ui/workspace_overlay.rs`). Window bitmaps composited in one opaque
    overlay window; the real windows are placed once at 75% progress, hidden
@@ -140,6 +140,65 @@ Once the strip visuals are validated by eye — rapid chained switches and
 pans are the test — the classifier can likely collapse too, though
 `take_strip_movement` also feeds the switch's claim on the destination's
 scroll offset, which needs care.
+
+## Resizes through the overlay
+
+A resize rides the per-window overlay path instead of the AX engine, ported
+from the parked `resize-rounds-1-2` branch onto the per-tile Core Animation
+machinery. The tile travels between its two rects like any other tile; what
+changes is how the picture maps onto it (`content_mode` in
+`workspace_overlay.rs`):
+
+- **A movement with a matching picture stretches.** Picture and frame are the
+  same shape, so `kCAGravityResize` is exact. Strip movements always stretch,
+  since their tiles never change size mid-flight.
+- **Everything else crops.** A 2x2 grid of sublayers (`crop_pieces`), every
+  piece mapped 1:1 via `contentsRect`: a body pinned to the leading corner,
+  and trailing bands showing the picture's own trailing edge pinned to the
+  frame's trailing edges. Content never stretches — the moving edge swallows
+  or reveals it, which is how a real resize reads — and the seam sits one
+  band in from the trailing edge, so all four rounded corners and the
+  harvested hairline ride through intact. A first cut used `contentsCenter`
+  (nine-part stretching); it kept the corners but read as the window
+  stretching, which it is. Wrong-shaped cached pictures use the same mapping
+  instead of being dropped — rapid preset cycling used to drop the resized
+  window's tile because its picture lagged one press behind.
+- **The animation is Core Animation end to end.** Piece frames and
+  contentsRects are linear functions of the tile frame while the band is
+  constant (any side ≥ 89pt), so interpolating between the two endpoint grids
+  IS the per-frame crop layout; one transaction installs frame, contentsRect,
+  shadow-path, ring-mask and hairline-band animations on the shared curve.
+  Below 89pt the band's `min` curve is approximated linearly, drifting the
+  seam a few points mid-flight inside the window's own content. Retargets
+  continue from the PRESENTED position and size, so rapid preset cycling
+  bends the resize instead of snapping it.
+- **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, so it
+  degrades continuously into a plain reveal as a frame approaches zero — no
+  seam pops mid-flight, no band ever wider than its frame.
+- **New windows resize in.** A window with no cached picture at all is almost
+  always one that just opened; a capture takes ~50-90ms, longer than the
+  animation can wait. `start` registers a `PendingEntrance` and queues the
+  capture; when the picture lands mid-flight (`admit_entrance`), a tile joins
+  growing from zero WIDTH at its own left edge, full height (`entrance_from`)
+  — a resize from nothing to its final width, matching how every other column
+  movement reads. Centred zoom was tried and rejected: nothing else on the
+  strip inflates. If the capture misses the flight, the window appears when
+  the overlay lifts, which is the old behaviour.
+- Growing past the picture's own size extends its edge pixels outward
+  (documented `contentsRect` behaviour), so a grow beyond the capture paints
+  window-coloured pixels rather than backdrop; the mid-flight recapture
+  replaces the picture before the handover in the common case.
+- **The apply point moves up to 0.5** (`APPLY_FRAMES_AT_RESIZE`) when any tile
+  resizes: the real resize behind the overlay costs three synchronous AX round
+  trips per window and needs more runway to land before the overlay lifts.
+- A pass containing a resize never becomes a strip pan, even when the strip
+  offset moved: the strip surface draws final sizes, which would snap the
+  resize. The strip movement is still consumed so the offset bookkeeping
+  stays current.
+- The caster's ring mask is created once per tile and reshaped in place; a
+  resize animates its path and the shadow's silhouette between the two
+  endpoint shapes, which interpolate because both are built by the same
+  constructors.
 
 ## Window borders during animations
 
