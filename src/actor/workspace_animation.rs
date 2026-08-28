@@ -105,6 +105,10 @@ pub enum Event {
     /// A mid-flight recapture of the window being switched into has landed. Posted by the capture
     /// thread, not by another actor.
     PictureReady { window: WindowId, snapshot: WindowSnapshot },
+    /// A hairline harvest finished on its background thread. Harvested OFF the capture service's
+    /// completion queue, because the framed capture behind it is proxied through that same
+    /// machinery and deadlocks it (see `snapshot_service`); this event carries the result back.
+    DressingReady { window: WindowId, dressing: crate::ui::edge_dressing::EdgeDressing },
     /// Recapture the bar, now that nothing is animating over it. Posted by the refresh timer.
     RefreshBar,
     /// Recapture this window because focus has just moved to or from it, whatever its cached picture says.
@@ -474,6 +478,7 @@ impl WorkspaceAnimation {
             }
             Event::SnapshotsReady => self.collect_snapshots(),
             Event::PictureReady { window, snapshot } => self.picture_ready(window, snapshot),
+            Event::DressingReady { window, dressing } => self.dressing_ready(window, dressing),
             Event::WarmCache => self.warm_cache(),
             Event::WarmWindows(targets) => self.warm_windows(targets),
             // Straight to the service, with no size test in the way. Background work, so a focus change
@@ -500,6 +505,31 @@ impl WorkspaceAnimation {
         let landed = self.service.collect();
         if landed.is_empty() {
             return;
+        }
+        // Hairlines for the batch, harvested on one plain thread. The service's completion queue
+        // must not make capture calls (see `snapshot_service`), and this actor's thread should not
+        // spend 16-24ms per window either; results come back as `DressingReady` events.
+        let to_dress: Vec<(WindowId, WindowServerId)> = landed
+            .iter()
+            .filter(|(_, snapshot)| snapshot.is_usable())
+            .map(|(window, _)| (*window, WindowServerId::from(*window)))
+            .collect();
+        if !to_dress.is_empty() {
+            let tx = self.tx.clone();
+            let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
+            std::thread::Builder::new()
+                .name("dressing-harvest".to_string())
+                .spawn(move || {
+                    for (window, server_id) in to_dress {
+                        let Some(dressing) =
+                            crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale)
+                        else {
+                            continue;
+                        };
+                        _ = tx.send(Event::DressingReady { window, dressing });
+                    }
+                })
+                .ok();
         }
         for (window, snapshot) in landed {
             debug!(
@@ -692,6 +722,19 @@ impl WorkspaceAnimation {
                     _ = tx.send(Event::PictureReady { window, snapshot });
                 })
                 .ok();
+        }
+    }
+
+    /// Takes a finished hairline harvest: onto the cached snapshot, and onto a tile in flight.
+    fn dressing_ready(&mut self, window: WindowId, dressing: crate::ui::edge_dressing::EdgeDressing) {
+        if let Some(snapshot) = self.cache.get_mut(window) {
+            snapshot.dressing = Some(dressing.clone());
+        }
+        if self.running.is_none() {
+            return;
+        }
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.set_tile_dressing(window, &dressing);
         }
     }
 

@@ -330,6 +330,10 @@ impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
         self.entries.get(&window)
     }
 
+    pub fn get_mut(&mut self, window: WindowId) -> Option<&mut T> {
+        self.entries.get_mut(&window)
+    }
+
     /// The snapshot to actually draw, or `None` if what we hold is not worth drawing.
     pub fn usable(&self, window: WindowId) -> Option<&T> {
         self.entries.get(&window).filter(|s| s.coverage().is_usable())

@@ -384,8 +384,23 @@ impl WorkspaceOverlay {
         // that changes it.
         if snapshot.dressing.is_some() {
             let size = entry.picture.bounds().size;
-            apply_edge_dressing(entry, snapshot, size, scale);
+            apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale);
         }
+        CATransaction::commit();
+    }
+
+    /// Swaps one in-flight tile's hairline, for a harvest that landed after its picture did.
+    pub fn set_tile_dressing(
+        &mut self,
+        window: WindowId,
+        dressing: &crate::ui::edge_dressing::EdgeDressing,
+    ) {
+        let scale = self.scale;
+        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        let size = entry.picture.bounds().size;
+        apply_edge_dressing(entry, Some(dressing), size, scale);
         CATransaction::commit();
     }
 
@@ -430,7 +445,7 @@ impl WorkspaceOverlay {
         reparent(&entry.shadow, &self.root);
         entry.picture.setContentsScale(self.scale);
         set_layer_contents(&entry.picture, &tile.snapshot);
-        apply_edge_dressing(entry, &tile.snapshot, tile.from.size, self.scale);
+        apply_edge_dressing(entry, tile.snapshot.dressing.as_ref(), tile.from.size, self.scale);
         // Set explicitly in both directions, because tile layers are pooled: a tile that carried
         // focus last flight must not keep the deep shadow for an unfocused window.
         let style = tile_shadow_style(tile.focused);
@@ -587,11 +602,16 @@ fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
 /// [`crate::ui::edge_dressing::DressingLayout`] order — so every movement animation carries it for
 /// free. Replaced wholesale because tile layers are pooled: a tile must not wear another window's
 /// edge, or a stale one after a recapture.
-fn apply_edge_dressing(tile: &mut Tile, snapshot: &WindowSnapshot, size: CGSize, scale: f64) {
+fn apply_edge_dressing(
+    tile: &mut Tile,
+    dressing: Option<&crate::ui::edge_dressing::EdgeDressing>,
+    size: CGSize,
+    scale: f64,
+) {
     for layer in tile.dressing.drain(..) {
         layer.removeFromSuperlayer();
     }
-    let Some(dressing) = &snapshot.dressing else { return };
+    let Some(dressing) = dressing else { return };
     let Some(layout) = boundary_layout(size) else { return };
     let pieces = dressing
         .strips

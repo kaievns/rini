@@ -463,13 +463,13 @@ impl SnapshotService {
                         .and_then(|sample| unsafe { sample.as_ref().image_buffer() });
                     let filled = buffer.as_ref().and_then(|b| content_reaches_edges(b));
                     let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
-                    // On the capture queue, not under the state lock: the framed capture behind the
-                    // harvest measures 16-24ms. Only for a window that produced pixels, since the
-                    // dressing lands with the snapshot.
-                    let dressing = surface.is_some().then(|| {
-                        crate::ui::edge_dressing::harvest_edge_dressing(target.server_id, scale)
-                    });
-                    service.finish(target, size, revision, scale, surface, filled, dressing.flatten());
+                    // NO capture calls in here. This block runs on ScreenCaptureKit's own delivery
+                    // queue, and the legacy capture API behind the hairline harvest is PROXIED
+                    // through that same machinery on modern macOS: calling it from a completion
+                    // deadlocks the delivery of its own reply until a ~20s timeout, and every
+                    // capture in the process serializes behind the wedge. Measured as half-minute
+                    // window switches. The owner harvests on a plain thread after collecting.
+                    service.finish(target, size, revision, scale, surface, filled, None);
                 });
             unsafe {
                 SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
