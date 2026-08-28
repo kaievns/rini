@@ -323,17 +323,17 @@ fn apply_frames_at(any_resize: bool) -> f64 {
 }
 
 /// How long a grow may hold at frame zero waiting for its reveal pixels, from the flight's
-/// duration. Generous against the measured pipeline — the real resize lands in ~100ms and a
-/// capture takes 16-50ms — while still bounded: an app that will not rerender gets the stretch
-/// placeholder rather than a frozen screen.
+/// duration. Sized against the measured pipeline — the AX resize plus the app's rerender lands
+/// around 150-250ms, the framed capture adds 16-24ms — while still bounded: an app that will not
+/// rerender gets the stretch placeholder rather than a frozen screen.
 fn reveal_hold_limit(duration: Duration) -> Duration {
-    duration.mul_f64(0.4).max(Duration::from_millis(150))
+    duration.mul_f64(0.4).max(Duration::from_millis(300))
 }
 
-/// How often the chase thread re-captures a growing window while waiting for it to reach its new
-/// size, and how many times it tries before giving up.
-const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(50);
-const REVEAL_CHASE_ATTEMPTS: usize = 16;
+/// How often the chase thread polls a growing window's real frame (a cheap window-server read;
+/// the capture itself only runs once the size is there), and how many times before giving up.
+const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(25);
+const REVEAL_CHASE_ATTEMPTS: usize = 40;
 
 /// What became of a tile offered to an animation in flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -822,10 +822,13 @@ impl WorkspaceAnimation {
         Some(running.duration.mul_f64((1.0 - running.progress()).max(0.0)))
     }
 
-    /// Chases the reveal pixels for a holding grow: one thread per window, recapturing until the
-    /// app has rendered at the new size or the attempts run out. `capture_via_skylight` reports
-    /// coverage against the size that counts as ready, so `is_usable` IS the gate: it only passes
-    /// once the real window has reached its destination size.
+    /// Chases the reveal pixels for a holding grow: one thread per window, polling the real
+    /// frame — a cheap window-server read — and capturing only once the size is there.
+    ///
+    /// Not `capture_via_skylight` polling: those captures measured 170-300ms EACH on this
+    /// pipeline, so the poll itself lost the race against the hold deadline (and congested the
+    /// capture proxy while losing it). The framed capture takes 16-24ms once the frame reports
+    /// the destination size.
     fn chase_reveal_pictures(&self, awaiting: &[(WindowId, CGSize)]) {
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for (window, size) in awaiting.iter().copied() {
@@ -836,12 +839,21 @@ impl WorkspaceAnimation {
                 .spawn(move || {
                     for _ in 0..REVEAL_CHASE_ATTEMPTS {
                         std::thread::sleep(REVEAL_CHASE_INTERVAL);
+                        let Some(info) = crate::sys::window_server::get_window(server_id) else {
+                            continue;
+                        };
+                        if !crate::ui::window_snapshot::fits_frame(
+                            (info.frame.size.width, info.frame.size.height),
+                            (size.width, size.height),
+                        ) {
+                            continue;
+                        }
                         let Some(mut snapshot) =
-                            capture_via_skylight(server_id, (size.width, size.height), scale)
+                            crate::ui::window_snapshot::capture_via_framed(server_id, scale)
                         else {
                             continue;
                         };
-                        if !snapshot.is_usable() {
+                        if !snapshot.is_usable() || !snapshot.fits(size) {
                             continue;
                         }
                         // The window is at its new size and about to be revealed: the fresh

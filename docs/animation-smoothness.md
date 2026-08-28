@@ -191,12 +191,15 @@ changes is how the picture maps onto it (`content_mode` in
   truthful pixels are made to exist first: a pass whose destination outgrows
   its picture (`outgrows`) applies the real frames IMMEDIATELY — the overlay
   is already covering the windows, so the app rerenders at its new size behind
-  a still frame — while a chase thread recaptures every ~50ms. When a capture
-  at the destination size lands (`claim_reveal`), the tile's grid re-maps to
-  it and the flight begins: the moving edge reveals genuine final-size
-  content, 1:1. Costs ~100-200ms of hold before motion, on grows only; a
-  shrink crops the picture it has and flies immediately. The hold is bounded
-  (`reveal_hold_limit`, 40% of the flight, floor 150ms): an app that will not
+  a still frame — while a chase thread polls the real frame every 25ms —
+  a cheap window-server read; SkyLight-capture polling measured 170-300ms per
+  attempt under load and lost the race — then takes one 16-24ms framed capture
+  once the size is there. When it lands (`claim_reveal`), the tile's grid
+  re-maps to it and the flight begins: the moving edge reveals genuine
+  final-size content, 1:1. Costs roughly the app's own rerender time of hold
+  before motion (~150-250ms), on grows only; a shrink crops the picture it
+  has and flies immediately. The hold is bounded (`reveal_hold_limit`, 40% of
+  the flight, floor 300ms): an app that will not
   rerender flies with the stretched-lead placeholder, and if pixels land
   mid-flight after all, `set_tile_picture` re-keys the grid from the PRESENTED
   state over the remaining duration.

@@ -238,6 +238,38 @@ pub fn capture_via_skylight(
     })
 }
 
+/// Captures one window through the framed legacy API, at whatever size it really is right now.
+///
+/// The reveal chase's capture: measured at 16-24ms against 170-300ms for the SkyLight route under
+/// load. The image carries the window-server hairline baked into its outermost point — harmless,
+/// because the dressing sublayers draw the same pixels over it. Only works for a window that is
+/// actually composited on screen; the chase only calls it for one that is.
+pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSnapshot> {
+    let frame = crate::sys::window_server::get_window(window)?.frame;
+    if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
+        return None;
+    }
+    #[allow(deprecated)]
+    let image = objc2_core_graphics::CGWindowListCreateImage(
+        frame,
+        objc2_core_graphics::CGWindowListOption::OptionIncludingWindow,
+        window.as_u32(),
+        objc2_core_graphics::CGWindowImageOption::empty(),
+    )?;
+    let px_w = CGImage::width(Some(&image)) as f64;
+    let px_h = CGImage::height(Some(&image)) as f64;
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    Some(WindowSnapshot {
+        image: SnapshotImage::Bitmap(image),
+        coverage: Coverage {
+            covered: (px_w / scale, px_h / scale),
+            window: (frame.size.width, frame.size.height),
+        },
+        source: SnapshotSource::SkyLight,
+        dressing: None,
+    })
+}
+
 /// Anything the cache can hold and judge. Exists so the cache's replacement policy can be tested
 /// against plain sizes, without constructing bitmaps for a rule that never looks at pixels.
 pub trait HasCoverage {
