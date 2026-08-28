@@ -16,7 +16,7 @@ use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSPopUpMenuWindowLevel, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
 use objc2_foundation::{NSString, NSValue};
 use objc2_quartz_core::{
@@ -80,6 +80,85 @@ impl OverlayTile {
     pub(crate) fn z(&self) -> f64 {
         -(self.depth as f64) + if self.companion { 0.25 } else { 0.0 }
     }
+}
+
+/// How a tile's picture is fitted to the frame it is drawn in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ContentMode {
+    /// Scaled to fill the frame. Right for a movement whose picture matches the frame's shape.
+    Stretch,
+    /// Cropped or revealed: the picture draws at native 1:1 scale, and the size change is absorbed
+    /// by a seam a band in from the trailing edges — content never stretches, the moving edge
+    /// swallows or reveals it, which is how a real resize reads. The trailing band, carrying the
+    /// window's rounded corners and border, rides the moving edge intact. See "Resizes through the
+    /// overlay" in `docs/animation-smoothness.md`.
+    Crop,
+}
+
+/// Crop for a resize, and for any picture that no longer matches the frame it starts in; stretched
+/// only when picture and frames agree, where stretching is exact.
+pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMode {
+    if crate::ui::window_snapshot::is_a_resize(from, to)
+        || !crate::ui::window_snapshot::fits_frame(covered, (from.width, from.height))
+    {
+        ContentMode::Crop
+    } else {
+        ContentMode::Stretch
+    }
+}
+
+/// The trailing band preserved intact when a tile draws cropped, in points.
+///
+/// Comfortably past the ~10pt corner radius so the crop seam never cuts a corner square, and small
+/// against any real column so almost all of the window is drawn 1:1.
+const EDGE_BAND: f64 = 40.0;
+
+/// The band that fits the frame being drawn into: shrinks with the frame, so a window growing in
+/// from nothing starts with no band at all and gains it continuously — no seam pops mid-flight.
+fn crop_band(frame: CGSize) -> f64 {
+    EDGE_BAND.min(0.45 * frame.width.min(frame.height)).max(0.0)
+}
+
+/// One piece of a crop-drawn tile: where it sits in the tile, and which part of the picture it
+/// shows, in the picture's unit coordinates.
+///
+/// Every mapping is 1:1 — a piece's frame is exactly as large as the picture region it shows — so
+/// nothing ever stretches. A region reaching past the picture's edge is deliberate: Core Animation
+/// extends the edge pixels outward, which paints a grow with window-coloured pixels instead of a
+/// hole.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CropPiece {
+    pub frame: CGRect,
+    pub contents: CGRect,
+}
+
+/// The 2x2 crop grid for a picture drawn into `frame`: body, trailing vertical band, trailing
+/// horizontal band, and trailing corner, split one `crop_band` in from the trailing edges.
+///
+/// The body is pinned to the leading (top-left) corner and cropped or extended at the seam; the
+/// trailing pieces show the picture's own trailing band, pinned to the frame's trailing edges. The
+/// window's leading corners live in the body at 1:1, its trailing corners in the bands, so all
+/// four rounded corners survive any frame the animation passes through.
+///
+/// Piece frames and contents are LINEAR in `frame` while the band is constant, which is what lets
+/// a resize ride plain Core Animation interpolation between the two endpoint grids. The band only
+/// varies below a 89pt side (see `crop_band`), where the linear approximation drifts the seam by a
+/// few points mid-flight — inside the window's own content, invisible against the motion.
+pub(crate) fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
+    let pw = picture.width.max(1.0);
+    let ph = picture.height.max(1.0);
+    let band = crop_band(frame);
+    let (bodyw, bodyh) = ((frame.width - band).max(0.0), (frame.height - band).max(0.0));
+    let piece = |x: f64, y: f64, w: f64, h: f64, cx: f64, cy: f64| CropPiece {
+        frame: CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)),
+        contents: CGRect::new(CGPoint::new(cx / pw, cy / ph), CGSize::new(w / pw, h / ph)),
+    };
+    [
+        piece(0.0, 0.0, bodyw, bodyh, 0.0, 0.0),
+        piece(bodyw, 0.0, band, bodyh, pw - band, 0.0),
+        piece(0.0, bodyh, bodyw, band, 0.0, ph - band),
+        piece(bodyw, bodyh, band, band, pw - band, ph - band),
+    ]
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -165,6 +244,66 @@ fn position_animation(from: CGPoint, to: CGPoint, seconds: f64) -> Retained<CABa
     animation
 }
 
+/// An animation between two rect-valued endpoints of `key_path` ("bounds", "contentsRect").
+fn rect_animation(
+    key_path: &str,
+    from: CGRect,
+    to: CGRect,
+    seconds: f64,
+) -> Retained<CABasicAnimation> {
+    let animation =
+        CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
+    // SAFETY: an NSValue holding a CGRect is the value type Core Animation expects for
+    // rect-valued key paths.
+    unsafe {
+        animation.setFromValue(Some(&NSValue::valueWithRect(from)));
+        animation.setToValue(Some(&NSValue::valueWithRect(to)));
+    }
+    animation.setTimingFunction(Some(&ease_out_cubic_timing()));
+    animation.setDuration(seconds);
+    animation
+}
+
+/// An animation between two path-valued endpoints ("shadowPath", "path"). Core Animation
+/// interpolates paths with matching element structure, which every caller here guarantees by
+/// building both endpoints with the same constructor.
+fn path_animation(
+    key_path: &str,
+    from: &objc2_core_graphics::CGPath,
+    to: &objc2_core_graphics::CGPath,
+    seconds: f64,
+) -> Retained<CABasicAnimation> {
+    let animation =
+        CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
+    // SAFETY: a CGPath is the value type Core Animation expects for path-valued key paths; it is
+    // toll-free-bridged, and the animation retains what it is given.
+    unsafe {
+        let from_raw: *const objc2_core_graphics::CGPath = from;
+        let to_raw: *const objc2_core_graphics::CGPath = to;
+        let _: () = msg_send![&*animation, setFromValue: from_raw];
+        let _: () = msg_send![&*animation, setToValue: to_raw];
+    }
+    animation.setTimingFunction(Some(&ease_out_cubic_timing()));
+    animation.setDuration(seconds);
+    animation
+}
+
+/// Installs position-and-bounds animations carrying `layer` between two frames. Anchor points are
+/// (0,0) throughout, so position is the frame origin.
+fn animate_layer_frame(layer: &CALayer, from: CGRect, to: CGRect, seconds: f64, key_prefix: &str) {
+    let position = position_animation(from.origin, to.origin, seconds);
+    layer.addAnimation_forKey(&position, Some(&NSString::from_str(&format!("{key_prefix}.move"))));
+    if from.size != to.size {
+        let bounds = rect_animation(
+            "bounds",
+            CGRect::new(CGPoint::new(0.0, 0.0), from.size),
+            CGRect::new(CGPoint::new(0.0, 0.0), to.size),
+            seconds,
+        );
+        layer.addAnimation_forKey(&bounds, Some(&NSString::from_str(&format!("{key_prefix}.size"))));
+    }
+}
+
 /// One window's two layers: the picture, and a caster behind it that carries nothing but the shadow.
 ///
 /// Two layers because a Core Animation shadow is drawn behind the WHOLE layer, including under its own
@@ -175,8 +314,22 @@ fn position_animation(from: CGPoint, to: CGPoint, seconds: f64) -> Retained<CABa
 struct Tile {
     picture: Retained<CALayer>,
     shadow: Retained<CALayer>,
+    /// The ring that keeps the shadow off the window itself. Persistent, so a resize can animate
+    /// its path instead of swapping in a new mask, which cannot be animated.
+    shadow_mask: Retained<objc2_quartz_core::CAShapeLayer>,
     /// The hairline sublayers riding the picture, replaced whenever the picture is re-dressed.
-    dressing: Vec<Retained<CALayer>>,
+    /// Each carries its index into [`crate::ui::edge_dressing::DressingLayout`] order (strips
+    /// 0-3, corners 4-7), so a resize can pair it with its endpoint geometries.
+    dressing: Vec<(usize, Retained<CALayer>)>,
+    /// The four crop pieces, created on first crop-drawn animation and pooled with the tile.
+    crop_grid: Option<CropGrid>,
+    /// The size in points of the picture the crop pieces are showing; `None` when stretching.
+    crop_of: Option<CGSize>,
+}
+
+/// The four layers a crop-drawn tile is composed of, children of the tile's picture layer.
+struct CropGrid {
+    pieces: [Retained<CALayer>; 4],
 }
 
 pub struct WorkspaceOverlay {
@@ -379,7 +532,18 @@ impl WorkspaceOverlay {
         let Some(entry) = self.tile_layers.get_mut(&window) else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        set_layer_contents(&entry.picture, snapshot);
+        // A crop-drawn tile carries its picture on the pieces; the geometry stays, since the
+        // animation's contentsRects were built against the picture this one replaces mid-flight,
+        // showing the same window at the same size.
+        if entry.crop_of.is_some() {
+            if let Some(grid) = &entry.crop_grid {
+                for piece in &grid.pieces {
+                    set_layer_contents(piece, snapshot);
+                }
+            }
+        } else {
+            set_layer_contents(&entry.picture, snapshot);
+        }
         // A recapture can carry a fresh hairline too — the focus recapture is exactly the one
         // that changes it.
         if snapshot.dressing.is_some() {
@@ -444,7 +608,9 @@ impl WorkspaceOverlay {
         reparent(&entry.picture, &self.root);
         reparent(&entry.shadow, &self.root);
         entry.picture.setContentsScale(self.scale);
-        set_layer_contents(&entry.picture, &tile.snapshot);
+        let covered = tile.snapshot.coverage.covered;
+        let mode = content_mode(covered, tile.from.size, tile.to.size);
+        set_tile_content(entry, &tile.snapshot, mode, tile.from.size, self.scale);
         apply_edge_dressing(entry, tile.snapshot.dressing.as_ref(), tile.from.size, self.scale);
         // Set explicitly in both directions, because tile layers are pooled: a tile that carried
         // focus last flight must not keep the deep shadow for an unfocused window.
@@ -505,10 +671,12 @@ impl WorkspaceOverlay {
     pub fn retarget_tile(&mut self, window: WindowId, to: CGRect, z: f64, duration: Duration) {
         let Some(entry) = self.tile_layers.get(&window) else { return };
         // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
-        let current = unsafe { entry.picture.presentationLayer() }
-            .map(|presented| presented.position())
-            .unwrap_or_else(|| entry.picture.position());
-        let from = CGRect::new(current, to.size);
+        // Position AND size: a resize retargeted mid-flight continues from the size it is drawn
+        // at, or rapid preset cycling snaps the tile to full size before each new leg.
+        let (current, current_size) = unsafe { entry.picture.presentationLayer() }
+            .map(|presented| (presented.position(), presented.bounds().size))
+            .unwrap_or_else(|| (entry.picture.position(), entry.picture.bounds().size));
+        let from = CGRect::new(current, current_size);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         self.animate_tile_movement(window, from, to, z, duration);
@@ -527,12 +695,89 @@ impl WorkspaceOverlay {
     ) {
         let Some(entry) = self.tile_layers.get(&window) else { return };
         place_tile(entry, to, z);
-        // Anchor points are (0,0), so position is the frame origin; this path never changes a
-        // tile's size. addAnimation copies, so one instance serves picture and shadow.
-        let animation = position_animation(from.origin, to.origin, duration.as_secs_f64());
-        let key = NSString::from_str(TILE_ANIMATION_KEY);
-        entry.picture.addAnimation_forKey(&animation, Some(&key));
-        entry.shadow.addAnimation_forKey(&animation, Some(&key));
+        // The proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move
+        // and lets its size snap the point it always did.
+        if !crate::ui::window_snapshot::is_a_resize(from.size, to.size) {
+            // Anchor points are (0,0), so position is the frame origin. addAnimation copies, so
+            // one instance serves picture and shadow.
+            let animation = position_animation(from.origin, to.origin, duration.as_secs_f64());
+            let key = NSString::from_str(TILE_ANIMATION_KEY);
+            entry.picture.addAnimation_forKey(&animation, Some(&key));
+            entry.shadow.addAnimation_forKey(&animation, Some(&key));
+            return;
+        }
+        self.animate_tile_resize(window, from, to, duration);
+    }
+
+    /// The resize choreography: every layer of the tile rides its own pair of endpoint geometries,
+    /// all in the caller's transaction, on the shared curve and duration.
+    ///
+    /// The endpoints are what make this read as a crop rather than a stretch: the crop pieces'
+    /// frames and contentsRects are linear functions of the tile frame (see `crop_pieces`), so
+    /// plain interpolation between the endpoint grids IS the per-frame crop layout. The shadow's
+    /// path and its ring mask interpolate because both endpoints are built by the same
+    /// constructors, and the hairline pieces ride between their two boundary layouts.
+    fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, duration: Duration) {
+        let Some(entry) = self.tile_layers.get(&window) else { return };
+        let seconds = duration.as_secs_f64();
+
+        animate_layer_frame(&entry.picture, from, to, seconds, "rini.tile");
+        animate_layer_frame(&entry.shadow, from, to, seconds, "rini.tile.shadow");
+
+        // The shadow's shape and the hole in its ring both follow the window silhouette.
+        let origin = CGPoint::new(0.0, 0.0);
+        let shadow_path = path_animation(
+            "shadowPath",
+            &silhouette_path(from.size, origin),
+            &silhouette_path(to.size, origin),
+            seconds,
+        );
+        entry
+            .shadow
+            .addAnimation_forKey(&shadow_path, Some(&NSString::from_str("rini.tile.shadow.path")));
+        animate_layer_frame(
+            &entry.shadow_mask,
+            shadow_mask_frame(from.size),
+            shadow_mask_frame(to.size),
+            seconds,
+            "rini.tile.mask",
+        );
+        let mask_path =
+            path_animation("path", &ring_path(from.size), &ring_path(to.size), seconds);
+        entry
+            .shadow_mask
+            .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
+
+        // The crop pieces carry the picture between the two endpoint grids.
+        if let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) {
+            let from_pieces = crop_pieces(picture, from.size);
+            let to_pieces = crop_pieces(picture, to.size);
+            for ((layer, a), b) in grid.pieces.iter().zip(from_pieces).zip(to_pieces) {
+                animate_layer_frame(layer, a.frame, b.frame, seconds, "rini.piece");
+                let contents = rect_animation("contentsRect", a.contents, b.contents, seconds);
+                layer.addAnimation_forKey(
+                    &contents,
+                    Some(&NSString::from_str("rini.piece.contents")),
+                );
+            }
+        }
+
+        // The hairline band rides between its two boundary layouts, each layer paired with its
+        // endpoint rects by its layout index. Model set to the destination first: Core Animation
+        // removes the animation on completion, revealing the model.
+        if let (Some(from_layout), Some(to_layout)) =
+            (boundary_layout(from.size), boundary_layout(to.size))
+        {
+            let rect_at = |layout: &crate::ui::edge_dressing::DressingLayout, index: usize| {
+                if index < 4 { layout.strips[index] } else { layout.corners[index - 4] }
+            };
+            for (index, layer) in &entry.dressing {
+                let a = rect_at(&from_layout, *index);
+                let b = rect_at(&to_layout, *index);
+                layer.setFrame(b);
+                animate_layer_frame(layer, a, b, seconds, "rini.dressing");
+            }
+        }
     }
 
     /// Positions every tile for a given progress through the animation, in ONE transaction.
@@ -608,7 +853,7 @@ fn apply_edge_dressing(
     size: CGSize,
     scale: f64,
 ) {
-    for layer in tile.dressing.drain(..) {
+    for (_, layer) in tile.dressing.drain(..) {
         layer.removeFromSuperlayer();
     }
     let Some(dressing) = dressing else { return };
@@ -617,8 +862,9 @@ fn apply_edge_dressing(
         .strips
         .iter()
         .zip(layout.strips)
-        .chain(dressing.corners.iter().zip(layout.corners));
-    for (image, frame) in pieces {
+        .chain(dressing.corners.iter().zip(layout.corners))
+        .enumerate();
+    for (index, (image, frame)) in pieces {
         let Some(image) = image else { continue };
         if frame.size.width <= 0.0 || frame.size.height <= 0.0 {
             continue;
@@ -627,13 +873,15 @@ fn apply_edge_dressing(
         layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
         layer.setFrame(frame);
         layer.setContentsScale(scale);
+        // Above the crop pieces (which sit at the default 0), whichever order they were created in.
+        layer.setZPosition(1.0);
         // SAFETY: a retained CGImage; Core Animation retains what it draws.
         unsafe {
             let raw: *const objc2_core_graphics::CGImage = &**image;
             let _: () = msg_send![&*layer, setContents: raw];
         }
         tile.picture.addSublayer(&layer);
-        tile.dressing.push(layer);
+        tile.dressing.push((index, layer));
     }
 }
 
@@ -647,6 +895,13 @@ fn new_tile(container: &CALayer) -> Tile {
     // Shadow colour is left alone: a CALayer's default is opaque black, which is what a window casts. The
     // caster has no contents and no background, so the shadow is all it ever draws. The style numbers
     // are per-tile (focus deepens them) and applied at install.
+    let shadow_mask = objc2_quartz_core::CAShapeLayer::layer();
+    shadow_mask.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    // SAFETY: Core Animation's own fill-rule constant, and a mask layer we just created and own.
+    unsafe {
+        shadow_mask.setFillRule(objc2_quartz_core::kCAFillRuleEvenOdd);
+        shadow.setMask(Some(&shadow_mask));
+    }
     container.addSublayer(&shadow);
 
     let picture = CALayer::layer();
@@ -658,7 +913,7 @@ fn new_tile(container: &CALayer) -> Tile {
     }
     container.addSublayer(&picture);
 
-    Tile { picture, shadow, dressing: Vec::new() }
+    Tile { picture, shadow, shadow_mask, dressing: Vec::new(), crop_grid: None, crop_of: None }
 }
 
 /// Puts both of a tile's layers at `frame`, with the caster just behind the picture.
@@ -674,8 +929,47 @@ fn place_tile(tile: &Tile, frame: CGRect, z: f64) {
     // numbers, so half a step cannot collide with another tile.
     tile.shadow.setZPosition(z - 0.5);
     if resized {
-        set_tile_shadow(&tile.shadow, frame.size);
+        set_tile_shadow(&tile.shadow, &tile.shadow_mask, frame.size);
+        layout_crop_grid(tile, frame.size);
     }
+}
+
+/// The window's own rounded-rect silhouette, which is both the shadow's shape and the mask's hole.
+fn silhouette_path(size: CGSize, at: CGPoint) -> CFRetained<objc2_core_graphics::CGPath> {
+    let radius = tile_corner_radius(size);
+    // SAFETY: a null transform means the path is taken as given.
+    unsafe {
+        objc2_core_graphics::CGPath::with_rounded_rect(
+            CGRect::new(at, size),
+            radius,
+            radius,
+            std::ptr::null(),
+        )
+    }
+}
+
+/// The ring: the whole mask, minus the window's own shape, wound so the inside is the hole.
+///
+/// Built identically for every size — one rect, one rounded rect — so two ring paths always have
+/// matching elements and Core Animation can interpolate between them during a resize.
+fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
+    let mask_frame = shadow_mask_frame(size);
+    let ring = objc2_core_graphics::CGMutablePath::new();
+    unsafe {
+        objc2_core_graphics::CGMutablePath::add_rect(
+            Some(&ring),
+            std::ptr::null(),
+            CGRect::new(CGPoint::new(0.0, 0.0), mask_frame.size),
+        );
+        objc2_core_graphics::CGMutablePath::add_rounded_rect(
+            Some(&ring),
+            std::ptr::null(),
+            CGRect::new(CGPoint::new(SHADOW_REACH, SHADOW_REACH), size),
+            tile_corner_radius(size),
+            tile_corner_radius(size),
+        );
+    }
+    ring
 }
 
 /// Gives the caster the shadow of a window of `size`, clipped to a ring outside it.
@@ -688,41 +982,10 @@ fn place_tile(tile: &Tile, frame: CGRect, z: f64) {
 /// whole layer, so a window with per-pixel alpha shows it through the glass as a wash over the entire
 /// window. Measured side by side against a masked caster over white: 0.45 grey unmasked against 0.62
 /// masked, where the window's own colour over white is 0.55.
-fn set_tile_shadow(layer: &CALayer, size: CGSize) {
-    let radius = tile_corner_radius(size);
-    let silhouette = CGRect::new(CGPoint::new(0.0, 0.0), size);
-    // SAFETY: a null transform means the path is taken as given.
-    let path = unsafe {
-        objc2_core_graphics::CGPath::with_rounded_rect(silhouette, radius, radius, std::ptr::null())
-    };
-    layer.setShadowPath(Some(&path));
-
-    let mask_frame = shadow_mask_frame(size);
-    let mask = objc2_quartz_core::CAShapeLayer::layer();
-    mask.setAnchorPoint(CGPoint::new(0.0, 0.0));
-    mask.setFrame(mask_frame);
-    // The ring: the whole mask, minus the window's own shape, wound so the inside is the hole.
-    let ring = objc2_core_graphics::CGMutablePath::new();
-    unsafe {
-        objc2_core_graphics::CGMutablePath::add_rect(
-            Some(&ring),
-            std::ptr::null(),
-            CGRect::new(CGPoint::new(0.0, 0.0), mask_frame.size),
-        );
-        objc2_core_graphics::CGMutablePath::add_rounded_rect(
-            Some(&ring),
-            std::ptr::null(),
-            CGRect::new(CGPoint::new(SHADOW_REACH, SHADOW_REACH), size),
-            radius,
-            radius,
-        );
-    }
-    mask.setPath(Some(&ring));
-    // SAFETY: Core Animation's own fill-rule constant, and a mask layer we just created and own.
-    unsafe {
-        mask.setFillRule(objc2_quartz_core::kCAFillRuleEvenOdd);
-        layer.setMask(Some(&mask));
-    }
+fn set_tile_shadow(layer: &CALayer, mask: &objc2_quartz_core::CAShapeLayer, size: CGSize) {
+    layer.setShadowPath(Some(&silhouette_path(size, CGPoint::new(0.0, 0.0))));
+    mask.setFrame(shadow_mask_frame(size));
+    mask.setPath(Some(&ring_path(size)));
 }
 
 /// The rect the shadow's mask has to cover, in the caster's own coordinates.
@@ -734,6 +997,70 @@ fn shadow_mask_frame(size: CGSize) -> CGRect {
         CGPoint::new(-SHADOW_REACH, -SHADOW_REACH),
         CGSize::new(size.width + 2.0 * SHADOW_REACH, size.height + 2.0 * SHADOW_REACH),
     )
+}
+
+/// Points a tile's contents at `mode`, handing every piece the snapshot.
+///
+/// Always set explicitly: tile layers are pooled across animations and across both drawing paths,
+/// so a tile left cropping by a resize would otherwise dismember the next animation's stretch.
+fn set_tile_content(
+    entry: &mut Tile,
+    snapshot: &WindowSnapshot,
+    mode: ContentMode,
+    frame: CGSize,
+    scale: f64,
+) {
+    match mode {
+        ContentMode::Crop => {
+            // The container draws nothing itself; the grid pieces carry the picture.
+            unsafe {
+                let _: () = msg_send![&*entry.picture, setContents: std::ptr::null::<NSObject>()];
+            }
+            let grid = entry.crop_grid.get_or_insert_with(|| new_crop_grid(&entry.picture));
+            for piece in &grid.pieces {
+                piece.setContentsScale(scale);
+                piece.setHidden(false);
+                set_layer_contents(piece, snapshot);
+            }
+            let covered = snapshot.coverage.covered;
+            entry.crop_of = Some(CGSize::new(covered.0, covered.1));
+            layout_crop_grid(entry, frame);
+        }
+        ContentMode::Stretch => {
+            entry.crop_of = None;
+            if let Some(grid) = &entry.crop_grid {
+                for piece in &grid.pieces {
+                    piece.setHidden(true);
+                }
+            }
+            set_layer_contents(&entry.picture, snapshot);
+        }
+    }
+}
+
+/// Lays the crop grid out for the tile's current frame size.
+fn layout_crop_grid(entry: &Tile, frame: CGSize) {
+    let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) else { return };
+    for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
+        layer.setFrame(piece.frame);
+        layer.setContentsRect(piece.contents);
+    }
+}
+
+/// Creates the four crop pieces under a tile's picture layer.
+fn new_crop_grid(container: &CALayer) -> CropGrid {
+    let pieces = std::array::from_fn(|_| {
+        let layer = CALayer::layer();
+        layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        // SAFETY: Core Animation's own filter-name constants.
+        unsafe {
+            layer.setMagnificationFilter(objc2_quartz_core::kCAFilterLinear);
+            layer.setMinificationFilter(objc2_quartz_core::kCAFilterLinear);
+        }
+        container.addSublayer(&layer);
+        layer
+    });
+    CropGrid { pieces }
 }
 
 /// Moves `layer` under `container` unless it is already there.
@@ -861,6 +1188,76 @@ mod tests {
             assert!(value >= previous, "easing went backwards at t = {}", i);
             previous = value;
         }
+    }
+
+    #[test]
+    fn a_matching_movement_stretches_and_everything_else_crops() {
+        let col = CGSize::new(859.0, 1081.0);
+        let picture = (859.0, 1081.0);
+        assert_eq!(content_mode(picture, col, col), ContentMode::Stretch);
+        assert_eq!(
+            content_mode((918.0, 1081.0), CGSize::new(918.0, 1081.0), CGSize::new(917.0, 1081.0)),
+            ContentMode::Stretch
+        );
+        // A horizontal resize, a vertical one, and a stale picture from one press ago.
+        assert_eq!(content_mode(picture, col, CGSize::new(1720.0, 1081.0)), ContentMode::Crop);
+        assert_eq!(content_mode(picture, col, CGSize::new(859.0, 540.0)), ContentMode::Crop);
+        assert_eq!(content_mode((572.0, 1081.0), col, col), ContentMode::Crop);
+    }
+
+    /// Every crop piece maps 1:1 — its frame exactly as large as the picture region it shows — and
+    /// the four pieces tile the frame with no gap and no overlap. Any violation is a stretch or a
+    /// seam, which is exactly what this mode exists to rule out.
+    #[test]
+    fn crop_pieces_map_one_to_one_and_tile_the_frame() {
+        let picture = CGSize::new(859.0, 1081.0);
+        let frames = [
+            CGSize::new(572.0, 1081.0),  // shrink
+            CGSize::new(1720.0, 1081.0), // grow past the picture
+            CGSize::new(859.0, 540.0),   // vertical
+            CGSize::new(20.0, 1081.0),   // narrower than the band
+        ];
+        for frame in frames {
+            let mut area = 0.0;
+            for piece in crop_pieces(picture, frame) {
+                assert!(
+                    (piece.contents.size.width * picture.width - piece.frame.size.width).abs()
+                        < 1e-9,
+                    "a piece stretches horizontally at {frame:?}"
+                );
+                assert!(
+                    (piece.contents.size.height * picture.height - piece.frame.size.height).abs()
+                        < 1e-9,
+                    "a piece stretches vertically at {frame:?}"
+                );
+                area += piece.frame.size.width * piece.frame.size.height;
+            }
+            assert!(
+                (area - frame.width * frame.height).abs() < 1e-6,
+                "gap or overlap at {frame:?}"
+            );
+        }
+    }
+
+    /// The trailing pieces show the picture's own trailing band pinned to the frame's trailing
+    /// edges, so the window's right and bottom rounded corners ride the moving edge intact.
+    #[test]
+    fn crop_trailing_band_comes_from_the_pictures_trailing_edge() {
+        let picture = CGSize::new(859.0, 1081.0);
+        let pieces = crop_pieces(picture, CGSize::new(572.0, 1081.0));
+        let band = &pieces[1];
+        assert!((band.contents.origin.x * picture.width - (859.0 - 40.0)).abs() < 1e-9);
+        assert_eq!(band.frame.origin.x, 572.0 - 40.0);
+        assert_eq!(band.frame.size.width, 40.0);
+    }
+
+    /// The band shrinks with the frame and vanishes at zero, so an entrance growing from nothing
+    /// starts as a plain reveal and gains its band continuously — no seam pops in mid-flight.
+    #[test]
+    fn crop_band_fits_any_frame() {
+        assert_eq!(crop_band(CGSize::new(859.0, 1081.0)), 40.0);
+        assert!((crop_band(CGSize::new(60.0, 1081.0)) - 27.0).abs() < 1e-9);
+        assert_eq!(crop_band(CGSize::new(0.0, 1081.0)), 0.0);
     }
 
     /// The measured miss: the floating Settings window's tile, in the back z-group, landed at
