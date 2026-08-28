@@ -144,20 +144,30 @@ pub(crate) struct CropPiece {
 /// a resize ride plain Core Animation interpolation between the two endpoint grids. The band only
 /// varies below a 89pt side (see `crop_band`), where the linear approximation drifts the seam by a
 /// few points mid-flight — inside the window's own content, invisible against the motion.
+/// Every piece maps 1:1 while the frame fits inside the picture. Growing PAST the picture, the
+/// leading region stretches the picture's own content instead of reaching beyond its edge:
+/// `contentsRect` past the edge extends the outermost pixels, which for a translucent window are
+/// near-transparent, so a grow painted a hole to the backdrop instead of window. The stretch is
+/// the honest fallback for the frames before the mid-flight recapture delivers real pixels at the
+/// new size, at which point the grid is re-keyed to them (`set_tile_picture`).
 pub(crate) fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     let pw = picture.width.max(1.0);
     let ph = picture.height.max(1.0);
-    let band = crop_band(frame);
+    let band = crop_band(frame).min(pw).min(ph);
     let (bodyw, bodyh) = ((frame.width - band).max(0.0), (frame.height - band).max(0.0));
-    let piece = |x: f64, y: f64, w: f64, h: f64, cx: f64, cy: f64| CropPiece {
+    // What the leading region may show of the picture: everything up to the trailing band, which
+    // belongs to the trailing pieces. Capping here is what keeps the seam continuous — the body
+    // must never duplicate the band's content.
+    let (leadw, leadh) = (bodyw.min(pw - band), bodyh.min(ph - band));
+    let piece = |x: f64, y: f64, w: f64, h: f64, cx: f64, cy: f64, cw: f64, ch: f64| CropPiece {
         frame: CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)),
-        contents: CGRect::new(CGPoint::new(cx / pw, cy / ph), CGSize::new(w / pw, h / ph)),
+        contents: CGRect::new(CGPoint::new(cx / pw, cy / ph), CGSize::new(cw / pw, ch / ph)),
     };
     [
-        piece(0.0, 0.0, bodyw, bodyh, 0.0, 0.0),
-        piece(bodyw, 0.0, band, bodyh, pw - band, 0.0),
-        piece(0.0, bodyh, bodyw, band, 0.0, ph - band),
-        piece(bodyw, bodyh, band, band, pw - band, ph - band),
+        piece(0.0, 0.0, bodyw, bodyh, 0.0, 0.0, leadw, leadh),
+        piece(bodyw, 0.0, band, bodyh, pw - band, 0.0, band, leadh),
+        piece(0.0, bodyh, bodyw, band, 0.0, ph - band, leadw, band),
+        piece(bodyw, bodyh, band, band, pw - band, ph - band, band, band),
     ]
 }
 
@@ -527,28 +537,56 @@ impl WorkspaceOverlay {
     ///
     /// Used mid-flight, once the window being switched into is on screen and can be captured with its
     /// focused appearance. Contents only: changing the frame here would fight the running movement.
-    pub fn set_tile_picture(&mut self, window: WindowId, snapshot: &WindowSnapshot) {
+    /// Swaps a fresh picture into a tile already on screen. `remaining` is how much of the flight
+    /// is left, for a crop-drawn tile whose geometry has to be re-keyed to the new picture.
+    pub fn set_tile_picture(
+        &mut self,
+        window: WindowId,
+        snapshot: &WindowSnapshot,
+        remaining: Option<Duration>,
+    ) {
         let scale = self.scale;
         let Some(entry) = self.tile_layers.get_mut(&window) else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        // A crop-drawn tile carries its picture on the pieces; the geometry stays, since the
-        // animation's contentsRects were built against the picture this one replaces mid-flight,
-        // showing the same window at the same size.
+        let mut rekey: Option<(CGRect, CGRect)> = None;
         if entry.crop_of.is_some() {
+            // A crop-drawn tile carries its picture on the pieces — and the new picture is the
+            // window at its NEW size (the recapture exists precisely because it changed), so the
+            // grid mapping built against the old picture would draw it squashed. Re-key: remap
+            // to the new picture and re-run the remaining flight from the PRESENTED state, which
+            // also replaces the transparent-edge fill of a grow with the window's real content.
             if let Some(grid) = &entry.crop_grid {
                 for piece in &grid.pieces {
                     set_layer_contents(piece, snapshot);
                 }
             }
+            let covered = snapshot.coverage.covered;
+            entry.crop_of = Some(CGSize::new(covered.0, covered.1));
+            let final_rect = entry.picture.frame();
+            match remaining.filter(|left| !left.is_zero()) {
+                Some(_) => {
+                    // SAFETY: `presentationLayer` returns a read-only copy of the layer as
+                    // currently presented.
+                    let presented = unsafe { entry.picture.presentationLayer() }
+                        .map(|p| CGRect::new(p.position(), p.bounds().size))
+                        .unwrap_or(final_rect);
+                    layout_crop_grid(entry, final_rect.size);
+                    rekey = Some((presented, final_rect));
+                }
+                None => layout_crop_grid(entry, final_rect.size),
+            }
         } else {
             set_layer_contents(&entry.picture, snapshot);
         }
         // A recapture can carry a fresh hairline too — the focus recapture is exactly the one
-        // that changes it.
+        // that changes it. Swapped in place, so it rides any animations already installed.
         if snapshot.dressing.is_some() {
             let size = entry.picture.bounds().size;
-            apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale);
+            apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale, true);
+        }
+        if let (Some((presented, final_rect)), Some(left)) = (rekey, remaining) {
+            self.animate_tile_resize(window, presented, final_rect, left);
         }
         CATransaction::commit();
     }
@@ -564,7 +602,7 @@ impl WorkspaceOverlay {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let size = entry.picture.bounds().size;
-        apply_edge_dressing(entry, Some(dressing), size, scale);
+        apply_edge_dressing(entry, Some(dressing), size, scale, true);
         CATransaction::commit();
     }
 
@@ -611,7 +649,13 @@ impl WorkspaceOverlay {
         let covered = tile.snapshot.coverage.covered;
         let mode = content_mode(covered, tile.from.size, tile.to.size);
         set_tile_content(entry, &tile.snapshot, mode, tile.from.size, self.scale);
-        apply_edge_dressing(entry, tile.snapshot.dressing.as_ref(), tile.from.size, self.scale);
+        apply_edge_dressing(
+            entry,
+            tile.snapshot.dressing.as_ref(),
+            tile.from.size,
+            self.scale,
+            false,
+        );
         // Set explicitly in both directions, because tile layers are pooled: a tile that carried
         // focus last flight must not keep the deep shadow for an unfocused window.
         let style = tile_shadow_style(tile.focused);
@@ -852,7 +896,31 @@ fn apply_edge_dressing(
     dressing: Option<&crate::ui::edge_dressing::EdgeDressing>,
     size: CGSize,
     scale: f64,
+    swap_in_place: bool,
 ) {
+    // A fresh harvest for the same window swaps pixels INTO the existing layers when the piece
+    // sets match, leaving their geometry — and crucially any resize animations riding them —
+    // untouched. Rebuilding here mid-flight snapped the border to its final layout while the tile
+    // was still travelling. Installs rebuild unconditionally: a pooled tile's layers may belong
+    // to another window's geometry entirely.
+    if swap_in_place && let Some(new) = dressing {
+        let image_at = |index: usize| {
+            if index < 4 { new.strips[index].as_ref() } else { new.corners[index - 4].as_ref() }
+        };
+        let available: Vec<usize> = (0..8).filter(|i| image_at(*i).is_some()).collect();
+        let worn: Vec<usize> = tile.dressing.iter().map(|(i, _)| *i).collect();
+        if !worn.is_empty() && worn == available {
+            for (index, layer) in &tile.dressing {
+                let image = image_at(*index).expect("index sets match");
+                // SAFETY: a retained CGImage; Core Animation retains what it draws.
+                unsafe {
+                    let raw: *const objc2_core_graphics::CGImage = &**image;
+                    let _: () = msg_send![&**layer, setContents: raw];
+                }
+            }
+            return;
+        }
+    }
     for (_, layer) in tile.dressing.drain(..) {
         layer.removeFromSuperlayer();
     }
@@ -1205,17 +1273,17 @@ mod tests {
         assert_eq!(content_mode((572.0, 1081.0), col, col), ContentMode::Crop);
     }
 
-    /// Every crop piece maps 1:1 — its frame exactly as large as the picture region it shows — and
-    /// the four pieces tile the frame with no gap and no overlap. Any violation is a stretch or a
-    /// seam, which is exactly what this mode exists to rule out.
+    /// Every crop piece maps 1:1 while the frame fits inside the picture — its frame exactly as
+    /// large as the picture region it shows — and the four pieces always tile the frame with no
+    /// gap and no overlap. Any violation is a stretch or a seam, which is exactly what this mode
+    /// exists to rule out.
     #[test]
     fn crop_pieces_map_one_to_one_and_tile_the_frame() {
         let picture = CGSize::new(859.0, 1081.0);
         let frames = [
-            CGSize::new(572.0, 1081.0),  // shrink
-            CGSize::new(1720.0, 1081.0), // grow past the picture
-            CGSize::new(859.0, 540.0),   // vertical
-            CGSize::new(20.0, 1081.0),   // narrower than the band
+            CGSize::new(572.0, 1081.0), // shrink
+            CGSize::new(859.0, 540.0),  // vertical
+            CGSize::new(20.0, 1081.0),  // narrower than the band
         ];
         for frame in frames {
             let mut area = 0.0;
@@ -1237,6 +1305,29 @@ mod tests {
                 "gap or overlap at {frame:?}"
             );
         }
+    }
+
+    /// Growing past the picture, the leading region stretches the picture's own content — never
+    /// reaches past its edge, where a translucent window's near-transparent pixels painted the
+    /// grow as a hole — and the trailing band stays 1:1 so the corners and hairline never distort.
+    #[test]
+    fn a_grow_past_the_picture_stretches_the_lead_and_keeps_the_band_intact() {
+        let picture = CGSize::new(859.0, 1081.0);
+        let frame = CGSize::new(1720.0, 1081.0);
+        let pieces = crop_pieces(picture, frame);
+        let body = &pieces[0];
+        // The body shows everything up to the trailing band and no further.
+        assert!((body.contents.origin.x).abs() < 1e-9);
+        assert!((body.contents.size.width * picture.width - (859.0 - 40.0)).abs() < 1e-9);
+        assert_eq!(body.frame.size.width, 1720.0 - 40.0, "stretched across the grown lead");
+        // The trailing band is still the picture's own trailing 40pt at 1:1.
+        let band = &pieces[1];
+        assert!((band.contents.size.width * picture.width - 40.0).abs() < 1e-9);
+        assert_eq!(band.frame.size.width, 40.0);
+        // And the pieces still tile the frame exactly.
+        let area: f64 =
+            pieces.iter().map(|p| p.frame.size.width * p.frame.size.height).sum();
+        assert!((area - frame.width * frame.height).abs() < 1e-6);
     }
 
     /// The trailing pieces show the picture's own trailing band pinned to the frame's trailing

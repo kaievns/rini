@@ -184,10 +184,19 @@ changes is how the picture maps onto it (`content_mode` in
   movement reads. Centred zoom was tried and rejected: nothing else on the
   strip inflates. If the capture misses the flight, the window appears when
   the overlay lifts, which is the old behaviour.
-- Growing past the picture's own size extends its edge pixels outward
-  (documented `contentsRect` behaviour), so a grow beyond the capture paints
-  window-coloured pixels rather than backdrop; the mid-flight recapture
-  replaces the picture before the handover in the common case.
+- **Growing past the picture stretches the lead, then re-keys to real
+  pixels.** Reaching past the picture's edge via `contentsRect` extends its
+  outermost pixels, which for a translucent window are near-transparent: the
+  first cut painted a grow as a hole to the backdrop. The lead now stretches
+  the picture's own content (band stays 1:1) until the mid-flight recapture
+  lands, at which point `set_tile_picture` re-keys the whole grid to the
+  new-size picture and re-runs the remaining flight from the PRESENTED state —
+  which also fixes the squash the swap used to cause when new pixels landed in
+  old contentsRect mappings.
+- **A fresh picture or hairline swaps in place.** Rebuilding the dressing on a
+  mid-flight recapture snapped the border to its final layout while the tile
+  was still travelling; a matching harvest now swaps pixels into the existing
+  layers and rides their animations.
 - **The apply point moves up to 0.5** (`APPLY_FRAMES_AT_RESIZE`) when any tile
   resizes: the real resize behind the overlay costs three synchronous AX round
   trips per window and needs more runway to land before the overlay lifts.

@@ -588,8 +588,9 @@ impl WorkspaceAnimation {
             // and how a window that opened mid-flight gets its entrance.
             if running && snapshot.is_usable() {
                 self.admit_entrance(window, &snapshot);
+                let remaining = self.remaining_flight();
                 if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.set_tile_picture(window, &snapshot);
+                    overlay.set_tile_picture(window, &snapshot, remaining);
                 }
             }
         }
@@ -783,9 +784,16 @@ impl WorkspaceAnimation {
             return;
         }
         self.admit_entrance(window, &snapshot);
+        let remaining = self.remaining_flight();
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tile_picture(window, &snapshot);
+            overlay.set_tile_picture(window, &snapshot, remaining);
         }
+    }
+
+    /// How much of the running flight is left, in wall-clock time.
+    fn remaining_flight(&self) -> Option<Duration> {
+        let running = self.running.as_ref()?;
+        Some(running.duration.mul_f64((1.0 - running.progress()).max(0.0)))
     }
 
     /// Adds the tile for a window whose first picture just landed, growing in from nothing.
