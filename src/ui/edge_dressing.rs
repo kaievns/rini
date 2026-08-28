@@ -54,6 +54,30 @@ pub struct DressingLayout {
     pub corners: [CGRect; 4],
 }
 
+impl DressingLayout {
+    fn offset(mut self, dx: f64, dy: f64) -> Self {
+        for rect in self.strips.iter_mut().chain(self.corners.iter_mut()) {
+            rect.origin.x += dx;
+            rect.origin.y += dy;
+        }
+        self
+    }
+}
+
+/// The dressing a tile wears, in window coordinates: a band straddling the window's boundary,
+/// one ring inside it and one ring outside.
+///
+/// Both sides, because macOS frames a window with two lines: the light hairline on the window's
+/// outermost point, and a near-black outline just OUTSIDE the bounds (measured at alpha 0.95),
+/// which is what separates the border from the shadow. A tile wearing only the inner hairline had
+/// the shadow bleeding straight into it, so the border read darker mid-flight and snapped at the
+/// handover.
+pub fn boundary_layout(size: CGSize) -> Option<DressingLayout> {
+    let expanded = CGSize::new(size.width + 2.0 * RING_PT, size.height + 2.0 * RING_PT);
+    let layout = dressing_layout(expanded, 2.0 * RING_PT, CORNER_RADIUS + RING_PT)?;
+    Some(layout.offset(-RING_PT, -RING_PT))
+}
+
 pub fn dressing_layout(size: CGSize, ring: f64, corner: f64) -> Option<DressingLayout> {
     let (w, h) = (size.width, size.height);
     if w <= 0.0 || h <= 0.0 || ring <= 0.0 {
@@ -120,9 +144,16 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }
+    // One ring beyond the bounds, so the capture carries the outer dark outline too (see
+    // [`boundary_layout`]). The margin holds the first ring of shadow as well, which the crops
+    // deliberately keep: it is what that pixel really looks like on screen.
+    let expanded = CGRect::new(
+        CGPoint::new(frame.origin.x - RING_PT, frame.origin.y - RING_PT),
+        CGSize::new(frame.size.width + 2.0 * RING_PT, frame.size.height + 2.0 * RING_PT),
+    );
     #[allow(deprecated)]
     let framed = objc2_core_graphics::CGWindowListCreateImage(
-        frame,
+        expanded,
         CGWindowListOption::OptionIncludingWindow,
         server_id.as_u32(),
         objc2_core_graphics::CGWindowImageOption::empty(),
@@ -130,20 +161,29 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
     let px_w = CGImage::width(Some(&framed)) as f64;
     let px_h = CGImage::height(Some(&framed)) as f64;
     // A capture of another size does not line up with the window rect, so the crops would be lies.
-    if (px_w - frame.size.width * scale).abs() > 2.0
-        || (px_h - frame.size.height * scale).abs() > 2.0
+    if (px_w - expanded.size.width * scale).abs() > 2.0
+        || (px_h - expanded.size.height * scale).abs() > 2.0
     {
         return None;
     }
-    let radius_px = tile_corner_radius(frame.size) * scale;
-    let layout =
-        dressing_layout(CGSize::new(px_w, px_h), RING_PT * scale, CORNER_RADIUS * scale)?;
+    // The clip hugs the dark outline's own rounded arc, one ring outside the window's corner.
+    let radius_px = (tile_corner_radius(frame.size) + RING_PT) * scale;
+    let layout = boundary_layout(frame.size)?;
+    // Placement rects are in window coordinates (origin can be one ring negative); the capture's
+    // origin is one ring before the window's, so crops shift by exactly that ring.
+    let crop = |rect: CGRect| {
+        CGRect::new(
+            CGPoint::new((rect.origin.x + RING_PT) * scale, (rect.origin.y + RING_PT) * scale),
+            CGSize::new(rect.size.width * scale, rect.size.height * scale),
+        )
+    };
 
     let mut alpha_sum = 0.0;
     let mut alpha_samples = 0usize;
     let mut strips: [Option<CFRetained<CGImage>>; 4] = [None, None, None, None];
     for (slot, region) in strips.iter_mut().zip(layout.strips) {
-        let Some((image, alpha, samples)) = copy_region(&framed, px_w, px_h, region, None) else {
+        let Some((image, alpha, samples)) = copy_region(&framed, px_w, px_h, crop(region), None)
+        else {
             continue;
         };
         alpha_sum += alpha;
@@ -156,7 +196,8 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
     }
     let mut corners: [Option<CFRetained<CGImage>>; 4] = [None, None, None, None];
     for (slot, region) in corners.iter_mut().zip(layout.corners) {
-        *slot = copy_region(&framed, px_w, px_h, region, Some(radius_px)).map(|(image, ..)| image);
+        *slot = copy_region(&framed, px_w, px_h, crop(region), Some(radius_px))
+            .map(|(image, ..)| image);
     }
     Some(EdgeDressing { strips, corners })
 }
@@ -307,6 +348,20 @@ mod tests {
         assert_eq!(layout.strips[0].size.width, 0.0);
         assert_eq!(layout.corners[0], rect(0.0, 0.0, 8.0, 8.0));
         assert_eq!(layout.corners[3], rect(8.0, 8.0, 8.0, 8.0));
+    }
+
+    /// The band straddles the boundary: one ring outside the window (the dark outline lives
+    /// there), one ring inside (the light hairline). Origins go negative by exactly one ring.
+    #[test]
+    fn the_boundary_band_straddles_the_window_edge() {
+        let layout = boundary_layout(CGSize::new(100.0, 60.0)).unwrap();
+        // Corner boxes grow by the ring to keep hugging the arc, so runs start one ring earlier.
+        assert_eq!(layout.strips[0], rect(10.0, -1.0, 80.0, 2.0), "top: 1pt out to 1pt in");
+        assert_eq!(layout.strips[1], rect(10.0, 59.0, 80.0, 2.0), "bottom");
+        assert_eq!(layout.strips[2], rect(-1.0, 10.0, 2.0, 40.0), "left");
+        assert_eq!(layout.strips[3], rect(99.0, 10.0, 2.0, 40.0), "right");
+        assert_eq!(layout.corners[0], rect(-1.0, -1.0, 11.0, 11.0));
+        assert_eq!(layout.corners[3], rect(90.0, 50.0, 11.0, 11.0), "10pt inside to 1pt outside");
     }
 
     #[test]

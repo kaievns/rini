@@ -1536,6 +1536,13 @@ from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
 - The hairline rides INSIDE the window bounds: the capture's outermost pixel
   pair at 2x is the hairline over the app's own edge pixel, which is exactly
   what the screen shows at rest.
+- The framing is TWO lines, not one. Just outside the bounds sits a near-black
+  outline (measured rgb 0,0,0 at alpha 0.95 in the shadow margin of a null-rect
+  capture), and only past it does the soft shadow begin. A tile wearing only
+  the inner hairline had the caster's shadow bleeding straight against it, so
+  the border read darker mid-flight and snapped at the handover; the dressing
+  band therefore straddles the boundary, one point in and one point out
+  (`boundary_layout`), harvested from a capture rect inset by minus one ring.
 
 ### Shadows are never in the surface
 

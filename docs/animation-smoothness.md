@@ -167,11 +167,14 @@ and translucency. No drawn constant can match every window.
 
 So the real composited pixels are harvested instead (`edge_dressing`):
 `CGWindowListCreateImage` is the one capture API that composites framing
-into its output, and a rect-bounded call returns exactly the window rect
-with the hairline on its outermost point, at 16-24ms. The ring — four
-straight runs plus four corner boxes clipped to the rounded silhouette,
-~200KB against the 28MB framed capture it is cropped from — is cached on
-the snapshot and worn by the tile as sublayers. It only renders windows
+into its output, and a rect-bounded call returns exactly the asked rect
+with the framing composited, at 16-24ms. The framing is two lines — the
+light hairline on the window's outermost point and a near-black outline
+just outside the bounds, which is what separates border from shadow — so
+the harvested band straddles the boundary, one point in and one out. Four
+straight runs plus four corner boxes clipped to the outline's arc, ~200KB
+against the 28MB framed capture they are cropped from, cached on the
+snapshot and worn by the tile as sublayers. It only renders windows
 actually composited, so a parked window harvests transparent pixels and is
 rejected by an alpha check, keeping the ring from when it was last seen:
 the picture cache's own staleness model. The focus recapture harvests too,
