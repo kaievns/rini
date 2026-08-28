@@ -58,14 +58,29 @@ impl HiddenWindowPlacement {
         }
     }
 
-    /// Whether a frame has nothing at all on the display.
+    /// Whether a frame shows nothing the eye can use on the display.
     ///
     /// A strip position thousands of points along the strip is off screen, and macOS will not honour it:
     /// asked for x = -12396 it places the window with 40pt showing instead, which is the row of slivers
-    /// down each edge. Those frames get a corner park instead, which macOS does honour at 1pt. A frame with
-    /// ANY part on screen is left alone, since a column peeking in at the edge is meant to be seen.
+    /// down each edge. Those frames get a corner park instead, which macOS does honour at 1pt.
+    ///
+    /// A park itself keeps a sliver on screen, so "any intersection at all" misclassified every
+    /// parked window as visible — and a parked window animated back in then travelled from its park
+    /// in the bottom corner instead of entering from the strip's edge. Off screen therefore means:
+    /// no intersection, or a sliver within the park clamp in both axes. Live parks measure up to
+    /// 32pt visible (bottom parks at y = display height - 32), and macOS itself will not push a
+    /// window further off an edge than 40pt, so nothing genuinely meant to be seen shows 40pt or
+    /// less in BOTH axes — a column peeking in at an edge shows its full height.
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
-        Self::intersection_area(window, screen) <= 0.0
+        const PARK_CLAMP_PX: f64 = 40.0;
+        if Self::intersection_area(window, screen) <= 0.0 {
+            return true;
+        }
+        let visible_width =
+            (window.max().x.min(screen.max().x) - window.origin.x.max(screen.origin.x)).max(0.0);
+        let visible_height =
+            (window.max().y.min(screen.max().y) - window.origin.y.max(screen.origin.y)).max(0.0);
+        visible_width <= PARK_CLAMP_PX && visible_height <= PARK_CLAMP_PX
     }
 
     /// Where a parked window should start an animation that brings it back on screen.
@@ -121,6 +136,18 @@ mod tests {
     }
 
     /// A column peeking in at the edge is meant to be seen, so it keeps the position the layout gave it.
+    #[test]
+    fn a_corner_park_with_a_sliver_showing_is_off_screen() {
+        let screen = rect(0.0, 0.0, 1728.0, 1117.0);
+        // The measured park positions. 1pt corner parks, and the live ones at y=1085 showing a
+        // 32pt band along the bottom: both must read as off screen or a parked window animated
+        // back in travels from the bottom corner instead of entering from the strip's edge.
+        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1116.0, 859.0, 1081.0)));
+        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-858.0, 1116.0, 859.0, 1081.0)));
+        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1085.0, 1720.0, 1081.0)));
+        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-858.0, 1085.0, 859.0, 1081.0)));
+    }
+
     #[test]
     fn a_column_with_any_part_on_screen_is_left_alone() {
         let screen = rect(0.0, 0.0, 1728.0, 1117.0);

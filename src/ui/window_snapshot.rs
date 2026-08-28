@@ -94,6 +94,16 @@ pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
     (MIN_STRETCH..=MAX_STRETCH).contains(&wide) && (MIN_STRETCH..=MAX_STRETCH).contains(&tall)
 }
 
+/// Whether a layout change resizes a window, rather than merely moving it.
+///
+/// The threshold is `fits_frame`'s, so "this move is a resize" and "this picture no longer fits"
+/// agree by construction. Rounding is not a resize; treating a one-point re-fit as one measurably
+/// tore the strip apart. See "A one-point size change sent the whole strip to the Accessibility
+/// engine" in `docs/capture-overlay-research.md`.
+pub fn is_a_resize(from: CGSize, to: CGSize) -> bool {
+    !fits_frame((from.width, from.height), (to.width, to.height))
+}
+
 /// Whether a window needs a fresh capture before it can be drawn at `size`.
 ///
 /// Having a drawable picture is not enough: it also has to match the size the window is now. A window
@@ -404,6 +414,33 @@ mod tests {
         assert!(spans_display((1728.0, 1117.0), (1728.0, 1117.0)));
         assert!(spans_display((1729.0, 1116.0), (1728.0, 1117.0)));
         assert!(!spans_display((1725.0, 1117.0), (1728.0, 1117.0)), "3pt short is not the display");
+    }
+
+    /// The measured case. A strip re-fit took a window from 918pt to 917pt, and treating that one
+    /// point as a resize sent the whole layout to the Accessibility engine, which writes every
+    /// window separately and lets the strip come apart.
+    #[test]
+    fn a_point_of_rounding_is_not_a_resize() {
+        assert!(!is_a_resize(CGSize::new(918.0, 1081.0), CGSize::new(917.0, 1081.0)));
+        assert!(!is_a_resize(CGSize::new(1720.0, 1081.0), CGSize::new(1719.0, 1081.0)));
+        assert!(!is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(859.0, 1081.0)));
+    }
+
+    /// A real resize is drawn anchored and cropped rather than stretched, so the overlay has to
+    /// know which one it is looking at.
+    #[test]
+    fn a_column_changing_width_is_a_resize() {
+        assert!(is_a_resize(CGSize::new(1440.0, 1081.0), CGSize::new(859.0, 1081.0)));
+        assert!(is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(1720.0, 1081.0)));
+        assert!(is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(859.0, 540.0)));
+    }
+
+    /// The tolerance is proportional, so a point means more on a small window than a large one. That
+    /// is the right way round: a point of stretch is invisible across 918pt and obvious across 40pt.
+    #[test]
+    fn the_tolerance_scales_with_the_window() {
+        assert!(!is_a_resize(CGSize::new(400.0, 400.0), CGSize::new(401.0, 400.0)));
+        assert!(is_a_resize(CGSize::new(40.0, 400.0), CGSize::new(41.0, 400.0)));
     }
 
     #[test]

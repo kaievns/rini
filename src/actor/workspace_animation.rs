@@ -784,11 +784,11 @@ impl WorkspaceAnimation {
         if area <= 0.0 {
             return false;
         }
-        let enough = min_on_screen(is_moving(from, to));
+        let moving = is_moving(from, to);
         (0..SAMPLES).any(|step| {
             let t = step as f64 / (SAMPLES - 1) as f64;
             let at = crate::ui::workspace_overlay::lerp_rect(from, to, t);
-            on_screen_fraction(at, display) >= enough
+            shows_enough(at, display, moving)
         })
     }
 
@@ -1682,6 +1682,31 @@ fn min_on_screen(moving: bool) -> f64 {
     if moving { 0.25 } else { f64::MIN_POSITIVE }
 }
 
+/// The smallest visible extent that still reads as a window rather than a sliver.
+///
+/// The share test alone starved wide windows: a 1720pt window showing 400pt is under a quarter by
+/// area yet is exactly the "column peeking in" a scrolling layout is made of. Anything showing at
+/// least this much in both axes is drawn.
+const MIN_VISIBLE_EXTENT: f64 = 80.0;
+
+/// How much of `frame` shows on `display`, as the overlap's width and height.
+fn on_screen_extent(frame: CGRect, display: CGRect) -> (f64, f64) {
+    let w = (frame.origin.x + frame.size.width).min(display.origin.x + display.size.width)
+        - frame.origin.x.max(display.origin.x);
+    let h = (frame.origin.y + frame.size.height).min(display.origin.y + display.size.height)
+        - frame.origin.y.max(display.origin.y);
+    (w.max(0.0), h.max(0.0))
+}
+
+/// Whether enough of the window shows at `at` for a tile to be worth drawing there.
+fn shows_enough(at: CGRect, display: CGRect, moving: bool) -> bool {
+    if on_screen_fraction(at, display) >= min_on_screen(moving) {
+        return true;
+    }
+    let (w, h) = on_screen_extent(at, display);
+    moving && w.min(h) >= MIN_VISIBLE_EXTENT
+}
+
 /// Which group a window belongs to.
 fn group_of(floating: bool) -> crate::model::z_group::StackGroup {
     if floating {
@@ -1791,6 +1816,28 @@ mod tests {
     fn a_standing_request_is_not_synthetic() {
         let frame = rect(4.0, 32.0, 859.0, 1081.0);
         assert!(!start_is_synthetic(frame, frame, frame));
+    }
+
+    /// The measured miss: a 1720pt Kiro column at x=1439 on a 1728pt display shows 289pt of real
+    /// content but only 17% of its area, so the fraction rule read it as a parked sliver and the
+    /// overlay painted desktop over it for the length of the animation.
+    #[test]
+    fn a_wide_window_with_a_real_share_visible_is_drawn() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let kiro = rect(1439.0, 32.0, 1720.0, 1081.0);
+        assert!(shows_enough(kiro, display, true));
+    }
+
+    /// Parked windows show at most 40pt (the macOS clamp), and must stay skipped or every park
+    /// becomes a tile.
+    #[test]
+    fn a_parked_sliver_is_still_skipped() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let parked = rect(1688.0, 32.0, 859.0, 1081.0);
+        assert!(!shows_enough(parked, display, true));
+        // Standing still, even a sliver is drawn: whatever shows of it turns into wallpaper
+        // otherwise.
+        assert!(shows_enough(parked, display, false));
     }
 
     /// A floating window does not belong to the strip: a pan leaves it exactly where it stands,
