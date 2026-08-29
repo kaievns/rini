@@ -769,8 +769,11 @@ impl WorkspaceAnimation {
                 .name("destination-recapture".to_string())
                 .spawn(move || {
                     let started = Instant::now();
+                    // The framed route, not SkyLight: under animation load the SkyLight capture
+                    // measured 170-300ms — long enough for the focus swap to land near the
+                    // handover, which reads as end-of-flight flicker — against a steady 16-24ms.
                     let Some(mut snapshot) =
-                        capture_via_skylight(server_id, (size.width, size.height), scale)
+                        crate::ui::window_snapshot::capture_via_framed(server_id, scale)
                     else {
                         return;
                     };

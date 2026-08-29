@@ -285,6 +285,11 @@ running, carrying real border windows as tiles:
   is: an arriving row's window sits parked with its real border parked too,
   so no companion matches — which is what the real screen does, since the
   border tool only catches up after the window lands.
+- The mid-flight focus recapture rides the framed route (16-24ms measured,
+  against 170-300ms for SkyLight under animation load) and its swap fades the
+  outgoing picture over ~120ms instead of cutting: the cut read as flicker,
+  the fade reads as the app's own focus dimming, which is usually what the
+  swap carries.
 - Companions are excluded from the mid-flight destination recapture, which
   exists for the window the eye is on. They wear no harvested hairline
   either: a border window's ring is transparent almost everywhere, so the

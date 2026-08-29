@@ -336,6 +336,10 @@ struct Tile {
     /// The ring that keeps the shadow off the window itself. Persistent, so a resize can animate
     /// its path instead of swapping in a new mask, which cannot be animated.
     shadow_mask: Retained<objc2_quartz_core::CAShapeLayer>,
+    /// Holds the outgoing picture for a beat when a fresh one swaps in mid-flight, fading out.
+    /// A hard cut read as flicker; the fade reads as the app's own focus dimming, which is what
+    /// the swap usually carries.
+    swap_veil: Option<Retained<CALayer>>,
     /// The hairline sublayers riding the picture, replaced whenever the picture is re-dressed.
     /// Each carries its index into [`crate::ui::edge_dressing::DressingLayout`] order (strips
     /// 0-3, corners 4-7), so a resize can pair it with its endpoint geometries.
@@ -586,7 +590,10 @@ impl WorkspaceOverlay {
                 None => layout_crop_grid(entry, final_rect.size),
             }
         } else {
+            // SAFETY: reading the layer's current contents to hand to the veil.
+            let old_contents = unsafe { entry.picture.contents() };
             set_layer_contents(&entry.picture, snapshot);
+            crossfade_content_swap(entry, old_contents);
         }
         // A recapture can carry a fresh hairline too — the focus recapture is exactly the one
         // that changes it. Swapped in place, so it rides any animations already installed.
@@ -674,6 +681,15 @@ impl WorkspaceOverlay {
         // Negated so a smaller depth, meaning nearer the front, draws on top.
         place_tile(entry, tile.from, tile.z());
         entry.picture.setHidden(false);
+        // Pooled tiles must not resurrect a previous flight's outgoing picture.
+        if let Some(veil) = &entry.swap_veil {
+            veil.setHidden(true);
+            veil.removeAllAnimations();
+            // SAFETY: releasing the held image; nil contents draw nothing.
+            unsafe {
+                let _: () = msg_send![&**veil, setContents: std::ptr::null::<NSObject>()];
+            }
+        }
         // A border window casts no shadow, so its tile must not either.
         entry.shadow.setHidden(tile.companion);
     }
@@ -998,7 +1014,49 @@ fn new_tile(container: &CALayer) -> Tile {
     }
     container.addSublayer(&picture);
 
-    Tile { picture, shadow, shadow_mask, dressing: Vec::new(), crop_grid: None, crop_of: None }
+    Tile {
+        picture,
+        shadow,
+        shadow_mask,
+        swap_veil: None,
+        dressing: Vec::new(),
+        crop_grid: None,
+        crop_of: None,
+    }
+}
+
+/// How long the outgoing picture lingers over an incoming one, matching the ~100ms most apps
+/// take to animate their own focus dimming.
+const CONTENT_SWAP_FADE: f64 = 0.12;
+
+/// Fades the picture layer's PREVIOUS contents out over the fresh ones just set.
+fn crossfade_content_swap(tile: &mut Tile, old_contents: Option<Retained<objc2::runtime::AnyObject>>) {
+    let Some(old) = old_contents else { return };
+    if tile.swap_veil.is_none() {
+        let veil = CALayer::layer();
+        veil.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        // Above the crop pieces (0), below the hairline dressing (1).
+        veil.setZPosition(0.75);
+        tile.picture.addSublayer(&veil);
+        tile.swap_veil = Some(veil);
+    }
+    let veil = tile.swap_veil.as_ref().expect("created above");
+    veil.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), tile.picture.bounds().size));
+    // SAFETY: contents previously held by the picture layer; Core Animation retains what it draws.
+    unsafe {
+        let raw: *const objc2::runtime::AnyObject = &*old;
+        let _: () = msg_send![&**veil, setContents: raw];
+    }
+    veil.setHidden(false);
+    veil.setOpacity(0.0);
+    let fade = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str("opacity")));
+    // SAFETY: NSNumber is the value type Core Animation expects for "opacity".
+    unsafe {
+        fade.setFromValue(Some(&objc2_foundation::NSNumber::new_f64(1.0)));
+        fade.setToValue(Some(&objc2_foundation::NSNumber::new_f64(0.0)));
+    }
+    fade.setDuration(CONTENT_SWAP_FADE);
+    veil.addAnimation_forKey(&fade, Some(&NSString::from_str("rini.swap.fade")));
 }
 
 /// Puts both of a tile's layers at `frame`, with the caster just behind the picture.
