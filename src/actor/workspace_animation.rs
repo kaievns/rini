@@ -1255,7 +1255,7 @@ impl WorkspaceAnimation {
         // later pass can also change where a window is going.
         if self.running.is_some() {
             let in_flight;
-            let mut retargets: Vec<(WindowId, CGRect, f64)> = Vec::new();
+            let mut retargets: Vec<OverlayTile> = Vec::new();
             let mut joined: Vec<OverlayTile> = Vec::new();
             let mut hold_frames: Option<Vec<(WindowId, CGRect)>> = None;
             {
@@ -1305,7 +1305,7 @@ impl WorkspaceAnimation {
                         // flight already has. Touching nothing is what keeps chained presses from
                         // restarting or extending the animation forever.
                         Admitted::Redundant => {}
-                        Admitted::Retargeted => retargets.push((copy.window, copy.to, copy.z())),
+                        Admitted::Retargeted => retargets.push(copy),
                         Admitted::Joined => joined.push(copy),
                     }
                 }
@@ -1315,12 +1315,18 @@ impl WorkspaceAnimation {
                 // Tiles already animating bend toward their new targets from wherever they are
                 // drawn; newcomers start their whole movement now. Both get the fresh duration.
                 if let Some(overlay) = self.overlay.as_mut() {
-                    for (window, to, z) in retargets {
-                        overlay.retarget_tile(window, to, z, duration);
+                    for tile in &retargets {
+                        overlay.retarget_tile(tile, duration);
                     }
                     for tile in &joined {
                         overlay.add_tile(tile, duration);
                     }
+                }
+                // A grow joining mid-flight cannot hold, but it can still get its truthful
+                // pixels: the chase lands them through the ordinary mid-flight swap, which
+                // re-keys the grid from the presented state.
+                if !awaiting.is_empty() {
+                    self.chase_reveal_pictures(&awaiting);
                 }
                 if changed {
                     let running = self.running.as_mut().expect("checked above");

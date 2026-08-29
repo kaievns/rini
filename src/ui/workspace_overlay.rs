@@ -721,8 +721,9 @@ impl WorkspaceOverlay {
     /// The presentation tree is the truth about the current position — the model already sits at
     /// the old destination — and re-adding under the same key replaces the old animation, so the
     /// tile bends toward the new target instead of restarting. Same chaining pattern as the canvas.
-    pub fn retarget_tile(&mut self, window: WindowId, to: CGRect, z: f64, duration: Duration) {
-        let Some(entry) = self.tile_layers.get(&window) else { return };
+    pub fn retarget_tile(&mut self, tile: &OverlayTile, duration: Duration) {
+        let scale = self.scale;
+        let Some(entry) = self.tile_layers.get_mut(&tile.window) else { return };
         // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
         // Position AND size: a resize retargeted mid-flight continues from the size it is drawn
         // at, or rapid preset cycling snaps the tile to full size before each new leg.
@@ -732,7 +733,14 @@ impl WorkspaceOverlay {
         let from = CGRect::new(current, current_size);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        self.animate_tile_movement(window, from, to, z, duration);
+        // The content mode is judged against the NEW leg, not the one the tile was installed for:
+        // a retarget can turn a plain move into a resize — a window expanding after a sibling
+        // closes arrives exactly this way — and a tile left stretching draws the resize as a
+        // stretch. Applied at the presented size, so the switch to the crop grid is invisible.
+        let covered = tile.snapshot.coverage.covered;
+        let mode = content_mode(covered, from.size, tile.to.size);
+        set_tile_content(entry, &tile.snapshot, mode, from.size, scale);
+        self.animate_tile_movement(tile.window, from, tile.to, tile.z(), duration);
         CATransaction::commit();
     }
 
