@@ -104,7 +104,10 @@ pub enum Event {
     SnapshotsReady,
     /// A mid-flight recapture of the window being switched into has landed. Posted by the capture
     /// thread, not by another actor.
-    PictureReady { window: WindowId, snapshot: WindowSnapshot },
+    /// `settled` means two consecutive captures showed the same rendering (the reveal chase's
+    /// gate). Only settled pictures may satisfy a reveal hold or replace a resizing tile's
+    /// picture: an unsettled capture of a resized-but-unpainted window is stable-looking garbage.
+    PictureReady { window: WindowId, snapshot: WindowSnapshot, settled: bool },
     /// A hairline harvest finished on its background thread. Harvested OFF the capture service's
     /// completion queue, because the framed capture behind it is proxied through that same
     /// machinery and deadlocks it (see `snapshot_service`); this event carries the result back.
@@ -532,7 +535,9 @@ impl WorkspaceAnimation {
                 self.refresh_bar();
             }
             Event::SnapshotsReady => self.collect_snapshots(),
-            Event::PictureReady { window, snapshot } => self.picture_ready(window, snapshot),
+            Event::PictureReady { window, snapshot, settled } => {
+                self.picture_ready(window, snapshot, settled)
+            }
             Event::DressingReady { window, dressing } => self.dressing_ready(window, dressing),
             Event::WarmCache => self.warm_cache(),
             Event::WarmWindows(targets) => self.warm_windows(targets),
@@ -606,12 +611,10 @@ impl WorkspaceAnimation {
             // Straight onto the tile when an animation is mid-flight. That is how a ScreenCaptureKit
             // capture requested for a clipped destination reaches the screen before the handover,
             // and how a window that opened mid-flight gets its entrance.
+            // Background captures are never settled: the service knows sizes, not paint states.
             if running && snapshot.is_usable() {
-                if self.claim_reveal(window, &snapshot) {
-                    continue;
-                }
                 self.admit_entrance(window, &snapshot);
-                if !self.swappable_mid_flight(window, &snapshot) {
+                if !self.swappable_mid_flight(window, &snapshot, false) {
                     continue;
                 }
                 let remaining = self.remaining_flight();
@@ -783,7 +786,7 @@ impl WorkspaceAnimation {
                         took_ms = started.elapsed().as_millis(),
                         "recaptured the window being switched into, off the main thread"
                     );
-                    _ = tx.send(Event::PictureReady { window, snapshot });
+                    _ = tx.send(Event::PictureReady { window, snapshot, settled: false });
                 })
                 .ok();
         }
@@ -803,17 +806,17 @@ impl WorkspaceAnimation {
     }
 
     /// Takes a mid-flight recapture and swaps it into the tile that is already on screen.
-    fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot) {
+    fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot, settled: bool) {
         self.cache.insert(window, snapshot.clone());
         // Only worth drawing while the animation that asked for it is still running.
         if self.running.is_none() {
             return;
         }
-        if self.claim_reveal(window, &snapshot) {
+        if settled && self.claim_reveal(window, &snapshot) {
             return;
         }
         self.admit_entrance(window, &snapshot);
-        if !self.swappable_mid_flight(window, &snapshot) {
+        if !self.swappable_mid_flight(window, &snapshot, settled) {
             return;
         }
         let remaining = self.remaining_flight();
@@ -827,15 +830,23 @@ impl WorkspaceAnimation {
     /// Only a picture of the tile's DESTINATION size may. The hold and refresh machinery race
     /// several captures per window, and a stale one — requested before a resize, landing after —
     /// yanked the drawn tile back to the old image mid-flight: the grow teleported, went blank
-    /// below the old content, and flickered to the real window at the handover. The cache still
-    /// takes every capture; the drawn tile only takes the one that ends where the window will.
-    fn swappable_mid_flight(&self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
+    /// below the old content, and flickered to the real window at the handover.
+    ///
+    /// A RESIZING tile additionally requires a settled picture: an unsettled capture can be the
+    /// resized-but-unpainted surface, final-sized and stable-looking, and it won the race against
+    /// the chase's settled capture about half the time. Non-resizing tiles keep taking ordinary
+    /// captures — that is the focus-change swap. The cache takes every capture either way.
+    fn swappable_mid_flight(&self, window: WindowId, snapshot: &WindowSnapshot, settled: bool) -> bool {
         let Some(running) = self.running.as_ref() else { return false };
-        running
-            .tiles
-            .iter()
-            .find(|tile| tile.window == window)
-            .is_some_and(|tile| snapshot.fits(tile.to.size))
+        let Some(tile) = running.tiles.iter().find(|tile| tile.window == window) else {
+            return false;
+        };
+        if !snapshot.fits(tile.to.size) {
+            return false;
+        }
+        let resizing =
+            crate::ui::window_snapshot::is_a_resize(tile.from.size, tile.to.size);
+        !resizing || settled
     }
 
     /// How much of the running flight is left, in wall-clock time.
@@ -905,7 +916,7 @@ impl WorkspaceAnimation {
                         // fresh hairline belongs to this capture.
                         snapshot.dressing =
                             crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale);
-                        _ = tx.send(Event::PictureReady { window, snapshot });
+                        _ = tx.send(Event::PictureReady { window, snapshot, settled: true });
                         return;
                     }
                     debug!(
