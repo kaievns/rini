@@ -6,6 +6,7 @@
 //! Constraints and costs of both are measured in `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 use std::ffi::c_int;
 
 use objc2_core_foundation::{CFArray, CFRetained, CGSize};
@@ -181,6 +182,22 @@ pub struct WindowSnapshot {
     /// not been harvested yet. Carried across cache refreshes by [`SnapshotCache::insert`]: see
     /// [`crate::ui::edge_dressing`].
     pub dressing: Option<crate::ui::edge_dressing::EdgeDressing>,
+    /// When the pixels were captured. Staleness is a reason to re-warm: a fitting picture used to
+    /// be kept forever, so an off-strip window's tile showed week-old content on every animation
+    /// and snapped to the live window at each handover.
+    pub taken: std::time::Instant,
+}
+
+/// How old a fitting picture may grow before a warm re-captures it anyway.
+///
+/// One flight of staleness at most under continuous use, without re-capturing everything on
+/// every keystroke: the service already dedups in-flight requests, so the steady-state cost is
+/// one capture per animated window per interval.
+const SNAPSHOT_STALE_AFTER: Duration = Duration::from_secs(2);
+
+/// Whether a cached picture's age alone justifies a fresh capture.
+pub fn picture_is_stale(age: Duration) -> bool {
+    age > SNAPSHOT_STALE_AFTER
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -235,6 +252,7 @@ pub fn capture_via_skylight(
         },
         source: SnapshotSource::SkyLight,
         dressing: None,
+        taken: std::time::Instant::now(),
     })
 }
 
@@ -267,6 +285,7 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSn
         },
         source: SnapshotSource::SkyLight,
         dressing: None,
+        taken: std::time::Instant::now(),
     })
 }
 
@@ -344,6 +363,7 @@ pub fn capture_composite_via_skylight(
         coverage: Coverage { covered: (px_w / scale, px_h / scale), window: covers },
         source: SnapshotSource::SkyLight,
         dressing: None,
+        taken: std::time::Instant::now(),
     })
 }
 
@@ -484,6 +504,14 @@ mod tests {
     fn the_tolerance_scales_with_the_window() {
         assert!(!is_a_resize(CGSize::new(400.0, 400.0), CGSize::new(401.0, 400.0)));
         assert!(is_a_resize(CGSize::new(40.0, 400.0), CGSize::new(41.0, 400.0)));
+    }
+
+    /// Fresh pictures are left alone — re-capturing every animated window per keystroke is churn —
+    /// while anything older than the threshold re-warms even though it still fits.
+    #[test]
+    fn a_picture_goes_stale_by_age_alone() {
+        assert!(!picture_is_stale(Duration::from_millis(500)));
+        assert!(picture_is_stale(Duration::from_secs(3)));
     }
 
     /// A grow needs pixels the picture does not have; a shrink or a match never does. This is

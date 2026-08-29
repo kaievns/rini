@@ -636,11 +636,18 @@ impl WorkspaceAnimation {
             // resized from 859pt to 1147pt keeps a perfectly usable 859pt picture, and this used to skip
             // it forever, so it was dropped from every animation as the wrong shape and visibly vanished
             // for the length of each one. `target.size` is the size the layout just gave it.
+            //
+            // Nor is fitting enough: a fitting picture was kept FOREVER, so an off-strip window's
+            // tile showed old content on every animation and snapped to the live window at each
+            // handover. Age alone re-warms now.
             .filter(|target| {
+                let cached = self.cache.usable(target.window);
                 crate::ui::window_snapshot::needs_capture(
-                    self.cache.usable(target.window).map(|snapshot| snapshot.coverage),
+                    cached.map(|snapshot| snapshot.coverage),
                     (target.size.width, target.size.height),
-                )
+                ) || cached.is_some_and(|snapshot| {
+                    crate::ui::window_snapshot::picture_is_stale(snapshot.taken.elapsed())
+                })
             })
             .collect();
         if wanted.is_empty() {

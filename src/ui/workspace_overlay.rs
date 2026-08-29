@@ -786,8 +786,12 @@ impl WorkspaceOverlay {
         let Some(entry) = self.tile_layers.get(&window) else { return };
         let seconds = duration.as_secs_f64();
 
+        // The shadow's movement uses the SAME key prefix as the plain-move branch. Keys are
+        // per-layer, so picture and shadow do not collide — but a plain-move leg retargeted into
+        // a resize left its old position animation (under the plain key) fighting the resize's
+        // one, and the shadow visibly tore away from its tile.
         animate_layer_frame(&entry.picture, from, to, seconds, "rini.tile");
-        animate_layer_frame(&entry.shadow, from, to, seconds, "rini.tile.shadow");
+        animate_layer_frame(&entry.shadow, from, to, seconds, "rini.tile");
 
         // The shadow's shape and the hole in its ring both follow the window silhouette.
         let origin = CGPoint::new(0.0, 0.0);
@@ -1031,8 +1035,14 @@ fn place_tile(tile: &Tile, frame: CGRect, z: f64) {
 }
 
 /// The window's own rounded-rect silhouette, which is both the shadow's shape and the mask's hole.
+///
+/// Never degenerate: dimensions are floored and the radius is kept strictly positive, because a
+/// zero radius makes Core Graphics emit a PLAIN rect — a different element structure — and a path
+/// animation between mismatched structures does not interpolate, it cuts. An entrance growing
+/// from zero width hit exactly that: its shadow popped instead of riding.
 fn silhouette_path(size: CGSize, at: CGPoint) -> CFRetained<objc2_core_graphics::CGPath> {
-    let radius = tile_corner_radius(size);
+    let size = CGSize::new(size.width.max(0.5), size.height.max(0.5));
+    let radius = tile_corner_radius(size).max(0.01);
     // SAFETY: a null transform means the path is taken as given.
     unsafe {
         objc2_core_graphics::CGPath::with_rounded_rect(
@@ -1049,6 +1059,10 @@ fn silhouette_path(size: CGSize, at: CGPoint) -> CFRetained<objc2_core_graphics:
 /// Built identically for every size — one rect, one rounded rect — so two ring paths always have
 /// matching elements and Core Animation can interpolate between them during a resize.
 fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
+    // Floored for the same reason as `silhouette_path`: the hole's element structure must be
+    // identical for every size or the mask's path animation cuts instead of interpolating.
+    let size = CGSize::new(size.width.max(0.5), size.height.max(0.5));
+    let radius = tile_corner_radius(size).max(0.01);
     let mask_frame = shadow_mask_frame(size);
     let ring = objc2_core_graphics::CGMutablePath::new();
     unsafe {
@@ -1061,8 +1075,8 @@ fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
             Some(&ring),
             std::ptr::null(),
             CGRect::new(CGPoint::new(SHADOW_REACH, SHADOW_REACH), size),
-            tile_corner_radius(size),
-            tile_corner_radius(size),
+            radius,
+            radius,
         );
     }
     ring

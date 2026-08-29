@@ -422,6 +422,7 @@ impl SnapshotService {
                         },
                         source: SnapshotSource::ScreenCaptureKit,
                         dressing: None,
+                        taken: std::time::Instant::now(),
                     });
                     true
                 }
@@ -530,6 +531,7 @@ impl SnapshotService {
                         },
                         source: SnapshotSource::ScreenCaptureKit,
                         dressing,
+                        taken: std::time::Instant::now(),
                     },
                 );
                 true
@@ -638,6 +640,7 @@ mod tests {
                     coverage: Coverage { covered: (859.0, 1081.0), window: (859.0, 1081.0) },
                     source: SnapshotSource::ScreenCaptureKit,
                     dressing: None,
+                    taken: std::time::Instant::now(),
                 },
             );
         }
