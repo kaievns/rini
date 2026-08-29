@@ -611,6 +611,9 @@ impl WorkspaceAnimation {
                     continue;
                 }
                 self.admit_entrance(window, &snapshot);
+                if !self.swappable_mid_flight(window, &snapshot) {
+                    continue;
+                }
                 let remaining = self.remaining_flight();
                 if let Some(overlay) = self.overlay.as_mut() {
                     overlay.set_tile_picture(window, &snapshot, remaining);
@@ -810,10 +813,29 @@ impl WorkspaceAnimation {
             return;
         }
         self.admit_entrance(window, &snapshot);
+        if !self.swappable_mid_flight(window, &snapshot) {
+            return;
+        }
         let remaining = self.remaining_flight();
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_tile_picture(window, &snapshot, remaining);
         }
+    }
+
+    /// Whether a landed picture may replace what a tile in flight is drawing.
+    ///
+    /// Only a picture of the tile's DESTINATION size may. The hold and refresh machinery race
+    /// several captures per window, and a stale one — requested before a resize, landing after —
+    /// yanked the drawn tile back to the old image mid-flight: the grow teleported, went blank
+    /// below the old content, and flickered to the real window at the handover. The cache still
+    /// takes every capture; the drawn tile only takes the one that ends where the window will.
+    fn swappable_mid_flight(&self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
+        let Some(running) = self.running.as_ref() else { return false };
+        running
+            .tiles
+            .iter()
+            .find(|tile| tile.window == window)
+            .is_some_and(|tile| snapshot.fits(tile.to.size))
     }
 
     /// How much of the running flight is left, in wall-clock time.
