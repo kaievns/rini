@@ -810,6 +810,11 @@ impl WorkspaceAnimation {
 
     /// Takes a mid-flight recapture and swaps it into the tile that is already on screen.
     fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot, settled: bool) {
+        // Compared before the cache absorbs the newcomer: a swap whose picture renders the same
+        // as the one on screen is a cut for nothing. Swaps are hard cuts — a crossfade veil was
+        // tried and rejected, since stacking two copies of a translucent window pulses its net
+        // opacity — so the cheapest smoothness is not cutting at all.
+        let renders_the_same = self.renders_like_cached(window, &snapshot);
         self.cache.insert(window, snapshot.clone());
         // Only worth drawing while the animation that asked for it is still running.
         if self.running.is_none() {
@@ -819,12 +824,34 @@ impl WorkspaceAnimation {
             return;
         }
         self.admit_entrance(window, &snapshot);
-        if !self.swappable_mid_flight(window, &snapshot, settled) {
+        if renders_the_same || !self.swappable_mid_flight(window, &snapshot, settled) {
             return;
         }
         let remaining = self.remaining_flight();
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_tile_picture(window, &snapshot, remaining);
+        }
+    }
+
+    /// Whether an incoming picture renders the same as the cached one, within thumbprint
+    /// tolerance. Only bitmap pairs can be judged; anything else counts as different.
+    fn renders_like_cached(&self, window: WindowId, incoming: &WindowSnapshot) -> bool {
+        use crate::ui::window_snapshot::SnapshotImage;
+        let Some(cached) = self.cache.get(window) else { return false };
+        if !cached.fits(CGSize::new(incoming.coverage.covered.0, incoming.coverage.covered.1)) {
+            return false;
+        }
+        let (SnapshotImage::Bitmap(old), SnapshotImage::Bitmap(new)) =
+            (&cached.image, &incoming.image)
+        else {
+            return false;
+        };
+        match (
+            crate::ui::edge_dressing::thumbprint(old),
+            crate::ui::edge_dressing::thumbprint(new),
+        ) {
+            (Some(a), Some(b)) => crate::ui::edge_dressing::renderings_match(&a, &b),
+            _ => false,
         }
     }
 
