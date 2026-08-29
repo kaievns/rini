@@ -859,6 +859,11 @@ impl WorkspaceAnimation {
             std::thread::Builder::new()
                 .name("reveal-chase".to_string())
                 .spawn(move || {
+                    // The frame resizes instantly; the app's PIXELS lag behind it. A capture taken
+                    // between the two is a half-painted surface — delivering one flew the whole
+                    // reveal with garbage — so a capture only counts once two consecutive ones
+                    // show the same rendering.
+                    let mut last_print: Option<Vec<u8>> = None;
                     for _ in 0..REVEAL_CHASE_ATTEMPTS {
                         std::thread::sleep(REVEAL_CHASE_INTERVAL);
                         let Some(info) = crate::sys::window_server::get_window(server_id) else {
@@ -868,6 +873,7 @@ impl WorkspaceAnimation {
                             (info.frame.size.width, info.frame.size.height),
                             (size.width, size.height),
                         ) {
+                            last_print = None;
                             continue;
                         }
                         let Some(mut snapshot) =
@@ -876,10 +882,27 @@ impl WorkspaceAnimation {
                             continue;
                         };
                         if !snapshot.is_usable() || !snapshot.fits(size) {
+                            last_print = None;
                             continue;
                         }
-                        // The window is at its new size and about to be revealed: the fresh
-                        // hairline belongs to this capture.
+                        let print = match &snapshot.image {
+                            crate::ui::window_snapshot::SnapshotImage::Bitmap(image) => {
+                                crate::ui::edge_dressing::thumbprint(image)
+                            }
+                            _ => None,
+                        };
+                        let Some(print) = print else { continue };
+                        let settled = last_print
+                            .as_ref()
+                            .is_some_and(|previous| {
+                                crate::ui::edge_dressing::renderings_match(previous, &print)
+                            });
+                        last_print = Some(print);
+                        if !settled {
+                            continue;
+                        }
+                        // The window is at its new size, painted, and about to be revealed: the
+                        // fresh hairline belongs to this capture.
                         snapshot.dressing =
                             crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale);
                         _ = tx.send(Event::PictureReady { window, snapshot });

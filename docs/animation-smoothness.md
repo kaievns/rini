@@ -196,8 +196,13 @@ changes is how the picture maps onto it (`content_mode` in
   is already covering the windows, so the app rerenders at its new size behind
   a still frame — while a chase thread polls the real frame every 25ms —
   a cheap window-server read; SkyLight-capture polling measured 170-300ms per
-  attempt under load and lost the race — then takes one 16-24ms framed capture
-  once the size is there. When it lands (`claim_reveal`), the tile's grid
+  attempt under load and lost the race — then takes 16-24ms framed captures
+  once the size is there — TWO of them, because the frame resizes instantly
+  while the app's pixels lag behind, and a capture taken between the two is a
+  half-painted surface: delivering one flew the whole reveal with garbage.
+  A capture only counts once two consecutive thumbprints show the same
+  rendering (`renderings_match`, 3% sample tolerance so cursors and clocks
+  do not stall it). When it lands (`claim_reveal`), the tile's grid
   re-maps to it and the flight begins: the moving edge reveals genuine
   final-size content, 1:1. Costs roughly the app's own rerender time of hold
   before motion (~150-250ms), on grows only; a shrink crops the picture it

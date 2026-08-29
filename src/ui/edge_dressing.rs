@@ -109,6 +109,69 @@ pub fn dressing_is_real(mean_alpha: f64) -> bool {
     mean_alpha >= MIN_MEAN_ALPHA
 }
 
+/// The side of the square a [`thumbprint`] samples an image down to.
+const THUMBPRINT_SIDE: usize = 32;
+
+/// How different two consecutive thumbprints may be and still count as the same rendering.
+///
+/// Zero would never settle: a terminal's cursor blinks, a clock ticks. Three percent of samples
+/// forgives those while a half-painted surface — the reveal chase's actual enemy, where whole
+/// regions fill in between captures — differs across a large share of the image.
+const STABLE_MAX_DIFFERING: f64 = 0.03;
+const STABLE_CHANNEL_TOLERANCE: u8 = 8;
+
+/// A small fingerprint of an image's content: the image drawn down to a 32x32 RGBA square.
+///
+/// Exists for the reveal chase, which must not deliver a capture of a window whose app has not
+/// finished PAINTING at its new size — the frame resizes instantly, the pixels lag — so it
+/// compares consecutive fingerprints until the rendering stops changing.
+pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
+    let side = THUMBPRINT_SIDE;
+    let space = CGColorSpace::new_device_rgb()?;
+    // SAFETY: a fresh context; CG owns and frees the backing store with it.
+    let ctx = unsafe {
+        CGBitmapContextCreate(
+            std::ptr::null_mut(),
+            side,
+            side,
+            8,
+            0,
+            Some(&space),
+            CGImageAlphaInfo::PremultipliedLast.0,
+        )
+    };
+    let ctx = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(ctx)?) };
+    CGContext::draw_image(
+        Some(&ctx),
+        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(side as f64, side as f64)),
+        Some(image),
+    );
+    let data = CGBitmapContextGetData(Some(&ctx)) as *const u8;
+    if data.is_null() {
+        return None;
+    }
+    let stride = CGBitmapContextGetBytesPerRow(Some(&ctx));
+    let mut out = Vec::with_capacity(side * side * 4);
+    for y in 0..side {
+        // SAFETY: rows within the context's own buffer.
+        out.extend_from_slice(unsafe { std::slice::from_raw_parts(data.add(y * stride), side * 4) });
+    }
+    Some(out)
+}
+
+/// Whether two consecutive thumbprints show the same rendering.
+pub fn renderings_match(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() || a.is_empty() {
+        return false;
+    }
+    let differing = a
+        .iter()
+        .zip(b)
+        .filter(|(x, y)| x.abs_diff(**y) > STABLE_CHANNEL_TOLERANCE)
+        .count();
+    (differing as f64) <= (a.len() as f64) * STABLE_MAX_DIFFERING
+}
+
 /// The harvested hairline: small owned bitmaps, in [`DressingLayout`] order.
 ///
 /// Owned copies rather than crops of the framed capture, because a crop keeps the whole
@@ -382,6 +445,30 @@ mod tests {
         // The most translucent real edge measured: alpha 244 of 255.
         assert!(dressing_is_real(244.0 / 255.0));
         assert!(dressing_is_real(1.0));
+    }
+
+    /// Blinking cursors and ticking clocks must not keep the reveal chase waiting forever; a
+    /// half-painted surface filling in — whole regions changing between captures — must.
+    #[test]
+    fn a_rendering_matches_itself_through_cursor_noise_but_not_through_repaints() {
+        let a = vec![100u8; 4096];
+        assert!(renderings_match(&a, &a), "identical");
+        let mut cursor = a.clone();
+        for value in cursor.iter_mut().take(80) {
+            *value = 200; // ~2% of samples: a cursor cell, a clock digit
+        }
+        assert!(renderings_match(&a, &cursor), "cursor-sized noise still matches");
+        let mut repaint = a.clone();
+        for value in repaint.iter_mut().take(1024) {
+            *value = 200; // a quarter of the image filled in
+        }
+        assert!(!renderings_match(&a, &repaint), "a repaint does not");
+    }
+
+    #[test]
+    fn mismatched_or_empty_thumbprints_never_match() {
+        assert!(!renderings_match(&[1, 2, 3], &[1, 2]));
+        assert!(!renderings_match(&[], &[]));
     }
 
     #[test]
