@@ -152,17 +152,20 @@ changes is how the picture maps onto it (`content_mode` in
 - **A movement with a matching picture stretches.** Picture and frame are the
   same shape, so `kCAGravityResize` is exact. Strip movements always stretch,
   since their tiles never change size mid-flight.
-- **Everything else crops.** A 2x2 grid of sublayers (`crop_pieces`), every
-  piece mapped 1:1 via `contentsRect`: a body pinned to the leading corner,
-  and trailing bands showing the picture's own trailing edge pinned to the
-  frame's trailing edges. Content never stretches — the moving edge swallows
-  or reveals it, which is how a real resize reads — and the seam sits one
-  band in from the trailing edge, so all four rounded corners and the
-  harvested hairline ride through intact. A first cut used `contentsCenter`
-  (nine-part stretching); it kept the corners but read as the window
-  stretching, which it is. Wrong-shaped cached pictures use the same mapping
-  instead of being dropped — rapid preset cycling used to drop the resized
-  window's tile because its picture lagged one press behind.
+- **Everything else crops, anchored the way each axis really resizes.** A 2x2
+  grid of sublayers (`crop_pieces`), every piece mapped 1:1 via
+  `contentsRect`. Horizontally, content anchors LEFT and the right band —
+  carrying the window's right border and corners — rides the moving right
+  edge. Vertically, the TITLE BAR band stays pinned at the top and content
+  anchors to the BOTTOM (a terminal's prompt rides the bottom edge), so the
+  seam sits just below the title bar; cutting at the bottom instead read as
+  the window sliding into a slot. Content never stretches — the moving edges
+  swallow or reveal it — and all four rounded corners plus the harvested
+  hairline ride through intact. A first cut used `contentsCenter` (nine-part
+  stretching); it kept the corners but read as the window stretching, which
+  it is. Wrong-shaped cached pictures use the same mapping instead of being
+  dropped — rapid preset cycling used to drop the resized window's tile
+  because its picture lagged one press behind.
 - **The animation is Core Animation end to end.** Piece frames and
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids

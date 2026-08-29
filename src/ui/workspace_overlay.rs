@@ -132,42 +132,51 @@ pub(crate) struct CropPiece {
     pub contents: CGRect,
 }
 
-/// The 2x2 crop grid for a picture drawn into `frame`: body, trailing vertical band, trailing
-/// horizontal band, and trailing corner, split one `crop_band` in from the trailing edges.
+/// The 2x2 crop grid for a picture drawn into `frame`, split one `crop_band` in from the RIGHT
+/// edge and one down from the TOP.
 ///
-/// The body is pinned to the leading (top-left) corner and cropped or extended at the seam; the
-/// trailing pieces show the picture's own trailing band, pinned to the frame's trailing edges. The
-/// window's leading corners live in the body at 1:1, its trailing corners in the bands, so all
-/// four rounded corners survive any frame the animation passes through.
+/// The anchoring follows how each axis of a real resize reads:
+/// - Horizontally, content anchors LEFT and the right edge swallows or reveals it — the right
+///   band, carrying the window's right border and corners, rides the moving edge intact.
+/// - Vertically, the TITLE BAR stays put and content anchors to the BOTTOM — the prompt of a
+///   terminal rides the bottom edge — so the seam sits just below the title-bar band, and the
+///   bottom-anchored body slides into or out of it.
+///
+/// The window's top corners live in the top band at 1:1, its bottom corners in the bottom-anchored
+/// body, so all four rounded corners survive any frame the animation passes through.
 ///
 /// Piece frames and contents are LINEAR in `frame` while the band is constant, which is what lets
-/// a resize ride plain Core Animation interpolation between the two endpoint grids. The band only
-/// varies below a 89pt side (see `crop_band`), where the linear approximation drifts the seam by a
-/// few points mid-flight — inside the window's own content, invisible against the motion.
-/// Every piece maps 1:1 while the frame fits inside the picture. Growing PAST the picture, the
-/// leading region stretches the picture's own content instead of reaching beyond its edge:
-/// `contentsRect` past the edge extends the outermost pixels, which for a translucent window are
-/// near-transparent, so a grow painted a hole to the backdrop instead of window. The stretch is
-/// the honest fallback for the frames before the mid-flight recapture delivers real pixels at the
-/// new size, at which point the grid is re-keyed to them (`set_tile_picture`).
+/// a resize ride plain Core Animation interpolation between the endpoint grids. Every piece maps
+/// 1:1 while the frame fits inside the picture. Growing PAST the picture, the seam region
+/// stretches the picture's own content instead of reaching beyond its edge: `contentsRect` past
+/// the edge extends the outermost pixels, near-transparent on a translucent window, so a grow
+/// painted a hole to the backdrop. The stretch is the fallback for the frames before the reveal
+/// capture delivers real pixels at the new size (see `docs/animation-smoothness.md`).
 pub(crate) fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     let pw = picture.width.max(1.0);
     let ph = picture.height.max(1.0);
     let band = crop_band(frame).min(pw).min(ph);
     let (bodyw, bodyh) = ((frame.width - band).max(0.0), (frame.height - band).max(0.0));
-    // What the leading region may show of the picture: everything up to the trailing band, which
-    // belongs to the trailing pieces. Capping here is what keeps the seam continuous — the body
-    // must never duplicate the band's content.
-    let (leadw, leadh) = (bodyw.min(pw - band), bodyh.min(ph - band));
+    // What the anchored regions may show of the picture: everything up to the seam, which
+    // belongs to the bands. Capping is what keeps the seam continuous — the body must never
+    // duplicate a band's content.
+    let leadw = bodyw.min(pw - band);
+    let tailh = bodyh.min(ph - band);
     let piece = |x: f64, y: f64, w: f64, h: f64, cx: f64, cy: f64, cw: f64, ch: f64| CropPiece {
         frame: CGRect::new(CGPoint::new(x, y), CGSize::new(w, h)),
         contents: CGRect::new(CGPoint::new(cx / pw, cy / ph), CGSize::new(cw / pw, ch / ph)),
     };
     [
-        piece(0.0, 0.0, bodyw, bodyh, 0.0, 0.0, leadw, leadh),
-        piece(bodyw, 0.0, band, bodyh, pw - band, 0.0, band, leadh),
-        piece(0.0, bodyh, bodyw, band, 0.0, ph - band, leadw, band),
-        piece(bodyw, bodyh, band, band, pw - band, ph - band, band, band),
+        // Title-bar band: the picture's top edge, pinned to the frame's top.
+        piece(0.0, 0.0, bodyw, band, 0.0, 0.0, leadw, band),
+        // Top-right corner: pinned top and right.
+        piece(bodyw, 0.0, band, band, pw - band, 0.0, band, band),
+        // Body: left-anchored horizontally, BOTTOM-anchored vertically — the picture's bottom
+        // rows ride the moving bottom edge, and the seam below the title bar absorbs the change.
+        piece(0.0, band, bodyw, bodyh, 0.0, ph - tailh, leadw, tailh),
+        // Right band: the picture's right edge, riding the moving right edge, bottom-anchored to
+        // stay row-continuous with the body.
+        piece(bodyw, band, band, bodyh, pw - band, ph - tailh, band, tailh),
     ]
 }
 
@@ -1330,16 +1339,37 @@ mod tests {
         assert!((area - frame.width * frame.height).abs() < 1e-6);
     }
 
-    /// The trailing pieces show the picture's own trailing band pinned to the frame's trailing
-    /// edges, so the window's right and bottom rounded corners ride the moving edge intact.
+    /// The right band shows the picture's own right edge pinned to the frame's moving right edge,
+    /// so the window's right border and corners ride it intact.
     #[test]
-    fn crop_trailing_band_comes_from_the_pictures_trailing_edge() {
+    fn crop_right_band_comes_from_the_pictures_right_edge() {
         let picture = CGSize::new(859.0, 1081.0);
         let pieces = crop_pieces(picture, CGSize::new(572.0, 1081.0));
-        let band = &pieces[1];
+        let band = &pieces[3];
         assert!((band.contents.origin.x * picture.width - (859.0 - 40.0)).abs() < 1e-9);
         assert_eq!(band.frame.origin.x, 572.0 - 40.0);
         assert_eq!(band.frame.size.width, 40.0);
+    }
+
+    /// A vertical resize anchors like the real thing: the title bar stays put at the top, the
+    /// bottom content rides the moving bottom edge, and the seam sits just below the title-bar
+    /// band. Cutting at the bottom instead read as the window sliding into a slot.
+    #[test]
+    fn a_vertical_resize_pins_the_title_bar_and_anchors_content_to_the_bottom() {
+        let picture = CGSize::new(859.0, 1081.0);
+        let frame = CGSize::new(859.0, 540.0);
+        let pieces = crop_pieces(picture, frame);
+        let title = &pieces[0];
+        assert_eq!(title.frame.origin.y, 0.0, "title band pinned to the top");
+        assert!((title.contents.origin.y).abs() < 1e-9, "showing the picture's top");
+        assert_eq!(title.frame.size.height, 40.0);
+        let body = &pieces[2];
+        assert_eq!(body.frame.origin.y, 40.0, "body starts at the seam below the title");
+        // Bottom-anchored: the contents reach the picture's bottom edge exactly.
+        let content_bottom =
+            (body.contents.origin.y + body.contents.size.height) * picture.height;
+        assert!((content_bottom - 1081.0).abs() < 1e-9, "contents reach the picture's bottom");
+        assert_eq!(body.frame.size.height, 540.0 - 40.0);
     }
 
     /// The band shrinks with the frame and vanishes at zero, so an entrance growing from nothing
