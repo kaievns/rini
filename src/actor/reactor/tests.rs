@@ -6481,6 +6481,47 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     );
 }
 
+/// A closing window animates out: the reactor hands its last frame to the overlay engine before
+/// dropping its state, and only then tells the cache to forget it — the exit tile clones the
+/// cached snapshot, so the forget must arrive second.
+#[test]
+fn a_destroyed_window_exits_before_it_is_forgotten() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = true;
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    let wid = WindowId::new(1, 1);
+    let last_frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+    reactor.handle_event(Event::WindowDestroyed(wid));
+
+    let mut exit: Option<CGRect> = None;
+    let mut forgotten_after_exit = false;
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        match event {
+            crate::actor::workspace_animation::Event::AnimateExit { window, frame, .. } => {
+                assert_eq!(window, wid);
+                exit = Some(frame);
+            }
+            crate::actor::workspace_animation::Event::ForgetWindow(window) if window == wid => {
+                forgotten_after_exit = exit.is_some();
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(exit, Some(last_frame), "the exit carries the window's last known frame");
+    assert!(forgotten_after_exit, "the cache must only be told to forget after the exit");
+    assert!(reactor.state.windows.window(wid).is_none(), "the window state is still removed");
+}
+
 /// A raise walks the whole workspace and macOS reports a focus change for every window it touches. Taking
 /// those at face value moved the layout's selection down the raise list, and the strip scrolled to each in
 /// turn: eight scroll targets from one keypress, ending where it started.

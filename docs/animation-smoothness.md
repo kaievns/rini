@@ -187,6 +187,26 @@ changes is how the picture maps onto it (`content_mode` in
   movement reads. Centred zoom was tried and rejected: nothing else on the
   strip inflates. If the capture misses the flight, the window appears when
   the overlay lifts, which is the old behaviour.
+- **Entrances are chased, not just queued.** The queued SkyLight capture
+  measured 170-300ms under load — most of a flight. A flight with entrances
+  applies the real frames immediately (the overlay is already covering
+  everything, the same reasoning as the reveal hold) and runs
+  `chase_reveal_pictures` on each entering window: the entrance is admitted
+  from the chase's settled 16-24ms framed capture, with the SkyLight capture
+  as the fallback. Entrances joining a running flight get the same chase.
+- **Closed windows resize out.** The reverse of an entrance: the tile shrinks
+  to zero width at its own left edge (`exit_to`, the exact mirror of
+  `entrance_from`). The real window is gone from the window server before
+  rini hears about it, so the exit draws the cached snapshot — the reactor
+  sends `AnimateExit` with the last known frame BEFORE dropping the window's
+  state, then `ForgetWindow`, in that order: the tile clones the picture
+  before the cache drops it. The exit carries no final frame (there is no
+  window left to place) and merges through `begin_group` with the layout pass
+  that reflows the survivors, so the ghost shrinks while its neighbours slide
+  in to take the space, as one flight. Unmanaged and minimized windows are
+  filtered in the reactor; parked and off-screen ones by the actor's ordinary
+  visibility gate. A closed window with no usable cached picture just
+  disappears, which is the old behaviour.
 - **A grow holds, then reveals.** Every fill for the not-yet-rendered region
   of a grow was tried and rejected by eye: `contentsRect` past the picture's
   edge extends its outermost pixels (a hole to the backdrop on a translucent

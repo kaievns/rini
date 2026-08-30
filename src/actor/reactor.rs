@@ -1306,7 +1306,14 @@ impl Reactor {
                 if self.refreshes_blocked() {
                     return Ok(EventOutcome::default());
                 }
-
+                // Before the state goes: the exit animation needs the last known frame, and the
+                // overlay's cached snapshot is the only picture of this window that will ever
+                // exist. Exit first, then forget, so the actor clones the picture before the
+                // cache drops it.
+                self.animate_window_exit(wid);
+                if let Some(tx) = &self.communication_manager.workspace_animation_tx {
+                    _ = tx.send(crate::actor::workspace_animation::Event::ForgetWindow(wid));
+                }
                 let mut outcome = window_workflow::handle_window_destroyed(
                     &mut self.state,
                     &self.transaction_manager,
@@ -4353,6 +4360,35 @@ impl Reactor {
     /// was over there: the external showed the built-in's windows sliding while the built-in's own windows
     /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
     /// have no particular display in mind.
+    /// Hands a closing window to the overlay engine so it shrinks out of the layout, the reverse
+    /// of an entrance. Must run while the window's state still exists: the last known frame is
+    /// read from it. Parked and off-screen windows are filtered by the actor's own visibility
+    /// gate; this only filters what the actor cannot see — unmanaged and minimized windows.
+    pub(crate) fn animate_window_exit(&self, wid: WindowId) {
+        if !self.config.settings.overlay_animations {
+            return;
+        }
+        let Some(window) = self.state.windows.window(wid) else {
+            return;
+        };
+        if !window.is_effectively_manageable() || window.info.is_minimized {
+            return;
+        }
+        let frame = window.frame_monotonic;
+        self.publish_animation_display_for(None);
+        let Some(tx) = &self.communication_manager.workspace_animation_tx else {
+            return;
+        };
+        let duration = std::time::Duration::from_secs_f64(
+            self.config.settings.animation_duration.max(0.0),
+        );
+        _ = tx.send(crate::actor::workspace_animation::Event::AnimateExit {
+            window: wid,
+            frame,
+            duration,
+        });
+    }
+
     pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) {
         let Some(tx) = &self.communication_manager.workspace_animation_tx else {
             return;

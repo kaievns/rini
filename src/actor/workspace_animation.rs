@@ -77,6 +77,10 @@ pub enum Event {
     RefreshSnapshot { window: WindowId, server_id: WindowServerId, size: CGSize },
     /// Drop snapshots for windows that no longer exist, so the cache cannot grow without bound.
     ForgetWindow(WindowId),
+    /// Animate a window that just closed shrinking out of the layout. The real window is already
+    /// gone from the window server, so the tile draws the cached snapshot — the reverse of an
+    /// entrance. Sent before `ForgetWindow`, which is what makes the cached picture available.
+    AnimateExit { window: WindowId, frame: CGRect, duration: Duration },
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
@@ -315,6 +319,12 @@ fn entrance_from(to: CGRect) -> CGRect {
     CGRect::new(to.origin, CGSize::new(0.0, to.size.height))
 }
 
+/// Where a closing window shrinks out to: zero width at its own left edge, full height.
+/// The exact mirror of [`entrance_from`], so closing reads as opening played backwards.
+fn exit_to(from: CGRect) -> CGRect {
+    CGRect::new(from.origin, CGSize::new(0.0, from.size.height))
+}
+
 /// The earlier apply point for an animation that resizes a window. A resize behind the overlay
 /// costs three synchronous round trips into the owning app (see `flush_frames` in `actor/app.rs`),
 /// so it needs more runway than a move to land before the overlay lifts.
@@ -526,6 +536,9 @@ impl WorkspaceAnimation {
                 self.refresh_snapshot(window, server_id, size)
             }
             Event::ForgetWindow(window) => self.cache.forget(window),
+            Event::AnimateExit { window, frame, duration } => {
+                self.animate_exit(window, frame, duration)
+            }
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
             Event::StartMoving => self.start_moving(),
@@ -1149,6 +1162,54 @@ impl WorkspaceAnimation {
         (tiles, targets)
     }
 
+    /// Animates a closed window shrinking out: a resize to zero width at its own left edge,
+    /// drawn from the cached snapshot because the real window no longer exists.
+    ///
+    /// Runs through `begin_group` like every other movement, so the exit merges with the layout
+    /// pass that reflows the survivors — the ghost shrinks while its neighbours slide in to take
+    /// the space, one flight. No final frame is carried: there is no real window to place.
+    fn animate_exit(&mut self, window: WindowId, frame: CGRect, duration: Duration) {
+        let Some((display_frame, _)) = self.display else {
+            return;
+        };
+        let to = exit_to(frame);
+        // The same visibility gate every tile passes: a parked window (inactive workspace, or
+        // scrolled off the strip) closes with nothing to show.
+        if !self.is_worth_animating(frame, to, display_frame) {
+            return;
+        }
+        let Some(snapshot) = self.cache.usable(window).cloned() else {
+            debug!(
+                pid = window.pid,
+                idx = window.idx.get(),
+                "closed window had no usable snapshot; skipping the exit animation"
+            );
+            return;
+        };
+        debug!(pid = window.pid, idx = window.idx.get(), "window exiting");
+        let tile = OverlayTile {
+            window,
+            from: to_overlay_space(frame, display_frame),
+            to: to_overlay_space(to, display_frame),
+            snapshot,
+            // Frontmost and unfocused: the closed window was almost always the focused one, and
+            // focus has already moved on to whichever neighbour inherits it.
+            depth: 0,
+            companion: false,
+            focused: false,
+        };
+        self.begin_group(
+            vec![tile],
+            Vec::new(),
+            duration,
+            "exit",
+            GroupStart::Coalesced,
+            apply_frames_at(false),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
     fn start(
         &mut self,
         windows: Vec<AnimationRequest>,
@@ -1351,6 +1412,7 @@ impl WorkspaceAnimation {
             let mut retargets: Vec<OverlayTile> = Vec::new();
             let mut joined: Vec<OverlayTile> = Vec::new();
             let mut hold_frames: Option<Vec<(WindowId, CGRect)>> = None;
+            let mut new_entrances: Vec<(WindowId, CGSize)> = Vec::new();
             {
                 let running = self.running.as_mut().expect("checked above");
                 in_flight = running.started.is_some();
@@ -1359,6 +1421,7 @@ impl WorkspaceAnimation {
                 running.apply_at = running.apply_at.min(apply_at);
                 for entrance in entrances {
                     if !running.entrances.iter().any(|e| e.window == entrance.window) {
+                        new_entrances.push((entrance.window, entrance.to.size));
                         running.entrances.push(entrance);
                     }
                 }
@@ -1452,6 +1515,11 @@ impl WorkspaceAnimation {
                 self.request_frames(frames);
                 self.chase_reveal_pictures(&awaiting);
             }
+            // Newly reserved entrances get the same fast chase a fresh flight gives them: the
+            // queued SkyLight capture is the fallback, not the plan.
+            if !new_entrances.is_empty() {
+                self.chase_reveal_pictures(&new_entrances);
+            }
             return;
         }
 
@@ -1499,16 +1567,27 @@ impl WorkspaceAnimation {
 
         // A holding grow applies the real frames NOW: the overlay is already covering the
         // windows, so the app can rerender at its new size while the tiles stand still — the
-        // rerender is exactly what the hold is waiting for.
+        // rerender is exactly what the hold is waiting for. A flight with entrances does the
+        // same, and for the same reason: the entering window can only be captured once its real
+        // frame is at the destination size, and the chase's framed capture beats the queued
+        // SkyLight one to it by hundreds of milliseconds.
         let holding = !awaiting.is_empty();
-        if holding {
+        let entering = !entrances.is_empty();
+        if holding || entering {
             self.request_frames(final_frames.clone());
+        }
+        if holding {
             self.chase_reveal_pictures(&awaiting);
+        }
+        if entering {
+            let pairs: Vec<(WindowId, CGSize)> =
+                entrances.iter().map(|e| (e.window, e.to.size)).collect();
+            self.chase_reveal_pictures(&pairs);
         }
         self.running = Some(RunningAnimation {
             tiles,
             final_frames,
-            frames_applied: holding,
+            frames_applied: holding || entering,
             started: None,
             duration,
             apply_at,
@@ -2259,6 +2338,18 @@ mod tests {
         assert_eq!(from.origin.y, 32.0);
         assert_eq!(from.size.width, 0.0);
         assert_eq!(from.size.height, 1081.0);
+    }
+
+    /// A closing window is the same movement backwards: it shrinks to zero width at its own left
+    /// edge, so `exit_to` of a frame equals `entrance_from` of that frame.
+    #[test]
+    fn an_exit_is_an_entrance_played_backwards() {
+        let frame = rect(100.0, 32.0, 859.0, 1081.0);
+        let to = exit_to(frame);
+        assert_eq!(to, entrance_from(frame));
+        assert_eq!(to.origin.x, 100.0);
+        assert_eq!(to.size.width, 0.0);
+        assert_eq!(to.size.height, 1081.0);
     }
 
     /// The measured miss: a 1720pt Kiro column at x=1439 on a 1728pt display shows 289pt of real
