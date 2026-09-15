@@ -7,7 +7,7 @@
 //! Design constraints, all measured, in `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
@@ -64,14 +64,23 @@ pub struct OverlayTile {
     /// Where the window ends up, in the overlay's coordinate space.
     pub to: CGRect,
     pub snapshot: WindowSnapshot,
-    /// Front-to-back position on screen, 0 being frontmost. Without it a tile can be drawn behind a
-    /// window it is really in front of, and the handover pops.
+    /// Off the strip, so in the other z-order band from the strip windows. See `model/z_group.rs`.
+    pub floating: bool,
+    /// The window server's front-to-back position, 0 frontmost; `None` when unreported.
+    pub server_order: Option<usize>,
+    /// Front-to-back position in the overlay, 0 being frontmost. Derived from `server_order`,
+    /// `floating`, and the flight's focus by the engine's restack, once per flight rather than per
+    /// pass. Without it a tile can be drawn behind a window it is really in front of, and the
+    /// handover pops.
     pub depth: usize,
     /// A border window riding the window it traces: drawn a quarter-step in front of its window's
     /// depth, and without a shadow, because the real border window casts none.
     pub companion: bool,
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow.
     pub focused: bool,
+    /// A closed window's ghost, shrinking out with no real window behind it. No later pass names
+    /// it, so a strip movement merging into the flight carries it by its travel instead.
+    pub ghost: bool,
 }
 
 impl OverlayTile {
@@ -101,10 +110,51 @@ pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMod
     if crate::ui::window_snapshot::is_a_resize(from, to)
         || !crate::ui::window_snapshot::fits_frame(covered, (from.width, from.height))
     {
-        ContentMode::Crop
+        placeholder_mode(covered, to)
     } else {
         ContentMode::Stretch
     }
+}
+
+/// How a tile fits a picture that may not cover its destination: the ordinary crop when it can,
+/// stretched when it cannot. The stretch is the placeholder of a grow whose reveal has not landed;
+/// every mode fills the whole frame, so a placeholder never shows the backdrop. A top-left crop
+/// that left the growth undrawn was tried and read as a hole (see "A grow holds, then reveals"
+/// in `docs/animation-smoothness.md`).
+pub fn placeholder_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
+    if crate::ui::window_snapshot::outgrows(covered, to) {
+        ContentMode::Stretch
+    } else {
+        ContentMode::Crop
+    }
+}
+
+/// What a fresh hairline does to the layers a tile already wears.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DressingAction {
+    /// Same piece set: new pixels into the existing layers, riding any installed animation.
+    SwapInPlace,
+    /// Different piece set: drop the ring and build it at the model size.
+    Rebuild,
+    /// Different piece set while a resize is animating: leave the worn ring alone.
+    Defer,
+}
+
+/// Whether a harvest may rebuild a tile's ring now. See "A fresh picture or hairline swaps in
+/// place" in `docs/animation-smoothness.md`.
+pub fn dressing_rebuild_allowed(resize_in_flight: bool, worn_matches: bool) -> DressingAction {
+    if worn_matches {
+        DressingAction::SwapInPlace
+    } else if resize_in_flight {
+        DressingAction::Defer
+    } else {
+        DressingAction::Rebuild
+    }
+}
+
+/// Whether a tile's resize animation, ending at `resize_until`, is still riding at `now`.
+pub fn resize_in_flight(resize_until: Option<Instant>, now: Instant) -> bool {
+    resize_until.is_some_and(|until| now < until)
 }
 
 /// The trailing band preserved intact when a tile draws cropped, in points.
@@ -150,8 +200,9 @@ pub(crate) struct CropPiece {
 /// 1:1 while the frame fits inside the picture. Growing PAST the picture, the seam region
 /// stretches the picture's own content instead of reaching beyond its edge: `contentsRect` past
 /// the edge extends the outermost pixels, near-transparent on a translucent window, so a grow
-/// painted a hole to the backdrop. The stretch is the fallback for the frames before the reveal
-/// capture delivers real pixels at the new size (see `docs/animation-smoothness.md`).
+/// painted a hole to the backdrop. A picture that cannot cover its destination is not drawn
+/// cropped at all (`placeholder_mode`), so this only covers the frames a fitting picture passes
+/// through.
 pub(crate) fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     let pw = picture.width.max(1.0);
     let ph = picture.height.max(1.0);
@@ -344,6 +395,8 @@ struct Tile {
     crop_grid: Option<CropGrid>,
     /// The size in points of the picture the crop pieces are showing; `None` when stretching.
     crop_of: Option<CGSize>,
+    /// When the installed resize animation ends; a mismatched hairline is deferred until then.
+    resize_until: Option<Instant>,
 }
 
 /// The four layers a crop-drawn tile is composed of, children of the tile's picture layer.
@@ -596,7 +649,8 @@ impl WorkspaceOverlay {
         // that changes it. Swapped in place, so it rides any animations already installed.
         if snapshot.dressing.is_some() {
             let size = entry.picture.bounds().size;
-            apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale, true);
+            let resizing = resize_in_flight(entry.resize_until, Instant::now());
+            apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale, true, resizing);
         }
         if let (Some((presented, final_rect)), Some(left)) = (rekey, remaining) {
             self.animate_tile_resize(window, presented, final_rect, left);
@@ -615,7 +669,8 @@ impl WorkspaceOverlay {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let size = entry.picture.bounds().size;
-        apply_edge_dressing(entry, Some(dressing), size, scale, true);
+        let resizing = resize_in_flight(entry.resize_until, Instant::now());
+        apply_edge_dressing(entry, Some(dressing), size, scale, true, resizing);
         CATransaction::commit();
     }
 
@@ -659,6 +714,8 @@ impl WorkspaceOverlay {
         reparent(&entry.picture, &self.root);
         reparent(&entry.shadow, &self.root);
         entry.picture.setContentsScale(self.scale);
+        // A fresh install ends whatever resize the pooled tile was riding.
+        entry.resize_until = None;
         let covered = tile.snapshot.coverage.covered;
         let mode = content_mode(covered, tile.from.size, tile.to.size);
         set_tile_content(entry, &tile.snapshot, mode, tile.from.size, self.scale);
@@ -667,6 +724,7 @@ impl WorkspaceOverlay {
             tile.snapshot.dressing.as_ref(),
             tile.from.size,
             self.scale,
+            false,
             false,
         );
         // Set explicitly in both directions, because tile layers are pooled: a tile that carried
@@ -682,11 +740,10 @@ impl WorkspaceOverlay {
         entry.shadow.setHidden(tile.companion);
     }
 
-    /// Adds one tile to an animation already in flight and starts its movement.
-    ///
-    /// The reactor lays a layout out over several passes, so a window can join after the others
-    /// have left. It gets the full duration from where it stands: joining at the group's current
-    /// progress would snap it to a mid-flight position first, which is the worse artifact.
+    /// Adds one tile to an animation already in flight and starts its movement from where it
+    /// stands, over `duration`. The caller picks the duration: a pass that restarts the flight's
+    /// clock gives the full one, a late entrance gets what is left of the flight so it lands with
+    /// its neighbours (`docs/animation-smoothness.md`, "Entrances are holds").
     pub fn add_tile(&mut self, tile: &OverlayTile, duration: Duration) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
@@ -715,6 +772,20 @@ impl WorkspaceOverlay {
                 continue;
             }
             self.animate_tile_movement(tile.window, tile.from, tile.to, tile.z(), duration);
+        }
+        CATransaction::commit();
+    }
+
+    /// Puts every installed tile at its current depth, touching nothing else. A hard cut: a pass
+    /// merged mid-flight can rebank tiles it did not move, and z-order does not interpolate.
+    pub fn restack(&mut self, tiles: &[OverlayTile]) {
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        for tile in tiles {
+            let Some(entry) = self.tile_layers.get(&tile.window) else { continue };
+            let z = tile.z();
+            entry.picture.setZPosition(z);
+            entry.shadow.setZPosition(z - 0.5);
         }
         CATransaction::commit();
     }
@@ -783,8 +854,10 @@ impl WorkspaceOverlay {
     /// path and its ring mask interpolate because both endpoints are built by the same
     /// constructors, and the hairline pieces ride between their two boundary layouts.
     fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, duration: Duration) {
-        let Some(entry) = self.tile_layers.get(&window) else { return };
+        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
         let seconds = duration.as_secs_f64();
+        // A re-key or retarget replaces the animation, so the end moves with it.
+        entry.resize_until = Some(Instant::now() + duration);
 
         // The shadow's movement uses the SAME key prefix as the plain-move branch. Keys are
         // per-layer, so picture and shadow do not collide — but a plain-move leg retargeted into
@@ -910,6 +983,29 @@ fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
 }
 
+/// The harvested image for one piece, in `DressingLayout` order: four strips, then four corners.
+fn dressing_image(
+    dressing: &crate::ui::edge_dressing::EdgeDressing,
+    index: usize,
+) -> Option<&CFRetained<objc2_core_graphics::CGImage>> {
+    if index < 4 { dressing.strips[index].as_ref() } else { dressing.corners[index - 4].as_ref() }
+}
+
+/// Which pieces a tile dressed at `size` wears: every harvested piece, whatever the size.
+///
+/// A run with no extent at this size still gets a (zero-size) layer, so the set never changes
+/// between an entrance's zero width and its final width and a fresh harvest swaps in place
+/// instead of rebuilding the ring mid-flight. See `docs/animation-smoothness.md`.
+fn dressing_piece_indices(
+    dressing: &crate::ui::edge_dressing::EdgeDressing,
+    size: CGSize,
+) -> Vec<usize> {
+    if boundary_layout(size).is_none() {
+        return Vec::new();
+    }
+    (0..8).filter(|index| dressing_image(dressing, *index).is_some()).collect()
+}
+
 /// Dresses a tile with its window's harvested hairline, or strips it bare.
 ///
 /// The ring rides the picture as thin sublayers — four straight runs and four corner boxes, in
@@ -922,28 +1018,32 @@ fn apply_edge_dressing(
     size: CGSize,
     scale: f64,
     swap_in_place: bool,
+    resize_in_flight: bool,
 ) {
     // A fresh harvest for the same window swaps pixels INTO the existing layers when the piece
     // sets match, leaving their geometry — and crucially any resize animations riding them —
-    // untouched. Rebuilding here mid-flight snapped the border to its final layout while the tile
-    // was still travelling. Installs rebuild unconditionally: a pooled tile's layers may belong
-    // to another window's geometry entirely.
+    // untouched. A mismatched set is deferred while a resize rides (the cached snapshot carries
+    // it for the next install); rebuilding mid-flight snapped the border to its final layout
+    // while the tile was still travelling. Installs rebuild unconditionally: a pooled tile's
+    // layers may belong to another window's geometry entirely.
     if swap_in_place && let Some(new) = dressing {
-        let image_at = |index: usize| {
-            if index < 4 { new.strips[index].as_ref() } else { new.corners[index - 4].as_ref() }
-        };
-        let available: Vec<usize> = (0..8).filter(|i| image_at(*i).is_some()).collect();
+        let available: Vec<usize> = (0..8).filter(|i| dressing_image(new, *i).is_some()).collect();
         let worn: Vec<usize> = tile.dressing.iter().map(|(i, _)| *i).collect();
-        if !worn.is_empty() && worn == available {
-            for (index, layer) in &tile.dressing {
-                let image = image_at(*index).expect("index sets match");
-                // SAFETY: a retained CGImage; Core Animation retains what it draws.
-                unsafe {
-                    let raw: *const objc2_core_graphics::CGImage = &**image;
-                    let _: () = msg_send![&**layer, setContents: raw];
+        let worn_matches = !worn.is_empty() && worn == available;
+        match dressing_rebuild_allowed(resize_in_flight, worn_matches) {
+            DressingAction::SwapInPlace => {
+                for (index, layer) in &tile.dressing {
+                    let image = dressing_image(new, *index).expect("index sets match");
+                    // SAFETY: a retained CGImage; Core Animation retains what it draws.
+                    unsafe {
+                        let raw: *const objc2_core_graphics::CGImage = &**image;
+                        let _: () = msg_send![&**layer, setContents: raw];
+                    }
                 }
+                return;
             }
-            return;
+            DressingAction::Defer => return,
+            DressingAction::Rebuild => {}
         }
     }
     for (_, layer) in tile.dressing.drain(..) {
@@ -951,17 +1051,10 @@ fn apply_edge_dressing(
     }
     let Some(dressing) = dressing else { return };
     let Some(layout) = boundary_layout(size) else { return };
-    let pieces = dressing
-        .strips
-        .iter()
-        .zip(layout.strips)
-        .chain(dressing.corners.iter().zip(layout.corners))
-        .enumerate();
-    for (index, (image, frame)) in pieces {
-        let Some(image) = image else { continue };
-        if frame.size.width <= 0.0 || frame.size.height <= 0.0 {
-            continue;
-        }
+    let frames: Vec<CGRect> = layout.strips.into_iter().chain(layout.corners).collect();
+    for index in dressing_piece_indices(dressing, size) {
+        let image = dressing_image(dressing, index).expect("indices name harvested pieces");
+        let frame = frames[index];
         let layer = CALayer::layer();
         layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
         layer.setFrame(frame);
@@ -1013,6 +1106,7 @@ fn new_tile(container: &CALayer) -> Tile {
         dressing: Vec::new(),
         crop_grid: None,
         crop_of: None,
+        resize_until: None,
     }
 }
 
@@ -1225,6 +1319,82 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
+    /// T9 (1.5) of `.kiro/specs/flight-render-stability/bugfix.md`. A harvest with a different
+    /// piece set lands while the tile's resize is animating: rebuilding puts the ring at the
+    /// destination size over a picture still travelling. Asserts the fixed `Defer`; unfixed
+    /// rebuilds.
+    #[test]
+    fn a_mismatched_dressing_is_deferred_while_a_resize_is_in_flight() {
+        let action = dressing_rebuild_allowed(true, false);
+        assert_eq!(action, DressingAction::Defer, "hairline rebuilt mid-resize: {action:?}");
+    }
+
+    #[test]
+    fn dressing_rebuild_allowed_full_table() {
+        assert_eq!(dressing_rebuild_allowed(false, true), DressingAction::SwapInPlace);
+        assert_eq!(dressing_rebuild_allowed(true, true), DressingAction::SwapInPlace);
+        assert_eq!(dressing_rebuild_allowed(false, false), DressingAction::Rebuild);
+        assert_eq!(dressing_rebuild_allowed(true, false), DressingAction::Defer);
+    }
+
+    #[test]
+    fn a_resize_is_in_flight_until_its_end_instant() {
+        let now = Instant::now();
+        assert!(resize_in_flight(Some(now + Duration::from_millis(100)), now));
+        assert!(!resize_in_flight(Some(now - Duration::from_millis(1)), now));
+        assert!(!resize_in_flight(Some(now), now), "the end instant itself is over");
+        assert!(!resize_in_flight(None, now));
+    }
+
+    /// Exhaustive over worn × available 8-bit piece sets and both resize flags, matched the way
+    /// `apply_edge_dressing` matches them: a rebuild never lands while a resize is in flight.
+    #[test]
+    fn a_resize_in_flight_never_rebuilds_the_hairline() {
+        for worn_bits in 0u32..256 {
+            for available_bits in 0u32..256 {
+                let worn: Vec<usize> = (0..8).filter(|i| worn_bits & (1 << i) != 0).collect();
+                let available: Vec<usize> =
+                    (0..8).filter(|i| available_bits & (1 << i) != 0).collect();
+                let worn_matches = !worn.is_empty() && worn == available;
+                for resize_in_flight in [false, true] {
+                    let action = dressing_rebuild_allowed(resize_in_flight, worn_matches);
+                    if resize_in_flight {
+                        assert_ne!(
+                            action,
+                            DressingAction::Rebuild,
+                            "worn {worn:?} available {available:?}"
+                        );
+                    }
+                    if worn_matches {
+                        assert_eq!(action, DressingAction::SwapInPlace);
+                    } else if !resize_in_flight {
+                        assert_eq!(action, DressingAction::Rebuild);
+                    }
+                }
+            }
+        }
+    }
+
+    /// P-3.7 of `.kiro/specs/flight-render-stability/bugfix.md`. Observed: a harvest whose piece
+    /// set matches the worn set swaps pixels in place whether or not a resize is in flight, over
+    /// every non-empty piece set, matched the way `apply_edge_dressing` matches them.
+    #[test]
+    fn a_matching_piece_set_swaps_in_place_in_or_out_of_a_resize() {
+        for bits in 1u32..256 {
+            let worn: Vec<usize> = (0..8).filter(|i| bits & (1 << i) != 0).collect();
+            let available = worn.clone();
+            let worn_matches = !worn.is_empty() && worn == available;
+            assert!(worn_matches, "pieces {worn:?}");
+            for resize_in_flight in [false, true] {
+                assert_eq!(
+                    dressing_rebuild_allowed(resize_in_flight, worn_matches),
+                    DressingAction::SwapInPlace,
+                    "pieces {worn:?} resize_in_flight={resize_in_flight}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn lerp_at_zero_is_the_start_frame() {
         let from = rect(10.0, 20.0, 100.0, 200.0);
@@ -1309,10 +1479,42 @@ mod tests {
             content_mode((918.0, 1081.0), CGSize::new(918.0, 1081.0), CGSize::new(917.0, 1081.0)),
             ContentMode::Stretch
         );
-        // A horizontal resize, a vertical one, and a stale picture from one press ago.
-        assert_eq!(content_mode(picture, col, CGSize::new(1720.0, 1081.0)), ContentMode::Crop);
+        // A horizontal grow past the picture is the placeholder: it stretches until the reveal
+        // lands. A vertical shrink crops.
+        assert_eq!(
+            content_mode(picture, col, CGSize::new(1720.0, 1081.0)),
+            ContentMode::Stretch
+        );
         assert_eq!(content_mode(picture, col, CGSize::new(859.0, 540.0)), ContentMode::Crop);
-        assert_eq!(content_mode((572.0, 1081.0), col, col), ContentMode::Crop);
+        // A stale narrow picture in a wider frame is the placeholder case too: the reveal fills it.
+        assert_eq!(content_mode((572.0, 1081.0), col, col), ContentMode::Stretch);
+        assert_eq!(content_mode((918.0, 1081.0), col, col), ContentMode::Crop, "a wider one crops");
+    }
+
+    /// A picture that cannot cover its destination is stretched over it; one that covers it takes
+    /// the ordinary crop. Either way the whole frame is drawn.
+    #[test]
+    fn a_placeholder_never_shows_backdrop() {
+        let picture = (859.0, 1081.0);
+        assert_eq!(placeholder_mode(picture, CGSize::new(1147.0, 1081.0)), ContentMode::Stretch);
+        assert_eq!(placeholder_mode(picture, CGSize::new(859.0, 1300.0)), ContentMode::Stretch);
+        assert_eq!(placeholder_mode(picture, CGSize::new(859.0, 1081.0)), ContentMode::Crop);
+        assert_eq!(placeholder_mode(picture, CGSize::new(572.0, 1081.0)), ContentMode::Crop);
+        // Both modes fill the frame: the match is exhaustive, so a mode that left part of the
+        // frame undrawn would have to be added here to compile.
+        for w in (1..=40).map(|i| i as f64 * 50.0) {
+            for h in (1..=30).map(|i| i as f64 * 50.0) {
+                let to = CGSize::new(w, h);
+                match placeholder_mode(picture, to) {
+                    ContentMode::Stretch => {
+                        assert!(crate::ui::window_snapshot::outgrows(picture, to), "{to:?}")
+                    }
+                    ContentMode::Crop => {
+                        assert!(!crate::ui::window_snapshot::outgrows(picture, to), "{to:?}")
+                    }
+                }
+            }
+        }
     }
 
     /// Every crop piece maps 1:1 while the frame fits inside the picture — its frame exactly as
@@ -1513,5 +1715,81 @@ mod tests {
         // unclamped cubic would overshoot the target position.
         assert_eq!(ease_out_cubic(-0.5), 0.0);
         assert_eq!(ease_out_cubic(1.5), 1.0);
+    }
+
+    /// T3 (bugfix.md 1.5). An entrance is dressed at zero width; if that wears fewer pieces than
+    /// the final size, the first fresh harvest rebuilds the ring at final geometry mid-flight and
+    /// the hairline leaves the picture's timeline. Written to fail on unfixed code.
+    #[test]
+    fn the_dressing_piece_set_does_not_depend_on_the_tile_size() {
+        use crate::ui::edge_dressing::EdgeDressing;
+        use crate::ui::window_snapshot::test_bitmap;
+        let piece = || Some(test_bitmap());
+        let dressing = EdgeDressing {
+            strips: [piece(), piece(), piece(), piece()],
+            corners: [piece(), piece(), piece(), piece()],
+        };
+        let at_zero = dressing_piece_indices(&dressing, CGSize::new(0.0, 1081.0));
+        let at_full = dressing_piece_indices(&dressing, CGSize::new(859.0, 1081.0));
+        assert_eq!(
+            at_zero, at_full,
+            "a tile dressed at (0, h) wears {} pieces, at (w, h) {}",
+            at_zero.len(),
+            at_full.len()
+        );
+    }
+
+    fn full_dressing() -> crate::ui::edge_dressing::EdgeDressing {
+        use crate::ui::window_snapshot::test_bitmap;
+        let piece = || Some(test_bitmap());
+        crate::ui::edge_dressing::EdgeDressing {
+            strips: [piece(), piece(), piece(), piece()],
+            corners: [piece(), piece(), piece(), piece()],
+        }
+    }
+
+    #[test]
+    fn a_full_dressing_is_worn_whole_at_zero_one_and_full_width() {
+        let dressing = full_dressing();
+        let all: Vec<usize> = (0..8).collect();
+        for w in [0.0, 1.0, 859.0] {
+            assert_eq!(
+                dressing_piece_indices(&dressing, CGSize::new(w, 1081.0)),
+                all,
+                "width {w}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unharvested_piece_still_gets_no_layer() {
+        let mut dressing = full_dressing();
+        dressing.strips[1] = None;
+        dressing.corners[3] = None;
+        assert_eq!(
+            dressing_piece_indices(&dressing, CGSize::new(0.0, 1081.0)),
+            vec![0, 2, 3, 4, 5, 6]
+        );
+    }
+
+    /// Property: for random sizes with h > 0, the piece set is constant.
+    #[test]
+    fn the_piece_set_is_constant_over_random_sizes() {
+        let dressing = full_dressing();
+        let reference = dressing_piece_indices(&dressing, CGSize::new(859.0, 1081.0));
+        assert_eq!(reference.len(), 8);
+        // Seeded LCG, same constants as `workspace_animation::tests::preservation::Gen`.
+        let mut state: u64 = 0x5eed_d2e5_5100;
+        let mut next = move |n: u64| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 11) % n
+        };
+        for _ in 0..500 {
+            // Width from zero (an entrance's first frame) up to a full display.
+            let w = next(1729) as f64;
+            let h = 1.0 + next(1081) as f64;
+            let size = CGSize::new(w, h);
+            assert_eq!(dressing_piece_indices(&dressing, size), reference, "size {size:?}");
+        }
     }
 }

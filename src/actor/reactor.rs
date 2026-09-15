@@ -334,6 +334,9 @@ pub struct Reactor {
     /// The focus reports rini's own raises are about to produce, so they are not mistaken for the user
     /// moving. See [`main_window::RaiseEcho`].
     raise_echo: main_window::RaiseEcho,
+    /// The strip windows the current event's regroup already raised, so the post-layout judgment does
+    /// not raise them a second time. See `regroup_after_layout`.
+    regroup_raised: Vec<WindowId>,
     drag_manager: managers::DragManager,
     workspace_switch_manager: managers::WorkspaceSwitchManager,
     recording_manager: managers::RecordingManager,
@@ -443,6 +446,7 @@ impl Reactor {
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
             raise_echo: main_window::RaiseEcho::default(),
+            regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
                 drag_swap_manager: crate::actor::drag_swap::DragManager::new(
@@ -1254,13 +1258,10 @@ impl Reactor {
                     return Ok(outcome);
                 }
                 // A click raises only the window under the cursor, which splits the strip around a
-                // floating window. The strip is one group, so lift all of it.
-                let mut outcome = EventOutcome::default()
-                    .with_layout_event(LayoutEvent::WindowFocused(reported_space, window));
-                if let Some(regroup) = self.regroup_strip_for_focus(reported_space, window) {
-                    outcome = outcome.with_raise_request(regroup);
-                }
-                return Ok(outcome);
+                // floating window. The strip is one group, so `apply_event_outcome` lifts all of it
+                // once this focus has landed (`regroup_after_layout`).
+                return Ok(EventOutcome::default()
+                    .with_layout_event(LayoutEvent::WindowFocused(reported_space, window)));
             }
             Event::RegisterWmSender(sender) => {
                 return Ok(system_workflow::handle_register_wm_sender(
@@ -2049,6 +2050,8 @@ impl Reactor {
     /// discovery requests made directly by a workflow are consequently observed
     /// only after its model mutation is complete.
     fn apply_event_outcome(&mut self, outcome: EventOutcome) {
+        // Per event: what this event's regroup raises is only known to this event.
+        self.regroup_raised.clear();
         if !outcome.window_server_updates.is_empty() {
             self.update_partial_window_server_info(outcome.window_server_updates);
         }
@@ -2169,6 +2172,8 @@ impl Reactor {
             }
         }
 
+        let focus_landed = outcome.focused_window.is_some()
+            || outcome.layout_events.iter().any(|event| matches!(event, LayoutEvent::WindowFocused(..)));
         for event in outcome.layout_events {
             self.send_layout_event(event);
         }
@@ -2202,11 +2207,17 @@ impl Reactor {
         for request in outcome.raise_requests {
             self.dispatch_raise(request);
         }
-
         if let Some((space, window)) =
             focus_service::resolve(outcome.focused_window, |wid| self.best_space_for_window_id(wid))
         {
             self.send_layout_event(LayoutEvent::WindowFocused(space, window));
+        }
+
+        // After the raises above, so a column this pass scrolled in is lifted over a floating window
+        // in a sequence that ends after the focus raise, with the focused window last again. A focus
+        // report with no layout change (a click) is judged too: macOS raised only the clicked window.
+        if layout_changed || focus_landed {
+            self.regroup_after_layout();
         }
 
         if let Some(direction) = outcome.switch_native_space {
@@ -3913,7 +3924,14 @@ impl Reactor {
     /// it. Each write is a synchronous request into another process, and those land at different
     /// times, but that no longer matters: nothing is visible until the overlay comes down.
     fn apply_overlay_frames(&mut self, frames: Vec<(WindowId, CGRect)>) {
-        for (wid, frame) in frames {
+        let display = self
+            .space_state
+            .screens
+            .iter()
+            .find(|screen| screen.space == self.active_display_space())
+            .or_else(|| self.space_state.screens.first())
+            .map_or(CGRect::ZERO, |screen| screen.frame);
+        for (wid, frame) in animation::frame_send_order(frames, display) {
             let Some(window) = self.state.windows.window_mut(wid) else {
                 continue;
             };
@@ -3940,7 +3958,9 @@ impl Reactor {
     /// nothing and gave no sense of direction at all.
     ///
     /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
-    /// it holds unless something better arrives, so this settles rather than re-capturing.
+    /// it holds unless something better arrives, so this settles rather than re-capturing. During a
+    /// flight the animation actor holds the targets until lift ("Capture work in flight" in
+    /// `docs/animation-smoothness.md`), so calling this from the switch handler is safe.
     fn warm_all_workspaces(&mut self, space: SpaceId) {
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
             return;
@@ -4296,7 +4316,8 @@ impl Reactor {
             focus: self.layout_manager.layout_engine.focused_window(),
             duration,
         });
-        // Every workspace, so the next switch in any direction has both strips drawn.
+        // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
+        // the animation actor defers it until the flight lifts (`docs/animation-smoothness.md`).
         self.warm_all_workspaces(space);
         true
     }
@@ -4353,17 +4374,10 @@ impl Reactor {
         self.publish_animation_display_for(None);
     }
 
-    /// Points the animation overlay at the display holding `space`.
-    ///
-    /// There is one overlay, so it has to sit on the display whose windows are about to move. Choosing the
-    /// ACTIVE display instead put a built-in workspace switch on the external screen whenever the cursor
-    /// was over there: the external showed the built-in's windows sliding while the built-in's own windows
-    /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
-    /// have no particular display in mind.
-    /// Hands a closing window to the overlay engine so it shrinks out of the layout, the reverse
-    /// of an entrance. Must run while the window's state still exists: the last known frame is
-    /// read from it. Parked and off-screen windows are filtered by the actor's own visibility
-    /// gate; this only filters what the actor cannot see — unmanaged and minimized windows.
+    /// Hands a closing window to the overlay engine as a pending exit, composed by the next layout
+    /// pass with the survivors. Must run while the window's state still exists: the last known
+    /// frame is read from it. Parked and off-screen windows are filtered by the actor's own
+    /// visibility gate; this only filters what the actor cannot see — unmanaged and minimized.
     pub(crate) fn animate_window_exit(&self, wid: WindowId) {
         if !self.config.settings.overlay_animations {
             return;
@@ -4385,10 +4399,18 @@ impl Reactor {
         _ = tx.send(crate::actor::workspace_animation::Event::AnimateExit {
             window: wid,
             frame,
+            floating: self.layout_manager.layout_engine.is_window_floating(wid),
             duration,
         });
     }
 
+    /// Points the animation overlay at the display holding `space`.
+    ///
+    /// There is one overlay, so it has to sit on the display whose windows are about to move. Choosing the
+    /// ACTIVE display instead put a built-in workspace switch on the external screen whenever the cursor
+    /// was over there: the external showed the built-in's windows sliding while the built-in's own windows
+    /// snapped with no animation. `space` is `None` only for the debug commands and a config reload, which
+    /// have no particular display in mind.
     pub(crate) fn publish_animation_display_for(&self, space: Option<SpaceId>) {
         let Some(tx) = &self.communication_manager.workspace_animation_tx else {
             return;
@@ -4576,11 +4598,16 @@ impl Reactor {
         self.prepare_refocus_after_layout_event(&event_clone);
         self.handle_layout_response(response, workspace_switch_space);
         if geometry_changed {
-            self.update_layout_or_warn(
+            let layout_changed = self.update_layout_or_warn(
                 false,
                 workspace_switch_space.is_some(),
                 workspace_switch_space.or(event_space),
             );
+            // A focus report onto a parked window (cmd-tab) scrolls it in here; if it was behind a
+            // floating window it has to be lifted now that it is on screen.
+            if layout_changed {
+                self.regroup_after_layout();
+            }
         }
         if focus_desktop && let Some(space) = self.workspace_command_space() {
             self.focus_desktop_if_active_workspace_empty(space);
@@ -5295,16 +5322,26 @@ impl Reactor {
         }
 
         // The strip goes up as one group. A focus move raises only the window it lands on, which leaves a
-        // floating window in front of the columns beside it. See `model::z_group`.
-        if let Some(target) = focus_window {
-            let space = self.best_space_for_window_id(target);
-            if let Some(space) = space {
-                for wid in self.strip_group_to_lift(space, target) {
-                    if !raise_windows.contains(&wid) {
-                        self.insert_app_handle_for_window(&mut app_handles, wid);
-                        raise_windows.push(wid);
-                    }
+        // floating window in front of the columns beside it. See `model::z_group`. The regroup's order
+        // (back to front, focused last) leads; whatever else the layout asked for follows.
+        if let Some(target) = focus_window
+            && let Some(space) = self.best_space_for_window_id(target)
+        {
+            let regroup = self.strip_group_to_lift(space, target);
+            if !regroup.is_empty() {
+                debug!(
+                    focused = target.idx.get(),
+                    windows = regroup.len(),
+                    "a floating window was in front of the strip; lifting the whole strip over it"
+                );
+                for wid in &regroup {
+                    self.insert_app_handle_for_window(&mut app_handles, *wid);
                 }
+                self.regroup_raised = regroup.clone();
+                let rest: Vec<WindowId> =
+                    raise_windows.into_iter().filter(|wid| !regroup.contains(wid)).collect();
+                raise_windows = regroup;
+                raise_windows.extend(rest);
             }
         }
 
@@ -5361,21 +5398,18 @@ impl Reactor {
     ///
     /// macOS raises the one window that was clicked, so clicking one half of a 50/50 pair lifts it over a
     /// floating window and leaves the other half behind it. The strip is one surface and has to be one
-    /// group. `None` when the order already obeys the rule, which is the common case and costs nothing:
-    /// putting it back costs an Accessibility raise per window on screen.
+    /// group. Empty when the order already obeys the rule, which is the common case and costs nothing:
+    /// putting it back costs an Accessibility raise per strip window in the workspace.
     ///
-    /// Only the on-screen windows are raised. A parked column is invisible, so its place in the order
-    /// cannot be seen, and it is raised anyway by the layout pass that scrolls it back into view.
+    /// Only the on-screen windows are judged and raised. Raising the whole strip was tried and measured:
+    /// 19 windows across 10 apps take seconds (one activation wait per app, serialized), every raise
+    /// echoes as a focus report, and echoes past the 400ms `RaiseEcho` window read as the user moving,
+    /// so the strip scrolled to random parked windows and regrouped again, 13 rounds per press. A parked
+    /// column's place cannot be seen; it is judged again by `regroup_after_layout` once a layout pass
+    /// brings it on screen, since nothing else raises a column that scrolls back into view.
     fn strip_group_to_lift(&mut self, space: SpaceId, focused: WindowId) -> Vec<WindowId> {
-        use crate::model::z_group::StackGroup;
-
-        // A floating window taking focus is already in front: macOS put it there, and that matches the rule.
-        if self.stack_group_of(focused) == StackGroup::Floating {
-            return Vec::new();
-        }
-
         let depths = crate::sys::window_server::front_to_back_depths();
-        let mut on_screen: Vec<(usize, WindowId, StackGroup)> = self
+        let mut order: Vec<StackedWindow> = self
             .layout_manager
             .layout_engine
             .windows_in_active_workspace(&self.state.windows, space)
@@ -5384,32 +5418,63 @@ impl Reactor {
             .filter_map(|wid| {
                 let server_id = self.state.windows.window(wid)?.info.sys_id?;
                 let depth = depths.get(&server_id.as_u32()).copied()?;
-                Some((depth, wid, self.stack_group_of(wid)))
+                Some(StackedWindow { window: wid, depth, group: self.stack_group_of(wid) })
             })
             .collect();
-        on_screen.sort_by_key(|(depth, _, _)| *depth);
+        order.sort_by_key(|stacked| stacked.depth);
 
-        let order: Vec<(WindowId, StackGroup)> =
-            on_screen.iter().map(|(_, wid, group)| (*wid, *group)).collect();
-        crate::model::z_group::strip_regroup(&order)
+        let to_raise = strip_group_to_lift_for(&order, focused, self.stack_group_of(focused));
+        debug!(
+            focused = focused.idx.get(),
+            order = ?order.iter().map(|s| (s.window.idx.get(), s.group)).collect::<Vec<_>>(),
+            lifting = to_raise.len(),
+            "strip regroup judged"
+        );
+        to_raise
     }
 
-    /// The raise that puts the strip back in front, for a focus change that carries no raise of its own.
+    /// The regroup for a focus that has landed and a layout that has been applied: the strip windows now
+    /// on screen are lifted over any floating window in front of one of them, the focused window last.
     ///
-    /// A click is raised by macOS, not by rini, so nothing else in this path will fix the order.
-    fn regroup_strip_for_focus(
+    /// Two cases end here. A click is raised by macOS, not by rini, and produces only a focus report,
+    /// so nothing else in that path fixes the order. A focus move raises before the strip scrolls
+    /// (`handle_layout_response`), so a column that was parked behind a floating window comes into view
+    /// behind it and the floating window sits between it and the focused column; `animate_layout` has
+    /// set every moved window's `frame_monotonic` by now, so the on-screen set is the post-layout one
+    /// while the window server's order is still the old one. Skipped when every window it would raise
+    /// was already raised by this event's earlier regroup: that raise is still in flight and the order
+    /// it will produce is the one wanted.
+    fn regroup_after_layout(&mut self) {
+        let already = std::mem::take(&mut self.regroup_raised);
+        let Some(focused) = self.layout_manager.layout_engine.focused_window() else {
+            return;
+        };
+        let Some(space) = self.best_space_for_window_id(focused) else {
+            return;
+        };
+        let to_raise = self.strip_group_to_lift(space, focused);
+        if to_raise.is_empty() || to_raise.iter().all(|wid| already.contains(wid)) {
+            return;
+        }
+        if let Some(request) = self.regroup_raise(&to_raise, focused) {
+            debug!(
+                focused = focused.idx.get(),
+                windows = to_raise.len(),
+                "a floating window was in front of the strip; lifting the whole strip over it"
+            );
+            self.dispatch_raise(request);
+        }
+    }
+
+    /// One quiet raise of `to_raise` in order, focusing `focused` (which is expected to be last).
+    fn regroup_raise(
         &mut self,
-        space: SpaceId,
+        to_raise: &[WindowId],
         focused: WindowId,
     ) -> Option<raise_manager::Event> {
-        let to_raise = self.strip_group_to_lift(space, focused);
-        if to_raise.is_empty() {
-            return None;
-        }
-
         let mut app_handles = HashMap::default();
         let mut by_app: HashMap<(pid_t, Option<SpaceId>), Vec<WindowId>> = HashMap::default();
-        for wid in &to_raise {
+        for wid in to_raise {
             self.insert_app_handle_for_window(&mut app_handles, *wid);
             by_app.entry((wid.pid, self.best_space_for_window_id(*wid))).or_default().push(*wid);
         }
@@ -5417,11 +5482,7 @@ impl Reactor {
             return None;
         }
         self.insert_app_handle_for_window(&mut app_handles, focused);
-        debug!(
-            focused = focused.idx.get(),
-            windows = by_app.values().map(Vec::len).sum::<usize>(),
-            "a floating window was in front of the strip; lifting the whole strip over it"
-        );
+        self.regroup_raised = to_raise.to_vec();
         Some(raise_manager::Event::RaiseRequest(RaiseRequest {
             raise_windows: by_app.into_values().collect(),
             focus_window: Some((focused, None)),
@@ -6204,4 +6265,40 @@ impl Reactor {
         self.autosave_pending = false;
         trace!(path = %path.display(), "Autosaved layout");
     }
+}
+
+/// One on-screen window of the active workspace as the window server stacks it, for the strip regroup.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StackedWindow {
+    pub(crate) window: WindowId,
+    /// Front-to-back position, 0 being frontmost.
+    pub(crate) depth: usize,
+    pub(crate) group: crate::model::z_group::StackGroup,
+}
+
+/// The windows to raise so the strip is one group in front of the floating windows, in raise order:
+/// back to front, the focused window last. Empty when a floating window takes focus (macOS already
+/// put it in front, which is the rule) or when the order already obeys the rule.
+///
+/// `order` is front to back, as `front_to_back_depths` reports it. The focused window goes last
+/// whatever its depth: a raise sequence ends with the window that has to be frontmost, and after a
+/// keyboard move the target has not been raised yet.
+pub(crate) fn strip_group_to_lift_for(
+    order: &[StackedWindow],
+    focused: WindowId,
+    focused_group: crate::model::z_group::StackGroup,
+) -> Vec<WindowId> {
+    use crate::model::z_group::StackGroup;
+
+    if focused_group == StackGroup::Floating {
+        return Vec::new();
+    }
+    let groups: Vec<(WindowId, StackGroup)> = order.iter().map(|s| (s.window, s.group)).collect();
+    let back_to_front = crate::model::z_group::strip_regroup(&groups);
+    let mut raise: Vec<WindowId> =
+        back_to_front.iter().copied().filter(|wid| *wid != focused).collect();
+    if back_to_front.contains(&focused) {
+        raise.push(focused);
+    }
+    raise
 }

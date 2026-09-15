@@ -99,6 +99,16 @@ rather than register its own. Until that is done, rini under launchd manages
 windows but cannot be driven by the CLI, which also breaks the sketchybar
 subscriptions.
 
+## Deploy is `service restart`, never `stop` then `start`
+
+Measured 2026-09-15, 1:39 UTC. `rini service start` regenerates the plist from
+a PATH lookup. It found a stale `~/.local/bin/rini` and launched it. Same
+identifier, different code requirement: TCC invalidated both grants for the
+client. Accessibility prompted again; Screen Recording stayed revoked, so every
+capture returned nothing and the overlay flew empty tiles (`tiles=0,
+missing=22` on every flight). `service restart` is `kickstart -k` and leaves the
+plist alone. Delete stale copies of the binary so a lookup cannot find them.
+
 ## Current state
 
 rini runs as a terminal-launched process, which has Accessibility by inheritance

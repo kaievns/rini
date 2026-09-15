@@ -5932,6 +5932,270 @@ fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
     );
 }
 
+/// The strip is one z-order group (`model::z_group`): focus landing on a strip window while a floating
+/// window sits in front of any strip window raises the whole strip over it.
+mod strip_regroup {
+    use super::*;
+    use test_log::test;
+    use crate::actor::raise_manager::{self, RaiseRequest};
+    use crate::actor::reactor::{StackedWindow, strip_group_to_lift_for};
+    use crate::model::z_group::StackGroup::{Floating, Strip};
+
+    const SCREEN: CGRect = CGRect {
+        origin: CGPoint { x: 0., y: 0. },
+        size: CGSize { width: 1728., height: 1117. },
+    };
+
+    /// Two Ghostty-like strip windows side by side, a third parked off the right edge, and a floating
+    /// Settings window over the middle of the screen, all one app on one workspace. The raise manager's
+    /// channel is handed back so the test reads the `RaiseRequest` the reactor sends.
+    fn reactor_with_sandwich() -> (Reactor, actor::Receiver<raise_manager::Event>, SpaceId) {
+        let mut reactor = test_reactor();
+        let (raise_tx, mut raise_rx) = actor::channel();
+        reactor.communication_manager.raise_manager_tx = raise_tx;
+        let space = SpaceId::new(1);
+        set_space_membership(&[(space, &[901, 902, 903, 904])]);
+        reactor.handle_event(space_state_event(vec![SCREEN], vec![Some(space)]));
+        reactor.add_test_app(1);
+        let workspace = reactor.test_workspace(space, 0);
+        let left = CGRect::new(CGPoint::new(4., 32.), CGSize::new(859., 1081.));
+        let right = CGRect::new(CGPoint::new(867., 32.), CGSize::new(859., 1081.));
+        let parked = CGRect::new(CGPoint::new(1727., 32.), CGSize::new(859., 1081.));
+        let settings = CGRect::new(CGPoint::new(500., 200.), CGSize::new(723., 781.));
+        for (idx, wsid, frame) in [(1, 901u32, left), (2, 902, right), (3, 903, parked), (4, 904, settings)]
+        {
+            let window = WindowId::new(1, idx);
+            reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), frame);
+            assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+            reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+        }
+        // The strip's selection is the left column, so the layout shows the first two columns and
+        // parks the third; then the fourth window floats over them.
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 4)));
+        reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+        assert!(reactor.layout_manager.layout_engine.is_window_floating(WindowId::new(1, 4)));
+        // The frames the strip has on screen right now: two columns visible, the third parked off
+        // the right edge. Set directly; the engine's scroll position is not what these tests are about.
+        for (idx, frame) in [(1, left), (2, right), (3, parked), (4, settings)] {
+            if let Some(w) = reactor.state.windows.window_mut(WindowId::new(1, idx)) {
+                w.frame_monotonic = frame;
+            }
+        }
+        for idx in [1, 2] {
+            assert!(!reactor.is_window_parked_offscreen(WindowId::new(1, idx)), "setup: {idx} on screen");
+        }
+        assert!(reactor.is_window_parked_offscreen(WindowId::new(1, 3)), "setup: 3 parked");
+        while raise_rx.try_recv().is_ok() {}
+        (reactor, raise_rx, space)
+    }
+
+    fn raise_request(rx: &mut actor::Receiver<raise_manager::Event>) -> Option<RaiseRequest> {
+        match rx.try_recv().ok()?.1 {
+            raise_manager::Event::RaiseRequest(request) => Some(request),
+            other => panic!("unexpected raise manager event: {other:?}"),
+        }
+    }
+
+    fn stacked(idx: u32, depth: usize, floating: bool) -> StackedWindow {
+        StackedWindow {
+            window: WindowId::new(1, idx),
+            depth,
+            group: if floating { Floating } else { Strip },
+        }
+    }
+
+    /// The measured sandwich: the floating window between the two visible columns. Raise order: the
+    /// strip back to front, the focused window last whatever its depth.
+    #[test]
+    fn a_sandwich_lifts_the_strip_back_to_front_with_the_focused_window_last() {
+        let order = [stacked(2, 0, false), stacked(4, 1, true), stacked(1, 2, false)];
+        assert_eq!(
+            strip_group_to_lift_for(&order, WindowId::new(1, 2), Strip),
+            vec![WindowId::new(1, 1), WindowId::new(1, 2)]
+        );
+        // Focus on the column that was behind (a keyboard move, not raised yet): it still goes last.
+        assert_eq!(
+            strip_group_to_lift_for(&order, WindowId::new(1, 1), Strip),
+            vec![WindowId::new(1, 2), WindowId::new(1, 1)]
+        );
+        // A focus not in the order (no server depth yet) is left to the caller's own raise.
+        assert_eq!(
+            strip_group_to_lift_for(&order, WindowId::new(1, 9), Strip),
+            vec![WindowId::new(1, 1), WindowId::new(1, 2)]
+        );
+    }
+
+    #[test]
+    fn a_grouped_order_or_a_floating_focus_lifts_nothing() {
+        let grouped = [stacked(2, 0, false), stacked(1, 1, false), stacked(4, 2, true)];
+        assert!(strip_group_to_lift_for(&grouped, WindowId::new(1, 2), Strip).is_empty());
+        let sandwich = [stacked(2, 0, false), stacked(4, 1, true), stacked(1, 2, false)];
+        assert!(strip_group_to_lift_for(&sandwich, WindowId::new(1, 4), Floating).is_empty());
+    }
+
+    /// A layout response focusing a strip window (the rini-initiated raise path) carries every
+    /// on-screen strip window, back to front, the focused one last, when a floating window is in
+    /// front of any of them. The parked column is not raised: it cannot be seen.
+    #[test]
+    fn a_focus_response_onto_the_strip_raises_the_on_screen_strip_over_the_floating_window() {
+        let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
+        // Front to back: right column, Settings, left column, parked column.
+        crate::sys::window_server::set_front_to_back_override(Some(vec![902, 904, 901, 903]));
+
+        reactor.handle_layout_response(
+            layout::EventResponse {
+                changed: true,
+                raise_windows: vec![WindowId::new(1, 1)],
+                focus_window: Some(WindowId::new(1, 1)),
+                boundary_hit: None,
+            },
+            None,
+        );
+        crate::sys::window_server::set_front_to_back_override(None);
+
+        let request = raise_request(&mut raise_rx).expect("a raise request");
+        assert_eq!(
+            request.raise_windows,
+            vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]],
+            "back to front, focused last; never the floating window, never the parked column"
+        );
+        assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
+    }
+
+    /// Focus landing on the floating window raises only what the layout asked for.
+    #[test]
+    fn a_focus_response_onto_the_floating_window_lifts_nothing_extra() {
+        let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
+        crate::sys::window_server::set_front_to_back_override(Some(vec![902, 904, 901, 903]));
+        reactor.handle_layout_response(
+            layout::EventResponse {
+                changed: true,
+                raise_windows: vec![WindowId::new(1, 4)],
+                focus_window: Some(WindowId::new(1, 4)),
+                boundary_hit: None,
+            },
+            None,
+        );
+        crate::sys::window_server::set_front_to_back_override(None);
+        let request = raise_request(&mut raise_rx).expect("a raise request");
+        assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 4)]]);
+    }
+
+    /// An order that already obeys the rule costs nothing: the raise is what the layout asked for.
+    #[test]
+    fn a_grouped_order_is_left_alone_by_the_focus_response() {
+        let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
+        crate::sys::window_server::set_front_to_back_override(Some(vec![902, 901, 903, 904]));
+        reactor.handle_layout_response(
+            layout::EventResponse {
+                changed: true,
+                raise_windows: vec![WindowId::new(1, 1)],
+                focus_window: Some(WindowId::new(1, 1)),
+                boundary_hit: None,
+            },
+            None,
+        );
+        crate::sys::window_server::set_front_to_back_override(None);
+        let request = raise_request(&mut raise_rx).expect("a raise request");
+        assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 1)]]);
+    }
+
+    /// Keyboard navigation between two windows of the same app: the layout's own raise names only
+    /// the target column, so the regroup has to add the rest.
+    #[test]
+    fn same_app_keyboard_navigation_regroups_the_strip() {
+        let (mut reactor, mut raise_rx, space) = reactor_with_sandwich();
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
+        while raise_rx.try_recv().is_ok() {}
+        // Left column in front, Settings, then the right column and the parked one.
+        crate::sys::window_server::set_front_to_back_override(Some(vec![901, 904, 902, 903]));
+
+        reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        crate::sys::window_server::set_front_to_back_override(None);
+
+        assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(WindowId::new(1, 2)));
+        let request = raise_request(&mut raise_rx).expect("a raise request");
+        assert_eq!(
+            request.raise_windows,
+            vec![vec![WindowId::new(1, 1), WindowId::new(1, 2)]],
+            "the strip goes up as one group, the new focus last"
+        );
+        assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 2)));
+        assert!(raise_request(&mut raise_rx).is_none(), "no second regroup: nothing new came on screen");
+    }
+
+    /// Keyboard navigation onto the parked column: the strip scrolls it in. It was behind the floating
+    /// window, so once the layout pass has placed it a second, quiet raise lifts it and re-raises the
+    /// focus over it. Before this, the floating window sat between the two columns until the next
+    /// focus change.
+    #[test]
+    fn a_column_scrolled_in_behind_the_floating_window_is_lifted_after_the_layout() {
+        let (mut reactor, mut raise_rx, space) = reactor_with_sandwich();
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 2)));
+        // The focus event re-arranged from the engine's own scroll; put the frames back to the strip
+        // this test is about: two columns visible, the third parked off the right edge.
+        let left = CGRect::new(CGPoint::new(4., 32.), CGSize::new(859., 1081.));
+        let right = CGRect::new(CGPoint::new(867., 32.), CGSize::new(859., 1081.));
+        let parked = CGRect::new(CGPoint::new(1727., 32.), CGSize::new(859., 1081.));
+        for (idx, frame) in [(1, left), (2, right), (3, parked)] {
+            if let Some(w) = reactor.state.windows.window_mut(WindowId::new(1, idx)) {
+                w.frame_monotonic = frame;
+            }
+        }
+        assert!(reactor.is_window_parked_offscreen(WindowId::new(1, 3)));
+        while raise_rx.try_recv().is_ok() {}
+        // The visible pair is grouped in front of Settings; the parked column is behind it.
+        crate::sys::window_server::set_front_to_back_override(Some(vec![902, 901, 904, 903]));
+
+        reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+        crate::sys::window_server::set_front_to_back_override(None);
+
+        assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(WindowId::new(1, 3)));
+        assert!(
+            !reactor.is_window_parked_offscreen(WindowId::new(1, 3)),
+            "the layout pass brought the target on screen: {:?}",
+            reactor.state.windows.window(WindowId::new(1, 3)).map(|w| w.frame_monotonic)
+        );
+        let first = raise_request(&mut raise_rx).expect("the focus move's own raise");
+        assert_eq!(first.raise_windows, vec![vec![WindowId::new(1, 3)]], "judged before the scroll");
+
+        // What the strip shows after the pass, in the server's (old) order 2, 1, 3 front to back:
+        // the on-screen columns back to front, the scrolled-in focus last.
+        let mut expected: Vec<WindowId> = [2u32, 1]
+            .into_iter()
+            .map(|idx| WindowId::new(1, idx))
+            .filter(|wid| !reactor.is_window_parked_offscreen(*wid))
+            .rev()
+            .collect();
+        expected.push(WindowId::new(1, 3));
+        let second = raise_request(&mut raise_rx).expect("the post-layout regroup");
+        assert_eq!(second.raise_windows, vec![expected]);
+        assert_eq!(second.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 3)));
+        assert_eq!(second.focus_quiet, Quiet::Yes);
+        assert!(raise_request(&mut raise_rx).is_none(), "one regroup, not a loop");
+    }
+
+    /// A window-server focus report onto the strip (a click, raised by macOS, not by rini) sends the
+    /// regroup as a raise of its own.
+    #[test]
+    fn a_click_onto_the_strip_regroups_the_strip() {
+        let (mut reactor, mut raise_rx, space) = reactor_with_sandwich();
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 4)));
+        while raise_rx.try_recv().is_ok() {}
+        // macOS raised the clicked left column over Settings; the right column stayed behind.
+        crate::sys::window_server::set_front_to_back_override(Some(vec![901, 904, 902, 903]));
+
+        reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(1, 1), space));
+        crate::sys::window_server::set_front_to_back_override(None);
+
+        let request = raise_request(&mut raise_rx).expect("a raise request");
+        assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]]);
+        assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
+        assert_eq!(request.focus_quiet, Quiet::Yes, "rini's own raise, not the user moving");
+    }
+}
+
 /// Switching away from a workspace must not erase where focus was in it.
 ///
 /// apply_focus_response cleared the workspace's remembered focus whenever the focused window
@@ -6503,13 +6767,18 @@ fn a_destroyed_window_exits_before_it_is_forgotten() {
     let last_frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    let mut exit: Option<CGRect> = None;
+    let mut exit: Option<(CGRect, bool)> = None;
     let mut forgotten_after_exit = false;
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::actor::workspace_animation::Event::AnimateExit { window, frame, .. } => {
+            crate::actor::workspace_animation::Event::AnimateExit {
+                window,
+                frame,
+                floating,
+                ..
+            } => {
                 assert_eq!(window, wid);
-                exit = Some(frame);
+                exit = Some((frame, floating));
             }
             crate::actor::workspace_animation::Event::ForgetWindow(window) if window == wid => {
                 forgotten_after_exit = exit.is_some();
@@ -6517,9 +6786,139 @@ fn a_destroyed_window_exits_before_it_is_forgotten() {
             _ => {}
         }
     }
-    assert_eq!(exit, Some(last_frame), "the exit carries the window's last known frame");
+    assert_eq!(
+        exit,
+        Some((last_frame, false)),
+        "the exit carries the window's last known frame, and a tiled window is not floating"
+    );
     assert!(forgotten_after_exit, "the cache must only be told to forget after the exit");
     assert!(reactor.state.windows.window(wid).is_none(), "the window state is still removed");
+}
+
+/// Change 3 of `.kiro/specs/exit-entrance-animation-regressions`: the exit carries the window's
+/// group, read from the layout engine while it still knows the window, so the ghost is banded
+/// with the floating tiles rather than drawn in front of the strip.
+#[test]
+fn a_destroyed_floating_window_exits_as_floating() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = true;
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+
+    let floater = WindowId::new(1, 1);
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
+    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
+    apps.simulate_until_quiet(&mut reactor);
+    assert!(
+        reactor.layout_manager.layout_engine.is_window_floating(floater),
+        "test setup must make the window floating"
+    );
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    reactor.handle_event(Event::WindowDestroyed(floater));
+
+    let mut exit: Option<bool> = None;
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        if let crate::actor::workspace_animation::Event::AnimateExit { window, floating, .. } =
+            event
+        {
+            assert_eq!(window, floater);
+            exit = Some(floating);
+        }
+    }
+    assert_eq!(exit, Some(true), "the exit reports the window as floating");
+}
+
+/// P-3.13 (`.kiro/specs/exit-entrance-animation-regressions`): with overlay animations off, a
+/// close sends the engine nothing but the forget, and the window state is still removed.
+#[test]
+fn a_destroyed_window_does_not_exit_when_overlay_animations_are_off() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = false;
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    let wid = WindowId::new(1, 1);
+    reactor.handle_event(Event::WindowDestroyed(wid));
+
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        assert!(
+            !matches!(
+                event,
+                crate::actor::workspace_animation::Event::AnimateExit { .. }
+                    | crate::actor::workspace_animation::Event::Animate { .. }
+                    | crate::actor::workspace_animation::Event::AnimateStrip { .. }
+            ),
+            "nothing flies with overlay animations off: {event:?}"
+        );
+    }
+    assert!(reactor.state.windows.window(wid).is_none(), "the window state is still removed");
+}
+
+/// P-3.13: with overlay animations off, a layout pass places the windows and sends the engine no
+/// flight.
+#[test]
+fn a_layout_pass_does_not_fly_when_overlay_animations_are_off() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = false;
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    let mut layout = Vec::new();
+    for idx in 1..=3u32 {
+        let wid = WindowId::new(1, idx);
+        let frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+        let target = match idx {
+            1 => CGRect::new(CGPoint::new(frame.origin.x + 120., frame.origin.y), frame.size),
+            2 => CGRect::new(CGPoint::new(frame.origin.x - 120., frame.origin.y), frame.size),
+            _ => frame,
+        };
+        layout.push((wid, target));
+    }
+
+    super::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
+
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        assert!(
+            !matches!(
+                event,
+                crate::actor::workspace_animation::Event::Animate { .. }
+                    | crate::actor::workspace_animation::Event::AnimateStrip { .. }
+                    | crate::actor::workspace_animation::Event::AnimateExit { .. }
+            ),
+            "nothing flies with overlay animations off: {event:?}"
+        );
+    }
+    assert!(
+        apps.requests().iter().any(|request| matches!(
+            request,
+            Request::SetWindowFrame(..) | Request::SetBatchWindowFrame(..)
+        )),
+        "the windows are still placed"
+    );
 }
 
 /// A raise walks the whole workspace and macOS reports a focus change for every window it touches. Taking

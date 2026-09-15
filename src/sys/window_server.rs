@@ -42,6 +42,7 @@ thread_local! {
     static TEST_SPACE_WINDOW_LIST_BY_SPACE_OVERRIDE: RefCell<HashMap<u64, Vec<u32>>> = RefCell::new(HashMap::default());
     static TEST_WINDOW_SPACES_OVERRIDE: RefCell<HashMap<u32, Vec<u64>>> = RefCell::new(HashMap::default());
     static TEST_WINDOW_ORDERED_IN_OVERRIDE: RefCell<HashMap<u32, bool>> = RefCell::new(HashMap::default());
+    static TEST_FRONT_TO_BACK_OVERRIDE: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
 }
 
 pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
@@ -777,7 +778,9 @@ fn union_rect(a: CGRect, b: CGRect) -> CGRect {
 /// Front-to-back position of every on-screen window, keyed by window server id, 0 being frontmost.
 ///
 /// `CGWindowListCopyWindowInfo` returns on-screen windows in front-to-back order, so the index is the
-/// depth. Used by the animation overlay to stack its tiles the way the screen is stacked.
+/// depth. Used by the animation overlay to stack its tiles the way the screen is stacked, and by the
+/// reactor's strip regroup to see whether a floating window sits in front of the strip.
+#[cfg(not(test))]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
     get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
         .iter()
@@ -785,6 +788,21 @@ pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
         .enumerate()
         .map(|(depth, id)| (id, depth))
         .collect()
+}
+
+/// See "A unit test must not read the live window server" in `docs/testing.md`. Empty until a test
+/// sets the order with `set_front_to_back_override`.
+#[cfg(test)]
+pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
+    TEST_FRONT_TO_BACK_OVERRIDE.with(|order| {
+        order.borrow().iter().enumerate().map(|(depth, id)| (*id, depth)).collect()
+    })
+}
+
+/// The on-screen order for test builds, frontmost first. `None` clears it.
+#[cfg(test)]
+pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
+    TEST_FRONT_TO_BACK_OVERRIDE.with(|current| *current.borrow_mut() = order.unwrap_or_default());
 }
 
 /// Ordinary application windows currently on screen and intersecting `display`, with their frames.

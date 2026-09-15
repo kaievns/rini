@@ -67,10 +67,11 @@ impl HiddenWindowPlacement {
     /// A park itself keeps a sliver on screen, so "any intersection at all" misclassified every
     /// parked window as visible — and a parked window animated back in then travelled from its park
     /// in the bottom corner instead of entering from the strip's edge. Off screen therefore means:
-    /// no intersection, or a sliver within the park clamp in both axes. Live parks measure up to
-    /// 32pt visible (bottom parks at y = display height - 32), and macOS itself will not push a
-    /// window further off an edge than 40pt, so nothing genuinely meant to be seen shows 40pt or
-    /// less in BOTH axes — a column peeking in at an edge shows its full height.
+    /// no intersection, or a sliver within the park clamp in both axes. Nothing genuinely meant to
+    /// be seen shows 40pt or less in BOTH axes — a column peeking in at an edge shows its full height.
+    ///
+    /// Apps clamp a park past 40pt (Kiro 41pt, Finder 52pt), so the animation's park remap also
+    /// consults the requested frame, not only this test. See docs/animation-smoothness.md.
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
         const PARK_CLAMP_PX: f64 = 40.0;
         if Self::intersection_area(window, screen) <= 0.0 {

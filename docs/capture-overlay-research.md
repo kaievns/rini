@@ -826,8 +826,23 @@ It decides two separate things:
   something off the strip is in front of any of them, and nothing at all when the
   order already obeys the rule — the common case, and it must cost nothing, because
   putting it back costs one Accessibility raise per window on screen. Only on-screen
-  windows are raised: a parked column's place in the order cannot be seen, and the
-  layout pass that scrolls it back into view raises it anyway.
+  windows are judged and raised (`strip_group_to_lift_for` in `actor/reactor.rs`),
+  and the judgment runs twice per focus change: once with the raise the focus move
+  issues, and again after the layout pass has been applied (`regroup_after_layout`),
+  because nothing raises a column when it scrolls back into view — the engine's raise
+  list for a focus move is the target column alone (`scrolling.rs` `move_focus`).
+  Without the second pass a parked column left behind a floating window came into
+  view behind it and sat between the focused column and the floating window, the
+  sandwich seen after keyboard navigation with System Settings floating. The second
+  pass is skipped when the first already raised everything it would.
+
+  Raising the WHOLE strip, parked columns included, was tried and measured on
+  2026-09-15: 19 windows across 10 apps took seconds (one activation wait per app,
+  serialized by the raise mutex in `app.rs`), every raise echoed as a focus report,
+  and echoes past the 400ms `RaiseEcho` window read as the user moving, so the strip
+  scrolled to random parked windows and regrouped again — 13 regroup rounds for one
+  focus move before the order settled. On-screen only keeps a regroup to 2-3 raises,
+  inside the echo window.
 
 The windows off the strip are LEFT OUT of the regroup raise rather than raised first.
 Everything raised in one sequence lands in front of everything not raised, but the

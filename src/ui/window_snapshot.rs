@@ -289,6 +289,38 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSn
     })
 }
 
+/// One framed capture that yields the picture AND its hairline: the window plus one ring, the
+/// picture cropped back out of the same pixels. The reveal chase's capture: one window-server
+/// call per attempt. See "A grow holds, then reveals" in `docs/animation-smoothness.md`.
+pub fn capture_via_framed_with_dressing(
+    window: WindowServerId,
+    scale: f64,
+) -> Option<WindowSnapshot> {
+    use crate::ui::edge_dressing::{
+        capture_ring_expanded, harvest_from_capture, picture_within_ring,
+    };
+    let frame = crate::sys::window_server::get_window(window)?.frame;
+    if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
+        return None;
+    }
+    let framed = capture_ring_expanded(window, frame, scale)?;
+    let px_w = CGImage::width(Some(&framed)) as f64;
+    let px_h = CGImage::height(Some(&framed)) as f64;
+    let inner = picture_within_ring(px_w, px_h, scale);
+    let image = CGImage::with_image_in_rect(Some(&framed), inner)?;
+    let dressing = harvest_from_capture(&framed, frame.size, scale);
+    Some(WindowSnapshot {
+        image: SnapshotImage::Bitmap(image),
+        coverage: Coverage {
+            covered: (inner.size.width / scale, inner.size.height / scale),
+            window: (frame.size.width, frame.size.height),
+        },
+        source: SnapshotSource::SkyLight,
+        dressing,
+        taken: std::time::Instant::now(),
+    })
+}
+
 /// Anything the cache can hold and judge. Exists so the cache's replacement policy can be tested
 /// against plain sizes, without constructing bitmaps for a rule that never looks at pixels.
 pub trait HasCoverage {
@@ -428,6 +460,56 @@ impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+/// A 1x1 bitmap for tests that need a real `CGImage` but never read its pixels.
+#[cfg(test)]
+pub(crate) fn test_bitmap() -> CFRetained<CGImage> {
+    use objc2_core_graphics::{CGBitmapInfo, CGColorSpace, CGDataProvider, CGImageAlphaInfo};
+    static PIXEL: [u8; 4] = [0, 0, 0, 255];
+    // SAFETY: the data outlives the provider, being a static, so no release callback is needed.
+    let provider = unsafe {
+        CGDataProvider::with_data(
+            std::ptr::null_mut(),
+            PIXEL.as_ptr() as *const std::ffi::c_void,
+            PIXEL.len(),
+            None,
+        )
+    }
+    .expect("data provider");
+    let space = CGColorSpace::new_device_rgb().expect("colour space");
+    // SAFETY: 1x1 BGRA, and the provider holds exactly those four bytes.
+    unsafe {
+        CGImage::new(
+            1,
+            1,
+            8,
+            32,
+            4,
+            Some(&space),
+            CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0),
+            Some(&provider),
+            std::ptr::null(),
+            false,
+            objc2_core_graphics::CGColorRenderingIntent::RenderingIntentDefault,
+        )
+    }
+    .expect("image")
+}
+
+/// A usable snapshot that claims to cover a window of `size`, for tests about geometry.
+#[cfg(test)]
+pub(crate) fn test_snapshot(size: CGSize) -> WindowSnapshot {
+    WindowSnapshot {
+        image: SnapshotImage::Bitmap(test_bitmap()),
+        coverage: Coverage {
+            covered: (size.width, size.height),
+            window: (size.width, size.height),
+        },
+        source: SnapshotSource::ScreenCaptureKit,
+        dressing: None,
+        taken: std::time::Instant::now(),
     }
 }
 

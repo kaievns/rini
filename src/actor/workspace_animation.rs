@@ -14,7 +14,7 @@
 //!
 //! Measurements behind all of this are in `docs/capture-overlay-research.md`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -80,7 +80,8 @@ pub enum Event {
     /// Animate a window that just closed shrinking out of the layout. The real window is already
     /// gone from the window server, so the tile draws the cached snapshot — the reverse of an
     /// entrance. Sent before `ForgetWindow`, which is what makes the cached picture available.
-    AnimateExit { window: WindowId, frame: CGRect, duration: Duration },
+    /// `floating` places the ghost in its own z-order band (`model/z_group.rs`).
+    AnimateExit { window: WindowId, frame: CGRect, floating: bool, duration: Duration },
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
@@ -106,11 +107,11 @@ pub enum Event {
     StartMoving,
     /// A background capture has landed. Posted by the snapshot service, not by another actor.
     SnapshotsReady,
-    /// A mid-flight recapture of the window being switched into has landed. Posted by the capture
-    /// thread, not by another actor.
-    /// `settled` means two consecutive captures showed the same rendering (the reveal chase's
-    /// gate). Only settled pictures may satisfy a reveal hold or replace a resizing tile's
-    /// picture: an unsettled capture of a resized-but-unpainted window is stable-looking garbage.
+    /// A framed recapture has landed: a chase's reveal or the destination refresh. Posted by the
+    /// capture thread, not by another actor. `settled` is the chase's gate (`chase_settled`): the
+    /// window has repainted. Only settled pictures may satisfy a reveal hold or replace a resizing
+    /// tile's picture: an unsettled capture of a resized-but-unpainted window is stable-looking
+    /// garbage. What reaches a tile is `should_swap_mid_flight`'s call.
     PictureReady { window: WindowId, snapshot: WindowSnapshot, settled: bool },
     /// A hairline harvest finished on its background thread. Harvested OFF the capture service's
     /// completion queue, because the framed capture behind it is proxied through that same
@@ -149,16 +150,14 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// joining in between cannot pop. One frame is enough and is imperceptible.
 const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 
-/// How far into a movement to recapture the window being switched into.
-///
-/// Early, so the corrected picture is on screen for most of the flight, but not on the very first frame,
-/// because the destination workspace's windows are only shown once the reactor has acted on the switch.
-const REFRESH_DESTINATION_AT: f64 = 0.0;
+/// How far into a movement to recapture the window being switched into. Once per flight, at the
+/// midpoint: the app has repainted as focused by then, and the real windows are not yet placed.
+/// See "Mid-flight passes" in `docs/animation-smoothness.md`.
+const REFRESH_DESTINATION_AT: f64 = 0.5;
 
-/// A second attempt, later in the flight. An app repaints as focused on its own schedule, and the
-/// first attempt can land before it has: the tile then still slides in dimmed. Still before the real
-/// windows are placed, so the corrected picture is on screen before the handover.
-const REFRESH_DESTINATION_AGAIN_AT: f64 = 0.5;
+/// A refresh landing at or after this progress is cached only: a cut this close to lift reads as
+/// end-of-flight flicker.
+const REFRESH_APPLY_BEFORE: f64 = 0.6;
 
 /// How many windows to recapture mid-flight, each costing a frame. Two, because a focus change has
 /// two ends: the window being switched into needs its FOCUSED rendering, and the window being left
@@ -192,12 +191,25 @@ fn refresh_order(
     ordered.into_iter().take(max).map(|(window, _)| *window).collect()
 }
 
-/// How much of a window must be on screen before a fresh capture is worth attempting. A partly covered
-/// window comes back clipped and would be rejected anyway.
-const FRESH_CAPTURE_MIN_ON_SCREEN: f64 = 0.99;
+/// The destination refresh's requests: exactly one ScreenCaptureKit target per wanted window that
+/// the pass knows a server id and size for, and the windows those targets cover, in order. One
+/// route, so the refresh compares like with like against the cache `warm_windows` filled.
+fn refresh_requests(
+    tiles: &[(WindowId, WindowServerId, CGSize)],
+    wanted: &[WindowId],
+) -> (Vec<WindowId>, Vec<SnapshotTarget>) {
+    let requests: Vec<SnapshotTarget> = wanted
+        .iter()
+        .filter_map(|window| tiles.iter().find(|(w, _, _)| w == window))
+        .map(|&(window, server_id, size)| SnapshotTarget { window, server_id, size })
+        .collect();
+    let covered = requests.iter().map(|t| t.window).collect();
+    (covered, requests)
+}
 
-/// How far through the animation the real windows are placed. Late enough that the overlay is
-/// certainly covering them, early enough that the Accessibility writes land before it lifts.
+/// How far through a move-only layout flight the real windows are placed. Late enough that the
+/// overlay is certainly covering them, early enough that the Accessibility writes land before it
+/// lifts. Resizes and strips place earlier: `apply_frames_at`, "The apply point" in the doc.
 const APPLY_FRAMES_AT: f64 = 0.75;
 
 /// How a fresh group of tiles begins moving.
@@ -283,31 +295,44 @@ struct RunningAnimation {
     duration: Duration,
     /// Progress at which the real windows are placed: earlier when a resize is in flight.
     apply_at: f64,
-    /// Windows waiting for a first picture, admitted as growing tiles when it lands.
+    /// Windows waiting for a first picture. Each also holds in `awaiting`; the tile is composed
+    /// when the picture lands (`claim`), or joins late with the remaining flight (`admit`).
     entrances: Vec<PendingEntrance>,
-    /// Growing windows whose reveal pixels are still being rendered, with the size that counts as
-    /// ready. The flight holds at frame zero until this empties or `hold_deadline` passes: a grow
-    /// drawn from the old picture is a stretch or a hole, and the only truthful fill is a capture
-    /// of the window at its new size.
+    /// Windows whose pixels are still being rendered — a grow's reveal, an entrance's first
+    /// picture — with the size that counts as ready: the destination's, for both. The flight
+    /// holds at frame zero until this empties or `hold_deadline` passes: the only truthful fill
+    /// for a grow is a capture of the window at its new size.
     awaiting: Vec<(WindowId, CGSize)>,
-    /// When to stop waiting for reveal pixels and fly with the placeholder.
+    /// When to stop waiting for reveal pixels and fly with the cropped placeholder
+    /// (`reveal_hold_limit`, at most `HOLD_CAP`).
     hold_deadline: Option<Instant>,
-    /// How many times the window being focused has been recaptured. See `refresh_destination_among`.
-    destination_refreshed: u8,
+    /// Whether the window being focused has been recaptured. See `refresh_destination_among`.
+    destination_refreshed: bool,
+    /// The windows that refresh recaptured. Only their tiles may take a picture mid-flight, and
+    /// only before `REFRESH_APPLY_BEFORE`; every other landing is cached for the next flight.
+    refresh_targets: Vec<WindowId>,
+    /// Windows whose hairline landed this flight (with a chase or refresh capture), so `finish`
+    /// harvests the rest of the animated set once and nothing twice.
+    harvested: HashSet<WindowId>,
+    /// The window gaining focus, from the latest pass that named one. Its group is the one
+    /// `restack` bands in front, for every tile in the flight whichever pass composed it.
+    focus: Option<WindowId>,
     /// Dropped when the animation ends, which invalidates the timer and stops the wakeups.
     _clock: Option<RepeatingTimer>,
 }
 
 /// A window that should join the animation as soon as it has a picture.
 ///
-/// A window that just opened has never been captured, and a capture takes ~50-90ms. Rather than
-/// letting it pop in when the overlay lifts, the animation reserves it a place: when its capture
-/// lands mid-flight, a tile is added growing from nothing at its destination.
+/// A window that just opened has never been captured. Rather than letting it pop in when the
+/// overlay lifts, the flight holds at frame zero for its first picture and composes it as a tile
+/// growing from nothing at its destination, in the survivors' transaction. See "Entrances are
+/// holds" in `docs/animation-smoothness.md`.
 #[derive(Debug, Clone)]
 struct PendingEntrance {
     window: WindowId,
     /// Destination, in the overlay's coordinate space.
     to: CGRect,
+    floating: bool,
 }
 
 /// Where an entering window grows in from: zero width at its own left edge, full height.
@@ -330,23 +355,292 @@ fn exit_to(from: CGRect) -> CGRect {
 /// so it needs more runway than a move to land before the overlay lifts.
 const APPLY_FRAMES_AT_RESIZE: f64 = 0.5;
 
-/// Which apply point an animation needs.
-fn apply_frames_at(any_resize: bool) -> f64 {
-    if any_resize { APPLY_FRAMES_AT_RESIZE } else { APPLY_FRAMES_AT }
+/// The apply point for a strip movement: pure moves, but 17 serialized AX writes need runway.
+/// See "The apply point" in `docs/animation-smoothness.md`.
+const APPLY_FRAMES_AT_STRIP: f64 = 0.5;
+
+/// Which path composed a flight. See "The apply point" in `docs/animation-smoothness.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlightKind {
+    /// A per-window layout pass: moves and resizes.
+    Layout,
+    /// A strip movement: pure translations.
+    Strip,
 }
 
+/// Which apply point an animation needs.
+fn apply_frames_at(kind: FlightKind, any_resize: bool) -> f64 {
+    match (kind, any_resize) {
+        (_, true) => APPLY_FRAMES_AT_RESIZE,
+        (FlightKind::Layout, false) => APPLY_FRAMES_AT,
+        (FlightKind::Strip, false) => APPLY_FRAMES_AT_STRIP,
+    }
+}
+
+/// What a tile is doing when a picture of its window lands mid-flight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TileState {
+    /// No tile for this window in the flight.
+    NotTiled,
+    /// The flight holds for this window's first picture: an entrance reservation.
+    Awaiting,
+    /// A grow waiting for its reveal: held at frame zero, or flying the placeholder because its
+    /// picture cannot cover the destination. `fits`: the landed picture covers it.
+    Reveal { fits: bool },
+    /// An ordinary moving tile. `fits`: the picture covers the destination; `resizing`: the tile
+    /// changes size in flight.
+    Moving { fits: bool, resizing: bool },
+    /// A moving tile whose picture is the flight's own destination refresh.
+    MovingRefreshTarget { fits: bool, resizing: bool },
+}
+
+/// What to do with a picture that landed while a flight is running. Every picture is cached
+/// first; this decides whether it also reaches the overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwapDecision {
+    /// A held flight takes it at frame zero (`claim_reveal`).
+    Claim,
+    /// A moving flight adds the entrance late (`admit_entrance`).
+    Admit,
+    /// Hard-cut onto the moving tile, with the reason logged.
+    Swap(&'static str),
+    /// Cache only, for the next flight.
+    CacheOnly,
+}
+
+/// How an incoming picture compares with the one cached for its window, judged before the cache
+/// absorbs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct CacheComparison {
+    /// Renders the same within thumbprint tolerance. Only bitmap pairs can be judged; anything
+    /// else counts as different.
+    renders_like_cached: bool,
+    /// Captured by the same route (`SnapshotSource`) as the cached picture. Different routes
+    /// render a translucent window differently, so a route change alone reads as a change.
+    same_source: bool,
+}
+
+/// Whether a picture landing mid-flight may change what a tile draws. `progress` is `None`
+/// before the flight starts moving. A moving tile keeps its picture unless it is waiting for
+/// one: a placeholder takes its settled reveal, the destination refresh target its recapture,
+/// both only early. A resizing tile still needs a settled picture: an unsettled one can be the
+/// resized-but-unpainted surface. The refresh also needs `same_source`: a picture from another
+/// capture route differs from the cached one by route alone, and swapping it ping-pongs the tile
+/// between two renderings every flight. See "Mid-flight passes" in
+/// `docs/animation-smoothness.md`.
+fn should_swap_mid_flight(
+    state: TileState,
+    settled: bool,
+    renders_like_cached: bool,
+    same_source: bool,
+    progress: Option<f64>,
+) -> SwapDecision {
+    match state {
+        TileState::Awaiting | TileState::Reveal { .. } if progress.is_none() => {
+            SwapDecision::Claim
+        }
+        TileState::Awaiting => SwapDecision::Admit,
+        TileState::Reveal { fits: true }
+            if settled && progress.is_some_and(|p| p < REFRESH_APPLY_BEFORE) =>
+        {
+            SwapDecision::Swap("reveal")
+        }
+        TileState::Reveal { .. } => SwapDecision::CacheOnly,
+        TileState::MovingRefreshTarget { fits: true, resizing }
+            if same_source
+                && !renders_like_cached
+                && (!resizing || settled)
+                && progress.is_some_and(|p| p < REFRESH_APPLY_BEFORE) =>
+        {
+            SwapDecision::Swap("refresh")
+        }
+        TileState::NotTiled
+        | TileState::Moving { .. }
+        | TileState::MovingRefreshTarget { .. } => SwapDecision::CacheOnly,
+    }
+}
+
+/// Where a flight is between composition and lift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlightPhase {
+    /// No flight.
+    Idle,
+    /// Composed, overlay up, not yet moving, nothing awaited.
+    FrameZero,
+    /// Overlay up, waiting at frame zero for reveal or entrance pictures.
+    Holding,
+    /// Tiles in motion.
+    Moving,
+}
+
+/// A request to the window server that a flight might make.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureKind {
+    /// Background captures for windows the reactor named (`warm_windows`).
+    Warm,
+    /// The full-display desktop render (`warm_desktop`).
+    Desktop,
+    /// The destination recapture (`refresh_destination_among`).
+    Refresh,
+    /// A reveal or entrance chase (`chase_reveal_pictures`).
+    Chase,
+    /// A hairline harvest for a landed snapshot.
+    Harvest,
+    /// A capture for a window SkyLight could not serve at composition.
+    NeedsCapture,
+}
+
+/// Whether a flight in `phase` may start `kind` of capture work now. Between frame zero and lift
+/// only the chases and the one moving refresh may; see "Capture work in flight" in
+/// `docs/animation-smoothness.md`.
+fn capture_work_allowed(phase: FlightPhase, kind: CaptureKind) -> bool {
+    match phase {
+        FlightPhase::Idle => true,
+        FlightPhase::FrameZero => matches!(kind, CaptureKind::Chase | CaptureKind::NeedsCapture),
+        FlightPhase::Holding => matches!(kind, CaptureKind::Chase),
+        FlightPhase::Moving => matches!(kind, CaptureKind::Chase | CaptureKind::Refresh),
+    }
+}
+
+/// Parks warm targets asked for mid-flight, one per window: a later request for the same window
+/// replaces the earlier one, since it carries the newer size.
+fn defer_warm(deferred: &mut Vec<SnapshotTarget>, targets: Vec<SnapshotTarget>) {
+    for target in targets {
+        match deferred.iter_mut().find(|held| held.window == target.window) {
+            Some(held) => *held = target,
+            None => deferred.push(target),
+        }
+    }
+}
+
+/// Which animated windows `finish` harvests a hairline for: each at most once per flight. Skipped:
+/// harvested with a chase or refresh, re-requested (the landing harvests), or already dressed.
+fn finish_harvest_set(
+    animated: &[WindowId],
+    harvested: &HashSet<WindowId>,
+    requested: &[WindowId],
+    dressed: &HashSet<WindowId>,
+) -> Vec<WindowId> {
+    let mut seen = HashSet::new();
+    animated
+        .iter()
+        .copied()
+        .filter(|w| {
+            !harvested.contains(w) && !requested.contains(w) && !dressed.contains(w) && seen.insert(*w)
+        })
+        .collect()
+}
+
+/// Whether the desktop render in hand can back the next overlay, or `finish` should ask for a new
+/// one: missing, sized for another display, or older than the picture staleness bound.
+fn desktop_render_wanted(render: Option<(Duration, (f64, f64))>, display: (f64, f64)) -> bool {
+    match render {
+        None => true,
+        Some((age, covered)) => {
+            !crate::ui::window_snapshot::spans_display(covered, display)
+                || crate::ui::window_snapshot::picture_is_stale(age)
+        }
+    }
+}
+
+/// Whether an in-flight merge leaves the already-applied frames stale. `changed`: a tile was
+/// retargeted or joined; `frames_changed`: any final frame differs, tiled or not. A parked
+/// window has no tile, so its frame change counts too. See "Mid-flight passes" in
+/// `docs/animation-smoothness.md`.
+fn mark_stale_on_untiled_change(changed: bool, frames_changed: bool) -> bool {
+    changed || frames_changed
+}
+
+/// A real window further than this from its intended frame at lift is a handover miss.
+const HANDOVER_THRESHOLD_PT: f64 = 2.0;
+
+/// How far the real windows were from their tiles at lift. See `report_handover_error`.
+#[derive(Debug, Clone, PartialEq)]
+struct HandoverReport {
+    /// Windows measured: tiled, answered by the server, intended on screen.
+    total: usize,
+    /// Windows more than `HANDOVER_THRESHOLD_PT` off.
+    count_over: usize,
+    /// The largest error among the windows the report counts.
+    worst_visible_pt: f64,
+    worst_wsid: u32,
+}
+
+/// Measures every tiled window's real frame against its intended one. A park is excluded: macOS
+/// clamps it, so its error is the clamp, not the flight. Pure, so the report can be checked on
+/// plain rects. See "Real windows land before lift" in `docs/animation-smoothness.md`.
+fn handover_report(
+    final_frames: &[(WindowId, CGRect)],
+    tiled: &[WindowId],
+    real: &HashMap<WindowId, CGRect>,
+    display: CGRect,
+) -> HandoverReport {
+    let mut report =
+        HandoverReport { total: 0, count_over: 0, worst_visible_pt: 0.0, worst_wsid: 0 };
+    for (window, intended) in final_frames {
+        if !tiled.contains(window) {
+            continue;
+        }
+        if crate::model::HiddenWindowPlacement::is_off_screen(display, *intended) {
+            continue;
+        }
+        let Some(actual) = real.get(window) else { continue };
+        report.total += 1;
+        let dx = (actual.origin.x - intended.origin.x).abs();
+        let dy = (actual.origin.y - intended.origin.y).abs();
+        let error = dx.max(dy);
+        if error > HANDOVER_THRESHOLD_PT {
+            report.count_over += 1;
+        }
+        if error > report.worst_visible_pt {
+            report.worst_visible_pt = error;
+            report.worst_wsid = window.idx.get();
+        }
+    }
+    report
+}
+
+/// Whether a chase capture counts as the window's settled rendering: it matches the previous
+/// one, or it differs from the picture cached before the resize (the app has repainted). See "A
+/// grow holds, then reveals" in `docs/animation-smoothness.md`.
+fn chase_settled(prev: Option<&[u8]>, print: &[u8], pre_resize: Option<&[u8]>) -> bool {
+    use crate::ui::edge_dressing::renderings_match;
+    prev.is_some_and(|previous| renderings_match(previous, print))
+        || pre_resize.is_some_and(|before| !renderings_match(before, print))
+}
+
+/// The thumbprint of a snapshot's bitmap; `None` for a surface, which cannot be compared.
+fn bitmap_thumbprint(snapshot: &WindowSnapshot) -> Option<Vec<u8>> {
+    match &snapshot.image {
+        crate::ui::window_snapshot::SnapshotImage::Bitmap(image) => {
+            crate::ui::edge_dressing::thumbprint(image)
+        }
+        _ => None,
+    }
+}
+
+/// The longest a flight stands still at frame zero for a reveal. A slower app flies with the
+/// stretched placeholder. See "A grow holds, then reveals" in `docs/animation-smoothness.md`.
+const HOLD_CAP: Duration = Duration::from_millis(300);
+
 /// How long a grow may hold at frame zero waiting for its reveal pixels, from the flight's
-/// duration. Sized against the measured pipeline — the AX resize plus the app's rerender lands
-/// around 150-250ms, the framed capture adds 16-24ms — while still bounded: an app that will not
-/// rerender gets the stretch placeholder rather than a frozen screen.
+/// duration: 0.4·d with a 300ms floor, capped at `HOLD_CAP`.
 fn reveal_hold_limit(duration: Duration) -> Duration {
-    duration.mul_f64(0.4).max(Duration::from_millis(300))
+    duration.mul_f64(0.4).max(Duration::from_millis(300)).min(HOLD_CAP)
+}
+
+/// How long a holding flight still waits before flying with the placeholder: the time to its
+/// deadline, or `None` once that has passed. See "A grow holds, then reveals" in the doc.
+fn hold_wait(hold_deadline: Option<Instant>, now: Instant) -> Option<Duration> {
+    let deadline = hold_deadline?;
+    (now < deadline).then(|| (deadline - now).max(Duration::from_millis(10)))
 }
 
 /// How often the chase thread polls a growing window's real frame (a cheap window-server read;
-/// the capture itself only runs once the size is there), and how many times before giving up.
-const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(25);
-const REVEAL_CHASE_ATTEMPTS: usize = 40;
+/// the capture itself only runs once the size is there), and how many times before giving up:
+/// about a second in all. See "A grow holds, then reveals" in `docs/animation-smoothness.md`.
+const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(8);
+const REVEAL_CHASE_ATTEMPTS: usize = 125;
 
 /// What became of a tile offered to an animation in flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -370,6 +664,272 @@ fn merge_action(current_to: Option<CGRect>, incoming_to: CGRect) -> Admitted {
     }
 }
 
+/// Folds a later pass's destinations into the flight's. Latest frame per window wins. Returns
+/// whether any window's destination is new or different.
+fn merge_final_frames(
+    existing: &mut Vec<(WindowId, CGRect)>,
+    incoming: Vec<(WindowId, CGRect)>,
+) -> bool {
+    let mut changed = false;
+    for (window, frame) in incoming {
+        if let Some(current) = existing.iter_mut().find(|(w, _)| *w == window) {
+            if !current.1.same_as(frame) {
+                changed = true;
+            }
+            current.1 = frame;
+        } else {
+            existing.push((window, frame));
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Points a flight's reserved entrances at a later pass's destinations. An entrance has no tile
+/// yet, so `merge_pass` cannot retarget it, and its `to` was fixed at reservation; a pan merging
+/// into the open left the newcomer at its pre-pan slot while its neighbours scrolled. Returns how
+/// many moved. See "Mid-flight passes" in `docs/animation-smoothness.md`.
+fn retarget_entrances(
+    entrances: &mut [PendingEntrance],
+    final_frames: &[(WindowId, CGRect)],
+    display: CGRect,
+) -> usize {
+    let mut moved = 0;
+    for entrance in entrances.iter_mut() {
+        let Some((_, frame)) = final_frames.iter().find(|(w, _)| *w == entrance.window) else {
+            continue;
+        };
+        let to = to_overlay_space(*frame, display);
+        if !entrance.to.same_as(to) {
+            entrance.to = to;
+            moved += 1;
+        }
+    }
+    moved
+}
+
+/// Retargets for the flight's tiles a pass moves without composing: a final frame names the
+/// window but no tile in the pass does (a strip pass composes only windows with a usable picture;
+/// a layout pass leaves out a window heading off screen). Each keeps its start and picture and
+/// takes the pass's destination, then goes through `merge_pass` like any composed tile.
+/// Companions and ghosts have no final frame and are never touched.
+fn retargets_from_frames(
+    flight: &[OverlayTile],
+    pass: &[OverlayTile],
+    final_frames: &[(WindowId, CGRect)],
+    display: CGRect,
+) -> Vec<OverlayTile> {
+    flight
+        .iter()
+        .filter(|tile| !tile.companion && !tile.ghost)
+        .filter(|tile| !pass.iter().any(|p| p.window == tile.window))
+        .filter_map(|tile| {
+            let (_, frame) = final_frames.iter().find(|(w, _)| *w == tile.window)?;
+            let mut retarget = tile.clone();
+            retarget.to = to_overlay_space(*frame, display);
+            Some(retarget)
+        })
+        .collect()
+}
+
+/// Carries a flight's exit ghosts along a strip movement merging into it. A ghost's window is
+/// gone, so no pass carries a frame for it; the survivors around it travel by `delta`, and a
+/// ghost that did not ended the flight torn from them. `from` stays: an in-flight retarget bends
+/// from the presented position. Returns the ghosts moved, for the overlay to retarget.
+fn shift_ghosts(tiles: &mut [OverlayTile], delta: CGPoint) -> Vec<WindowId> {
+    if delta.x == 0.0 && delta.y == 0.0 {
+        return Vec::new();
+    }
+    tiles
+        .iter_mut()
+        .filter(|tile| tile.ghost)
+        .map(|tile| {
+            tile.to.origin.x += delta.x;
+            tile.to.origin.y += delta.y;
+            tile.window
+        })
+        .collect()
+}
+
+/// How far a strip movement carries every unpinned tile: `strip_travel`'s `to - from`.
+fn strip_pan_travel(from_offset: CGPoint, to_offset: CGPoint) -> CGPoint {
+    CGPoint::new(from_offset.x - to_offset.x, from_offset.y - to_offset.y)
+}
+
+/// The frames a coalescing merge must send again, if any: frames already placed at frame zero are
+/// stale once a later pass moves a window, and `step` will not place them a second time. See
+/// "Resizes through the overlay" in `docs/animation-smoothness.md`.
+fn reapply_set(
+    frames_applied: bool,
+    in_flight: bool,
+    changed: bool,
+    final_frames: &[(WindowId, CGRect)],
+) -> Option<Vec<(WindowId, CGRect)>> {
+    (frames_applied && !in_flight && changed).then(|| final_frames.to_vec())
+}
+
+/// How long a tile joining a flight already in motion travels: what is left of the flight, so it
+/// lands with its neighbours and never outlives the overlay.
+fn late_join_duration(duration: Duration, progress: f64) -> Duration {
+    duration.mul_f64((1.0 - progress).max(0.0))
+}
+
+/// A newly opened window's place in the flight: the entrance reservation, and the reveal hold entry
+/// it adds to `awaiting`. An entrance is a hold: the flight waits at frame zero for the window's
+/// first picture like a grow waits for its reveal pixels.
+fn entrance_reservation(
+    window: WindowId,
+    to: CGRect,
+    floating: bool,
+) -> (PendingEntrance, Option<(WindowId, CGSize)>) {
+    (PendingEntrance { window, to, floating }, Some((window, to.size)))
+}
+
+/// What a fresh flight does at frame zero: whether the real frames are applied now, under the
+/// covering overlay, and which windows the reveal chase follows. Entrances are in `awaiting`.
+fn frame_zero_work(awaiting: &[(WindowId, CGSize)]) -> (bool, Vec<(WindowId, CGSize)>) {
+    (!awaiting.is_empty(), awaiting.to_vec())
+}
+
+/// The tile for a reserved entrance whose picture has landed: growing from zero width at its own
+/// left edge, frontmost (`server_order: Some(0)`, a window is raised on open) with the focused
+/// shadow, since a window that just opened is about to hold focus.
+fn entrance_tile(entrance: &PendingEntrance, snapshot: &WindowSnapshot) -> OverlayTile {
+    OverlayTile {
+        window: entrance.window,
+        from: entrance_from(entrance.to),
+        to: entrance.to,
+        snapshot: snapshot.clone(),
+        floating: entrance.floating,
+        server_order: Some(0),
+        depth: 0,
+        companion: false,
+        focused: true,
+        ghost: false,
+    }
+}
+
+/// What a settled picture did for a flight holding at frame zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Claimed {
+    /// Taken; other holds remain.
+    Held,
+    /// Taken, and it was the last hold: the flight may start moving.
+    Released,
+}
+
+/// Whether a composed pass is worth an overlay flight at all. False only when nothing drawable
+/// moves, no exit was drained, and no flight is running: see "Layout changes" in
+/// `docs/animation-smoothness.md`.
+fn worth_flying(moving_drawable: bool, exits: usize, running: bool) -> bool {
+    moving_drawable || exits > 0 || running
+}
+
+/// A closed window waiting for the layout pass that reflows its neighbours, so the ghost and the
+/// survivors fly in one transaction. Never a flight of its own: see "Closed windows resize out"
+/// in `docs/animation-smoothness.md`.
+#[derive(Debug, Clone)]
+struct PendingExit {
+    window: WindowId,
+    /// Display-space frame the window closed at.
+    frame: CGRect,
+    snapshot: WindowSnapshot,
+    floating: bool,
+    /// Past this, no pass is coming and the exit is dropped rather than flown alone.
+    expires: Instant,
+}
+
+impl PendingExit {
+    fn claimable(&self, now: Instant) -> bool {
+        now < self.expires
+    }
+
+    /// The ghost tile in overlay space: the window's last picture shrinking to zero width at
+    /// its own left edge. The window is gone from the server, so it has no order; `Some(0)`
+    /// draws the ghost frontmost, where a window that was just being used most likely sat.
+    fn tile(&self, display: CGRect) -> OverlayTile {
+        OverlayTile {
+            window: self.window,
+            from: to_overlay_space(self.frame, display),
+            to: to_overlay_space(exit_to(self.frame), display),
+            snapshot: self.snapshot.clone(),
+            floating: self.floating,
+            server_order: Some(0),
+            depth: 0,
+            companion: false,
+            focused: false,
+            ghost: true,
+        }
+    }
+}
+
+/// The pending exit for a window that just closed at `frame`, waiting one coalesce window for the
+/// pass that reflows the survivors. `None` when there is nothing to show: no visible exit path (a
+/// park, or scrolled off the strip) or no usable picture to draw the ghost from.
+fn pending_exit(
+    window: WindowId,
+    frame: CGRect,
+    snapshot: Option<WindowSnapshot>,
+    floating: bool,
+    display: CGRect,
+    now: Instant,
+) -> Option<PendingExit> {
+    if !worth_animating(frame, exit_to(frame), display) {
+        return None;
+    }
+    let snapshot = snapshot?;
+    Some(PendingExit { window, frame, snapshot, floating, expires: now + COALESCE_WINDOW })
+}
+
+/// Takes every pending exit for the pass composing now: the unexpired ones become ghost tiles,
+/// the rest are dropped. Either way the list is emptied, so one exit is composed at most once.
+fn claim_exits(pending: &mut Vec<PendingExit>, now: Instant, display: CGRect) -> Vec<OverlayTile> {
+    pending.drain(..).filter(|exit| exit.claimable(now)).map(|exit| exit.tile(display)).collect()
+}
+
+/// Depth for every tile in the flight, banded by z-group (`tile_depth` in `model/z_group.rs`):
+/// the focused window, then the rest of its group, then the other group, the window server's
+/// order kept within a band. The strip is one z-order group, so with a strip focus (or none)
+/// every floating tile is behind every strip tile, whichever pass composed it. Companions keep
+/// the depth of the window they trace. The real windows are put in the same order by the
+/// reactor's regroup (`strip_regroup`), so both ends of a flight match. See "Mid-flight passes"
+/// in `docs/animation-smoothness.md`.
+fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
+    let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
+    for tile in tiles.iter_mut().filter(|t| !t.companion) {
+        tile.depth = crate::model::z_group::tile_depth(
+            tile.server_order,
+            focus == Some(tile.window),
+            group_of(tile.floating),
+            focused_group,
+        );
+    }
+}
+
+/// Which group a window belongs to.
+fn group_of(floating: bool) -> crate::model::z_group::StackGroup {
+    if floating {
+        crate::model::z_group::StackGroup::Floating
+    } else {
+        crate::model::z_group::StackGroup::Strip
+    }
+}
+
+/// The group the window gaining focus belongs to, which decides which group is drawn in front.
+///
+/// Falls back to the strip when the focus target is not among the windows being animated, since
+/// that is where focus lands for every movement the strip itself makes.
+fn focus_group(
+    focus: Option<WindowId>,
+    mut windows: impl Iterator<Item = (WindowId, bool)>,
+) -> crate::model::z_group::StackGroup {
+    let Some(focus) = focus else { return crate::model::z_group::StackGroup::Strip };
+    windows
+        .find(|(window, _)| *window == focus)
+        .map(|(_, floating)| group_of(floating))
+        .unwrap_or(crate::model::z_group::StackGroup::Strip)
+}
+
 impl RunningAnimation {
     /// Progress from the clock, not from a frame count, so a late frame skips ahead instead of
     /// stretching the animation.
@@ -386,6 +946,174 @@ impl RunningAnimation {
 
     fn is_done(&self) -> bool {
         self.started.is_some() && self.progress() >= 1.0
+    }
+
+    /// Wall-clock time left before the overlay lifts.
+    fn remaining(&self) -> Duration {
+        self.duration.mul_f64((1.0 - self.progress()).max(0.0))
+    }
+
+    fn phase(&self) -> FlightPhase {
+        match (self.started.is_some(), self.awaiting.is_empty()) {
+            (true, _) => FlightPhase::Moving,
+            (false, false) => FlightPhase::Holding,
+            (false, true) => FlightPhase::FrameZero,
+        }
+    }
+
+    /// `progress` as `should_swap_mid_flight` wants it: `None` until the flight starts moving.
+    fn progress_if_started(&self) -> Option<f64> {
+        self.started.map(|_| self.progress())
+    }
+
+    /// Whether the destination refresh is due at `progress`; takes the one slot when it is.
+    fn take_refresh(&mut self, progress: f64) -> bool {
+        let due = !self.destination_refreshed
+            && progress >= REFRESH_DESTINATION_AT
+            && capture_work_allowed(self.phase(), CaptureKind::Refresh);
+        if due {
+            self.destination_refreshed = true;
+        }
+        due
+    }
+
+    /// What `window` is doing in this flight when a picture of it lands, for
+    /// `should_swap_mid_flight`. Entrances and holds come first; a tile flying a placeholder
+    /// (its picture cannot cover its destination) is still a reveal in waiting.
+    fn tile_state(&self, window: WindowId, snapshot: &WindowSnapshot) -> TileState {
+        if self.entrances.iter().any(|e| e.window == window) {
+            return TileState::Awaiting;
+        }
+        if let Some((_, size)) = self.awaiting.iter().find(|(w, _)| *w == window) {
+            return TileState::Reveal { fits: snapshot.fits(*size) };
+        }
+        let Some(tile) = self.tiles.iter().find(|tile| tile.window == window) else {
+            return TileState::NotTiled;
+        };
+        let fits = snapshot.fits(tile.to.size);
+        if crate::ui::window_snapshot::outgrows(tile.snapshot.coverage.covered, tile.to.size) {
+            return TileState::Reveal { fits };
+        }
+        let resizing = crate::ui::window_snapshot::is_a_resize(tile.from.size, tile.to.size);
+        if self.refresh_targets.contains(&window) {
+            TileState::MovingRefreshTarget { fits, resizing }
+        } else {
+            TileState::Moving { fits, resizing }
+        }
+    }
+
+    /// A later pass carrying reveal holds. A grow can only extend a hold, not stop a flight: one
+    /// already moving keeps the placeholder-then-re-key path, since yanking it back to frame zero
+    /// is worse. Returns the frames a held merge must apply now, under the covering overlay: the
+    /// app can only rerender once its real frame is set.
+    fn extend_hold(
+        &mut self,
+        awaiting: &[(WindowId, CGSize)],
+        in_flight: bool,
+        duration: Duration,
+        now: Instant,
+    ) -> Option<Vec<(WindowId, CGRect)>> {
+        if in_flight || awaiting.is_empty() {
+            return None;
+        }
+        for (window, size) in awaiting.iter().copied() {
+            if let Some(waiting) = self.awaiting.iter_mut().find(|(w, _)| *w == window) {
+                waiting.1 = size;
+            } else {
+                self.awaiting.push((window, size));
+            }
+        }
+        if self.hold_deadline.is_none() {
+            self.hold_deadline = Some(now + reveal_hold_limit(duration));
+        }
+        self.frames_applied = true;
+        Some(self.final_frames.clone())
+    }
+
+    /// The frames the flight still owes the reactor at `progress`: everything, once the apply
+    /// point is reached and nothing was placed. `None` before it or once they went out.
+    fn frames_due(&mut self, progress: f64) -> Option<Vec<(WindowId, CGRect)>> {
+        if progress < self.apply_at || self.frames_applied {
+            return None;
+        }
+        self.frames_applied = true;
+        Some(self.final_frames.clone())
+    }
+
+    /// Takes a settled picture for a window this flight is holding for. A reserved entrance becomes
+    /// a tile at zero width in the frame-zero composition, so it flies in the same transaction as
+    /// the survivors; a grow gets its reveal picture. `None` when the flight is not holding for
+    /// the window: already moving, not awaiting it, or the picture does not cover the destination.
+    /// An entrance needs the fit like a grow: its real frame went to the slot at frame zero, so
+    /// the chase captures it at slot size. A spawn-size picture drawn over the slot was a hole.
+    fn claim(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> Option<Claimed> {
+        if self.started.is_some() {
+            return None;
+        }
+        let position = self.awaiting.iter().position(|(w, _)| *w == window)?;
+        let (_, size) = self.awaiting[position];
+        if !snapshot.is_usable() || !snapshot.fits(size) {
+            return None;
+        }
+        self.awaiting.remove(position);
+        if let Some(at) = self.entrances.iter().position(|e| e.window == window) {
+            let entrance = self.entrances.remove(at);
+            self.merge(entrance_tile(&entrance, snapshot));
+            restack(&mut self.tiles, self.focus);
+        } else if let Some(tile) = self.tiles.iter_mut().find(|tile| tile.window == window) {
+            tile.snapshot = snapshot.clone();
+        }
+        Some(if self.awaiting.is_empty() { Claimed::Released } else { Claimed::Held })
+    }
+
+    /// Takes the first picture of a reserved entrance after the flight has started moving: the
+    /// hold deadline passed, or the window joined a pass merged in flight. Returns the banded tile
+    /// and how long it travels, which is what is left of the flight.
+    fn admit(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> Option<(OverlayTile, Duration)> {
+        if self.started.is_none() || !snapshot.is_usable() {
+            return None;
+        }
+        let position = self.entrances.iter().position(|e| e.window == window)?;
+        let entrance = self.entrances.remove(position);
+        self.merge(entrance_tile(&entrance, snapshot));
+        restack(&mut self.tiles, self.focus);
+        let tile = self
+            .tiles
+            .iter()
+            .find(|t| t.window == window)
+            .expect("merge just admitted it")
+            .clone();
+        Some((tile, late_join_duration(self.duration, self.progress())))
+    }
+
+    /// After an in-flight merge: the frames already requested are stale if any destination
+    /// changed, tiled or not, so `step` asks again at the apply point.
+    fn absorb_in_flight_change(&mut self, changed: bool, frames_changed: bool) {
+        if mark_stale_on_untiled_change(changed, frames_changed) {
+            self.frames_applied = false;
+        }
+    }
+
+    /// Folds one later pass into the flight: its focus (when it names one), then each of its
+    /// tiles, then one restack so every depth is banded by the flight's latest focus, whichever
+    /// pass composed the tile. Returns what became of each tile, in order.
+    fn merge_pass(
+        &mut self,
+        tiles: Vec<OverlayTile>,
+        focus: Option<WindowId>,
+    ) -> Vec<(WindowId, Admitted)> {
+        if focus.is_some() {
+            self.focus = focus;
+        }
+        let outcomes = tiles
+            .into_iter()
+            .map(|tile| {
+                let window = tile.window;
+                (window, self.merge(tile))
+            })
+            .collect();
+        restack(&mut self.tiles, self.focus);
+        outcomes
     }
 
     /// Adds or retargets one window without disturbing anything already moving, reporting which of
@@ -407,9 +1135,13 @@ impl RunningAnimation {
                 // take the newer destination so the animation ends where the window really goes.
                 existing.to = tile.to;
                 existing.snapshot = tile.snapshot;
+                existing.floating = tile.floating;
+                existing.server_order = tile.server_order;
+                // Only a companion's depth is final here; the rest are restacked by `restack`.
                 existing.depth = tile.depth;
                 existing.companion = tile.companion;
                 existing.focused = tile.focused;
+                existing.ghost = tile.ghost;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -462,12 +1194,17 @@ pub struct WorkspaceAnimation {
     /// `display` rather than folded into it because only the desktop capture needs it.
     display_id: Option<u32>,
     running: Option<RunningAnimation>,
-
-
+    /// Closed windows waiting for the layout pass that reflows their neighbours.
+    pending_exits: Vec<PendingExit>,
     /// Fires once after the layout passes settle, to start the animation moving.
     coalesce: Option<RepeatingTimer>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
     last_animated: Vec<SnapshotTarget>,
+    /// Warms asked for during a flight, one per window, requested at `finish`. See "Capture work
+    /// in flight" in `docs/animation-smoothness.md`.
+    deferred_warm: Vec<SnapshotTarget>,
+    /// Whether the desktop render was missing or stale at composition; re-rendered at `finish`.
+    deferred_desktop: bool,
     /// Everything held that is a picture of one particular display.
     pictures: DisplayPictures,
     /// Fires once after an animation, to recapture the bar away from the critical path.
@@ -497,9 +1234,11 @@ impl WorkspaceAnimation {
             display: None,
             display_id: None,
             running: None,
-
+            pending_exits: Vec::new(),
             coalesce: None,
             last_animated: Vec::new(),
+            deferred_warm: Vec::new(),
+            deferred_desktop: false,
             pictures: DisplayPictures::default(),
             bar_refresh: None,
             reactor_tx: None,
@@ -536,8 +1275,8 @@ impl WorkspaceAnimation {
                 self.refresh_snapshot(window, server_id, size)
             }
             Event::ForgetWindow(window) => self.cache.forget(window),
-            Event::AnimateExit { window, frame, duration } => {
-                self.animate_exit(window, frame, duration)
+            Event::AnimateExit { window, frame, floating, duration } => {
+                self.animate_exit(window, frame, floating, duration)
             }
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
@@ -553,7 +1292,9 @@ impl WorkspaceAnimation {
             }
             Event::DressingReady { window, dressing } => self.dressing_ready(window, dressing),
             Event::WarmCache => self.warm_cache(),
-            Event::WarmWindows(targets) => self.warm_windows(targets),
+            Event::WarmWindows(targets) => {
+                self.warm_windows(targets);
+            }
             // Straight to the service, with no size test in the way. Background work, so a focus change
             // costs nothing on the main thread.
             Event::RefreshFocus(target) => self.service.request(vec![target]),
@@ -579,30 +1320,18 @@ impl WorkspaceAnimation {
         if landed.is_empty() {
             return;
         }
-        // Hairlines for the batch, harvested on one plain thread. The service's completion queue
-        // must not make capture calls (see `snapshot_service`), and this actor's thread should not
-        // spend 16-24ms per window either; results come back as `DressingReady` events.
-        let to_dress: Vec<(WindowId, WindowServerId)> = landed
-            .iter()
-            .filter(|(_, snapshot)| snapshot.is_usable())
-            .map(|(window, _)| (*window, WindowServerId::from(*window)))
-            .collect();
-        if !to_dress.is_empty() {
-            let tx = self.tx.clone();
-            let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-            std::thread::Builder::new()
-                .name("dressing-harvest".to_string())
-                .spawn(move || {
-                    for (window, server_id) in to_dress {
-                        let Some(dressing) =
-                            crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale)
-                        else {
-                            continue;
-                        };
-                        _ = tx.send(Event::DressingReady { window, dressing });
-                    }
+        // Hairlines for the batch. Mid-flight the batch is cached without one (the worn ring
+        // carries over) and `finish` harvests the animated set instead.
+        if capture_work_allowed(self.phase(), CaptureKind::Harvest) {
+            let harvested = self.running.as_ref().map(|running| &running.harvested);
+            let to_dress: Vec<WindowId> = landed
+                .iter()
+                .filter(|(window, snapshot)| {
+                    snapshot.is_usable() && !harvested.is_some_and(|done| done.contains(window))
                 })
-                .ok();
+                .map(|(window, _)| *window)
+                .collect();
+            self.harvest_dressings(to_dress);
         }
         for (window, snapshot) in landed {
             debug!(
@@ -619,22 +1348,60 @@ impl WorkspaceAnimation {
                 usable = snapshot.is_usable(),
                 "background snapshot landed"
             );
-            let running = self.running.is_some();
-            self.cache.insert(window, snapshot.clone());
-            // Straight onto the tile when an animation is mid-flight. That is how a ScreenCaptureKit
-            // capture requested for a clipped destination reaches the screen before the handover,
-            // and how a window that opened mid-flight gets its entrance.
             // Background captures are never settled: the service knows sizes, not paint states.
-            if running && snapshot.is_usable() {
-                self.admit_entrance(window, &snapshot);
-                if !self.swappable_mid_flight(window, &snapshot, false) {
-                    continue;
-                }
-                let remaining = self.remaining_flight();
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.set_tile_picture(window, &snapshot, remaining);
+            // So a hold keeps waiting for its chase; only a late entrance (`admit`) or the
+            // refresh's own ScreenCaptureKit route reaches a tile. Everything else waits in the
+            // cache. See "Mid-flight passes" in `docs/animation-smoothness.md`.
+            let comparison = if self.running.is_some() {
+                self.compare_with_cached(window, &snapshot)
+            } else {
+                CacheComparison::default()
+            };
+            self.cache.insert(window, snapshot.clone());
+            if snapshot.is_usable() {
+                self.offer_mid_flight(window, &snapshot, false, comparison);
+            }
+        }
+    }
+
+    /// Offers a landed picture to the running flight per `should_swap_mid_flight`. The cache
+    /// has it already; this only decides whether the overlay sees it too.
+    fn offer_mid_flight(
+        &mut self,
+        window: WindowId,
+        snapshot: &WindowSnapshot,
+        settled: bool,
+        comparison: CacheComparison,
+    ) {
+        let Some(running) = self.running.as_ref() else { return };
+        let progress = running.progress_if_started();
+        let state = running.tile_state(window, snapshot);
+        let CacheComparison { renders_like_cached, same_source } = comparison;
+        match should_swap_mid_flight(state, settled, renders_like_cached, same_source, progress) {
+            // An unsettled capture of a held window can be its unpainted surface; the chase's
+            // settled one is the reveal.
+            SwapDecision::Claim => {
+                if settled {
+                    self.claim_reveal(window, snapshot);
                 }
             }
+            SwapDecision::Admit => {
+                self.admit_entrance(window, snapshot);
+            }
+            SwapDecision::Swap(reason) => {
+                debug!(
+                    pid = window.pid,
+                    idx = window.idx.get(),
+                    reason,
+                    progress = progress.unwrap_or(0.0),
+                    "picture swapped mid-flight"
+                );
+                let remaining = self.remaining_flight();
+                if let Some(overlay) = self.overlay.as_mut() {
+                    overlay.set_tile_picture(window, snapshot, remaining);
+                }
+            }
+            SwapDecision::CacheOnly => {}
         }
     }
 
@@ -642,7 +1409,14 @@ impl WorkspaceAnimation {
     ///
     /// Already-held windows are skipped by the service, and the cache keeps what it has unless
     /// something better arrives, so calling this after every switch settles rather than re-capturing.
-    fn warm_windows(&mut self, targets: Vec<SnapshotTarget>) {
+    ///
+    /// During a flight nothing is requested: the targets wait in `deferred_warm` for `finish`.
+    /// Returns the windows requested now.
+    fn warm_windows(&mut self, targets: Vec<SnapshotTarget>) -> Vec<WindowId> {
+        if !capture_work_allowed(self.phase(), CaptureKind::Warm) {
+            defer_warm(&mut self.deferred_warm, targets);
+            return Vec::new();
+        }
         let wanted: Vec<SnapshotTarget> = targets
             .into_iter()
             // Drawable is not enough: the picture also has to match the size the window is now. A window
@@ -664,10 +1438,12 @@ impl WorkspaceAnimation {
             })
             .collect();
         if wanted.is_empty() {
-            return;
+            return Vec::new();
         }
         debug!(count = wanted.len(), "warming snapshots for reactor-supplied windows");
+        let requested = wanted.iter().map(|target| target.window).collect();
         self.service.request(wanted);
+        requested
     }
 
     /// Queues background captures for every window on the display that SkyLight cannot serve.
@@ -737,15 +1513,20 @@ impl WorkspaceAnimation {
 
     /// Recaptures both ends of a focus change mid-flight and swaps their tiles.
     ///
-    /// Runs twice per movement (see `REFRESH_DESTINATION_AT` / `_AGAIN_AT`). By that point the
+    /// Runs once per movement, at `REFRESH_DESTINATION_AT`. By that point the
     /// reactor has shown the destination and moved focus, so a fresh capture gets the app's
     /// FOCUSED rendering for the window being switched into and the dimmed one for the window
     /// being left — which is what the real windows will look like when the overlay lifts.
     /// Without this the tiles slide with whatever the pictures held: the destination arrives
     /// unfocused and snaps at the handover, and the departing window keeps its focused look for
     /// the whole flight, reading as two active windows.
+    ///
+    /// One capture route only: the ScreenCaptureKit service, the same route `warm_windows` fills
+    /// the cache from (`refresh_targets` in `refresh_requests`). Racing it against a framed
+    /// SkyLight capture swapped the tile twice or three times per flight, since the two routes
+    /// render a translucent window differently. See "Mid-flight passes" in
+    /// `docs/animation-smoothness.md`.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
-        let Some((_, scale)) = self.display else { return };
         let candidates: Vec<(WindowId, u32)> =
             tiles.iter().map(|(w, s, _)| (*w, s.as_u32())).collect();
         if candidates.is_empty() {
@@ -754,65 +1535,41 @@ impl WorkspaceAnimation {
         // No visibility filter here, unlike the pre-flight refresh. During a slide the destination is
         // mid-scroll and only partly on screen, so requiring it to be fully visible skipped it entirely,
         // which is why switching between adjacent windows still arrived unfocused. A clipped capture is
-        // rejected below anyway; the cost of trying is one background thread.
+        // rejected by the cache anyway.
         let depths = crate::sys::window_server::front_to_back_depths();
-        let wanted = refresh_order(&candidates, &depths, None, MAX_DESTINATION_CAPTURES);
-        let fully_visible: Vec<u32> = match self.display {
-            Some((display, _)) => crate::sys::window_server::visible_windows_on_display(display)
-                .into_iter()
-                .filter(|(_, frame)| on_screen_fraction(*frame, display) >= FRESH_CAPTURE_MIN_ON_SCREEN)
-                .map(|(id, _)| id.as_u32())
-                .collect(),
-            None => Vec::new(),
-        };
-
-        for window in wanted {
-            let Some((_, server_id, size)) =
-                tiles.iter().find(|(w, _, _)| *w == window).copied()
-            else {
-                continue;
-            };
-            // On its own thread. A capture of a large window measured 38ms to 179ms, which on the main
-            // thread dropped up to four frames of a 494ms flight. yabai captures on per-window pthreads
-            // too (`window_manager.c:666`), so the call is safe off the main thread. The picture arrives
-            // as an event a few frames later, which is fine: it replaces contents, not geometry.
-            // Both routes, always. ScreenCaptureKit works whatever the window's visibility but takes
-            // long enough that it can miss the handover on a short flight; SkyLight is fast but can only
-            // serve a window that is fully on screen, and during a slide the destination is mid-scroll.
-            // Racing them means whichever can answer does, and a later arrival overwrites an earlier one.
-            self.service.request(vec![SnapshotTarget { window, server_id, size }]);
-            if !fully_visible.contains(&server_id.as_u32()) {
-                continue;
-            }
-            let tx = self.tx.clone();
-            std::thread::Builder::new()
-                .name("destination-recapture".to_string())
-                .spawn(move || {
-                    let started = Instant::now();
-                    // The framed route, not SkyLight: under animation load the SkyLight capture
-                    // measured 170-300ms — long enough for the focus swap to land near the
-                    // handover, which reads as end-of-flight flicker — against a steady 16-24ms.
-                    let Some(mut snapshot) =
-                        crate::ui::window_snapshot::capture_via_framed(server_id, scale)
-                    else {
-                        return;
-                    };
-                    if !snapshot.is_usable() || !snapshot.fits(size) {
-                        return;
-                    }
-                    // The window being switched into is on screen and about to be focused, which is
-                    // exactly when its hairline is worth harvesting: the ring brightens with focus.
-                    snapshot.dressing =
-                        crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale);
-                    debug!(
-                        idx = window.idx.get(),
-                        took_ms = started.elapsed().as_millis(),
-                        "recaptured the window being switched into, off the main thread"
-                    );
-                    _ = tx.send(Event::PictureReady { window, snapshot, settled: false });
-                })
-                .ok();
+        let (wanted, requests) =
+            refresh_requests(tiles, &refresh_order(&candidates, &depths, None, MAX_DESTINATION_CAPTURES));
+        // Only this route's result may reach the tile; nothing else landing mid-flight does.
+        if let Some(running) = self.running.as_mut() {
+            running.refresh_targets = wanted.clone();
         }
+        debug!(windows = wanted.len(), "destination refresh requested");
+        self.service.request(requests);
+    }
+
+    /// Harvests hairlines for `windows` on one plain thread. The service's completion queue must
+    /// not make capture calls (see `snapshot_service`), and this actor's thread should not spend
+    /// 16-24ms per window either; results come back as `DressingReady` events.
+    fn harvest_dressings(&self, windows: Vec<WindowId>) {
+        if windows.is_empty() {
+            return;
+        }
+        let tx = self.tx.clone();
+        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
+        std::thread::Builder::new()
+            .name("dressing-harvest".to_string())
+            .spawn(move || {
+                for window in windows {
+                    let server_id = WindowServerId::from(window);
+                    let Some(dressing) =
+                        crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale)
+                    else {
+                        continue;
+                    };
+                    _ = tx.send(Event::DressingReady { window, dressing });
+                }
+            })
+            .ok();
     }
 
     /// Takes a finished hairline harvest: onto the cached snapshot, and onto a tile in flight.
@@ -820,125 +1577,106 @@ impl WorkspaceAnimation {
         if let Some(snapshot) = self.cache.get_mut(window) {
             snapshot.dressing = Some(dressing.clone());
         }
-        if self.running.is_none() {
-            return;
-        }
+        let Some(running) = self.running.as_mut() else { return };
+        running.harvested.insert(window);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.set_tile_dressing(window, &dressing);
         }
     }
 
-    /// Takes a mid-flight recapture and swaps it into the tile that is already on screen.
+    /// Takes a framed recapture: a chase's reveal, or the destination refresh.
     fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot, settled: bool) {
         // Compared before the cache absorbs the newcomer: a swap whose picture renders the same
         // as the one on screen is a cut for nothing. Swaps are hard cuts — a crossfade veil was
         // tried and rejected, since stacking two copies of a translucent window pulses its net
         // opacity — so the cheapest smoothness is not cutting at all.
-        let renders_the_same = self.renders_like_cached(window, &snapshot);
+        let comparison = self.compare_with_cached(window, &snapshot);
+        if snapshot.dressing.is_some() {
+            if let Some(running) = self.running.as_mut() {
+                running.harvested.insert(window);
+            }
+        }
         self.cache.insert(window, snapshot.clone());
-        // Only worth drawing while the animation that asked for it is still running.
-        if self.running.is_none() {
-            return;
-        }
-        if settled && self.claim_reveal(window, &snapshot) {
-            return;
-        }
-        self.admit_entrance(window, &snapshot);
-        if renders_the_same || !self.swappable_mid_flight(window, &snapshot, settled) {
-            return;
-        }
-        let remaining = self.remaining_flight();
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tile_picture(window, &snapshot, remaining);
-        }
+        self.offer_mid_flight(window, &snapshot, settled, comparison);
     }
 
-    /// Whether an incoming picture renders the same as the cached one, within thumbprint
-    /// tolerance. Only bitmap pairs can be judged; anything else counts as different.
-    fn renders_like_cached(&self, window: WindowId, incoming: &WindowSnapshot) -> bool {
+    /// How an incoming picture compares with the cached one: same capture route, and rendering
+    /// the same within thumbprint tolerance. With nothing cached there is no other rendering to
+    /// ping-pong against, so the source counts as the same and the rendering as different.
+    fn compare_with_cached(&self, window: WindowId, incoming: &WindowSnapshot) -> CacheComparison {
         use crate::ui::window_snapshot::SnapshotImage;
-        let Some(cached) = self.cache.get(window) else { return false };
+        let Some(cached) = self.cache.get(window) else {
+            return CacheComparison { renders_like_cached: false, same_source: true };
+        };
+        let same_source = cached.source == incoming.source;
         if !cached.fits(CGSize::new(incoming.coverage.covered.0, incoming.coverage.covered.1)) {
-            return false;
+            return CacheComparison { renders_like_cached: false, same_source };
         }
         let (SnapshotImage::Bitmap(old), SnapshotImage::Bitmap(new)) =
             (&cached.image, &incoming.image)
         else {
-            return false;
+            return CacheComparison { renders_like_cached: false, same_source };
         };
-        match (
+        let renders_like_cached = match (
             crate::ui::edge_dressing::thumbprint(old),
             crate::ui::edge_dressing::thumbprint(new),
         ) {
             (Some(a), Some(b)) => crate::ui::edge_dressing::renderings_match(&a, &b),
             _ => false,
-        }
-    }
-
-    /// Whether a landed picture may replace what a tile in flight is drawing.
-    ///
-    /// Only a picture of the tile's DESTINATION size may. The hold and refresh machinery race
-    /// several captures per window, and a stale one — requested before a resize, landing after —
-    /// yanked the drawn tile back to the old image mid-flight: the grow teleported, went blank
-    /// below the old content, and flickered to the real window at the handover.
-    ///
-    /// A RESIZING tile additionally requires a settled picture: an unsettled capture can be the
-    /// resized-but-unpainted surface, final-sized and stable-looking, and it won the race against
-    /// the chase's settled capture about half the time. Non-resizing tiles keep taking ordinary
-    /// captures — that is the focus-change swap. The cache takes every capture either way.
-    fn swappable_mid_flight(&self, window: WindowId, snapshot: &WindowSnapshot, settled: bool) -> bool {
-        let Some(running) = self.running.as_ref() else { return false };
-        let Some(tile) = running.tiles.iter().find(|tile| tile.window == window) else {
-            return false;
         };
-        if !snapshot.fits(tile.to.size) {
-            return false;
-        }
-        let resizing =
-            crate::ui::window_snapshot::is_a_resize(tile.from.size, tile.to.size);
-        !resizing || settled
+        CacheComparison { renders_like_cached, same_source }
     }
 
     /// How much of the running flight is left, in wall-clock time.
     fn remaining_flight(&self) -> Option<Duration> {
-        let running = self.running.as_ref()?;
-        Some(running.duration.mul_f64((1.0 - running.progress()).max(0.0)))
+        self.running.as_ref().map(RunningAnimation::remaining)
     }
 
-    /// Chases the reveal pixels for a holding grow: one thread per window, polling the real
-    /// frame — a cheap window-server read — and capturing only once the size is there.
-    ///
-    /// Not `capture_via_skylight` polling: those captures measured 170-300ms EACH on this
-    /// pipeline, so the poll itself lost the race against the hold deadline (and congested the
-    /// capture proxy while losing it). The framed capture takes 16-24ms once the frame reports
-    /// the destination size.
+    fn phase(&self) -> FlightPhase {
+        self.running.as_ref().map_or(FlightPhase::Idle, RunningAnimation::phase)
+    }
+
+    /// Chases the first truthful picture for a holding grow or entrance: one thread per window,
+    /// polling the real frame — a cheap window-server read — then one framed capture per attempt,
+    /// hairline included, until `chase_settled`. Not `capture_via_skylight` polling: that lost the
+    /// race against the hold deadline. See "A grow holds, then reveals" in
+    /// `docs/animation-smoothness.md`.
     fn chase_reveal_pictures(&self, awaiting: &[(WindowId, CGSize)]) {
+        if !capture_work_allowed(self.phase(), CaptureKind::Chase) {
+            return;
+        }
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for (window, size) in awaiting.iter().copied() {
             let server_id = WindowServerId::from(window);
             let tx = self.tx.clone();
+            // The picture the tile flies from: a capture that no longer renders like it is the
+            // app's repaint at the new size. An entrance has none.
+            let pre_resize = self.cache.get(window).and_then(bitmap_thumbprint);
             std::thread::Builder::new()
                 .name("reveal-chase".to_string())
                 .spawn(move || {
                     // The frame resizes instantly; the app's PIXELS lag behind it. A capture taken
                     // between the two is a half-painted surface — delivering one flew the whole
-                    // reveal with garbage — so a capture only counts once two consecutive ones
-                    // show the same rendering.
+                    // reveal with garbage — so a capture only counts once `chase_settled` says so.
+                    // One framed capture per attempt, hairline included.
                     let mut last_print: Option<Vec<u8>> = None;
                     for _ in 0..REVEAL_CHASE_ATTEMPTS {
                         std::thread::sleep(REVEAL_CHASE_INTERVAL);
                         let Some(info) = crate::sys::window_server::get_window(server_id) else {
                             continue;
                         };
-                        if !crate::ui::window_snapshot::fits_frame(
+                        let frame_fits = crate::ui::window_snapshot::fits_frame(
                             (info.frame.size.width, info.frame.size.height),
                             (size.width, size.height),
-                        ) {
+                        );
+                        if !frame_fits {
                             last_print = None;
                             continue;
                         }
-                        let Some(mut snapshot) =
-                            crate::ui::window_snapshot::capture_via_framed(server_id, scale)
+                        let Some(snapshot) =
+                            crate::ui::window_snapshot::capture_via_framed_with_dressing(
+                                server_id, scale,
+                            )
                         else {
                             continue;
                         };
@@ -946,26 +1684,13 @@ impl WorkspaceAnimation {
                             last_print = None;
                             continue;
                         }
-                        let print = match &snapshot.image {
-                            crate::ui::window_snapshot::SnapshotImage::Bitmap(image) => {
-                                crate::ui::edge_dressing::thumbprint(image)
-                            }
-                            _ => None,
-                        };
-                        let Some(print) = print else { continue };
-                        let settled = last_print
-                            .as_ref()
-                            .is_some_and(|previous| {
-                                crate::ui::edge_dressing::renderings_match(previous, &print)
-                            });
+                        let Some(print) = bitmap_thumbprint(&snapshot) else { continue };
+                        let settled =
+                            chase_settled(last_print.as_deref(), &print, pre_resize.as_deref());
                         last_print = Some(print);
                         if !settled {
                             continue;
                         }
-                        // The window is at its new size, painted, and about to be revealed: the
-                        // fresh hairline belongs to this capture.
-                        snapshot.dressing =
-                            crate::ui::edge_dressing::harvest_edge_dressing(server_id, scale);
                         _ = tx.send(Event::PictureReady { window, snapshot, settled: true });
                         return;
                     }
@@ -979,29 +1704,14 @@ impl WorkspaceAnimation {
         }
     }
 
-    /// Takes a landed picture for a window a holding grow is waiting on. Returns whether the
-    /// picture was claimed by the hold.
+    /// Takes a landed picture for a window a holding flight is waiting on: a grow's reveal pixels,
+    /// or a reserved entrance's first picture. Returns whether the hold claimed it.
     fn claim_reveal(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
-        let claimed = {
-            let Some(running) = self.running.as_mut() else { return false };
-            if running.started.is_some() {
-                return false;
-            }
-            let Some(position) = running.awaiting.iter().position(|(w, _)| *w == window) else {
-                return false;
-            };
-            let (_, size) = running.awaiting[position];
-            if !snapshot.is_usable() || !snapshot.fits(size) {
-                return false;
-            }
-            running.awaiting.remove(position);
-            if let Some(tile) = running.tiles.iter_mut().find(|tile| tile.window == window) {
-                tile.snapshot = snapshot.clone();
-            }
-            running.awaiting.is_empty()
-        };
-        // Redraw frame zero with the new picture: the tile is standing still, so this is a plain
-        // recompose, and the crop grid now maps the final-size picture — the reveal.
+        let Some(running) = self.running.as_mut() else { return false };
+        let Some(claimed) = running.claim(window, snapshot) else { return false };
+        // Redraw frame zero with the new picture: the tiles are standing still, so this is a plain
+        // recompose. A grow's crop grid now maps the final-size picture — the reveal — and an
+        // entrance stands at zero width until `start_moving` flies everything together.
         let tiles = self
             .running
             .as_mut()
@@ -1014,7 +1724,7 @@ impl WorkspaceAnimation {
         if let Some(running) = self.running.as_mut() {
             running.tiles = tiles;
         }
-        if claimed {
+        if claimed == Claimed::Released {
             debug!(
                 pid = window.pid,
                 idx = window.idx.get(),
@@ -1025,40 +1735,17 @@ impl WorkspaceAnimation {
         true
     }
 
-    /// Adds the tile for a window whose first picture just landed, growing in from nothing.
-    ///
-    /// Reserved by `start` when the window had no picture at all — a window that just opened. The
-    /// tile joins with the full duration from where it stands, the same semantics as any newcomer
-    /// joining a flight, and its entrance is a resize from zero width, so the crop grid reveals
-    /// content rightward as the frame widens.
-    fn admit_entrance(&mut self, window: WindowId, snapshot: &WindowSnapshot) {
-        if !snapshot.is_usable() {
-            return;
-        }
-        let (tile, duration) = {
-            let Some(running) = self.running.as_mut() else { return };
-            let Some(position) = running.entrances.iter().position(|e| e.window == window) else {
-                return;
-            };
-            let entrance = running.entrances.remove(position);
-            // A window that just opened is about to hold focus, so it enters frontmost with the
-            // focused shadow. Getting this wrong is cosmetic and lasts one flight.
-            let tile = OverlayTile {
-                window,
-                from: entrance_from(entrance.to),
-                to: entrance.to,
-                snapshot: snapshot.clone(),
-                depth: 0,
-                companion: false,
-                focused: true,
-            };
-            running.merge(tile.clone());
-            (tile, running.duration)
-        };
+    /// Adds the tile for a reserved entrance whose first picture landed after the flight started
+    /// moving: the late fallback behind `claim_reveal`. The tile grows from zero width for what is
+    /// left of the flight, so it lands with its neighbours. Returns whether the picture was taken.
+    fn admit_entrance(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
+        let Some(running) = self.running.as_mut() else { return false };
+        let Some((tile, duration)) = running.admit(window, snapshot) else { return false };
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.add_tile(&tile, duration);
         }
         debug!(pid = window.pid, idx = window.idx.get(), "window entered mid-flight");
+        true
     }
 
     fn refresh_snapshot(&mut self, window: WindowId, server_id: WindowServerId, size: CGSize) {
@@ -1084,21 +1771,7 @@ impl WorkspaceAnimation {
     /// The whole path is sampled, not just its ends: a window that sweeps across mid-animation is
     /// exactly what conveys how far the strip travelled, and testing endpoints alone excluded it.
     fn is_worth_animating(&self, from: CGRect, to: CGRect, display: CGRect) -> bool {
-        /// Samples along the path. Enough that a window cannot cross the display between two of them:
-        /// the fastest realistic travel is a few display widths, so eleven samples leave any crossing
-        /// window on screen for at least one of them.
-        const SAMPLES: usize = 11;
-
-        let area = from.size.width * from.size.height;
-        if area <= 0.0 {
-            return false;
-        }
-        let moving = is_moving(from, to);
-        (0..SAMPLES).any(|step| {
-            let t = step as f64 / (SAMPLES - 1) as f64;
-            let at = crate::ui::workspace_overlay::lerp_rect(from, to, t);
-            shows_enough(at, display, moving)
-        })
+        worth_animating(from, to, display)
     }
 
     /// Tiles for the border windows tracing the windows being animated (JankyBorders and kin).
@@ -1151,9 +1824,13 @@ impl WorkspaceAnimation {
                     from: follow(from),
                     to: follow(to),
                     snapshot,
+                    floating: false,
+                    server_order: None,
+                    // Its window's banded depth; `restack` leaves companions alone.
                     depth,
                     companion: true,
                     focused: false,
+                    ghost: false,
                 }),
                 // Like a window with no picture: skipped this flight, warmed for the next.
                 None => needs_capture.push(SnapshotTarget { window, server_id, size: frame.size }),
@@ -1162,52 +1839,44 @@ impl WorkspaceAnimation {
         (tiles, targets)
     }
 
-    /// Animates a closed window shrinking out: a resize to zero width at its own left edge,
-    /// drawn from the cached snapshot because the real window no longer exists.
+    /// Queues a closed window to shrink out: a resize to zero width at its own left edge, drawn
+    /// from the cached snapshot because the real window no longer exists.
     ///
-    /// Runs through `begin_group` like every other movement, so the exit merges with the layout
-    /// pass that reflows the survivors — the ghost shrinks while its neighbours slide in to take
-    /// the space, one flight. No final frame is carried: there is no real window to place.
-    fn animate_exit(&mut self, window: WindowId, frame: CGRect, duration: Duration) {
+    /// The ghost is composed by the next layout pass (`start` or `start_strip`) together with the
+    /// survivors, so both fly in one transaction; it never starts a flight of its own. When no
+    /// pass follows within the coalesce window — a floating close, or a close with no survivors —
+    /// the exit is dropped and no overlay is shown. See "Closed windows resize out" in
+    /// `docs/animation-smoothness.md`.
+    fn animate_exit(&mut self, window: WindowId, frame: CGRect, floating: bool, _duration: Duration) {
         let Some((display_frame, _)) = self.display else {
             return;
         };
-        let to = exit_to(frame);
-        // The same visibility gate every tile passes: a parked window (inactive workspace, or
-        // scrolled off the strip) closes with nothing to show.
-        if !self.is_worth_animating(frame, to, display_frame) {
-            return;
-        }
-        let Some(snapshot) = self.cache.usable(window).cloned() else {
+        // Cloned before `ForgetWindow` lands: the ghost is drawn from this after the cache entry
+        // is gone. The gates inside `pending_exit` are the ones every tile passes: a parked or
+        // scrolled-off window closes with nothing to show, and no picture means no ghost.
+        let snapshot = self.cache.usable(window).cloned();
+        let Some(exit) =
+            pending_exit(window, frame, snapshot, floating, display_frame, Instant::now())
+        else {
             debug!(
                 pid = window.pid,
                 idx = window.idx.get(),
-                "closed window had no usable snapshot; skipping the exit animation"
+                "closed window had no visible exit path or no usable snapshot; skipping the exit"
             );
             return;
         };
-        debug!(pid = window.pid, idx = window.idx.get(), "window exiting");
-        let tile = OverlayTile {
-            window,
-            from: to_overlay_space(frame, display_frame),
-            to: to_overlay_space(to, display_frame),
-            snapshot,
-            // Frontmost and unfocused: the closed window was almost always the focused one, and
-            // focus has already moved on to whichever neighbour inherits it.
-            depth: 0,
-            companion: false,
-            focused: false,
-        };
-        self.begin_group(
-            vec![tile],
-            Vec::new(),
-            duration,
-            "exit",
-            GroupStart::Coalesced,
-            apply_frames_at(false),
-            Vec::new(),
-            Vec::new(),
-        );
+        debug!(pid = window.pid, idx = window.idx.get(), "window exiting; waiting for the next pass");
+        self.pending_exits.push(exit);
+    }
+
+    /// The ghost tiles for the pass composing now, in overlay space. Empties `pending_exits`.
+    fn claim_pending_exits(&mut self, display: CGRect) -> Vec<OverlayTile> {
+        let now = Instant::now();
+        let claimed = claim_exits(&mut self.pending_exits, now, display);
+        if !claimed.is_empty() {
+            debug!(exits = claimed.len(), "composing closed windows with the survivors");
+        }
+        claimed
     }
 
     fn start(
@@ -1236,12 +1905,11 @@ impl WorkspaceAnimation {
         // Front-to-back order straight from the window server, so the overlay stacks tiles the way
         // the screen is actually stacked.
         let depths = crate::sys::window_server::front_to_back_depths();
-        let focused_group = focus_group(focus, windows.iter().map(|r| (r.window, r.floating)));
 
         let any_resize = windows.iter().any(|request| {
             crate::ui::window_snapshot::is_a_resize(request.from.size, request.to.size)
         });
-        let apply_at = apply_frames_at(any_resize);
+        let apply_at = apply_frames_at(FlightKind::Layout, any_resize);
 
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
@@ -1249,7 +1917,8 @@ impl WorkspaceAnimation {
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
         let mut entrances: Vec<PendingEntrance> = Vec::new();
         let mut awaiting: Vec<(WindowId, CGSize)> = Vec::new();
-        let mut anchors: Vec<(CGRect, CGRect, CGRect, usize)> = Vec::new();
+        // Real frame per drawn window; depths are filled in after the restack.
+        let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
         for request in &windows {
             let start = actual_start(request, display_frame);
             // Parked slivers are excluded on the way in AND on the way out: a window arriving from
@@ -1304,53 +1973,75 @@ impl WorkspaceAnimation {
                     ) {
                         awaiting.push((request.window, request.to.size));
                     }
-                    let tile = OverlayTile {
+                    tiles.push(OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
                         to: to_overlay_space(request.to, display_frame),
                         snapshot,
-                        depth: crate::model::z_group::tile_depth(
-                            depths.get(&request.server_id.as_u32()).copied(),
-                            focus == Some(request.window),
-                            group_of(request.floating),
-                            focused_group,
-                        ),
+                        floating: request.floating,
+                        server_order: depths.get(&request.server_id.as_u32()).copied(),
+                        depth: 0,
                         companion: false,
                         focused: focus == Some(request.window),
-                    };
-                    anchors.push((start, tile.from, tile.to, tile.depth));
-                    tiles.push(tile);
+                        ghost: false,
+                    });
+                    starts.push((request.window, start));
                 }
                 // No picture at all: almost always a window that just opened, since anything that
-                // has ever been on a workspace was warmed. It cannot be drawn yet, but its capture
-                // is already queued above; reserve it an entrance so the tile joins the animation
-                // the moment its picture lands, growing in from nothing at its destination.
+                // has ever been on a workspace was warmed. It cannot be drawn yet; reserve it an
+                // entrance and hold the flight at frame zero for its first picture, so its tile
+                // flies in the survivors' transaction. Its own slot is held back until the claim.
+                // See "Entrances are holds" in `docs/animation-smoothness.md`.
                 None => {
                     skipped += 1;
-                    entrances.push(PendingEntrance {
-                        window: request.window,
-                        to: to_overlay_space(request.to, display_frame),
-                    });
+                    let (entrance, waiting) = entrance_reservation(
+                        request.window,
+                        to_overlay_space(request.to, display_frame),
+                        request.floating,
+                    );
+                    entrances.push(entrance);
+                    awaiting.extend(waiting);
                 }
             }
         }
+        // Closed windows this pass reflows around: their ghosts ride the same transaction. They
+        // carry no final frame and leave the apply point alone.
+        let exits = self.claim_pending_exits(display_frame);
+        let drained_exits = exits.len();
+        tiles.extend(exits);
+        // Stacked here so the companions can anchor to their windows' depths; `begin_group`
+        // restacks the whole flight once this pass has merged.
+        restack(&mut tiles, focus);
+        let anchors: Vec<(CGRect, CGRect, CGRect, usize)> = starts
+            .iter()
+            .filter_map(|(window, start)| {
+                let tile = tiles.iter().find(|tile| tile.window == *window)?;
+                Some((*start, tile.from, tile.to, tile.depth))
+            })
+            .collect();
         let exclude: std::collections::HashSet<u32> =
             windows.iter().map(|request| request.server_id.as_u32()).collect();
         let (companions, companion_targets) =
             self.companion_tiles(display_frame, &anchors, &exclude, &mut needs_capture);
         tiles.extend(companions);
         if !needs_capture.is_empty() {
-            debug!(
-                count = needs_capture.len(),
-                "queueing background captures for windows SkyLight could not serve"
-            );
-            self.service.request(needs_capture);
+            // Frame zero: the overlay is not up yet. A pass merging into a flight defers instead.
+            if capture_work_allowed(self.phase(), CaptureKind::NeedsCapture) {
+                debug!(
+                    count = needs_capture.len(),
+                    "queueing background captures for windows SkyLight could not serve"
+                );
+                self.service.request(needs_capture);
+            } else {
+                defer_warm(&mut self.deferred_warm, needs_capture);
+            }
         }
         debug!(
             requested = windows.len(),
             tiles = tiles.len(),
             offscreen,
             no_snapshot = skipped,
+            exits = drained_exits,
             display = format!(
                 "{:.0},{:.0} {:.0}x{:.0}",
                 display_frame.origin.x,
@@ -1374,6 +2065,19 @@ impl WorkspaceAnimation {
             .chain(companion_targets)
             .collect();
 
+        // A pass where nothing drawable moves has no overlay to hide behind: place the windows at
+        // once rather than raising the overlay over them. A flight in progress still merges, so
+        // its fresh destinations are not yanked out from under the running overlay.
+        let moving_drawable = tiles.iter().any(|tile| is_moving(tile.from, tile.to));
+        if !worth_flying(moving_drawable, drained_exits, self.running.is_some()) {
+            self.request_frames(final_frames);
+            // Warm anyway, or this deadlocks: the cache only ever filled when an animation
+            // completed, and no animation could run with an empty cache.
+            let targets = std::mem::take(&mut self.last_animated);
+            self.warm_windows(targets);
+            return;
+        }
+
         self.begin_group(
             tiles,
             final_frames,
@@ -1383,6 +2087,8 @@ impl WorkspaceAnimation {
             apply_at,
             entrances,
             awaiting,
+            focus,
+            None,
         );
     }
 
@@ -1392,7 +2098,7 @@ impl WorkspaceAnimation {
     /// any other.
     fn begin_group(
         &mut self,
-        tiles: Vec<OverlayTile>,
+        mut tiles: Vec<OverlayTile>,
         final_frames: Vec<(WindowId, CGRect)>,
         duration: Duration,
         label: &'static str,
@@ -1400,6 +2106,8 @@ impl WorkspaceAnimation {
         apply_at: f64,
         entrances: Vec<PendingEntrance>,
         awaiting: Vec<(WindowId, CGSize)>,
+        focus: Option<WindowId>,
+        pan: Option<CGPoint>,
     ) {
         // Merge FIRST, before the empty check: a pass with nothing drawable can still carry fresh
         // destinations for a flight in progress, and placing its frames immediately would yank
@@ -1411,65 +2119,75 @@ impl WorkspaceAnimation {
             let in_flight;
             let mut retargets: Vec<OverlayTile> = Vec::new();
             let mut joined: Vec<OverlayTile> = Vec::new();
-            let mut hold_frames: Option<Vec<(WindowId, CGRect)>> = None;
-            let mut new_entrances: Vec<(WindowId, CGSize)> = Vec::new();
+            let hold_frames: Option<Vec<(WindowId, CGRect)>>;
+            let frames_changed;
+            let display = self.display.map(|(frame, _)| frame);
             {
                 let running = self.running.as_mut().expect("checked above");
                 in_flight = running.started.is_some();
                 // A resize joining mid-flight needs the earlier apply point just as much, and a
-                // window still waiting for its first picture keeps its reservation.
+                // window still waiting for its first picture keeps its reservation. Its hold
+                // entry rides in `awaiting` like a grow's.
                 running.apply_at = running.apply_at.min(apply_at);
                 for entrance in entrances {
                     if !running.entrances.iter().any(|e| e.window == entrance.window) {
-                        new_entrances.push((entrance.window, entrance.to.size));
                         running.entrances.push(entrance);
                     }
                 }
-                // A grow can only extend a hold, not stop a flight: one already moving keeps the
-                // placeholder-then-re-key path, since yanking it back to frame zero is worse.
-                if !in_flight && !awaiting.is_empty() {
-                    for (window, size) in awaiting.iter().copied() {
-                        if let Some(waiting) =
-                            running.awaiting.iter_mut().find(|(w, _)| *w == window)
-                        {
-                            waiting.1 = size;
-                        } else {
-                            running.awaiting.push((window, size));
-                        }
-                    }
-                    if running.hold_deadline.is_none() {
-                        running.hold_deadline = Some(Instant::now() + reveal_hold_limit(duration));
-                    }
-                    // The app can only rerender once its real frame is set, so a held merge
-                    // applies the merged destinations now, under the covering overlay.
-                    running.frames_applied = true;
-                    hold_frames = Some(running.final_frames.clone());
+                // What this pass moves that it did not compose: the entrances still waiting for
+                // a picture, tiles whose window it names only by frame, and the exit ghosts,
+                // which no pass names and a strip movement carries by its travel. Left alone,
+                // they end the flight where the strip was, not where it is: the tear seen at
+                // 3:27:20. See "Mid-flight passes" in `docs/animation-smoothness.md`.
+                let mut tiles = tiles;
+                if let Some(display) = display {
+                    retarget_entrances(&mut running.entrances, &final_frames, display);
+                    tiles.extend(retargets_from_frames(
+                        &running.tiles,
+                        &tiles,
+                        &final_frames,
+                        display,
+                    ));
                 }
-                for (window, frame) in final_frames {
-                    if let Some(existing) =
-                        running.final_frames.iter_mut().find(|(w, _)| *w == window)
-                    {
-                        existing.1 = frame;
-                    } else {
-                        running.final_frames.push((window, frame));
-                    }
-                }
-                for tile in tiles {
-                    let copy = tile.clone();
-                    match running.merge(tile) {
+                let shifted = match pan {
+                    Some(delta) => shift_ghosts(&mut running.tiles, delta),
+                    None => Vec::new(),
+                };
+                // Merged before the hold reads them, so a held merge re-requests the frames this
+                // pass brought, not the ones it replaced.
+                frames_changed = merge_final_frames(&mut running.final_frames, final_frames);
+                hold_frames = running.extend_hold(&awaiting, in_flight, duration, Instant::now());
+                // Merged and restacked before the overlay sees any tile, so the copies handed to
+                // it below carry their flight-level depths.
+                let outcomes = running.merge_pass(tiles, focus);
+                for (window, outcome) in outcomes {
+                    let tile = match outcome {
                         // The common rapid-press case: a later pass confirming destinations the
                         // flight already has. Touching nothing is what keeps chained presses from
                         // restarting or extending the animation forever.
-                        Admitted::Redundant => {}
-                        Admitted::Retargeted => retargets.push(copy),
-                        Admitted::Joined => joined.push(copy),
+                        Admitted::Redundant => continue,
+                        Admitted::Retargeted | Admitted::Joined => running
+                            .tiles
+                            .iter()
+                            .find(|t| t.window == window)
+                            .expect("merge kept the tile")
+                            .clone(),
+                    };
+                    match outcome {
+                        Admitted::Retargeted => retargets.push(tile),
+                        _ => joined.push(tile),
                     }
                 }
+                retargets.extend(
+                    running.tiles.iter().filter(|t| shifted.contains(&t.window)).cloned(),
+                );
             }
             let changed = !(retargets.is_empty() && joined.is_empty());
             if in_flight {
                 // Tiles already animating bend toward their new targets from wherever they are
                 // drawn; newcomers start their whole movement now. Both get the fresh duration.
+                // Tiles this pass did not touch may still have changed band, so the whole flight
+                // is restacked where it stands.
                 if let Some(overlay) = self.overlay.as_mut() {
                     for tile in &retargets {
                         overlay.retarget_tile(tile, duration);
@@ -1478,8 +2196,13 @@ impl WorkspaceAnimation {
                         overlay.add_tile(tile, duration);
                     }
                 }
+                if let Some(running) = self.running.as_ref()
+                    && let Some(overlay) = self.overlay.as_mut()
+                {
+                    overlay.restack(&running.tiles);
+                }
                 // A grow joining mid-flight cannot hold, but it can still get its truthful
-                // pixels: the chase lands them through the ordinary mid-flight swap, which
+                // pixels: the chase lands them as `Swap("reveal")` on the placeholder tile, which
                 // re-keys the grid from the presented state.
                 if !awaiting.is_empty() {
                     self.chase_reveal_pictures(&awaiting);
@@ -1491,10 +2214,11 @@ impl WorkspaceAnimation {
                     // lifts while a retargeted tile is still travelling.
                     running.started = Some(Instant::now());
                     running.duration = duration;
-                    // The destinations changed, so the frames already requested are stale. Ask
-                    // again once the animation is far enough along.
-                    running.frames_applied = false;
                 }
+                self.running
+                    .as_mut()
+                    .expect("checked above")
+                    .absorb_in_flight_change(changed, frames_changed);
             } else {
                 // Still collecting behind the coalesce window: compose statically at frame zero,
                 // exactly as a fresh start does. The animations are installed once by
@@ -1507,25 +2231,33 @@ impl WorkspaceAnimation {
                     overlay.set_tiles(&tiles);
                     overlay.draw_frame(&tiles, 0.0);
                 }
-                if let Some(running) = self.running.as_mut() {
+                let reapply = self.running.as_mut().and_then(|running| {
                     running.tiles = tiles;
+                    // A held merge already carries the merged frames below; one request per pass.
+                    if hold_frames.is_some() {
+                        return None;
+                    }
+                    reapply_set(
+                        running.frames_applied,
+                        false,
+                        frames_changed,
+                        &running.final_frames,
+                    )
+                });
+                if let Some(frames) = reapply {
+                    self.request_frames(frames);
                 }
             }
             if let Some(frames) = hold_frames {
                 self.request_frames(frames);
                 self.chase_reveal_pictures(&awaiting);
             }
-            // Newly reserved entrances get the same fast chase a fresh flight gives them: the
-            // queued SkyLight capture is the fallback, not the plan.
-            if !new_entrances.is_empty() {
-                self.chase_reveal_pictures(&new_entrances);
-            }
             return;
         }
 
+        // The layout path has already decided the pass is worth flying; this guards the strip
+        // path, where a pan with no usable picture leaves nothing to draw.
         if tiles.is_empty() {
-            // Nothing drawable, so there is no overlay to hide behind: place the windows at once
-            // rather than leaving them where they are.
             self.request_frames(final_frames);
             // Warm anyway, or this deadlocks: the cache only ever filled when an animation completed,
             // and no animation could run with an empty cache.
@@ -1547,6 +2279,7 @@ impl WorkspaceAnimation {
             self.request_frames(final_frames);
             return;
         };
+        restack(&mut tiles, focus);
         overlay.set_backdrop(backdrop.as_ref());
         overlay.set_bar(bar.as_ref(), strip);
         overlay.set_tiles(&tiles);
@@ -1565,36 +2298,30 @@ impl WorkspaceAnimation {
             warn!("could not start the frame clock; drawing the final frame directly");
         }
 
-        // A holding grow applies the real frames NOW: the overlay is already covering the
+        // A holding flight applies the real frames NOW: the overlay is already covering the
         // windows, so the app can rerender at its new size while the tiles stand still — the
-        // rerender is exactly what the hold is waiting for. A flight with entrances does the
-        // same, and for the same reason: the entering window can only be captured once its real
-        // frame is at the destination size, and the chase's framed capture beats the queued
-        // SkyLight one to it by hundreds of milliseconds.
-        let holding = !awaiting.is_empty();
-        let entering = !entrances.is_empty();
-        if holding || entering {
-            self.request_frames(final_frames.clone());
-        }
+        // rerender is exactly what the hold is waiting for. An entrance's slot goes out with the
+        // rest, so its chase captures the window at slot size and the picture fits; held back,
+        // the chase took a spawn-size picture that left a hole in the slot.
+        let (holding, chase) = frame_zero_work(&awaiting);
         if holding {
-            self.chase_reveal_pictures(&awaiting);
-        }
-        if entering {
-            let pairs: Vec<(WindowId, CGSize)> =
-                entrances.iter().map(|e| (e.window, e.to.size)).collect();
-            self.chase_reveal_pictures(&pairs);
+            self.request_frames(final_frames.clone());
+            self.chase_reveal_pictures(&chase);
         }
         self.running = Some(RunningAnimation {
             tiles,
             final_frames,
-            frames_applied: holding || entering,
+            frames_applied: holding,
             started: None,
             duration,
             apply_at,
             entrances,
             hold_deadline: holding.then(|| Instant::now() + reveal_hold_limit(duration)),
             awaiting,
-            destination_refreshed: 0,
+            destination_refreshed: false,
+            refresh_targets: Vec::new(),
+            harvested: HashSet::new(),
+            focus,
             _clock: clock,
         });
 
@@ -1652,12 +2379,12 @@ impl WorkspaceAnimation {
             .collect();
 
         let depths = crate::sys::window_server::front_to_back_depths();
-        let focused_group = focus_group(focus, windows.iter().map(|w| (w.window, w.floating)));
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
-        let mut anchors: Vec<(CGRect, CGRect, CGRect, usize)> = Vec::new();
+        // Real frame per drawn window; depths are filled in after the restack.
+        let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
         for window in &windows {
             let (from, to) = strip_travel(window.frame, from_offset, to_offset, window.pinned);
             match self.cache.usable(window.window).cloned() {
@@ -1670,26 +2397,23 @@ impl WorkspaceAnimation {
                     if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
-                    let depth = crate::model::z_group::tile_depth(
-                        depths.get(&window.server_id.as_u32()).copied(),
-                        focus == Some(window.window),
-                        group_of(window.floating),
-                        focused_group,
-                    );
                     // The border rides only where the window genuinely is: an arriving row's
                     // window sits parked, its real border parked with it, so no companion matches
                     // — matching reality, where the border reappears once its tool catches up.
                     if let Some(info) = crate::sys::window_server::get_window(window.server_id) {
-                        anchors.push((info.frame, from, to, depth));
+                        starts.push((window.window, info.frame));
                     }
                     tiles.push(OverlayTile {
                         window: window.window,
                         from,
                         to,
                         snapshot,
-                        depth,
+                        floating: window.floating,
+                        server_order: depths.get(&window.server_id.as_u32()).copied(),
+                        depth: 0,
                         companion: false,
                         focused: focus == Some(window.window),
+                        ghost: false,
                     });
                 }
                 // No usable picture. The window is still placed by final_frames, and warmed once
@@ -1697,6 +2421,21 @@ impl WorkspaceAnimation {
                 None => missing += 1,
             }
         }
+        // A close that scrolls the strip: the ghost shrinks in the same transaction as the pan.
+        let mut drained_exits = 0usize;
+        if let Some((display_frame, _)) = self.display {
+            let exits = self.claim_pending_exits(display_frame);
+            drained_exits = exits.len();
+            tiles.extend(exits);
+        }
+        restack(&mut tiles, focus);
+        let anchors: Vec<(CGRect, CGRect, CGRect, usize)> = starts
+            .iter()
+            .filter_map(|(window, real)| {
+                let tile = tiles.iter().find(|tile| tile.window == *window)?;
+                Some((*real, tile.from, tile.to, tile.depth))
+            })
+            .collect();
         let exclude: std::collections::HashSet<u32> =
             windows.iter().map(|window| window.server_id.as_u32()).collect();
         let (companions, companion_targets) = match self.display {
@@ -1708,13 +2447,19 @@ impl WorkspaceAnimation {
         tiles.extend(companions);
         self.last_animated.extend(companion_targets);
         if !needs_capture.is_empty() {
-            self.service.request(needs_capture);
+            // Frame zero unless this switch chains onto a flight; then it waits for `finish`.
+            if capture_work_allowed(self.phase(), CaptureKind::NeedsCapture) {
+                self.service.request(needs_capture);
+            } else {
+                defer_warm(&mut self.deferred_warm, needs_capture);
+            }
         }
         debug!(
             requested = windows.len(),
             tiles = tiles.len(),
             missing,
             misshapen,
+            exits = drained_exits,
             travel = format!(
                 "{:.0},{:.0} -> {:.0},{:.0}",
                 from_offset.x, from_offset.y, to_offset.x, to_offset.y
@@ -1727,16 +2472,19 @@ impl WorkspaceAnimation {
         // toward its new destination — the same continuity the old canvas got from reading its
         // single layer's presentation offset, per tile.
         // A strip movement never resizes and never carries a brand-new window: entrances and the
-        // early apply point are the layout path's concerns.
+        // early apply point are the layout path's concerns. Its travel is what a flight's exit
+        // ghosts ride when it merges (`shift_ghosts`).
         self.begin_group(
             tiles,
             final_frames,
             duration,
             "strip",
             GroupStart::Immediate,
-            apply_frames_at(false),
+            apply_frames_at(FlightKind::Strip, false),
             Vec::new(),
             Vec::new(),
+            focus,
+            Some(strip_pan_travel(from_offset, to_offset)),
         );
     }
 
@@ -1748,23 +2496,19 @@ impl WorkspaceAnimation {
         // Dropping the timer stops it repeating; it only ever needed to fire once.
         self.coalesce = None;
         // A grow holds at frame zero until its reveal pixels land or the deadline passes: flying
-        // without them shows the stretch placeholder for the whole flight. The nudge timer
-        // re-fires StartMoving at the deadline, so a slow app costs the hold and nothing more.
+        // without them draws the old picture stretched (`placeholder_mode`) until the chase lands
+        // it early or caches it. The nudge timer re-fires StartMoving at the deadline, so a slow
+        // app costs the capped hold and nothing more.
         let now = Instant::now();
         if let Some(running) = self.running.as_ref()
             && running.started.is_none()
             && !running.awaiting.is_empty()
         {
-            if let Some(deadline) = running.hold_deadline
-                && now < deadline
-            {
+            if let Some(wait) = hold_wait(running.hold_deadline, now) {
                 let tx = self.tx.clone();
-                self.coalesce = RepeatingTimer::every(
-                    (deadline - now).max(Duration::from_millis(10)),
-                    move || {
-                        _ = tx.send(Event::StartMoving);
-                    },
-                );
+                self.coalesce = RepeatingTimer::every(wait, move || {
+                    _ = tx.send(Event::StartMoving);
+                });
                 return;
             }
             let running = self.running.as_mut().expect("checked above");
@@ -1797,18 +2541,8 @@ impl WorkspaceAnimation {
             // Nothing is drawn here; Core Animation carries the tiles (see `animate_tiles`). The
             // tick only paces the mid-flight work, so a late tick delays a recapture or the frame
             // placement, never the motion.
-            let place_now = !running.frames_applied && progress >= running.apply_at;
-            if place_now {
-                running.frames_applied = true;
-            }
-            let refresh_now = match running.destination_refreshed {
-                0 => progress >= REFRESH_DESTINATION_AT,
-                1 => progress >= REFRESH_DESTINATION_AGAIN_AT,
-                _ => false,
-            };
-            if refresh_now {
-                running.destination_refreshed += 1;
-            }
+            let place_now = running.frames_due(progress);
+            let refresh_now = running.take_refresh(progress);
             (running.is_done(), place_now, refresh_now)
         };
         if refresh_now {
@@ -1828,12 +2562,7 @@ impl WorkspaceAnimation {
                 .unwrap_or_default();
             self.refresh_destination_among(&tiles);
         }
-        if place_now {
-            let frames = self
-                .running
-                .as_ref()
-                .map(|running| running.final_frames.clone())
-                .unwrap_or_default();
+        if let Some(frames) = place_now {
             self.request_frames(frames);
         }
         if done {
@@ -1841,50 +2570,46 @@ impl WorkspaceAnimation {
         }
     }
 
-    /// Logs how far each real window is from where its tile finished.
-    ///
-    /// This is the handover shift, measured rather than eyeballed: a non-zero delta here is exactly
-    /// the jump seen when the overlay lifts. Kept because it is the only way to tell a layout that
-    /// moved from an animation that ended in the wrong place.
+    /// Logs how many real windows are not where their tiles finished, and the worst of them.
+    /// Parks are excluded (macOS clamps them). This is the handover shift, measured rather than
+    /// eyeballed. See "Real windows land before lift" in `docs/animation-smoothness.md`.
     fn report_handover_error(&self) {
         let Some(running) = self.running.as_ref() else { return };
         let Some((display_frame, _)) = self.display else { return };
-        let mut worst = 0.0f64;
-        let mut worst_wsid = 0u32;
-        for (window, intended) in &running.final_frames {
-            let Some(target) = running.tiles.iter().find(|t| t.window == *window) else {
-                continue;
-            };
-            let _ = target;
-            let Some(info) = crate::sys::window_server::get_window(
-                crate::sys::window_server::WindowServerId::new(window.idx.get()),
-            ) else {
-                continue;
-            };
-            let dx = (info.frame.origin.x - intended.origin.x).abs();
-            let dy = (info.frame.origin.y - intended.origin.y).abs();
-            let error = dx.max(dy);
-            if error > worst {
-                worst = error;
-                worst_wsid = window.idx.get();
-            }
-        }
-        let _ = display_frame;
-        if worst > 2.0 {
+        let tiled: Vec<WindowId> = running.tiles.iter().map(|t| t.window).collect();
+        let real: HashMap<WindowId, CGRect> = running
+            .final_frames
+            .iter()
+            .filter(|(window, _)| tiled.contains(window))
+            .filter_map(|(window, _)| {
+                let info = crate::sys::window_server::get_window(
+                    crate::sys::window_server::WindowServerId::new(window.idx.get()),
+                )?;
+                Some((*window, info.frame))
+            })
+            .collect();
+        let report = handover_report(&running.final_frames, &tiled, &real, display_frame);
+        if report.count_over > 0 {
             debug!(
-                worst_pt = format!("{:.0}", worst),
-                wsid = worst_wsid,
+                count_over = report.count_over,
+                total = report.total,
+                worst_visible_pt = format!("{:.0}", report.worst_visible_pt),
+                wsid = report.worst_wsid,
                 "handover mismatch: a real window is not where its tile finished"
             );
         }
     }
 
-    /// Captures the desktop wallpaper and icons as one image, for the overlay's backdrop.
-    /// Asks for a fresh desktop capture in the background.
+    /// Asks for a fresh desktop render in the background, or defers it to `finish` while a flight
+    /// is up (see "Capture work in flight" in `docs/animation-smoothness.md`).
     ///
     /// Cheap to call: the service ignores the request when one is already in flight, and the desktop
     /// changes rarely enough that a capture a few seconds old is indistinguishable from a fresh one.
-    fn warm_desktop(&self) {
+    fn warm_desktop(&mut self) {
+        if !capture_work_allowed(self.phase(), CaptureKind::Desktop) {
+            self.deferred_desktop = true;
+            return;
+        }
         let (Some((frame, _)), Some(id)) = (self.display, self.display_id) else {
             return;
         };
@@ -1900,8 +2625,16 @@ impl WorkspaceAnimation {
         let (display_frame, scale) = self.display?;
         let display_size = (display_frame.size.width, display_frame.size.height);
 
-        // Keep the render current whether or not one is in hand for this switch.
-        self.warm_desktop();
+        // A render asked for here lands mid-flight, so it is asked for at `finish` instead and
+        // this switch draws what is in hand. See "Capture work in flight" in the doc.
+        let in_hand = self
+            .pictures
+            .desktop
+            .as_ref()
+            .map(|render| (render.taken.elapsed(), render.coverage.covered));
+        if desktop_render_wanted(in_hand, display_size) {
+            self.deferred_desktop = true;
+        }
 
         // The ScreenCaptureKit render first, because it is the compositor's own output and therefore matches
         // the real desktop exactly. Measured against the SkyLight composite of the same desktop: identical
@@ -2070,22 +2803,45 @@ impl WorkspaceAnimation {
     }
 
     fn finish(&mut self) {
+        // Whatever is still owed (a clockless flight's held entrance slots) goes out before lift.
+        if let Some(frames) = self.running.as_mut().and_then(|running| running.frames_due(1.0)) {
+            self.request_frames(frames);
+        }
         self.report_handover_error();
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.hide();
+            // The acceptance greps pair "placing real windows" with this line.
+            let windows = self.running.as_ref().map_or(0, |running| running.tiles.len());
+            debug!(windows, "overlay lifted");
             // Free the tile contents rather than hold window pictures that are no longer drawn.
             overlay.release_tiles();
         }
         // Dropping the animation drops its timer, which stops the wakeups.
-        self.running = None;
+        let harvested = self.running.take().map(|running| running.harvested).unwrap_or_default();
         self.coalesce = None;
         self.arm_bar_refresh();
 
         // Capture what just became visible, so switching back has pixels ready. Event-driven, once
         // per animation, never on a timer.
         let targets = std::mem::take(&mut self.last_animated);
-        if !targets.is_empty() {
-            self.warm_windows(targets);
+        let animated: Vec<WindowId> = targets.iter().map(|target| target.window).collect();
+        let requested = if targets.is_empty() { Vec::new() } else { self.warm_windows(targets) };
+        // The animated set's hairlines, once: a re-warmed window is harvested when its picture
+        // lands, a chased or refreshed one already was, and a dressed one keeps its ring.
+        let dressed: HashSet<WindowId> = animated
+            .iter()
+            .copied()
+            .filter(|window| self.cache.get(*window).is_some_and(|s| s.dressing.is_some()))
+            .collect();
+        self.harvest_dressings(finish_harvest_set(&animated, &harvested, &requested, &dressed));
+        // The flight is over, so the work it deferred runs now. See "Capture work in flight" in
+        // `docs/animation-smoothness.md`.
+        let deferred = std::mem::take(&mut self.deferred_warm);
+        if !deferred.is_empty() {
+            self.warm_windows(deferred);
+        }
+        if std::mem::take(&mut self.deferred_desktop) {
+            self.warm_desktop();
         }
     }
 
@@ -2149,17 +2905,29 @@ pub(crate) fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
 /// the owning application.
 fn actual_start(request: &AnimationRequest, display: CGRect) -> CGRect {
     let real = match crate::sys::window_server::get_window(request.server_id) {
-        Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => info.frame,
-        _ => request.from,
+        Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => {
+            Some(info.frame)
+        }
+        _ => None,
     };
-    if start_is_synthetic(real, request.from, request.to) {
-        return request.from;
+    resolve_start(real, request.from, request.to, display)
+}
+
+/// The tile's start from the window server's answer (`real`, `None` when it had none) and the
+/// request's `from`/`to`. Pure, so the park remap can be tested on plain rects.
+fn resolve_start(real: Option<CGRect>, from: CGRect, to: CGRect, display: CGRect) -> CGRect {
+    use crate::model::HiddenWindowPlacement as Park;
+    // A park is judged from both frames, before the synthetic test: apps clamp the real frame past
+    // the park threshold, and the server may already report the slot. See docs/animation-smoothness.md.
+    let parked_real = real.is_some_and(|real| Park::is_off_screen(display, real));
+    let parked_from = Park::is_off_screen(display, from);
+    if parked_real || parked_from {
+        let park = if parked_real { real.unwrap_or(from) } else { from };
+        return Park::entry_frame(park, to, display);
     }
-    // A parked window's real frame is a corner of the display, so animating from it would fly the window in
-    // diagonally from the bottom. It belongs to the strip and comes back in from the edge it was parked
-    // against.
-    if crate::model::HiddenWindowPlacement::is_off_screen(display, real) {
-        return crate::model::HiddenWindowPlacement::entry_frame(real, request.to, display);
+    let real = real.unwrap_or(from);
+    if start_is_synthetic(real, from, to) {
+        return from;
     }
     real
 }
@@ -2197,6 +2965,26 @@ fn on_screen_extent(frame: CGRect, display: CGRect) -> (f64, f64) {
     (w.max(0.0), h.max(0.0))
 }
 
+/// Does a window travelling `from` → `to` appear on `display` at ANY point? The whole path is
+/// sampled, not just its ends: a window sweeping across mid-animation is exactly what conveys how
+/// far the strip travelled, and testing endpoints alone excluded it.
+fn worth_animating(from: CGRect, to: CGRect, display: CGRect) -> bool {
+    /// Enough that a window cannot cross the display between two samples: the fastest realistic
+    /// travel is a few display widths.
+    const SAMPLES: usize = 11;
+
+    let area = from.size.width * from.size.height;
+    if area <= 0.0 {
+        return false;
+    }
+    let moving = is_moving(from, to);
+    (0..SAMPLES).any(|step| {
+        let t = step as f64 / (SAMPLES - 1) as f64;
+        let at = crate::ui::workspace_overlay::lerp_rect(from, to, t);
+        shows_enough(at, display, moving)
+    })
+}
+
 /// Whether enough of the window shows at `at` for a tile to be worth drawing there.
 fn shows_enough(at: CGRect, display: CGRect, moving: bool) -> bool {
     if on_screen_fraction(at, display) >= min_on_screen(moving) {
@@ -2204,30 +2992,6 @@ fn shows_enough(at: CGRect, display: CGRect, moving: bool) -> bool {
     }
     let (w, h) = on_screen_extent(at, display);
     moving && w.min(h) >= MIN_VISIBLE_EXTENT
-}
-
-/// Which group a window belongs to.
-fn group_of(floating: bool) -> crate::model::z_group::StackGroup {
-    if floating {
-        crate::model::z_group::StackGroup::Floating
-    } else {
-        crate::model::z_group::StackGroup::Strip
-    }
-}
-
-/// The group the window gaining focus belongs to, which decides which group is drawn in front.
-///
-/// Falls back to the strip when the focus target is not among the windows being animated, since that is
-/// where focus lands for every movement the strip itself makes.
-fn focus_group(
-    focus: Option<WindowId>,
-    mut windows: impl Iterator<Item = (WindowId, bool)>,
-) -> crate::model::z_group::StackGroup {
-    let Some(focus) = focus else { return crate::model::z_group::StackGroup::Strip };
-    windows
-        .find(|(window, _)| *window == focus)
-        .map(|(_, floating)| group_of(floating))
-        .unwrap_or(crate::model::z_group::StackGroup::Strip)
 }
 
 /// Whether a request actually moves its window.
@@ -2322,9 +3086,9 @@ mod tests {
     /// real windows longer.
     #[test]
     fn a_resize_places_the_real_windows_earlier() {
-        assert!(apply_frames_at(true) < apply_frames_at(false));
-        assert_eq!(apply_frames_at(false), APPLY_FRAMES_AT);
-        assert_eq!(apply_frames_at(true), APPLY_FRAMES_AT_RESIZE);
+        assert!(apply_frames_at(FlightKind::Layout, true) < apply_frames_at(FlightKind::Layout, false));
+        assert_eq!(apply_frames_at(FlightKind::Layout, false), APPLY_FRAMES_AT);
+        assert_eq!(apply_frames_at(FlightKind::Layout, true), APPLY_FRAMES_AT_RESIZE);
     }
 
     /// An entering window is a resize from zero to its final width: full height, anchored at its
@@ -2362,8 +3126,8 @@ mod tests {
         assert!(shows_enough(kiro, display, true));
     }
 
-    /// Parked windows show at most 40pt (the macOS clamp), and must stay skipped or every park
-    /// becomes a tile.
+    /// A park as the layout asks for it shows 40pt at most, and must stay skipped or every park
+    /// becomes a tile. Apps clamp the real frame past that; `resolve_start` handles those.
     #[test]
     fn a_parked_sliver_is_still_skipped() {
         let display = rect(0.0, 0.0, 1728.0, 1117.0);
@@ -2550,6 +3314,2753 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
+    /// Bug-condition exploration for the regressions from 5877636. Each test names the clause in
+    /// `.kiro/specs/exit-entrance-animation-regressions/bugfix.md` it pins. Written to fail on
+    /// unfixed code; a failure here is the defect, reproduced.
+    mod exploration {
+        use super::*;
+        use crate::model::HiddenWindowPlacement;
+        use crate::ui::window_snapshot::test_snapshot;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn tile(
+            window: WindowId,
+            from: CGRect,
+            to: CGRect,
+            server_order: Option<usize>,
+            floating: bool,
+        ) -> OverlayTile {
+            OverlayTile {
+                window,
+                from,
+                to,
+                snapshot: test_snapshot(to.size),
+                floating,
+                server_order,
+                depth: 0,
+                companion: false,
+                focused: false,
+                ghost: false,
+            }
+        }
+
+        fn running(started: Option<Instant>, duration: Duration) -> RunningAnimation {
+            RunningAnimation {
+                tiles: Vec::new(),
+                final_frames: Vec::new(),
+                frames_applied: false,
+                started,
+                duration,
+                apply_at: APPLY_FRAMES_AT,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                _clock: None,
+            }
+        }
+
+        /// T1 (1.7). Frames applied at frame zero, then a coalescing pass moves the window: the
+        /// merged frame must be sent again or the real window stays where pass 1 put it.
+        #[test]
+        fn a_coalescing_merge_re_requests_frames_it_already_applied() {
+            let window = wid(1);
+            let a = rect(1727.0, 1116.0, 859.0, 1081.0);
+            let b = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut running = running(None, Duration::from_millis(300));
+            running.frames_applied = true;
+            running.final_frames = vec![(window, a)];
+
+            let changed = merge_final_frames(&mut running.final_frames, vec![(window, b)]);
+            let reapply = reapply_set(
+                running.frames_applied,
+                running.started.is_some(),
+                changed,
+                &running.final_frames,
+            );
+
+            assert!(changed, "B differs from A");
+            assert_eq!(running.final_frames, vec![(window, b)], "latest frame wins");
+            assert_eq!(
+                reapply,
+                Some(vec![(window, b)]),
+                "frames applied early and then merged must be re-requested; got {reapply:?}"
+            );
+        }
+
+        /// T2 (1.4). A picture landing at 60% of the flight must not travel longer than the
+        /// overlay stays up, or the cut lands mid-growth.
+        #[test]
+        fn a_late_entrance_ends_no_later_than_the_flight() {
+            let duration = Duration::from_millis(300);
+            let running = running(Some(Instant::now() - duration.mul_f64(0.6)), duration);
+            // Read before `progress`: the clock only moves forward between the two reads.
+            let remaining = running.remaining();
+            let progress = running.progress();
+            assert!(progress >= 0.6 && progress < 0.7, "clock sanity: {progress}");
+
+            let entrance = late_join_duration(running.duration, progress);
+            assert!(
+                entrance <= remaining,
+                "entrance travels {entrance:?} but the overlay lifts in {remaining:?}"
+            );
+        }
+
+        /// T4 (1.1): pass 1 (a close, focus not among the tiles), then pass 2 (a pan, focus on
+        /// the floating window) retargets one strip tile. Depth is banded from the flight's
+        /// latest focus for EVERY tile, the redundant ones included: the floating window is never
+        /// between two strip tiles. Before the restack, pass 1 banded the strip in front and
+        /// pass 2 put only the retargeted tile in the floating band.
+        #[test]
+        fn depths_do_not_interleave_groups_across_passes() {
+            let (s1, s2, f) = (wid(1), wid(2), wid(3));
+            let slot_a = rect(4.0, 32.0, 859.0, 1081.0);
+            let slot_b = rect(867.0, 32.0, 859.0, 1081.0);
+            let slot_c = rect(1730.0, 32.0, 859.0, 1081.0);
+            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
+
+            let pass1 = vec![
+                tile(s1, slot_a, slot_a, Some(1), false),
+                tile(s2, slot_c, slot_b, Some(2), false),
+                tile(f, zoom, zoom, Some(0), true),
+            ];
+            let mut flight = running(None, Duration::from_millis(300));
+            for (_, outcome) in flight.merge_pass(pass1, None) {
+                assert_eq!(outcome, Admitted::Joined);
+            }
+
+            let pass2 = vec![
+                tile(s1, slot_a, slot_a, Some(1), false),
+                tile(s2, slot_c, slot_c, Some(2), false),
+                tile(f, zoom, zoom, Some(0), true),
+            ];
+            let outcomes: Vec<Admitted> =
+                flight.merge_pass(pass2, Some(f)).into_iter().map(|(_, o)| o).collect();
+            assert_eq!(
+                outcomes,
+                vec![Admitted::Redundant, Admitted::Retargeted, Admitted::Redundant],
+                "S1 confirmed, S2 retargeted, F confirmed"
+            );
+
+            let depth = |w: WindowId| flight.tiles.iter().find(|t| t.window == w).unwrap().depth;
+            let (d1, d2, df) = (depth(s1), depth(s2), depth(f));
+            assert!(
+                !(d1 < df && df < d2) && !(d2 < df && df < d1),
+                "S1={d1} S2={d2} F={df}: the floating window is between two strip tiles"
+            );
+            assert!(df < d1 && df < d2, "the floating focus leads, and its group with it");
+        }
+
+        /// T5 (1.2, 1.3). Parks the apps clamped past 40pt (Kiro 41pt, Finder 52pt, from the
+        /// log) and a park whose window the server already reports at its slot: all must enter
+        /// from the edge, never fly in from the bottom corner.
+        #[test]
+        fn a_clamped_park_enters_from_the_display_edge() {
+            let display = rect(0.0, 0.0, 1728.0, 1117.0);
+            let slot = rect(4.0, 32.0, 1720.0, 1081.0);
+            let park = rect(1727.0, 1116.0, 1720.0, 1081.0);
+            let kiro_real = rect(1727.0, 1076.0, 1720.0, 1081.0);
+            let finder_real = rect(1727.0, 1065.0, 859.0, 1081.0);
+            let finder_slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let finder_park = rect(1727.0, 1116.0, 859.0, 1081.0);
+
+            let cases = [
+                ("41pt Kiro park", Some(kiro_real), park, slot),
+                ("52pt Finder park", Some(finder_real), finder_park, finder_slot),
+                ("park the server already reports at its slot", Some(slot), park, slot),
+            ];
+            let wrong: Vec<String> = cases
+                .iter()
+                .filter_map(|(name, real, from, to)| {
+                    let expected = HiddenWindowPlacement::entry_frame(*from, *to, display);
+                    let got = resolve_start(*real, *from, *to, display);
+                    (got != expected).then(|| {
+                        format!(
+                            "{name}: started at {:.0},{:.0}, wanted {:.0},{:.0}",
+                            got.origin.x, got.origin.y, expected.origin.x, expected.origin.y
+                        )
+                    })
+                })
+                .collect();
+            assert!(wrong.is_empty(), "parks not remapped to the edge:\n{}", wrong.join("\n"));
+        }
+
+        /// T6 (1.9). A closing window must wait for the layout pass that reflows its neighbours,
+        /// not fly alone with no final frames over a backdrop that omits every strip window.
+        #[test]
+        fn an_exit_waits_for_the_next_pass_instead_of_flying_alone() {
+            let display = rect(0.0, 0.0, 1728.0, 1117.0);
+            let frame = rect(867.0, 32.0, 859.0, 1081.0);
+            let now = Instant::now();
+            // Unfixed code returned an `ExitDisposition::FlyAlone` here (one tile, no final
+            // frames); Change 4 leaves only the pending exit.
+            let pending =
+                pending_exit(wid(1), frame, Some(test_snapshot(frame.size)), false, display, now)
+                    .expect("on screen with a picture");
+            assert!(pending.claimable(now));
+            assert!(!pending.claimable(now + COALESCE_WINDOW));
+            assert_eq!(pending.frame, frame);
+        }
+
+        /// T7 (1.8). A floating open: one entrance, every drawable tile standing still, no exit,
+        /// nothing in flight. There is nothing to animate, so no overlay may go up.
+        #[test]
+        fn a_pass_where_nothing_drawable_moves_does_not_fly() {
+            assert!(
+                !worth_flying(false, 0, false),
+                "a still-only composition flew, hiding the new window until its picture landed"
+            );
+        }
+    }
+
+    /// Bug-condition exploration for `.kiro/specs/flight-render-stability/bugfix.md`. Each test
+    /// names the clause it pins and asserts the FIXED expectation, so it fails on unfixed code; a
+    /// failure here is the defect, reproduced.
+    mod render_stability_exploration {
+        use super::*;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        /// T1 (1.1). A background picture lands on an ordinary moving tile at 40%: nobody asked
+        /// for it, so it must go to the cache only. Unfixed: the tile takes it (`Swap`).
+        #[test]
+        fn a_background_picture_never_swaps_onto_a_moving_tile() {
+            let decision = should_swap_mid_flight(
+                TileState::Moving { fits: true, resizing: false },
+                false,
+                false,
+                true,
+                Some(0.4),
+            );
+            assert_eq!(
+                decision,
+                SwapDecision::CacheOnly,
+                "an unsolicited picture reached the moving tile: {decision:?}"
+            );
+        }
+
+        /// T2 (1.1, 1.2). The destination refresh lands at 98%, four ticks before lift: too late
+        /// to be anything but end-of-flight flicker. Unfixed: `Swap`.
+        #[test]
+        fn a_refresh_landing_late_is_cached_only() {
+            let decision = should_swap_mid_flight(
+                TileState::MovingRefreshTarget { fits: true, resizing: false },
+                false,
+                false,
+                true,
+                Some(0.98),
+            );
+            assert_eq!(
+                decision,
+                SwapDecision::CacheOnly,
+                "a refresh at 0.98 cut onto the tile: {decision:?}"
+            );
+        }
+
+        /// T3 (1.2). Warming, the desktop render, a refresh during a hold, and a harvest all
+        /// contend with the chase for the window server mid-flight. Unfixed: all allowed.
+        #[test]
+        fn no_capture_work_starts_between_frame_zero_and_lift() {
+            let cases = [
+                (FlightPhase::Moving, CaptureKind::Warm),
+                (FlightPhase::Moving, CaptureKind::Desktop),
+                (FlightPhase::Holding, CaptureKind::Refresh),
+                (FlightPhase::Moving, CaptureKind::Harvest),
+            ];
+            let allowed: Vec<String> = cases
+                .iter()
+                .filter(|(phase, kind)| capture_work_allowed(*phase, *kind))
+                .map(|(phase, kind)| format!("{phase:?}/{kind:?}"))
+                .collect();
+            assert!(allowed.is_empty(), "capture work allowed in flight: {}", allowed.join(", "));
+        }
+
+        /// T4 (1.3). A strip switch's frames are pure moves that still take 90ms median to land;
+        /// 0.75 of a 300ms flight leaves 75ms. Unfixed: 0.75.
+        #[test]
+        fn a_strip_movement_applies_frames_by_the_midpoint() {
+            let at = apply_frames_at(FlightKind::Strip, false);
+            assert!(at <= 0.5, "strip apply point is {at}, leaving too little runway");
+        }
+
+        /// T6 (1.3). An in-flight pass that changes only untiled (parked) windows' frames after
+        /// the apply point must mark the applied frames stale. Unfixed: only a tile change does.
+        #[test]
+        fn an_untiled_frame_change_in_flight_marks_frames_stale() {
+            assert!(
+                mark_stale_on_untiled_change(false, true),
+                "frames_applied stays true after an untiled frame change"
+            );
+        }
+
+        /// T7 (1.3). wsid=108's park at y=1116 on a 1117pt display is clamped by macOS to
+        /// y=1051: a 65pt "error" on a window nobody can see, masking a real 3pt miss on the
+        /// strip. Unfixed: worst 65, no count.
+        #[test]
+        fn the_handover_report_excludes_off_screen_intents_and_counts_misses() {
+            let display = rect(0.0, 0.0, 1728.0, 1117.0);
+            let parked = wid(108);
+            let strip = wid(200);
+            let final_frames = vec![
+                (parked, rect(1727.0, 1116.0, 859.0, 1081.0)),
+                (strip, rect(867.0, 32.0, 859.0, 1081.0)),
+            ];
+            let real: HashMap<WindowId, CGRect> = [
+                (parked, rect(1727.0, 1051.0, 859.0, 1081.0)),
+                (strip, rect(870.0, 32.0, 859.0, 1081.0)),
+            ]
+            .into_iter()
+            .collect();
+            let report = handover_report(&final_frames, &[parked, strip], &real, display);
+            assert!(
+                report.count_over == 1 && report.worst_visible_pt == 3.0 && report.worst_wsid == 200,
+                "expected count_over=1 worst=3pt wsid=200; got {report:?}"
+            );
+        }
+
+        /// T8 (1.4). A hold is a frozen strip: it must be capped at `HOLD_CAP`, polled every
+        /// 8ms, and settle as soon as the print differs from the pre-resize one. Unfixed: 25ms,
+        /// two matching prints required. (The cap went 300 -> 150 -> 300: at 150 an entrance's
+        /// chase rarely landed in time; see "A grow holds, then reveals" in the doc.)
+        #[test]
+        fn a_hold_is_short_and_settles_on_the_first_repaint() {
+            let limit = reveal_hold_limit(Duration::from_millis(300));
+            let p = vec![10u8; 64];
+            let q = vec![200u8; 64];
+            let settled = chase_settled(None, &p, Some(&q));
+            let wrong: Vec<String> = [
+                (limit <= HOLD_CAP, format!("reveal_hold_limit(300ms) = {limit:?}")),
+                (
+                    REVEAL_CHASE_INTERVAL == Duration::from_millis(8),
+                    format!("REVEAL_CHASE_INTERVAL = {REVEAL_CHASE_INTERVAL:?}"),
+                ),
+                (settled, format!("chase_settled(None, p, Some(q != p)) = {settled}")),
+            ]
+            .into_iter()
+            .filter(|(ok, _)| !ok)
+            .map(|(_, why)| why)
+            .collect();
+            assert!(wrong.is_empty(), "hold is not bounded and cheap:\n{}", wrong.join("\n"));
+        }
+
+        /// T10 (1.6), inverted. Holding a reserved entrance's frame back made its chase capture
+        /// the window at spawn size; drawn over the slot, that picture left a hole (2026-09-15
+        /// 3:28:10). So a holding flight sends EVERY frame at frame zero, the newcomer's included,
+        /// and the chase then requires the fit like a grow's.
+        #[test]
+        fn an_entrances_frame_goes_out_at_frame_zero_so_its_picture_fits() {
+            let newcomer = wid(51462);
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let final_frames = vec![
+                (wid(1), rect(4.0, 32.0, 859.0, 1081.0)),
+                (newcomer, slot),
+                (wid(2), rect(1730.0, 32.0, 859.0, 1081.0)),
+            ];
+            let mut running = super::render_stability_fix::flight(None);
+            running.final_frames = final_frames.clone();
+            let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
+            running.entrances.push(entrance);
+            let awaiting: Vec<_> = waiting.into_iter().collect();
+            let sent = running
+                .extend_hold(&awaiting, false, Duration::from_millis(300), Instant::now())
+                .expect("a held merge sends frames");
+            assert_eq!(sent, final_frames, "the newcomer's slot went out with the rest");
+            assert!(running.frames_applied);
+            assert_eq!(running.frames_due(1.0), None, "nothing left for the apply point");
+        }
+    }
+
+    /// Fix checking for `.kiro/specs/flight-render-stability/bugfix.md` 2.x. Change A: a picture
+    /// lands on a moving tile only if the tile is waiting for one, or it is the single early
+    /// destination refresh.
+    mod render_stability_fix {
+        use super::preservation::{Gen, RUNS};
+        use super::*;
+        use crate::ui::window_snapshot::test_snapshot;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        pub(super) fn flight(started: Option<Instant>) -> RunningAnimation {
+            RunningAnimation {
+                tiles: Vec::new(),
+                final_frames: Vec::new(),
+                frames_applied: false,
+                started,
+                duration: Duration::from_millis(300),
+                apply_at: APPLY_FRAMES_AT,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                _clock: None,
+            }
+        }
+
+        fn tile(window: WindowId, from: CGRect, to: CGRect) -> OverlayTile {
+            OverlayTile {
+                window,
+                from,
+                to,
+                snapshot: test_snapshot(to.size),
+                floating: false,
+                server_order: None,
+                depth: 0,
+                companion: false,
+                focused: false,
+                ghost: false,
+            }
+        }
+
+        const STATES: [TileState; 12] = [
+            TileState::NotTiled,
+            TileState::Awaiting,
+            TileState::Reveal { fits: false },
+            TileState::Reveal { fits: true },
+            TileState::Moving { fits: false, resizing: false },
+            TileState::Moving { fits: false, resizing: true },
+            TileState::Moving { fits: true, resizing: false },
+            TileState::Moving { fits: true, resizing: true },
+            TileState::MovingRefreshTarget { fits: false, resizing: false },
+            TileState::MovingRefreshTarget { fits: false, resizing: true },
+            TileState::MovingRefreshTarget { fits: true, resizing: false },
+            TileState::MovingRefreshTarget { fits: true, resizing: true },
+        ];
+
+        /// The rule in 2.1, spelled out independently of the implementation, plus the same-route
+        /// gate on the refresh (see "Mid-flight passes" in `docs/animation-smoothness.md`).
+        fn expected(
+            state: TileState,
+            settled: bool,
+            renders_like_cached: bool,
+            same_source: bool,
+            progress: Option<f64>,
+        ) -> SwapDecision {
+            match state {
+                TileState::Awaiting | TileState::Reveal { .. } if progress.is_none() => {
+                    SwapDecision::Claim
+                }
+                TileState::Awaiting => SwapDecision::Admit,
+                // 2.4: a settled reveal landing on the placeholder before 0.6 is hard-swapped,
+                // whatever route it came by: the chase's picture is the truth for a grow.
+                TileState::Reveal { fits } => {
+                    if fits && settled && progress.is_some_and(|p| p < 0.6) {
+                        SwapDecision::Swap("reveal")
+                    } else {
+                        SwapDecision::CacheOnly
+                    }
+                }
+                TileState::MovingRefreshTarget { fits: true, resizing } => {
+                    let early = progress.is_some_and(|p| p < 0.6);
+                    if early && same_source && !renders_like_cached && (!resizing || settled) {
+                        SwapDecision::Swap("refresh")
+                    } else {
+                        SwapDecision::CacheOnly
+                    }
+                }
+                _ => SwapDecision::CacheOnly,
+            }
+        }
+
+        /// 2.1. The full table: every state, settle flag, thumbprint match, route match, and the
+        /// progress values on both sides of 0.6, plus `None` for a flight not yet moving.
+        #[test]
+        fn should_swap_mid_flight_full_table() {
+            let progresses = [None, Some(0.3), Some(0.59), Some(0.6), Some(0.9)];
+            let mut swaps = 0usize;
+            for state in STATES {
+                for settled in [false, true] {
+                    for same in [false, true] {
+                        for same_source in [false, true] {
+                            for progress in progresses {
+                                let got =
+                                    should_swap_mid_flight(state, settled, same, same_source, progress);
+                                assert_eq!(
+                                    got,
+                                    expected(state, settled, same, same_source, progress),
+                                    "{state:?} settled={settled} same={same} same_source={same_source} progress={progress:?}"
+                                );
+                                if matches!(got, SwapDecision::Swap(_)) {
+                                    swaps += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // fits=true refresh target, not same, same route, {0.3, 0.59}: non-resizing both
+            // settle flags, resizing only settled = 3 combinations x 2 progresses; plus the
+            // fitting reveal, settled, both `same` flags x both routes x 2 progresses.
+            assert_eq!(swaps, 6 + 8, "the table has exactly the early refresh and reveal swaps");
+        }
+
+        /// 2.1, 2.4. For random states and progress, `Swap` happens only for the refresh target
+        /// or a fitting settled reveal before 0.6, and never for an ordinary moving tile. Seed
+        /// 95, 200 runs.
+        #[test]
+        fn swap_only_for_the_early_refresh_target() {
+            let mut rng = Gen(95);
+            let mut swaps = 0usize;
+            for _ in 0..RUNS {
+                let state = STATES[rng.below(STATES.len() as u64) as usize];
+                let settled = rng.coin();
+                let same = rng.coin();
+                let same_source = rng.coin();
+                let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
+                let decision = should_swap_mid_flight(state, settled, same, same_source, progress);
+                if let SwapDecision::Swap(reason) = decision {
+                    swaps += 1;
+                    match state {
+                        TileState::MovingRefreshTarget { fits: true, .. } => {
+                            assert_eq!(reason, "refresh", "seed 95: {state:?}");
+                            assert!(!same, "seed 95: swapped a picture rendering like the cache");
+                            assert!(same_source, "seed 95: swapped a picture from another route");
+                        }
+                        TileState::Reveal { fits: true } => {
+                            assert_eq!(reason, "reveal", "seed 95: {state:?}");
+                            assert!(settled, "seed 95: an unsettled reveal swapped");
+                        }
+                        other => panic!("seed 95: swapped onto {other:?}"),
+                    }
+                    assert!(progress.is_some_and(|p| p < 0.6), "seed 95: swap at {progress:?}");
+                }
+                if matches!(state, TileState::Moving { .. }) {
+                    assert_eq!(decision, SwapDecision::CacheOnly, "seed 95: {state:?}");
+                }
+            }
+            assert!(swaps > 0, "generator sanity: no Swap in {RUNS} runs");
+        }
+
+        /// The refresh ping-pong (log 22:34:04: three `reason="refresh"` swaps in one strip pan,
+        /// alternating between the ScreenCaptureKit and framed routes). A picture from another
+        /// route differs by route alone, so it never reaches the tile, whatever the settle flag or
+        /// the fit.
+        #[test]
+        fn a_route_change_alone_never_swaps_the_refresh() {
+            for settled in [false, true] {
+                for resizing in [false, true] {
+                    let decision = should_swap_mid_flight(
+                        TileState::MovingRefreshTarget { fits: true, resizing },
+                        settled,
+                        false,
+                        false,
+                        Some(0.3),
+                    );
+                    assert_eq!(
+                        decision,
+                        SwapDecision::CacheOnly,
+                        "settled={settled} resizing={resizing}: a route change swapped"
+                    );
+                }
+            }
+        }
+
+        /// The refresh's real job: the same route, rendering differently (the focus ring landed),
+        /// early. That still swaps.
+        #[test]
+        fn the_same_route_rendering_differently_swaps_the_refresh() {
+            assert_eq!(
+                should_swap_mid_flight(
+                    TileState::MovingRefreshTarget { fits: true, resizing: false },
+                    false,
+                    false,
+                    true,
+                    Some(0.3),
+                ),
+                SwapDecision::Swap("refresh")
+            );
+        }
+
+        /// Property: `Swap("refresh")` implies the picture came by the cached picture's route.
+        /// Seed 97, 200 runs.
+        #[test]
+        fn a_refresh_swap_implies_the_same_route() {
+            let mut rng = Gen(97);
+            let mut swaps = 0usize;
+            for _ in 0..RUNS {
+                let state = STATES[rng.below(STATES.len() as u64) as usize];
+                let same_source = rng.coin();
+                let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
+                let decision =
+                    should_swap_mid_flight(state, rng.coin(), rng.coin(), same_source, progress);
+                if decision == SwapDecision::Swap("refresh") {
+                    swaps += 1;
+                    assert!(same_source, "seed 97: {state:?} at {progress:?} swapped across routes");
+                }
+            }
+            assert!(swaps > 0, "generator sanity: no refresh swap in {RUNS} runs");
+        }
+
+        /// The refresh asks one route: exactly one ScreenCaptureKit target per wanted window the
+        /// pass knows, in the wanted order, and `refresh_targets` names exactly those windows.
+        #[test]
+        fn the_destination_refresh_uses_one_route() {
+            let size = CGSize::new(859.0, 1081.0);
+            let tiles = vec![
+                (wid(1), WindowServerId::new(10), size),
+                (wid(2), WindowServerId::new(20), size),
+                (wid(3), WindowServerId::new(30), size),
+            ];
+            let (covered, requests) = refresh_requests(&tiles, &[wid(2), wid(1), wid(9)]);
+            assert_eq!(covered, vec![wid(2), wid(1)], "an unknown window is not a target");
+            let asked: Vec<(WindowId, u32)> =
+                requests.iter().map(|t| (t.window, t.server_id.as_u32())).collect();
+            assert_eq!(asked, vec![(wid(2), 20), (wid(1), 10)], "one request per window");
+            assert!(requests.iter().all(|t| t.size == size));
+            assert!(refresh_requests(&tiles, &[]).1.is_empty());
+        }
+
+        /// 2.1, 3.6. One refresh per flight, at 0.5; nothing at 0.0, holding or moving.
+        #[test]
+        fn one_refresh_per_flight_at_the_midpoint_and_none_at_frame_zero() {
+            let mut holding = flight(None);
+            holding.awaiting.push((wid(1), CGSize::new(859.0, 1081.0)));
+            assert!(!holding.take_refresh(0.0), "a hold does not refresh");
+            assert!(!holding.destination_refreshed);
+
+            let mut running = flight(Some(Instant::now()));
+            let fired: Vec<f64> = (0..=100)
+                .map(|i| i as f64 / 100.0)
+                .filter(|&progress| running.take_refresh(progress))
+                .collect();
+            assert_eq!(fired, vec![0.5], "refresh slots taken: {fired:?}");
+            assert!(running.destination_refreshed);
+            assert!(!(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)), "spent");
+            assert_eq!(REFRESH_DESTINATION_AT, 0.5);
+            assert_eq!(REFRESH_APPLY_BEFORE, 0.6);
+        }
+
+        /// 2.1. `tile_state` names what a landing finds: a hold or entrance first, then the
+        /// refresh target, then a plain tile, then nothing.
+        #[test]
+        fn tile_state_ranks_hold_over_refresh_over_tile() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let parked = rect(-1720.0, 32.0, 859.0, 1081.0);
+            let grown = rect(4.0, 32.0, 1147.0, 1081.0);
+            let picture = test_snapshot(slot.size);
+            let mut running = flight(None);
+            running.tiles.push(tile(wid(1), parked, slot));
+            running.tiles.push(tile(wid(2), slot, grown));
+            running.tiles.push(tile(wid(3), parked, slot));
+            running.awaiting.push((wid(2), grown.size));
+            running.refresh_targets.push(wid(3));
+            let (entrance, waiting) = entrance_reservation(wid(4), slot, false);
+            running.entrances.push(entrance);
+            running.awaiting.extend(waiting);
+
+            assert_eq!(
+                running.tile_state(wid(1), &picture),
+                TileState::Moving { fits: true, resizing: false }
+            );
+            assert_eq!(
+                running.tile_state(wid(2), &picture),
+                TileState::Reveal { fits: false },
+                "a grow's hold"
+            );
+            assert_eq!(
+                running.tile_state(wid(2), &test_snapshot(grown.size)),
+                TileState::Reveal { fits: true },
+                "a grow's hold, its reveal landing"
+            );
+            assert_eq!(
+                running.tile_state(wid(3), &picture),
+                TileState::MovingRefreshTarget { fits: true, resizing: false }
+            );
+            assert_eq!(running.tile_state(wid(4), &picture), TileState::Awaiting, "an entrance");
+            assert_eq!(running.tile_state(wid(5), &picture), TileState::NotTiled);
+
+            // Once claimed, the grow is an ordinary resizing tile: a smaller picture no longer fits.
+            running.awaiting.retain(|(w, _)| *w != wid(2));
+            assert_eq!(
+                running.tile_state(wid(2), &picture),
+                TileState::Moving { fits: false, resizing: true }
+            );
+            // A refresh target in flight but past its hold is still only the refresh target.
+            running.refresh_targets.push(wid(2));
+            assert_eq!(
+                running.tile_state(wid(2), &test_snapshot(grown.size)),
+                TileState::MovingRefreshTarget { fits: true, resizing: true }
+            );
+        }
+
+        // Change B: no capture work between frame zero and lift.
+
+        const PHASES: [FlightPhase; 4] =
+            [FlightPhase::Idle, FlightPhase::FrameZero, FlightPhase::Holding, FlightPhase::Moving];
+        const KINDS: [CaptureKind; 6] = [
+            CaptureKind::Warm,
+            CaptureKind::Desktop,
+            CaptureKind::Refresh,
+            CaptureKind::Chase,
+            CaptureKind::Harvest,
+            CaptureKind::NeedsCapture,
+        ];
+
+        /// The rule in 2.2, spelled out independently of the implementation: idle does anything;
+        /// frame zero composes (chase, first captures); a hold only chases; a flight in motion
+        /// chases and takes its one refresh.
+        fn expected_allowed(phase: FlightPhase, kind: CaptureKind) -> bool {
+            match (phase, kind) {
+                (FlightPhase::Idle, _) => true,
+                (_, CaptureKind::Chase) => true,
+                (FlightPhase::FrameZero, CaptureKind::NeedsCapture) => true,
+                (FlightPhase::Moving, CaptureKind::Refresh) => true,
+                _ => false,
+            }
+        }
+
+        fn target(idx: u32, width: f64) -> SnapshotTarget {
+            SnapshotTarget {
+                window: wid(idx),
+                server_id: WindowServerId::new(idx),
+                size: CGSize::new(width, 1081.0),
+            }
+        }
+
+        /// 2.2. The full table over phase x kind.
+        #[test]
+        fn capture_work_allowed_full_table() {
+            let mut allowed = 0usize;
+            for phase in PHASES {
+                for kind in KINDS {
+                    let got = capture_work_allowed(phase, kind);
+                    assert_eq!(got, expected_allowed(phase, kind), "{phase:?}/{kind:?}");
+                    allowed += got as usize;
+                }
+            }
+            // Idle 6, frame zero 2, holding 1, moving 2.
+            assert_eq!(allowed, 11);
+        }
+
+        /// 2.2. For random phases and kinds, work between frame zero and lift is a chase or the
+        /// moving refresh, nothing else. Seed 96, 200 runs.
+        #[test]
+        fn in_flight_capture_work_is_only_a_chase_or_the_refresh() {
+            let mut rng = Gen(96);
+            let mut allowed = 0usize;
+            for _ in 0..RUNS {
+                let phase = PHASES[rng.below(PHASES.len() as u64) as usize];
+                let kind = KINDS[rng.below(KINDS.len() as u64) as usize];
+                if phase == FlightPhase::Idle {
+                    assert!(capture_work_allowed(phase, kind), "seed 96: idle refused {kind:?}");
+                    continue;
+                }
+                if capture_work_allowed(phase, kind) {
+                    allowed += 1;
+                    assert!(
+                        matches!(kind, CaptureKind::Chase | CaptureKind::Refresh)
+                            || (phase == FlightPhase::FrameZero
+                                && kind == CaptureKind::NeedsCapture),
+                        "seed 96: {kind:?} allowed at {phase:?}"
+                    );
+                    if kind == CaptureKind::Refresh {
+                        assert_eq!(phase, FlightPhase::Moving, "seed 96: a refresh while holding");
+                    }
+                }
+            }
+            assert!(allowed > 0, "generator sanity: nothing allowed in {RUNS} runs");
+        }
+
+        /// 2.2, 3.4. A warm asked for mid-flight is parked once per window, the newest size
+        /// winning, and a drain hands the parked set over once.
+        #[test]
+        fn a_mid_flight_warm_is_deferred_once_per_window_and_drained_once() {
+            let mut deferred: Vec<SnapshotTarget> = Vec::new();
+            defer_warm(&mut deferred, vec![target(1, 859.0), target(2, 859.0)]);
+            defer_warm(&mut deferred, vec![target(1, 1147.0), target(3, 859.0)]);
+            let windows: Vec<WindowId> = deferred.iter().map(|t| t.window).collect();
+            assert_eq!(windows, vec![wid(1), wid(2), wid(3)], "one entry per window");
+            assert_eq!(deferred[0].size.width, 1147.0, "the later request replaces the earlier");
+
+            let drained = std::mem::take(&mut deferred);
+            assert_eq!(drained.len(), 3);
+            assert!(deferred.is_empty(), "a second drain has nothing");
+
+            // The desktop flag drains the same way.
+            let mut deferred_desktop = true;
+            assert!(std::mem::take(&mut deferred_desktop));
+            assert!(!std::mem::take(&mut deferred_desktop), "drained once");
+        }
+
+        /// 2.2. The desktop render is re-asked for at `finish` only when the one in hand cannot
+        /// back the next overlay: missing, another display's size, or stale.
+        #[test]
+        fn the_desktop_render_is_wanted_when_missing_misfit_or_stale() {
+            let display = (1728.0, 1117.0);
+            let fresh = Duration::from_millis(500);
+            let stale = Duration::from_secs(3);
+            assert!(desktop_render_wanted(None, display), "missing");
+            assert!(desktop_render_wanted(Some((fresh, (2560.0, 1440.0))), display), "misfit");
+            assert!(desktop_render_wanted(Some((stale, display)), display), "stale");
+            assert!(!desktop_render_wanted(Some((fresh, display)), display), "in hand");
+        }
+
+        /// 2.2. A window's hairline is harvested at most once per flight: a chase or refresh that
+        /// carried one marks it, a re-warmed window is harvested when its picture lands, and a
+        /// dressed one keeps its ring. Duplicates in the animated set collapse.
+        #[test]
+        fn finish_harvests_each_animated_window_at_most_once() {
+            let animated = [wid(1), wid(2), wid(3), wid(4), wid(2)];
+            let mut harvested = HashSet::new();
+            assert!(harvested.insert(wid(1)), "the chase's dressing");
+            assert!(!harvested.insert(wid(1)), "a second harvest for the same window is skipped");
+            let requested = [wid(3)];
+            let dressed: HashSet<WindowId> = [wid(4)].into_iter().collect();
+            assert_eq!(
+                finish_harvest_set(&animated, &harvested, &requested, &dressed),
+                vec![wid(2)]
+            );
+            assert!(
+                finish_harvest_set(&[], &harvested, &requested, &dressed).is_empty(),
+                "nothing animated, nothing harvested"
+            );
+        }
+
+        /// 2.2. A flight tracks what was harvested; a fresh flight has harvested nothing.
+        #[test]
+        fn a_flight_starts_with_nothing_harvested() {
+            let running = flight(None);
+            assert!(running.harvested.is_empty());
+            assert!(!capture_work_allowed(running.phase(), CaptureKind::Harvest));
+        }
+
+        // Change C: real windows land before lift.
+
+        const DISPLAY: CGRect = CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize { width: 1728.0, height: 1117.0 },
+        };
+
+        /// 2.3, 3.3. Layout keeps 0.75 and 0.5; a strip movement applies at 0.5 either way.
+        #[test]
+        fn apply_points_by_flight_kind() {
+            assert_eq!(apply_frames_at(FlightKind::Layout, false), 0.75);
+            assert_eq!(apply_frames_at(FlightKind::Layout, true), 0.5);
+            assert_eq!(apply_frames_at(FlightKind::Strip, false), APPLY_FRAMES_AT_STRIP);
+            assert_eq!(apply_frames_at(FlightKind::Strip, true), 0.5);
+            assert_eq!(APPLY_FRAMES_AT_STRIP, 0.5);
+        }
+
+        /// 2.3. Applied frames go stale when a tile changed or any final frame did.
+        #[test]
+        fn frames_go_stale_on_a_tile_or_an_untiled_change() {
+            assert!(!mark_stale_on_untiled_change(false, false));
+            assert!(mark_stale_on_untiled_change(true, false));
+            assert!(mark_stale_on_untiled_change(false, true));
+            assert!(mark_stale_on_untiled_change(true, true));
+        }
+
+        /// 2.3. An in-flight pass that only moves a parked (untiled) window's destination clears
+        /// `frames_applied`, so `step` re-sends at the apply point. A redundant pass does not.
+        #[test]
+        fn an_untiled_frame_change_in_flight_clears_frames_applied() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let park_a = rect(1727.0, 1116.0, 859.0, 1081.0);
+            let park_b = rect(-858.0, 1116.0, 859.0, 1081.0);
+            let mut running = flight(Some(Instant::now()));
+            running.tiles.push(tile(wid(1), rect(867.0, 32.0, 859.0, 1081.0), slot));
+            running.final_frames = vec![(wid(1), slot), (wid(2), park_a)];
+            running.frames_applied = true;
+
+            // The same tile again, the untiled window to the other park.
+            let frames_changed =
+                merge_final_frames(&mut running.final_frames, vec![(wid(1), slot), (wid(2), park_b)]);
+            let outcomes = running.merge_pass(vec![tile(wid(1), slot, slot)], None);
+            let changed = outcomes.iter().any(|(_, o)| *o != Admitted::Redundant);
+            assert!(frames_changed && !changed, "the pass changes only the untiled frame");
+            running.absorb_in_flight_change(changed, frames_changed);
+            assert!(!running.frames_applied, "an untiled change left frames_applied set");
+
+            // Nothing changes: the applied frames stand.
+            running.frames_applied = true;
+            let frames_changed =
+                merge_final_frames(&mut running.final_frames, vec![(wid(1), slot), (wid(2), park_b)]);
+            let outcomes = running.merge_pass(vec![tile(wid(1), slot, slot)], None);
+            let changed = outcomes.iter().any(|(_, o)| *o != Admitted::Redundant);
+            running.absorb_in_flight_change(changed, frames_changed);
+            assert!(running.frames_applied, "a redundant pass cleared frames_applied");
+        }
+
+        fn measured(
+            frames: &[(WindowId, CGRect, CGRect)],
+        ) -> (Vec<(WindowId, CGRect)>, Vec<WindowId>, HashMap<WindowId, CGRect>) {
+            let final_frames = frames.iter().map(|(w, intended, _)| (*w, *intended)).collect();
+            let tiled = frames.iter().map(|(w, _, _)| *w).collect();
+            let real = frames.iter().map(|(w, _, actual)| (*w, *actual)).collect();
+            (final_frames, tiled, real)
+        }
+
+        /// 2.3. The report over the log's cases: wsid=108's 65pt clamp is excluded; a 3446pt
+        /// park miss (the leaving window still on screen) is excluded because its intent is the
+        /// park; two on-screen misses count both and name the worst; a clean flight reports none.
+        #[test]
+        fn handover_report_counts_on_screen_misses_only() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            // wsid=108: intended y=1116, clamped by macOS to 1051. Not the flight's error.
+            let clamp = [
+                (wid(108), rect(1727.0, 1116.0, 859.0, 1081.0), rect(1727.0, 1051.0, 859.0, 1081.0)),
+                (wid(200), slot, rect(870.0, 32.0, 859.0, 1081.0)),
+            ];
+            let (f, t, r) = measured(&clamp);
+            let report = handover_report(&f, &t, &r, DISPLAY);
+            assert_eq!(report.total, 1, "108 is excluded from the measured set");
+            assert_eq!(report.count_over, 1);
+            assert_eq!(report.worst_visible_pt, 3.0);
+            assert_eq!(report.worst_wsid, 200);
+
+            // The leaving window: intended at its park past the right edge, still in its slot.
+            let park_miss = [
+                (wid(1), rect(1728.0, 32.0, 1720.0, 1081.0), rect(-1718.0, 32.0, 1720.0, 1081.0)),
+                (wid(2), rect(4.0, 32.0, 1720.0, 1081.0), rect(4.0, 32.0, 1720.0, 1081.0)),
+            ];
+            let (f, t, r) = measured(&park_miss);
+            let report = handover_report(&f, &t, &r, DISPLAY);
+            assert_eq!(report.total, 1);
+            assert_eq!(report.count_over, 0, "a park intent is not measured");
+            assert_eq!(report.worst_visible_pt, 0.0);
+
+            let two = [
+                (wid(1), rect(4.0, 32.0, 859.0, 1081.0), rect(9.0, 32.0, 859.0, 1081.0)),
+                (wid(2), slot, rect(867.0, 40.0, 859.0, 1081.0)),
+                (wid(3), rect(1730.0, 32.0, 859.0, 1081.0), rect(1730.0, 32.0, 859.0, 1081.0)),
+            ];
+            let (f, t, r) = measured(&two);
+            let report = handover_report(&f, &t, &r, DISPLAY);
+            assert_eq!(report.total, 2, "wid 3 starts past the edge: excluded");
+            assert_eq!(report.count_over, 2);
+            assert_eq!(report.worst_visible_pt, 8.0);
+            assert_eq!(report.worst_wsid, 2);
+
+            let clean = [(wid(1), slot, slot), (wid(2), rect(4.0, 32.0, 859.0, 1081.0), rect(5.0, 32.0, 859.0, 1081.0))];
+            let (f, t, r) = measured(&clean);
+            let report = handover_report(&f, &t, &r, DISPLAY);
+            assert_eq!(report.total, 2);
+            assert_eq!(report.count_over, 0, "1pt is within the threshold");
+            assert_eq!(report.worst_visible_pt, 1.0);
+        }
+
+        /// 2.3. For random flights of on-screen slots and parks with random real frames,
+        /// `count_over` is the brute-force count over on-screen intents, and the worst never
+        /// comes from a park. Seed 97, 200 runs.
+        #[test]
+        fn handover_report_matches_the_brute_force_over_on_screen_intents() {
+            let mut rng = Gen(97);
+            let mut over_seen = 0usize;
+            for _ in 0..RUNS {
+                let count = rng.below(6) as usize + 1;
+                let mut frames = Vec::with_capacity(count);
+                for i in 1..=count {
+                    let intended = if rng.coin() {
+                        rng.on_screen()
+                    } else {
+                        rng.park(CGSize::new(859.0, 1081.0))
+                    };
+                    let shift = if rng.coin() { 0.0 } else { rng.pt(-80.0, 80.0) };
+                    let actual = CGRect::new(
+                        CGPoint::new(intended.origin.x + shift, intended.origin.y + shift / 2.0),
+                        intended.size,
+                    );
+                    frames.push((wid(i as u32), intended, actual));
+                }
+                let (f, t, r) = measured(&frames);
+                let report = handover_report(&f, &t, &r, DISPLAY);
+
+                let visible: Vec<_> = frames
+                    .iter()
+                    .filter(|(_, intended, _)| {
+                        !crate::model::HiddenWindowPlacement::is_off_screen(DISPLAY, *intended)
+                    })
+                    .collect();
+                let error = |intended: &CGRect, actual: &CGRect| {
+                    (actual.origin.x - intended.origin.x)
+                        .abs()
+                        .max((actual.origin.y - intended.origin.y).abs())
+                };
+                let expected_over =
+                    visible.iter().filter(|(_, i, a)| error(i, a) > 2.0).count();
+                let expected_worst =
+                    visible.iter().map(|(_, i, a)| error(i, a)).fold(0.0, f64::max);
+                assert_eq!(report.total, visible.len(), "seed 97");
+                assert_eq!(report.count_over, expected_over, "seed 97");
+                assert_eq!(report.worst_visible_pt, expected_worst, "seed 97");
+                if report.worst_visible_pt > 0.0 {
+                    let worst = frames
+                        .iter()
+                        .find(|(w, _, _)| w.idx.get() == report.worst_wsid)
+                        .expect("seed 97: the worst names a measured window");
+                    assert!(
+                        !crate::model::HiddenWindowPlacement::is_off_screen(DISPLAY, worst.1),
+                        "seed 97: the worst came from a park"
+                    );
+                }
+                over_seen += expected_over;
+            }
+            assert!(over_seen > 0, "generator sanity: no misses in {RUNS} runs");
+        }
+
+        // Change D: holds are bounded at `HOLD_CAP` and cheap.
+
+        /// The hold bound before Change D, kept here so the cap is checked against it.
+        fn reveal_hold_limit_old(duration: Duration) -> Duration {
+            duration.mul_f64(0.4).max(Duration::from_millis(300))
+        }
+
+        /// 2.4. A capture is settled when it matches the one before it, or when it no longer
+        /// renders like the picture cached before the resize. Neither known: not settled.
+        #[test]
+        fn chase_settled_on_a_match_or_a_repaint() {
+            let p = vec![10u8; 64];
+            let q = vec![200u8; 64];
+            assert!(!chase_settled(None, &p, None), "nothing to compare against");
+            assert!(chase_settled(Some(&p), &p, None), "two consecutive match");
+            assert!(chase_settled(None, &p, Some(&q)), "differs from the pre-resize picture");
+            assert!(!chase_settled(None, &p, Some(&p)), "still the old rendering");
+            assert!(chase_settled(Some(&q), &p, Some(&q)), "a repaint settles even after a change");
+        }
+
+        /// 2.4. The hold is capped for every flight duration; the old formula stays visible in
+        /// the function and the cap wins over it. The cap is 300ms: 150 flew most entrances with
+        /// no picture at all (see "A grow holds, then reveals" in the doc).
+        #[test]
+        fn the_hold_is_capped_at_a_blink() {
+            for ms in [180u64, 300, 375, 500, 1000] {
+                let d = Duration::from_millis(ms);
+                assert_eq!(reveal_hold_limit(d), HOLD_CAP, "{ms}ms flight");
+                assert!(reveal_hold_limit(d) <= reveal_hold_limit_old(d), "{ms}ms flight");
+            }
+            assert_eq!(HOLD_CAP, Duration::from_millis(300));
+            assert_eq!(REVEAL_CHASE_INTERVAL, Duration::from_millis(8));
+            // The same ~1s ceiling as 40 x 25ms.
+            assert_eq!(REVEAL_CHASE_INTERVAL * REVEAL_CHASE_ATTEMPTS as u32, Duration::from_secs(1));
+        }
+
+        /// 2.4. For random durations the hold never exceeds `HOLD_CAP` and never exceeds the old
+        /// bound. Seed 98, 200 runs.
+        #[test]
+        fn the_hold_cap_holds_for_any_duration() {
+            let mut rng = Gen(98);
+            for _ in 0..RUNS {
+                let d = Duration::from_millis(rng.below(3000));
+                let limit = reveal_hold_limit(d);
+                assert!(limit <= HOLD_CAP, "seed 98: {d:?} -> {limit:?}");
+                assert!(limit <= reveal_hold_limit_old(d), "seed 98: {d:?} -> {limit:?}");
+            }
+        }
+
+        /// 2.4. A tile flying the placeholder (its picture cannot cover its destination) is a
+        /// reveal in waiting after the hold timed out and cleared `awaiting`, and after a grow
+        /// joined mid-flight; its settled reveal is swapped before 0.6 and cached after.
+        #[test]
+        fn a_placeholder_tile_takes_its_reveal_early() {
+            let small = rect(4.0, 32.0, 859.0, 1081.0);
+            let grown = rect(4.0, 32.0, 1147.0, 1081.0);
+            let mut running = flight(Some(Instant::now()));
+            let mut placeholder = tile(wid(1), small, grown);
+            placeholder.snapshot = test_snapshot(small.size);
+            running.tiles.push(placeholder);
+            assert!(running.awaiting.is_empty(), "the deadline cleared the hold");
+
+            let reveal = test_snapshot(grown.size);
+            assert_eq!(running.tile_state(wid(1), &reveal), TileState::Reveal { fits: true });
+            assert_eq!(
+                running.tile_state(wid(1), &test_snapshot(small.size)),
+                TileState::Reveal { fits: false },
+                "a background picture at the old size is not the reveal"
+            );
+            let state = running.tile_state(wid(1), &reveal);
+            assert_eq!(
+                should_swap_mid_flight(state, true, false, true, Some(0.3)),
+                SwapDecision::Swap("reveal")
+            );
+            assert_eq!(
+                should_swap_mid_flight(state, true, false, false, Some(0.3)),
+                SwapDecision::Swap("reveal"),
+                "the chase's framed picture is the truth for a grow, whatever the cached route"
+            );
+            assert_eq!(
+                should_swap_mid_flight(state, false, false, true, Some(0.3)),
+                SwapDecision::CacheOnly,
+                "an unsettled capture can be the unpainted surface"
+            );
+            assert_eq!(
+                should_swap_mid_flight(state, true, false, true, Some(0.6)),
+                SwapDecision::CacheOnly,
+                "too late: a cut this close to lift reads as flicker"
+            );
+            // Once the reveal is worn, the tile is an ordinary resizing tile again.
+            running.tiles[0].snapshot = reveal.clone();
+            assert_eq!(
+                running.tile_state(wid(1), &reveal),
+                TileState::Moving { fits: true, resizing: true }
+            );
+        }
+
+        /// 2.6, inverted. A holding flight sends EVERY final frame at frame zero, the entrance's
+        /// slot included: held back, the chase captured the newcomer at spawn size and the picture
+        /// left a hole in the slot (2026-09-15 3:28:10). Nothing is owed at the apply point.
+        #[test]
+        fn an_entrances_frame_goes_out_at_frame_zero_so_its_picture_fits() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let neighbour = (wid(1), rect(4.0, 32.0, 859.0, 1081.0));
+            let newcomer = wid(51462);
+            let final_frames = vec![neighbour, (newcomer, slot)];
+
+            // The held merge, as `begin_group` runs it: every frame, once.
+            let mut running = flight(None);
+            running.final_frames = final_frames.clone();
+            let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
+            running.entrances.push(entrance);
+            let awaiting: Vec<(WindowId, CGSize)> = waiting.into_iter().collect();
+            let now = Instant::now();
+            let requested = running.extend_hold(&awaiting, false, Duration::from_millis(300), now);
+            assert_eq!(requested, Some(final_frames.clone()), "the slot went out with the rest");
+            assert!(running.frames_applied);
+            running.started = Some(now);
+            assert_eq!(running.frames_due(running.apply_at), None, "nothing left to send");
+
+            // Nothing placed yet (a plain flight, or a stale in-flight merge): everything goes at
+            // the apply point, once.
+            let mut running = flight(Some(Instant::now()));
+            running.final_frames = final_frames.clone();
+            assert_eq!(running.frames_due(running.apply_at - 0.01), None);
+            assert_eq!(running.frames_due(running.apply_at), Some(final_frames.clone()));
+            assert!(running.frames_applied);
+            assert_eq!(running.frames_due(1.0), None, "sent once");
+        }
+
+        /// 2.6, inverted. An entrance's picture must cover its slot like a grow's reveal must
+        /// cover its destination: the real window is at the slot from frame zero, so the chase
+        /// can deliver one. A smaller picture is not claimed and the hold goes on.
+        #[test]
+        fn an_entrance_needs_the_fit_like_a_grow() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let newcomer = wid(51462);
+            let mut running = flight(None);
+            let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
+            running.entrances.push(entrance);
+            running.awaiting.extend(waiting);
+            let spawn = test_snapshot(CGSize::new(572.0, 540.0));
+            assert_eq!(running.claim(newcomer, &spawn), None, "a spawn-size picture is refused");
+            assert_eq!(running.entrances.len(), 1);
+            assert_eq!(running.awaiting.len(), 1);
+            assert_eq!(
+                running.claim(newcomer, &test_snapshot(slot.size)),
+                Some(Claimed::Released),
+                "a slot-size picture is the entrance"
+            );
+            assert!(running.entrances.is_empty() && running.awaiting.is_empty());
+            let tile = running.tiles.iter().find(|t| t.window == newcomer).expect("tile");
+            assert_eq!((tile.from, tile.to), (entrance_from(slot), slot));
+        }
+    }
+
+    /// Preservation for `.kiro/specs/flight-render-stability/bugfix.md` 3.x: flights with no
+    /// mid-flight arrival, hold, resize, park, or pictureless window. Each assertion pins the
+    /// output observed on unfixed code, over generated inputs outside the bug condition.
+    ///
+    /// 3.1 is a review, not a test. Observed in `src/ui/workspace_overlay.rs`: `opacity` occurs
+    /// only in `ShadowStyle` and `setShadowOpacity`; the animated key paths are `position`,
+    /// `bounds`, `shadowPath`, `path`, `contentsRect`, so nothing animates `contents` or
+    /// `opacity`; all 11 `CATransaction::begin()` calls are followed by `setDisableActions(true)`.
+    ///
+    /// `finish`, `step`, `start_strip` and `start_moving` need the actor, so P-3.4, 3.6, 3.13,
+    /// 3.14 and 3.16 assert on the decisions those paths make: `capture_work_allowed`,
+    /// `take_refresh`, `hold_wait`, `frame_zero_work`, `SnapshotCache::usable`.
+    mod render_stability_preservation {
+        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::*;
+        use crate::model::HiddenWindowPlacement;
+        use crate::ui::window_snapshot::{
+            SnapshotCache, WindowSnapshot, needs_capture, outgrows, should_replace, test_snapshot,
+        };
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn flight(started: Option<Instant>) -> RunningAnimation {
+            RunningAnimation {
+                tiles: Vec::new(),
+                final_frames: Vec::new(),
+                frames_applied: false,
+                started,
+                duration: Duration::from_millis(300),
+                apply_at: APPLY_FRAMES_AT,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                _clock: None,
+            }
+        }
+
+        /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
+        fn clipped(size: CGSize) -> WindowSnapshot {
+            let mut snapshot = test_snapshot(size);
+            snapshot.coverage.covered = (40.0, size.height);
+            snapshot
+        }
+
+        fn any_state(rng: &mut Gen) -> TileState {
+            match rng.below(4) {
+                0 => TileState::NotTiled,
+                1 => TileState::Awaiting,
+                2 => TileState::Moving { fits: rng.coin(), resizing: rng.coin() },
+                _ => TileState::MovingRefreshTarget { fits: rng.coin(), resizing: rng.coin() },
+            }
+        }
+
+        /// The apply point before this spec, kept here for P-3.3.
+        fn apply_frames_at_old(any_resize: bool) -> f64 {
+            if any_resize { APPLY_FRAMES_AT_RESIZE } else { APPLY_FRAMES_AT }
+        }
+
+        /// P-3.2. Observed: an awaited window's picture is `Claim` before the flight starts and
+        /// `Admit` after, whatever the settle flag, the thumbprint match, or the progress; never
+        /// `CacheOnly`. `progress_if_started` is the `None`/`Some` the decision keys on.
+        #[test]
+        fn an_awaited_picture_is_claimed_before_start_and_admitted_after() {
+            let mut rng = Gen(92);
+            for _ in 0..RUNS {
+                let settled = rng.coin();
+                let same = rng.coin();
+                let same_source = rng.coin();
+                let progress = rng.below(1001) as f64 / 1000.0;
+                assert_eq!(
+                    should_swap_mid_flight(TileState::Awaiting, settled, same, same_source, None),
+                    SwapDecision::Claim,
+                    "seed 92: settled={settled} same={same}"
+                );
+                assert_eq!(
+                    should_swap_mid_flight(
+                        TileState::Awaiting,
+                        settled,
+                        same,
+                        same_source,
+                        Some(progress)
+                    ),
+                    SwapDecision::Admit,
+                    "seed 92: settled={settled} same={same} progress={progress}"
+                );
+            }
+            let mut flight = flight(None);
+            assert_eq!(flight.progress_if_started(), None, "holding: the claim path");
+            flight.started = Some(Instant::now());
+            assert!(flight.progress_if_started().is_some(), "moving: the admit path");
+        }
+
+        /// Outside the bug condition on the swap path. Observed: a window with no tile, a picture
+        /// that does not cover the destination, or one rendering like the cached picture is
+        /// cached only, for every state and progress.
+        #[test]
+        fn an_unfitting_or_identical_picture_is_cached_only() {
+            let mut rng = Gen(94);
+            for _ in 0..RUNS {
+                let settled = rng.coin();
+                let resizing = rng.coin();
+                let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
+                assert_eq!(
+                    should_swap_mid_flight(
+                        TileState::NotTiled,
+                        settled,
+                        rng.coin(),
+                        rng.coin(),
+                        progress
+                    ),
+                    SwapDecision::CacheOnly,
+                    "seed 94: no tile"
+                );
+                for state in [
+                    TileState::Moving { fits: false, resizing },
+                    TileState::MovingRefreshTarget { fits: false, resizing },
+                ] {
+                    assert_eq!(
+                        should_swap_mid_flight(state, settled, rng.coin(), rng.coin(), progress),
+                        SwapDecision::CacheOnly,
+                        "seed 94: {state:?} does not fit"
+                    );
+                }
+                for state in [
+                    TileState::Moving { fits: true, resizing },
+                    TileState::MovingRefreshTarget { fits: true, resizing },
+                ] {
+                    assert_eq!(
+                        should_swap_mid_flight(state, settled, true, rng.coin(), progress),
+                        SwapDecision::CacheOnly,
+                        "seed 94: {state:?} renders like the cached picture"
+                    );
+                }
+            }
+        }
+
+        /// P-3.3. Observed: the layout path's apply points are 0.75 for a move and 0.5 for a
+        /// resize, the same as before this spec.
+        #[test]
+        fn layout_apply_points_are_unchanged() {
+            for any_resize in [false, true] {
+                assert_eq!(
+                    apply_frames_at(FlightKind::Layout, any_resize),
+                    apply_frames_at_old(any_resize),
+                    "any_resize={any_resize}"
+                );
+            }
+            assert_eq!(apply_frames_at_old(false), 0.75);
+            assert_eq!(apply_frames_at_old(true), 0.5);
+        }
+
+        /// P-3.4. `finish` drops the flight before it warms `last_animated`, so the warm and the
+        /// desktop render run with no flight. Observed: both are allowed then, and `phase` names
+        /// each stage of a flight from `started` and `awaiting` alone.
+        #[test]
+        fn warming_and_the_desktop_render_are_allowed_once_the_flight_is_dropped() {
+            assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::Warm));
+            assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::Desktop));
+            assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::NeedsCapture));
+
+            let mut running = flight(None);
+            assert_eq!(running.phase(), FlightPhase::FrameZero);
+            running.awaiting.push((wid(1), CGSize::new(859.0, 1081.0)));
+            assert_eq!(running.phase(), FlightPhase::Holding);
+            running.started = Some(Instant::now());
+            assert_eq!(running.phase(), FlightPhase::Moving);
+            running.awaiting.clear();
+            assert_eq!(running.phase(), FlightPhase::Moving);
+        }
+
+        /// P-3.5. Observed: every landed picture leaves an entry in the cache whatever the swap
+        /// decision, and a usable picture is never replaced by a clipped one.
+        #[test]
+        fn every_landed_picture_reaches_the_cache_and_never_downgrades() {
+            let mut rng = Gen(93);
+            let mut refused = 0usize;
+            let mut decisions: Vec<SwapDecision> = Vec::new();
+            for _ in 0..RUNS {
+                let mut cache: SnapshotCache = SnapshotCache::new();
+                let size = rng.on_screen().size;
+                for _ in 0..rng.below(4) + 1 {
+                    let incoming = if rng.coin() { test_snapshot(size) } else { clipped(size) };
+                    let before = cache.get(wid(1)).map(|s| s.coverage);
+                    let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
+                    let decision = should_swap_mid_flight(
+                        any_state(&mut rng),
+                        rng.coin(),
+                        rng.coin(),
+                        rng.coin(),
+                        progress,
+                    );
+                    decisions.push(decision);
+                    cache.insert(wid(1), incoming.clone());
+                    let held = cache.get(wid(1)).expect("seed 93: every landing leaves an entry");
+                    if should_replace(before, incoming.coverage) {
+                        assert_eq!(held.coverage, incoming.coverage, "seed 93: taken");
+                    } else {
+                        refused += 1;
+                        assert_eq!(held.coverage, before.unwrap(), "seed 93: kept");
+                    }
+                    if before.is_some_and(|c| c.is_usable()) {
+                        assert!(held.is_usable(), "seed 93: a usable picture was downgraded");
+                    }
+                }
+            }
+            assert!(refused > RUNS / 8, "generator sanity: {refused} downgrades refused");
+            let seen = |wanted: fn(&SwapDecision) -> bool| decisions.iter().any(wanted);
+            assert!(seen(|d| *d == SwapDecision::Claim), "generator sanity: no Claim");
+            assert!(seen(|d| *d == SwapDecision::Admit), "generator sanity: no Admit");
+            assert!(seen(|d| matches!(d, SwapDecision::Swap(_))), "generator sanity: no Swap");
+            assert!(seen(|d| *d == SwapDecision::CacheOnly), "generator sanity: no CacheOnly");
+        }
+
+        /// P-3.6. Observed on unfixed code: sweeping progress 0 to 1, `take_refresh` fires at
+        /// 0.00 and at 0.50, two per flight. The preserved part is the 0.5 slot: exactly one
+        /// refresh at or after the midpoint, with two windows recaptured.
+        #[test]
+        fn one_destination_refresh_fires_at_the_midpoint() {
+            let mut running = flight(Some(Instant::now()));
+            let fired: Vec<f64> = (0..=100)
+                .map(|i| i as f64 / 100.0)
+                .filter(|&progress| running.take_refresh(progress))
+                .collect();
+            let late: Vec<f64> = fired.iter().copied().filter(|p| *p >= 0.5).collect();
+            assert_eq!(late, vec![0.5], "refreshes at or after the midpoint: {fired:?}");
+            assert!(fired.len() <= 2, "more than the schedule allows: {fired:?}");
+            assert_eq!(REFRESH_DESTINATION_AT, 0.5);
+            assert_eq!(MAX_DESTINATION_CAPTURES, 2);
+            assert!(capture_work_allowed(FlightPhase::Moving, CaptureKind::Refresh));
+            // A second sweep on the same flight fires nothing: the slots are spent.
+            assert!(!(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)));
+        }
+
+        /// P-3.13. Observed: a grow whose picture cannot cover the destination enters `awaiting`
+        /// and holds; before the deadline `start_moving` waits for what is left of it, at the
+        /// deadline it flies with the placeholder; a fitting reveal landing first is claimed and a
+        /// small one is not.
+        #[test]
+        fn a_grow_holds_bounded_and_flies_a_placeholder_at_the_deadline() {
+            let mut rng = Gen(91);
+            for _ in 0..RUNS {
+                let small = rng.on_screen();
+                let to = rect(
+                    small.origin.x,
+                    32.0,
+                    small.size.width + rng.pt(20.0, 800.0),
+                    small.size.height,
+                );
+                let snapshot = test_snapshot(small.size);
+                assert!(outgrows(snapshot.coverage.covered, to.size), "seed 91: a grow");
+                // `start`: the outgrown picture puts the window in `awaiting` at its destination size.
+                let awaiting = vec![(wid(1), to.size)];
+                let (holding, chase) = frame_zero_work(&awaiting);
+                assert!(holding, "seed 91");
+                assert_eq!(chase, awaiting, "seed 91");
+
+                let duration = Duration::from_millis(rng.pt(100.0, 600.0) as u64);
+                let limit = reveal_hold_limit(duration);
+                let now = Instant::now();
+                let mut running = flight(None);
+                let mut tile = stacked(wid(1), small, to, Some(0), false);
+                tile.snapshot = snapshot.clone();
+                running.tiles.push(tile);
+                running.awaiting = awaiting.clone();
+                running.frames_applied = holding;
+                running.hold_deadline = Some(now + limit);
+                assert_eq!(running.phase(), FlightPhase::Holding, "seed 91");
+                assert_eq!(
+                    hold_wait(running.hold_deadline, now),
+                    Some(limit.max(Duration::from_millis(10))),
+                    "seed 91: waits out the hold"
+                );
+                assert_eq!(
+                    hold_wait(running.hold_deadline, now + limit),
+                    None,
+                    "seed 91: at the deadline the placeholder flies"
+                );
+                assert_eq!(running.claim(wid(1), &snapshot), None, "seed 91: too small to claim");
+                assert_eq!(running.awaiting, awaiting, "seed 91: the hold stands");
+                assert_eq!(
+                    running.claim(wid(1), &test_snapshot(to.size)),
+                    Some(Claimed::Released),
+                    "seed 91: the reveal is claimed"
+                );
+                assert!(running.tiles[0].snapshot.fits(to.size), "seed 91: drawn from the reveal");
+                assert_eq!(running.phase(), FlightPhase::FrameZero, "seed 91: released, not moving");
+            }
+            assert_eq!(hold_wait(None, Instant::now()), None, "no deadline, no wait");
+        }
+
+        /// P-3.14. `start_strip` draws only `cache.usable` pictures and keeps every window in
+        /// `final_frames` and `last_animated`. Observed: a window never captured, or captured as a
+        /// sliver, is not usable; the handover report counts only tiled windows; and the warm
+        /// after the movement wants a capture for it.
+        #[test]
+        fn a_strip_window_with_no_usable_picture_is_placed_but_not_drawn() {
+            let mut rng = Gen(95);
+            for _ in 0..RUNS {
+                let slot = rng.on_screen();
+                let mut cache: SnapshotCache = SnapshotCache::new();
+                cache.insert(wid(2), clipped(slot.size));
+                assert!(cache.usable(wid(1)).is_none(), "seed 95: never captured");
+                assert!(cache.usable(wid(2)).is_none(), "seed 95: a sliver");
+                assert!(cache.usable(wid(3)).is_none());
+                cache.insert(wid(3), test_snapshot(slot.size));
+                assert!(cache.usable(wid(3)).is_some(), "seed 95: the drawn neighbour");
+
+                let (from, to) = strip_travel(slot, CGPoint::new(0.0, 0.0), CGPoint::new(861.0, 0.0), false);
+                let mut running = flight(None);
+                running.tiles.push(stacked(wid(3), from, to, Some(0), false));
+                running.final_frames = vec![(wid(1), to), (wid(2), to), (wid(3), to)];
+                let tiled: Vec<WindowId> = running.tiles.iter().map(|t| t.window).collect();
+                let real: HashMap<WindowId, CGRect> =
+                    running.final_frames.iter().copied().collect();
+                let report = handover_report(&running.final_frames, &tiled, &real, DISPLAY);
+                // A destination past the edge is a park, which the report excludes (2.3).
+                let measured = usize::from(!HiddenWindowPlacement::is_off_screen(DISPLAY, to));
+                assert_eq!(report.total, measured, "seed 95: only the drawn window is measured");
+                assert_eq!(report.count_over, 0);
+
+                let size = (slot.size.width, slot.size.height);
+                assert!(needs_capture(None, size), "seed 95: warmed after the movement");
+                assert!(needs_capture(Some(clipped(slot.size).coverage), size));
+                assert!(!needs_capture(Some(test_snapshot(slot.size).coverage), size));
+            }
+        }
+
+        /// P-3.16. `start_strip` hands `begin_group` empty `awaiting` and `entrances` and starts
+        /// `Immediate`. Observed: such a flight holds for nothing, applies nothing at frame zero,
+        /// and has no deadline to wait out.
+        #[test]
+        fn a_pan_holds_for_nothing() {
+            assert_eq!(frame_zero_work(&[]), (false, Vec::new()));
+            let mut rng = Gen(96);
+            for _ in 0..RUNS {
+                let count = rng.below(4) as u32 + 1;
+                let travel = CGPoint::new(rng.pt(-1720.0, 1720.0), 0.0);
+                let mut running = flight(None);
+                running.apply_at = apply_frames_at(FlightKind::Strip, false);
+                for i in 1..=count {
+                    let frame = rng.on_screen();
+                    let (from, to) = strip_travel(frame, CGPoint::new(0.0, 0.0), travel, false);
+                    running.tiles.push(stacked(wid(i), from, to, Some(i as usize), false));
+                    running.final_frames.push((wid(i), to));
+                }
+                assert!(running.awaiting.is_empty() && running.entrances.is_empty(), "seed 96");
+                assert_eq!(running.phase(), FlightPhase::FrameZero, "seed 96");
+                assert!(!running.frames_applied, "seed 96: nothing applied at frame zero");
+                assert_eq!(hold_wait(running.hold_deadline, Instant::now()), None, "seed 96");
+                assert_eq!(running.claim(wid(1), &test_snapshot(CGSize::new(859.0, 1081.0))), None);
+            }
+        }
+    }
+
+    /// Preservation for the regressions fix (`.kiro/specs/exit-entrance-animation-regressions`,
+    /// bugfix.md 3.x): flights with no open or close. Each assertion pins the output observed on the
+    /// code before the fix, over generated inputs outside the bug condition.
+    mod preservation {
+        use super::*;
+        use crate::model::HiddenWindowPlacement;
+        use crate::model::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+        use crate::ui::window_snapshot::{SnapshotCache, test_snapshot};
+
+        pub(super) const DISPLAY: CGRect = CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize { width: 1728.0, height: 1117.0 },
+        };
+        pub(super) const RUNS: usize = 200;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        /// A small deterministic generator, so a failure names its seed and replays.
+        pub(super) struct Gen(pub(super) u64);
+
+        impl Gen {
+            fn next(&mut self) -> u64 {
+                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                self.0 >> 11
+            }
+
+            pub(super) fn below(&mut self, n: u64) -> u64 {
+                self.next() % n
+            }
+
+            pub(super) fn pt(&mut self, lo: f64, hi: f64) -> f64 {
+                lo + self.below((hi - lo) as u64 + 1) as f64
+            }
+
+            pub(super) fn coin(&mut self) -> bool {
+                self.below(2) == 0
+            }
+
+            /// A window frame with a real share of the display showing: a column on the strip.
+            pub(super) fn on_screen(&mut self) -> CGRect {
+                let w = self.pt(400.0, 1720.0);
+                let h = self.pt(600.0, 1081.0);
+                let x = self.pt(-w / 4.0, DISPLAY.size.width - w * 0.75);
+                rect(x, 32.0, w, h)
+            }
+
+            /// The layout's park for a scrolled-off window: 1pt showing in a bottom corner.
+            pub(super) fn park(&mut self, size: CGSize) -> CGRect {
+                let x = if self.coin() {
+                    DISPLAY.size.width - 1.0
+                } else {
+                    DISPLAY.origin.x - size.width + 1.0
+                };
+                rect(x, DISPLAY.size.height - 1.0, size.width, size.height)
+            }
+        }
+
+        pub(super) fn stacked(
+            window: WindowId,
+            from: CGRect,
+            to: CGRect,
+            server_order: Option<usize>,
+            floating: bool,
+        ) -> OverlayTile {
+            OverlayTile {
+                window,
+                from,
+                to,
+                snapshot: test_snapshot(to.size),
+                floating,
+                server_order,
+                depth: 0,
+                companion: false,
+                focused: false,
+                ghost: false,
+            }
+        }
+
+        fn running(final_frames: Vec<(WindowId, CGRect)>) -> RunningAnimation {
+            RunningAnimation {
+                tiles: Vec::new(),
+                final_frames,
+                frames_applied: false,
+                started: None,
+                duration: Duration::from_millis(300),
+                apply_at: APPLY_FRAMES_AT,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                _clock: None,
+            }
+        }
+
+        /// P-3.1/3.7. Observed: with the window server reporting an on-screen frame that differs
+        /// from both the request's start and its destination, the tile starts from the server's
+        /// frame. A plain move keeps the late apply point.
+        #[test]
+        fn a_plain_move_starts_from_the_window_servers_frame() {
+            let mut rng = Gen(31);
+            let mut checked = 0;
+            for _ in 0..RUNS {
+                let from = rng.on_screen();
+                let to = rect(rng.pt(0.0, 900.0), 32.0, from.size.width, from.size.height);
+                let real = rect(
+                    from.origin.x + rng.pt(20.0, 300.0),
+                    32.0,
+                    from.size.width,
+                    from.size.height,
+                );
+                if real.same_as(to) || HiddenWindowPlacement::is_off_screen(DISPLAY, real) {
+                    continue;
+                }
+                checked += 1;
+                assert_eq!(
+                    resolve_start(Some(real), from, to, DISPLAY),
+                    real,
+                    "seed 31: {from:?} -> {to:?}"
+                );
+            }
+            assert!(checked > RUNS / 2, "generator sanity: {checked} of {RUNS} in scope");
+            assert_eq!(apply_frames_at(FlightKind::Layout, false), APPLY_FRAMES_AT);
+        }
+
+        /// P-3.7. Observed: no server answer falls back to the request's start; a server answer
+        /// already at the destination honours the request's (synthetic) start.
+        #[test]
+        fn a_missing_or_synthetic_start_falls_back_to_the_request() {
+            let from = rect(4.0, 32.0, 859.0, 1081.0);
+            let to = rect(867.0, 32.0, 859.0, 1081.0);
+            assert_eq!(resolve_start(None, from, to, DISPLAY), from);
+            assert_eq!(resolve_start(Some(to), from, to, DISPLAY), from);
+        }
+
+        /// P-3.1/3.5. Observed: frames never applied early are never re-requested by a coalescing
+        /// merge, whatever changed. `merge_action` is the same three-way decision, and
+        /// `merge_final_frames` reports a change exactly when the merge retargets.
+        #[test]
+        fn a_merge_before_frames_were_applied_re_requests_nothing() {
+            let mut rng = Gen(35);
+            for _ in 0..RUNS {
+                let current = rng.on_screen();
+                let mut flight = running(vec![(wid(1), current)]);
+                let incoming = if rng.coin() { rng.on_screen() } else { current };
+                let action = merge_action(Some(current), incoming);
+                let expected =
+                    if current.same_as(incoming) { Admitted::Redundant } else { Admitted::Retargeted };
+                assert_eq!(action, expected);
+                let changed = merge_final_frames(&mut flight.final_frames, vec![(wid(1), incoming)]);
+                assert_eq!(changed, action == Admitted::Retargeted);
+                assert_eq!(flight.final_frames, vec![(wid(1), incoming)], "latest frame wins");
+                for in_flight in [false, true] {
+                    assert_eq!(reapply_set(false, in_flight, changed, &flight.final_frames), None);
+                }
+            }
+            assert_eq!(merge_action(None, rect(4.0, 32.0, 859.0, 1081.0)), Admitted::Joined);
+        }
+
+        /// P-3.2/3.6. Observed: a coalescing pass carrying reveal holds and no entrance merges its
+        /// holds (latest size per window wins), marks frames applied, sets one deadline of
+        /// `reveal_hold_limit`, and hands back the flight's frames to request again.
+        #[test]
+        fn a_held_merge_re_requests_the_flights_frames() {
+            let mut rng = Gen(36);
+            let mut checked = 0;
+            for _ in 0..RUNS {
+                let count = rng.below(3) as u32 + 1;
+                let frames: Vec<(WindowId, CGRect)> =
+                    (1..=count).map(|i| (wid(i), rng.on_screen())).collect();
+                let mut flight = running(frames.clone());
+                if rng.coin() {
+                    flight.awaiting.push((wid(1), CGSize::new(100.0, 100.0)));
+                }
+                let mut incoming: Vec<(WindowId, CGSize)> = Vec::new();
+                for i in 1..=count {
+                    if rng.coin() {
+                        incoming.push((wid(i), CGSize::new(rng.pt(200.0, 1720.0), 1081.0)));
+                    }
+                }
+                if incoming.is_empty() {
+                    continue;
+                }
+                checked += 1;
+                let now = Instant::now();
+                let duration = Duration::from_millis(rng.pt(100.0, 600.0) as u64);
+                let requested = flight.extend_hold(&incoming, false, duration, now);
+                assert_eq!(requested, Some(frames.clone()));
+                assert!(flight.frames_applied);
+                assert_eq!(flight.hold_deadline, Some(now + reveal_hold_limit(duration)));
+                for (window, size) in &incoming {
+                    let held: Vec<_> =
+                        flight.awaiting.iter().filter(|(w, _)| w == window).collect();
+                    assert_eq!(held.len(), 1, "one hold per window");
+                    assert_eq!(held[0].1, *size, "latest size wins");
+                }
+            }
+            assert!(checked > RUNS / 2, "generator sanity: {checked} of {RUNS} in scope");
+        }
+
+        /// P-3.2. Observed: a hold cannot stop a flight already moving, and a pass with no holds
+        /// extends nothing.
+        #[test]
+        fn a_hold_never_stops_a_flight_in_motion() {
+            let now = Instant::now();
+            let duration = Duration::from_millis(300);
+            let mut flight = running(vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))]);
+            flight.started = Some(now);
+            let grow = [(wid(1), CGSize::new(1720.0, 1081.0))];
+            assert_eq!(flight.extend_hold(&grow, true, duration, now), None);
+            assert!(!flight.frames_applied);
+            assert!(flight.awaiting.is_empty());
+            assert!(flight.hold_deadline.is_none());
+            flight.started = None;
+            assert_eq!(flight.extend_hold(&[], false, duration, now), None);
+            assert!(!flight.frames_applied);
+        }
+
+        /// P-3.3/3.4. Observed: a pan translates a parked window by the viewport's travel like any
+        /// other, `from = frame - from_offset`; the park is never remapped to an entry frame here.
+        #[test]
+        fn a_pan_translates_a_parked_window_without_remapping_it() {
+            let mut rng = Gen(33);
+            for _ in 0..RUNS {
+                let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
+                let frame = rng.park(size);
+                let from_offset = CGPoint::new(rng.pt(-4000.0, 4000.0), 0.0);
+                let to_offset = CGPoint::new(rng.pt(-4000.0, 4000.0), 0.0);
+                let (from, to) = strip_travel(frame, from_offset, to_offset, false);
+                assert_eq!(from.origin.x, frame.origin.x - from_offset.x);
+                assert_eq!(to.origin.x, frame.origin.x - to_offset.x);
+                assert_eq!(from.size, frame.size);
+                assert_eq!(to.origin.x - from.origin.x, from_offset.x - to_offset.x);
+                assert_eq!(from.origin.y, frame.origin.y, "a pan keeps the park's row");
+                let entry = HiddenWindowPlacement::entry_frame(frame, to, DISPLAY);
+                if from_offset.x.abs() != 1.0 {
+                    assert_ne!(from, entry, "the pan path does not consult the park remap");
+                }
+            }
+        }
+
+        /// P-3.8: a restack with a floating focus puts every floating tile in `[0, STRIDE)` and
+        /// every strip tile in `[STRIDE, 2*STRIDE)`; with a strip focus the reverse. Seed 38, 200
+        /// runs.
+        #[test]
+        fn a_restack_bands_the_focused_group_in_front() {
+            let mut rng = Gen(38);
+            for _ in 0..RUNS {
+                let count = rng.below(6) as u32 + 1;
+                let mut tiles: Vec<OverlayTile> = (1..=count)
+                    .map(|i| {
+                        let known = rng.coin();
+                        let server_order = known.then(|| rng.below(20) as usize);
+                        let floating = rng.coin();
+                        stacked(wid(i), rng.on_screen(), rng.on_screen(), server_order, floating)
+                    })
+                    .collect();
+                let focus = wid(rng.below(count as u64) as u32 + 1);
+                let focus_floating = tiles.iter().find(|t| t.window == focus).unwrap().floating;
+                restack(&mut tiles, Some(focus));
+                for tile in &tiles {
+                    let in_front = tile.floating == focus_floating;
+                    let band = if in_front { 0..GROUP_STRIDE } else { GROUP_STRIDE..2 * GROUP_STRIDE };
+                    assert!(
+                        band.contains(&tile.depth),
+                        "seed 38: {:?} floating={} depth={} focus floating={focus_floating}",
+                        tile.window,
+                        tile.floating,
+                        tile.depth
+                    );
+                    if tile.window == focus {
+                        assert_eq!(tile.depth, 0, "seed 38: the focused window leads");
+                    }
+                }
+            }
+        }
+
+        /// A focus that is not among the tiles (a close whose focus target is gone, or none at
+        /// all) is a strip interaction: the strip is banded in front.
+        #[test]
+        fn a_focus_off_the_pass_puts_the_strip_in_front() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut tiles = vec![
+                stacked(wid(1), slot, slot, Some(4), false),
+                stacked(wid(2), slot, slot, Some(0), true),
+                stacked(wid(3), slot, slot, None, false),
+            ];
+            restack(&mut tiles, Some(wid(99)));
+            let depths: Vec<usize> = tiles.iter().map(|t| t.depth).collect();
+            assert_eq!(depths, vec![5, GROUP_STRIDE + 1, GROUP_STRIDE - 1]);
+            restack(&mut tiles, None);
+            let no_focus: Vec<usize> = tiles.iter().map(|t| t.depth).collect();
+            assert_eq!(no_focus, depths);
+        }
+
+        /// The server's order is untrusted input: an absurd order stays inside its band, and the
+        /// deepest possible tile still draws in front of the backdrop.
+        #[test]
+        fn an_absurd_server_order_stays_inside_its_band() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut tiles = vec![
+                stacked(wid(1), slot, slot, Some(usize::MAX), false),
+                stacked(wid(2), slot, slot, Some(usize::MAX), true),
+            ];
+            restack(&mut tiles, None);
+            assert_eq!(tiles[0].depth, GROUP_STRIDE - 1);
+            assert_eq!(tiles[1].depth, MAX_TILE_DEPTH);
+        }
+
+        /// P-3.9. Observed: a window closing from a bottom-corner park or from off the strip shows
+        /// nothing along its exit path and is not animated; one closing on screen is.
+        #[test]
+        fn a_parked_or_scrolled_off_close_is_not_worth_animating() {
+            let mut rng = Gen(39);
+            for _ in 0..RUNS {
+                let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
+                let park = rng.park(size);
+                assert!(!worth_animating(park, exit_to(park), DISPLAY), "park {park:?}");
+                let off = rect(DISPLAY.size.width + rng.pt(1.0, 9000.0), 32.0, size.width, size.height);
+                assert!(!worth_animating(off, exit_to(off), DISPLAY), "off strip {off:?}");
+                let on = rng.on_screen();
+                assert!(worth_animating(on, exit_to(on), DISPLAY), "on screen {on:?}");
+            }
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            assert!(!worth_animating(rect(4.0, 32.0, 0.0, 0.0), slot, DISPLAY), "zero area");
+            // Entering from a park is still worth it: the path crosses the display.
+            assert!(worth_animating(rect(1727.0, 1116.0, 859.0, 1081.0), slot, DISPLAY));
+        }
+
+        /// P-3.10. Observed: forgetting a window empties its cache entry while a clone taken for an
+        /// exit tile stays usable on its own.
+        #[test]
+        fn forgetting_a_window_empties_the_cache_even_while_a_clone_is_held() {
+            let mut cache: SnapshotCache = SnapshotCache::new();
+            let size = CGSize::new(859.0, 1081.0);
+            cache.insert(wid(1), test_snapshot(size));
+            let held = cache.usable(wid(1)).cloned().expect("inserted");
+            cache.forget(wid(1));
+            assert!(cache.usable(wid(1)).is_none());
+            assert!(held.is_usable());
+            assert!(held.fits(size));
+        }
+
+        /// P-3.11. Observed: a fresh flight with an entrance applies the real frames at frame zero
+        /// and chases `(window, to.size)`; a hold does the same for its awaiting set; a plain
+        /// flight does neither. The entrance reaches `frame_zero_work` the way `start` sends it:
+        /// through the hold entry `entrance_reservation` hands back.
+        #[test]
+        fn a_fresh_flight_with_an_entrance_applies_and_chases_at_frame_zero() {
+            let mut rng = Gen(311);
+            for _ in 0..RUNS {
+                let to = rng.on_screen();
+                let (entrance, waiting) = entrance_reservation(wid(3), to, false);
+                assert_eq!(entrance.window, wid(3));
+                assert_eq!(entrance.to, to);
+                let awaiting: Vec<(WindowId, CGSize)> = waiting.into_iter().collect();
+                let (apply_now, chase) = frame_zero_work(&awaiting);
+                assert!(apply_now);
+                assert!(chase.contains(&(wid(3), to.size)), "the entrance is chased: {chase:?}");
+
+                let awaiting = vec![(wid(1), rng.on_screen().size)];
+                let (apply_now, chase) = frame_zero_work(&awaiting);
+                assert!(apply_now);
+                assert_eq!(chase, awaiting);
+            }
+            assert_eq!(frame_zero_work(&[]), (false, Vec::new()));
+        }
+    }
+
+    /// Change 3 of `.kiro/specs/exit-entrance-animation-regressions`: depth is banded once per
+    /// flight from the flight's latest focus, whichever pass composed the tile, so the strip is
+    /// one z-order group in the overlay as it is on the real screen (`model/z_group.rs`). See
+    /// "Mid-flight passes" in `docs/animation-smoothness.md`.
+    mod flight_restack {
+        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::*;
+        use crate::model::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+        use crate::ui::window_snapshot::test_snapshot;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        pub(super) fn flight() -> RunningAnimation {
+            RunningAnimation {
+                tiles: Vec::new(),
+                final_frames: Vec::new(),
+                frames_applied: false,
+                started: None,
+                duration: Duration::from_millis(300),
+                apply_at: APPLY_FRAMES_AT,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                _clock: None,
+            }
+        }
+
+        fn depth(flight: &RunningAnimation, window: WindowId) -> usize {
+            flight.tiles.iter().find(|t| t.window == window).unwrap().depth
+        }
+
+        /// The 1.1 scenario: pass 1 (a close, focus not among the tiles) bands the strip in
+        /// front; pass 2 (a pan, focus on the floating window) retargets one strip tile. Every
+        /// tile is rebanded from the new focus, the redundant strip tile included, so the
+        /// floating window is in front of BOTH terminals, never between them.
+        #[test]
+        fn a_later_focus_rebands_every_tile_in_the_flight() {
+            let (s1, s2, f) = (wid(1), wid(2), wid(3));
+            let slot_a = rect(4.0, 32.0, 859.0, 1081.0);
+            let slot_b = rect(867.0, 32.0, 859.0, 1081.0);
+            let slot_c = rect(1730.0, 32.0, 859.0, 1081.0);
+            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
+            let mut flight = flight();
+
+            flight.merge_pass(
+                vec![
+                    stacked(s1, slot_a, slot_a, Some(0), false),
+                    stacked(s2, slot_c, slot_b, Some(2), false),
+                    stacked(f, zoom, zoom, Some(1), true),
+                ],
+                None,
+            );
+            assert_eq!(depth(&flight, s1), 1, "pass 1: the strip leads, server order within");
+            assert_eq!(depth(&flight, s2), 3);
+            assert_eq!(depth(&flight, f), GROUP_STRIDE + 2, "the floating window behind the strip");
+
+            flight.merge_pass(
+                vec![
+                    stacked(s1, slot_a, slot_a, Some(0), false),
+                    stacked(s2, slot_c, slot_c, Some(2), false),
+                    stacked(f, zoom, zoom, Some(1), true),
+                ],
+                Some(f),
+            );
+            assert_eq!(flight.focus, Some(f), "latest focus is recorded");
+            assert_eq!(depth(&flight, f), 0, "the focused floating window leads");
+            assert_eq!(depth(&flight, s1), GROUP_STRIDE + 1, "redundant tile: rebanded anyway");
+            assert_eq!(depth(&flight, s2), GROUP_STRIDE + 3, "retargeted tile: rebanded");
+        }
+
+        /// A pass that names no focus leaves the flight's focus alone, and the banding with it.
+        #[test]
+        fn a_pass_without_a_focus_keeps_the_flights_focus() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
+            let mut flight = flight();
+            flight.merge_pass(
+                vec![
+                    stacked(wid(1), slot, slot, Some(1), false),
+                    stacked(wid(2), zoom, zoom, Some(0), true),
+                ],
+                Some(wid(2)),
+            );
+            flight.merge_pass(vec![stacked(wid(1), slot, slot, Some(1), false)], None);
+            assert_eq!(flight.focus, Some(wid(2)));
+            assert_eq!(depth(&flight, wid(2)), 0);
+            assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 2, "the floating focus still leads");
+        }
+
+        /// A retargeting pass that carries a new server order (the server re-reported the window
+        /// after a raise) moves the tile within its band. A redundant tile is untouched by
+        /// `merge`, order included, so it keeps its place within the band.
+        #[test]
+        fn a_new_server_order_on_a_later_pass_moves_the_tile_within_its_band() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let slot_b = rect(867.0, 32.0, 859.0, 1081.0);
+            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
+            let mut flight = flight();
+            flight.merge_pass(
+                vec![
+                    stacked(wid(1), slot, slot, Some(0), false),
+                    stacked(wid(2), zoom, zoom, Some(1), true),
+                    stacked(wid(3), slot_b, slot_b, Some(2), false),
+                ],
+                None,
+            );
+            flight.merge_pass(
+                vec![
+                    stacked(wid(1), slot, slot_b, Some(4), false),
+                    stacked(wid(2), zoom, exit_to(zoom), Some(0), true),
+                    stacked(wid(3), slot_b, slot_b, Some(5), false),
+                ],
+                Some(wid(2)),
+            );
+            assert_eq!(depth(&flight, wid(2)), 0, "the floating focus leads");
+            assert_eq!(depth(&flight, wid(3)), GROUP_STRIDE + 3, "redundant: old order kept");
+            assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 5, "retargeted: the new order");
+        }
+
+        /// An exit tile has no server order to follow (the window is gone); its `Some(0)` draws
+        /// the ghost at the front of its own band, behind the focused group when it is off it.
+        #[test]
+        fn an_exit_tile_leads_its_own_band() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
+            let exit =
+                pending_exit(wid(9), zoom, Some(test_snapshot(zoom.size)), true, DISPLAY, Instant::now())
+                    .expect("on screen with a picture")
+                    .tile(DISPLAY);
+            assert_eq!(exit.server_order, Some(0));
+            assert!(exit.floating);
+            let mut flight = flight();
+            flight.merge_pass(
+                vec![
+                    stacked(wid(1), slot, slot, Some(3), false),
+                    stacked(wid(2), slot, slot, Some(7), true),
+                    exit,
+                ],
+                Some(wid(1)),
+            );
+            assert_eq!(depth(&flight, wid(1)), 0, "the focused strip window leads");
+            assert_eq!(depth(&flight, wid(9)), GROUP_STRIDE + 1, "the ghost leads the floating band");
+            assert_eq!(depth(&flight, wid(2)), GROUP_STRIDE + 8);
+        }
+
+        /// An entrance tile (`server_order: Some(0)`: a window is raised on open) leads its own
+        /// band, which with a floating focus is the band behind.
+        #[test]
+        fn an_entrance_tile_leads_its_own_band() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
+            let mut flight = flight();
+            flight.merge_pass(
+                vec![
+                    stacked(wid(1), slot, slot, Some(3), false),
+                    stacked(wid(2), zoom, zoom, Some(7), true),
+                ],
+                Some(wid(2)),
+            );
+            let entering = stacked(wid(5), entrance_from(slot), slot, Some(0), false);
+            flight.merge_pass(vec![entering], None);
+            assert_eq!(depth(&flight, wid(2)), 0, "the floating focus leads");
+            assert_eq!(depth(&flight, wid(5)), GROUP_STRIDE + 1, "the entrance leads the strip");
+            assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 4);
+        }
+
+        /// Companions ride their window's depth and are not restacked on their own.
+        #[test]
+        fn a_companion_keeps_the_depth_it_was_given() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut companion = stacked(wid(8), slot, slot, None, false);
+            companion.companion = true;
+            companion.depth = 3;
+            let mut tiles = vec![stacked(wid(1), slot, slot, Some(2), false), companion];
+            restack(&mut tiles, None);
+            assert_eq!(tiles[0].depth, 3);
+            assert_eq!(tiles[1].depth, 3, "not sent to the back for its `None` order");
+        }
+
+        /// The rule, as a property: for random tile sets, pass orders, and focus choices (among
+        /// the tiles, off them, or none), with a strip focus or none EVERY floating tile is deeper
+        /// than EVERY strip tile; with a floating focus the reverse. The focused tile leads.
+        /// Seed 33, 200 runs.
+        #[test]
+        fn the_unfocused_group_is_never_in_front_of_the_focused_group() {
+            let mut rng = Gen(33);
+            for _ in 0..RUNS {
+                let count = rng.below(6) as u32 + 1;
+                let mut flight = flight();
+                let passes = rng.below(3) + 1;
+                let mut focus = None;
+                for _ in 0..passes {
+                    let mut tiles: Vec<OverlayTile> = Vec::new();
+                    for i in 1..=count {
+                        if rng.below(4) == 0 {
+                            continue;
+                        }
+                        let known = rng.coin();
+                        let server_order = known.then(|| rng.below(20) as usize);
+                        let floating = i % 2 == 0;
+                        let to = rng.on_screen();
+                        tiles.push(stacked(wid(i), rng.on_screen(), to, server_order, floating));
+                    }
+                    let pass_focus = match rng.below(4) {
+                        0 => None,
+                        1 => Some(wid(99)),
+                        _ => Some(wid(rng.below(count as u64) as u32 + 1)),
+                    };
+                    if pass_focus.is_some() {
+                        focus = pass_focus;
+                    }
+                    flight.merge_pass(tiles, pass_focus);
+                }
+                assert_eq!(flight.focus, focus, "seed 33: latest named focus wins");
+                let focus_floating = focus
+                    .and_then(|f| flight.tiles.iter().find(|t| t.window == f))
+                    .is_some_and(|t| t.floating);
+                for tile in &flight.tiles {
+                    assert!(tile.depth <= MAX_TILE_DEPTH, "seed 33: in front of the backdrop");
+                    if Some(tile.window) == focus {
+                        assert_eq!(tile.depth, 0, "seed 33: the focused tile leads");
+                    }
+                }
+                for front in flight.tiles.iter().filter(|t| t.floating == focus_floating) {
+                    for back in flight.tiles.iter().filter(|t| t.floating != focus_floating) {
+                        assert!(
+                            front.depth < back.depth,
+                            "seed 33: {:?} (floating={}) behind {:?} (floating={}) with focus {focus:?}",
+                            front.window,
+                            front.floating,
+                            back.window,
+                            back.floating
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Change 5 of `.kiro/specs/exit-entrance-animation-regressions`: the park remap is decided
+    /// from both the server's frame and the request's, before the synthetic-start test.
+    mod park_remap {
+        use super::preservation::{DISPLAY, Gen, RUNS};
+        use super::*;
+        use crate::model::HiddenWindowPlacement;
+
+        const SLOT: CGRect = CGRect {
+            origin: CGPoint { x: 4.0, y: 32.0 },
+            size: CGSize { width: 1720.0, height: 1081.0 },
+        };
+        const PARK: CGRect = CGRect {
+            origin: CGPoint { x: 1727.0, y: 1116.0 },
+            size: CGSize { width: 1720.0, height: 1081.0 },
+        };
+        const RIGHT_EDGE: CGRect = CGRect {
+            origin: CGPoint { x: 1728.0, y: 32.0 },
+            size: CGSize { width: 1720.0, height: 1081.0 },
+        };
+
+        /// Kiro's park shows 41pt: `is_off_screen` says visible, the requested park says parked.
+        #[test]
+        fn a_41pt_park_enters_from_the_right_edge() {
+            let real = rect(1727.0, 1076.0, 1720.0, 1081.0);
+            assert!(!HiddenWindowPlacement::is_off_screen(DISPLAY, real));
+            assert_eq!(resolve_start(Some(real), PARK, SLOT, DISPLAY), RIGHT_EDGE);
+        }
+
+        /// Finder's park shows 52pt.
+        #[test]
+        fn a_52pt_park_enters_from_the_right_edge() {
+            let real = rect(1727.0, 1065.0, 859.0, 1081.0);
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let park = rect(1727.0, 1116.0, 859.0, 1081.0);
+            assert!(!HiddenWindowPlacement::is_off_screen(DISPLAY, real));
+            assert_eq!(
+                resolve_start(Some(real), park, slot, DISPLAY),
+                rect(1728.0, 32.0, 859.0, 1081.0)
+            );
+        }
+
+        /// The server already reports the slot while the reactor still holds the park: the park
+        /// wins over the synthetic-start test, so the tile enters from the edge, not the corner.
+        #[test]
+        fn a_park_the_server_reports_at_its_slot_enters_from_the_edge() {
+            assert_eq!(resolve_start(Some(SLOT), PARK, SLOT, DISPLAY), RIGHT_EDGE);
+        }
+
+        /// A genuine park (1pt showing) with no server answer still enters from the edge.
+        #[test]
+        fn a_park_with_no_server_answer_enters_from_the_edge() {
+            assert_eq!(resolve_start(None, PARK, SLOT, DISPLAY), RIGHT_EDGE);
+        }
+
+        /// Both frames on screen and the server already at the destination: the request's start is
+        /// a deliberate fiction and is honoured.
+        #[test]
+        fn a_synthetic_start_on_screen_is_still_honoured() {
+            let from = rect(4.0, 32.0, 859.0, 1081.0);
+            let to = rect(867.0, 32.0, 859.0, 1081.0);
+            assert_eq!(resolve_start(Some(to), from, to, DISPLAY), from);
+        }
+
+        /// Drift with both frames on screen: the server's frame wins.
+        #[test]
+        fn drift_on_screen_starts_from_the_servers_frame() {
+            let from = rect(4.0, 32.0, 859.0, 1081.0);
+            let real = rect(120.0, 32.0, 859.0, 1081.0);
+            let to = rect(867.0, 32.0, 859.0, 1081.0);
+            assert_eq!(resolve_start(Some(real), from, to, DISPLAY), real);
+        }
+
+        /// For any corner park as the request's start, whatever the server reports (the park, a
+        /// clamped park, or the slot), the tile starts in `to`'s row with `to`'s size, just past
+        /// the display edge on the park's side.
+        #[test]
+        fn any_corner_park_enters_from_its_own_edge() {
+            let mut rng = Gen(52);
+            for _ in 0..RUNS {
+                let to = rng.on_screen();
+                let from = rng.park(to.size);
+                let clamp = rng.pt(0.0, 60.0);
+                let real = match rng.below(3) {
+                    0 => Some(from),
+                    1 => Some(rect(from.origin.x, from.origin.y - clamp, to.size.width, to.size.height)),
+                    _ => Some(to),
+                };
+                let got = resolve_start(real, from, to, DISPLAY);
+                let parked_left = from.mid().x < DISPLAY.mid().x;
+                let expected_x = if parked_left {
+                    DISPLAY.origin.x - to.size.width
+                } else {
+                    DISPLAY.max().x
+                };
+                assert_eq!(got.origin.y, to.origin.y, "seed 52: row of {to:?}, got {got:?}");
+                assert_eq!(got.size, to.size, "seed 52: size of {to:?}, got {got:?}");
+                assert_eq!(got.origin.x, expected_x, "seed 52: park {from:?} real {real:?}, got {got:?}");
+            }
+        }
+    }
+
+    /// Change 1 of `.kiro/specs/exit-entrance-animation-regressions`: an entrance is a hold. The
+    /// flight waits at frame zero for the window's first picture and composes it there, so it
+    /// flies in the survivors' transaction; a picture landing after lift-off gets what is left.
+    mod entrance_hold {
+        use super::preservation::{Gen, RUNS, stacked};
+        use super::*;
+        use crate::ui::window_snapshot::test_snapshot;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn flight(started: Option<Instant>) -> RunningAnimation {
+            RunningAnimation {
+                tiles: Vec::new(),
+                final_frames: Vec::new(),
+                frames_applied: false,
+                started,
+                duration: Duration::from_millis(300),
+                apply_at: APPLY_FRAMES_AT,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                _clock: None,
+            }
+        }
+
+        /// A flight holding for one entrance at `to`, composed the way `start` does it.
+        fn holding_for(window: WindowId, to: CGRect, floating: bool) -> RunningAnimation {
+            let mut flight = flight(None);
+            let (entrance, waiting) = entrance_reservation(window, to, floating);
+            flight.entrances.push(entrance);
+            flight.awaiting.extend(waiting);
+            flight.frames_applied = true;
+            flight
+        }
+
+        /// Frames are re-requested exactly when they were applied early, the flight is still
+        /// coalescing, and a destination changed.
+        #[test]
+        fn reapply_set_truth_table() {
+            let frames = vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))];
+            for frames_applied in [false, true] {
+                for in_flight in [false, true] {
+                    for changed in [false, true] {
+                        let expected = (frames_applied && !in_flight && changed)
+                            .then(|| frames.clone());
+                        assert_eq!(
+                            reapply_set(frames_applied, in_flight, changed, &frames),
+                            expected,
+                            "frames_applied={frames_applied} in_flight={in_flight} changed={changed}"
+                        );
+                    }
+                }
+            }
+        }
+
+        /// The reservation always brings a hold entry of the destination's size.
+        #[test]
+        fn an_entrance_always_holds_at_its_destination_size() {
+            let mut rng = Gen(61);
+            for _ in 0..RUNS {
+                let to = rng.on_screen();
+                let floating = rng.coin();
+                let (entrance, waiting) = entrance_reservation(wid(2), to, floating);
+                assert_eq!(waiting, Some((wid(2), to.size)), "seed 61: {to:?}");
+                assert_eq!(entrance.to, to);
+                assert_eq!(entrance.floating, floating);
+            }
+        }
+
+        /// A settled picture landing while the flight holds composes the entrance at zero width
+        /// in the frame-zero tile set, banded with the others, and shrinks the hold by one.
+        #[test]
+        fn a_claimed_entrance_joins_the_frame_zero_composition() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let neighbour = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut flight = holding_for(wid(2), slot, false);
+            flight.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
+            flight.awaiting.push((wid(1), neighbour.size));
+            flight.focus = Some(wid(2));
+
+            let claimed = flight.claim(wid(2), &test_snapshot(slot.size));
+
+            assert_eq!(claimed, Some(Claimed::Held), "the grow's hold remains");
+            assert!(flight.started.is_none(), "still at frame zero");
+            assert_eq!(flight.awaiting, vec![(wid(1), neighbour.size)]);
+            assert!(flight.entrances.is_empty(), "the reservation is consumed");
+            let tile = flight.tiles.iter().find(|t| t.window == wid(2)).expect("tile composed");
+            assert_eq!(tile.from, entrance_from(slot), "zero width at its left edge");
+            assert_eq!(tile.to, slot);
+            assert!(tile.focused);
+            assert_eq!(tile.depth, 0, "the entrance leads: raised on open");
+            let other = flight.tiles.iter().find(|t| t.window == wid(1)).unwrap();
+            assert_eq!(other.depth, 2, "its neighbour keeps the server's order, within the band");
+        }
+
+        /// The last hold released hands the flight to `start_moving`; a second picture for the
+        /// same window is no longer a hold.
+        #[test]
+        fn the_last_claim_releases_the_flight_and_a_repeat_is_not_a_hold() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut flight = holding_for(wid(2), slot, true);
+            assert_eq!(flight.claim(wid(2), &test_snapshot(slot.size)), Some(Claimed::Released));
+            assert!(flight.awaiting.is_empty());
+            assert_eq!(flight.tiles.len(), 1);
+            assert_eq!(flight.claim(wid(2), &test_snapshot(slot.size)), None);
+            assert_eq!(flight.tiles.len(), 1, "no second tile");
+        }
+
+        /// A picture that cannot cover the slot is not a claim (its real frame is at the slot from
+        /// frame zero, so the chase can deliver one that does; a smaller one drawn over the slot
+        /// was a hole), and neither is a flight already moving.
+        #[test]
+        fn a_small_picture_is_not_claimed_nor_is_a_moving_flight() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut flight = holding_for(wid(2), slot, false);
+            assert_eq!(flight.claim(wid(2), &test_snapshot(CGSize::new(200.0, 200.0))), None);
+            assert_eq!(flight.awaiting.len(), 1, "the hold goes on");
+            assert_eq!(flight.entrances.len(), 1);
+            assert!(flight.tiles.is_empty(), "nothing composed from the small picture");
+
+            let mut flight = holding_for(wid(2), slot, false);
+            flight.started = Some(Instant::now());
+            assert_eq!(flight.claim(wid(2), &test_snapshot(slot.size)), None);
+            assert!(flight.tiles.is_empty());
+        }
+
+        /// A grow's reveal picture still lands on its tile: the pre-existing hold path.
+        #[test]
+        fn a_grows_reveal_picture_replaces_its_tiles_snapshot() {
+            let small = rect(4.0, 32.0, 400.0, 1081.0);
+            let big = rect(4.0, 32.0, 1720.0, 1081.0);
+            let mut flight = flight(None);
+            let mut tile = stacked(wid(1), small, big, Some(0), false);
+            tile.snapshot = test_snapshot(small.size);
+            flight.tiles.push(tile);
+            flight.awaiting.push((wid(1), big.size));
+            assert_eq!(flight.claim(wid(1), &test_snapshot(big.size)), Some(Claimed::Released));
+            assert!(flight.tiles[0].snapshot.fits(big.size));
+            assert_eq!(flight.tiles.len(), 1);
+        }
+
+        /// After the flight has started, an entrance joins for what is left of it, not the full
+        /// duration; before, `admit` does nothing and leaves the reservation to `claim`.
+        #[test]
+        fn a_late_entrance_travels_for_the_remaining_flight() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut flight = holding_for(wid(2), slot, false);
+            assert!(flight.admit(wid(2), &test_snapshot(slot.size)).is_none(), "still holding");
+            assert_eq!(flight.entrances.len(), 1);
+
+            // The deadline passed: `start_moving` flew with the placeholder and cleared the hold.
+            flight.awaiting.clear();
+            flight.started = Some(Instant::now() - flight.duration.mul_f64(0.6));
+            let remaining = flight.remaining();
+            let (tile, travel) = flight.admit(wid(2), &test_snapshot(slot.size)).expect("admitted");
+            assert_eq!(tile.from, entrance_from(slot));
+            assert_eq!(tile.to, slot);
+            assert!(travel <= remaining, "{travel:?} outlives {remaining:?}");
+            assert!(travel < flight.duration.mul_f64(0.5), "not the full duration: {travel:?}");
+            assert!(flight.entrances.is_empty());
+            assert!(flight.admit(wid(2), &test_snapshot(slot.size)).is_none(), "taken once");
+        }
+
+        /// Property: for any progress in `[0, 1)`, a late joiner ends no later than the flight, and
+        /// at progress 1 it does not travel at all.
+        #[test]
+        fn a_late_joiner_never_outlives_the_flight() {
+            let mut rng = Gen(62);
+            for _ in 0..RUNS {
+                let duration = Duration::from_millis(rng.pt(100.0, 600.0) as u64);
+                let progress = rng.below(1000) as f64 / 1000.0;
+                let travel = late_join_duration(duration, progress);
+                let remaining = duration.mul_f64(1.0 - progress);
+                assert!(
+                    travel <= remaining + Duration::from_nanos(1),
+                    "seed 62: {travel:?} > {remaining:?} at {progress}"
+                );
+                let mut flight = flight(Some(Instant::now() - duration.mul_f64(progress)));
+                flight.duration = duration;
+                flight.entrances.push(PendingEntrance {
+                    window: wid(2),
+                    to: rng.on_screen(),
+                    floating: false,
+                });
+                let to = flight.entrances[0].to;
+                let (_, admitted) = flight.admit(wid(2), &test_snapshot(to.size)).unwrap();
+                assert!(admitted <= flight.duration, "seed 62: {admitted:?}");
+            }
+            assert_eq!(late_join_duration(Duration::from_millis(300), 1.0), Duration::ZERO);
+            assert_eq!(late_join_duration(Duration::from_millis(300), 1.5), Duration::ZERO);
+        }
+
+        /// Property: for random coalescing merges with frames applied early, the frames requested
+        /// again are exactly the merged set, latest per window winning, whenever anything changed.
+        #[test]
+        fn a_coalescing_merge_re_requests_exactly_the_merged_frames() {
+            let mut rng = Gen(63);
+            let mut re_requested = 0;
+            for _ in 0..RUNS {
+                let count = rng.below(4) as u32 + 1;
+                let mut flight = flight(None);
+                flight.frames_applied = true;
+                flight.final_frames = (1..=count).map(|i| (wid(i), rng.on_screen())).collect();
+                let passes = rng.below(3) + 1;
+                let mut expected: Vec<(WindowId, CGRect)> = flight.final_frames.clone();
+                for _ in 0..passes {
+                    let mut incoming: Vec<(WindowId, CGRect)> = Vec::new();
+                    for i in 1..=count + 1 {
+                        match rng.below(3) {
+                            0 => continue,
+                            1 => incoming.push((wid(i), rng.on_screen())),
+                            _ => {
+                                if let Some(&(_, current)) = expected.iter().find(|(w, _)| *w == wid(i)) {
+                                    incoming.push((wid(i), current));
+                                }
+                            }
+                        }
+                    }
+                    let mut expected_changed = false;
+                    for (window, frame) in &incoming {
+                        match expected.iter_mut().find(|(w, _)| w == window) {
+                            Some(current) => {
+                                expected_changed |= !current.1.same_as(*frame);
+                                current.1 = *frame;
+                            }
+                            None => {
+                                expected.push((*window, *frame));
+                                expected_changed = true;
+                            }
+                        }
+                    }
+                    let changed = merge_final_frames(&mut flight.final_frames, incoming);
+                    assert_eq!(changed, expected_changed, "seed 63");
+                    let reapply =
+                        reapply_set(flight.frames_applied, flight.started.is_some(), changed, &flight.final_frames);
+                    if changed {
+                        re_requested += 1;
+                        assert_eq!(reapply, Some(expected.clone()), "seed 63: merged set, latest wins");
+                    } else {
+                        assert_eq!(reapply, None, "seed 63: nothing changed, nothing re-requested");
+                    }
+                }
+            }
+            assert!(re_requested > RUNS / 2, "generator sanity: {re_requested} re-requests");
+        }
+    }
+
+    /// Change 4 of `.kiro/specs/exit-entrance-animation-regressions`: an exit is a pending tile
+    /// the next layout pass composes with the survivors, never a flight of its own. Unclaimed
+    /// after one coalesce window, it is dropped.
+    mod pending_exits {
+        use super::preservation::{DISPLAY, Gen, RUNS};
+        use super::*;
+        use crate::ui::window_snapshot::{SnapshotCache, test_snapshot};
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn exit(idx: u32, frame: CGRect, floating: bool, now: Instant) -> PendingExit {
+            pending_exit(wid(idx), frame, Some(test_snapshot(frame.size)), floating, DISPLAY, now)
+                .expect("on screen with a picture")
+        }
+
+        /// One `start` within the coalesce window takes the exit as a ghost tile: the window's
+        /// frame shrinking to zero width, its own group, front of its band, no final frame. The
+        /// next pass finds nothing.
+        #[test]
+        fn a_pending_exit_is_composed_by_exactly_one_pass_then_gone() {
+            let frame = rect(867.0, 32.0, 859.0, 1081.0);
+            let now = Instant::now();
+            let mut pending = vec![exit(1, frame, false, now)];
+
+            let later = now + COALESCE_WINDOW / 2;
+            let tiles = claim_exits(&mut pending, later, DISPLAY);
+            assert_eq!(tiles.len(), 1);
+            assert_eq!(tiles[0].window, wid(1));
+            assert_eq!(tiles[0].from, to_overlay_space(frame, DISPLAY));
+            assert_eq!(tiles[0].to, to_overlay_space(exit_to(frame), DISPLAY));
+            assert_eq!(tiles[0].to.size.width, 0.0);
+            assert_eq!(tiles[0].server_order, Some(0));
+            assert!(!tiles[0].floating && !tiles[0].companion && !tiles[0].focused);
+            assert!(pending.is_empty(), "composed once, then gone");
+
+            assert!(claim_exits(&mut pending, later, DISPLAY).is_empty(), "never a second flight");
+        }
+
+        /// No pass within the coalesce window (a floating close, or no survivors): the exit is
+        /// dropped, so nothing is composed and no overlay goes up for it.
+        #[test]
+        fn an_expired_exit_is_dropped_without_a_flight() {
+            let frame = rect(224.0, 95.0, 1280.0, 960.0);
+            let now = Instant::now();
+            let mut pending = vec![exit(1, frame, true, now)];
+            assert!(!pending[0].claimable(now + COALESCE_WINDOW), "expires at the window's end");
+            let tiles = claim_exits(&mut pending, now + COALESCE_WINDOW, DISPLAY);
+            assert!(tiles.is_empty());
+            assert!(pending.is_empty(), "dropped, not kept for a later pass");
+        }
+
+        /// Property: over random claim times and mixes of fresh and stale exits, a pass composes
+        /// exactly the unexpired ones, empties the queue, and no exit is ever composed twice.
+        #[test]
+        fn each_exit_is_composed_at_most_once_and_only_before_it_expires() {
+            let mut rng = Gen(71);
+            let mut composed = 0usize;
+            for _ in 0..RUNS {
+                let now = Instant::now();
+                let count = rng.below(4) as u32 + 1;
+                let mut expected = 0usize;
+                let mut pending = Vec::new();
+                let claim_at = now + Duration::from_millis(rng.below(2 * COALESCE_WINDOW.as_millis() as u64));
+                for i in 1..=count {
+                    // Closed somewhere in the last coalesce window.
+                    let closed = now - Duration::from_millis(rng.below(COALESCE_WINDOW.as_millis() as u64));
+                    let exit = exit(i, rng.on_screen(), rng.coin(), closed);
+                    if claim_at < closed + COALESCE_WINDOW {
+                        expected += 1;
+                    }
+                    pending.push(exit);
+                }
+                let tiles = claim_exits(&mut pending, claim_at, DISPLAY);
+                assert_eq!(tiles.len(), expected, "seed 71: only unexpired exits are composed");
+                assert!(pending.is_empty(), "seed 71: the queue is emptied either way");
+                assert!(claim_exits(&mut pending, claim_at, DISPLAY).is_empty(), "seed 71: never twice");
+                for tile in &tiles {
+                    assert_eq!(tile.to.size.width, 0.0, "seed 71: shrinks to zero width");
+                    assert_eq!(tile.to.origin, tile.from.origin, "seed 71: at its own left edge");
+                    assert_eq!(tile.server_order, Some(0));
+                }
+                composed += tiles.len();
+            }
+            assert!(composed > RUNS / 4, "generator sanity: {composed} composed");
+        }
+
+        /// P-3.9 through the exit path: a window closing from a park or from off the strip, or
+        /// with no usable picture, never becomes a pending exit. An on-screen close with a
+        /// picture does.
+        #[test]
+        fn a_park_or_pictureless_close_never_becomes_a_pending_exit() {
+            let mut rng = Gen(72);
+            let now = Instant::now();
+            for _ in 0..RUNS {
+                let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
+                let park = rng.park(size);
+                assert!(
+                    pending_exit(wid(1), park, Some(test_snapshot(size)), rng.coin(), DISPLAY, now)
+                        .is_none(),
+                    "seed 72: park {park:?}"
+                );
+                let off = rect(DISPLAY.size.width + rng.pt(1.0, 9000.0), 32.0, size.width, size.height);
+                assert!(
+                    pending_exit(wid(1), off, Some(test_snapshot(size)), false, DISPLAY, now).is_none(),
+                    "seed 72: off strip {off:?}"
+                );
+                let on = rng.on_screen();
+                assert!(
+                    pending_exit(wid(1), on, None, false, DISPLAY, now).is_none(),
+                    "seed 72: no picture {on:?}"
+                );
+                let exit = pending_exit(wid(1), on, Some(test_snapshot(on.size)), false, DISPLAY, now)
+                    .expect("on screen with a picture");
+                assert_eq!(exit.frame, on);
+                assert_eq!(exit.expires, now + COALESCE_WINDOW);
+            }
+        }
+
+        /// P-3.10 with the clone where it now lives: `ForgetWindow` after `AnimateExit` empties the
+        /// cache entry while the pending exit keeps its own usable picture.
+        #[test]
+        fn forgetting_the_window_leaves_the_pending_exits_picture_usable() {
+            let frame = rect(867.0, 32.0, 859.0, 1081.0);
+            let now = Instant::now();
+            let mut cache: SnapshotCache = SnapshotCache::new();
+            cache.insert(wid(1), test_snapshot(frame.size));
+
+            let exit = pending_exit(wid(1), frame, cache.usable(wid(1)).cloned(), false, DISPLAY, now)
+                .expect("cached picture");
+            cache.forget(wid(1));
+
+            assert!(cache.usable(wid(1)).is_none(), "the entry is gone");
+            assert!(exit.snapshot.is_usable());
+            assert!(exit.snapshot.fits(frame.size));
+            let tile = exit.tile(DISPLAY);
+            assert!(tile.snapshot.fits(frame.size), "the ghost draws from the held clone");
+        }
+    }
+
+    /// Fix checking for Change 6 (bugfix.md 1.8, 2.8, 2.10): a pass flies only when something
+    /// drawable moves, a ghost was drained, or a flight is already running. Each case composes
+    /// the tiles the way `start` and `start_strip` do and feeds the real `is_moving` verdict in.
+    mod still_passes {
+        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::*;
+        use crate::ui::window_snapshot::test_snapshot;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn moving_drawable(tiles: &[OverlayTile]) -> bool {
+            tiles.iter().any(|tile| is_moving(tile.from, tile.to))
+        }
+
+        /// 1.8: Zoom opens over the strip. The new window has no picture, so it is an entrance
+        /// and not a tile; every strip window is a still request. Nothing drawable moves, so the
+        /// window is placed in place and no overlay goes up.
+        #[test]
+        fn a_floating_open_over_a_still_strip_does_not_fly() {
+            let s1 = rect(0.0, 32.0, 860.0, 1081.0);
+            let s2 = rect(867.0, 32.0, 859.0, 1081.0);
+            let tiles = vec![
+                stacked(wid(1), s1, s1, Some(1), false),
+                stacked(wid(2), s2, s2, Some(2), false),
+            ];
+            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
+            let (entrance, waiting) = entrance_reservation(wid(3), zoom, true);
+            assert_eq!(entrance.window, wid(3));
+            assert!(waiting.is_some(), "the entrance is reserved but never drawn here");
+            assert!(!worth_flying(moving_drawable(&tiles), 0, false));
+        }
+
+        /// A Terminal opening beside a Kiro column: the neighbour is pushed aside, so the pass
+        /// flies as a hold for the entrance.
+        #[test]
+        fn a_strip_open_that_moves_a_neighbour_flies() {
+            let before = rect(0.0, 32.0, 1720.0, 1081.0);
+            let after = rect(0.0, 32.0, 860.0, 1081.0);
+            let tiles = vec![stacked(wid(1), before, after, Some(1), false)];
+            let (_, waiting) = entrance_reservation(wid(2), rect(867.0, 32.0, 859.0, 1081.0), false);
+            assert!(waiting.is_some());
+            assert!(worth_flying(moving_drawable(&tiles), 0, false));
+        }
+
+        /// A strip close whose survivors stand still (the closed column was at the end): the
+        /// drained ghost alone is worth the flight.
+        #[test]
+        fn a_strip_close_flies_on_the_drained_exit_alone() {
+            let s1 = rect(0.0, 32.0, 860.0, 1081.0);
+            let closed = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut tiles = vec![stacked(wid(1), s1, s1, Some(1), false)];
+            let now = Instant::now();
+            let mut pending = vec![
+                pending_exit(wid(2), closed, Some(test_snapshot(closed.size)), false, DISPLAY, now)
+                    .expect("on screen with a picture"),
+            ];
+            let exits = claim_exits(&mut pending, now, DISPLAY);
+            let drained = exits.len();
+            tiles.extend(exits);
+            assert_eq!(drained, 1);
+            assert!(worth_flying(moving_drawable(&tiles), drained, false));
+            // The ghost itself is a moving tile, so the strip path's empty guard never fires.
+            assert!(moving_drawable(&tiles));
+        }
+
+        /// A pan translates every unpinned window by the viewport's travel.
+        #[test]
+        fn a_pan_flies() {
+            let frame = rect(867.0, 32.0, 859.0, 1081.0);
+            let (from, to) =
+                strip_travel(frame, CGPoint::new(0.0, 0.0), CGPoint::new(867.0, 0.0), false);
+            let tiles = vec![stacked(wid(1), from, to, Some(1), false)];
+            assert!(worth_flying(moving_drawable(&tiles), 0, false));
+        }
+
+        /// A still-only pass arriving while a flight runs still merges: its destinations belong to
+        /// the flight, and placing them now would yank windows out from under the overlay.
+        #[test]
+        fn a_still_pass_joining_a_running_flight_flies() {
+            let s1 = rect(0.0, 32.0, 860.0, 1081.0);
+            let tiles = vec![stacked(wid(1), s1, s1, Some(1), false)];
+            assert!(worth_flying(moving_drawable(&tiles), 0, true));
+            assert!(worth_flying(false, 0, true), "even with nothing drawable at all");
+        }
+
+        /// Property (P-3.3): over random still and moving mixes, any moving tile is enough to
+        /// fly, and a pass is grounded only when every tile stands still with no ghost and no
+        /// flight running.
+        #[test]
+        fn any_moving_tile_is_enough_to_fly() {
+            let mut rng = Gen(81);
+            let mut grounded = 0usize;
+            for _ in 0..RUNS {
+                let count = rng.below(4) as usize + 1;
+                // Half the passes are still-only, so the grounded branch is exercised often.
+                let all_still = rng.coin();
+                let mut tiles = Vec::with_capacity(count);
+                let mut any_moving = false;
+                for i in 0..count {
+                    let from = rng.on_screen();
+                    let to = if all_still || rng.coin() {
+                        from
+                    } else {
+                        rect(from.origin.x + rng.pt(1.0, 400.0), 32.0, from.size.width, from.size.height)
+                    };
+                    any_moving |= is_moving(from, to);
+                    tiles.push(stacked(wid(i as u32 + 1), from, to, Some(i), rng.coin()));
+                }
+                let exits = rng.below(2) as usize;
+                let running = rng.coin();
+                let flies = worth_flying(moving_drawable(&tiles), exits, running);
+                assert_eq!(flies, any_moving || exits > 0 || running, "seed 81");
+                if !flies {
+                    grounded += 1;
+                }
+            }
+            assert!(grounded > RUNS / 20, "generator sanity: {grounded} grounded");
+        }
+    }
+
     #[test]
     fn overlay_space_subtracts_the_overlay_origin() {
         // The real case: a display frame inset by a 32pt menu bar. A window at y = 32 must land at
@@ -2595,7 +6106,10 @@ mod tests {
             entrances: Vec::new(),
             awaiting: Vec::new(),
             hold_deadline: None,
-            destination_refreshed: 0,
+            destination_refreshed: false,
+            refresh_targets: Vec::new(),
+            harvested: HashSet::new(),
+            focus: None,
             _clock: None,
         };
         assert_eq!(running.progress(), 1.0);
@@ -2614,7 +6128,10 @@ mod tests {
             entrances: Vec::new(),
             awaiting: Vec::new(),
             hold_deadline: None,
-            destination_refreshed: 0,
+            destination_refreshed: false,
+            refresh_targets: Vec::new(),
+            harvested: HashSet::new(),
+            focus: None,
             _clock: None,
         };
         assert!(running.progress() < 0.2, "just started");
@@ -2629,12 +6146,274 @@ mod tests {
             entrances: Vec::new(),
             awaiting: Vec::new(),
             hold_deadline: None,
-            destination_refreshed: 0,
+            destination_refreshed: false,
+            refresh_targets: Vec::new(),
+            harvested: HashSet::new(),
+            focus: None,
             _clock: None,
         };
         // Clamped rather than allowed past 1.0, since the easing would otherwise overshoot the
         // target position when a frame arrives late.
         assert_eq!(finished.progress(), 1.0);
         assert!(finished.is_done());
+    }
+
+    /// A pass merging into a flight moves what it did not compose too, so the flight ends where
+    /// the strip ends: reserved entrances take the pass's frame, tiles the pass names only by
+    /// frame are retargeted, and exit ghosts ride a strip movement's travel. The 3:27:20 tear:
+    /// an open (`no_snapshot=1`) merged with a pan 56ms later; 22 survivors scrolled 574pt, the
+    /// newcomer and the ghost did not. See "Mid-flight passes" in `docs/animation-smoothness.md`.
+    mod rigid_strip {
+        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::*;
+        use crate::ui::window_snapshot::test_snapshot;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        /// The display the 3:27:20 flight was on: an external at a non-zero origin, so overlay
+        /// space and display space differ and a retarget that forgot the conversion shows.
+        const EXTERNAL: CGRect = CGRect {
+            origin: CGPoint { x: 1728.0, y: -300.0 },
+            size: CGSize { width: 3008.0, height: 1692.0 },
+        };
+
+        fn ghost(window: WindowId, closed_at: CGRect) -> OverlayTile {
+            let exit = PendingExit {
+                window,
+                frame: closed_at,
+                snapshot: test_snapshot(closed_at.size),
+                floating: false,
+                expires: Instant::now() + COALESCE_WINDOW,
+            };
+            exit.tile(EXTERNAL)
+        }
+
+        fn shifted(frame: CGRect, delta: CGPoint) -> CGRect {
+            CGRect::new(
+                CGPoint::new(frame.origin.x + delta.x, frame.origin.y + delta.y),
+                frame.size,
+            )
+        }
+
+        /// An entrance with a frame in the later pass takes it, converted to overlay space; one
+        /// the pass did not place keeps its reservation; one already at the frame is not counted.
+        #[test]
+        fn a_later_pass_retargets_a_reserved_entrance() {
+            let slot = rect(EXTERNAL.origin.x + 867.0, EXTERNAL.origin.y + 32.0, 859.0, 1081.0);
+            let pan = CGPoint::new(-574.0, 0.0);
+            let (newcomer, _) =
+                entrance_reservation(wid(51462), to_overlay_space(slot, EXTERNAL), false);
+            let (untouched, _) = entrance_reservation(
+                wid(51463),
+                to_overlay_space(rect(2000.0, 32.0, 400.0, 1081.0), EXTERNAL),
+                false,
+            );
+            let mut entrances = vec![newcomer, untouched.clone()];
+            let frames = vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0)), (wid(51462), shifted(slot, pan))];
+
+            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 1);
+            assert_eq!(entrances[0].to, to_overlay_space(shifted(slot, pan), EXTERNAL));
+            assert_eq!(entrances[1].to, untouched.to, "no frame for it: left alone");
+            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 0, "already there");
+            // The tile it becomes flies to the new slot.
+            let tile = entrance_tile(&entrances[0], &test_snapshot(slot.size));
+            assert_eq!(tile.to, to_overlay_space(shifted(slot, pan), EXTERNAL));
+            assert_eq!(tile.from, entrance_from(tile.to));
+        }
+
+        /// A flight tile the pass names by frame but not by tile (a strip pass with no usable
+        /// picture for it, `missing`) is retargeted to the frame; tiles the pass composes, tiles
+        /// with no frame in the pass, companions and ghosts are not.
+        #[test]
+        fn a_tile_carried_by_frames_but_not_tiles_is_retargeted() {
+            let a = rect(EXTERNAL.origin.x + 4.0, 32.0, 859.0, 1081.0);
+            let b = rect(EXTERNAL.origin.x + 867.0, 32.0, 859.0, 1081.0);
+            let c = rect(EXTERNAL.origin.x + 1730.0, 32.0, 859.0, 1081.0);
+            let pan = CGPoint::new(-574.0, 0.0);
+            let tile = |w: u32, f: CGRect| {
+                stacked(wid(w), to_overlay_space(f, EXTERNAL), to_overlay_space(f, EXTERNAL), Some(0), false)
+            };
+            let mut companion = tile(9, a);
+            companion.companion = true;
+            let flight = vec![tile(1, a), tile(2, b), tile(3, c), companion, ghost(wid(4), c)];
+            // The pass composes 1 and names 2 by frame; 3 is not in it; the companion and the
+            // ghost have frames in it (they never do in life) to prove they are skipped.
+            let pass = vec![stacked(
+                wid(1),
+                to_overlay_space(a, EXTERNAL),
+                to_overlay_space(shifted(a, pan), EXTERNAL),
+                Some(0),
+                false,
+            )];
+            let frames = vec![
+                (wid(1), shifted(a, pan)),
+                (wid(2), shifted(b, pan)),
+                (wid(9), shifted(a, pan)),
+                (wid(4), shifted(c, pan)),
+            ];
+
+            let retargets = retargets_from_frames(&flight, &pass, &frames, EXTERNAL);
+            assert_eq!(retargets.len(), 1);
+            let retarget = &retargets[0];
+            assert_eq!(retarget.window, wid(2));
+            assert_eq!(retarget.to, to_overlay_space(shifted(b, pan), EXTERNAL));
+            assert_eq!(retarget.from, flight[1].from, "keeps its start");
+            assert_eq!(retarget.snapshot.coverage, flight[1].snapshot.coverage, "and its picture");
+
+            // Fed to the merge, it is a retarget, not a join, and lands the frame.
+            let mut running = super::render_stability_fix::flight(Some(Instant::now()));
+            running.tiles = flight.clone();
+            let mut pass = pass;
+            pass.extend(retargets);
+            let outcomes = running.merge_pass(pass, None);
+            assert_eq!(outcomes, vec![(wid(1), Admitted::Retargeted), (wid(2), Admitted::Retargeted)]);
+            let two = running.tiles.iter().find(|t| t.window == wid(2)).unwrap();
+            assert_eq!(two.to, to_overlay_space(shifted(b, pan), EXTERNAL));
+            assert_eq!(running.tiles.len(), 5, "nothing joined");
+        }
+
+        /// A strip movement carries the flight's ghosts by its travel: `to` moves, `from` does
+        /// not, nothing else is touched, and a still pan moves nothing.
+        #[test]
+        fn ghosts_ride_the_pan_and_nothing_else_does() {
+            let closed_at = rect(EXTERNAL.origin.x + 867.0, 32.0, 859.0, 1081.0);
+            let column = rect(EXTERNAL.origin.x + 4.0, 32.0, 859.0, 1081.0);
+            let mut tiles = vec![
+                stacked(wid(1), to_overlay_space(column, EXTERNAL), to_overlay_space(column, EXTERNAL), Some(1), false),
+                ghost(wid(2), closed_at),
+            ];
+            let before: Vec<(CGRect, CGRect)> = tiles.iter().map(|t| (t.from, t.to)).collect();
+            let delta = strip_pan_travel(CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
+            assert_eq!(delta, CGPoint::new(-574.0, 0.0));
+
+            assert_eq!(shift_ghosts(&mut tiles, delta), vec![wid(2)]);
+            assert!(tiles[1].ghost);
+            assert_eq!(tiles[1].from, before[1].0, "the ghost starts where it was");
+            assert_eq!(tiles[1].to, shifted(before[1].1, delta));
+            assert_eq!(tiles[1].to.size.width, 0.0, "still shrinking to nothing");
+            assert_eq!((tiles[0].from, tiles[0].to), before[0], "the survivor is the pass's job");
+
+            assert!(shift_ghosts(&mut tiles, CGPoint::new(0.0, 0.0)).is_empty());
+            assert_eq!(tiles[1].to, shifted(before[1].1, delta), "a still pan moves nothing");
+        }
+
+        /// The exit tile is the only ghost; nothing else composed carries the flag.
+        #[test]
+        fn only_an_exit_tile_is_a_ghost() {
+            let frame = rect(EXTERNAL.origin.x + 867.0, 32.0, 859.0, 1081.0);
+            assert!(ghost(wid(1), frame).ghost);
+            let (entrance, _) = entrance_reservation(wid(2), frame, false);
+            assert!(!entrance_tile(&entrance, &test_snapshot(frame.size)).ghost);
+            assert!(!stacked(wid(3), frame, frame, None, false).ghost);
+        }
+
+        /// Property (seed 111, 200 runs). A per-window pass composes a flight with survivors, a
+        /// reserved entrance and a ghost; a random strip pan then merges into it. Afterwards
+        /// every non-companion, non-ghost tile with a final frame in the pan ends at that frame
+        /// in overlay space, every entrance does too, and every ghost's destination moved by
+        /// exactly the pan's travel.
+        #[test]
+        fn after_a_merged_pan_everything_ends_where_the_strip_ends() {
+            let mut rng = Gen(111);
+            for run in 0..RUNS {
+                let display = if run % 2 == 0 { DISPLAY } else { EXTERNAL };
+                let count = 1 + rng.below(5) as u32;
+                let column = |i: u32, rng: &mut Gen| {
+                    let w = rng.pt(400.0, 1200.0);
+                    rect(display.origin.x + 4.0 + i as f64 * 870.0, display.origin.y + 32.0, w, 1081.0)
+                };
+                // Survivors: tiles standing at their columns. Some have no picture at pan time.
+                let mut flight: Vec<OverlayTile> = Vec::new();
+                let mut frames_before: Vec<(WindowId, CGRect)> = Vec::new();
+                for i in 0..count {
+                    let f = column(i, &mut rng);
+                    flight.push(stacked(
+                        wid(i + 1),
+                        to_overlay_space(f, display),
+                        to_overlay_space(f, display),
+                        Some(i as usize),
+                        false,
+                    ));
+                    frames_before.push((wid(i + 1), f));
+                }
+                let newcomer = wid(100);
+                let slot = column(count, &mut rng);
+                let (entrance, waiting) =
+                    entrance_reservation(newcomer, to_overlay_space(slot, display), false);
+                frames_before.push((newcomer, slot));
+                let closed_at = column(count + 1, &mut rng);
+                let mut ghost_tile = ghost(wid(200), closed_at);
+                ghost_tile.from = to_overlay_space(closed_at, display);
+                ghost_tile.to = to_overlay_space(exit_to(closed_at), display);
+                flight.push(ghost_tile);
+                let mut running = super::render_stability_fix::flight(Some(Instant::now()));
+                running.tiles = flight;
+                running.final_frames = frames_before.clone();
+                running.entrances.push(entrance);
+                running.awaiting.extend(waiting);
+
+                // The pan: every window's frame moves by `delta`; the pass composes the windows
+                // with a picture (a random subset of the survivors, never the newcomer).
+                let delta = CGPoint::new(rng.pt(-900.0, 900.0), if rng.coin() { 0.0 } else { rng.pt(-200.0, 200.0) });
+                let from_offset = CGPoint::new(delta.x, delta.y);
+                let to_offset = CGPoint::new(0.0, 0.0);
+                assert_eq!(strip_pan_travel(from_offset, to_offset), delta, "seed 111 run {run}");
+                let frames_after: Vec<(WindowId, CGRect)> =
+                    frames_before.iter().map(|(w, f)| (*w, shifted(*f, delta))).collect();
+                let mut pass: Vec<OverlayTile> = Vec::new();
+                for (w, f) in &frames_after {
+                    if *w == newcomer || rng.coin() {
+                        continue;
+                    }
+                    let strip_frame = CGRect::new(
+                        CGPoint::new(f.origin.x - display.origin.x, f.origin.y - display.origin.y),
+                        f.size,
+                    );
+                    let (from, to) = strip_travel(strip_frame, from_offset, to_offset, false);
+                    pass.push(stacked(*w, from, to, Some(0), false));
+                }
+
+                // `begin_group`'s merge, in order.
+                retarget_entrances(&mut running.entrances, &frames_after, display);
+                let mut pass = pass;
+                pass.extend(retargets_from_frames(&running.tiles, &pass, &frames_after, display));
+                let ghosts_before: Vec<(WindowId, CGRect)> =
+                    running.tiles.iter().filter(|t| t.ghost).map(|t| (t.window, t.to)).collect();
+                let shifted_ghosts = shift_ghosts(&mut running.tiles, delta);
+                merge_final_frames(&mut running.final_frames, frames_after.clone());
+                running.merge_pass(pass, None);
+
+                for tile in running.tiles.iter().filter(|t| !t.companion && !t.ghost) {
+                    let (_, frame) = frames_after
+                        .iter()
+                        .find(|(w, _)| *w == tile.window)
+                        .unwrap_or_else(|| panic!("seed 111 run {run}: tile with no frame"));
+                    assert!(
+                        tile.to.same_as(to_overlay_space(*frame, display)),
+                        "seed 111 run {run}: {:?} ends at {:?}, strip at {:?}",
+                        tile.window,
+                        tile.to,
+                        to_overlay_space(*frame, display)
+                    );
+                }
+                for entrance in &running.entrances {
+                    assert!(
+                        entrance.to.same_as(to_overlay_space(shifted(slot, delta), display)),
+                        "seed 111 run {run}: entrance at {:?}",
+                        entrance.to
+                    );
+                }
+                assert_eq!(shifted_ghosts, vec![wid(200)], "seed 111 run {run}");
+                for (window, to) in ghosts_before {
+                    let ghost = running.tiles.iter().find(|t| t.window == window).unwrap();
+                    assert_eq!(ghost.to.origin.x, to.origin.x + delta.x, "seed 111 run {run}");
+                    assert_eq!(ghost.to.origin.y, to.origin.y + delta.y, "seed 111 run {run}");
+                    assert_eq!(ghost.to.size, to.size, "seed 111 run {run}");
+                }
+                assert_eq!(running.tiles.len(), count as usize + 1, "seed 111 run {run}: nothing joined");
+            }
+        }
     }
 }

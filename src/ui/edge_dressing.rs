@@ -44,8 +44,9 @@ const MIN_MEAN_ALPHA: f64 = 0.5;
 /// four corner boxes where the hairline curves.
 ///
 /// One function for both uses — cropping the harvest in pixels and placing the sublayers in points —
-/// so the two can never disagree about what goes where. Rects can be empty when the window is small;
-/// callers skip those.
+/// so the two can never disagree about what goes where. Rects can be empty when the window is small:
+/// the harvest skips those, the overlay still places a zero-size layer for each so a tile's piece
+/// set does not depend on its size (see `docs/animation-smoothness.md`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DressingLayout {
     /// Top, bottom, left, right, in that order.
@@ -207,13 +208,39 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }
-    // One ring beyond the bounds, so the capture carries the outer dark outline too (see
-    // [`boundary_layout`]). The margin holds the first ring of shadow as well, which the crops
-    // deliberately keep: it is what that pixel really looks like on screen.
-    let expanded = CGRect::new(
+    let framed = capture_ring_expanded(server_id, frame, scale)?;
+    harvest_from_capture(&framed, frame.size, scale)
+}
+
+/// The window rect grown by one ring on every side: what a framed capture has to cover so it
+/// carries the outer dark outline too (see [`boundary_layout`]). The margin holds the first ring
+/// of shadow as well, which the crops deliberately keep: it is what that pixel really looks like
+/// on screen.
+pub fn ring_expanded(frame: CGRect) -> CGRect {
+    CGRect::new(
         CGPoint::new(frame.origin.x - RING_PT, frame.origin.y - RING_PT),
         CGSize::new(frame.size.width + 2.0 * RING_PT, frame.size.height + 2.0 * RING_PT),
-    );
+    )
+}
+
+/// The picture's pixel rect inside a ring-expanded capture of `px_w` x `px_h` pixels: the
+/// window without the ring, which is what the tile draws.
+pub fn picture_within_ring(px_w: f64, px_h: f64, scale: f64) -> CGRect {
+    let ring = RING_PT * scale;
+    CGRect::new(
+        CGPoint::new(ring, ring),
+        CGSize::new((px_w - 2.0 * ring).max(0.0), (px_h - 2.0 * ring).max(0.0)),
+    )
+}
+
+/// One framed capture of the window plus its ring, or `None` when the window server returned an
+/// image of another size (the crops would not line up with the window rect).
+pub fn capture_ring_expanded(
+    server_id: WindowServerId,
+    frame: CGRect,
+    scale: f64,
+) -> Option<CFRetained<CGImage>> {
+    let expanded = ring_expanded(frame);
     #[allow(deprecated)]
     let framed = objc2_core_graphics::CGWindowListCreateImage(
         expanded,
@@ -223,15 +250,23 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
     )?;
     let px_w = CGImage::width(Some(&framed)) as f64;
     let px_h = CGImage::height(Some(&framed)) as f64;
-    // A capture of another size does not line up with the window rect, so the crops would be lies.
     if (px_w - expanded.size.width * scale).abs() > 2.0
         || (px_h - expanded.size.height * scale).abs() > 2.0
     {
         return None;
     }
+    Some(framed)
+}
+
+/// Crops the ring out of `framed`, a capture of the window expanded by one `RING_PT` on every
+/// side, at `scale` pixels per point. See "A grow holds, then reveals" in
+/// `docs/animation-smoothness.md`.
+pub fn harvest_from_capture(framed: &CGImage, frame: CGSize, scale: f64) -> Option<EdgeDressing> {
+    let px_w = CGImage::width(Some(framed)) as f64;
+    let px_h = CGImage::height(Some(framed)) as f64;
     // The clip hugs the dark outline's own rounded arc, one ring outside the window's corner.
-    let radius_px = (tile_corner_radius(frame.size) + RING_PT) * scale;
-    let layout = boundary_layout(frame.size)?;
+    let radius_px = (tile_corner_radius(frame) + RING_PT) * scale;
+    let layout = boundary_layout(frame)?;
     // Placement rects are in window coordinates (origin can be one ring negative); the capture's
     // origin is one ring before the window's, so crops shift by exactly that ring.
     let crop = |rect: CGRect| {
@@ -245,7 +280,7 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
     let mut alpha_samples = 0usize;
     let mut strips: [Option<CFRetained<CGImage>>; 4] = [None, None, None, None];
     for (slot, region) in strips.iter_mut().zip(layout.strips) {
-        let Some((image, alpha, samples)) = copy_region(&framed, px_w, px_h, crop(region), None)
+        let Some((image, alpha, samples)) = copy_region(framed, px_w, px_h, crop(region), None)
         else {
             continue;
         };
@@ -259,7 +294,7 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
     }
     let mut corners: [Option<CFRetained<CGImage>>; 4] = [None, None, None, None];
     for (slot, region) in corners.iter_mut().zip(layout.corners) {
-        *slot = copy_region(&framed, px_w, px_h, crop(region), Some(radius_px))
+        *slot = copy_region(framed, px_w, px_h, crop(region), Some(radius_px))
             .map(|(image, ..)| image);
     }
     Some(EdgeDressing { strips, corners })
@@ -406,7 +441,7 @@ mod tests {
     #[test]
     fn corners_swallow_the_whole_edge_of_a_window_smaller_than_two_corners() {
         // A 16x16 window cannot hold two 10pt corner boxes plus a run: corners clamp to half the
-        // side and the runs collapse to empty, which callers skip.
+        // side and the runs collapse to empty.
         let layout = dressing_layout(CGSize::new(16.0, 16.0), 1.0, 10.0).unwrap();
         assert_eq!(layout.strips[0].size.width, 0.0);
         assert_eq!(layout.corners[0], rect(0.0, 0.0, 8.0, 8.0));
@@ -482,5 +517,83 @@ mod tests {
         // on screen, the same staleness model as the picture cache itself.
         assert_eq!(dressing_after_insert(Some(1), None), Some(1));
         assert_eq!(dressing_after_insert::<u32>(None, None), None);
+    }
+
+    /// A `w` x `h` pixel image filled with one colour at `alpha`: what a framed capture of a flat
+    /// opaque window (or of nothing at all) looks like to the harvest.
+    fn flat_image(w: usize, h: usize, alpha: f64) -> CFRetained<CGImage> {
+        let space = CGColorSpace::new_device_rgb().unwrap();
+        // SAFETY: a fresh context; CG owns and frees the backing store with it.
+        let ctx = unsafe {
+            CGBitmapContextCreate(
+                std::ptr::null_mut(),
+                w,
+                h,
+                8,
+                0,
+                Some(&space),
+                CGImageAlphaInfo::PremultipliedLast.0,
+            )
+        };
+        let ctx = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(ctx).unwrap()) };
+        CGContext::set_rgb_fill_color(Some(&ctx), 0.2, 0.4, 0.6, alpha);
+        CGContext::fill_rect(Some(&ctx), rect(0.0, 0.0, w as f64, h as f64));
+        CGBitmapContextCreateImage(Some(&ctx)).unwrap()
+    }
+
+    fn px_size(image: &CGImage) -> (f64, f64) {
+        (CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
+    }
+
+    /// 2.4. The chase's one capture is the window plus one ring; the picture is the same capture
+    /// without the ring, at every scale.
+    #[test]
+    fn the_ring_expanded_capture_holds_the_picture_one_ring_in() {
+        let frame = rect(100.0, 50.0, 60.0, 40.0);
+        assert_eq!(ring_expanded(frame), rect(99.0, 49.0, 62.0, 42.0));
+        assert_eq!(picture_within_ring(62.0, 42.0, 1.0), rect(1.0, 1.0, 60.0, 40.0));
+        assert_eq!(picture_within_ring(124.0, 84.0, 2.0), rect(2.0, 2.0, 120.0, 80.0));
+        assert_eq!(picture_within_ring(2.0, 2.0, 1.0), rect(1.0, 1.0, 0.0, 0.0), "never negative");
+    }
+
+    /// 2.4. Harvesting from a ring-expanded capture cuts the eight pieces `boundary_layout`
+    /// prescribes for the window, in pixels: the same rects `harvest_edge_dressing` cuts from the
+    /// capture it takes itself.
+    #[test]
+    fn harvest_from_capture_cuts_the_boundary_layout_out_of_the_image() {
+        for scale in [1.0, 2.0] {
+            let frame = CGSize::new(60.0, 40.0);
+            let expanded = ring_expanded(rect(0.0, 0.0, frame.width, frame.height)).size;
+            let image = flat_image(
+                (expanded.width * scale) as usize,
+                (expanded.height * scale) as usize,
+                1.0,
+            );
+            let dressing = harvest_from_capture(&image, frame, scale).expect("an opaque edge");
+            let layout = boundary_layout(frame).unwrap();
+            for (piece, region) in dressing.strips.iter().zip(layout.strips) {
+                let piece = piece.as_ref().expect("every strip");
+                assert_eq!(
+                    px_size(piece),
+                    (region.size.width * scale, region.size.height * scale),
+                    "strip at {scale}x"
+                );
+            }
+            for (piece, region) in dressing.corners.iter().zip(layout.corners) {
+                let piece = piece.as_ref().expect("every corner");
+                assert_eq!(
+                    px_size(piece),
+                    (region.size.width * scale, region.size.height * scale),
+                    "corner at {scale}x"
+                );
+            }
+        }
+    }
+
+    /// A capture of a window that was not composited is transparent; the harvest rejects it.
+    #[test]
+    fn harvest_from_a_transparent_capture_is_rejected() {
+        let image = flat_image(62, 42, 0.0);
+        assert!(harvest_from_capture(&image, CGSize::new(60.0, 40.0), 1.0).is_none());
     }
 }
