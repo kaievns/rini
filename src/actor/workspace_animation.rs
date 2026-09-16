@@ -159,13 +159,6 @@ const REFRESH_DESTINATION_AT: f64 = 0.5;
 /// end-of-flight flicker.
 const REFRESH_APPLY_BEFORE: f64 = 0.6;
 
-/// How many windows to recapture mid-flight, each costing a frame. Two, because a focus change has
-/// two ends: the window being switched into needs its FOCUSED rendering, and the window being left
-/// needs its unfocused one — with one slot the departing tile kept its focused look for the whole
-/// flight, which read as two active windows side by side. Depth order picks exactly these two: the
-/// raise has made the destination frontmost, and the window being left was frontmost before it.
-const MAX_DESTINATION_CAPTURES: usize = 2;
-
 /// How long after an animation to recapture the bar.
 ///
 /// A bar composite measures 31ms median, so it cannot be paid at the start of a switch. Long enough after
@@ -173,22 +166,28 @@ const MAX_DESTINATION_CAPTURES: usize = 2;
 /// burst of switches only pays it once, at the end.
 const BAR_REFRESH_DELAY: Duration = Duration::from_millis(250);
 
-/// Which of `candidates` to recapture, frontmost first, capped at `max`.
+/// Which of `tiles` to recapture mid-flight: the two ends of a focus change, and nothing else.
 ///
-/// Frontmost first because the front window is the one being switched INTO, and the one whose picture
-/// matters most. Capped because each capture costs a frame.
-fn refresh_order(
-    candidates: &[(WindowId, u32)],
-    depths: &HashMap<u32, usize>,
-    on_screen: Option<&[u32]>,
-    max: usize,
+/// A focus change has two ends: the window being switched into needs its FOCUSED rendering, and
+/// the window being left needs its unfocused one — with only the destination recaptured the
+/// departing tile kept its focused look for the whole flight, reading as two active windows. Only
+/// those two, and only when focus moved: a translucent window's two captures differ by the
+/// wallpaper behind it, so recapturing whatever was frontmost cut those tiles on every flight,
+/// focus change or not (seen 2026-09-16 2:05, two Ghostty tiles on every strip pan).
+fn refresh_targets(
+    previous: Option<WindowId>,
+    current: Option<WindowId>,
+    tiles: &[WindowId],
 ) -> Vec<WindowId> {
-    let mut ordered: Vec<&(WindowId, u32)> = candidates
-        .iter()
-        .filter(|(_, wsid)| on_screen.is_none_or(|ids| ids.contains(wsid)))
-        .collect();
-    ordered.sort_by_key(|(_, wsid)| depths.get(wsid).copied().unwrap_or(usize::MAX));
-    ordered.into_iter().take(max).map(|(window, _)| *window).collect()
+    let Some(current) = current else { return Vec::new() };
+    if previous == Some(current) {
+        return Vec::new();
+    }
+    [Some(current), previous]
+        .into_iter()
+        .flatten()
+        .filter(|window| tiles.contains(window))
+        .collect()
 }
 
 /// The destination refresh's requests: exactly one ScreenCaptureKit target per wanted window that
@@ -1251,6 +1250,10 @@ pub struct WorkspaceAnimation {
     deferred_warm: Vec<SnapshotTarget>,
     /// Whether the desktop render was missing or stale at composition; re-rendered at `finish`.
     deferred_desktop: bool,
+    /// The focus the previous flight landed on. The mid-flight refresh recaptures only when the
+    /// current flight's focus differs (`refresh_targets`). Kept across a flight that names no
+    /// focus, which is a flight that did not move it.
+    last_focus: Option<WindowId>,
     /// Everything held that is a picture of one particular display.
     pictures: DisplayPictures,
     /// Fires once after an animation, to recapture the bar away from the critical path.
@@ -1285,6 +1288,7 @@ impl WorkspaceAnimation {
             last_animated: Vec::new(),
             deferred_warm: Vec::new(),
             deferred_desktop: false,
+            last_focus: None,
             pictures: DisplayPictures::default(),
             bar_refresh: None,
             reactor_tx: None,
@@ -1567,24 +1571,24 @@ impl WorkspaceAnimation {
     /// unfocused and snaps at the handover, and the departing window keeps its focused look for
     /// the whole flight, reading as two active windows.
     ///
+    /// Only the two ends of the focus change (`refresh_targets`): a flight that moves focus
+    /// nowhere, a strip pan say, recaptures nothing. No visibility filter: during a slide the
+    /// destination is mid-scroll and only partly on screen; a clipped capture is rejected by the
+    /// cache anyway.
+    ///
     /// One capture route only: the ScreenCaptureKit service, the same route `warm_windows` fills
     /// the cache from (`refresh_targets` in `refresh_requests`). Racing it against a framed
     /// SkyLight capture swapped the tile twice or three times per flight, since the two routes
     /// render a translucent window differently. See "Mid-flight passes" in
     /// `docs/animation-smoothness.md`.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
-        let candidates: Vec<(WindowId, u32)> =
-            tiles.iter().map(|(w, s, _)| (*w, s.as_u32())).collect();
-        if candidates.is_empty() {
+        let current = self.running.as_ref().and_then(|running| running.focus);
+        let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
+        let wanted = refresh_targets(self.last_focus, current, &windows);
+        if wanted.is_empty() {
             return;
         }
-        // No visibility filter here, unlike the pre-flight refresh. During a slide the destination is
-        // mid-scroll and only partly on screen, so requiring it to be fully visible skipped it entirely,
-        // which is why switching between adjacent windows still arrived unfocused. A clipped capture is
-        // rejected by the cache anyway.
-        let depths = crate::sys::window_server::front_to_back_depths();
-        let (wanted, requests) =
-            refresh_requests(tiles, &refresh_order(&candidates, &depths, None, MAX_DESTINATION_CAPTURES));
+        let (wanted, requests) = refresh_requests(tiles, &wanted);
         // Only this route's result may reach the tile; nothing else landing mid-flight does.
         if let Some(running) = self.running.as_mut() {
             running.refresh_targets = wanted.clone();
@@ -2883,7 +2887,14 @@ impl WorkspaceAnimation {
             overlay.release_tiles();
         }
         // Dropping the animation drops its timer, which stops the wakeups.
-        let harvested = self.running.take().map(|running| running.harvested).unwrap_or_default();
+        let (harvested, focus) = self
+            .running
+            .take()
+            .map(|running| (running.harvested, running.focus))
+            .unwrap_or_default();
+        if focus.is_some() {
+            self.last_focus = focus;
+        }
         self.coalesce = None;
         self.arm_bar_refresh();
 
@@ -3400,63 +3411,50 @@ mod tests {
             assert!(is_moving(frame, widened));
         }
 
-        fn depths(pairs: &[(u32, usize)]) -> HashMap<u32, usize> {
-            pairs.iter().copied().collect()
+        /// The mid-flight recapture is for a focus change and nothing else. Recapturing whatever was
+        /// frontmost cut a translucent window's tile on every flight: its two captures differ by
+        /// the wallpaper behind it (2026-09-16 2:05, two Ghostty tiles on every strip pan).
+        #[test]
+        fn refresh_targets_are_the_two_ends_of_a_focus_change() {
+            let tiles = [wid(1), wid(2), wid(3)];
+            // No change: a strip pan with focus where it was.
+            assert!(refresh_targets(Some(wid(1)), Some(wid(1)), &tiles).is_empty());
+            // No current focus: nothing to recapture towards.
+            assert!(refresh_targets(Some(wid(1)), None, &tiles).is_empty());
+            assert!(refresh_targets(None, None, &tiles).is_empty());
+            // A change between two tiles: both, destination first.
+            assert_eq!(refresh_targets(Some(wid(1)), Some(wid(2)), &tiles), vec![wid(2), wid(1)]);
+            // Only one end is in the flight: only that one.
+            assert_eq!(refresh_targets(Some(wid(9)), Some(wid(2)), &tiles), vec![wid(2)]);
+            assert_eq!(refresh_targets(Some(wid(1)), Some(wid(9)), &tiles), vec![wid(1)]);
+            // First flight ever: the destination alone.
+            assert_eq!(refresh_targets(None, Some(wid(3)), &tiles), vec![wid(3)]);
+            // Neither end tiled: nothing, whatever else is flying.
+            assert!(refresh_targets(Some(wid(8)), Some(wid(9)), &tiles).is_empty());
         }
 
-        /// Frontmost first, because the front window is the one being switched into and the only one
-        /// whose unfocused rendering is worth paying a capture to correct.
+        /// `refresh_destination_among` end to end minus the service call: a strip pan that leaves
+        /// focus where it was requests no capture at all; a focus change requests exactly the
+        /// two ends, one ScreenCaptureKit target each.
         #[test]
-        fn orders_frontmost_first() {
-            let candidates = [(wid(10), 10), (wid(20), 20), (wid(30), 30)];
-            let order = refresh_order(
-                &candidates,
-                &depths(&[(10, 5), (20, 0), (30, 2)]),
-                Some(&[10, 20, 30]),
-                3,
-            );
-            assert_eq!(order, vec![wid(20), wid(30), wid(10)]);
-        }
+        fn a_strip_pan_with_unchanged_focus_requests_no_refresh() {
+            let size = CGSize::new(859.0, 1081.0);
+            let tiles = [
+                (wid(1), WindowServerId::new(10), size),
+                (wid(2), WindowServerId::new(20), size),
+                (wid(3), WindowServerId::new(30), size),
+            ];
+            let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
 
-        #[test]
-        fn takes_only_as_many_as_asked_for() {
-            // Each capture costs a frame, so the cap is what keeps the hitch bounded.
-            let candidates = [(wid(10), 10), (wid(20), 20), (wid(30), 30)];
-            let order =
-                refresh_order(&candidates, &depths(&[(10, 2), (20, 0), (30, 1)]), Some(&[10, 20, 30]), 1);
-            assert_eq!(order, vec![wid(20)]);
-        }
+            let pan = refresh_targets(Some(wid(2)), Some(wid(2)), &windows);
+            assert!(pan.is_empty());
+            assert!(refresh_requests(&tiles, &pan).1.is_empty(), "nothing is captured");
 
-        #[test]
-        fn skips_windows_that_are_not_on_screen() {
-            // SkyLight reads the framebuffer, so capturing one of these would return a sliver and be
-            // rejected anyway, after paying for it.
-            let candidates = [(wid(10), 10), (wid(20), 20)];
-            let order = refresh_order(&candidates, &depths(&[(10, 0), (20, 1)]), Some(&[20]), 2);
-            assert_eq!(order, vec![wid(20)]);
-        }
-
-        /// The destination path passes None, because during a horizontal slide the window being switched
-        /// into is mid-scroll and would fail a visibility test that it should not be subject to.
-        #[test]
-        fn no_filter_considers_everything() {
-            let candidates = [(wid(10), 10), (wid(20), 20)];
-            let order = refresh_order(&candidates, &depths(&[(10, 1), (20, 0)]), None, 2);
-            assert_eq!(order, vec![wid(20), wid(10)]);
-        }
-
-        #[test]
-        fn is_empty_when_nothing_is_on_screen() {
-            let candidates = [(wid(10), 10)];
-            assert!(refresh_order(&candidates, &depths(&[(10, 0)]), Some(&[]), 2).is_empty());
-        }
-
-        #[test]
-        fn a_window_with_no_known_depth_sorts_last_rather_than_first() {
-            // Unknown depth must not outrank a window the window server actually reported as frontmost.
-            let candidates = [(wid(10), 10), (wid(20), 20)];
-            let order = refresh_order(&candidates, &depths(&[(20, 3)]), Some(&[10, 20]), 1);
-            assert_eq!(order, vec![wid(20)]);
+            let change = refresh_targets(Some(wid(2)), Some(wid(3)), &windows);
+            let (covered, requests) = refresh_requests(&tiles, &change);
+            assert_eq!(covered, vec![wid(3), wid(2)]);
+            let asked: Vec<u32> = requests.iter().map(|t| t.server_id.as_u32()).collect();
+            assert_eq!(asked, vec![30, 20], "exactly the two ends");
         }
     }
 
@@ -4837,7 +4835,8 @@ mod tests {
 
         /// P-3.6. Observed on unfixed code: sweeping progress 0 to 1, `take_refresh` fires at
         /// 0.00 and at 0.50, two per flight. The preserved part is the 0.5 slot: exactly one
-        /// refresh at or after the midpoint, with two windows recaptured.
+        /// refresh slot at or after the midpoint. The slot is taken whether or not it has targets;
+        /// what it recaptures is `refresh_targets`, at most the two ends of a focus change.
         #[test]
         fn one_destination_refresh_fires_at_the_midpoint() {
             let mut running = flight(Some(Instant::now()));
@@ -4849,7 +4848,7 @@ mod tests {
             assert_eq!(late, vec![0.5], "refreshes at or after the midpoint: {fired:?}");
             assert!(fired.len() <= 2, "more than the schedule allows: {fired:?}");
             assert_eq!(REFRESH_DESTINATION_AT, 0.5);
-            assert_eq!(MAX_DESTINATION_CAPTURES, 2);
+            assert!(refresh_targets(Some(wid(1)), Some(wid(2)), &[wid(1), wid(2), wid(3)]).len() <= 2);
             assert!(capture_work_allowed(FlightPhase::Moving, CaptureKind::Refresh));
             // A second sweep on the same flight fires nothing: the slots are spent.
             assert!(!(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)));

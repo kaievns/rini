@@ -2052,6 +2052,14 @@ impl Reactor {
     fn apply_event_outcome(&mut self, outcome: EventOutcome) {
         // Per event: what this event's regroup raises is only known to this event.
         self.regroup_raised.clear();
+        // Ahead of the layout events: `WindowRemoved` is queued in the same outcome, and the exit
+        // reads the floating flag from the layout engine. Exit before forget, as in the AX path.
+        for exit in outcome.window_exits {
+            self.send_window_exit(exit.window, exit.frame);
+            if let Some(tx) = &self.communication_manager.workspace_animation_tx {
+                _ = tx.send(crate::actor::workspace_animation::Event::ForgetWindow(exit.window));
+            }
+        }
         if !outcome.window_server_updates.is_empty() {
             self.update_partial_window_server_info(outcome.window_server_updates);
         }
@@ -4379,16 +4387,22 @@ impl Reactor {
     /// frame is read from it. Parked and off-screen windows are filtered by the actor's own
     /// visibility gate; this only filters what the actor cannot see — unmanaged and minimized.
     pub(crate) fn animate_window_exit(&self, wid: WindowId) {
-        if !self.config.settings.overlay_animations {
-            return;
-        }
         let Some(window) = self.state.windows.window(wid) else {
             return;
         };
         if !window.is_effectively_manageable() || window.info.is_minimized {
             return;
         }
-        let frame = window.frame_monotonic;
+        self.send_window_exit(wid, window.frame_monotonic);
+    }
+
+    /// The gate-free half of `animate_window_exit`, for callers that already checked the window
+    /// and captured its frame before removing it (`EventOutcome::window_exits`). Must run before
+    /// the layout engine forgets the window: the floating flag is read from it here.
+    fn send_window_exit(&self, wid: WindowId, frame: CGRect) {
+        if !self.config.settings.overlay_animations {
+            return;
+        }
         self.publish_animation_display_for(None);
         let Some(tx) = &self.communication_manager.workspace_animation_tx else {
             return;

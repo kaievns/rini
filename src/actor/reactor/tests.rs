@@ -6795,6 +6795,66 @@ fn a_destroyed_window_exits_before_it_is_forgotten() {
     assert!(reactor.state.windows.window(wid).is_none(), "the window state is still removed");
 }
 
+/// The window server reports a close ~15ms before AX does. That path promotes the disappearance
+/// to an immediate removal inside a workflow with no reactor, so the exit rides on the outcome:
+/// still exactly one `AnimateExit`, still ahead of `ForgetWindow`, and the late AX
+/// `WindowDestroyed` finds no window and adds nothing (seen 2026-09-16 2:05, wsid 79953).
+#[test]
+fn a_window_server_promoted_close_exits_once_before_it_is_forgotten() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = true;
+    reactor.config.settings.animate = true;
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    let wid = WindowId::new(1, 1);
+    let wsid = reactor.test_window_server_id(wid);
+    let last_frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
+
+    crate::sys::window_server::set_window_ordered_in_override(wsid, Some(false));
+    reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
+    crate::sys::window_server::set_window_ordered_in_override(wsid, None);
+    assert!(reactor.state.windows.window(wid).is_none(), "the promotion removes the window");
+
+    reactor.handle_event(Event::WindowDestroyed(wid));
+
+    let mut exits = Vec::new();
+    let mut forgotten_after_exit = false;
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        match event {
+            crate::actor::workspace_animation::Event::AnimateExit {
+                window,
+                frame,
+                floating,
+                ..
+            } => {
+                assert_eq!(window, wid);
+                exits.push((frame, floating));
+            }
+            crate::actor::workspace_animation::Event::ForgetWindow(window)
+                if window == wid && !forgotten_after_exit =>
+            {
+                forgotten_after_exit = !exits.is_empty();
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        exits,
+        vec![(last_frame, false)],
+        "one exit, from the promotion, with the frame captured before removal; the AX \
+         destruction that follows adds none"
+    );
+    assert!(forgotten_after_exit, "the cache must only be told to forget after the exit");
+}
+
 /// Change 3 of `.kiro/specs/exit-entrance-animation-regressions`: the exit carries the window's
 /// group, read from the layout engine while it still knows the window, so the ghost is banded
 /// with the floating tiles rather than drawn in front of the strip.

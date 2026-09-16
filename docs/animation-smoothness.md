@@ -167,9 +167,14 @@ flight), and every cut read as a flicker or a change of transparency:
 SkyLight and ScreenCaptureKit render a translucent window differently. On a
 resizing tile the cut also re-keyed the resize from the presented state,
 which staggered that tile against its neighbours. The destination refresh
-runs once per flight at 0.5 (`REFRESH_DESTINATION_AT`), two windows at most
-(`MAX_DESTINATION_CAPTURES`): the window being switched into and the one
-being left, so both land in their focus rendering. It asks ONE capture
+has one slot per flight, at 0.5 (`REFRESH_DESTINATION_AT`), and recaptures
+only on a focus change, only its two ends (`refresh_targets`, against the
+previous flight's `last_focus`): the window being switched into and the one
+being left, so both land in their focus rendering. A flight that moves
+focus nowhere recaptures nothing. It used to recapture the two frontmost
+tiles by depth on every flight; a translucent window's two captures differ
+by the wallpaper behind it, so that cut the two front Ghostty tiles at 0.55
+on every strip pan (log 2026-09-16 2:05). It asks ONE capture
 route, the ScreenCaptureKit service `warm_windows` fills the cache from
 (`refresh_requests`), and the swap requires the landing picture to come by
 the cached picture's route (`same_source`, from `SnapshotSource`). Racing
@@ -316,7 +321,12 @@ changes is how the picture maps onto it (`content_mode` in
   rini hears about it, so the exit draws the cached snapshot — the reactor
   sends `AnimateExit` with the last known frame BEFORE dropping the window's
   state, then `ForgetWindow`, in that order: `PendingExit` clones the picture
-  before the cache drops it. An exit is never a flight of its own. It waits
+  before the cache drops it. The window server's disappearance (`ordered_in
+  == false`, ~15ms ahead of the AX `WindowDestroyed`) removes the window
+  first, so that path queues the exit too, on the `EventOutcome`
+  (`window_exits`); the late AX event then finds no window and adds nothing
+  (log 2026-09-16 2:05: a promoted close composed `exits=0` and vanished
+  with a gap). An exit is never a flight of its own. It waits
   one `COALESCE_WINDOW` for the layout pass that reflows the survivors;
   `start` and `start_strip` drain it into that pass as a ghost tile (from the
   closed frame, the window's own group, front of its band via
@@ -487,7 +497,7 @@ companions reproduce whatever a border tool draws, or nothing.
 Staleness is accepted by construction ("a slightly stale moving image is not
 perceptible", `capture-overlay-research.md`) and the worst case — the
 destination's focus appearance — is patched mid-flight
-(`refresh_destination_among`, once per flight at 0.5, two windows). What that
+(`refresh_destination_among`, at 0.5, the two ends of a focus change). What that
 does not cover: content that changed while parked. Terminal output, chat,
 anything live — warmed only at animation end, focus change, and layout
 passes, so a window that repainted itself while hidden is stale until the
