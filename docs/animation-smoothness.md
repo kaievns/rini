@@ -90,12 +90,23 @@ The two entry points feed the same `begin_group`:
   A pass where nothing drawable moves, drains no exit, and joins no flight
   is not flown (`worth_flying`): its windows are placed directly, no overlay.
   A tile starts from the window server's frame when that differs from the
-  request (`resolve_start`). A parked window instead starts at the display
-  edge on its park's side, in its destination's row (`entry_frame`). The
-  park is judged from BOTH the requested frame and the server's: apps clamp
-  a park past the 40pt `is_off_screen` threshold (Kiro shows 41pt, Finder
-  52pt, log 20:35:56), and the server may already report the slot. Judged
-  from the server's frame alone, both flew in from the bottom-right corner.
+  request (`resolve_start`). A window displaced to a park, or returning from
+  one, travels by its neighbour's vector: `neighbour_travel` reads the
+  `to - from` of the nearest strip window (by centre x) that is on screen at
+  both ends and moves. Leaving, the tile ends at `start + travel`
+  (`resolve_end`); returning, it starts at `to - travel`. `final_frames`
+  keeps the real park either way. The display edge on the park's side, in
+  the tile's own row (`entry_frame`), is only the fallback when no neighbour
+  moves. Aimed at the edge, the displaced tile covered a different distance
+  from its neighbour under one duration and curve, so it ran at its own speed
+  and overlapped it (seen 2026-09-15). A park is judged from BOTH the
+  requested frame and the server's: apps clamp a park past the 40pt
+  `is_off_screen` threshold (Kiro shows 41pt, Finder 52pt, log 20:35:56),
+  and the server may already report the slot. Judged from the server's frame
+  alone, the tile flew in from, or slid into, the bottom-right corner. A
+  later pass merging into the flight applies the same rule to the tiles and
+  entrances it moves by frame alone (`PassTravel`): a strip pass lends its
+  pan, a layout pass the vector of its composed tiles.
 - **Strip movements** (`Event::AnimateStrip` — workspace switches and strip
   pans; the wire event the reactor builds from the stacked-workspace
   geometry in `model/strip_stack.rs`) start `Immediate`: they arrive once
@@ -114,7 +125,8 @@ from its own start). Any real change restarts the orchestration clock so the
 frame placement and teardown cover the newest flights. A pass also moves
 what it did not compose: reserved entrances take its frame for their window
 (`retarget_entrances`), a flight tile it names by frame but not by tile is
-retargeted to that frame (`retargets_from_frames`), and a strip movement
+retargeted to that frame (`retargets_from_frames`; a park frame goes through
+`PassTravel`, see "Layout changes"), and a strip movement
 carries every exit ghost by its travel (`shift_ghosts`, the pan delta from
 `AnimateStrip`'s offsets), so the flight ends where the strip ends. Without
 that, a pan merging 56ms after an open (log 3:27:20, 22 tiles scrolled

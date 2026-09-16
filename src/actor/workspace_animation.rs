@@ -693,13 +693,14 @@ fn retarget_entrances(
     entrances: &mut [PendingEntrance],
     final_frames: &[(WindowId, CGRect)],
     display: CGRect,
+    travel: &PassTravel,
 ) -> usize {
     let mut moved = 0;
     for entrance in entrances.iter_mut() {
         let Some((_, frame)) = final_frames.iter().find(|(w, _)| *w == entrance.window) else {
             continue;
         };
-        let to = to_overlay_space(*frame, display);
+        let to = to_overlay_space(travel.aim(entrance.to, *frame, entrance.floating), display);
         if !entrance.to.same_as(to) {
             entrance.to = to;
             moved += 1;
@@ -718,6 +719,7 @@ fn retargets_from_frames(
     pass: &[OverlayTile],
     final_frames: &[(WindowId, CGRect)],
     display: CGRect,
+    travel: &PassTravel,
 ) -> Vec<OverlayTile> {
     flight
         .iter()
@@ -726,10 +728,54 @@ fn retargets_from_frames(
         .filter_map(|tile| {
             let (_, frame) = final_frames.iter().find(|(w, _)| *w == tile.window)?;
             let mut retarget = tile.clone();
-            retarget.to = to_overlay_space(*frame, display);
+            retarget.to = to_overlay_space(travel.aim(tile.to, *frame, tile.floating), display);
             Some(retarget)
         })
         .collect()
+}
+
+/// How far a pass merging into a flight carries the strip, for the tiles and entrances it moves
+/// by frame alone. A strip pass says so outright (`pan`); a layout pass is read off its composed
+/// tiles (`neighbour_travel`). A frame that is a park is not aimed at: the tile keeps the strip's
+/// row and travels by the pass's vector, or exits past the edge when the pass has none
+/// (`resolve_end`), the same rule `start` applies to the tiles it composes.
+struct PassTravel {
+    pan: Option<CGPoint>,
+    /// The pass's tiles as `(from, to, floating)` in display space.
+    candidates: Vec<(CGRect, CGRect, bool)>,
+    display: CGRect,
+}
+
+impl PassTravel {
+    fn new(pass: &[OverlayTile], pan: Option<CGPoint>, display: CGRect) -> Self {
+        let candidates = pass
+            .iter()
+            .filter(|tile| !tile.companion && !tile.ghost)
+            .map(|tile| {
+                (
+                    from_overlay_space(tile.from, display),
+                    from_overlay_space(tile.to, display),
+                    tile.floating,
+                )
+            })
+            .collect();
+        Self { pan, candidates, display }
+    }
+
+    /// Where a tile whose destination is `current` (overlay space) should now aim, given the
+    /// pass's `frame` for it (display space). Display space.
+    fn aim(&self, current: CGRect, frame: CGRect, floating: bool) -> CGRect {
+        let current = from_overlay_space(current, self.display);
+        let travel = (!floating)
+            .then(|| {
+                self.pan.or_else(|| {
+                    let subject = travel_subject(current, frame, self.display);
+                    neighbour_travel(subject, &self.candidates, self.display)
+                })
+            })
+            .flatten();
+        resolve_end(current, frame, self.display, travel)
+    }
 }
 
 /// Carries a flight's exit ghosts along a strip movement merging into it. A ghost's window is
@@ -1919,11 +1965,29 @@ impl WorkspaceAnimation {
         let mut awaiting: Vec<(WindowId, CGSize)> = Vec::new();
         // Real frame per drawn window; depths are filled in after the restack.
         let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
-        for request in &windows {
-            let start = actual_start(request, display_frame);
+        // The pass's layout frames, for `neighbour_travel`: a window leaving for a park or coming
+        // back from one moves by the vector of the strip window nearest it, not to the edge.
+        let others: Vec<(CGRect, CGRect, bool)> =
+            windows.iter().map(|r| (r.from, r.to, r.floating)).collect();
+        for (index, request) in windows.iter().enumerate() {
+            let travel = (!request.floating)
+                .then(|| {
+                    let excluding_self: Vec<(CGRect, CGRect, bool)> = others
+                        .iter()
+                        .enumerate()
+                        .filter(|(j, _)| *j != index)
+                        .map(|(_, o)| *o)
+                        .collect();
+                    let subject = travel_subject(request.from, request.to, display_frame);
+                    neighbour_travel(subject, &excluding_self, display_frame)
+                })
+                .flatten();
+            let start = actual_start(request, display_frame, travel);
+            // The tile's visual destination; `final_frames` keeps the real park in `request.to`.
+            let end = resolve_end(start, request.to, display_frame, travel);
             // Parked slivers are excluded on the way in AND on the way out: a window arriving from
             // off-strip has no visible starting point, and one leaving has no visible destination.
-            if !self.is_worth_animating(start, request.to, display_frame) {
+            if !self.is_worth_animating(start, end, display_frame) {
                 offscreen += 1;
                 debug!(
                     wsid = request.server_id.as_u32(),
@@ -1976,7 +2040,7 @@ impl WorkspaceAnimation {
                     tiles.push(OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
-                        to: to_overlay_space(request.to, display_frame),
+                        to: to_overlay_space(end, display_frame),
                         snapshot,
                         floating: request.floating,
                         server_order: depths.get(&request.server_id.as_u32()).copied(),
@@ -2141,12 +2205,14 @@ impl WorkspaceAnimation {
                 // 3:27:20. See "Mid-flight passes" in `docs/animation-smoothness.md`.
                 let mut tiles = tiles;
                 if let Some(display) = display {
-                    retarget_entrances(&mut running.entrances, &final_frames, display);
+                    let travel = PassTravel::new(&tiles, pan, display);
+                    retarget_entrances(&mut running.entrances, &final_frames, display, &travel);
                     tiles.extend(retargets_from_frames(
                         &running.tiles,
                         &tiles,
                         &final_frames,
                         display,
+                        &travel,
                     ));
                 }
                 let shifted = match pan {
@@ -2903,33 +2969,106 @@ pub(crate) fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
 ///
 /// The window server always knows the truth, and asking it is a read rather than a round trip into
 /// the owning application.
-fn actual_start(request: &AnimationRequest, display: CGRect) -> CGRect {
+fn actual_start(request: &AnimationRequest, display: CGRect, travel: Option<CGPoint>) -> CGRect {
     let real = match crate::sys::window_server::get_window(request.server_id) {
         Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => {
             Some(info.frame)
         }
         _ => None,
     };
-    resolve_start(real, request.from, request.to, display)
+    resolve_start(real, request.from, request.to, display, travel)
 }
 
 /// The tile's start from the window server's answer (`real`, `None` when it had none) and the
 /// request's `from`/`to`. Pure, so the park remap can be tested on plain rects.
-fn resolve_start(real: Option<CGRect>, from: CGRect, to: CGRect, display: CGRect) -> CGRect {
+///
+/// A parked window comes back along the strip's own movement: `to` translated back by
+/// `travel`, the vector its neighbours make this pass (`neighbour_travel`). Without a moving
+/// neighbour it enters from the display edge on the park's side (`entry_frame`).
+fn resolve_start(
+    real: Option<CGRect>,
+    from: CGRect,
+    to: CGRect,
+    display: CGRect,
+    travel: Option<CGPoint>,
+) -> CGRect {
     use crate::model::HiddenWindowPlacement as Park;
     // A park is judged from both frames, before the synthetic test: apps clamp the real frame past
     // the park threshold, and the server may already report the slot. See docs/animation-smoothness.md.
     let parked_real = real.is_some_and(|real| Park::is_off_screen(display, real));
     let parked_from = Park::is_off_screen(display, from);
     if parked_real || parked_from {
-        let park = if parked_real { real.unwrap_or(from) } else { from };
-        return Park::entry_frame(park, to, display);
+        return match travel {
+            Some(d) => translated(to, CGPoint::new(-d.x, -d.y)),
+            None => {
+                let park = if parked_real { real.unwrap_or(from) } else { from };
+                Park::entry_frame(park, to, display)
+            }
+        };
     }
     let real = real.unwrap_or(from);
     if start_is_synthetic(real, from, to) {
         return from;
     }
     real
+}
+
+/// The tile's visual destination: a window leaving for a corner park travels with the strip,
+/// `start` translated by `travel` (`neighbour_travel`), the mirror of `resolve_start`. With no
+/// moving neighbour it exits past the display edge on the park's side. See "Layout changes" in
+/// `docs/animation-smoothness.md`.
+fn resolve_end(start: CGRect, to: CGRect, display: CGRect, travel: Option<CGPoint>) -> CGRect {
+    use crate::model::HiddenWindowPlacement as Park;
+    if Park::is_off_screen(display, to) && !Park::is_off_screen(display, start) {
+        return match travel {
+            Some(d) => translated(start, d),
+            None => Park::entry_frame(to, start, display),
+        };
+    }
+    to
+}
+
+/// The vector the rigid strip moves by this pass, as the window at `subject` sees it: the
+/// `to - from` of the nearest (by centre x of `from`) strip window that is on screen at both
+/// ends and actually moves. `None` when no such neighbour exists, which is the edge fallback's
+/// cue. `others` is `(from, to, floating)` for every OTHER request of the pass.
+///
+/// A displaced window aimed at the display edge covered a different distance from the window
+/// beside it under one duration and one curve, so the two ran at different speeds and
+/// overlapped (seen 2026-09-15). Sharing the neighbour's vector is what makes them one body.
+fn neighbour_travel(
+    subject: CGRect,
+    others: &[(CGRect, CGRect, bool)],
+    display: CGRect,
+) -> Option<CGPoint> {
+    use crate::model::HiddenWindowPlacement as Park;
+    others
+        .iter()
+        .filter(|(_, _, floating)| !floating)
+        .filter(|(from, to, _)| {
+            !Park::is_off_screen(display, *from) && !Park::is_off_screen(display, *to)
+        })
+        // Moving by origin, not `is_moving`: a neighbour that only resizes has no travel to lend.
+        .filter(|(from, to, _)| {
+            (to.origin.x - from.origin.x).abs() >= 0.5 || (to.origin.y - from.origin.y).abs() >= 0.5
+        })
+        .min_by(|(a, _, _), (b, _, _)| {
+            let da = (a.mid().x - subject.mid().x).abs();
+            let db = (b.mid().x - subject.mid().x).abs();
+            da.total_cmp(&db)
+        })
+        .map(|(from, to, _)| CGPoint::new(to.origin.x - from.origin.x, to.origin.y - from.origin.y))
+}
+
+/// `frame` moved by `by`, same size.
+fn translated(frame: CGRect, by: CGPoint) -> CGRect {
+    CGRect::new(CGPoint::new(frame.origin.x + by.x, frame.origin.y + by.y), frame.size)
+}
+
+/// The subject frame `neighbour_travel` measures from for one request: the slot it leaves when
+/// its destination is a park, otherwise the slot it arrives at.
+fn travel_subject(from: CGRect, to: CGRect, display: CGRect) -> CGRect {
+    if crate::model::HiddenWindowPlacement::is_off_screen(display, to) { from } else { to }
 }
 
 /// Is a request's start a deliberate fiction rather than drift to correct?
@@ -3024,6 +3163,17 @@ pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
         CGPoint::new(
             frame.origin.x - overlay_frame.origin.x,
             frame.origin.y - overlay_frame.origin.y,
+        ),
+        frame.size,
+    )
+}
+
+/// The inverse of [`to_overlay_space`]: an overlay-space rect back in display coordinates.
+fn from_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
+    CGRect::new(
+        CGPoint::new(
+            frame.origin.x + overlay_frame.origin.x,
+            frame.origin.y + overlay_frame.origin.y,
         ),
         frame.size,
     )
@@ -3479,7 +3629,7 @@ mod tests {
                 .iter()
                 .filter_map(|(name, real, from, to)| {
                     let expected = HiddenWindowPlacement::entry_frame(*from, *to, display);
-                    let got = resolve_start(*real, *from, *to, display);
+                    let got = resolve_start(*real, *from, *to, display, None);
                     (got != expected).then(|| {
                         format!(
                             "{name}: started at {:.0},{:.0}, wanted {:.0},{:.0}",
@@ -4946,7 +5096,7 @@ mod tests {
                 }
                 checked += 1;
                 assert_eq!(
-                    resolve_start(Some(real), from, to, DISPLAY),
+                    resolve_start(Some(real), from, to, DISPLAY, None),
                     real,
                     "seed 31: {from:?} -> {to:?}"
                 );
@@ -4961,8 +5111,8 @@ mod tests {
         fn a_missing_or_synthetic_start_falls_back_to_the_request() {
             let from = rect(4.0, 32.0, 859.0, 1081.0);
             let to = rect(867.0, 32.0, 859.0, 1081.0);
-            assert_eq!(resolve_start(None, from, to, DISPLAY), from);
-            assert_eq!(resolve_start(Some(to), from, to, DISPLAY), from);
+            assert_eq!(resolve_start(None, from, to, DISPLAY, None), from);
+            assert_eq!(resolve_start(Some(to), from, to, DISPLAY, None), from);
         }
 
         /// P-3.1/3.5. Observed: frames never applied early are never re-requested by a coalescing
@@ -5469,7 +5619,7 @@ mod tests {
         fn a_41pt_park_enters_from_the_right_edge() {
             let real = rect(1727.0, 1076.0, 1720.0, 1081.0);
             assert!(!HiddenWindowPlacement::is_off_screen(DISPLAY, real));
-            assert_eq!(resolve_start(Some(real), PARK, SLOT, DISPLAY), RIGHT_EDGE);
+            assert_eq!(resolve_start(Some(real), PARK, SLOT, DISPLAY, None), RIGHT_EDGE);
         }
 
         /// Finder's park shows 52pt.
@@ -5480,7 +5630,7 @@ mod tests {
             let park = rect(1727.0, 1116.0, 859.0, 1081.0);
             assert!(!HiddenWindowPlacement::is_off_screen(DISPLAY, real));
             assert_eq!(
-                resolve_start(Some(real), park, slot, DISPLAY),
+                resolve_start(Some(real), park, slot, DISPLAY, None),
                 rect(1728.0, 32.0, 859.0, 1081.0)
             );
         }
@@ -5489,13 +5639,13 @@ mod tests {
         /// wins over the synthetic-start test, so the tile enters from the edge, not the corner.
         #[test]
         fn a_park_the_server_reports_at_its_slot_enters_from_the_edge() {
-            assert_eq!(resolve_start(Some(SLOT), PARK, SLOT, DISPLAY), RIGHT_EDGE);
+            assert_eq!(resolve_start(Some(SLOT), PARK, SLOT, DISPLAY, None), RIGHT_EDGE);
         }
 
         /// A genuine park (1pt showing) with no server answer still enters from the edge.
         #[test]
         fn a_park_with_no_server_answer_enters_from_the_edge() {
-            assert_eq!(resolve_start(None, PARK, SLOT, DISPLAY), RIGHT_EDGE);
+            assert_eq!(resolve_start(None, PARK, SLOT, DISPLAY, None), RIGHT_EDGE);
         }
 
         /// Both frames on screen and the server already at the destination: the request's start is
@@ -5504,7 +5654,7 @@ mod tests {
         fn a_synthetic_start_on_screen_is_still_honoured() {
             let from = rect(4.0, 32.0, 859.0, 1081.0);
             let to = rect(867.0, 32.0, 859.0, 1081.0);
-            assert_eq!(resolve_start(Some(to), from, to, DISPLAY), from);
+            assert_eq!(resolve_start(Some(to), from, to, DISPLAY, None), from);
         }
 
         /// Drift with both frames on screen: the server's frame wins.
@@ -5513,7 +5663,7 @@ mod tests {
             let from = rect(4.0, 32.0, 859.0, 1081.0);
             let real = rect(120.0, 32.0, 859.0, 1081.0);
             let to = rect(867.0, 32.0, 859.0, 1081.0);
-            assert_eq!(resolve_start(Some(real), from, to, DISPLAY), real);
+            assert_eq!(resolve_start(Some(real), from, to, DISPLAY, None), real);
         }
 
         /// For any corner park as the request's start, whatever the server reports (the park, a
@@ -5531,7 +5681,7 @@ mod tests {
                     1 => Some(rect(from.origin.x, from.origin.y - clamp, to.size.width, to.size.height)),
                     _ => Some(to),
                 };
-                let got = resolve_start(real, from, to, DISPLAY);
+                let got = resolve_start(real, from, to, DISPLAY, None);
                 let parked_left = from.mid().x < DISPLAY.mid().x;
                 let expected_x = if parked_left {
                     DISPLAY.origin.x - to.size.width
@@ -5541,6 +5691,336 @@ mod tests {
                 assert_eq!(got.origin.y, to.origin.y, "seed 52: row of {to:?}, got {got:?}");
                 assert_eq!(got.size, to.size, "seed 52: size of {to:?}, got {got:?}");
                 assert_eq!(got.origin.x, expected_x, "seed 52: park {from:?} real {real:?}, got {got:?}");
+            }
+        }
+    }
+
+    /// The mirror of `park_remap`: a window leaving an on-screen slot for a corner park exits in
+    /// its own row past the display edge on the park's side (`resolve_end`), while `final_frames`
+    /// keeps the real park. Before, the tile slid diagonally into the corner.
+    mod park_exit {
+        use super::preservation::{DISPLAY, Gen, RUNS};
+        use super::*;
+
+        const SLOT: CGRect = CGRect {
+            origin: CGPoint { x: 867.0, y: 32.0 },
+            size: CGSize { width: 859.0, height: 1081.0 },
+        };
+        const RIGHT_PARK: CGRect = CGRect {
+            origin: CGPoint { x: 1727.0, y: 1116.0 },
+            size: CGSize { width: 859.0, height: 1081.0 },
+        };
+        const LEFT_PARK: CGRect = CGRect {
+            origin: CGPoint { x: -858.0, y: 1116.0 },
+            size: CGSize { width: 859.0, height: 1081.0 },
+        };
+
+        #[test]
+        fn a_window_leaving_for_the_right_park_exits_past_the_right_edge() {
+            assert_eq!(
+                resolve_end(SLOT, RIGHT_PARK, DISPLAY, None),
+                rect(DISPLAY.max().x, SLOT.origin.y, SLOT.size.width, SLOT.size.height)
+            );
+        }
+
+        #[test]
+        fn a_window_leaving_for_the_left_park_exits_past_the_left_edge() {
+            assert_eq!(
+                resolve_end(SLOT, LEFT_PARK, DISPLAY, None),
+                rect(
+                    DISPLAY.origin.x - SLOT.size.width,
+                    SLOT.origin.y,
+                    SLOT.size.width,
+                    SLOT.size.height
+                )
+            );
+        }
+
+        #[test]
+        fn a_destination_on_screen_is_unchanged() {
+            let to = rect(4.0, 32.0, 859.0, 1081.0);
+            assert_eq!(resolve_end(SLOT, to, DISPLAY, None), to);
+        }
+
+        /// Park to park: nothing shows either way, so the real frame stands.
+        #[test]
+        fn a_start_already_parked_is_unchanged() {
+            assert_eq!(resolve_end(LEFT_PARK, RIGHT_PARK, DISPLAY, None), RIGHT_PARK);
+        }
+
+        /// The edge is the display's own, not the global zero.
+        #[test]
+        fn exit_is_relative_to_the_display_it_happens_on() {
+            let display = rect(-670.0, -1692.0, 3008.0, 1692.0);
+            let start = rect(-666.0, -1660.0, 859.0, 1081.0);
+            let park = rect(2337.0, -1.0, 859.0, 1081.0);
+            assert_eq!(
+                resolve_end(start, park, display, None),
+                rect(2338.0, -1660.0, 859.0, 1081.0)
+            );
+        }
+
+        /// For any on-screen start and any corner park, the exit is strictly horizontal: the
+        /// start's row and size, at the display edge on the park's side.
+        #[test]
+        fn any_exit_to_a_corner_park_is_horizontal() {
+            let mut rng = Gen(53);
+            for _ in 0..RUNS {
+                let start = rng.on_screen();
+                let park = rng.park(start.size);
+                let got = resolve_end(start, park, DISPLAY, None);
+                let parked_left = park.mid().x < DISPLAY.mid().x;
+                let expected_x = if parked_left {
+                    DISPLAY.origin.x - start.size.width
+                } else {
+                    DISPLAY.max().x
+                };
+                assert_eq!(got.origin.y, start.origin.y, "seed 53: row of {start:?}, got {got:?}");
+                assert_eq!(got.size, start.size, "seed 53: size of {start:?}, got {got:?}");
+                assert_eq!(got.origin.x, expected_x, "seed 53: park {park:?}, got {got:?}");
+            }
+        }
+
+        /// Leaving then entering: a window that exited to a park comes back into the same row it
+        /// left from, so the round trip is horizontal both ways.
+        #[test]
+        fn leaving_then_entering_stays_in_the_row() {
+            let mut rng = Gen(54);
+            for _ in 0..RUNS {
+                let slot = rng.on_screen();
+                let park = rng.park(slot.size);
+                let exit = resolve_end(slot, park, DISPLAY, None);
+                let entry = resolve_start(Some(exit), park, slot, DISPLAY, None);
+                assert_eq!(entry.origin.y, slot.origin.y, "seed 54: slot {slot:?}, got {entry:?}");
+                assert_eq!(entry.size, slot.size, "seed 54: slot {slot:?}, got {entry:?}");
+                assert_eq!(entry.origin.x, exit.origin.x, "seed 54: exit {exit:?}, entry {entry:?}");
+            }
+        }
+    }
+
+    /// The strip is one rigid body: a window displaced to a park, or coming back from one, moves
+    /// by the same vector as the strip window nearest it (`neighbour_travel`). Aimed at the edge
+    /// instead, it covered a different distance under the same duration and curve, so it ran at
+    /// its own speed and overlapped its neighbour (seen 2026-09-15). The edge is only the fallback
+    /// when nothing beside it moves.
+    mod rigid_park {
+        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::*;
+        use crate::model::HiddenWindowPlacement;
+
+        const W: f64 = 859.0;
+        const SLOT_A: CGRect = CGRect {
+            origin: CGPoint { x: 4.0, y: 32.0 },
+            size: CGSize { width: W, height: 1081.0 },
+        };
+        const SLOT_B: CGRect = CGRect {
+            origin: CGPoint { x: 867.0, y: 32.0 },
+            size: CGSize { width: W, height: 1081.0 },
+        };
+        const RIGHT_PARK: CGRect = CGRect {
+            origin: CGPoint { x: 1727.0, y: 1116.0 },
+            size: CGSize { width: W, height: 1081.0 },
+        };
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn moved(frame: CGRect, dx: f64) -> CGRect {
+            translated(frame, CGPoint::new(dx, 0.0))
+        }
+
+        /// `start()`'s per-request rule on plain rects: the tile's `(from, to)` for request
+        /// `index` of `requests` (`(from, to, floating)`), with no server answer.
+        fn tile_for(index: usize, requests: &[(CGRect, CGRect, bool)]) -> (CGRect, CGRect) {
+            let (from, to, floating) = requests[index];
+            let others: Vec<_> = requests
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != index)
+                .map(|(_, r)| *r)
+                .collect();
+            let travel = (!floating)
+                .then(|| neighbour_travel(travel_subject(from, to, DISPLAY), &others, DISPLAY))
+                .flatten();
+            let start = resolve_start(None, from, to, DISPLAY, travel);
+            (start, resolve_end(start, to, DISPLAY, travel))
+        }
+
+        #[test]
+        fn leaving_travels_by_the_neighbours_vector() {
+            // A opens a column: A is pushed right by W, B is pushed off to the park.
+            let requests = [(SLOT_A, moved(SLOT_A, W), false), (SLOT_B, RIGHT_PARK, false)];
+            let (start, to) = tile_for(1, &requests);
+            assert_eq!(start, SLOT_B);
+            assert_eq!(to, moved(SLOT_B, W), "not the corner, not the edge");
+        }
+
+        #[test]
+        fn returning_travels_by_the_neighbours_vector() {
+            // A column closes: A comes back left by W, B returns from the park to its slot.
+            let requests = [(moved(SLOT_A, W), SLOT_A, false), (RIGHT_PARK, SLOT_B, false)];
+            let (from, to) = tile_for(1, &requests);
+            assert_eq!(to, SLOT_B);
+            assert_eq!(from, moved(SLOT_B, W), "enters from where the strip was");
+        }
+
+        #[test]
+        fn no_moving_neighbour_falls_back_to_the_edge() {
+            let requests = [(SLOT_A, SLOT_A, false), (SLOT_B, RIGHT_PARK, false)];
+            let (_, to) = tile_for(1, &requests);
+            assert_eq!(to, HiddenWindowPlacement::entry_frame(RIGHT_PARK, SLOT_B, DISPLAY));
+            let requests = [(SLOT_A, SLOT_A, false), (RIGHT_PARK, SLOT_B, false)];
+            let (from, _) = tile_for(1, &requests);
+            assert_eq!(from, HiddenWindowPlacement::entry_frame(RIGHT_PARK, SLOT_B, DISPLAY));
+        }
+
+        #[test]
+        fn a_floating_neighbour_lends_no_travel() {
+            let requests = [(SLOT_A, moved(SLOT_A, 300.0), true), (SLOT_B, RIGHT_PARK, false)];
+            let (_, to) = tile_for(1, &requests);
+            assert_eq!(to, HiddenWindowPlacement::entry_frame(RIGHT_PARK, SLOT_B, DISPLAY));
+        }
+
+        #[test]
+        fn a_neighbour_that_only_resizes_lends_no_travel() {
+            let grown = rect(4.0, 32.0, W + 200.0, 1081.0);
+            let requests = [(SLOT_A, grown, false), (SLOT_B, RIGHT_PARK, false)];
+            assert_eq!(neighbour_travel(SLOT_B, &requests[..1], DISPLAY), None);
+        }
+
+        #[test]
+        fn a_parked_neighbour_lends_no_travel() {
+            let left_park = rect(-W + 1.0, 1116.0, W, 1081.0);
+            let others = [(left_park, SLOT_A, false), (RIGHT_PARK, moved(RIGHT_PARK, -5.0), false)];
+            assert_eq!(neighbour_travel(SLOT_B, &others, DISPLAY), None);
+        }
+
+        #[test]
+        fn the_nearest_neighbour_by_centre_x_wins() {
+            let far = rect(4.0, 32.0, 400.0, 1081.0);
+            let near = rect(1200.0, 32.0, 400.0, 1081.0);
+            let subject = rect(1500.0, 32.0, 200.0, 1081.0);
+            let others = [(far, moved(far, 100.0), false), (near, moved(near, -250.0), false)];
+            assert_eq!(neighbour_travel(subject, &others, DISPLAY), Some(CGPoint::new(-250.0, 0.0)));
+            let others = [(near, moved(near, -250.0), false), (far, moved(far, 100.0), false)];
+            assert_eq!(neighbour_travel(subject, &others, DISPLAY), Some(CGPoint::new(-250.0, 0.0)));
+        }
+
+        /// A layout pass merging into a flight follows the same rule: a park in `final_frames`
+        /// for a tile the pass did not compose aims by the pass's own tiles' vector.
+        #[test]
+        fn a_merging_pass_aims_a_park_by_its_tiles_vector() {
+            let pass = [stacked(wid(1), SLOT_A, moved(SLOT_A, W), None, false)];
+            let travel = PassTravel::new(&pass, None, DISPLAY);
+            assert_eq!(travel.aim(SLOT_B, RIGHT_PARK, false), moved(SLOT_B, W));
+            // Nothing in the pass moves: the edge.
+            let still = [stacked(wid(1), SLOT_A, SLOT_A, None, false)];
+            let travel = PassTravel::new(&still, None, DISPLAY);
+            assert_eq!(
+                travel.aim(SLOT_B, RIGHT_PARK, false),
+                HiddenWindowPlacement::entry_frame(RIGHT_PARK, SLOT_B, DISPLAY)
+            );
+            // A frame on screen is aimed at as is.
+            assert_eq!(travel.aim(SLOT_B, SLOT_A, false), SLOT_A);
+        }
+
+        /// Same, on a display with a non-zero origin: tiles are in overlay space, frames in
+        /// display space, and the answer is in display space.
+        #[test]
+        fn a_merging_pass_converts_overlay_space() {
+            let display = rect(-670.0, -1692.0, 3008.0, 1692.0);
+            let a = rect(-666.0, -1660.0, W, 1081.0);
+            let b = rect(197.0, -1660.0, W, 1081.0);
+            let park = rect(2337.0, -1.0, W, 1081.0);
+            let pass = [stacked(
+                wid(1),
+                to_overlay_space(a, display),
+                to_overlay_space(moved(a, W), display),
+                None,
+                false,
+            )];
+            let travel = PassTravel::new(&pass, None, display);
+            assert_eq!(travel.aim(to_overlay_space(b, display), park, false), moved(b, W));
+        }
+
+        /// N on-screen columns; an open at index k pushes every column from k on by +W and the
+        /// last off to a park. Every tile from k on moves by exactly (W, 0); the rest stand still.
+        #[test]
+        fn an_open_moves_the_displaced_columns_as_one_body() {
+            let mut rng = Gen(61);
+            for _ in 0..RUNS {
+                let n = rng.below(4) as usize + 2;
+                let w = rng.pt(300.0, 1680.0 / n as f64 - 4.0);
+                let k = rng.below(n as u64 - 1) as usize;
+                let columns: Vec<CGRect> =
+                    (0..n).map(|i| rect(4.0 + i as f64 * (w + 4.0), 32.0, w, 1081.0)).collect();
+                let park = rect(DISPLAY.max().x - 1.0, DISPLAY.max().y - 1.0, w, 1081.0);
+                let mut requests: Vec<(CGRect, CGRect, bool)> = columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let to = if i < k {
+                            *c
+                        } else if i == n - 1 {
+                            park
+                        } else {
+                            moved(*c, w)
+                        };
+                        (*c, to, false)
+                    })
+                    .collect();
+                // The newcomer, already placed at slot k.
+                requests.push((columns[k], columns[k], false));
+                for i in 0..n {
+                    let (from, to) = tile_for(i, &requests);
+                    let dx = to.origin.x - from.origin.x;
+                    let dy = to.origin.y - from.origin.y;
+                    let want = if i >= k { w } else { 0.0 };
+                    assert_eq!((dx, dy), (want, 0.0), "seed 61: n={n} w={w} k={k} i={i}");
+                    assert_eq!(to.size, from.size, "seed 61: n={n} w={w} k={k} i={i}");
+                }
+            }
+        }
+
+        /// The mirror: a close at index k pulls every column from k on back by -W and the parked
+        /// one back onto the strip. Every tile from k on moves by exactly (-W, 0), and the
+        /// returning tile enters from `to + (W, 0)`.
+        #[test]
+        fn a_close_pulls_the_displaced_columns_back_as_one_body() {
+            let mut rng = Gen(62);
+            for _ in 0..RUNS {
+                let n = rng.below(4) as usize + 2;
+                let w = rng.pt(300.0, 1680.0 / n as f64 - 4.0);
+                let k = rng.below(n as u64 - 1) as usize;
+                let columns: Vec<CGRect> =
+                    (0..n).map(|i| rect(4.0 + i as f64 * (w + 4.0), 32.0, w, 1081.0)).collect();
+                let park = rect(DISPLAY.max().x - 1.0, DISPLAY.max().y - 1.0, w, 1081.0);
+                let requests: Vec<(CGRect, CGRect, bool)> = columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        let from = if i < k {
+                            *c
+                        } else if i == n - 1 {
+                            park
+                        } else {
+                            moved(*c, w)
+                        };
+                        (from, *c, false)
+                    })
+                    .collect();
+                for i in 0..n {
+                    let (from, to) = tile_for(i, &requests);
+                    let dx = to.origin.x - from.origin.x;
+                    let dy = to.origin.y - from.origin.y;
+                    let want = if i >= k { -w } else { 0.0 };
+                    assert_eq!((dx, dy), (want, 0.0), "seed 62: n={n} w={w} k={k} i={i}");
+                    assert_eq!(to.size, from.size, "seed 62: n={n} w={w} k={k} i={i}");
+                    if i == n - 1 {
+                        assert_eq!(from, moved(columns[i], w), "seed 62: n={n} w={w} k={k}");
+                    }
+                }
             }
         }
     }
@@ -6213,10 +6693,15 @@ mod tests {
             let mut entrances = vec![newcomer, untouched.clone()];
             let frames = vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0)), (wid(51462), shifted(slot, pan))];
 
-            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 1);
+            let travel = PassTravel::new(&[], Some(pan), EXTERNAL);
+            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL, &travel), 1);
             assert_eq!(entrances[0].to, to_overlay_space(shifted(slot, pan), EXTERNAL));
             assert_eq!(entrances[1].to, untouched.to, "no frame for it: left alone");
-            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 0, "already there");
+            assert_eq!(
+                retarget_entrances(&mut entrances, &frames, EXTERNAL, &travel),
+                0,
+                "already there"
+            );
             // The tile it becomes flies to the new slot.
             let tile = entrance_tile(&entrances[0], &test_snapshot(slot.size));
             assert_eq!(tile.to, to_overlay_space(shifted(slot, pan), EXTERNAL));
@@ -6254,7 +6739,8 @@ mod tests {
                 (wid(4), shifted(c, pan)),
             ];
 
-            let retargets = retargets_from_frames(&flight, &pass, &frames, EXTERNAL);
+            let travel = PassTravel::new(&pass, Some(pan), EXTERNAL);
+            let retargets = retargets_from_frames(&flight, &pass, &frames, EXTERNAL, &travel);
             assert_eq!(retargets.len(), 1);
             let retarget = &retargets[0];
             assert_eq!(retarget.window, wid(2));
@@ -6376,9 +6862,16 @@ mod tests {
                 }
 
                 // `begin_group`'s merge, in order.
-                retarget_entrances(&mut running.entrances, &frames_after, display);
+                let travel = PassTravel::new(&pass, Some(delta), display);
+                retarget_entrances(&mut running.entrances, &frames_after, display, &travel);
                 let mut pass = pass;
-                pass.extend(retargets_from_frames(&running.tiles, &pass, &frames_after, display));
+                pass.extend(retargets_from_frames(
+                    &running.tiles,
+                    &pass,
+                    &frames_after,
+                    display,
+                    &travel,
+                ));
                 let ghosts_before: Vec<(WindowId, CGRect)> =
                     running.tiles.iter().filter(|t| t.ghost).map(|t| (t.window, t.to)).collect();
                 let shifted_ghosts = shift_ghosts(&mut running.tiles, delta);
