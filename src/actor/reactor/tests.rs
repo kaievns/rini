@@ -6564,14 +6564,14 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
 
     reactor.publish_animation_display_for(Some(built_in_space));
     let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::actor::workspace_animation::Event::SetDisplay { id, .. } = published else {
+    let rini_overlay::engine::Event::SetDisplay { id, .. } = published else {
         panic!("expected SetDisplay, got {published:?}");
     };
     assert_eq!(id, 0, "the built-in display is screen 0, and its space is the one animating");
 
     reactor.publish_animation_display();
     let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::actor::workspace_animation::Event::SetDisplay { id, .. } = published else {
+    let rini_overlay::engine::Event::SetDisplay { id, .. } = published else {
         panic!("expected SetDisplay, got {published:?}");
     };
     assert_eq!(id, 1, "with no space in mind the active display is still the right answer");
@@ -6600,7 +6600,7 @@ fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
 
     let mut refreshed = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::actor::workspace_animation::Event::RefreshFocus(target) = event {
+        if let rini_overlay::engine::Event::RefreshFocus(target) = event {
             refreshed.push(target.window);
         }
     }
@@ -6626,7 +6626,7 @@ fn focus_that_does_not_move_asks_for_nothing() {
 
     let mut refreshed = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::actor::workspace_animation::Event::RefreshFocus(target) = event {
+        if let rini_overlay::engine::Event::RefreshFocus(target) = event {
             refreshed.push(target.window);
         }
     }
@@ -6667,13 +6667,13 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 
     super::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
 
-    let mut animated: Vec<crate::actor::workspace_animation::AnimationRequest> = Vec::new();
+    let mut animated: Vec<rini_overlay::engine::AnimationRequest> = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::actor::workspace_animation::Event::Animate { windows, .. } => animated = windows,
+            rini_overlay::engine::Event::Animate { windows, .. } => animated = windows,
             // Opposite vectors are not a pan, so this must not reach the strip path: that path takes
             // its windows from the layout and so never had this bug to begin with.
-            crate::actor::workspace_animation::Event::AnimateSurface { .. } => {
+            rini_overlay::engine::Event::AnimateSurface { .. } => {
                 panic!("a layout that is not a pan must go to the per-window path")
             }
             _ => {}
@@ -6686,11 +6686,11 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 
 /// Pushing past an end bounces the view instead of doing nothing: focus right at the last column
 /// nudges the strip left; the previous workspace at the top of the stack nudges the row up. Focus
-/// stays where it was in both cases. See "Edge bounce" in `docs/animation-smoothness.md`.
+/// stays where it was in both cases. See "Edge bounce" in `crates/rini-overlay/docs/animation-smoothness.md`.
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     use crate::actor::reactor::animation::EDGE_BOUNCE_OVERSHOOT;
-    use crate::actor::workspace_animation::Event as Anim;
+    use rini_overlay::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -6775,8 +6775,8 @@ fn a_one_point_move_is_placed_rather_than_animated() {
         assert!(
             !matches!(
                 event,
-                crate::actor::workspace_animation::Event::Animate { .. }
-                    | crate::actor::workspace_animation::Event::AnimateSurface { .. }
+                rini_overlay::engine::Event::Animate { .. }
+                    | rini_overlay::engine::Event::AnimateSurface { .. }
             ),
             "a one-point move must not run an animation: {event:?}"
         );
@@ -6792,7 +6792,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
 
 /// A closed window disappears: the reactor sends the engine exactly one `ForgetWindow` for it
 /// and no flight of its own, on the AX path. See "A closed window disappears" in
-/// `docs/animation-smoothness.md`.
+/// `crates/rini-overlay/docs/animation-smoothness.md`.
 #[test]
 fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let (mut apps, mut reactor) = test_context();
@@ -6813,10 +6813,10 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let mut forgotten = 0usize;
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::actor::workspace_animation::Event::ForgetWindow(window) if window == wid => {
+            rini_overlay::engine::Event::ForgetWindow(window) if window == wid => {
                 forgotten += 1;
             }
-            crate::actor::workspace_animation::Event::Animate { windows, .. } => {
+            rini_overlay::engine::Event::Animate { windows, .. } => {
                 assert!(
                     windows.iter().all(|request| request.window != wid),
                     "the closed window is not composed"
@@ -6859,10 +6859,10 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     let mut forgotten = 0usize;
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::actor::workspace_animation::Event::ForgetWindow(window) if window == wid => {
+            rini_overlay::engine::Event::ForgetWindow(window) if window == wid => {
                 forgotten += 1;
             }
-            crate::actor::workspace_animation::Event::Animate { windows, .. } => {
+            rini_overlay::engine::Event::Animate { windows, .. } => {
                 assert!(
                     windows.iter().all(|request| request.window != wid),
                     "the closed window is not composed"
@@ -6897,8 +6897,8 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
         assert!(
             !matches!(
                 event,
-                crate::actor::workspace_animation::Event::Animate { .. }
-                    | crate::actor::workspace_animation::Event::AnimateSurface { .. }
+                rini_overlay::engine::Event::Animate { .. }
+                    | rini_overlay::engine::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );
@@ -6940,8 +6940,8 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
         assert!(
             !matches!(
                 event,
-                crate::actor::workspace_animation::Event::Animate { .. }
-                    | crate::actor::workspace_animation::Event::AnimateSurface { .. }
+                rini_overlay::engine::Event::Animate { .. }
+                    | rini_overlay::engine::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );

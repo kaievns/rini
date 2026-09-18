@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-ipc", "crates/rini-layout", "crates/rini-macos", "crates/rini-motion", "crates/rini-protocol", "crates/rini-shared"]
+members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-ipc", "crates/rini-layout", "crates/rini-macos", "crates/rini-motion", "crates/rini-overlay", "crates/rini-protocol", "crates/rini-shared"]
 resolver = "3"
 
 [[bin]]
@@ -183,30 +183,11 @@ rini-config = { path = "crates/rini-config" }
 rini-layout = { path = "crates/rini-layout" }
 rini-ipc = { path = "crates/rini-ipc" }
 rini-motion = { path = "crates/rini-motion" }
+rini-overlay = { path = "crates/rini-overlay" }
 rini-protocol = { path = "crates/rini-protocol" }
 libc = "0.2"
 continue = { git = "https://github.com/drewcrawford/continue" }
-
-[dependencies]
-anyhow = { workspace = true }
-arc-swap = "1"
-ascii_tree = "0.1.1"
-thiserror = { workspace = true }
-bitflags = { workspace = true }
 block2 = { version = "0.6.2", default-features = false, features = ["alloc"] }
-clap = { workspace = true }
-dirs = { workspace = true }
-dispatchr = { workspace = true }
-nix = { workspace = true }
-objc2 = { workspace = true }
-objc2-app-kit = { workspace = true }
-objc2-application-services = { workspace = true }
-objc2-core-foundation = { workspace = true }
-objc2-core-text = { version = "0.3.2", default-features = false, features = [
-	"CTLine",
-	"objc2-core-graphics"
-]}
-objc2-core-graphics = { workspace = true }
 objc2-core-media = { version = "0.3.2", default-features = false, features = [
 	"CMSampleBuffer",
 	"objc2-core-video",
@@ -230,7 +211,6 @@ objc2-io-surface = { version = "0.3.2", default-features = false, features = [
 	"objc2",
 	"objc2-core-foundation",
 ] }
-objc2-foundation = { workspace = true }
 objc2-screen-capture-kit = { version = "0.3.2", default-features = false, features = [
 	"SCScreenshotManager",
 	"SCShareableContent",
@@ -258,6 +238,23 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
 	"objc2-core-graphics",
 	"objc2-metal"
 ]}
+
+[dependencies]
+anyhow = { workspace = true }
+arc-swap = "1"
+ascii_tree = "0.1.1"
+thiserror = { workspace = true }
+bitflags = { workspace = true }
+clap = { workspace = true }
+dirs = { workspace = true }
+dispatchr = { workspace = true }
+nix = { workspace = true }
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-application-services = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }
+objc2-foundation = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 ron = { workspace = true }
@@ -295,6 +292,7 @@ rini-config = { workspace = true }
 rini-layout = { workspace = true }
 rini-ipc = { workspace = true }
 rini-motion = { workspace = true }
+rini-overlay = { workspace = true }
 rini-protocol = { workspace = true }
 
 [dev-dependencies]

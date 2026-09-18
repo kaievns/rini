@@ -8,11 +8,11 @@ the capture measurements this builds on.
 ## One engine
 
 Every animated movement runs through the overlay engine
-(`src/actor/workspace_animation.rs` + `src/ui/workspace_overlay.rs`): window
+(`crates/rini-overlay`: `engine.rs` + `overlay.rs`, geometry in `crates/rini-motion`): window
 bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "The apply point"). Layout passes, strip pans, workspace
 switches, resizes, entrances and the edge bounce are all flights of it.
-`AnimationManager` (`src/actor/reactor/animation.rs`) is the layout side: it
+`AnimationManager` (`src/actor/reactor/animation.rs` in `rini-wm`) is the layout side: it
 decides per pass whether the overlay flies (`config.settings.animate`, not low
 power, not a drag, something visibly travels) and places the real windows
 directly when it does not.
@@ -28,10 +28,10 @@ engine that is left.
 
 ## The overlay engine: containers carry the rigid pieces
 
-Every overlay flight is a `FlightPlan` (`workspace_animation/plan.rs`): a
-set of rigid strip groups, a loose set (resizes and entrances), and the
+Every overlay flight is a `FlightPlan` (`rini_motion::plan`): a
+set of rigid groups (`RigidGroup`, keyed `GroupKey::Rigid`), a loose set (resizes and entrances), and the
 floating windows. Each group is one `CALayer` container under the overlay's
-root (`install` in `workspace_overlay.rs`). A container's `position` is the
+root (`TileOverlay::install` in `overlay.rs`). A container's `position` is the
 only animated translation its members get; the tiles inside sit at
 group-relative frames and never move on their own. Resizes and entrances
 are loose tiles under `StripLoose`; floating windows sit in the `Floating`
@@ -95,12 +95,12 @@ The two entry points feed the same `begin_group`:
   window rides, so it slides with its neighbour by construction. A pass is
   flown when something drawable moves or a flight is running
   (`worth_flying`).
-- **Strip movements** (`Event::AnimateStrip` — workspace switches and strip
+- **Strip movements** (`Event::AnimateSurface` — workspace switches and strip
   pans; the wire event the reactor builds from the stacked-workspace
-  geometry in `model/strip_stack.rs`) start `Immediate`: they arrive once
-  per keystroke and latency is the enemy. `strip_plan` puts every window
-  on the strip surface in ONE group travelling by the viewport's travel
-  (`strip_travel`, `strip_pan_travel`): one container, one position
+  geometry in `model/strip_stack.rs`, carrying `SurfaceWindow`s) start `Immediate`: they arrive once
+  per keystroke and latency is the enemy. `surface_plan` puts every window
+  on the surface in ONE group travelling by the viewport's travel
+  (`surface_travel`, `pan_travel`): one container, one position
   animation. Pinned (floating) windows stand in the floating container with
   `from == to`; a switch moves the floating container itself by the same
   travel (`floating_travel`). Visual destinations are deliberately distinct
@@ -144,12 +144,12 @@ Depth is banded by z-group (`tile_depth` in `model/z_group.rs`) at the
 container level (`band_plan`, `rebank`). The floating container sits at
 `container_z`: zero with a floating focus, one `GROUP_STRIDE` behind with a
 strip focus (or no focus the flight draws); strip containers the other way
-round, a quarter step apart in `strip_order`. Each tile sits at its
+round, a quarter step apart in `Banding.group_order`. Each tile sits at its
 within-band depth inside its container (`Banding.within`; a companion a
 quarter step in front of its window, a shadow half a step behind its
 picture). `container_z - within` is `-tile_depth`, so the drawn order is
 what `restack` computes for `tile.depth` and what the reactor's regroup
-(`strip_regroup`, "Real order" in `capture-overlay-research.md`) puts on the
+(`regroup_tiled`, "Real order" in `capture-overlay-research.md`) puts on the
 real screen at lift. Core Animation sorts `zPosition` among siblings only,
 so a floating tile can never land between two strip tiles whatever its own
 depth: that is the structural fix for the 50/50 interleave (the 1.1 case in
@@ -174,7 +174,11 @@ which staggered that tile against its neighbours. The destination refresh
 has one slot per flight, at 0.5 (`REFRESH_DESTINATION_AT`), and recaptures
 only on a focus change, only its two ends (`refresh_targets`, against the
 previous flight's `last_focus`): the window being switched into and the one
-being left, so both land in their focus rendering. A flight that moves
+being left, so both land in their focus rendering. Focus changes a
+window's rendering without changing its size (measured on a 1pt window
+border: 65 of 255 focused against 42 unfocused), so `Event::RefreshFocus`
+also recaptures a window whenever focus moves to or from it, whatever the
+size test says about its cached picture. A flight that moves
 focus nowhere recaptures nothing. It used to recapture the two frontmost
 tiles by depth on every flight; a translucent window's two captures differ
 by the wallpaper behind it, so that cut the two front Ghostty tiles at 0.55
@@ -209,7 +213,10 @@ window captures and the desktop render), so a press inside that window flew
 the next flight against a busy compositor: frame-difference profiles of a
 screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
 beginning inside the quiet period cancels the timer; the work carries over to
-its own lift.
+its own lift. The bar is recaptured `BAR_REFRESH_DELAY` (250ms) after a
+flight, never at the start of one: a bar composite measures 31ms median,
+and the delay lets the compositor drop the hidden overlay from the
+framebuffer and folds a burst of switches into one capture, at the end.
 
 **Real windows land before lift.** Frames go out on-screen destinations
 first, parks last (`frame_send_order`): a park write nobody sees no longer
@@ -220,13 +227,13 @@ screen at lift, 1000-3446pt from its park. The handover metric
 macOS (y=1116 on a 1117pt display, clamped to 1051) had reported 65pt on 180
 flights and masked every smaller error. `finish()` logs "overlay lifted", so
 the placing-to-lift gap can be read from the log. The lift itself waits for
-the render server (`lift_now`, `WorkspaceOverlay::settled`): the clock has
+the render server (`lift_now`, `TileOverlay::settled`): the clock has
 to run out AND every container and picture has to be presented at its model
-position within half a point, or `LIFT_GRACE` (120ms) past the clock. The
+position within half a point, or `LIFT_GRACE` (350ms) past the clock. The
 render server runs a frame or so behind the actor's clock, and lifting on
 the clock alone showed the real windows one frame ahead of their tiles: a
 small jerk at the end of every flight. Strip movements send their frames at
-frame zero (`APPLY_FRAMES_AT_STRIP` 0.0): 24 of 162 flights had lifted with
+frame zero (`APPLY_FRAMES_AT_PAN` 0.0): 24 of 162 flights had lifted with
 every window 1700-2600pt from its tile because 17 writes across Electron apps
 took longer than half a flight. A park-to-park write is not sent at all
 (`is_park_to_park`, reactor `apply_overlay_frames`): 12 of a pan's 20 frames
@@ -288,8 +295,8 @@ to stop dead, which read as a dropped keypress. The layout reports it as
 `EventResponse::edge_hit` (`move_focus_internal`'s fallback for left/right
 only; `handle_virtual_workspace_command` for up/down), distinct from
 `boundary_hit`, which is the gesture's threshold crossing. The reactor
-(`start_edge_bounce`) sends `BounceStrip` with the active workspace's surface
-and `edge_bounce_overshoot`: `EDGE_BOUNCE_OVERSHOOT` (36pt) the way the
+(`start_edge_bounce`) sends `Event::Bounce` with the active workspace's surface
+and `edge_bounce_overshoot` (`reactor/animation.rs`): `EDGE_BOUNCE_OVERSHOOT` (36pt) the way the
 content would have gone, so focus right pulls the strip left and the next
 workspace pulls the row up. The actor (`start_bounce`) composes a flight with
 no travel when none is running (every tile at rest, `final_frames` the layout
@@ -310,7 +317,7 @@ A resize rides the per-window overlay path, ported
 from the parked `resize-rounds-1-2` branch onto the per-tile Core Animation
 machinery. The tile travels between its two rects like any other tile; what
 changes is how the picture maps onto it (`content_mode` in
-`workspace_overlay.rs`):
+`rini_motion::tile`):
 
 - **A movement with a matching picture stretches.** Picture and frame are the
   same shape, so `kCAGravityResize` is exact. Strip movements always stretch,
@@ -357,7 +364,9 @@ changes is how the picture maps onto it (`content_mode` in
   with a cold cache took a 1s off-screen capture and flew in from the park,
   so it takes the reservation instead. A window already at its slot with no
   picture is captured as a still tile and not chased. Growing from zero
-  width (`entrance_from`) was the previous entrance and read as a pop then a
+  width (`entrance_from`; a centred zero-size zoom was tried first and read
+  as the window inflating, which nothing else on the strip does) was the
+  previous entrance and read as a pop then a
   vanish; it survives only in the reservation fallback below.
 - **The reservation fallback.** With no server frame, a zero frame, an
   unusable capture or no budget left (`entrance_plan`, reason logged as
@@ -411,8 +420,9 @@ changes is how the picture maps onto it (`content_mode` in
   pixels. The frame resizes instantly while the app's pixels lag behind, and
   a capture taken between the two is a half-painted surface: delivering one
   flew the whole reveal with garbage. So a capture counts only when settled
-  (`chase_settled`): it matches the previous print (`renderings_match`, 3%
-  sample tolerance so cursors and clocks do not stall it), or it differs from
+  (`chase_settled`): it matches the previous print (`renderings_match` on
+  32x32 RGBA thumbprints, a sample differing when any channel moves by more
+  than 8, up to 3% of samples allowed so cursors and clocks do not stall it), or it differs from
   the picture cached before the resize, which means the app has repainted.
   The second test saves one poll interval on most grows; the first is all an
   entrance has. When it lands (`claim_reveal`), the tile's grid re-maps to it
@@ -455,11 +465,12 @@ changes is how the picture maps onto it (`content_mode` in
   (`APPLY_FRAMES_AT`), or at 0.5 (`APPLY_FRAMES_AT_RESIZE`) when any tile
   resizes: the real resize behind the overlay costs three synchronous AX round
   trips per window and needs more runway to land before the overlay lifts.
-  Strip movements place at 0.5 too (`APPLY_FRAMES_AT_STRIP`). Their frames
-  are pure moves, but a switch sends about 17 of them, serialized per app
-  actor and sharing it with window rediscovery. At 0.75 the gap from
-  "placing real windows" to lift measured 90ms median, p90 156, and 0.75 of
-  a 300ms switch leaves 75ms.
+  Strip movements place at frame zero (`APPLY_FRAMES_AT_PAN`; the
+  measurements are under "The apply point"). Their frames are pure moves,
+  but a switch sends about 17 of them, serialized per app actor and sharing
+  it with window rediscovery. At 0.75 the gap from "placing real windows" to
+  lift measured 90ms median, p90 156, and 0.75 of a 300ms switch leaves 75ms;
+  0.5 was tried next and still lost 24 of 162 flights.
 - A pass containing a resize never becomes a strip pan, even when the strip
   offset moved: the strip surface draws final sizes, which would snap the
   resize. The strip movement is still consumed so the offset bookkeeping
@@ -505,7 +516,18 @@ against the 28MB framed capture they are cropped from, cached on the
 snapshot and worn by the tile as sublayers. It only renders windows
 actually composited, so a parked window harvests transparent pixels and is
 rejected by an alpha check, keeping the ring from when it was last seen:
-the picture cache's own staleness model. The focused ring lands with the
+the picture cache's own staleness model. The check believes a ring when the
+straight runs' mean alpha is at least 0.5 (`MIN_MEAN_ALPHA`): a parked
+window reads 0, the most translucent real edge measured (a see-through
+terminal) 244 of 255, and a border tool's overlay window fails it without a
+special case. Corner boxes are legitimately transparent outside the arc, so
+only the four runs are judged. The ring is 1pt (`RING_PT`), two device
+pixels at 2x. The harvest runs on a plain thread after `collect`, never
+inside a ScreenCaptureKit completion: on modern macOS
+`CGWindowListCreateImage` is proxied through the same capture machinery, so
+a call from the delivery queue deadlocks its own reply until a ~20s
+timeout and every capture in the process serialises behind it (measured as
+half-minute window switches). The focused ring lands with the
 post-flight harvest of the animated set (`finish`), not mid-flight: the
 destination refresh no longer harvests, since it no longer takes the framed
 route (see "Mid-flight passes").
@@ -553,6 +575,15 @@ running, carrying real border windows as tiles:
 
 No configuration in either mechanism: the outline is the platform's, and the
 companions reproduce whatever a border tool draws, or nothing.
+
+**Companion geometry.** A border window is recognised by geometry alone:
+same centre within `COMPANION_CENTER_SLACK` (4pt), and at most
+`COMPANION_EXPANSION` (8pt) larger per axis. JankyBorders draws its stroke
+on a sibling window about twice the stroke width larger than the traced
+one, plus rounding, so 8pt covers any plausible stroke without reaching the
+next column. The companion tests use this machine's bordersrc geometry
+(width 1.5, square: a 865x1087 border at 1,29 around an 859x1081 window at
+4,32).
 
 ## Snapshot staleness
 
@@ -624,7 +655,7 @@ ended in the overlay's favour.
 4. ~~Dissolve the canvas into per-tile groups~~ — done, then reversed: the
    per-tile groups teleported on every merge, and containers carry the
    rigid pieces again (see the overlay section). The group event is
-   `AnimateStrip`, the geometry module `strip_stack`.
+   `AnimateSurface`, the geometry module `strip_stack`.
 5. Pan routing collapse (`take_strip_movement`, routing in `animate_layout`),
    once the strip visuals are validated; it also feeds the switch's
    scroll-offset claim and needs care. `strip_pan_delta` is already gone.

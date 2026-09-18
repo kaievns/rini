@@ -150,7 +150,7 @@ pub struct CommunicationManager {
     pub event_tap_tx: Option<event_tap::Sender>,
     pub gesture_tap_tx: Option<gesture_tap::Sender>,
     pub cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
-    pub workspace_animation_tx: Option<crate::actor::workspace_animation::Sender>,
+    pub workspace_animation_tx: Option<rini_overlay::engine::Sender>,
     pub raise_manager_tx: raise_manager::Sender,
     pub event_broadcaster: BroadcastSender,
     pub wm_sender: Option<wm_controller::Sender>,

@@ -424,7 +424,7 @@ impl Reactor {
         event_tap_tx: event_tap::Sender,
         broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
-        workspace_animation_tx: Option<crate::actor::workspace_animation::Sender>,
+        workspace_animation_tx: Option<rini_overlay::engine::Sender>,
         window_notify: Option<(crate::actor::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -1325,11 +1325,11 @@ impl Reactor {
                 }
                 // A closed window disappears; only its cached picture has to go. Once: the
                 // window-server path may have removed the window, and forgotten it, already. See
-                // "A closed window disappears" in `docs/animation-smoothness.md`.
+                // "A closed window disappears" in `crates/rini-overlay/docs/animation-smoothness.md`.
                 if self.state.windows.window(wid).is_some()
                     && let Some(tx) = &self.communication_manager.workspace_animation_tx
                 {
-                    _ = tx.send(crate::actor::workspace_animation::Event::ForgetWindow(wid));
+                    _ = tx.send(rini_overlay::engine::Event::ForgetWindow(wid));
                 }
                 let mut outcome = window_workflow::handle_window_destroyed(
                     &mut self.state,
@@ -1727,7 +1727,7 @@ impl Reactor {
                 self.publish_animation_display();
                 let response = match &self.communication_manager.workspace_animation_tx {
                     Some(tx) => {
-                        _ = tx.send(crate::actor::workspace_animation::Event::DebugSlide {
+                        _ = tx.send(rini_overlay::engine::Event::DebugSlide {
                             dx: dx as f64,
                             dy: dy as f64,
                             duration: std::time::Duration::from_millis(duration_ms),
@@ -1742,7 +1742,7 @@ impl Reactor {
                 self.publish_animation_display();
                 let response = match &self.communication_manager.workspace_animation_tx {
                     Some(tx) => {
-                        _ = tx.send(crate::actor::workspace_animation::Event::WarmCache);
+                        _ = tx.send(rini_overlay::engine::Event::WarmCache);
                         "snapshot cache warm requested".to_string()
                     }
                     None => "the workspace animation actor is not running".to_string(),
@@ -2038,7 +2038,7 @@ impl Reactor {
         // Ahead of the layout events, as on the AX path: the closed window's picture goes first.
         for window in outcome.forgotten_windows {
             if let Some(tx) = &self.communication_manager.workspace_animation_tx {
-                _ = tx.send(crate::actor::workspace_animation::Event::ForgetWindow(window));
+                _ = tx.send(rini_overlay::engine::Event::ForgetWindow(window));
             }
         }
         if !outcome.window_server_updates.is_empty() {
@@ -3934,7 +3934,7 @@ impl Reactor {
     /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
     /// it holds unless something better arrives, so this settles rather than re-capturing. During a
     /// flight the animation actor holds the targets until lift ("Capture work in flight" in
-    /// `docs/animation-smoothness.md`), so calling this from the switch handler is safe.
+    /// `crates/rini-overlay/docs/animation-smoothness.md`), so calling this from the switch handler is safe.
     fn warm_all_workspaces(&mut self, space: SpaceId) {
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
             return;
@@ -3961,7 +3961,7 @@ impl Reactor {
             .gaps
             .effective_for_display(screen.display_uuid_opt());
 
-        let mut targets: Vec<crate::ui::snapshot_service::SnapshotTarget> = Vec::new();
+        let mut targets: Vec<rini_overlay::snapshot_service::SnapshotTarget> = Vec::new();
         for (workspace_id, _) in &workspaces {
             let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
                 &self.state.windows,
@@ -3973,7 +3973,7 @@ impl Reactor {
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };
-                targets.push(crate::ui::snapshot_service::SnapshotTarget {
+                targets.push(rini_overlay::snapshot_service::SnapshotTarget {
                     window: wid,
                     server_id,
                     size: frame.size,
@@ -3983,7 +3983,7 @@ impl Reactor {
         if targets.is_empty() {
             return;
         }
-        _ = tx.send(crate::actor::workspace_animation::Event::WarmWindows(targets));
+        _ = tx.send(rini_overlay::engine::Event::WarmWindows(targets));
     }
 
     /// Which workspace indices this switch is moving between.
@@ -4081,7 +4081,7 @@ impl Reactor {
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::AnimateSurface {
+        _ = tx.send(rini_overlay::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -4101,13 +4101,13 @@ impl Reactor {
         layout: &[(WindowId, CGRect)],
         display_bounds: CGRect,
         pin_floating: bool,
-    ) -> Vec<crate::actor::workspace_animation::SurfaceWindow> {
+    ) -> Vec<rini_overlay::engine::SurfaceWindow> {
         let mut windows = Vec::with_capacity(layout.len());
         for (wid, frame) in layout {
             let Some(window) = self.state.windows.window(*wid) else { continue };
             let Some(server_id) = window.info.sys_id else { continue };
             let floating = self.layout_manager.layout_engine.is_window_floating(*wid);
-            windows.push(crate::actor::workspace_animation::SurfaceWindow {
+            windows.push(rini_overlay::engine::SurfaceWindow {
                 window: *wid,
                 server_id,
                 frame: CGRect::new(
@@ -4127,7 +4127,7 @@ impl Reactor {
     /// Bounces the view against the end a command ran into: the strip's first or last column
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
-    /// the real windows do not move. See "Edge bounce" in `docs/animation-smoothness.md`.
+    /// the real windows do not move. See "Edge bounce" in `crates/rini-overlay/docs/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
         if !self.config.settings.animate || rini_macos::power::is_low_power_mode_enabled() {
             return;
@@ -4174,7 +4174,7 @@ impl Reactor {
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         tracing::debug!(?direction, windows = windows.len(), "edge bounce");
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::Bounce {
+        _ = tx.send(rini_overlay::engine::Event::Bounce {
             windows,
             overshoot,
             final_frames: layout,
@@ -4250,7 +4250,7 @@ impl Reactor {
         let row_pitch = display_bounds.size.height;
         let height = row_pitch;
 
-        let mut windows: Vec<crate::actor::workspace_animation::SurfaceWindow> = Vec::new();
+        let mut windows: Vec<rini_overlay::engine::SurfaceWindow> = Vec::new();
         let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else { continue };
@@ -4267,7 +4267,7 @@ impl Reactor {
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };
-                windows.push(crate::actor::workspace_animation::SurfaceWindow {
+                windows.push(rini_overlay::engine::SurfaceWindow {
                     window: wid,
                     server_id,
                     frame: crate::model::strip_stack::strip_frame(
@@ -4341,7 +4341,7 @@ impl Reactor {
         }
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::AnimateSurface {
+        _ = tx.send(rini_overlay::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -4350,7 +4350,7 @@ impl Reactor {
             duration,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
-        // the animation actor defers it until the flight lifts (`docs/animation-smoothness.md`).
+        // the animation actor defers it until the flight lifts (`crates/rini-overlay/docs/animation-smoothness.md`).
         self.warm_all_workspaces(space);
         true
     }
@@ -4371,8 +4371,8 @@ impl Reactor {
         for window in [Some(gaining), losing].into_iter().flatten() {
             let Some(state) = self.state.windows.window(window) else { continue };
             let Some(server_id) = state.info.sys_id else { continue };
-            _ = tx.send(crate::actor::workspace_animation::Event::RefreshFocus(
-                crate::ui::snapshot_service::SnapshotTarget {
+            _ = tx.send(rini_overlay::engine::Event::RefreshFocus(
+                rini_overlay::snapshot_service::SnapshotTarget {
                     window,
                     server_id,
                     size: state.frame_monotonic.size,
@@ -4428,7 +4428,7 @@ impl Reactor {
         else {
             return;
         };
-        _ = tx.send(crate::actor::workspace_animation::Event::SetDisplay {
+        _ = tx.send(rini_overlay::engine::Event::SetDisplay {
             id: screen.id.as_u32(),
             frame: objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()),
             // Backing scale is not carried on ScreenInfo. Every display rini has been run on is

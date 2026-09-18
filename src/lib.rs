@@ -5,4 +5,3 @@ pub mod actor;
 pub use rini_ipc as ipc;
 pub mod layout_engine;
 pub mod model;
-pub mod ui;

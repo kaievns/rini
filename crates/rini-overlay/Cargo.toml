@@ -1,0 +1,27 @@
+[package]
+name = "rini-overlay"
+version = "0.1.0"
+edition = "2024"
+description = "rini's capture-based animation overlay: window snapshots, Core Animation tiles, and the flight engine. Knows windows, not workspaces."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+block2 = { workspace = true }
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }
+objc2-core-media = { workspace = true }
+objc2-core-video = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-io-surface = { workspace = true }
+objc2-quartz-core = { workspace = true }
+objc2-screen-capture-kit = { workspace = true }
+rini-macos = { workspace = true }
+rini-motion = { workspace = true }
+rini-shared = { workspace = true }
+tracing = { workspace = true }

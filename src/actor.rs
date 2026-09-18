@@ -11,6 +11,5 @@ pub mod reactor;
 pub mod spaces;
 pub mod window_notify;
 pub mod wm_controller;
-pub mod workspace_animation;
 
 pub use rini_shared::channel::{Receiver, Sender, channel};

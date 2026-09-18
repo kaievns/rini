@@ -356,12 +356,12 @@ stays usable. Fix the config and restart. Error: {error}",
 
     // The animation overlay lives on the main thread because Core Animation requires it. It stays
     // idle until the reactor sends it display geometry and something to animate.
-    let mut workspace_animation = rini_wm::actor::workspace_animation::WorkspaceAnimation::new(
+    let mut flight_engine = rini_overlay::engine::FlightEngine::new(
         workspace_animation_rx,
         workspace_animation_tx.clone(),
         mtm,
     );
-    workspace_animation.set_place_frames(Box::new({
+    flight_engine.set_place_frames(Box::new({
         let events_tx = events_tx.clone();
         move |frames| events_tx.send(reactor::Event::ApplyOverlayFrames(frames))
     }));
@@ -404,7 +404,7 @@ stays usable. Fix the config and restart. Error: {error}",
             supervise("mc_native", mission_control_native.run()),
             supervise("process_actor", process_actor.run()),
             supervise("cursor_warp", cursor_warp.run()),
-            supervise("workspace_animation", workspace_animation.run()),
+            supervise("flight_engine", flight_engine.run()),
         );
     });
 }

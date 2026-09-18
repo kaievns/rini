@@ -1,9 +1,7 @@
 //! Bitmap snapshots of windows, for the capture-based animation overlay.
 //!
-//! Two capture APIs, because neither is sufficient alone: SkyLight for what is on screen, captured
-//! fresh, and ScreenCaptureKit for everything else, served from a background cache.
-//!
-//! Constraints and costs of both are measured in `docs/capture-overlay-research.md`.
+//! SkyLight captures what is on screen, fresh; ScreenCaptureKit serves everything else from a
+//! background cache. Constraints and costs of both: `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 use std::ffi::c_int;
@@ -14,7 +12,7 @@ use objc2_io_surface::IOSurfaceRef;
 
 use rini_shared::ids::WindowId;
 use rini_macos::skylight::{SLSHWCaptureWindowList, SLSMainConnectionID};
-use crate::ui::edge_dressing::dressing_after_insert;
+use crate::edge_dressing::dressing_after_insert;
 use rini_shared::ids::WindowServerId;
 
 pub use rini_motion::fit::{
@@ -22,27 +20,20 @@ pub use rini_motion::fit::{
     picture_is_stale, should_replace, spans_display,
 };
 
-/// Capture options cribbed verbatim from yabai (`window_manager.c:521`). The bits are undocumented,
-/// so they are not named: 1 << 11 asks for nominal resolution and 1 << 8 for best. Measured to make
-/// no difference to the visible-portion clipping, but kept identical to the one implementation known
-/// to work in production.
+/// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
+/// actually does" in `docs/capture-overlay-research.md`.
 const CAPTURE_OPTIONS: u32 = (1 << 11) | (1 << 8);
 
-/// A window's pixels, whichever API produced them.
-///
-/// Two cases rather than one normalised form: Core Animation accepts either, and converting would cost
-/// exactly what each API is good at avoiding. Surfaces are preferred because they stay off the heap.
+/// A window's pixels, whichever API produced them. Core Animation accepts either form.
 #[derive(Clone, Debug)]
 pub enum SnapshotImage {
     /// CPU-side bitmap, from `SLSHWCaptureWindowList`.
     Bitmap(CFRetained<CGImage>),
-    /// GPU-side surface, from ScreenCaptureKit. Does not occupy the process's heap.
+    /// GPU-side surface, from ScreenCaptureKit; off the process's heap.
     Surface(CFRetained<IOSurfaceRef>),
 }
 
-// IOSurface is explicitly shareable across threads and processes, and the ScreenCaptureKit capture
-// completes on a background queue. The retained reference keeps it alive until the main thread
-// attaches it to a layer.
+// SAFETY: CGImage is immutable and IOSurface is shareable across threads and processes.
 unsafe impl Send for SnapshotImage {}
 
 /// A window's pixels, plus how much of the window they cover.
@@ -51,13 +42,10 @@ pub struct WindowSnapshot {
     pub image: SnapshotImage,
     pub coverage: Coverage,
     pub source: SnapshotSource,
-    /// The window-server hairline this window wore when last seen composited, or `None` if it has
-    /// not been harvested yet. Carried across cache refreshes by [`SnapshotCache::insert`]: see
-    /// [`crate::ui::edge_dressing`].
-    pub dressing: Option<crate::ui::edge_dressing::EdgeDressing>,
-    /// When the pixels were captured. Staleness is a reason to re-warm: a fitting picture used to
-    /// be kept forever, so an off-strip window's tile showed week-old content on every animation
-    /// and snapped to the live window at each handover.
+    /// The hairline this window wore when last seen composited; carried across cache refreshes by
+    /// [`SnapshotCache::insert`]. See [`crate::edge_dressing`].
+    pub dressing: Option<crate::edge_dressing::EdgeDressing>,
+    /// When the pixels were captured; staleness is a reason to re-warm.
     pub taken: std::time::Instant,
 }
 
@@ -80,11 +68,8 @@ impl WindowSnapshot {
     }
 }
 
-/// Captures one window from the framebuffer through SkyLight.
-///
-/// One window per call: a list returns a single flattened composite, which cannot drive per-window
-/// animation. `None` is normal, including whenever the display is asleep, and callers fall back to the
-/// cache rather than treating it as an error.
+/// Captures one window from the framebuffer through SkyLight. One window per call: a list returns
+/// a single flattened composite. `None` is normal (display asleep); callers fall back to the cache.
 pub fn capture_via_skylight(
     window: WindowServerId,
     window_size: (f64, f64),
@@ -117,12 +102,8 @@ pub fn capture_via_skylight(
     })
 }
 
-/// Captures one window through the framed legacy API, at whatever size it really is right now.
-///
-/// The reveal chase's capture: measured at 16-24ms against 170-300ms for the SkyLight route under
-/// load. The image carries the window-server hairline baked into its outermost point — harmless,
-/// because the dressing sublayers draw the same pixels over it. Only works for a window that is
-/// actually composited on screen; the chase only calls it for one that is.
+/// Captures one window through `CGWindowListCreateImage`, which only renders a composited window.
+/// See "The hairline is composited outside every capture" in `docs/capture-overlay-research.md`.
 pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSnapshot> {
     let frame = rini_macos::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
@@ -150,14 +131,13 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSn
     })
 }
 
-/// One framed capture that yields the picture AND its hairline: the window plus one ring, the
-/// picture cropped back out of the same pixels. The reveal chase's capture: one window-server
-/// call per attempt. See "A grow holds, then reveals" in `docs/animation-smoothness.md`.
+/// One framed capture that yields the picture and its hairline: the reveal chase's capture.
+/// See "A grow holds, then reveals" in `docs/animation-smoothness.md`.
 pub fn capture_via_framed_with_dressing(
     window: WindowServerId,
     scale: f64,
 ) -> Option<WindowSnapshot> {
-    use crate::ui::edge_dressing::{
+    use crate::edge_dressing::{
         capture_ring_expanded, harvest_from_capture, picture_within_ring,
     };
     let frame = rini_macos::window_server::get_window(window)?.frame;
@@ -182,18 +162,13 @@ pub fn capture_via_framed_with_dressing(
     })
 }
 
-/// Anything the cache can hold and judge. Exists so the cache's replacement policy can be tested
-/// against plain sizes, without constructing bitmaps for a rule that never looks at pixels.
+/// Anything the cache can hold and judge, so the replacement policy can be tested on plain sizes.
 pub trait HasCoverage {
     fn coverage(&self) -> Coverage;
 }
 
 /// State a cache payload keeps alive across captures, independently of the pixel replacement rule.
-///
-/// The hairline dressing is harvested from the screen composite rather than from the capture
-/// buffer, so the two replace independently: a clipped capture can carry a good ring, and a good
-/// capture of a parked window carries none. Both hooks default to nothing for payloads that carry
-/// nothing.
+/// The dressing comes from the screen composite, not the capture buffer, so it replaces on its own.
 pub trait CarriesOver: Sized {
     /// Called on an incoming payload that is about to replace `previous`.
     fn inherit(&mut self, _previous: &Self) {}
@@ -225,10 +200,7 @@ impl HasCoverage for Coverage {
 
 impl CarriesOver for Coverage {}
 
-/// Captures several windows as ONE composited image.
-///
-/// The one case where SkyLight's flattening is wanted: a backdrop needs the wallpaper and the icon
-/// layer in a single picture.
+/// Captures several windows as one composited image, for the backdrop.
 pub fn capture_composite_via_skylight(
     windows: &[WindowServerId],
     covers: (f64, f64),
@@ -245,7 +217,7 @@ pub fn capture_composite_via_skylight(
     if array.is_null() {
         return None;
     }
-    // SAFETY: returns a +1 CFArray of CGImage, so ownership transfers here.
+    // SAFETY: SLSHWCaptureWindowList returns a +1 CFArray of CGImage, so ownership transfers here.
     let array = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(array)?) };
     let image = array.iter().next()?;
     let scale = if scale > 0.0 { scale } else { 1.0 };
@@ -261,9 +233,7 @@ pub fn capture_composite_via_skylight(
 }
 
 /// Snapshots held per window, so a switch can composite without capturing anything synchronously.
-///
-/// Keyed by [`WindowId`] rather than [`WindowServerId`] because window server ids are recycled when
-/// a window is closed and reopened, which would serve one window's pixels for another.
+/// Keyed by [`WindowId`] because window server ids are recycled when a window closes and reopens.
 pub struct SnapshotCache<T = WindowSnapshot> {
     entries: HashMap<WindowId, T>,
 }
@@ -309,8 +279,7 @@ impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
         self.entries.remove(&window);
     }
 
-    /// Drops snapshots for windows rini no longer manages, so the cache cannot outgrow the window
-    /// set. Each entry holds a full-resolution bitmap, so a leak here is measured in tens of MB.
+    /// Drops snapshots for windows rini no longer manages.
     pub fn retain_only(&mut self, live: &dyn Fn(WindowId) -> bool) {
         self.entries.retain(|wid, _| live(*wid));
     }
@@ -393,14 +362,11 @@ mod tests {
         Coverage { covered, window }
     }
 
-    /// The cache is exercised with `Coverage` as its payload. Every rule it enforces keys off sizes,
-    /// so a bitmap would add nothing but the need for graphics features in a unit test.
     fn cache() -> SnapshotCache<Coverage> {
         SnapshotCache::new()
     }
 
-    /// A payload with carried state, standing in for `WindowSnapshot` and its dressing: the same
-    /// `dressing_after_insert` rule, without needing a bitmap.
+    /// Stands in for `WindowSnapshot` and its dressing without needing a bitmap.
     #[derive(Clone, Copy)]
     struct Dressed {
         coverage: Coverage,
@@ -416,20 +382,17 @@ mod tests {
     impl CarriesOver for Dressed {
         fn inherit(&mut self, previous: &Self) {
             self.dressing =
-                crate::ui::edge_dressing::dressing_after_insert(previous.dressing, self.dressing);
+                crate::edge_dressing::dressing_after_insert(previous.dressing, self.dressing);
         }
 
         fn absorb(&mut self, refused: Self) {
             self.dressing =
-                crate::ui::edge_dressing::dressing_after_insert(self.dressing, refused.dressing);
+                crate::edge_dressing::dressing_after_insert(self.dressing, refused.dressing);
         }
     }
 
     #[test]
     fn a_refused_capture_still_delivers_its_dressing() {
-        // The harvest reads the screen composite, not the capture buffer: a clipped capture of an
-        // on-screen window carries a perfectly good ring, and dropping it with the pixels would
-        // leave the tile wearing last week's hairline.
         let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
         let good = coverage((859.0, 1081.0), (859.0, 1081.0));
         let sliver = coverage((40.0, 1081.0), (859.0, 1081.0));
@@ -442,8 +405,6 @@ mod tests {
 
     #[test]
     fn an_accepted_capture_without_a_harvest_inherits_the_worn_dressing() {
-        // A window captured while parked harvests nothing; it keeps the ring from when it was last
-        // composited, the same staleness model as the pictures themselves.
         let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
         let good = coverage((859.0, 1081.0), (859.0, 1081.0));
         cache.insert(wid(1), Dressed { coverage: good, dressing: Some(1) });
@@ -478,7 +439,6 @@ mod tests {
 
     #[test]
     fn retain_only_drops_windows_that_are_gone() {
-        // Each entry holds a full-resolution bitmap, so failing to prune leaks tens of MB.
         let mut cache = cache();
         cache.insert(wid(1), coverage((859.0, 1081.0), (859.0, 1081.0)));
         cache.insert(wid(2), coverage((859.0, 1081.0), (859.0, 1081.0)));

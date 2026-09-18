@@ -425,8 +425,11 @@ Gating spike for the design, run 2026-08-16. Every question passed. Spikes are
 ### Level and coverage
 
 All managed windows sit at CG layer 0, read from the window server rather than
-assumed. An overlay at `CGWindowLevelForKey(.screenSaverWindow)`, which is 1000,
-covers all of them. Verified from the framebuffer with `screencapture`, not from
+assumed. The overlay sits at level 18 (`OVERLAY_LEVEL`): above every managed
+window, below utility panels (19), the Dock (20), notification banners (21) and
+the menu bar (24), all read from the window list on this machine. At
+`NSPopUpMenuWindowLevel` (101) it blotted out notification banners for every
+animation; `screenSaverWindow` (1000) was the first working level and worse still. Verified from the framebuffer with `screencapture`, not from
 `SLSHWCaptureWindowList`, which composites only the windows it is handed and so
 cannot answer what is actually on screen.
 
@@ -451,6 +454,13 @@ sketchybar             -20
 Dock          -2147483624
 Notification Center   -2147483601
 ```
+
+The overlay window is opaque with a black background: left transparent, a gap
+between columns rendered as AppKit's bare grey slab. Its content view is a
+flipped `NSView` (`isFlipped`), so the layer tree agrees with CoreGraphics
+coordinates; `setGeometryFlipped` on a view-backed layer is silently
+ineffective, and on the backdrop layer it flips the contents too and drew the
+captured desktop upside down.
 
 ### Focus is never stolen
 
@@ -821,7 +831,7 @@ It decides two separate things:
   group, then the other group, with a stride between groups wide enough that no
   window count can make them interleave. Without it, the animation drew the floating
   window over the columns sliding past underneath.
-- **Real order.** `strip_regroup` returns the strip windows back to front when
+- **Real order.** `regroup_tiled` returns the strip windows back to front when
   something off the strip is in front of any of them, and nothing at all when the
   order already obeys the rule — the common case, and it must cost nothing, because
   putting it back costs one Accessibility raise per window on screen. Only on-screen
@@ -1333,6 +1343,22 @@ A layer handed that surface draws the whole buffer, so the window appears at
 half size pinned to a corner of a tile that is itself exactly the right size.
 Which is precisely what it looked like.
 
+The guard is `content_reaches_edges`: seven samples along the right and bottom
+edges, inset 4px to clear rounded corners, painted meaning alpha above 8
+(`PAINTED_ALPHA`), both edges required since content along one does not rule
+out underfill in the other direction. An underfilled capture is rejected, not
+cached: its coverage would claim the full buffer, pass every fit test, and draw
+the window small in a corner on black. Mid-resize the same underfill has another
+cause: a 1147pt window requested at 572pt (the layout's intended size) came back
+aspect-fitted into a corner, and the tile drew it at two-thirds size on black.
+The buffer is therefore sized from the window's frame at enumeration time;
+`target.size` only decides whether to capture. The check locks the
+`CVPixelBuffer`, not the IOSurface: creating or locking IOSurfaces from parallel
+test threads raced SkyLight's lazy initialisation and aborted the suite in 3% to
+8% of runs ("Cannot form weak reference to instance of class
+SLSWindowManagementFallbackBridge"), so the tests use plain closures and 1x1
+`CGImage` bitmaps.
+
 ### Why fixing it in the layer is the wrong fix
 
 `contentsRect` set to the painted quarter does make the window the right size,
@@ -1649,8 +1675,18 @@ the window's own colour over white would be 0.55
 So a tile is two layers now: the picture, and a caster behind it carrying nothing
 but the shadow, masked by a `CAShapeLayer` whose path is the mask's own rect plus
 the window's rounded rect, wound even-odd, so only the ring outside the window is
-drawn. `SHADOW_REACH` is 40pt, comfortably past the 17pt where the measured ramp is
-spent, so the ring never clips the blur into a straight edge.
+drawn. `SHADOW_REACH` is 70pt: the focused style (radius 14, offset 12) spends
+its ramp by about 54pt (three radii plus the offset), so the 40pt reach that fit
+the unfocused style clipped it into a straight edge.
+
+`CGPath::with_rounded_rect` with a zero radius or a zero dimension emits a plain
+rect, whose element structure differs from a rounded rect's; a `shadowPath` or
+mask `path` animation between the two does not interpolate, it cuts. An entrance
+growing from zero width popped its shadow this way, so `silhouette_path` and
+`ring_path` floor the size to 0.5pt and the radius to 0.01. The caster's resize
+animations use the same key prefix (`rini.tile`) as the plain move: a move leg
+retargeted into a resize otherwise left its old position animation fighting the
+resize's, and the shadow tore away from its tile.
 
 The shape is rebuilt only when a tile's size changes, which is once per animation:
 a movement changes where a tile is, not how big it is.
@@ -1703,7 +1739,14 @@ of:
 - `SnapshotService::set_scale` was the only invalidation, and it acts on the backing
   scale. Both displays here are 2x, so moving the overlay between them invalidated
   nothing, and a render already in flight for one display landed as the cached
-  desktop for the other.
+  desktop for the other. `SnapshotService::invalidate` now bumps a revision on a
+  display change so such a render cannot land, and the engine keeps the backdrop,
+  desktop render and bar picture in one `DisplayPictures` forgotten as a unit: a
+  display change used to clear only the bar, and the overlay drew an external
+  display's 3008x1692 desktop behind a built-in display's strips on a 1728x1117
+  overlay. The per-window path reuses the shown backdrop rather than recapturing:
+  a desktop composite measures 13ms to 36ms, a frame or two of lag on every
+  focus change, while re-applying a held picture is a pointer assignment.
 - `capture_backdrop` size-checked the SkyLight composite but handed the cached
   ScreenCaptureKit render over unchecked.
 
@@ -1803,6 +1846,13 @@ so nothing composites those surfaces for minutes at a time.
 `increment_use_count` on every cached capture prevents it. This one is reasoned
 rather than reproduced: purging happens on the system's schedule and did not
 reproduce inside a test session.
+
+The use count keeps a surface from being reclaimed, not from being reused.
+ScreenCaptureKit's sample buffers come from its own pool: once the completion
+returns, the surface is recycled for the next capture, and a layer still holding
+it draws whatever landed there next. Two same-size Chrome windows on different
+workspaces swapped pictures that way. `own_copy` therefore memcpys every capture
+into an IOSurface this process owns, one copy per capture, off the main thread.
 
 ### Recapturing the destination once it is on screen
 

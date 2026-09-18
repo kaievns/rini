@@ -596,7 +596,7 @@ pub struct DesktopBackdrop {
 }
 
 /// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
-/// See "The wallpaper is not reliably a window" in `docs/capture-overlay-research.md`.
+/// See "The wallpaper is not reliably a window" in `crates/rini-overlay/docs/capture-overlay-research.md`.
 pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
 
     let mut windows = Vec::new();
@@ -641,7 +641,7 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
 /// Anything at or below this level is the desktop behind every app window.
 const DESKTOP_CEILING: i64 = -2147483600;
 
-/// Levels measured in `docs/capture-overlay-research.md` ("The wallpaper is not reliably a window");
+/// Levels measured in `crates/rini-overlay/docs/capture-overlay-research.md` ("The wallpaper is not reliably a window");
 /// the wallpaper at -2147483624 is owned by the Dock process and must count as desktop.
 pub fn is_desktop_layer(layer: i64) -> bool {
     layer <= DESKTOP_CEILING
@@ -658,7 +658,7 @@ pub struct BarStrip {
     pub windows: Vec<WindowServerId>,
     /// Union of the windows' bounds, or `None` without a bar. A composite capture covers only this
     /// union, so it must be drawn at the union's origin ("The bar has to be captured on its own" in
-    /// `docs/capture-overlay-research.md`).
+    /// `crates/rini-overlay/docs/capture-overlay-research.md`).
     pub bounds: Option<CGRect>,
 }
 

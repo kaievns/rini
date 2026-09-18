@@ -36,7 +36,7 @@ pub fn resolve_start(
     travel: Option<CGPoint>,
 ) -> CGRect {
         // A park is judged from both frames, before the synthetic test: apps clamp the real frame past
-    // the park threshold, and the server may already report the slot. See docs/animation-smoothness.md.
+    // the park threshold, and the server may already report the slot. See crates/rini-overlay/docs/animation-smoothness.md.
     let parked_real = real.is_some_and(|real| is_off_screen(display, real));
     let parked_from = is_off_screen(display, from);
     if parked_real || parked_from {
@@ -58,7 +58,7 @@ pub fn resolve_start(
 /// The tile's visual destination: a window leaving for a corner park travels with the strip,
 /// `start` translated by `travel` (`neighbour_travel`), the mirror of `resolve_start`. With no
 /// moving neighbour it exits past the display edge on the park's side. See "Layout changes" in
-/// `docs/animation-smoothness.md`.
+/// `crates/rini-overlay/docs/animation-smoothness.md`.
 pub fn resolve_end(start: CGRect, to: CGRect, display: CGRect, travel: Option<CGPoint>) -> CGRect {
         if is_off_screen(display, to) && !is_off_screen(display, start) {
         return match travel {

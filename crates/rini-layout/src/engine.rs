@@ -2252,7 +2252,7 @@ impl LayoutEngine {
                     // showing at the edge; it honours the corner at 1pt. The strip's own geometry is
                     // untouched — `calculate_layout_for_workspace` still answers with the real position,
                     // which is what the animation canvas is built from. See "macOS will not park a window
-                    // further off the left edge than 40pt" in `docs/capture-overlay-research.md`.
+                    // further off the left edge than 40pt" in `crates/rini-overlay/docs/capture-overlay-research.md`.
                     let placed = if crate::HiddenWindowPlacement::is_off_screen(screen, rect) {
                         // The corner records which side of the strip the column was on, so an animation
                         // can bring it back in from that edge instead of up from the bottom.

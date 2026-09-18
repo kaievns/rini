@@ -1,10 +1,7 @@
 //! Background window capture through ScreenCaptureKit, for windows SkyLight cannot serve.
 //!
-//! Fills a cache rather than capturing on demand: a capture is far too slow to run at switch time.
-//! Nothing polls, so an idle rini costs nothing. Results are `IOSurface` rather than bitmaps to keep a
-//! warm cache off the heap.
-//!
-//! Capture API constraints and costs are measured in `docs/capture-overlay-research.md`.
+//! Fills a cache rather than capturing on demand: a capture is too slow to run at switch time.
+//! Results are `IOSurface` to keep a warm cache off the heap. See `docs/capture-overlay-research.md`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ptr::NonNull;
@@ -28,21 +25,17 @@ use tracing::{debug, warn};
 
 use rini_shared::ids::WindowId;
 use rini_shared::ids::WindowServerId;
-use crate::ui::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, WindowSnapshot};
+use crate::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, WindowSnapshot};
 
-/// Concurrent captures. Measured: wall clock stops improving past four, because ScreenCaptureKit
-/// serialises internally. Going wider only queues work and delays the first result.
+/// Concurrent captures. ScreenCaptureKit serialises internally, so wall clock stops improving past
+/// four. See "Capture cost" in `docs/capture-overlay-research.md`.
 const MAX_CONCURRENT: usize = 4;
 
-/// Alpha above which a pixel counts as painted. Window corners are rounded and shadows are excluded, so
-/// a genuinely painted edge is opaque; anything at or below this is untouched buffer.
+/// Alpha above which a pixel counts as painted; shadows are excluded, so a painted edge is opaque.
 const PAINTED_ALPHA: u8 = 8;
 
-/// Do both far edges of a capture have painted pixels?
-///
-/// The rule, separated from the surface so it can be tested without one. Both edges must be reached:
-/// content along one does not rule out underfill in the other direction. Several samples per edge,
-/// since a rounded corner can leave any single point clear.
+/// Do both far edges of a capture have painted pixels? Several samples per edge, since a rounded
+/// corner can leave any single point clear.
 fn edges_are_painted(width: usize, height: usize, alpha_at: impl Fn(usize, usize) -> u8) -> bool {
     if width == 0 || height == 0 {
         return false;
@@ -66,13 +59,8 @@ fn edges_are_painted(width: usize, height: usize, alpha_at: impl Fn(usize, usize
     reaches_right && reaches_bottom
 }
 
-/// Does a capture's content actually reach the far edge of the buffer it was given?
-///
-/// A buffer is always the size that was asked for, so only its pixels can reveal an underfilled
-/// capture. `None` means the surface could not be inspected, which callers treat as fine.
-///
-/// See "Nominal capture resolution paints a quarter of the buffer" in
-/// `docs/capture-overlay-research.md`.
+/// Does a capture's content reach the far edge of its buffer? `None` means it could not be inspected.
+/// See "Nominal capture resolution paints a quarter of the buffer" in `docs/capture-overlay-research.md`.
 fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<bool> {
     use objc2_core_video::{
         CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
@@ -85,9 +73,8 @@ fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<boo
     if width == 0 || height == 0 {
         return None;
     }
-    // Read-only, and unlocked before returning. Deliberately the pixel buffer rather than the
-    // IOSurface: taking an IOSurface lock from a test thread raced SkyLight's lazy initialisation and
-    // aborted the suite in about 5% of runs.
+    // The pixel buffer's lock, not the IOSurface's: an IOSurface lock off the main thread races
+    // SkyLight's lazy initialisation.
     if unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly) } != 0 {
         return None;
     }
@@ -97,8 +84,7 @@ fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<boo
         None
     } else {
         Some(edges_are_painted(width, height, |x, y| {
-            // SAFETY: bounded by the buffer's own dimensions and stride, both checked above, while the
-            // buffer is locked for reading.
+            // SAFETY: bounded by the buffer's dimensions and stride, checked above, while locked.
             unsafe { *base.add(y * stride + x * 4 + 3) }
         }))
     };
@@ -106,13 +92,8 @@ fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<boo
     painted
 }
 
-/// Copies a capture's pixels into an IOSurface this process owns.
-///
-/// ScreenCaptureKit's sample buffers come from its own pool: once the completion returns, the
-/// surface is recycled for the next capture, and a layer still holding it draws whatever landed
-/// there next. Two same-size Chrome windows on different workspaces swapped pictures that way
-/// (a use-count bump kept the backing store from being reclaimed, not from being reused). One
-/// memcpy per capture, off the main thread. `None` when the surface cannot be read or allocated.
+/// Copies a capture's pixels into an IOSurface this process owns: ScreenCaptureKit recycles its pool
+/// surfaces once the completion returns. See "Cached surfaces have to be marked in use" in the research doc.
 fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
     use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
     use objc2_io_surface::{
@@ -140,8 +121,7 @@ fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
     ];
     let value_refs: [&CFNumber; 5] = std::array::from_fn(|i| &*values[i]);
     let properties = CFDictionary::from_slices(&keys, &value_refs);
-    // SAFETY: a fresh surface from a well-formed property list; locks are paired below and the
-    // copy stays inside both buffers' `bytes_per_row * height` extents.
+    // SAFETY: locks are paired below and the copy stays inside both buffers' stride * height extents.
     let copy = unsafe { IOSurfaceRef::new(properties.as_opaque()) }?;
     let copy_stride = copy.bytes_per_row();
     let row_bytes = stride.min(copy_stride);
@@ -169,28 +149,27 @@ fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
 pub struct SnapshotTarget {
     pub window: WindowId,
     pub server_id: WindowServerId,
-    /// The window's full size in points. Captured at this size times the backing scale, so a tile
-    /// drawn at the window's own size is pixel-exact.
+    /// The window's full size in points, as the layout intends it.
     pub size: CGSize,
 }
 
 struct PendingCapture {
     target: SnapshotTarget,
-    /// The window's frame size at enumeration — what the capture is actually of, as opposed to
-    /// `target.size`, which is the size the layout intends. Mid-resize the two differ.
+    /// The window's frame size at enumeration: what the capture is of. Mid-resize it differs from
+    /// `target.size`.
     size: CGSize,
     filter: Retained<SCContentFilter>,
     config: Retained<SCStreamConfiguration>,
     revision: u64,
 }
 
-// The filter and configuration are immutable once queued here, and are consumed only by
-// ScreenCaptureKit's thread-safe class capture method.
+// SAFETY: the filter and configuration are immutable once queued, and consumed only by a
+// thread-safe class method.
 unsafe impl Send for PendingCapture {}
 
 #[derive(Default)]
 struct ServiceState {
-    /// Completed captures waiting to be collected by the owner of the cache.
+    /// Completed captures waiting to be collected.
     ready: HashMap<WindowId, WindowSnapshot>,
     /// Targets with a capture in flight, so a burst of events cannot queue the same window twice.
     in_flight: HashSet<WindowId>,
@@ -198,23 +177,18 @@ struct ServiceState {
     active: usize,
     /// The most recent desktop capture, waiting to be collected.
     desktop: Option<WindowSnapshot>,
-    /// Whether a desktop capture is already running, so a burst of switches queues only one.
     desktop_in_flight: bool,
 }
 
-/// Captures windows in the background and holds the results until collected.
-///
-/// Cloneable: every clone shares one queue and one result set, so the ScreenCaptureKit completion
-/// handlers can hand results back without the caller holding a lock.
+/// Captures windows in the background and holds the results until collected. Every clone shares
+/// one queue and one result set.
 #[derive(Clone)]
 pub struct SnapshotService {
     state: Arc<Mutex<ServiceState>>,
-    /// Bumped whenever the display configuration changes, so results captured against stale geometry
-    /// are discarded rather than cached at the wrong size.
+    /// Bumped on display or scale changes; results captured against an older revision are dropped.
     revision: Arc<AtomicU64>,
     scale: Arc<Mutex<f64>>,
-    /// Called on the capturing queue when at least one result has landed, so the owner knows there is
-    /// something to collect without polling.
+    /// Called on the capturing queue when a result has landed.
     notify: Arc<dyn Fn() + Send + Sync>,
 }
 
@@ -228,19 +202,13 @@ impl SnapshotService {
         }
     }
 
-    /// Invalidates everything in flight, so a capture requested for the old geometry cannot be cached
-    /// against the new one.
-    ///
-    /// `set_scale` alone was not enough: both displays here are 2x, so moving the overlay between them
-    /// changed nothing it looks at, and a desktop render of one display landed as the cached desktop for
-    /// the other. The backdrop layer is sized from the picture, so that showed the wrong display's
-    /// wallpaper at its own size, zoomed in, until the right render arrived.
+    /// Invalidates everything in flight on a display change. See "A render of the wrong display,
+    /// drawn at its own size" in `docs/capture-overlay-research.md`.
     pub fn invalidate(&self) {
         self.revision.fetch_add(1, Ordering::Release);
     }
 
-    /// Invalidates everything in flight when the backing scale changes, because a capture sized for the old
-    /// scale would be cached at the wrong resolution.
+    /// Invalidates everything in flight when the backing scale changes.
     pub fn set_scale(&self, scale: f64) {
         let mut current = self.scale.lock().unwrap();
         if (*current - scale).abs() < f64::EPSILON {
@@ -255,19 +223,15 @@ impl SnapshotService {
         if scale > 0.0 { scale } else { 2.0 }
     }
 
-    /// Takes every completed capture, leaving the service empty.
-    ///
-    /// The caller owns the cache; this only holds results long enough to hand them over, so a capture
-    /// that lands while an animation is running cannot mutate the cache mid-frame.
+    /// Takes every completed capture, leaving the service empty. The caller owns the cache, so a
+    /// capture landing mid-animation cannot mutate it mid-frame.
     pub fn collect(&self) -> Vec<(WindowId, WindowSnapshot)> {
         let mut state = self.state.lock().unwrap();
         state.ready.drain().collect()
     }
 
-    /// Requests captures for `targets`, skipping any already in flight.
-    ///
-    /// One `SCShareableContent` lookup for the whole batch, since enumeration is the expensive part.
-    /// `onScreenWindowsOnly` must be false or windows on a hidden workspace are never enumerated.
+    /// Requests captures for `targets`, skipping any already in flight. `onScreenWindowsOnly` must be
+    /// false or hidden-workspace windows are never enumerated.
     pub fn request(&self, targets: Vec<SnapshotTarget>) {
         let revision = self.revision.load(Ordering::Acquire);
         let targets: Vec<SnapshotTarget> = {
@@ -300,7 +264,6 @@ impl SnapshotService {
                     .iter()
                     .find(|window| unsafe { window.windowID() } == target.server_id.as_u32());
                 let Some(window) = found else {
-                    // The window closed between the request and the enumeration. Not an error.
                     debug!(
                         wsid = target.server_id.as_u32(),
                         pid = target.window.pid,
@@ -310,13 +273,8 @@ impl SnapshotService {
                     continue;
                 };
 
-                // The buffer is sized from the window as it IS, not as the layout intends it
-                // (`target.size`). During a resize the two disagree, and ScreenCaptureKit fits the
-                // real window into whatever buffer it is given: a 1147pt window asked for at 572pt
-                // came back aspect-fitted into a corner of the buffer, and the tile drew the window
-                // at two-thirds size on black. `target.size` still decides WHETHER to capture
-                // (`needs_capture`); the churn settles because the last capture after a resize is
-                // taken at the settled size.
+                // Buffer sized from the window as it is, not `target.size`: ScreenCaptureKit
+                // aspect-fits the real window into whatever buffer it is given.
                 let actual = unsafe { window.frame() }.size;
                 let size = if actual.width >= 1.0 && actual.height >= 1.0 {
                     actual
@@ -336,15 +294,13 @@ impl SnapshotService {
                     config.setPixelFormat(u32::from_be_bytes(*b"BGRA"));
                     config.setShowsCursor(false);
                     config.setCapturesAudio(false);
-                    // Shadows would be baked into the bitmap and then drawn again by the compositor,
-                    // giving every animated window a doubled shadow.
+                    // The compositor draws the tile's shadow; a baked one would double it.
                     config.setIgnoreShadowsSingleWindow(true);
                     config.setIgnoreGlobalClipSingleWindow(true);
-                    // Not opaque: rounded corners must stay transparent, or every tile animates as a
-                    // rectangle with black corners.
+                    // Rounded corners must stay transparent.
                     config.setShouldBeOpaque(false);
-                    // Best, not Nominal: Nominal renders at POINT size into a buffer sized in PIXELS
-                    // and leaves three quarters of it transparent. See docs/capture-overlay-research.md.
+                    // Nominal renders at point size into a pixel-sized buffer. See "Nominal capture
+                    // resolution paints a quarter of the buffer" in docs/capture-overlay-research.md.
                     config.setCaptureResolution(SCCaptureResolutionType::Best);
                 }
                 queued.push(PendingCapture { target: *target, size, filter, config, revision });
@@ -364,11 +320,8 @@ impl SnapshotService {
         self.state.lock().unwrap().desktop.take()
     }
 
-    /// Requests a capture of the desktop: the display with every app window excluded.
-    ///
-    /// Renders a DISPLAY rather than a set of windows, because the wallpaper is not reliably a window
-    /// and cannot be composited from one. See "The wallpaper is not reliably a window" in
-    /// `docs/capture-overlay-research.md`.
+    /// Requests a render of the display with every app window excluded. See "The wallpaper is not
+    /// reliably a window" in `docs/capture-overlay-research.md`.
     pub fn request_desktop(&self, display_id: u32, size: CGSize) {
         {
             let mut state = self.state.lock().unwrap();
@@ -397,9 +350,8 @@ impl SnapshotService {
                 return;
             };
 
-            // Leaves the wallpaper, the desktop icons and the widgets. The bar goes too, even though it
-            // sits below layer 0: the overlay draws it from its own capture, and a copy baked in here
-            // would sit under that one and hide the strips scrolling past.
+            // The bar is excluded too, although below layer 0: the overlay draws it from its own
+            // capture. See "The bar has to be captured on its own" in docs/capture-overlay-research.md.
             let windows = unsafe { content.windows() };
             let excluded: Vec<Retained<SCWindow>> = windows
                 .iter()
@@ -425,7 +377,6 @@ impl SnapshotService {
                 config.setPixelFormat(u32::from_be_bytes(*b"BGRA"));
                 config.setShowsCursor(false);
                 config.setCapturesAudio(false);
-                // The desktop is drawn as the bottom layer, so it wants no transparency of its own.
                 config.setShouldBeOpaque(true);
                 config.setCaptureResolution(SCCaptureResolutionType::Nominal);
             }
@@ -465,8 +416,6 @@ impl SnapshotService {
             state.desktop_in_flight = false;
             match surface {
                 Some(surface) if revision == self.revision.load(Ordering::Acquire) => {
-                    // Our own copy: the pool's surface is recycled or reclaimed under a layer that
-                    // still holds it (see `own_copy`).
                     let Some(surface) = own_copy(&surface) else {
                         return;
                     };
@@ -522,12 +471,8 @@ impl SnapshotService {
                         .and_then(|sample| unsafe { sample.as_ref().image_buffer() });
                     let filled = buffer.as_ref().and_then(|b| content_reaches_edges(b));
                     let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
-                    // NO capture calls in here. This block runs on ScreenCaptureKit's own delivery
-                    // queue, and the legacy capture API behind the hairline harvest is PROXIED
-                    // through that same machinery on modern macOS: calling it from a completion
-                    // deadlocks the delivery of its own reply until a ~20s timeout, and every
-                    // capture in the process serializes behind the wedge. Measured as half-minute
-                    // window switches. The owner harvests on a plain thread after collecting.
+                    // No capture calls in here: `CGWindowListCreateImage` is proxied through this
+                    // same delivery queue and deadlocks until a ~20s timeout. The owner harvests later.
                     service.finish(target, size, revision, scale, surface, filled, None);
                 });
             unsafe {
@@ -548,7 +493,7 @@ impl SnapshotService {
         scale: f64,
         surface: Option<CFRetained<IOSurfaceRef>>,
         filled: Option<bool>,
-        dressing: Option<crate::ui::edge_dressing::EdgeDressing>,
+        dressing: Option<crate::edge_dressing::EdgeDressing>,
     ) {
         let landed = {
             let mut state = self.state.lock().unwrap();
@@ -558,12 +503,8 @@ impl SnapshotService {
             if revision != self.revision.load(Ordering::Acquire) {
                 false
             } else if filled == Some(false) {
-                // The requested size is guaranteed of the BUFFER only, not of what was painted into
-                // it. An underfilled capture is REJECTED rather than cached: its coverage would
-                // claim the full buffer, pass every fit test, and draw the window small in a corner
-                // on black — through a translucent window, the untouched buffer reads as a gap to
-                // the backdrop. It happens when the window changes size between the request and the
-                // capture, so the next warm — taken once the size settles — replaces it.
+                // Rejected rather than cached: an underfilled capture's coverage would claim the
+                // full buffer and pass every fit test.
                 warn!(
                     wsid = target.server_id.as_u32(),
                     pid = target.window.pid,
@@ -572,7 +513,6 @@ impl SnapshotService {
                 );
                 false
             } else if let Some(surface) = surface.as_deref().and_then(own_copy) {
-                // Our own copy, not the pool's surface (see `own_copy`).
                 let width = surface.width() as f64 / scale;
                 let height = surface.height() as f64 / scale;
                 state.ready.insert(
@@ -581,8 +521,6 @@ impl SnapshotService {
                         image: SnapshotImage::Surface(surface),
                         coverage: Coverage {
                             covered: (width, height),
-                            // The size the capture is actually of, not target.size: mid-resize the
-                            // layout's intended size is not what was on screen.
                             window: (size.width, size.height),
                         },
                         source: SnapshotSource::ScreenCaptureKit,
@@ -603,7 +541,6 @@ impl SnapshotService {
         if landed {
             (self.notify)();
         }
-        // Keep the queue moving whether or not this one produced pixels.
         self.pump();
     }
 
@@ -628,8 +565,6 @@ mod tests {
 
     use super::*;
 
-    /// The copy is a different surface with the same pixels, so the pool recycling its own cannot
-    /// change what a cached snapshot shows.
     #[test]
     fn a_captures_copy_is_its_own_surface_with_the_same_pixels() {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
@@ -704,8 +639,6 @@ mod tests {
 
     #[test]
     fn a_scale_change_bumps_the_revision_so_stale_captures_are_dropped() {
-        // Without this, a capture requested at one backing scale could land after a display change
-        // and be cached at the wrong resolution, which would draw the tile at the wrong size.
         let service = service();
         let before = service.revision.load(Ordering::Acquire);
         service.set_scale(1.0);
@@ -714,7 +647,6 @@ mod tests {
 
     #[test]
     fn setting_the_same_scale_does_not_invalidate_anything() {
-        // A config reload or a redundant screen event must not throw away work in flight.
         let service = service();
         let before = service.revision.load(Ordering::Acquire);
         service.set_scale(2.0);
@@ -723,8 +655,6 @@ mod tests {
 
     #[test]
     fn abandoning_a_target_lets_it_be_requested_again() {
-        // A window that closes mid-capture must not be stuck in flight forever, or it can never be
-        // captured again if it reopens with the same id.
         let service = service();
         {
             let mut state = service.state.lock().unwrap();
@@ -737,8 +667,6 @@ mod tests {
 
     #[test]
     fn results_are_taken_once_and_only_once() {
-        // The owner drains results into its own cache, so a capture landing mid-animation cannot
-        // mutate what is being drawn.
         let service = service();
         {
             let mut state = service.state.lock().unwrap();
@@ -759,8 +687,6 @@ mod tests {
 
     #[test]
     fn notify_fires_only_when_a_capture_actually_produced_pixels() {
-        // A failed capture must not wake the owner, or a window that cannot be captured would cause
-        // a wakeup on every attempt.
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
         let service =
@@ -779,19 +705,12 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
 
-    /// Alpha reader over a plain buffer whose top-left `fill_w` x `fill_h` pixels are painted. That is
-    /// the shape of the regression: a buffer of the right size holding the window in one corner.
-    ///
-    /// Deliberately not a real IOSurface. Creating and locking surfaces from parallel test threads
-    /// raced SkyLight's lazy initialisation and aborted the whole suite in about 8% of runs with
-    /// "Cannot form weak reference to instance of class SLSWindowManagementFallbackBridge".
+    /// Alpha reader over a plain buffer whose top-left `fill_w` x `fill_h` pixels are painted.
+    /// Not a real IOSurface: creating one from a test thread races SkyLight's lazy initialisation.
     fn painted(fill_w: usize, fill_h: usize) -> impl Fn(usize, usize) -> u8 {
         move |x, y| if x < fill_w && y < fill_h { 255 } else { 0 }
     }
 
-    /// The regression: `captureResolution` set to nominal renders the window at its POINT size into a
-    /// buffer sized in PIXELS, so three quarters of the buffer stays transparent. The buffer's own
-    /// dimensions look correct, so only the pixels can catch it.
     #[test]
     fn a_capture_filling_only_a_corner_of_its_buffer_is_detected() {
         assert!(!edges_are_painted(64, 64, painted(32, 32)));
@@ -804,14 +723,11 @@ mod tests {
 
     #[test]
     fn a_capture_a_few_pixels_short_still_passes() {
-        // Rounded corners leave the very edge clear on a correct capture, so sampling is inset. Being
-        // strict here would reject every real window.
         assert!(edges_are_painted(64, 64, painted(62, 62)));
     }
 
     #[test]
     fn a_capture_short_in_only_one_direction_is_detected() {
-        // Checking either edge rather than both missed these, which a test caught.
         assert!(!edges_are_painted(64, 64, painted(64, 32)));
         assert!(!edges_are_painted(64, 64, painted(32, 64)));
     }
@@ -826,11 +742,8 @@ mod tests {
         assert!(!edges_are_painted(0, 0, painted(0, 0)));
     }
 
-    /// A 1x1 CPU bitmap, which is all the drain test needs: something a `WindowSnapshot` can hold.
-    ///
-    /// Not an IOSurface. Creating one from a test thread raced SkyLight's lazy initialisation and
-    /// aborted the whole suite in roughly 3% of runs with "Cannot form weak reference to instance of
-    /// class SLSWindowManagementFallbackBridge". A bitmap touches no window server state.
+    /// A 1x1 CPU bitmap. Not an IOSurface: creating one from a test thread races SkyLight's lazy
+    /// initialisation and aborts the suite.
     fn tiny_bitmap() -> CFRetained<objc2_core_graphics::CGImage> {
         use objc2_core_graphics::{
             CGBitmapInfo, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
