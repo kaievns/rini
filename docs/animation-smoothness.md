@@ -55,31 +55,44 @@ What remains is either consolidation or marginal:
 - **Cross-app skew is unfixable here.** The real fix is to stop using AX for
   animation entirely — see "Endgame" below.
 
-## The overlay engine: one per-tile Core Animation machinery
+## The overlay engine: containers carry the rigid pieces
 
-Every overlay movement is a group of per-tile animations handed to the render
-server in ONE `CATransaction` (`begin_group` in `workspace_animation.rs`,
-`animate_tiles` in `workspace_overlay.rs`): one commit, one timebase, one
-curve, so tiles start on the same beat, cannot tear against each other, and
-render vsync-locked at the display's native refresh, immune to main-thread
-stalls. Model layers jump to their destinations; the animations carry the
-presentation and are removed on completion, revealing the model — no
-snap-back, no delegate. The tick loop paces only the mid-flight orchestration
-(frame placement at the apply point, the one destination recapture,
-teardown); nothing is drawn on ticks.
+Every overlay flight is a `FlightPlan` (`workspace_animation/plan.rs`): a
+set of rigid strip groups, a loose set (resizes and entrances), and the
+floating windows. Each group is one `CALayer` container under the overlay's
+root (`install` in `workspace_overlay.rs`). A container's `position` is the
+only animated translation its members get; the tiles inside sit at
+group-relative frames and never move on their own. Resizes and entrances
+are loose tiles under `StripLoose`; floating windows sit in the `Floating`
+container. `fly` hands the whole plan to the render server in ONE
+`CATransaction`: one position animation per moving container, one resize
+per loose tile, one timebase, one curve. Model layers jump to their
+destinations; the animations carry the presentation and are removed on
+completion. The tick loop paces only the mid-flight orchestration (frame
+placement at the apply point, the one destination recapture, teardown);
+nothing is drawn on ticks. Every overlay commit is flushed to the render
+server at once (`commit_now`): the overlay shares the main thread with the
+reactor, and an explicit commit nested in the run loop's implicit
+transaction is only sent when that iteration ends, after the reactor's
+synchronous AX and window-server calls. Sent late, a flight skipped its
+first frames. Every leg's animations carry an explicit `beginTime`
+(`Timing`), so the render server's clock and the actor's agree; "flight
+landed" logs how late the last frame was presented (`late_ms`).
 
-This evolved in three steps, each replacing a weakness the previous one
-measured. The original manual tick loop (60Hz `RepeatingTimer` posting into
-the actor queue) was not vsync-aligned, capped at 60fps, and coupled to the
-main thread — dropped drawn frames were the observed difference between
-smooth and "instant cut". A dedicated canvas layer then carried switches and
-pans as one animated property, guaranteeing group rigidity structurally.
-Finally the canvas was dissolved into the per-tile machinery: animations
-committed in one transaction share clock and curve, so a rigid group slide
-holds together without a single-layer guarantee (pinned by
-`a_strip_movement_translates_every_window_by_the_same_vector`), and one
-machinery for every movement means a switch chaining onto a slide — or the
-reverse — merges instead of superseding it with a snap.
+The model has been round the loop twice. The original manual tick loop
+(60Hz `RepeatingTimer` posting into the actor queue) was not vsync-aligned
+and dropped drawn frames. A dedicated canvas layer then carried switches
+and pans as one animated property, rigid by construction. The canvas was
+dissolved into per-tile animations committed in one transaction: that
+bought one machinery for every movement, and continuity across a chained
+switch and slide, because each tile bent from its own presented position.
+It cost rigidity on every merge. Each tile was retargeted from its own
+presented position on its own fresh clock, and a pass merging mid-flight
+(a pan 56ms after an open, a resize during a pan) sent tiles of one strip
+off on slightly different legs. The user saw the strip teleport. Containers
+keep the continuity (a container is retargeted from its presented position
+the same way) and restore rigidity structurally: members of a group cannot
+drift because only the group moves.
 
 The two entry points feed the same `begin_group`:
 
@@ -103,59 +116,79 @@ The two entry points feed the same `begin_group`:
   requested frame and the server's: apps clamp a park past the 40pt
   `is_off_screen` threshold (Kiro shows 41pt, Finder 52pt, log 20:35:56),
   and the server may already report the slot. Judged from the server's frame
-  alone, the tile flew in from, or slid into, the bottom-right corner. A
-  later pass merging into the flight applies the same rule to the tiles and
-  entrances it moves by frame alone (`PassTravel`): a strip pass lends its
-  pan, a layout pass the vector of its composed tiles.
+  alone, the tile flew in from, or slid into, the bottom-right corner. The
+  resolved `(start, end)` pairs become a `ReflowPlan` (`reflow_plan`): tiles
+  moving by the same vector within 2pt (`GROUP_TOLERANCE`) share a group,
+  a resize is loose, a floating window is floating, and the still windows
+  are `groups[0]`. The park rule above decides which group a displaced
+  window rides, so it slides with its neighbour by construction. A pass is
+  flown when something drawable moves or a flight is running
+  (`worth_flying`).
 - **Strip movements** (`Event::AnimateStrip` — workspace switches and strip
   pans; the wire event the reactor builds from the stacked-workspace
   geometry in `model/strip_stack.rs`) start `Immediate`: they arrive once
-  per keystroke and latency is the enemy. `strip_travel` translates every
-  window on the strip surface by the viewport's travel; pinned (floating)
-  windows get `from == to` and are drawn standing still. Visual destinations
-  are deliberately distinct from `final_frames`: a leaving window animates
-  off-screen while its real frame goes to a park.
+  per keystroke and latency is the enemy. `strip_plan` puts every window
+  on the strip surface in ONE group travelling by the viewport's travel
+  (`strip_travel`, `strip_pan_travel`): one container, one position
+  animation. Pinned (floating) windows stand in the floating container with
+  `from == to`; a switch moves the floating container itself by the same
+  travel (`floating_travel`). Visual destinations are deliberately distinct
+  from `final_frames`: a leaving window animates off-screen while its real
+  frame goes to a park.
 
-Mid-flight passes are classified per tile (`merge_action`, tested):
-**redundant** (same destination within `same_as` tolerance — touched not at
-all, which is what keeps rapid presses from restarting or extending the
-flight), **retargeted** (the tile bends from its presentation position to the
-new destination over a fresh duration), or **joined** (installed and animated
-from its own start). Any real change restarts the orchestration clock so the
-frame placement and teardown cover the newest flights. A pass also moves
-what it did not compose: reserved entrances take its frame for their window
-(`retarget_entrances`), a flight tile it names by frame but not by tile is
-retargeted to that frame (`retargets_from_frames`; a park frame goes through
-`PassTravel`, see "Layout changes"), and a strip movement
-carries every exit ghost by its travel (`shift_ghosts`, the pan delta from
-`AnimateStrip`'s offsets), so the flight ends where the strip ends. Without
-that, a pan merging 56ms after an open (log 3:27:20, 22 tiles scrolled
-574pt) left the newcomer and the closed window's ghost at their pre-pan
-slots: a tear between the active window and its neighbours, then a pop at
-lift. `set_tiles` is
-pre-flight only: it places tiles at their START, which would end an in-flight
-tile's animation on the wrong frame; mid-flight changes go through
-`retarget_tile`/`add_tile`. Depth is banded by z-group (`tile_depth` in
-`model/z_group.rs`): the strip is one z-order group, so with the focus on a
-strip window (or on nothing the flight draws) every floating tile is behind
-every strip tile, and with a floating focus the reverse; within a band the
-window server's order is kept, and a window the server did not report goes
-to the back of its own band. After every merge `restack` rebands the whole
-flight from the flight's latest focus, whichever pass composed each tile:
-computing depth per pass left a floating tile between two strip tiles when
-a later pass named a different focus (the 1.1 interleave in
-`.kiro/specs/exit-entrance-animation-regressions`). The real windows are
-put in the same order by the reactor's regroup (`strip_regroup`, applied to
-the on-screen windows with the raise a focus move issues and again once the
-layout pass has been applied; "Real order" in
-`capture-overlay-research.md`), so the order the overlay draws is the order
-the screen has at lift. Entrance and exit ghosts carry `server_order: Some(0)`, the
-front of their own band: an entrance because a window is raised on open, an
-exit because the window is gone from the server and has no order to follow.
-A pass that
-changes any final frame after the apply point re-sends the frames
-(`mark_stale_on_untiled_change`). Parked windows have no tile, so a
-tile-only check missed their moves and left them at the old park.
+Mid-flight passes go through `merge_plans` (pure, tested), which retargets
+containers, not tiles. A rigid member of the incoming pass votes for its
+group's new position (`p = to - rel`); the largest cluster keeps the
+container, which bends from its presented position to the new destination
+under the same animation key (`group_travel_after_merge`). Members voting
+elsewhere are reparented at the frame they are drawn at, into a group whose
+remaining travel matches theirs, or into a new one. A member the pass sends
+off the viewport does not vote while its container moves (`rides_out`): it
+has no visible destination, and on a switch the layout pass 16ms later
+parked the departing row's windows, each of which opened a sideways group
+and swept to the park's edge while the row travelled vertically (the
+zig-zag; log 1:07:36, "member reparented" to (1727,1065) and (-1719,1076)).
+A member of a still container has no motion to ride and leaves on its own
+vector. A rigid member the pass now resizes goes loose (`StripLoose`) at
+its presented frame. A newcomer
+joins a group with a matching remaining travel or opens one; joins are
+resolved after the votes, because the votes change the remaining travel. A
+pan adds its travel to every group and every loose strip tile and changes
+no membership; members the pan does not compose (no usable picture) ride
+their group all the same. A pass confirming the flight's destinations is an
+empty `PlanDelta`: nothing is touched, and rapid presses neither restart
+nor extend the flight. Any real change restarts the orchestration clock so
+the frame placement and teardown cover the newest legs. Reserved entrances
+still waiting for a picture take the pass's slot (`retarget_entrances`).
+The overlay applies the delta in one transaction (`retarget`): reads of
+every container's presented position first, then reparents, container
+animations, joins, loose retargets. Without this a pan merging 56ms after
+an open (log 3:27:20, 22 tiles scrolled 574pt) left the newcomer at its
+pre-pan slot: a tear between the active window and its neighbours, then a
+pop at lift. Cross-container z is a tie rule, not a guarantee: strip
+windows do not overlap at rest, so overlap between two moving groups is
+transient, and the group holding focus is drawn first.
+
+Depth is banded by z-group (`tile_depth` in `model/z_group.rs`) at the
+container level (`band_plan`, `rebank`). The floating container sits at
+`container_z`: zero with a floating focus, one `GROUP_STRIDE` behind with a
+strip focus (or no focus the flight draws); strip containers the other way
+round, a quarter step apart in `strip_order`. Each tile sits at its
+within-band depth inside its container (`Banding.within`; a companion a
+quarter step in front of its window, a shadow half a step behind its
+picture). `container_z - within` is `-tile_depth`, so the drawn order is
+what `restack` computes for `tile.depth` and what the reactor's regroup
+(`strip_regroup`, "Real order" in `capture-overlay-research.md`) puts on the
+real screen at lift. Core Animation sorts `zPosition` among siblings only,
+so a floating tile can never land between two strip tiles whatever its own
+depth: that is the structural fix for the 50/50 interleave (the 1.1 case in
+`.kiro/specs/exit-entrance-animation-regressions`). Within a band the
+window server's order is kept; a window the server did not report goes to
+the back of its own band. An entrance carries `server_order: Some(0)`
+because a window is raised on open. A pass that changes any final frame
+after the apply point re-sends the frames (`mark_stale_on_untiled_change`).
+Parked windows have no tile, so a tile-only check missed their moves and
+left them at the old park.
 
 A picture landing mid-flight goes to the cache first. It reaches a moving
 tile only if the tile is waiting for it (`should_swap_mid_flight`): an
@@ -198,7 +231,14 @@ per flight. Under the old load the refresh took 203ms median (p90 441,
 n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
 271 of 321 desktop renders landed mid-flight. `warm_all_workspaces` stays in
 the reactor's switch handler: the actor knows the flight phase, the reactor
-does not.
+does not. After the lift the owed captures wait for a quiet period
+(`SETTLE_BEFORE_CAPTURES`, 400ms; `Event::Quiet`, `after_flight_captures`).
+They used to run the instant the overlay lifted and took 600-800ms (8-15
+window captures and the desktop render), so a press inside that window flew
+the next flight against a busy compositor: frame-difference profiles of a
+screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
+beginning inside the quiet period cancels the timer; the work carries over to
+its own lift.
 
 **Real windows land before lift.** Frames go out on-screen destinations
 first, parks last (`frame_send_order`): a park write nobody sees no longer
@@ -208,7 +248,32 @@ screen at lift, 1000-3446pt from its park. The handover metric
 2pt, the total measured, and the worst visible error. A park clamped by
 macOS (y=1116 on a 1117pt display, clamped to 1051) had reported 65pt on 180
 flights and masked every smaller error. `finish()` logs "overlay lifted", so
-the placing-to-lift gap can be read from the log.
+the placing-to-lift gap can be read from the log. The lift itself waits for
+the render server (`lift_now`, `WorkspaceOverlay::settled`): the clock has
+to run out AND every container and picture has to be presented at its model
+position within half a point, or `LIFT_GRACE` (120ms) past the clock. The
+render server runs a frame or so behind the actor's clock, and lifting on
+the clock alone showed the real windows one frame ahead of their tiles: a
+small jerk at the end of every flight. Strip movements send their frames at
+frame zero (`APPLY_FRAMES_AT_STRIP` 0.0): 24 of 162 flights had lifted with
+every window 1700-2600pt from its tile because 17 writes across Electron apps
+took longer than half a flight. A park-to-park write is not sent at all
+(`is_park_to_park`, reactor `apply_overlay_frames`): 12 of a pan's 20 frames
+moved windows from one park to another, nothing visible changed, and each
+made its app repaint under the flight. A park is a sliver still touching the
+display; a frame wholly off it is not. A switch leaves its departing row a
+display height below, which macOS clamps to a 41pt band along the bottom
+edge, and the next pass moves that band to the corner. Treating the row as a
+park skipped that write: the band stayed on screen and the windows drifted
+into the active workspace on the next reconciliation. The current frame is
+the window server's, not the model's (`frame_write_needed`, pinned by
+`park_write_is_judged_from_the_real_frame_not_the_model`): a write the app
+dropped leaves the model saying "parked" while the window sits on screen,
+and every later pass would have skipped the repair (a full Ghostty window
+sat on the right half of the display under the strip). Tiles sit on whole points (`whole` in
+the overlay): layout offsets are fractional (4592.67) and the window server
+places windows on whole points, so a tile drawn at the fraction was resampled
+and popped by the fraction at the lift.
 
 Mechanics worth remembering:
 
@@ -225,24 +290,21 @@ Mechanics worth remembering:
 - `NSValue::valueWithPoint` (the from/to carrier) is gated behind the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
 
-Found on the first live run of the dissolved strip path: **floating tiles
-were drawn behind the desktop backdrop.** The z-grouping puts the back group
-nearly two `GROUP_STRIDE`s deep (about 1<<20), tiles draw at `zPosition =
--depth`, and the backdrop sat at -10000 — so the floating Settings window's
-tile was in every composition and visible in none, and never appeared to
-ride workspace switches (it rode, behind the wallpaper). `BACKDROP_Z` is now
-derived from `z_group::MAX_TILE_DEPTH` instead of guessed, pinned by
-`every_possible_tile_draws_between_the_backdrop_and_the_bar`. During strip
-pans a floating window deliberately stands still (`pinned`); during switches
-it rides its workspace row.
+Found on the first live run of the per-tile strip path: **floating tiles
+were drawn behind the desktop backdrop.** The back group sits one
+`GROUP_STRIDE` deep (about 1<<20) and the backdrop sat at -10000, so the
+floating Settings window's tile was in every composition and visible in
+none. `BACKDROP_Z` is derived from `z_group::MAX_TILE_DEPTH`, pinned by
+`every_possible_tile_draws_between_the_backdrop_and_the_bar`; the containers
+sit between it and the bar. During strip pans a floating window deliberately
+stands still (`pinned`); during switches it rides its workspace row in the
+floating container.
 
-Still open from the canvas dissolution: the reactor-side pan classifier
-(`strip_pan_delta`, `take_strip_movement`) only exists to decide
-strip-vs-per-window routing, and both routes now land in the same machinery.
-Once the strip visuals are validated by eye — rapid chained switches and
-pans are the test — the classifier can likely collapse too, though
-`take_strip_movement` also feeds the switch's claim on the destination's
-scroll offset, which needs care.
+Still open: the reactor-side pan classifier (`strip_pan_delta`,
+`take_strip_movement`) only exists to decide strip-vs-per-window routing,
+and both routes land in the same machinery. `take_strip_movement` also
+feeds the switch's claim on the destination's scroll offset, which needs
+care.
 
 ## Resizes through the overlay
 
@@ -275,74 +337,66 @@ changes is how the picture maps onto it (`content_mode` in
   IS the per-frame crop layout; one transaction installs frame, contentsRect,
   shadow-path, ring-mask and hairline-band animations on the shared curve.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
-  seam a few points mid-flight inside the window's own content. Retargets
-  continue from the PRESENTED position and size, so rapid preset cycling
-  bends the resize instead of snapping it.
+  seam a few points mid-flight inside the window's own content. A loose
+  tile's retarget continues from the PRESENTED position and size, so rapid
+  preset cycling bends the resize instead of snapping it.
 - **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, so it
   degrades continuously into a plain reveal as a frame approaches zero — no
   seam pops mid-flight, no band ever wider than its frame.
-- **New windows resize in.** A window with no cached picture at all is almost
-  always one that just opened; a capture takes ~50-90ms, so there is nothing
-  to draw at frame zero. Its tile grows from zero WIDTH at its own left edge,
-  full height (`entrance_from`) — a resize from nothing to its final width,
-  matching how every other column movement reads. Centred zoom was tried and
-  rejected: nothing else on the strip inflates.
-- **Entrances are holds.** `entrance_reservation` registers a
-  `PendingEntrance` AND puts the window in `awaiting`, next to any grow. The
-  flight applies EVERY real frame at frame zero, the newcomer's slot
-  included (the overlay already covers them), so the chase captures the
-  window at slot size. Holding the slot back until the picture landed was
-  tried: the chase then captured the window at its SPAWN size, `claim` took
-  it, and drawn top-left in the slot it left the growth as backdrop, a hole
-  in the strip (recording of 2026-09-15 3:28:10). `chase_reveal_pictures`
-  follows the entering window like a grow: the queued SkyLight capture
-  measured 170-300ms under load, most of a flight; the chase's framed
-  capture takes 16-24ms once the app has painted. It waits for the real
-  frame to fit the slot, then settles on two matching prints. `claim`
-  requires the fit for an entrance and a grow alike; a smaller picture is
-  refused and the hold goes on. `claim_reveal` adds the zero-width tile to
-  the frame-zero composition. The flight
-  starts when the last awaited picture lands or `reveal_hold_limit` passes,
-  so every tile, entrance included, flies in one `animate_tiles` transaction
-  on one duration, and the hairline rides `animate_tile_resize` from the
-  zero-width dressing layout. A picture landing after lift-off is admitted
-  (`admit_entrance`) with `late_join_duration`: what is left of the flight,
-  so it lands with its neighbours and never outlives the overlay. A picture
-  that misses the flight altogether shows when the overlay lifts. Before the
-  hold, the entrance joined mid-flight with the whole duration and was
-  re-keyed to its final size in the same turn: the tile was cut at partial
-  width and the real window popped to full. A coalescing merge that moves a
-  window whose frame was already applied re-requests the merged frames
-  (`reapply_set`); without that the window sat where the first pass put it,
-  parked or behind a neighbour, until the strip scrolled.
-- **Closed windows resize out.** The reverse of an entrance: the tile shrinks
-  to zero width at its own left edge (`exit_to`, the exact mirror of
-  `entrance_from`). The real window is gone from the window server before
-  rini hears about it, so the exit draws the cached snapshot — the reactor
-  sends `AnimateExit` with the last known frame BEFORE dropping the window's
-  state, then `ForgetWindow`, in that order: `PendingExit` clones the picture
-  before the cache drops it. The window server's disappearance (`ordered_in
-  == false`, ~15ms ahead of the AX `WindowDestroyed`) removes the window
-  first, so that path queues the exit too, on the `EventOutcome`
-  (`window_exits`); the late AX event then finds no window and adds nothing
-  (log 2026-09-16 2:05: a promoted close composed `exits=0` and vanished
-  with a gap). An exit is never a flight of its own. It waits
-  one `COALESCE_WINDOW` for the layout pass that reflows the survivors;
-  `start` and `start_strip` drain it into that pass as a ghost tile (from the
-  closed frame, the window's own group, front of its band via
-  `server_order: Some(0)`), so ghost and survivors go through one
-  `set_tiles`/`animate_tiles`. Unclaimed after the window, it is dropped: a
-  floating close and a close with no survivors show no overlay. Flown alone,
-  a floating close covered the desktop with one ghost and no strip, and a
-  strip close under load ran the ghost 25ms+ ahead of the survivors' clock.
-  The exit carries no final frame (there is no window left to place) and
-  leaves `apply_at` alone. Unmanaged and minimized windows are filtered in
-  the reactor; parked and scrolled-off ones by `worth_animating`. A closed
-  window with no usable cached picture just disappears, which is the old
-  behaviour. The gap between the window vanishing and the ghost appearing is
-  AX latency plus the coalesce window, and is accepted: `WindowServerDestroyed`
-  does not fire for ordinary closes (3.5M-line log: 384 AX `WindowDestroyed`,
-  0 window-server promotions for tracked windows).
+- **A window that opens travels from its spawn frame.** macOS shows a new
+  window at its own frame about 40ms before rini's first pass (AX
+  `WindowCreated` latency plus the coalesce window); that time is accepted.
+  `start` reads that frame from the window server and takes ONE framed
+  capture there (`capture_via_framed_with_dressing`, 16-24ms), at most
+  `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
+  `Member::Entrance` from the spawn frame to the slot, stretched
+  (`placeholder_mode`) until the reveal chase lands the slot-size picture,
+  which `claim` takes at frame zero (`Claimed::Refreshed`) or the
+  `Swap("reveal")` cut takes before 0.6. No hold: the newcomer's slot alone
+  goes out at frame zero (`frame_zero_work`) so the chase has something to
+  capture, and again with every frame at the apply point, one redundant AX
+  write per open. A frame off this display is not a spawn: a parked window
+  with a cold cache took a 1s off-screen capture and flew in from the park,
+  so it takes the reservation instead. A window already at its slot with no
+  picture is captured as a still tile and not chased. Growing from zero
+  width (`entrance_from`) was the previous entrance and read as a pop then a
+  vanish; it survives only in the reservation fallback below.
+- **The reservation fallback.** With no server frame, a zero frame, an
+  unusable capture or no budget left (`entrance_plan`, reason logged as
+  "entrance reserved"), `entrance_reservation` registers a `PendingEntrance`
+  AND puts the window in `awaiting`, next to any grow. The flight applies
+  EVERY real frame at frame zero, the newcomer's slot included (the overlay
+  already covers them), so the chase captures the window at slot size.
+  Holding the slot back until the picture landed was tried: the chase then
+  captured the window at its SPAWN size, `claim` took it, and drawn top-left
+  in the slot it left the growth as backdrop, a hole in the strip (recording
+  of 2026-09-15 3:28:10). `chase_reveal_pictures` follows the entering
+  window like a grow: the queued SkyLight capture measured 170-300ms under
+  load, most of a flight; the chase's framed capture takes 16-24ms once the
+  app has painted. `claim` requires the fit; a smaller picture is refused
+  and the hold goes on. `claim_reveal` adds the zero-width tile to the
+  frame-zero composition (`install`). The flight starts when the last
+  awaited picture lands or `reveal_hold_limit` passes, so every tile flies
+  in one `fly` transaction. A picture landing after lift-off is admitted
+  (`admit_entrance`, `add_tile` under `StripLoose`) with
+  `late_join_duration`: what is left of the flight. A picture that misses
+  the flight altogether shows when the overlay lifts. A coalescing merge
+  that moves a window whose frame was already applied re-requests the
+  merged frames (`reapply_set`); without that the window sat where the
+  first pass put it until the strip scrolled.
+- **A closed window disappears.** Its survivors' pass is an ordinary
+  reflow: one group sliding by the closed width. Nothing is drawn for the
+  window itself. A shrinking ghost was tried (a resize to zero width from
+  the cached picture, `PendingExit`, `AnimateExit`) and removed: a ghost is
+  a per-tile discontinuity in a flight that is otherwise rigid, and a
+  picture of a window that no longer exists. Under load it ran 25ms ahead
+  of the survivors' clock; on the window-server close path it composed
+  `exits=0` and left a gap (log 2026-09-16 2:05). What stays is
+  `ForgetWindow`, sent once per close on either path: the AX
+  `WindowDestroyed` while the window still exists, or the window-server
+  disappearance through `EventOutcome::forgotten_windows` ahead of the
+  layout events. The gap between the window vanishing and the survivors
+  moving is AX latency plus the coalesce window, and is accepted.
 - **A grow holds, then reveals.** Every fill for the not-yet-rendered region
   of a grow was tried and rejected by eye: `contentsRect` past the picture's
   edge extends its outermost pixels (a hole to the backdrop on a translucent
@@ -379,10 +433,13 @@ changes is how the picture maps onto it (`content_mode` in
   top-left crop that stopped the grid at the picture's edge and showed the
   backdrop in the growth was tried and read as a hole (3:28:10), the same
   hole recorded above for `contentsRect` past the edge. If the reveal lands
-  mid-flight after all,
-  it is hard-cut onto the tile before 0.6 progress (`Swap("reveal")`) and
-  `set_tile_picture` re-keys the grid from the PRESENTED state over the
-  remaining duration; later than that it is cached for the next flight.
+  mid-flight after all, it is hard-cut onto the tile before 0.6 progress
+  (`Swap("reveal")`) and `set_tile_picture` re-installs the resize leg on
+  the SAME `Timing` (begin on the media clock plus duration, kept per tile
+  in `resize_leg`): the frame keeps its curve and only the pixels cut.
+  Re-keying from the presented frame over the remaining duration restarted
+  the ease-out and the tile lurched at every swap. Later than 0.6 the
+  picture is cached for the next flight.
 - **A fresh picture or hairline swaps in place.** Rebuilding the dressing on a
   mid-flight recapture snapped the border to its final layout while the tile
   was still travelling; a matching harvest now swaps pixels into the existing
@@ -394,7 +451,7 @@ changes is how the picture maps onto it (`content_mode` in
   mismatched set is never rebuilt while a resize animates
   (`dressing_rebuild_allowed`, `Tile.resize_until`): the worn ring stays on
   the resize timeline, the new dressing is already on the cached snapshot,
-  and the next `set_tiles` wears it. Rebuilding placed the pieces at the
+  and the next `install` wears it. Rebuilding placed the pieces at the
   destination rectangle while the picture was still halfway.
 - **The apply point.** Layout passes place the real windows at 0.75
   (`APPLY_FRAMES_AT`), or at 0.5 (`APPLY_FRAMES_AT_RESIZE`) when any tile
@@ -470,10 +527,17 @@ running, carrying real border windows as tiles:
 - Captured and cached like any window, keyed by synthetic ids; no picture
   yet means skipped this flight and warmed for the next. Companions join the
   post-flight warm set because borders recolor with focus.
-- During strip movements the border rides only where the window genuinely
-  is: an arriving row's window sits parked with its real border parked too,
-  so no companion matches — which is what the real screen does, since the
-  border tool only catches up after the window lands.
+- Nothing rini manages can be a companion (`managed_server_ids`: the pass's
+  windows plus every window the cache holds or owes a picture to), and a
+  parked window never traces or is traced (`companion_of`). Every parked
+  window shares the park's frame, so a window arriving from the park matched
+  another parked window as its "border" and flew in wearing that window's
+  picture: two Chrome windows on different workspaces swapped pictures on
+  every switch between them. The geometric test alone did not catch it
+  because macOS clamps the park to 41pt visible, one past `is_off_screen`'s
+  40. An arriving row's window therefore gets no companion, which is what
+  the real screen does, since the border tool only catches up after the
+  window lands.
 - The mid-flight focus recapture rode the framed route (16-24ms measured,
   against 170-300ms for SkyLight under animation load) until racing it
   against the ScreenCaptureKit route was found to swap the tile 2-3 times
@@ -596,9 +660,10 @@ the resize question again with whichever engine earned it.
 2. ~~Steady ticker + matching curve for the AX engine~~ — done, see the
    detour note.
 3. ~~CA-driven per-window overlay path~~ — done, see the overlay section.
-4. ~~Dissolve the canvas into per-tile groups~~ — done (and renamed: the
-   group event is `AnimateStrip`, the geometry module `strip_stack`).
-   Verdict pending eyes on rapid chained switches and pans.
+4. ~~Dissolve the canvas into per-tile groups~~ — done, then reversed: the
+   per-tile groups teleported on every merge, and containers carry the
+   rigid pieces again (see the overlay section). The group event is
+   `AnimateStrip`, the geometry module `strip_stack`.
 5. Pan classifier collapse (`strip_pan_delta`, routing in `animate_layout`),
    once the strip visuals are validated; `take_strip_movement` also feeds
    the switch's scroll-offset claim and needs care.

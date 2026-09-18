@@ -8,6 +8,7 @@ use crate::actor::reactor::transaction_manager::TransactionManager;
 use crate::actor::reactor::{DragState, Quiet, TransactionId, WindowState, utils};
 use crate::layout_engine::LayoutEvent;
 use crate::model::WindowVisibility;
+use crate::model::reactor::WindowFilter;
 use crate::sys::app::WindowInfo as Window;
 use crate::sys::event::MouseState;
 use crate::sys::geometry::SameAs;
@@ -310,6 +311,7 @@ pub fn handle_window_frame_changed(
     };
     let server_id = window.info.sys_id;
     let old_frame = window.frame_monotonic;
+    let manageable = window.matches_filter(WindowFilter::EffectivelyManageable);
 
     if !old_space_active && !new_space_active {
         return Ok(outcome);
@@ -382,7 +384,12 @@ pub fn handle_window_frame_changed(
                     state.windows.set_window_server_space(server, Some(space));
                     state.windows.mark_window_visible(server);
                 }
-                if new_space_active {
+                // Only a manageable window joins the layout here. A window whose model frame
+                // sat wholly off screen (a switch's departing row) maps to no space; when the
+                // app then reports its real frame this reads as a space change, and Zoom's
+                // 301x45 meeting toolbar was tiled as a column of the active workspace and the
+                // strip scrolled to show it, pushing the focused window half off screen.
+                if new_space_active && manageable {
                     if let Some(workspace) = layout.layout_engine.active_workspace(space) {
                         let _ = layout
                             .layout_engine

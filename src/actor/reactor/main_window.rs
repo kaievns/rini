@@ -218,11 +218,19 @@ impl MainWindowTracker {
     /// `None` when this focus change is not the one macOS produced for an activation, which is how cmd-`
     /// window cycling stays untouched: rini raises those itself and no activation edge is involved.
     pub(crate) fn take_activation_target(&mut self, pid: pid_t) -> Option<WindowId> {
+        let remembered = self.peek_activation_target(pid);
+        if self.pending_activation.is_some_and(|(p, _)| p == pid) {
+            self.pending_activation = None;
+        }
+        remembered
+    }
+
+    /// `take_activation_target` without consuming it, for a caller that may not act on it.
+    pub(crate) fn peek_activation_target(&self, pid: pid_t) -> Option<WindowId> {
         let (pending_pid, remembered) = self.pending_activation?;
         if pending_pid != pid {
             return None;
         }
-        self.pending_activation = None;
         remembered
     }
 

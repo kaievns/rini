@@ -1254,6 +1254,8 @@ impl Reactor {
                 // it had done nothing.
                 let outcome =
                     self.maybe_auto_switch_to_window_workspace(window.pid, window, reported_space);
+                // Once per activation: whatever was not used above is not used later either.
+                self.main_window_tracker.take_activation_target(window.pid);
                 if outcome.arrange.requested {
                     return Ok(outcome);
                 }
@@ -1307,12 +1309,12 @@ impl Reactor {
                 if self.refreshes_blocked() {
                     return Ok(EventOutcome::default());
                 }
-                // Before the state goes: the exit animation needs the last known frame, and the
-                // overlay's cached snapshot is the only picture of this window that will ever
-                // exist. Exit first, then forget, so the actor clones the picture before the
-                // cache drops it.
-                self.animate_window_exit(wid);
-                if let Some(tx) = &self.communication_manager.workspace_animation_tx {
+                // A closed window disappears; only its cached picture has to go. Once: the
+                // window-server path may have removed the window, and forgotten it, already. See
+                // "A closed window disappears" in `docs/animation-smoothness.md`.
+                if self.state.windows.window(wid).is_some()
+                    && let Some(tx) = &self.communication_manager.workspace_animation_tx
+                {
                     _ = tx.send(crate::actor::workspace_animation::Event::ForgetWindow(wid));
                 }
                 let mut outcome = window_workflow::handle_window_destroyed(
@@ -2052,12 +2054,10 @@ impl Reactor {
     fn apply_event_outcome(&mut self, outcome: EventOutcome) {
         // Per event: what this event's regroup raises is only known to this event.
         self.regroup_raised.clear();
-        // Ahead of the layout events: `WindowRemoved` is queued in the same outcome, and the exit
-        // reads the floating flag from the layout engine. Exit before forget, as in the AX path.
-        for exit in outcome.window_exits {
-            self.send_window_exit(exit.window, exit.frame);
+        // Ahead of the layout events, as on the AX path: the closed window's picture goes first.
+        for window in outcome.forgotten_windows {
             if let Some(tx) = &self.communication_manager.workspace_animation_tx {
-                _ = tx.send(crate::actor::workspace_animation::Event::ForgetWindow(exit.window));
+                _ = tx.send(crate::actor::workspace_animation::Event::ForgetWindow(window));
             }
         }
         if !outcome.window_server_updates.is_empty() {
@@ -3939,11 +3939,21 @@ impl Reactor {
             .find(|screen| screen.space == self.active_display_space())
             .or_else(|| self.space_state.screens.first())
             .map_or(CGRect::ZERO, |screen| screen.frame);
+        let mut skipped = 0usize;
         for (wid, frame) in animation::frame_send_order(frames, display) {
             let Some(window) = self.state.windows.window_mut(wid) else {
                 continue;
             };
+            // A park-to-park move is not sent: nothing visible changes, and the app's repaint would
+            // stall the compositor under the flight. Judged from where the window server says the
+            // window IS, not from the model: a write the app dropped leaves the model saying
+            // "parked" while the window sits on screen, and skipping on the model kept it there.
             let wsid = window.info.sys_id;
+            let real = wsid.and_then(|wsid| window_server::get_window(wsid)).map(|info| info.frame);
+            if !animation::frame_write_needed(real, frame, display) {
+                skipped += 1;
+                continue;
+            }
             window.frame_monotonic = frame;
             let txid = wsid
                 .map(|wsid| self.transaction_manager.generate_next_txid(wsid))
@@ -3956,6 +3966,9 @@ impl Reactor {
                     wid, frame, txid, true,
                 ));
             }
+        }
+        if skipped > 0 {
+            debug!(skipped, "park-to-park frames not sent");
         }
     }
 
@@ -4380,42 +4393,6 @@ impl Reactor {
 
     pub(crate) fn publish_animation_display(&self) {
         self.publish_animation_display_for(None);
-    }
-
-    /// Hands a closing window to the overlay engine as a pending exit, composed by the next layout
-    /// pass with the survivors. Must run while the window's state still exists: the last known
-    /// frame is read from it. Parked and off-screen windows are filtered by the actor's own
-    /// visibility gate; this only filters what the actor cannot see — unmanaged and minimized.
-    pub(crate) fn animate_window_exit(&self, wid: WindowId) {
-        let Some(window) = self.state.windows.window(wid) else {
-            return;
-        };
-        if !window.is_effectively_manageable() || window.info.is_minimized {
-            return;
-        }
-        self.send_window_exit(wid, window.frame_monotonic);
-    }
-
-    /// The gate-free half of `animate_window_exit`, for callers that already checked the window
-    /// and captured its frame before removing it (`EventOutcome::window_exits`). Must run before
-    /// the layout engine forgets the window: the floating flag is read from it here.
-    fn send_window_exit(&self, wid: WindowId, frame: CGRect) {
-        if !self.config.settings.overlay_animations {
-            return;
-        }
-        self.publish_animation_display_for(None);
-        let Some(tx) = &self.communication_manager.workspace_animation_tx else {
-            return;
-        };
-        let duration = std::time::Duration::from_secs_f64(
-            self.config.settings.animation_duration.max(0.0),
-        );
-        _ = tx.send(crate::actor::workspace_animation::Event::AnimateExit {
-            window: wid,
-            frame,
-            floating: self.layout_manager.layout_engine.is_window_floating(wid),
-            duration,
-        });
     }
 
     /// Points the animation overlay at the display holding `space`.
@@ -5026,7 +5003,9 @@ impl Reactor {
     /// display the user had not asked to move, and landed them in the wrong terminal. Only ever avoids a
     /// switch: it acts when the pick is parked and the remembered window is visible.
     fn activation_redirect(&mut self, picked: WindowId, picked_space: SpaceId) -> Option<EventOutcome> {
-        let remembered = self.main_window_tracker.take_activation_target(picked.pid)?;
+        // Peeked, not taken: when this does not redirect, the workspace switch below may still
+        // use the remembered window (`maybe_auto_switch_to_window_workspace`).
+        let remembered = self.main_window_tracker.peek_activation_target(picked.pid)?;
         let target = main_window::activation_focus_target(
             picked,
             self.window_is_in_active_workspace(picked, Some(picked_space)),
@@ -5034,6 +5013,7 @@ impl Reactor {
             self.window_is_standard(remembered)
                 && self.window_is_in_active_workspace(remembered, None),
         )?;
+        self.main_window_tracker.take_activation_target(picked.pid);
         debug!(
             ?picked,
             ?target,
@@ -5084,6 +5064,23 @@ impl Reactor {
         else {
             return EventOutcome::no_change();
         };
+        // macOS picks the app's main window on cmd-tab; the user was in another window of the app
+        // on the same workspace (Kiro, two windows on one row: the pick scrolled the strip to the
+        // far one). The switch is right, the window is the remembered one.
+        let remembered = self.main_window_tracker.take_activation_target(pid).filter(|wid| {
+            self.window_is_standard(*wid)
+                && workspace_state.workspace_for_window(&self.state.windows, window_space, *wid)
+                    == Some(window_workspace)
+        });
+        let picked = app_window_id;
+        let app_window_id = switch_focus_within_workspace(app_window_id, remembered);
+        if app_window_id != picked {
+            debug!(
+                ?picked,
+                target = ?app_window_id,
+                "app activation picked another of its windows on the same workspace; focusing the one the user was in"
+            );
+        }
 
         let Some(current_workspace) =
             self.layout_manager.layout_engine.active_workspace(window_space)
@@ -5145,6 +5142,11 @@ impl Reactor {
             boundary_hit,
         } = response;
 
+        // The window the switch is FOR: it is parked until the layout lands, so the window server
+        // may well report it off screen right now. The visibility filters below must not trade it
+        // for whichever window of the workspace happens to be visible (an auto-switch onto Kiro
+        // landed on a Ghostty window that way, and remembered Ghostty for the next time).
+        let mut switch_target: Option<WindowId> = None;
         if let Some(space) = workspace_switch_space
             && matches!(
                 self.workspace_switch_manager.workspace_switch_state,
@@ -5152,6 +5154,7 @@ impl Reactor {
             )
         {
             focus_window = self.visible_focus_candidate_in_active_workspace(space, focus_window);
+            switch_target = focus_window;
         }
 
         if let Some(dir) = boundary_hit
@@ -5254,7 +5257,8 @@ impl Reactor {
             && let Some(state) = self.state.windows.window(wid)
             && let Some(wsid) = state.info.sys_id
         {
-            let is_visible = self.state.windows.is_window_visible(wsid);
+            let is_visible =
+                self.state.windows.is_window_visible(wsid) || switch_target == Some(wid);
             let best_space = self.best_space_for_window_state(state);
             if !is_visible {
                 focus_window = None;
@@ -5463,6 +5467,19 @@ impl Reactor {
         let Some(focused) = self.layout_manager.layout_engine.focused_window() else {
             return;
         };
+        // The layout's focus is stale when the window that really has focus is one the layout
+        // does not hold: Zoom's meeting toolbar (not manageable) took focus when the user
+        // switched to the call, the layout kept Kiro as focused, and the regroup lifted the strip
+        // over the call and re-focused Kiro. Nothing to put right in that case: macOS ordered
+        // the windows for the app the user chose.
+        if self.main_window().is_some_and(|front| front != focused) {
+            debug!(
+                focused = focused.idx.get(),
+                front = ?self.main_window().map(|w| w.idx.get()),
+                "regroup skipped: focus is on a window outside the layout"
+            );
+            return;
+        }
         let Some(space) = self.best_space_for_window_id(focused) else {
             return;
         };
@@ -5774,19 +5791,17 @@ impl Reactor {
         Some(wid)
     }
 
+    /// The window a workspace switch focuses. The preferred window (the one the switch is for)
+    /// only has to belong to the workspace: it is parked until the layout lands, so the window
+    /// server may report it off screen. The fallbacks must be visible. See
+    /// `choose_switch_focus`.
     fn visible_focus_candidate_in_active_workspace(
         &self,
         space: SpaceId,
         preferred: Option<WindowId>,
     ) -> Option<WindowId> {
-        let is_visible_in_space = |wid: WindowId| {
-            let Some(window) = self.state.windows.window(wid) else {
-                return false;
-            };
-            let Some(wsid) = window.info.sys_id else {
-                return false;
-            };
-            self.state.windows.is_window_visible(wsid)
+        let in_space = |wid: WindowId| {
+            self.state.windows.window(wid).is_some_and(|w| w.info.sys_id.is_some())
                 && self.best_space_for_window_id(wid) == Some(space)
                 && self.layout_manager.layout_engine.is_window_in_active_workspace(
                     &self.state.windows,
@@ -5794,22 +5809,24 @@ impl Reactor {
                     wid,
                 )
         };
-
-        if let Some(wid) = preferred.filter(|wid| is_visible_in_space(*wid)) {
-            return Some(wid);
-        }
-
-        if let Some(wid) =
-            self.last_focused_window_in_space(space).filter(|wid| is_visible_in_space(*wid))
-        {
-            return Some(wid);
-        }
-
-        self.layout_manager
+        let is_visible_in_space = |wid: WindowId| {
+            in_space(wid)
+                && self
+                    .state
+                    .windows
+                    .window(wid)
+                    .and_then(|w| w.info.sys_id)
+                    .is_some_and(|wsid| self.state.windows.is_window_visible(wsid))
+        };
+        let remembered =
+            self.last_focused_window_in_space(space).filter(|wid| is_visible_in_space(*wid));
+        let first_visible = self
+            .layout_manager
             .layout_engine
             .windows_in_active_workspace(&self.state.windows, space)
             .into_iter()
-            .find(|wid| is_visible_in_space(*wid))
+            .find(|wid| is_visible_in_space(*wid));
+        choose_switch_focus(preferred, preferred.is_some_and(in_space), remembered, first_visible)
     }
 
     fn request_refocus_if_hidden(&mut self, space: SpaceId, window_id: WindowId) {
@@ -6279,6 +6296,27 @@ impl Reactor {
         self.autosave_pending = false;
         trace!(path = %path.display(), "Autosaved layout");
     }
+}
+
+/// The window an activation-driven switch focuses: the window the user was last in when it sits on
+/// the same workspace as macOS's pick, else the pick.
+pub(crate) fn switch_focus_within_workspace<W: Copy + PartialEq>(
+    picked: W,
+    remembered_on_same_workspace: Option<W>,
+) -> W {
+    remembered_on_same_workspace.unwrap_or(picked)
+}
+
+/// Which window a workspace switch focuses: the window the switch is for whenever it belongs to the
+/// workspace (visible or not: it is parked until the layout lands), else the workspace's remembered
+/// window if visible, else the first visible one.
+pub(crate) fn choose_switch_focus<W: Copy>(
+    preferred: Option<W>,
+    preferred_in_workspace: bool,
+    remembered_visible: Option<W>,
+    first_visible: Option<W>,
+) -> Option<W> {
+    preferred.filter(|_| preferred_in_workspace).or(remembered_visible).or(first_visible)
 }
 
 /// One on-screen window of the active workspace as the window server stacks it, for the strip regroup.

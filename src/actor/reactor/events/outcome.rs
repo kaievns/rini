@@ -30,14 +30,6 @@ pub(crate) struct WindowTitleBroadcast {
     pub(crate) new_title: String,
 }
 
-/// A window a workflow removed from the model that should shrink out on the overlay. The frame is
-/// captured before removal because the reactor applies outcomes after the state is gone; the
-/// manageable/minimized gates are evaluated by the workflow for the same reason.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct WindowExit {
-    pub(crate) window: WindowId,
-    pub(crate) frame: CGRect,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TopologyReassignment {
@@ -65,7 +57,8 @@ pub(crate) struct EventOutcome {
     pub(crate) wm_events: Vec<WmEvent>,
     pub(crate) app_requests: Vec<(pid_t, Request)>,
     pub(crate) topology_reassignments: Vec<TopologyReassignment>,
-    pub(crate) window_exits: Vec<WindowExit>,
+    /// Windows a workflow removed whose overlay picture the animation cache should drop.
+    pub(crate) forgotten_windows: Vec<WindowId>,
     pub(crate) confirmed_window_spaces: Vec<(WindowServerId, SpaceId)>,
     pub(crate) fullscreen_restorations: Vec<(WindowServerId, SpaceId, WindowId)>,
     pub(crate) raise_requests: Vec<raise_manager::Event>,
@@ -119,7 +112,7 @@ impl EventOutcome {
         self.wm_events.append(&mut other.wm_events);
         self.app_requests.append(&mut other.app_requests);
         self.topology_reassignments.append(&mut other.topology_reassignments);
-        self.window_exits.append(&mut other.window_exits);
+        self.forgotten_windows.append(&mut other.forgotten_windows);
         self.confirmed_window_spaces.append(&mut other.confirmed_window_spaces);
         self.fullscreen_restorations.append(&mut other.fullscreen_restorations);
         self.raise_requests.append(&mut other.raise_requests);
@@ -174,7 +167,7 @@ impl EventOutcome {
             wm_events: Vec::new(),
             app_requests: Vec::new(),
             topology_reassignments: Vec::new(),
-            window_exits: Vec::new(),
+            forgotten_windows: Vec::new(),
             confirmed_window_spaces: Vec::new(),
             fullscreen_restorations: Vec::new(),
             raise_requests: Vec::new(),
@@ -326,8 +319,8 @@ impl EventOutcome {
         self
     }
 
-    pub(crate) fn with_window_exit(mut self, window: WindowId, frame: CGRect) -> Self {
-        self.window_exits.push(WindowExit { window, frame });
+    pub(crate) fn with_forgotten_window(mut self, window: WindowId) -> Self {
+        self.forgotten_windows.push(window);
         self
     }
 

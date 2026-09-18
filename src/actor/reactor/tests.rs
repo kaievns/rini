@@ -1238,6 +1238,53 @@ fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_disp
     );
 }
 
+/// A window whose model frame sits wholly off screen maps to no space, so its next real frame
+/// reads as a space change and the frame-changed path adds it to the active workspace. Zoom's
+/// 301x45 meeting toolbar (`is_standard: false`) was tiled that way as a column of the workspace
+/// just switched to, and the strip scrolled to show it. Only a manageable window may join.
+#[test]
+fn an_unmanageable_window_is_not_tiled_when_its_frame_comes_back_on_screen() {
+    let mut reactor = test_reactor();
+    let pid = 1;
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space1 = SpaceId::new(1);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space1)]));
+    reactor.add_test_app(pid);
+    let _ = reactor.test_workspace(space1, 0);
+
+    let off_screen = CGRect::new(CGPoint::new(2255., 1126.), CGSize::new(301., 45.));
+    let on_screen = CGRect::new(CGPoint::new(1100., 32.), CGSize::new(301., 45.));
+    let toolbar = WindowId::new(pid, 1);
+    reactor.add_test_window_with_manageability(
+        toolbar,
+        WindowServerId::new(101),
+        Some(space1),
+        off_screen,
+        false,
+    );
+    let standard = WindowId::new(pid, 2);
+    reactor.add_test_window(standard, WindowServerId::new(102), Some(space1), off_screen);
+
+    for wid in [toolbar, standard] {
+        reactor.handle_event(Event::WindowFrameChanged(
+            wid,
+            on_screen,
+            None,
+            Requested(false),
+            Some(MouseState::Up),
+        ));
+    }
+
+    assert!(
+        !has_window_in_layout(&mut reactor, space1, screen, toolbar),
+        "an unmanageable window must not be tiled by a frame change"
+    );
+    assert!(
+        has_window_in_layout(&mut reactor, space1, screen, standard),
+        "a manageable window coming on screen still joins the layout"
+    );
+}
+
 #[test]
 fn duplicate_minimize_deminimize_and_unknown_window_events_do_not_arrange() {
     let (mut reactor, wid, _wsid, _space1, _space2, _frame) = reactor_with_window_on_space1();
@@ -5934,6 +5981,36 @@ fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
 
 /// The strip is one z-order group (`model::z_group`): focus landing on a strip window while a floating
 /// window sits in front of any strip window raises the whole strip over it.
+/// The window an auto workspace switch focuses (`choose_switch_focus`): the window the switch is
+/// for is taken visible or not, because it is parked until the layout lands. A cmd-tab onto Kiro
+/// (parked on workspace 2, reported off screen by the window server) landed on a Ghostty window
+/// this way and remembered Ghostty for the next time.
+mod switch_focus {
+    use crate::actor::reactor::{choose_switch_focus, switch_focus_within_workspace};
+
+    /// macOS picks the app's main window on cmd-tab. When the user was last in another window of
+    /// the app on the same workspace, that one is the switch's focus; otherwise the pick stands.
+    #[test]
+    fn the_window_the_user_was_in_beats_the_pick_on_the_same_workspace() {
+        assert_eq!(switch_focus_within_workspace("kiro-far", Some("kiro-near")), "kiro-near");
+        assert_eq!(switch_focus_within_workspace("kiro-far", None), "kiro-far");
+    }
+
+    #[test]
+    fn the_window_the_switch_is_for_wins_even_when_the_server_reports_it_off_screen() {
+        assert_eq!(choose_switch_focus(Some("kiro"), true, Some("ghostty"), Some("ghostty")), Some("kiro"));
+        assert_eq!(choose_switch_focus(Some("kiro"), true, None, None), Some("kiro"));
+    }
+
+    #[test]
+    fn a_preferred_window_outside_the_workspace_falls_back_to_the_remembered_then_first_visible() {
+        assert_eq!(choose_switch_focus(Some("kiro"), false, Some("ghostty"), Some("word")), Some("ghostty"));
+        assert_eq!(choose_switch_focus(Some("kiro"), false, None, Some("word")), Some("word"));
+        assert_eq!(choose_switch_focus(None, false, Some("ghostty"), Some("word")), Some("ghostty"));
+        assert_eq!(choose_switch_focus::<&str>(None, false, None, None), None);
+    }
+}
+
 mod strip_regroup {
     use super::*;
     use test_log::test;
@@ -6193,6 +6270,37 @@ mod strip_regroup {
         assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]]);
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
         assert_eq!(request.focus_quiet, Quiet::Yes, "rini's own raise, not the user moving");
+    }
+
+    /// Switching to a Zoom call: macOS focuses Zoom's meeting toolbar, a window the layout does
+    /// not hold (`is_standard: false`), so the layout's focus stays on the strip column that had
+    /// it. The regroup must not read that stale focus as "the strip is focused" and lift the strip
+    /// over the call; it did, and the call window showed for a frame before Kiro covered it.
+    #[test]
+    fn focus_on_a_window_outside_the_layout_does_not_regroup_the_strip() {
+        let (mut reactor, mut raise_rx, space) = reactor_with_sandwich();
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
+        let zoom = 2;
+        reactor.add_test_app(zoom);
+        let toolbar = WindowId::new(zoom, 1);
+        reactor.add_test_window_with_manageability(
+            toolbar,
+            WindowServerId::new(905),
+            Some(space),
+            CGRect::new(CGPoint::new(700., 32.), CGSize::new(301., 45.)),
+            false,
+        );
+        reactor.handle_event(Event::ApplicationGloballyActivated(zoom));
+        while raise_rx.try_recv().is_ok() {}
+        // Zoom in front, then Settings (floating) over the strip: a sandwich if the strip were focused.
+        crate::sys::window_server::set_front_to_back_override(Some(vec![905, 904, 901, 902, 903]));
+
+        reactor.handle_event(Event::WindowServerFocusChanged(toolbar, space));
+        crate::sys::window_server::set_front_to_back_override(None);
+
+        assert_eq!(reactor.main_window(), Some(toolbar), "setup: the toolbar has focus");
+        assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(WindowId::new(1, 1)));
+        assert!(raise_request(&mut raise_rx).is_none(), "the strip must not be lifted over the call");
     }
 }
 
@@ -6745,11 +6853,11 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     );
 }
 
-/// A closing window animates out: the reactor hands its last frame to the overlay engine before
-/// dropping its state, and only then tells the cache to forget it — the exit tile clones the
-/// cached snapshot, so the forget must arrive second.
+/// A closed window disappears: the reactor sends the engine exactly one `ForgetWindow` for it
+/// and no flight of its own, on the AX path. See "A closed window disappears" in
+/// `docs/animation-smoothness.md`.
 #[test]
-fn a_destroyed_window_exits_before_it_is_forgotten() {
+fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -6764,43 +6872,32 @@ fn a_destroyed_window_exits_before_it_is_forgotten() {
     reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
 
     let wid = WindowId::new(1, 1);
-    let last_frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    let mut exit: Option<(CGRect, bool)> = None;
-    let mut forgotten_after_exit = false;
+    let mut forgotten = 0usize;
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::actor::workspace_animation::Event::AnimateExit {
-                window,
-                frame,
-                floating,
-                ..
-            } => {
-                assert_eq!(window, wid);
-                exit = Some((frame, floating));
-            }
             crate::actor::workspace_animation::Event::ForgetWindow(window) if window == wid => {
-                forgotten_after_exit = exit.is_some();
+                forgotten += 1;
+            }
+            crate::actor::workspace_animation::Event::Animate { windows, .. } => {
+                assert!(
+                    windows.iter().all(|request| request.window != wid),
+                    "the closed window is not composed"
+                );
             }
             _ => {}
         }
     }
-    assert_eq!(
-        exit,
-        Some((last_frame, false)),
-        "the exit carries the window's last known frame, and a tiled window is not floating"
-    );
-    assert!(forgotten_after_exit, "the cache must only be told to forget after the exit");
+    assert_eq!(forgotten, 1, "exactly one forget");
     assert!(reactor.state.windows.window(wid).is_none(), "the window state is still removed");
 }
 
-/// The window server reports a close ~15ms before AX does. That path promotes the disappearance
-/// to an immediate removal inside a workflow with no reactor, so the exit rides on the outcome:
-/// still exactly one `AnimateExit`, still ahead of `ForgetWindow`, and the late AX
-/// `WindowDestroyed` finds no window and adds nothing (seen 2026-09-16 2:05, wsid 79953).
+/// The window server reports a close ~15ms before AX does. That path removes the window inside a
+/// workflow with no reactor, so the forget rides on the outcome: still exactly one
+/// `ForgetWindow`, and the late AX `WindowDestroyed` finds no window and adds nothing.
 #[test]
-fn a_window_server_promoted_close_exits_once_before_it_is_forgotten() {
+fn a_window_server_promoted_close_is_forgotten_once() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -6816,7 +6913,6 @@ fn a_window_server_promoted_close_exits_once_before_it_is_forgotten() {
 
     let wid = WindowId::new(1, 1);
     let wsid = reactor.test_window_server_id(wid);
-    let last_frame = reactor.state.windows.window(wid).expect("window").frame_monotonic;
 
     crate::sys::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
@@ -6825,75 +6921,22 @@ fn a_window_server_promoted_close_exits_once_before_it_is_forgotten() {
 
     reactor.handle_event(Event::WindowDestroyed(wid));
 
-    let mut exits = Vec::new();
-    let mut forgotten_after_exit = false;
+    let mut forgotten = 0usize;
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::actor::workspace_animation::Event::AnimateExit {
-                window,
-                frame,
-                floating,
-                ..
-            } => {
-                assert_eq!(window, wid);
-                exits.push((frame, floating));
+            crate::actor::workspace_animation::Event::ForgetWindow(window) if window == wid => {
+                forgotten += 1;
             }
-            crate::actor::workspace_animation::Event::ForgetWindow(window)
-                if window == wid && !forgotten_after_exit =>
-            {
-                forgotten_after_exit = !exits.is_empty();
+            crate::actor::workspace_animation::Event::Animate { windows, .. } => {
+                assert!(
+                    windows.iter().all(|request| request.window != wid),
+                    "the closed window is not composed"
+                );
             }
             _ => {}
         }
     }
-    assert_eq!(
-        exits,
-        vec![(last_frame, false)],
-        "one exit, from the promotion, with the frame captured before removal; the AX \
-         destruction that follows adds none"
-    );
-    assert!(forgotten_after_exit, "the cache must only be told to forget after the exit");
-}
-
-/// Change 3 of `.kiro/specs/exit-entrance-animation-regressions`: the exit carries the window's
-/// group, read from the layout engine while it still knows the window, so the ghost is banded
-/// with the floating tiles rather than drawn in front of the strip.
-#[test]
-fn a_destroyed_floating_window_exits_as_floating() {
-    let (mut apps, mut reactor) = test_context();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
-    let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = true;
-    reactor.config.settings.animate = true;
-
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
-
-    let floater = WindowId::new(1, 1);
-    reactor.send_layout_event(LayoutEvent::WindowFocused(space, floater));
-    reactor.handle_test_layout_command(LayoutCommand::ToggleWindowFloating);
-    apps.simulate_until_quiet(&mut reactor);
-    assert!(
-        reactor.layout_manager.layout_engine.is_window_floating(floater),
-        "test setup must make the window floating"
-    );
-    apps.requests();
-
-    let (animation_tx, mut animation_rx) = actor::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
-
-    reactor.handle_event(Event::WindowDestroyed(floater));
-
-    let mut exit: Option<bool> = None;
-    while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::actor::workspace_animation::Event::AnimateExit { window, floating, .. } =
-            event
-        {
-            assert_eq!(window, floater);
-            exit = Some(floating);
-        }
-    }
-    assert_eq!(exit, Some(true), "the exit reports the window as floating");
+    assert_eq!(forgotten, 1, "one forget, from the promotion; the AX destruction adds none");
 }
 
 /// P-3.13 (`.kiro/specs/exit-entrance-animation-regressions`): with overlay animations off, a
@@ -6920,8 +6963,7 @@ fn a_destroyed_window_does_not_exit_when_overlay_animations_are_off() {
         assert!(
             !matches!(
                 event,
-                crate::actor::workspace_animation::Event::AnimateExit { .. }
-                    | crate::actor::workspace_animation::Event::Animate { .. }
+                crate::actor::workspace_animation::Event::Animate { .. }
                     | crate::actor::workspace_animation::Event::AnimateStrip { .. }
             ),
             "nothing flies with overlay animations off: {event:?}"
@@ -6967,7 +7009,6 @@ fn a_layout_pass_does_not_fly_when_overlay_animations_are_off() {
                 event,
                 crate::actor::workspace_animation::Event::Animate { .. }
                     | crate::actor::workspace_animation::Event::AnimateStrip { .. }
-                    | crate::actor::workspace_animation::Event::AnimateExit { .. }
             ),
             "nothing flies with overlay animations off: {event:?}"
         );

@@ -1204,6 +1204,43 @@ mod tests {
     /// 2.3 of `flight-render-stability`. Mixed frames: every on-screen destination first, then
     /// every park, each class in the order given. All parked, all on screen, and empty inputs
     /// come back as given.
+    /// A window parked on one side re-parked on the other is not written; a window leaving or
+    /// arriving is.
+    #[test]
+    fn only_a_park_to_park_move_is_skipped() {
+        let d = display();
+        let left_park = CGRect::new(CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
+        let right_park = CGRect::new(CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
+        let slot = CGRect::new(CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0), CGSize::new(859.0, 1081.0));
+        assert!(is_park_to_park(left_park, right_park, d));
+        assert!(is_park_to_park(right_park, right_park, d));
+        assert!(!is_park_to_park(right_park, slot, d), "arriving");
+        assert!(!is_park_to_park(slot, right_park, d), "leaving");
+        assert!(!is_park_to_park(slot, slot, d));
+        // A switch's departing row sits a display height below, wholly off the display; macOS
+        // clamps it to a band along the bottom edge, so the write that parks it must go out.
+        let row_below = CGRect::new(CGPoint::new(slot.origin.x, d.origin.y + d.size.height + 32.0), slot.size);
+        assert!(!is_park_to_park(row_below, right_park, d), "a stacked row is not a park");
+        assert!(!is_park_to_park(right_park, row_below, d));
+    }
+
+    /// Regression: a full Ghostty window sat on the right half of the display under the strip
+    /// because the model said "parked" (the app had dropped an earlier write) and the skip trusted
+    /// the model. The write is judged from the window server's frame; a window that is really on
+    /// screen is always sent to its park, and an unknown real frame never suppresses a write.
+    #[test]
+    fn park_write_is_judged_from_the_real_frame_not_the_model() {
+        let d = display();
+        let right_park = CGRect::new(CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
+        let left_park = CGRect::new(CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
+        let slot = CGRect::new(CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0), CGSize::new(859.0, 1081.0));
+        // Model would say left_park -> right_park (skip); the server says the window is in a slot.
+        assert!(frame_write_needed(Some(slot), right_park, d), "on-screen window must be parked");
+        assert!(!frame_write_needed(Some(left_park), right_park, d), "true park-to-park is skipped");
+        assert!(frame_write_needed(None, right_park, d), "unknown real frame never suppresses");
+        assert!(frame_write_needed(Some(right_park), slot, d), "arrivals always go out");
+    }
+
     #[test]
     fn frame_send_order_partitions_stably() {
         let w = |i| WindowId::new(1, i);
@@ -2052,6 +2089,35 @@ pub(super) fn frame_send_order(
     });
     on_screen.extend(parked);
     on_screen
+}
+
+/// A write that moves a window from one park to another: nothing anyone can see changes, and
+/// every such write is an Accessibility round trip that makes the app repaint while the overlay is
+/// flying. A pan sent 20 frames of which 13 were park-to-park; the app repaints stalled the
+/// compositor for 50-130ms at the start of the flight. See "Real windows land before lift" in
+/// `docs/animation-smoothness.md`.
+///
+/// A park is a sliver still touching the display, never a frame wholly off it: a workspace switch
+/// leaves its departing row a full display height below, which macOS clamps to a 41pt band along
+/// the bottom edge, and the pass that follows is what moves that band into the corner. Skipping
+/// that write left the band on screen and let the windows drift into the active workspace.
+pub(super) fn is_park_to_park(current: CGRect, target: CGRect, display: CGRect) -> bool {
+    use crate::model::HiddenWindowPlacement;
+    let is_park = |frame: CGRect| {
+        HiddenWindowPlacement::is_off_screen(display, frame)
+            && HiddenWindowPlacement::intersection_area(frame, display) > 0.0
+    };
+    is_park(current) && is_park(target)
+}
+
+/// Whether a final-frame write must go out, judged from where the window server says the window IS.
+///
+/// The model's frame is deliberately not an input: a write the app dropped leaves the model saying
+/// "parked" while the window still sits on screen, and skipping on the model kept a full Ghostty
+/// window on the right half of the display under the strip. No real frame means we cannot rule the
+/// write out, so it goes.
+pub(super) fn frame_write_needed(real: Option<CGRect>, target: CGRect, display: CGRect) -> bool {
+    !real.is_some_and(|real| is_park_to_park(real, target, display))
 }
 
 /// How far one window is travelling, as a single distance.

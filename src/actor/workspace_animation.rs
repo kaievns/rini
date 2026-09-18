@@ -23,12 +23,17 @@ use tracing::{debug, warn};
 
 use crate::actor;
 use crate::actor::app::WindowId;
+use crate::model::HiddenWindowPlacement;
 use crate::sys::geometry::SameAs;
 use crate::sys::run_loop::RepeatingTimer;
 use crate::sys::window_server::WindowServerId;
 use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
-use crate::ui::window_snapshot::{SnapshotCache, WindowSnapshot, capture_via_skylight};
+use crate::ui::window_snapshot::{
+    SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing, capture_via_skylight,
+};
 use crate::ui::workspace_overlay::{OverlayTile, WorkspaceOverlay};
+
+pub(crate) mod plan;
 
 /// One window's fixed place on the strip surface.
 ///
@@ -77,20 +82,15 @@ pub enum Event {
     RefreshSnapshot { window: WindowId, server_id: WindowServerId, size: CGSize },
     /// Drop snapshots for windows that no longer exist, so the cache cannot grow without bound.
     ForgetWindow(WindowId),
-    /// Animate a window that just closed shrinking out of the layout. The real window is already
-    /// gone from the window server, so the tile draws the cached snapshot — the reverse of an
-    /// entrance. Sent before `ForgetWindow`, which is what makes the cached picture available.
-    /// `floating` places the ghost in its own z-order band (`model/z_group.rs`).
-    AnimateExit { window: WindowId, frame: CGRect, floating: bool, duration: Duration },
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
     /// Move the whole strip surface — every window involved, translated by the same travel — so a
     /// long jump scrolls past everything in between instead of cutting to the destination.
     ///
-    /// Drawn as one per-tile group in a single transaction; the visual destinations (`frame` minus
-    /// `to_offset`) are deliberately distinct from `final_frames`, because a window leaving the
-    /// screen animates off it while its real frame goes to a park.
+    /// Drawn as one rigid group in one container ("Strip movements" in
+    /// `docs/animation-smoothness.md`); the visual destinations are distinct from `final_frames`,
+    /// because a window leaving the screen animates off it while its real frame goes to a park.
     AnimateStrip {
         windows: Vec<StripWindow>,
         from_offset: CGPoint,
@@ -105,6 +105,9 @@ pub enum Event {
     Tick,
     /// The layout passes have settled; start the clock. Posted by the coalesce timer.
     StartMoving,
+    /// No flight began for `SETTLE_BEFORE_CAPTURES` after a lift: the captures the flight owes run
+    /// now. Posted by the quiet timer.
+    Quiet,
     /// A background capture has landed. Posted by the snapshot service, not by another actor.
     SnapshotsReady,
     /// A framed recapture has landed: a chase's reveal or the destination refresh. Posted by the
@@ -237,17 +240,24 @@ const COMPANION_CENTER_SLACK: f64 = 4.0;
 /// any approximation flickers against the real one at the handover.
 ///
 /// The trace test is geometric: same center, same-or-slightly-larger size. Candidates must already
-/// exclude every managed window, or a stacked twin would match its sibling.
+/// exclude every managed window, or a stacked twin would match its sibling. A parked window never
+/// traces and is never traced: every parked window shares the park's frame, so a window arriving
+/// from the park matched another parked window there and flew in wearing its picture.
 fn companion_of(
     frame: CGRect,
     candidates: &[(WindowServerId, CGRect)],
+    display: CGRect,
 ) -> Option<(WindowServerId, CGRect)> {
+    if HiddenWindowPlacement::is_off_screen(display, frame) {
+        return None;
+    }
     let center = |r: CGRect| {
         (r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0)
     };
     let (cx, cy) = center(frame);
     candidates
         .iter()
+        .filter(|(_, candidate)| !HiddenWindowPlacement::is_off_screen(display, *candidate))
         .find(|(_, candidate)| {
             let dw = candidate.size.width - frame.size.width;
             let dh = candidate.size.height - frame.size.height;
@@ -316,6 +326,10 @@ struct RunningAnimation {
     /// The window gaining focus, from the latest pass that named one. Its group is the one
     /// `restack` bands in front, for every tile in the flight whichever pass composed it.
     focus: Option<WindowId>,
+    /// The flight as rigid pieces: what `install` composed and `fly` animates. Rebuilt from
+    /// `tiles` while the flight is still collecting passes. See "The overlay engine" in
+    /// `docs/animation-smoothness.md`.
+    plan: plan::FlightPlan,
     /// Dropped when the animation ends, which invalidates the timer and stops the wakeups.
     _clock: Option<RepeatingTimer>,
 }
@@ -343,20 +357,16 @@ fn entrance_from(to: CGRect) -> CGRect {
     CGRect::new(to.origin, CGSize::new(0.0, to.size.height))
 }
 
-/// Where a closing window shrinks out to: zero width at its own left edge, full height.
-/// The exact mirror of [`entrance_from`], so closing reads as opening played backwards.
-fn exit_to(from: CGRect) -> CGRect {
-    CGRect::new(from.origin, CGSize::new(0.0, from.size.height))
-}
-
 /// The earlier apply point for an animation that resizes a window. A resize behind the overlay
 /// costs three synchronous round trips into the owning app (see `flush_frames` in `actor/app.rs`),
 /// so it needs more runway than a move to land before the overlay lifts.
 const APPLY_FRAMES_AT_RESIZE: f64 = 0.5;
 
-/// The apply point for a strip movement: pure moves, but 17 serialized AX writes need runway.
-/// See "The apply point" in `docs/animation-smoothness.md`.
-const APPLY_FRAMES_AT_STRIP: f64 = 0.5;
+/// The apply point for a strip movement: frame zero. Pure moves behind an opaque overlay, and 17
+/// serialized AX writes across Electron apps take longer than half a flight (24 of 162 flights
+/// lifted with every window 1700-2600pt from its tile). See "The apply point" in
+/// `docs/animation-smoothness.md`.
+const APPLY_FRAMES_AT_STRIP: f64 = 0.0;
 
 /// Which path composed a flight. See "The apply point" in `docs/animation-smoothness.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -692,14 +702,14 @@ fn retarget_entrances(
     entrances: &mut [PendingEntrance],
     final_frames: &[(WindowId, CGRect)],
     display: CGRect,
-    travel: &PassTravel,
 ) -> usize {
     let mut moved = 0;
     for entrance in entrances.iter_mut() {
         let Some((_, frame)) = final_frames.iter().find(|(w, _)| *w == entrance.window) else {
             continue;
         };
-        let to = to_overlay_space(travel.aim(entrance.to, *frame, entrance.floating), display);
+        // A slot is never a park, so the frame is aimed at directly.
+        let to = to_overlay_space(*frame, display);
         if !entrance.to.same_as(to) {
             entrance.to = to;
             moved += 1;
@@ -708,92 +718,20 @@ fn retarget_entrances(
     moved
 }
 
-/// Retargets for the flight's tiles a pass moves without composing: a final frame names the
-/// window but no tile in the pass does (a strip pass composes only windows with a usable picture;
-/// a layout pass leaves out a window heading off screen). Each keeps its start and picture and
-/// takes the pass's destination, then goes through `merge_pass` like any composed tile.
-/// Companions and ghosts have no final frame and are never touched.
-fn retargets_from_frames(
-    flight: &[OverlayTile],
-    pass: &[OverlayTile],
-    final_frames: &[(WindowId, CGRect)],
-    display: CGRect,
-    travel: &PassTravel,
-) -> Vec<OverlayTile> {
-    flight
-        .iter()
-        .filter(|tile| !tile.companion && !tile.ghost)
-        .filter(|tile| !pass.iter().any(|p| p.window == tile.window))
-        .filter_map(|tile| {
-            let (_, frame) = final_frames.iter().find(|(w, _)| *w == tile.window)?;
-            let mut retarget = tile.clone();
-            retarget.to = to_overlay_space(travel.aim(tile.to, *frame, tile.floating), display);
-            Some(retarget)
-        })
-        .collect()
-}
-
-/// How far a pass merging into a flight carries the strip, for the tiles and entrances it moves
-/// by frame alone. A strip pass says so outright (`pan`); a layout pass is read off its composed
-/// tiles (`neighbour_travel`). A frame that is a park is not aimed at: the tile keeps the strip's
-/// row and travels by the pass's vector, or exits past the edge when the pass has none
-/// (`resolve_end`), the same rule `start` applies to the tiles it composes.
-struct PassTravel {
-    pan: Option<CGPoint>,
-    /// The pass's tiles as `(from, to, floating)` in display space.
-    candidates: Vec<(CGRect, CGRect, bool)>,
-    display: CGRect,
-}
-
-impl PassTravel {
-    fn new(pass: &[OverlayTile], pan: Option<CGPoint>, display: CGRect) -> Self {
-        let candidates = pass
-            .iter()
-            .filter(|tile| !tile.companion && !tile.ghost)
-            .map(|tile| {
-                (
-                    from_overlay_space(tile.from, display),
-                    from_overlay_space(tile.to, display),
-                    tile.floating,
-                )
-            })
-            .collect();
-        Self { pan, candidates, display }
+/// Writes every tile's destination back from the merged plan, so the non-overlay readers
+/// (`report_handover_error`, the next merge's redundancy test) see where the flight really ends:
+/// a member the pass did not compose rides its group all the same.
+fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
+    for tile in tiles.iter_mut() {
+        let Some(member) = plan.member(tile.window) else { continue };
+        tile.to = match member {
+            plan::Member::Rigid { key, rel } => plan::overlay_of(rel, plan.position_of(key)),
+            plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => to,
+            plan::Member::Floating { to, .. } => {
+                plan::overlay_of(to, plan.position_of(plan::GroupKey::Floating))
+            }
+        };
     }
-
-    /// Where a tile whose destination is `current` (overlay space) should now aim, given the
-    /// pass's `frame` for it (display space). Display space.
-    fn aim(&self, current: CGRect, frame: CGRect, floating: bool) -> CGRect {
-        let current = from_overlay_space(current, self.display);
-        let travel = (!floating)
-            .then(|| {
-                self.pan.or_else(|| {
-                    let subject = travel_subject(current, frame, self.display);
-                    neighbour_travel(subject, &self.candidates, self.display)
-                })
-            })
-            .flatten();
-        resolve_end(current, frame, self.display, travel)
-    }
-}
-
-/// Carries a flight's exit ghosts along a strip movement merging into it. A ghost's window is
-/// gone, so no pass carries a frame for it; the survivors around it travel by `delta`, and a
-/// ghost that did not ended the flight torn from them. `from` stays: an in-flight retarget bends
-/// from the presented position. Returns the ghosts moved, for the overlay to retarget.
-fn shift_ghosts(tiles: &mut [OverlayTile], delta: CGPoint) -> Vec<WindowId> {
-    if delta.x == 0.0 && delta.y == 0.0 {
-        return Vec::new();
-    }
-    tiles
-        .iter_mut()
-        .filter(|tile| tile.ghost)
-        .map(|tile| {
-            tile.to.origin.x += delta.x;
-            tile.to.origin.y += delta.y;
-            tile.window
-        })
-        .collect()
 }
 
 /// How far a strip movement carries every unpinned tile: `strip_travel`'s `to - from`.
@@ -830,10 +768,88 @@ fn entrance_reservation(
     (PendingEntrance { window, to, floating }, Some((window, to.size)))
 }
 
-/// What a fresh flight does at frame zero: whether the real frames are applied now, under the
-/// covering overlay, and which windows the reveal chase follows. Entrances are in `awaiting`.
-fn frame_zero_work(awaiting: &[(WindowId, CGSize)]) -> (bool, Vec<(WindowId, CGSize)>) {
-    (!awaiting.is_empty(), awaiting.to_vec())
+/// How long after a lift the flight's captures wait for the user to stop. The warm of the
+/// animated set (8-15 ScreenCaptureKit captures) and the desktop render ran the instant the
+/// overlay lifted and took 600-800ms; a press inside that window flew the next flight against a
+/// busy compositor, which stalled it 50-130ms at a time. Back-to-back presses now capture nothing
+/// until the last one lands. See "Capture work in flight" in `docs/animation-smoothness.md`.
+const SETTLE_BEFORE_CAPTURES: Duration = Duration::from_millis(400);
+
+/// The capture work a lift leaves for the quiet period.
+#[derive(Default)]
+struct AfterFlight {
+    targets: Vec<SnapshotTarget>,
+    harvested: HashSet<WindowId>,
+}
+
+/// How long past its clock a flight waits for the render server to present the last frame and
+/// for the real windows to land before lifting anyway. See "Real windows land before lift" in
+/// `docs/animation-smoothness.md`.
+const LIFT_GRACE: Duration = Duration::from_millis(350);
+
+/// Whether the overlay lifts now: the clock has run out AND the render server presents every layer
+/// at its destination AND every visible real window is where its tile finished; or the clock ran
+/// out `LIFT_GRACE` ago. Lifting over windows still travelling showed them jump into place.
+fn lift_now(clock_done: bool, settled: bool, landed: bool, overdue: bool) -> bool {
+    clock_done && ((settled && landed) || overdue)
+}
+
+/// How many newly opened windows one pass captures synchronously at their spawn frame (16-24ms
+/// each); the rest take a reservation. See "A window that opens travels from its spawn frame" in
+/// `docs/animation-smoothness.md`.
+const MAX_SYNC_ENTRANCE_CAPTURES: usize = 4;
+
+/// How a newly opened window enters a flight.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum EntranceDecision {
+    /// Its tile travels from the frame macOS showed it at to its slot.
+    Travel { from: CGRect, to: CGRect },
+    /// No usable picture at spawn: a reservation, held for the first picture (`entrance_reservation`).
+    Reserve(&'static str),
+}
+
+/// `Travel` iff the window server reports a frame with size, the spawn capture is usable and the
+/// pass has capture budget left. `from` is the spawn frame, never the zero-width `entrance_from`.
+fn entrance_plan(
+    spawn: Option<CGRect>,
+    slot: CGRect,
+    picture_usable: bool,
+    budget_left: bool,
+) -> EntranceDecision {
+    let Some(from) = spawn else {
+        return EntranceDecision::Reserve("no server frame");
+    };
+    if from.size.width <= 0.0 || from.size.height <= 0.0 {
+        return EntranceDecision::Reserve("zero server frame");
+    }
+    if !budget_left {
+        return EntranceDecision::Reserve("capture budget");
+    }
+    if !picture_usable {
+        return EntranceDecision::Reserve("capture unusable");
+    }
+    EntranceDecision::Travel { from, to: slot }
+}
+
+/// What a fresh flight does at frame zero: whether it holds (the real frames go out now, under
+/// the covering overlay), which windows the reveal chase follows (holds and spawn entrances), and
+/// which frames go out now: every final frame when holding, else the newcomers' slots alone so
+/// their chase can capture them at slot size.
+fn frame_zero_work(
+    awaiting: &[(WindowId, CGSize)],
+    chase: &[(WindowId, CGSize)],
+    final_frames: &[(WindowId, CGRect)],
+    entrance_frames: &[(WindowId, CGRect)],
+) -> (bool, Vec<(WindowId, CGSize)>, Vec<(WindowId, CGRect)>) {
+    let holding = !awaiting.is_empty();
+    let mut chase_set = awaiting.to_vec();
+    for entry in chase {
+        if !chase_set.iter().any(|(w, _)| *w == entry.0) {
+            chase_set.push(*entry);
+        }
+    }
+    let now_frames = if holding { final_frames.to_vec() } else { entrance_frames.to_vec() };
+    (holding, chase_set, now_frames)
 }
 
 /// The tile for a reserved entrance whose picture has landed: growing from zero width at its own
@@ -850,7 +866,6 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &WindowSnapshot) -> Overl
         depth: 0,
         companion: false,
         focused: true,
-        ghost: false,
     }
 }
 
@@ -861,75 +876,15 @@ enum Claimed {
     Held,
     /// Taken, and it was the last hold: the flight may start moving.
     Released,
+    /// Taken by a composed tile standing at frame zero (a newcomer's slot-size picture); no hold
+    /// was involved and nothing is released.
+    Refreshed,
 }
 
 /// Whether a composed pass is worth an overlay flight at all. False only when nothing drawable
-/// moves, no exit was drained, and no flight is running: see "Layout changes" in
-/// `docs/animation-smoothness.md`.
-fn worth_flying(moving_drawable: bool, exits: usize, running: bool) -> bool {
-    moving_drawable || exits > 0 || running
-}
-
-/// A closed window waiting for the layout pass that reflows its neighbours, so the ghost and the
-/// survivors fly in one transaction. Never a flight of its own: see "Closed windows resize out"
-/// in `docs/animation-smoothness.md`.
-#[derive(Debug, Clone)]
-struct PendingExit {
-    window: WindowId,
-    /// Display-space frame the window closed at.
-    frame: CGRect,
-    snapshot: WindowSnapshot,
-    floating: bool,
-    /// Past this, no pass is coming and the exit is dropped rather than flown alone.
-    expires: Instant,
-}
-
-impl PendingExit {
-    fn claimable(&self, now: Instant) -> bool {
-        now < self.expires
-    }
-
-    /// The ghost tile in overlay space: the window's last picture shrinking to zero width at
-    /// its own left edge. The window is gone from the server, so it has no order; `Some(0)`
-    /// draws the ghost frontmost, where a window that was just being used most likely sat.
-    fn tile(&self, display: CGRect) -> OverlayTile {
-        OverlayTile {
-            window: self.window,
-            from: to_overlay_space(self.frame, display),
-            to: to_overlay_space(exit_to(self.frame), display),
-            snapshot: self.snapshot.clone(),
-            floating: self.floating,
-            server_order: Some(0),
-            depth: 0,
-            companion: false,
-            focused: false,
-            ghost: true,
-        }
-    }
-}
-
-/// The pending exit for a window that just closed at `frame`, waiting one coalesce window for the
-/// pass that reflows the survivors. `None` when there is nothing to show: no visible exit path (a
-/// park, or scrolled off the strip) or no usable picture to draw the ghost from.
-fn pending_exit(
-    window: WindowId,
-    frame: CGRect,
-    snapshot: Option<WindowSnapshot>,
-    floating: bool,
-    display: CGRect,
-    now: Instant,
-) -> Option<PendingExit> {
-    if !worth_animating(frame, exit_to(frame), display) {
-        return None;
-    }
-    let snapshot = snapshot?;
-    Some(PendingExit { window, frame, snapshot, floating, expires: now + COALESCE_WINDOW })
-}
-
-/// Takes every pending exit for the pass composing now: the unexpired ones become ghost tiles,
-/// the rest are dropped. Either way the list is emptied, so one exit is composed at most once.
-fn claim_exits(pending: &mut Vec<PendingExit>, now: Instant, display: CGRect) -> Vec<OverlayTile> {
-    pending.drain(..).filter(|exit| exit.claimable(now)).map(|exit| exit.tile(display)).collect()
+/// moves and no flight is running: see "Layout changes" in `docs/animation-smoothness.md`.
+fn worth_flying(moving_drawable: bool, running: bool) -> bool {
+    moving_drawable || running
 }
 
 /// Depth for every tile in the flight, banded by z-group (`tile_depth` in `model/z_group.rs`):
@@ -949,6 +904,66 @@ fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
             focused_group,
         );
     }
+}
+
+/// The flight's z-order as containers: whether the floating container is in front, every tile's
+/// depth inside its container, and the strip containers' order (the one holding focus first).
+/// `container_z - within` reproduces `-tile_depth`, so the overlay draws what `restack` and the
+/// reactor's regroup agree on. See "The overlay engine" in `docs/animation-smoothness.md`.
+fn band_plan(
+    plan: &plan::FlightPlan,
+    tiles: &[OverlayTile],
+    focus: Option<WindowId>,
+) -> plan::Banding {
+    use crate::model::z_group::{GROUP_STRIDE, StackGroup, tile_depth};
+    let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
+    let within: HashMap<WindowId, usize> = tiles
+        .iter()
+        .map(|t| {
+            let group = group_of(t.floating);
+            let depth = if t.companion {
+                // Its window's banded depth, less the band.
+                t.depth % GROUP_STRIDE
+            } else {
+                tile_depth(t.server_order, focus == Some(t.window), group, group)
+            };
+            (t.window, depth)
+        })
+        .collect();
+    let mut strip: Vec<(plan::GroupKey, bool, usize)> = Vec::new();
+    for group in plan.groups.iter().filter(|g| !g.members.is_empty()) {
+        let holds_focus = focus.is_some_and(|f| group.members.iter().any(|m| m.window == f));
+        let shallowest =
+            group.members.iter().filter_map(|m| within.get(&m.window)).copied().min().unwrap_or(0);
+        strip.push((group.key, holds_focus, shallowest));
+    }
+    if !plan.changing.is_empty() || !plan.entrances.is_empty() {
+        let loose: Vec<WindowId> =
+            plan.changing.iter().chain(&plan.entrances).map(|(w, _, _)| *w).collect();
+        let holds_focus = focus.is_some_and(|f| loose.contains(&f));
+        let shallowest = loose.iter().filter_map(|w| within.get(w)).copied().min().unwrap_or(0);
+        strip.push((plan::GroupKey::StripLoose, holds_focus, shallowest));
+    }
+    strip.sort_by_key(|(_, holds_focus, shallowest)| (!*holds_focus, *shallowest));
+    plan::Banding {
+        floating_in_front: focused_group == StackGroup::Floating,
+        within,
+        strip_order: strip.into_iter().map(|(key, _, _)| key).collect(),
+    }
+}
+
+/// The window server ids a border companion may never be: the pass's windows plus every window
+/// rini has a picture of or owes one to. A border window belongs to a border tool, which rini never
+/// manages, so nothing managed can be a companion. Synthetic (companion) ids carry pid 0 and are
+/// left out, or a border seen once could never be matched again.
+fn managed_server_ids(
+    pass: &std::collections::HashSet<u32>,
+    cached: impl Iterator<Item = WindowId>,
+    owed: impl Iterator<Item = WindowId>,
+) -> std::collections::HashSet<u32> {
+    let mut ids = pass.clone();
+    ids.extend(cached.chain(owed).filter(|w| w.pid != 0).map(|w| w.idx.get()));
+    ids
 }
 
 /// Which group a window belongs to.
@@ -991,6 +1006,12 @@ impl RunningAnimation {
 
     fn is_done(&self) -> bool {
         self.started.is_some() && self.progress() >= 1.0
+    }
+
+    /// Past the clock by more than `LIFT_GRACE`: the overlay lifts whether or not the render
+    /// server reports the tiles settled, so a stuck presentation cannot hold it up.
+    fn overdue(&self) -> bool {
+        self.started.is_some_and(|started| started.elapsed() > self.duration + LIFT_GRACE)
     }
 
     /// Wall-clock time left before the overlay lifts.
@@ -1095,7 +1116,16 @@ impl RunningAnimation {
         if self.started.is_some() {
             return None;
         }
-        let position = self.awaiting.iter().position(|(w, _)| *w == window)?;
+        let Some(position) = self.awaiting.iter().position(|(w, _)| *w == window) else {
+            // Not a hold: a newcomer travelling from its spawn frame, whose chase landed before
+            // the flight moved. Its tile takes the slot-size picture; nothing is released.
+            let tile = self.tiles.iter_mut().find(|tile| tile.window == window)?;
+            if !snapshot.is_usable() || !snapshot.fits(tile.to.size) {
+                return None;
+            }
+            tile.snapshot = snapshot.clone();
+            return Some(Claimed::Refreshed);
+        };
         let (_, size) = self.awaiting[position];
         if !snapshot.is_usable() || !snapshot.fits(size) {
             return None;
@@ -1139,9 +1169,9 @@ impl RunningAnimation {
         }
     }
 
-    /// Folds one later pass into the flight: its focus (when it names one), then each of its
-    /// tiles, then one restack so every depth is banded by the flight's latest focus, whichever
-    /// pass composed the tile. Returns what became of each tile, in order.
+    /// Folds one later pass into the flight's tiles and focus, for the non-overlay readers; the
+    /// overlay follows `merge_plans`. Depths are rebanded by the flight's latest focus. Returns
+    /// what became of each tile, in order.
     fn merge_pass(
         &mut self,
         tiles: Vec<OverlayTile>,
@@ -1186,7 +1216,6 @@ impl RunningAnimation {
                 existing.depth = tile.depth;
                 existing.companion = tile.companion;
                 existing.focused = tile.focused;
-                existing.ghost = tile.ghost;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
@@ -1239,10 +1268,13 @@ pub struct WorkspaceAnimation {
     /// `display` rather than folded into it because only the desktop capture needs it.
     display_id: Option<u32>,
     running: Option<RunningAnimation>,
-    /// Closed windows waiting for the layout pass that reflows their neighbours.
-    pending_exits: Vec<PendingExit>,
     /// Fires once after the layout passes settle, to start the animation moving.
     coalesce: Option<RepeatingTimer>,
+    /// Fires once, `SETTLE_BEFORE_CAPTURES` after a lift, unless a flight begins first.
+    quiet: Option<RepeatingTimer>,
+    /// The capture work the last flights owe, run at `Quiet`: the animated set to warm and the
+    /// windows whose hairline landed in flight.
+    after_flight: Option<AfterFlight>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
     last_animated: Vec<SnapshotTarget>,
     /// Warms asked for during a flight, one per window, requested at `finish`. See "Capture work
@@ -1283,8 +1315,9 @@ impl WorkspaceAnimation {
             display: None,
             display_id: None,
             running: None,
-            pending_exits: Vec::new(),
             coalesce: None,
+            quiet: None,
+            after_flight: None,
             last_animated: Vec::new(),
             deferred_warm: Vec::new(),
             deferred_desktop: false,
@@ -1325,12 +1358,10 @@ impl WorkspaceAnimation {
                 self.refresh_snapshot(window, server_id, size)
             }
             Event::ForgetWindow(window) => self.cache.forget(window),
-            Event::AnimateExit { window, frame, floating, duration } => {
-                self.animate_exit(window, frame, floating, duration)
-            }
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
             Event::StartMoving => self.start_moving(),
+            Event::Quiet => self.after_flight_captures(),
             Event::RefreshBar => {
                 // One shot: dropping the timer stops it repeating.
                 self.bar_refresh = None;
@@ -1762,18 +1793,7 @@ impl WorkspaceAnimation {
         // Redraw frame zero with the new picture: the tiles are standing still, so this is a plain
         // recompose. A grow's crop grid now maps the final-size picture — the reveal — and an
         // entrance stands at zero width until `start_moving` flies everything together.
-        let tiles = self
-            .running
-            .as_mut()
-            .map(|running| std::mem::take(&mut running.tiles))
-            .unwrap_or_default();
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tiles(&tiles);
-            overlay.draw_frame(&tiles, 0.0);
-        }
-        if let Some(running) = self.running.as_mut() {
-            running.tiles = tiles;
-        }
+        self.recompose();
         if claimed == Claimed::Released {
             debug!(
                 pid = window.pid,
@@ -1785,14 +1805,32 @@ impl WorkspaceAnimation {
         true
     }
 
+    /// Frame zero again, for a flight still collecting passes: the plan is rebuilt from the merged
+    /// tiles and installed. Nothing is animating yet, so this is a plain recompose.
+    fn recompose(&mut self) {
+        let Self { overlay, running, .. } = self;
+        let Some(running) = running.as_mut() else { return };
+        let mut rebuilt = plan::plan_from_tiles(&running.tiles);
+        // A tile only knows it resizes; the plan remembers which of those are entrances.
+        let entrances: Vec<WindowId> = running.plan.entrances.iter().map(|(w, _, _)| *w).collect();
+        rebuilt.mark_entrances(&entrances);
+        running.plan = plan::FlightPlan::from(rebuilt);
+        if let Some(overlay) = overlay.as_mut() {
+            let banding = band_plan(&running.plan, &running.tiles, running.focus);
+            overlay.install(&running.plan, &running.tiles, &banding);
+        }
+    }
+
     /// Adds the tile for a reserved entrance whose first picture landed after the flight started
     /// moving: the late fallback behind `claim_reveal`. The tile grows from zero width for what is
     /// left of the flight, so it lands with its neighbours. Returns whether the picture was taken.
     fn admit_entrance(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
         let Some(running) = self.running.as_mut() else { return false };
         let Some((tile, duration)) = running.admit(window, snapshot) else { return false };
+        running.plan.entrances.push((tile.window, tile.from, tile.to));
+        let banding = band_plan(&running.plan, &running.tiles, running.focus);
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.add_tile(&tile, duration);
+            overlay.add_tile(&tile, plan::GroupKey::StripLoose, &banding, duration);
         }
         debug!(pid = window.pid, idx = window.idx.get(), "window entered mid-flight");
         true
@@ -1844,22 +1882,36 @@ impl WorkspaceAnimation {
         if anchors.is_empty() {
             return (Vec::new(), Vec::new());
         }
+        // Every window rini manages is excluded, not only the pass's: two Chrome windows on
+        // different workspaces share one park frame, and the one outside the pass matched the one
+        // arriving as its "border" (the park clamps to 41pt visible, past `is_off_screen`), so the
+        // arriving window flew in wearing the other's picture.
+        let managed = managed_server_ids(
+            exclude,
+            self.cache.iter().map(|(window, _)| *window),
+            self.deferred_warm.iter().chain(self.after_flight.iter().flat_map(|a| a.targets.iter())).map(|t| t.window),
+        );
         let candidates: Vec<(WindowServerId, CGRect)> =
             crate::sys::window_server::visible_windows_on_display(display)
                 .into_iter()
-                .filter(|(id, _)| !exclude.contains(&id.as_u32()))
+                .filter(|(id, _)| !managed.contains(&id.as_u32()))
                 .collect();
         let mut claimed: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut tiles = Vec::new();
         let mut targets = Vec::new();
         for &(real, from, to, depth) in anchors {
-            let Some((server_id, frame)) = companion_of(real, &candidates) else { continue };
+            let Some((server_id, frame)) = companion_of(real, &candidates, display) else { continue };
             // One border traces one window: stacked twins share a frame and must not all claim
             // the same border window.
             if !claimed.insert(server_id.as_u32()) {
                 continue;
             }
             let window = synthetic_window_id(server_id);
+            debug!(
+                wsid = server_id.as_u32(),
+                anchor = format!("{:.0},{:.0} {:.0}x{:.0}", real.origin.x, real.origin.y, real.size.width, real.size.height),
+                "border companion matched"
+            );
             targets.push(SnapshotTarget { window, server_id, size: frame.size });
             let offset = (frame.origin.x - real.origin.x, frame.origin.y - real.origin.y);
             let follow = |rect: CGRect| {
@@ -1880,53 +1932,12 @@ impl WorkspaceAnimation {
                     depth,
                     companion: true,
                     focused: false,
-                    ghost: false,
-                }),
+                    }),
                 // Like a window with no picture: skipped this flight, warmed for the next.
                 None => needs_capture.push(SnapshotTarget { window, server_id, size: frame.size }),
             }
         }
         (tiles, targets)
-    }
-
-    /// Queues a closed window to shrink out: a resize to zero width at its own left edge, drawn
-    /// from the cached snapshot because the real window no longer exists.
-    ///
-    /// The ghost is composed by the next layout pass (`start` or `start_strip`) together with the
-    /// survivors, so both fly in one transaction; it never starts a flight of its own. When no
-    /// pass follows within the coalesce window — a floating close, or a close with no survivors —
-    /// the exit is dropped and no overlay is shown. See "Closed windows resize out" in
-    /// `docs/animation-smoothness.md`.
-    fn animate_exit(&mut self, window: WindowId, frame: CGRect, floating: bool, _duration: Duration) {
-        let Some((display_frame, _)) = self.display else {
-            return;
-        };
-        // Cloned before `ForgetWindow` lands: the ghost is drawn from this after the cache entry
-        // is gone. The gates inside `pending_exit` are the ones every tile passes: a parked or
-        // scrolled-off window closes with nothing to show, and no picture means no ghost.
-        let snapshot = self.cache.usable(window).cloned();
-        let Some(exit) =
-            pending_exit(window, frame, snapshot, floating, display_frame, Instant::now())
-        else {
-            debug!(
-                pid = window.pid,
-                idx = window.idx.get(),
-                "closed window had no visible exit path or no usable snapshot; skipping the exit"
-            );
-            return;
-        };
-        debug!(pid = window.pid, idx = window.idx.get(), "window exiting; waiting for the next pass");
-        self.pending_exits.push(exit);
-    }
-
-    /// The ghost tiles for the pass composing now, in overlay space. Empties `pending_exits`.
-    fn claim_pending_exits(&mut self, display: CGRect) -> Vec<OverlayTile> {
-        let now = Instant::now();
-        let claimed = claim_exits(&mut self.pending_exits, now, display);
-        if !claimed.is_empty() {
-            debug!(exits = claimed.len(), "composing closed windows with the survivors");
-        }
-        claimed
     }
 
     fn start(
@@ -1967,8 +1978,17 @@ impl WorkspaceAnimation {
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
         let mut entrances: Vec<PendingEntrance> = Vec::new();
         let mut awaiting: Vec<(WindowId, CGSize)> = Vec::new();
+        // Newly opened windows travelling from their spawn frame: their loose tiles, the chase
+        // that lands their slot-size picture, and the slots to request at frame zero.
+        let mut spawn_entrances: Vec<(WindowId, CGRect, CGRect)> = Vec::new();
+        let mut chase: Vec<(WindowId, CGSize)> = Vec::new();
+        let mut entrance_frames: Vec<(WindowId, CGRect)> = Vec::new();
+        let mut sync_captures = 0usize;
+        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         // Real frame per drawn window; depths are filled in after the restack.
         let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
+        // The resolved `(start, end, floating)` per drawn window, for `reflow_plan`.
+        let mut resolved: Vec<(WindowId, CGRect, CGRect, bool)> = Vec::new();
         // The pass's layout frames, for `neighbour_travel`: a window leaving for a park or coming
         // back from one moves by the vector of the strip window nearest it, not to the edge.
         let others: Vec<(CGRect, CGRect, bool)> =
@@ -2051,32 +2071,98 @@ impl WorkspaceAnimation {
                         depth: 0,
                         companion: false,
                         focused: focus == Some(request.window),
-                        ghost: false,
-                    });
+                            });
                     starts.push((request.window, start));
+                    resolved.push((request.window, start, end, request.floating));
                 }
                 // No picture at all: almost always a window that just opened, since anything that
-                // has ever been on a workspace was warmed. It cannot be drawn yet; reserve it an
-                // entrance and hold the flight at frame zero for its first picture, so its tile
-                // flies in the survivors' transaction. Its own slot is held back until the claim.
-                // See "Entrances are holds" in `docs/animation-smoothness.md`.
+                // has ever been on a workspace was warmed. macOS is already showing it at its
+                // spawn frame, so it is captured there and its tile travels from that frame to
+                // its slot; the chase replaces the stretched picture once the app renders at slot
+                // size. With no frame or no usable capture it takes a reservation instead. See "A
+                // window that opens travels from its spawn frame" in `docs/animation-smoothness.md`.
                 None => {
-                    skipped += 1;
-                    let (entrance, waiting) = entrance_reservation(
-                        request.window,
-                        to_overlay_space(request.to, display_frame),
-                        request.floating,
-                    );
-                    entrances.push(entrance);
-                    awaiting.extend(waiting);
+                    // Only a frame on this display counts as a spawn: a parked window with a
+                    // cold cache is not a newcomer, and capturing off screen is slow.
+                    let spawn = crate::sys::window_server::get_window(request.server_id)
+                        .map(|info| info.frame)
+                        .filter(|f| !HiddenWindowPlacement::is_off_screen(display_frame, *f));
+                    let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
+                    let captured_at = Instant::now();
+                    let picture = spawn
+                        .filter(|f| f.size.width > 0.0 && f.size.height > 0.0 && budget_left)
+                        .and_then(|_| {
+                            sync_captures += 1;
+                            capture_via_framed_with_dressing(request.server_id, scale)
+                        });
+                    let usable = picture.as_ref().is_some_and(|p| p.is_usable());
+                    match entrance_plan(spawn, request.to, usable, budget_left) {
+                        EntranceDecision::Travel { from, to } => {
+                            let snapshot = picture.expect("usable implies a picture");
+                            debug!(
+                                pid = request.window.pid,
+                                idx = request.window.idx.get(),
+                                spawn = format!(
+                                    "{:.0},{:.0} {:.0}x{:.0}",
+                                    from.origin.x, from.origin.y, from.size.width, from.size.height
+                                ),
+                                slot = format!(
+                                    "{:.0},{:.0} {:.0}x{:.0}",
+                                    to.origin.x, to.origin.y, to.size.width, to.size.height
+                                ),
+                                capture_ms = captured_at.elapsed().as_millis() as u64,
+                                "entrance from spawn"
+                            );
+                            self.cache.insert(request.window, snapshot.clone());
+                            let from_o = to_overlay_space(from, display_frame);
+                            let to_o = to_overlay_space(to, display_frame);
+                            // Already at its slot (a cold cache, not an open): an ordinary still
+                            // tile, no chase.
+                            let standing = from.same_as(to);
+                            tiles.push(OverlayTile {
+                                window: request.window,
+                                from: from_o,
+                                to: to_o,
+                                snapshot,
+                                floating: request.floating,
+                                server_order: if standing {
+                                    depths.get(&request.server_id.as_u32()).copied()
+                                } else {
+                                    Some(0)
+                                },
+                                depth: 0,
+                                companion: false,
+                                focused: standing && focus == Some(request.window) || !standing,
+                                            });
+                            if standing {
+                                starts.push((request.window, from));
+                                resolved.push((request.window, from, to, request.floating));
+                            } else {
+                                spawn_entrances.push((request.window, from_o, to_o));
+                                chase.push((request.window, to.size));
+                                entrance_frames.push((request.window, to));
+                            }
+                        }
+                        EntranceDecision::Reserve(reason) => {
+                            skipped += 1;
+                            debug!(
+                                pid = request.window.pid,
+                                idx = request.window.idx.get(),
+                                reason,
+                                "entrance reserved"
+                            );
+                            let (entrance, waiting) = entrance_reservation(
+                                request.window,
+                                to_overlay_space(request.to, display_frame),
+                                request.floating,
+                            );
+                            entrances.push(entrance);
+                            awaiting.extend(waiting);
+                        }
+                    }
                 }
             }
         }
-        // Closed windows this pass reflows around: their ghosts ride the same transaction. They
-        // carry no final frame and leave the apply point alone.
-        let exits = self.claim_pending_exits(display_frame);
-        let drained_exits = exits.len();
-        tiles.extend(exits);
         // Stacked here so the companions can anchor to their windows' depths; `begin_group`
         // restacks the whole flight once this pass has merged.
         restack(&mut tiles, focus);
@@ -2109,7 +2195,6 @@ impl WorkspaceAnimation {
             tiles = tiles.len(),
             offscreen,
             no_snapshot = skipped,
-            exits = drained_exits,
             display = format!(
                 "{:.0},{:.0} {:.0}x{:.0}",
                 display_frame.origin.x,
@@ -2137,13 +2222,23 @@ impl WorkspaceAnimation {
         // once rather than raising the overlay over them. A flight in progress still merges, so
         // its fresh destinations are not yanked out from under the running overlay.
         let moving_drawable = tiles.iter().any(|tile| is_moving(tile.from, tile.to));
-        if !worth_flying(moving_drawable, drained_exits, self.running.is_some()) {
+        if !worth_flying(moving_drawable, self.running.is_some()) {
             self.request_frames(final_frames);
             // Warm anyway, or this deadlocks: the cache only ever filled when an animation
             // completed, and no animation could run with an empty cache.
             let targets = std::mem::take(&mut self.last_animated);
             self.warm_windows(targets);
             return;
+        }
+
+        // The pass as rigid pieces: grouped by translation vector, with the park rule already
+        // folded into `start`/`end`. Ghosts and companions ride by their own vectors.
+        let mut plan = plan::reflow_plan(&resolved, display_frame);
+        plan.entrances.extend(spawn_entrances);
+        for tile in &tiles {
+            if plan.member(tile.window).is_none() {
+                plan.adopt(tile);
+            }
         }
 
         self.begin_group(
@@ -2155,15 +2250,18 @@ impl WorkspaceAnimation {
             apply_at,
             entrances,
             awaiting,
+            chase,
+            entrance_frames,
             focus,
             None,
+            plan,
         );
     }
 
-    /// Runs one group of tiles through the shared animation machinery: merge into a flight already
-    /// running, or dress the overlay and start a fresh one. Every animated movement — layout
-    /// changes and strip travel alike — ends up here, which is what lets any of them chain onto
-    /// any other.
+    /// Runs one plan through the shared animation machinery: merge into a flight already running
+    /// (`merge_plans`), or dress the overlay and install a fresh one. Every animated movement ends
+    /// up here, which is what lets any of them chain onto any other. See "The overlay engine" in
+    /// `docs/animation-smoothness.md`.
     fn begin_group(
         &mut self,
         mut tiles: Vec<OverlayTile>,
@@ -2174,8 +2272,11 @@ impl WorkspaceAnimation {
         apply_at: f64,
         entrances: Vec<PendingEntrance>,
         awaiting: Vec<(WindowId, CGSize)>,
+        chase: Vec<(WindowId, CGSize)>,
+        entrance_frames: Vec<(WindowId, CGRect)>,
         focus: Option<WindowId>,
         pan: Option<CGPoint>,
+        plan: plan::ReflowPlan,
     ) {
         // Merge FIRST, before the empty check: a pass with nothing drawable can still carry fresh
         // destinations for a flight in progress, and placing its frames immediately would yank
@@ -2185,10 +2286,9 @@ impl WorkspaceAnimation {
         // later pass can also change where a window is going.
         if self.running.is_some() {
             let in_flight;
-            let mut retargets: Vec<OverlayTile> = Vec::new();
-            let mut joined: Vec<OverlayTile> = Vec::new();
             let hold_frames: Option<Vec<(WindowId, CGRect)>>;
             let frames_changed;
+            let focus_before: Option<WindowId>;
             let display = self.display.map(|(frame, _)| frame);
             {
                 let running = self.running.as_mut().expect("checked above");
@@ -2202,107 +2302,111 @@ impl WorkspaceAnimation {
                         running.entrances.push(entrance);
                     }
                 }
-                // What this pass moves that it did not compose: the entrances still waiting for
-                // a picture, tiles whose window it names only by frame, and the exit ghosts,
-                // which no pass names and a strip movement carries by its travel. Left alone,
-                // they end the flight where the strip was, not where it is: the tear seen at
-                // 3:27:20. See "Mid-flight passes" in `docs/animation-smoothness.md`.
-                let mut tiles = tiles;
+                // A reservation still waiting for its picture takes the pass's slot; everything
+                // with a tile is the plan's business below.
                 if let Some(display) = display {
-                    let travel = PassTravel::new(&tiles, pan, display);
-                    retarget_entrances(&mut running.entrances, &final_frames, display, &travel);
-                    tiles.extend(retargets_from_frames(
-                        &running.tiles,
-                        &tiles,
-                        &final_frames,
-                        display,
-                        &travel,
-                    ));
+                    retarget_entrances(&mut running.entrances, &final_frames, display);
                 }
-                let shifted = match pan {
-                    Some(delta) => shift_ghosts(&mut running.tiles, delta),
-                    None => Vec::new(),
-                };
                 // Merged before the hold reads them, so a held merge re-requests the frames this
                 // pass brought, not the ones it replaced.
                 frames_changed = merge_final_frames(&mut running.final_frames, final_frames);
                 hold_frames = running.extend_hold(&awaiting, in_flight, duration, Instant::now());
                 // Merged and restacked before the overlay sees any tile, so the copies handed to
                 // it below carry their flight-level depths.
-                let outcomes = running.merge_pass(tiles, focus);
-                for (window, outcome) in outcomes {
-                    let tile = match outcome {
-                        // The common rapid-press case: a later pass confirming destinations the
-                        // flight already has. Touching nothing is what keeps chained presses from
-                        // restarting or extending the animation forever.
-                        Admitted::Redundant => continue,
-                        Admitted::Retargeted | Admitted::Joined => running
-                            .tiles
-                            .iter()
-                            .find(|t| t.window == window)
-                            .expect("merge kept the tile")
-                            .clone(),
-                    };
-                    match outcome {
-                        Admitted::Retargeted => retargets.push(tile),
-                        _ => joined.push(tile),
-                    }
-                }
-                retargets.extend(
-                    running.tiles.iter().filter(|t| shifted.contains(&t.window)).cloned(),
-                );
+                focus_before = running.focus;
+                running.merge_pass(tiles, focus);
             }
-            let changed = !(retargets.is_empty() && joined.is_empty());
             if in_flight {
-                // Tiles already animating bend toward their new targets from wherever they are
-                // drawn; newcomers start their whole movement now. Both get the fresh duration.
-                // Tiles this pass did not touch may still have changed band, so the whole flight
-                // is restacked where it stands.
-                if let Some(overlay) = self.overlay.as_mut() {
-                    for tile in &retargets {
-                        overlay.retarget_tile(tile, duration);
+                // Containers bend from where they are drawn; members changing hands are
+                // reparented at their presented frame; a pan carries every group. Nothing is
+                // retargeted per tile unless it is loose. See "Mid-flight passes" in
+                // `docs/animation-smoothness.md`.
+                let Self { overlay, running, .. } = self;
+                let running = running.as_mut().expect("checked above");
+                let presented = overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
+                let focus_changed = focus.is_some() && focus != focus_before;
+                // The viewport in overlay space: what a member's destination is judged against.
+                let viewport = display
+                    .map(|d| to_overlay_space(d, d))
+                    .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)));
+                let (merged, mut delta) = plan::merge_plans(
+                    &running.plan,
+                    &plan,
+                    pan,
+                    &presented,
+                    running.focus,
+                    viewport,
+                );
+                delta.focus_changed = focus_changed;
+                running.plan = merged;
+                sync_tiles_to_plan(&mut running.tiles, &running.plan);
+                if !delta.is_empty() {
+                    debug!(
+                        groups = running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
+                        changing = running.plan.changing.len(),
+                        entrances = running.plan.entrances.len(),
+                        reparented = delta.reparented.len(),
+                        retargeted_groups = delta.retargeted_groups.len(),
+                        joined = delta.joined_tiles.len(),
+                        "flight merged"
+                    );
+                    for (key, to) in &delta.retargeted_groups {
+                        let presented = presented.get(key).copied().unwrap_or_default();
+                        debug!(
+                            key = format!("{key:?}"),
+                            presented = format!("{:.0},{:.0}", presented.x, presented.y),
+                            to = format!("{:.0},{:.0}", to.x, to.y),
+                            "group retargeted"
+                        );
                     }
-                    for tile in &joined {
-                        overlay.add_tile(tile, duration);
+                    for (window, from_key, to_key) in &delta.reparented {
+                        let dest = running.plan.member(*window).map(|m| match m {
+                            plan::Member::Rigid { key, rel } => plan::overlay_of(rel, running.plan.position_of(key)),
+                            plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => to,
+                            plan::Member::Floating { to, .. } => plan::overlay_of(to, running.plan.position_of(plan::GroupKey::Floating)),
+                        });
+                        let from_to = running.plan.position_of(*from_key);
+                        debug!(
+                            pid = window.pid,
+                            idx = window.idx.get(),
+                            from = format!("{from_key:?}"),
+                            to = format!("{to_key:?}"),
+                            group_destination = format!("{:.0},{:.0}", from_to.x, from_to.y),
+                            member_destination = dest.map(|d| format!("{:.0},{:.0} {:.0}x{:.0}", d.origin.x, d.origin.y, d.size.width, d.size.height)).unwrap_or_default(),
+                            "member reparented"
+                        );
                     }
                 }
-                if let Some(running) = self.running.as_ref()
-                    && let Some(overlay) = self.overlay.as_mut()
-                {
-                    overlay.restack(&running.tiles);
+                if let Some(overlay) = overlay.as_mut() {
+                    let banding = band_plan(&running.plan, &running.tiles, running.focus);
+                    overlay.retarget(&delta, &running.plan, &running.tiles, &banding, duration);
                 }
-                // A grow joining mid-flight cannot hold, but it can still get its truthful
-                // pixels: the chase lands them as `Swap("reveal")` on the placeholder tile, which
-                // re-keys the grid from the presented state.
-                if !awaiting.is_empty() {
-                    self.chase_reveal_pictures(&awaiting);
-                }
+                let changed = delta.moves_anything();
                 if changed {
-                    let running = self.running.as_mut().expect("checked above");
                     // A real change restarts the orchestration clock so the frame placement and
                     // the teardown cover the flights that just began; without this the overlay
-                    // lifts while a retargeted tile is still travelling.
+                    // lifts while a retargeted container is still travelling.
                     running.started = Some(Instant::now());
                     running.duration = duration;
                 }
-                self.running
-                    .as_mut()
-                    .expect("checked above")
-                    .absorb_in_flight_change(changed, frames_changed);
+                running.absorb_in_flight_change(changed, frames_changed);
+                // A grow joining mid-flight cannot hold, but it can still get its truthful
+                // pixels: the chase lands them as `Swap("reveal")` on the placeholder tile, which
+                // re-keys the grid from the presented state. A newcomer's slot goes out now so
+                // the chase has something to capture.
+                let (_, chase_set, _) = frame_zero_work(&awaiting, &chase, &[], &[]);
+                if !entrance_frames.is_empty() {
+                    self.request_frames(entrance_frames);
+                }
+                if !chase_set.is_empty() {
+                    self.chase_reveal_pictures(&chase_set);
+                }
             } else {
                 // Still collecting behind the coalesce window: compose statically at frame zero,
                 // exactly as a fresh start does. The animations are installed once by
                 // `start_moving`.
-                let tiles = {
-                    let running = self.running.as_mut().expect("checked above");
-                    std::mem::take(&mut running.tiles)
-                };
-                if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.set_tiles(&tiles);
-                    overlay.draw_frame(&tiles, 0.0);
-                }
+                self.recompose();
                 let reapply = self.running.as_mut().and_then(|running| {
-                    running.tiles = tiles;
                     // A held merge already carries the merged frames below; one request per pass.
                     if hold_frames.is_some() {
                         return None;
@@ -2317,10 +2421,21 @@ impl WorkspaceAnimation {
                 if let Some(frames) = reapply {
                     self.request_frames(frames);
                 }
+                // A newcomer from spawn joining a collecting flight: its slot goes out now and its
+                // chase starts, unless a hold below sends every frame anyway.
+                if hold_frames.is_none() {
+                    if !entrance_frames.is_empty() {
+                        self.request_frames(entrance_frames);
+                    }
+                    if !chase.is_empty() {
+                        self.chase_reveal_pictures(&chase);
+                    }
+                }
             }
             if let Some(frames) = hold_frames {
                 self.request_frames(frames);
-                self.chase_reveal_pictures(&awaiting);
+                let (_, chase_set, _) = frame_zero_work(&awaiting, &chase, &[], &[]);
+                self.chase_reveal_pictures(&chase_set);
             }
             return;
         }
@@ -2336,6 +2451,9 @@ impl WorkspaceAnimation {
             return;
         }
 
+        // A flight beginning inside the quiet period keeps the compositor to itself: the owed
+        // captures wait for this flight's lift.
+        self.quiet = None;
         // The backdrop and bar, or the overlay shows a bare black window behind the tiles. Cheap in
         // the steady state: the cached render is a clone.
         let held = self.pictures.shown.is_some();
@@ -2352,8 +2470,9 @@ impl WorkspaceAnimation {
         restack(&mut tiles, focus);
         overlay.set_backdrop(backdrop.as_ref());
         overlay.set_bar(bar.as_ref(), strip);
-        overlay.set_tiles(&tiles);
-        overlay.draw_frame(&tiles, 0.0);
+        // Composed as rigid pieces at frame zero.
+        let plan = plan::FlightPlan::from(plan);
+        overlay.install(&plan, &tiles, &band_plan(&plan, &tiles, focus));
         // Shown at once, holding the windows exactly where they already are, so the real windows can
         // be placed underneath without the jump being visible.
         overlay.show();
@@ -2370,13 +2489,15 @@ impl WorkspaceAnimation {
 
         // A holding flight applies the real frames NOW: the overlay is already covering the
         // windows, so the app can rerender at its new size while the tiles stand still — the
-        // rerender is exactly what the hold is waiting for. An entrance's slot goes out with the
-        // rest, so its chase captures the window at slot size and the picture fits; held back,
-        // the chase took a spawn-size picture that left a hole in the slot.
-        let (holding, chase) = frame_zero_work(&awaiting);
-        if holding {
-            self.request_frames(final_frames.clone());
-            self.chase_reveal_pictures(&chase);
+        // rerender is exactly what the hold is waiting for. A newcomer's slot goes out now in
+        // either case, so its chase captures the window at slot size and the picture fits.
+        let (holding, chase_set, now_frames) =
+            frame_zero_work(&awaiting, &chase, &final_frames, &entrance_frames);
+        if !now_frames.is_empty() {
+            self.request_frames(now_frames);
+        }
+        if !chase_set.is_empty() {
+            self.chase_reveal_pictures(&chase_set);
         }
         self.running = Some(RunningAnimation {
             tiles,
@@ -2392,6 +2513,7 @@ impl WorkspaceAnimation {
             refresh_targets: Vec::new(),
             harvested: HashSet::new(),
             focus,
+            plan,
             _clock: clock,
         });
 
@@ -2420,14 +2542,8 @@ impl WorkspaceAnimation {
         }
     }
 
-    /// Animates the whole strip surface: every window translated by the viewport's travel, as one
-    /// per-tile group in one transaction.
-    ///
-    /// This replaced a dedicated canvas layer that glued the tiles down and moved as a single
-    /// unit. A per-tile group committed in one transaction shares one timebase and one curve, so
-    /// it holds together exactly as rigidly; expressing it per tile buys one machinery for every
-    /// movement, so a switch chaining onto a slide — or the reverse — merges instead of
-    /// superseding it with a visible snap.
+    /// Animates the whole strip surface as one rigid group: one container, one position
+    /// animation. See "Strip movements" in `docs/animation-smoothness.md`.
     fn start_strip(
         &mut self,
         windows: Vec<StripWindow>,
@@ -2483,20 +2599,12 @@ impl WorkspaceAnimation {
                         depth: 0,
                         companion: false,
                         focused: focus == Some(window.window),
-                        ghost: false,
-                    });
+                            });
                 }
                 // No usable picture. The window is still placed by final_frames, and warmed once
                 // the movement settles.
                 None => missing += 1,
             }
-        }
-        // A close that scrolls the strip: the ghost shrinks in the same transaction as the pan.
-        let mut drained_exits = 0usize;
-        if let Some((display_frame, _)) = self.display {
-            let exits = self.claim_pending_exits(display_frame);
-            drained_exits = exits.len();
-            tiles.extend(exits);
         }
         restack(&mut tiles, focus);
         let anchors: Vec<(CGRect, CGRect, CGRect, usize)> = starts
@@ -2529,7 +2637,6 @@ impl WorkspaceAnimation {
             tiles = tiles.len(),
             missing,
             misshapen,
-            exits = drained_exits,
             travel = format!(
                 "{:.0},{:.0} -> {:.0},{:.0}",
                 from_offset.x, from_offset.y, to_offset.x, to_offset.y
@@ -2537,13 +2644,26 @@ impl WorkspaceAnimation {
             "strip group animation"
         );
 
+        // One rigid piece for the strip, from the windows that have a picture; companions are
+        // adopted by their own vectors. See "Strip movements" in
+        // `docs/animation-smoothness.md`.
+        let drawn: Vec<StripWindow> = windows
+            .iter()
+            .filter(|w| tiles.iter().any(|t| t.window == w.window && !t.companion))
+            .cloned()
+            .collect();
+        let mut plan = plan::strip_plan(&drawn, from_offset, to_offset);
+        for tile in &tiles {
+            if plan.member(tile.window).is_none() {
+                plan.adopt(tile);
+            }
+        }
+
         // Chaining needs no special handling here: a strip movement arriving while anything is in
         // flight merges through `begin_group`, and each tile bends from its PRESENTATION position
-        // toward its new destination — the same continuity the old canvas got from reading its
-        // single layer's presentation offset, per tile.
+        // toward its new destination.
         // A strip movement never resizes and never carries a brand-new window: entrances and the
-        // early apply point are the layout path's concerns. Its travel is what a flight's exit
-        // ghosts ride when it merges (`shift_ghosts`).
+        // early apply point are the layout path's concerns.
         self.begin_group(
             tiles,
             final_frames,
@@ -2553,8 +2673,11 @@ impl WorkspaceAnimation {
             apply_frames_at(FlightKind::Strip, false),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             focus,
             Some(strip_pan_travel(from_offset, to_offset)),
+            plan,
         );
     }
 
@@ -2596,8 +2719,17 @@ impl WorkspaceAnimation {
         running.started = Some(Instant::now());
         let tiles = std::mem::take(&mut running.tiles);
         let duration = running.duration;
+        // The acceptance greps count this line against "overlay lifted".
+        let flight = &running.plan;
+        debug!(
+            groups = flight.groups.iter().filter(|g| !g.members.is_empty()).count(),
+            changing = flight.changing.len(),
+            entrances = flight.entrances.len(),
+            floating = flight.floating.len(),
+            "flight composed"
+        );
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.animate_tiles(&tiles, duration);
+            overlay.fly(flight, duration);
         }
         if let Some(running) = self.running.as_mut() {
             running.tiles = tiles;
@@ -2615,6 +2747,28 @@ impl WorkspaceAnimation {
             let refresh_now = running.take_refresh(progress);
             (running.is_done(), place_now, refresh_now)
         };
+        // The render server runs a frame or so behind the actor's clock: lifting on the clock alone
+        // showed the real windows one frame ahead of their tiles, a jerk at the end of every flight.
+        let clock_done = done;
+        let mut done = false;
+        if clock_done {
+            let settled = self.overlay.as_ref().is_none_or(WorkspaceOverlay::settled);
+            let handover = self.handover();
+            let landed = handover.as_ref().is_none_or(|report| report.count_over == 0);
+            let overdue = self.running.as_ref().is_some_and(RunningAnimation::overdue);
+            done = lift_now(clock_done, settled, landed, overdue);
+            if done && let Some(running) = self.running.as_ref() {
+                // The acceptance metric for the end of a flight: how long past its clock the lift
+                // waited for the render server and the real windows. `landed=false` or
+                // `settled=false` means the grace ran out.
+                let late_ms = running
+                    .started
+                    .map(|s| s.elapsed().saturating_sub(running.duration).as_millis() as u64)
+                    .unwrap_or(0);
+                let worst_pt = handover.as_ref().map_or(0.0, |r| r.worst_visible_pt);
+                debug!(settled, landed, late_ms, worst_pt = format!("{worst_pt:.2}"), "flight landed");
+            }
+        }
         if refresh_now {
             let tiles: Vec<(WindowId, WindowServerId, CGSize)> = self
                 .running
@@ -2644,8 +2798,22 @@ impl WorkspaceAnimation {
     /// Parks are excluded (macOS clamps them). This is the handover shift, measured rather than
     /// eyeballed. See "Real windows land before lift" in `docs/animation-smoothness.md`.
     fn report_handover_error(&self) {
-        let Some(running) = self.running.as_ref() else { return };
-        let Some((display_frame, _)) = self.display else { return };
+        let Some(report) = self.handover() else { return };
+        if report.count_over > 0 {
+            debug!(
+                count_over = report.count_over,
+                total = report.total,
+                worst_visible_pt = format!("{:.0}", report.worst_visible_pt),
+                wsid = report.worst_wsid,
+                "handover mismatch: a real window is not where its tile finished"
+            );
+        }
+    }
+
+    /// Every tiled window's real frame against its intended one, read from the window server now.
+    fn handover(&self) -> Option<HandoverReport> {
+        let running = self.running.as_ref()?;
+        let (display_frame, _) = self.display?;
         let tiled: Vec<WindowId> = running.tiles.iter().map(|t| t.window).collect();
         let real: HashMap<WindowId, CGRect> = running
             .final_frames
@@ -2658,16 +2826,7 @@ impl WorkspaceAnimation {
                 Some((*window, info.frame))
             })
             .collect();
-        let report = handover_report(&running.final_frames, &tiled, &real, display_frame);
-        if report.count_over > 0 {
-            debug!(
-                count_over = report.count_over,
-                total = report.total,
-                worst_visible_pt = format!("{:.0}", report.worst_visible_pt),
-                wsid = report.worst_wsid,
-                "handover mismatch: a real window is not where its tile finished"
-            );
-        }
+        Some(handover_report(&running.final_frames, &tiled, &real, display_frame))
     }
 
     /// Asks for a fresh desktop render in the background, or defers it to `finish` while a flight
@@ -2866,7 +3025,7 @@ impl WorkspaceAnimation {
         {
             let Self { overlay, running, .. } = self;
             if let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_ref()) {
-                overlay.draw_frame(&running.tiles, 1.0);
+                overlay.fly(&running.plan, Duration::ZERO);
             }
         }
         self.finish();
@@ -2898,11 +3057,37 @@ impl WorkspaceAnimation {
         self.coalesce = None;
         self.arm_bar_refresh();
 
-        // Capture what just became visible, so switching back has pixels ready. Event-driven, once
-        // per animation, never on a timer.
+        // The captures this flight owes run once the user has stopped for `SETTLE_BEFORE_CAPTURES`;
+        // a flight beginning first cancels the timer and the work carries over to its own lift.
         let targets = std::mem::take(&mut self.last_animated);
-        let animated: Vec<WindowId> = targets.iter().map(|target| target.window).collect();
-        let requested = if targets.is_empty() { Vec::new() } else { self.warm_windows(targets) };
+        let after = self.after_flight.get_or_insert_with(AfterFlight::default);
+        for target in targets {
+            if !after.targets.iter().any(|t| t.window == target.window) {
+                after.targets.push(target);
+            }
+        }
+        after.harvested.extend(harvested);
+        let tx = self.tx.clone();
+        self.quiet = RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
+            _ = tx.send(Event::Quiet);
+        });
+        if self.quiet.is_none() {
+            self.after_flight_captures();
+        }
+    }
+
+    /// The capture work the last flights left: the animated set's warm and hairlines, the warms
+    /// deferred in flight, the desktop render. Event-driven, once per quiet period, never on a
+    /// repeating timer.
+    fn after_flight_captures(&mut self) {
+        self.quiet = None;
+        if self.running.is_some() {
+            return;
+        }
+        let Some(after) = self.after_flight.take() else { return };
+        let animated: Vec<WindowId> = after.targets.iter().map(|target| target.window).collect();
+        let requested =
+            if after.targets.is_empty() { Vec::new() } else { self.warm_windows(after.targets) };
         // The animated set's hairlines, once: a re-warmed window is harvested when its picture
         // lands, a chased or refreshed one already was, and a dressed one keeps its ring.
         let dressed: HashSet<WindowId> = animated
@@ -2910,9 +3095,7 @@ impl WorkspaceAnimation {
             .copied()
             .filter(|window| self.cache.get(*window).is_some_and(|s| s.dressing.is_some()))
             .collect();
-        self.harvest_dressings(finish_harvest_set(&animated, &harvested, &requested, &dressed));
-        // The flight is over, so the work it deferred runs now. See "Capture work in flight" in
-        // `docs/animation-smoothness.md`.
+        self.harvest_dressings(finish_harvest_set(&animated, &after.harvested, &requested, &dressed));
         let deferred = std::mem::take(&mut self.deferred_warm);
         if !deferred.is_empty() {
             self.warm_windows(deferred);
@@ -2922,9 +3105,36 @@ impl WorkspaceAnimation {
         }
     }
 
+    /// Writes every cached picture to `<temp dir>/rini-snapshots/<pid>-<idx>.ppm`, so a picture
+    /// can be checked against the window it is keyed to. Debug command only.
+    fn dump_cache_for_inspection(&self) {
+        let dir = std::env::temp_dir().join("rini-snapshots");
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            warn!(?error, ?dir, "cannot create the snapshot dump directory");
+            return;
+        }
+        let mut written = 0usize;
+        for (window, snapshot) in self.cache.iter() {
+            let Some((w, h, rgb)) = snapshot_rgb(snapshot) else { continue };
+            let path = dir.join(format!("{}-{}.ppm", window.pid, window.idx.get()));
+            let mut bytes = format!("P6\n{w} {h}\n255\n").into_bytes();
+            bytes.extend(rgb);
+            if std::fs::write(&path, bytes).is_ok() {
+                written += 1;
+            }
+        }
+        if let Some((w, h, rgb)) = self.pictures.shown.as_ref().and_then(snapshot_rgb) {
+            let mut bytes = format!("P6\n{w} {h}\n255\n").into_bytes();
+            bytes.extend(rgb);
+            let _ = std::fs::write(dir.join("desktop.ppm"), bytes);
+        }
+        debug!(written, ?dir, "cache dumped for inspection");
+    }
+
     /// Slides every window currently on screen in from an offset. For judging animation quality by
     /// eye without touching a single real window, so it can be run at any time without risk.
     fn debug_slide(&mut self, dx: f64, dy: f64, duration: Duration) {
+        self.dump_cache_for_inspection();
         let Some((display_frame, _)) = self.display else {
             warn!("no display geometry yet; cannot run the debug slide");
             return;
@@ -3164,6 +3374,53 @@ fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
     WindowId { pid: 0, idx: std::num::NonZeroU32::new(server_id.as_u32().max(1)).unwrap() }
 }
 
+/// A snapshot's pixels as packed RGB, downsampled by four in each axis, for the debug dump.
+fn snapshot_rgb(snapshot: &WindowSnapshot) -> Option<(usize, usize, Vec<u8>)> {
+    use crate::ui::window_snapshot::SnapshotImage;
+    let step = 4usize;
+    let mut sample = |width: usize, height: usize, stride: usize, base: *const u8| {
+        let (w, h) = (width / step, height / step);
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                // BGRA, premultiplied: blue, green, red.
+                let px = unsafe { base.add(y * step * stride + x * step * 4) };
+                unsafe { rgb.extend_from_slice(&[*px.add(2), *px.add(1), *px]) };
+            }
+        }
+        (w, h, rgb)
+    };
+    match &snapshot.image {
+        SnapshotImage::Surface(surface) => {
+            use objc2_io_surface::IOSurfaceLockOptions;
+            if unsafe { surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) } != 0 {
+                return None;
+            }
+            let out = sample(
+                surface.width(),
+                surface.height(),
+                surface.bytes_per_row(),
+                surface.base_address().as_ptr() as *const u8,
+            );
+            unsafe { surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
+            Some(out)
+        }
+        SnapshotImage::Bitmap(image) => {
+            use objc2_core_graphics::{CGDataProvider, CGImage};
+            let provider = CGImage::data_provider(Some(image))?;
+            let data = CGDataProvider::data(Some(&provider))?;
+            // SAFETY: the data is immutable and outlives this read.
+            let bytes = unsafe { data.as_bytes_unchecked() }.to_vec();
+            let (w, h) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
+            let stride = CGImage::bytes_per_row(Some(image));
+            if bytes.len() < stride * h {
+                return None;
+            }
+            Some(sample(w, h, stride, bytes.as_ptr()))
+        }
+    }
+}
+
 /// Converts a display-space rect into the overlay's own coordinate space.
 ///
 /// The overlay's layer tree has its origin at the overlay's top-left, not the display's, so a window
@@ -3179,20 +3436,15 @@ pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
     )
 }
 
-/// The inverse of [`to_overlay_space`]: an overlay-space rect back in display coordinates.
-fn from_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
-    CGRect::new(
-        CGPoint::new(
-            frame.origin.x + overlay_frame.origin.x,
-            frame.origin.y + overlay_frame.origin.y,
-        ),
-        frame.size,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The built-in display, for tests that need a screen to judge parks against.
+    const DISPLAY: CGRect = CGRect {
+        origin: CGPoint { x: 0.0, y: 0.0 },
+        size: CGSize { width: 1728.0, height: 1117.0 },
+    };
 
     /// The rigidity property the old canvas layer guaranteed structurally: every unpinned window
     /// of a strip movement translates by exactly the same vector, so tiles animated per-tile from
@@ -3265,18 +3517,6 @@ mod tests {
         assert_eq!(from.size.height, 1081.0);
     }
 
-    /// A closing window is the same movement backwards: it shrinks to zero width at its own left
-    /// edge, so `exit_to` of a frame equals `entrance_from` of that frame.
-    #[test]
-    fn an_exit_is_an_entrance_played_backwards() {
-        let frame = rect(100.0, 32.0, 859.0, 1081.0);
-        let to = exit_to(frame);
-        assert_eq!(to, entrance_from(frame));
-        assert_eq!(to.origin.x, 100.0);
-        assert_eq!(to.size.width, 0.0);
-        assert_eq!(to.size.height, 1081.0);
-    }
-
     /// The measured miss: a 1720pt Kiro column at x=1439 on a 1728pt display shows 289pt of real
     /// content but only 17% of its area, so the fraction rule read it as a parked sliver and the
     /// overlay painted desktop over it for the length of the animation.
@@ -3318,7 +3558,7 @@ mod tests {
         let border = (WindowServerId::new(9001), rect(1.0, 29.0, 865.0, 1087.0));
         let neighbor = (WindowServerId::new(9002), rect(867.0, 32.0, 859.0, 1081.0));
         let zoom = (WindowServerId::new(9003), rect(224.0, 95.0, 1280.0, 960.0));
-        let found = companion_of(window, &[neighbor, zoom, border]);
+        let found = companion_of(window, &[neighbor, zoom, border], DISPLAY);
         assert_eq!(found.map(|(id, _)| id.as_u32()), Some(9001));
     }
 
@@ -3328,11 +3568,41 @@ mod tests {
     fn only_a_concentric_hug_counts_as_a_border() {
         let window = rect(4.0, 32.0, 859.0, 1081.0);
         let exact = (WindowServerId::new(1), rect(4.0, 32.0, 859.0, 1081.0));
-        assert!(companion_of(window, &[exact]).is_some());
+        assert!(companion_of(window, &[exact], DISPLAY).is_some());
         let shifted = (WindowServerId::new(2), rect(24.0, 32.0, 859.0, 1081.0));
         let larger = (WindowServerId::new(3), rect(-16.0, 12.0, 899.0, 1121.0));
         let smaller = (WindowServerId::new(4), rect(6.0, 34.0, 855.0, 1077.0));
-        assert!(companion_of(window, &[shifted, larger, smaller]).is_none());
+        assert!(companion_of(window, &[shifted, larger, smaller], DISPLAY).is_none());
+    }
+    /// Two Chrome windows on different workspaces, both parked at the same frame, which macOS
+    /// clamps to 41pt visible (past `is_off_screen`): the one outside the pass is a managed window
+    /// rini has a picture of, so it is no candidate. A synthetic companion id (pid 0) stays one.
+    #[test]
+    fn a_managed_window_is_never_a_border_candidate() {
+        let pass: std::collections::HashSet<u32> = [102698].into_iter().collect();
+        let cached = [WindowId::new(82799, 102682), WindowId::new(0, 9001)];
+        let owed = [WindowId::new(872, 51462)];
+        let managed = managed_server_ids(&pass, cached.into_iter(), owed.into_iter());
+        assert!(managed.contains(&102698) && managed.contains(&102682) && managed.contains(&51462));
+        assert!(!managed.contains(&9001), "a border seen before is still a border");
+        // The clamped park itself is not judged off screen, which is why geometry alone failed.
+        let park = rect(1727.0, 1076.0, 1720.0, 1081.0);
+        assert!(!HiddenWindowPlacement::is_off_screen(DISPLAY, park));
+        assert!(companion_of(park, &[(WindowServerId::new(102682), park)], DISPLAY).is_some());
+    }
+
+    /// Every parked window shares the park's frame, so a window arriving from the park matched
+    /// another parked window as its "border" and flew in wearing that window's picture. A parked
+    /// anchor traces nothing, and a parked candidate is never a border.
+    #[test]
+    fn a_parked_window_neither_traces_nor_is_traced() {
+        let park = rect(DISPLAY.size.width - 1.0, DISPLAY.size.height - 1.0, 859.0, 1081.0);
+        assert!(HiddenWindowPlacement::is_off_screen(DISPLAY, park));
+        let twin = (WindowServerId::new(7), park);
+        assert!(companion_of(park, &[twin], DISPLAY).is_none(), "a parked anchor");
+        let on_screen = rect(4.0, 32.0, 859.0, 1081.0);
+        let border = (WindowServerId::new(8), rect(1.0, 29.0, 865.0, 1087.0));
+        assert!(companion_of(on_screen, &[twin, border], DISPLAY).map(|(id, _)| id.as_u32()) == Some(8));
     }
 
     /// The stability property under rapid presses: a later layout pass confirming a destination
@@ -3491,7 +3761,6 @@ mod tests {
                 depth: 0,
                 companion: false,
                 focused: false,
-                ghost: false,
             }
         }
 
@@ -3510,6 +3779,7 @@ mod tests {
                 refresh_targets: Vec::new(),
                 harvested: HashSet::new(),
                 focus: None,
+                plan: plan::FlightPlan::empty(),
                 _clock: None,
             }
         }
@@ -3639,29 +3909,12 @@ mod tests {
             assert!(wrong.is_empty(), "parks not remapped to the edge:\n{}", wrong.join("\n"));
         }
 
-        /// T6 (1.9). A closing window must wait for the layout pass that reflows its neighbours,
-        /// not fly alone with no final frames over a backdrop that omits every strip window.
-        #[test]
-        fn an_exit_waits_for_the_next_pass_instead_of_flying_alone() {
-            let display = rect(0.0, 0.0, 1728.0, 1117.0);
-            let frame = rect(867.0, 32.0, 859.0, 1081.0);
-            let now = Instant::now();
-            // Unfixed code returned an `ExitDisposition::FlyAlone` here (one tile, no final
-            // frames); Change 4 leaves only the pending exit.
-            let pending =
-                pending_exit(wid(1), frame, Some(test_snapshot(frame.size)), false, display, now)
-                    .expect("on screen with a picture");
-            assert!(pending.claimable(now));
-            assert!(!pending.claimable(now + COALESCE_WINDOW));
-            assert_eq!(pending.frame, frame);
-        }
-
         /// T7 (1.8). A floating open: one entrance, every drawable tile standing still, no exit,
         /// nothing in flight. There is nothing to animate, so no overlay may go up.
         #[test]
         fn a_pass_where_nothing_drawable_moves_does_not_fly() {
             assert!(
-                !worth_flying(false, 0, false),
+                !worth_flying(false, false),
                 "a still-only composition flew, hiding the new window until its picture landed"
             );
         }
@@ -3853,6 +4106,7 @@ mod tests {
                 refresh_targets: Vec::new(),
                 harvested: HashSet::new(),
                 focus: None,
+                plan: plan::FlightPlan::empty(),
                 _clock: None,
             }
         }
@@ -3868,7 +4122,6 @@ mod tests {
                 depth: 0,
                 companion: false,
                 focused: false,
-                ghost: false,
             }
         }
 
@@ -4291,14 +4544,14 @@ mod tests {
             size: CGSize { width: 1728.0, height: 1117.0 },
         };
 
-        /// 2.3, 3.3. Layout keeps 0.75 and 0.5; a strip movement applies at 0.5 either way.
+        /// 2.3, 3.3. Layout keeps 0.75 and 0.5; a strip movement applies at frame zero, or 0.5 with a resize.
         #[test]
         fn apply_points_by_flight_kind() {
             assert_eq!(apply_frames_at(FlightKind::Layout, false), 0.75);
             assert_eq!(apply_frames_at(FlightKind::Layout, true), 0.5);
             assert_eq!(apply_frames_at(FlightKind::Strip, false), APPLY_FRAMES_AT_STRIP);
+            assert_eq!(APPLY_FRAMES_AT_STRIP, 0.0, "a strip movement places its windows at frame zero");
             assert_eq!(apply_frames_at(FlightKind::Strip, true), 0.5);
-            assert_eq!(APPLY_FRAMES_AT_STRIP, 0.5);
         }
 
         /// 2.3. Applied frames go stale when a tile changed or any final frame did.
@@ -4653,6 +4906,7 @@ mod tests {
                 refresh_targets: Vec::new(),
                 harvested: HashSet::new(),
                 focus: None,
+                plan: plan::FlightPlan::empty(),
                 _clock: None,
             }
         }
@@ -4873,7 +5127,7 @@ mod tests {
                 assert!(outgrows(snapshot.coverage.covered, to.size), "seed 91: a grow");
                 // `start`: the outgrown picture puts the window in `awaiting` at its destination size.
                 let awaiting = vec![(wid(1), to.size)];
-                let (holding, chase) = frame_zero_work(&awaiting);
+                let (holding, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
                 assert!(holding, "seed 91");
                 assert_eq!(chase, awaiting, "seed 91");
 
@@ -4953,7 +5207,7 @@ mod tests {
         /// and has no deadline to wait out.
         #[test]
         fn a_pan_holds_for_nothing() {
-            assert_eq!(frame_zero_work(&[]), (false, Vec::new()));
+            assert_eq!(frame_zero_work(&[], &[], &[], &[]), (false, Vec::new(), Vec::new()));
             let mut rng = Gen(96);
             for _ in 0..RUNS {
                 let count = rng.below(4) as u32 + 1;
@@ -5051,7 +5305,6 @@ mod tests {
                 depth: 0,
                 companion: false,
                 focused: false,
-                ghost: false,
             }
         }
 
@@ -5070,6 +5323,7 @@ mod tests {
                 refresh_targets: Vec::new(),
                 harvested: HashSet::new(),
                 focus: None,
+                plan: plan::FlightPlan::empty(),
                 _clock: None,
             }
         }
@@ -5296,11 +5550,11 @@ mod tests {
             for _ in 0..RUNS {
                 let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
                 let park = rng.park(size);
-                assert!(!worth_animating(park, exit_to(park), DISPLAY), "park {park:?}");
+                assert!(!worth_animating(park, entrance_from(park), DISPLAY), "park {park:?}");
                 let off = rect(DISPLAY.size.width + rng.pt(1.0, 9000.0), 32.0, size.width, size.height);
-                assert!(!worth_animating(off, exit_to(off), DISPLAY), "off strip {off:?}");
+                assert!(!worth_animating(off, entrance_from(off), DISPLAY), "off strip {off:?}");
                 let on = rng.on_screen();
-                assert!(worth_animating(on, exit_to(on), DISPLAY), "on screen {on:?}");
+                assert!(worth_animating(on, entrance_from(on), DISPLAY), "on screen {on:?}");
             }
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             assert!(!worth_animating(rect(4.0, 32.0, 0.0, 0.0), slot, DISPLAY), "zero area");
@@ -5335,16 +5589,16 @@ mod tests {
                 assert_eq!(entrance.window, wid(3));
                 assert_eq!(entrance.to, to);
                 let awaiting: Vec<(WindowId, CGSize)> = waiting.into_iter().collect();
-                let (apply_now, chase) = frame_zero_work(&awaiting);
+                let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
                 assert!(apply_now);
                 assert!(chase.contains(&(wid(3), to.size)), "the entrance is chased: {chase:?}");
 
                 let awaiting = vec![(wid(1), rng.on_screen().size)];
-                let (apply_now, chase) = frame_zero_work(&awaiting);
+                let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
                 assert!(apply_now);
                 assert_eq!(chase, awaiting);
             }
-            assert_eq!(frame_zero_work(&[]), (false, Vec::new()));
+            assert_eq!(frame_zero_work(&[], &[], &[], &[]), (false, Vec::new(), Vec::new()));
         }
     }
 
@@ -5353,10 +5607,9 @@ mod tests {
     /// one z-order group in the overlay as it is on the real screen (`model/z_group.rs`). See
     /// "Mid-flight passes" in `docs/animation-smoothness.md`.
     mod flight_restack {
-        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::preservation::{Gen, RUNS, stacked};
         use super::*;
         use crate::model::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
-        use crate::ui::window_snapshot::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
             WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
@@ -5377,6 +5630,7 @@ mod tests {
                 refresh_targets: Vec::new(),
                 harvested: HashSet::new(),
                 focus: None,
+                plan: plan::FlightPlan::empty(),
                 _clock: None,
             }
         }
@@ -5463,7 +5717,7 @@ mod tests {
             flight.merge_pass(
                 vec![
                     stacked(wid(1), slot, slot_b, Some(4), false),
-                    stacked(wid(2), zoom, exit_to(zoom), Some(0), true),
+                    stacked(wid(2), zoom, entrance_from(zoom), Some(0), true),
                     stacked(wid(3), slot_b, slot_b, Some(5), false),
                 ],
                 Some(wid(2)),
@@ -5471,32 +5725,6 @@ mod tests {
             assert_eq!(depth(&flight, wid(2)), 0, "the floating focus leads");
             assert_eq!(depth(&flight, wid(3)), GROUP_STRIDE + 3, "redundant: old order kept");
             assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 5, "retargeted: the new order");
-        }
-
-        /// An exit tile has no server order to follow (the window is gone); its `Some(0)` draws
-        /// the ghost at the front of its own band, behind the focused group when it is off it.
-        #[test]
-        fn an_exit_tile_leads_its_own_band() {
-            let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            let zoom = rect(224.0, 95.0, 1280.0, 960.0);
-            let exit =
-                pending_exit(wid(9), zoom, Some(test_snapshot(zoom.size)), true, DISPLAY, Instant::now())
-                    .expect("on screen with a picture")
-                    .tile(DISPLAY);
-            assert_eq!(exit.server_order, Some(0));
-            assert!(exit.floating);
-            let mut flight = flight();
-            flight.merge_pass(
-                vec![
-                    stacked(wid(1), slot, slot, Some(3), false),
-                    stacked(wid(2), slot, slot, Some(7), true),
-                    exit,
-                ],
-                Some(wid(1)),
-            );
-            assert_eq!(depth(&flight, wid(1)), 0, "the focused strip window leads");
-            assert_eq!(depth(&flight, wid(9)), GROUP_STRIDE + 1, "the ghost leads the floating band");
-            assert_eq!(depth(&flight, wid(2)), GROUP_STRIDE + 8);
         }
 
         /// An entrance tile (`server_order: Some(0)`: a window is raised on open) leads its own
@@ -5803,7 +6031,7 @@ mod tests {
     /// its own speed and overlapped its neighbour (seen 2026-09-15). The edge is only the fallback
     /// when nothing beside it moves.
     mod rigid_park {
-        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::preservation::{DISPLAY, Gen, RUNS};
         use super::*;
         use crate::model::HiddenWindowPlacement;
 
@@ -5904,43 +6132,6 @@ mod tests {
             assert_eq!(neighbour_travel(subject, &others, DISPLAY), Some(CGPoint::new(-250.0, 0.0)));
             let others = [(near, moved(near, -250.0), false), (far, moved(far, 100.0), false)];
             assert_eq!(neighbour_travel(subject, &others, DISPLAY), Some(CGPoint::new(-250.0, 0.0)));
-        }
-
-        /// A layout pass merging into a flight follows the same rule: a park in `final_frames`
-        /// for a tile the pass did not compose aims by the pass's own tiles' vector.
-        #[test]
-        fn a_merging_pass_aims_a_park_by_its_tiles_vector() {
-            let pass = [stacked(wid(1), SLOT_A, moved(SLOT_A, W), None, false)];
-            let travel = PassTravel::new(&pass, None, DISPLAY);
-            assert_eq!(travel.aim(SLOT_B, RIGHT_PARK, false), moved(SLOT_B, W));
-            // Nothing in the pass moves: the edge.
-            let still = [stacked(wid(1), SLOT_A, SLOT_A, None, false)];
-            let travel = PassTravel::new(&still, None, DISPLAY);
-            assert_eq!(
-                travel.aim(SLOT_B, RIGHT_PARK, false),
-                HiddenWindowPlacement::entry_frame(RIGHT_PARK, SLOT_B, DISPLAY)
-            );
-            // A frame on screen is aimed at as is.
-            assert_eq!(travel.aim(SLOT_B, SLOT_A, false), SLOT_A);
-        }
-
-        /// Same, on a display with a non-zero origin: tiles are in overlay space, frames in
-        /// display space, and the answer is in display space.
-        #[test]
-        fn a_merging_pass_converts_overlay_space() {
-            let display = rect(-670.0, -1692.0, 3008.0, 1692.0);
-            let a = rect(-666.0, -1660.0, W, 1081.0);
-            let b = rect(197.0, -1660.0, W, 1081.0);
-            let park = rect(2337.0, -1.0, W, 1081.0);
-            let pass = [stacked(
-                wid(1),
-                to_overlay_space(a, display),
-                to_overlay_space(moved(a, W), display),
-                None,
-                false,
-            )];
-            let travel = PassTravel::new(&pass, None, display);
-            assert_eq!(travel.aim(to_overlay_space(b, display), park, false), moved(b, W));
         }
 
         /// N on-screen columns; an open at index k pushes every column from k on by +W and the
@@ -6051,6 +6242,7 @@ mod tests {
                 refresh_targets: Vec::new(),
                 harvested: HashSet::new(),
                 focus: None,
+                plan: plan::FlightPlan::empty(),
                 _clock: None,
             }
         }
@@ -6134,7 +6326,11 @@ mod tests {
             assert_eq!(flight.claim(wid(2), &test_snapshot(slot.size)), Some(Claimed::Released));
             assert!(flight.awaiting.is_empty());
             assert_eq!(flight.tiles.len(), 1);
-            assert_eq!(flight.claim(wid(2), &test_snapshot(slot.size)), None);
+            assert_eq!(
+                flight.claim(wid(2), &test_snapshot(slot.size)),
+                Some(Claimed::Refreshed),
+                "a repeat refreshes the composed tile's picture and releases nothing"
+            );
             assert_eq!(flight.tiles.len(), 1, "no second tile");
         }
 
@@ -6277,154 +6473,13 @@ mod tests {
         }
     }
 
-    /// Change 4 of `.kiro/specs/exit-entrance-animation-regressions`: an exit is a pending tile
-    /// the next layout pass composes with the survivors, never a flight of its own. Unclaimed
-    /// after one coalesce window, it is dropped.
-    mod pending_exits {
-        use super::preservation::{DISPLAY, Gen, RUNS};
-        use super::*;
-        use crate::ui::window_snapshot::{SnapshotCache, test_snapshot};
-
-        fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
-        }
-
-        fn exit(idx: u32, frame: CGRect, floating: bool, now: Instant) -> PendingExit {
-            pending_exit(wid(idx), frame, Some(test_snapshot(frame.size)), floating, DISPLAY, now)
-                .expect("on screen with a picture")
-        }
-
-        /// One `start` within the coalesce window takes the exit as a ghost tile: the window's
-        /// frame shrinking to zero width, its own group, front of its band, no final frame. The
-        /// next pass finds nothing.
-        #[test]
-        fn a_pending_exit_is_composed_by_exactly_one_pass_then_gone() {
-            let frame = rect(867.0, 32.0, 859.0, 1081.0);
-            let now = Instant::now();
-            let mut pending = vec![exit(1, frame, false, now)];
-
-            let later = now + COALESCE_WINDOW / 2;
-            let tiles = claim_exits(&mut pending, later, DISPLAY);
-            assert_eq!(tiles.len(), 1);
-            assert_eq!(tiles[0].window, wid(1));
-            assert_eq!(tiles[0].from, to_overlay_space(frame, DISPLAY));
-            assert_eq!(tiles[0].to, to_overlay_space(exit_to(frame), DISPLAY));
-            assert_eq!(tiles[0].to.size.width, 0.0);
-            assert_eq!(tiles[0].server_order, Some(0));
-            assert!(!tiles[0].floating && !tiles[0].companion && !tiles[0].focused);
-            assert!(pending.is_empty(), "composed once, then gone");
-
-            assert!(claim_exits(&mut pending, later, DISPLAY).is_empty(), "never a second flight");
-        }
-
-        /// No pass within the coalesce window (a floating close, or no survivors): the exit is
-        /// dropped, so nothing is composed and no overlay goes up for it.
-        #[test]
-        fn an_expired_exit_is_dropped_without_a_flight() {
-            let frame = rect(224.0, 95.0, 1280.0, 960.0);
-            let now = Instant::now();
-            let mut pending = vec![exit(1, frame, true, now)];
-            assert!(!pending[0].claimable(now + COALESCE_WINDOW), "expires at the window's end");
-            let tiles = claim_exits(&mut pending, now + COALESCE_WINDOW, DISPLAY);
-            assert!(tiles.is_empty());
-            assert!(pending.is_empty(), "dropped, not kept for a later pass");
-        }
-
-        /// Property: over random claim times and mixes of fresh and stale exits, a pass composes
-        /// exactly the unexpired ones, empties the queue, and no exit is ever composed twice.
-        #[test]
-        fn each_exit_is_composed_at_most_once_and_only_before_it_expires() {
-            let mut rng = Gen(71);
-            let mut composed = 0usize;
-            for _ in 0..RUNS {
-                let now = Instant::now();
-                let count = rng.below(4) as u32 + 1;
-                let mut expected = 0usize;
-                let mut pending = Vec::new();
-                let claim_at = now + Duration::from_millis(rng.below(2 * COALESCE_WINDOW.as_millis() as u64));
-                for i in 1..=count {
-                    // Closed somewhere in the last coalesce window.
-                    let closed = now - Duration::from_millis(rng.below(COALESCE_WINDOW.as_millis() as u64));
-                    let exit = exit(i, rng.on_screen(), rng.coin(), closed);
-                    if claim_at < closed + COALESCE_WINDOW {
-                        expected += 1;
-                    }
-                    pending.push(exit);
-                }
-                let tiles = claim_exits(&mut pending, claim_at, DISPLAY);
-                assert_eq!(tiles.len(), expected, "seed 71: only unexpired exits are composed");
-                assert!(pending.is_empty(), "seed 71: the queue is emptied either way");
-                assert!(claim_exits(&mut pending, claim_at, DISPLAY).is_empty(), "seed 71: never twice");
-                for tile in &tiles {
-                    assert_eq!(tile.to.size.width, 0.0, "seed 71: shrinks to zero width");
-                    assert_eq!(tile.to.origin, tile.from.origin, "seed 71: at its own left edge");
-                    assert_eq!(tile.server_order, Some(0));
-                }
-                composed += tiles.len();
-            }
-            assert!(composed > RUNS / 4, "generator sanity: {composed} composed");
-        }
-
-        /// P-3.9 through the exit path: a window closing from a park or from off the strip, or
-        /// with no usable picture, never becomes a pending exit. An on-screen close with a
-        /// picture does.
-        #[test]
-        fn a_park_or_pictureless_close_never_becomes_a_pending_exit() {
-            let mut rng = Gen(72);
-            let now = Instant::now();
-            for _ in 0..RUNS {
-                let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
-                let park = rng.park(size);
-                assert!(
-                    pending_exit(wid(1), park, Some(test_snapshot(size)), rng.coin(), DISPLAY, now)
-                        .is_none(),
-                    "seed 72: park {park:?}"
-                );
-                let off = rect(DISPLAY.size.width + rng.pt(1.0, 9000.0), 32.0, size.width, size.height);
-                assert!(
-                    pending_exit(wid(1), off, Some(test_snapshot(size)), false, DISPLAY, now).is_none(),
-                    "seed 72: off strip {off:?}"
-                );
-                let on = rng.on_screen();
-                assert!(
-                    pending_exit(wid(1), on, None, false, DISPLAY, now).is_none(),
-                    "seed 72: no picture {on:?}"
-                );
-                let exit = pending_exit(wid(1), on, Some(test_snapshot(on.size)), false, DISPLAY, now)
-                    .expect("on screen with a picture");
-                assert_eq!(exit.frame, on);
-                assert_eq!(exit.expires, now + COALESCE_WINDOW);
-            }
-        }
-
-        /// P-3.10 with the clone where it now lives: `ForgetWindow` after `AnimateExit` empties the
-        /// cache entry while the pending exit keeps its own usable picture.
-        #[test]
-        fn forgetting_the_window_leaves_the_pending_exits_picture_usable() {
-            let frame = rect(867.0, 32.0, 859.0, 1081.0);
-            let now = Instant::now();
-            let mut cache: SnapshotCache = SnapshotCache::new();
-            cache.insert(wid(1), test_snapshot(frame.size));
-
-            let exit = pending_exit(wid(1), frame, cache.usable(wid(1)).cloned(), false, DISPLAY, now)
-                .expect("cached picture");
-            cache.forget(wid(1));
-
-            assert!(cache.usable(wid(1)).is_none(), "the entry is gone");
-            assert!(exit.snapshot.is_usable());
-            assert!(exit.snapshot.fits(frame.size));
-            let tile = exit.tile(DISPLAY);
-            assert!(tile.snapshot.fits(frame.size), "the ghost draws from the held clone");
-        }
-    }
 
     /// Fix checking for Change 6 (bugfix.md 1.8, 2.8, 2.10): a pass flies only when something
-    /// drawable moves, a ghost was drained, or a flight is already running. Each case composes
+    /// drawable moves or a flight is already running. Each case composes
     /// the tiles the way `start` and `start_strip` do and feeds the real `is_moving` verdict in.
     mod still_passes {
-        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::preservation::{Gen, RUNS, stacked};
         use super::*;
-        use crate::ui::window_snapshot::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
             WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
@@ -6449,7 +6504,7 @@ mod tests {
             let (entrance, waiting) = entrance_reservation(wid(3), zoom, true);
             assert_eq!(entrance.window, wid(3));
             assert!(waiting.is_some(), "the entrance is reserved but never drawn here");
-            assert!(!worth_flying(moving_drawable(&tiles), 0, false));
+            assert!(!worth_flying(moving_drawable(&tiles), false));
         }
 
         /// A Terminal opening beside a Kiro column: the neighbour is pushed aside, so the pass
@@ -6461,28 +6516,7 @@ mod tests {
             let tiles = vec![stacked(wid(1), before, after, Some(1), false)];
             let (_, waiting) = entrance_reservation(wid(2), rect(867.0, 32.0, 859.0, 1081.0), false);
             assert!(waiting.is_some());
-            assert!(worth_flying(moving_drawable(&tiles), 0, false));
-        }
-
-        /// A strip close whose survivors stand still (the closed column was at the end): the
-        /// drained ghost alone is worth the flight.
-        #[test]
-        fn a_strip_close_flies_on_the_drained_exit_alone() {
-            let s1 = rect(0.0, 32.0, 860.0, 1081.0);
-            let closed = rect(867.0, 32.0, 859.0, 1081.0);
-            let mut tiles = vec![stacked(wid(1), s1, s1, Some(1), false)];
-            let now = Instant::now();
-            let mut pending = vec![
-                pending_exit(wid(2), closed, Some(test_snapshot(closed.size)), false, DISPLAY, now)
-                    .expect("on screen with a picture"),
-            ];
-            let exits = claim_exits(&mut pending, now, DISPLAY);
-            let drained = exits.len();
-            tiles.extend(exits);
-            assert_eq!(drained, 1);
-            assert!(worth_flying(moving_drawable(&tiles), drained, false));
-            // The ghost itself is a moving tile, so the strip path's empty guard never fires.
-            assert!(moving_drawable(&tiles));
+            assert!(worth_flying(moving_drawable(&tiles), false));
         }
 
         /// A pan translates every unpinned window by the viewport's travel.
@@ -6492,7 +6526,7 @@ mod tests {
             let (from, to) =
                 strip_travel(frame, CGPoint::new(0.0, 0.0), CGPoint::new(867.0, 0.0), false);
             let tiles = vec![stacked(wid(1), from, to, Some(1), false)];
-            assert!(worth_flying(moving_drawable(&tiles), 0, false));
+            assert!(worth_flying(moving_drawable(&tiles), false));
         }
 
         /// A still-only pass arriving while a flight runs still merges: its destinations belong to
@@ -6501,13 +6535,12 @@ mod tests {
         fn a_still_pass_joining_a_running_flight_flies() {
             let s1 = rect(0.0, 32.0, 860.0, 1081.0);
             let tiles = vec![stacked(wid(1), s1, s1, Some(1), false)];
-            assert!(worth_flying(moving_drawable(&tiles), 0, true));
-            assert!(worth_flying(false, 0, true), "even with nothing drawable at all");
+            assert!(worth_flying(moving_drawable(&tiles), true));
+            assert!(worth_flying(false, true), "even with nothing drawable at all");
         }
 
         /// Property (P-3.3): over random still and moving mixes, any moving tile is enough to
-        /// fly, and a pass is grounded only when every tile stands still with no ghost and no
-        /// flight running.
+        /// fly, and a pass is grounded only when every tile stands still and no flight is running.
         #[test]
         fn any_moving_tile_is_enough_to_fly() {
             let mut rng = Gen(81);
@@ -6528,10 +6561,9 @@ mod tests {
                     any_moving |= is_moving(from, to);
                     tiles.push(stacked(wid(i as u32 + 1), from, to, Some(i), rng.coin()));
                 }
-                let exits = rng.below(2) as usize;
                 let running = rng.coin();
-                let flies = worth_flying(moving_drawable(&tiles), exits, running);
-                assert_eq!(flies, any_moving || exits > 0 || running, "seed 81");
+                let flies = worth_flying(moving_drawable(&tiles), running);
+                assert_eq!(flies, any_moving || running, "seed 81");
                 if !flies {
                     grounded += 1;
                 }
@@ -6571,6 +6603,19 @@ mod tests {
         );
     }
 
+    /// The overlay lifts once the clock is done AND the render server presents every layer at its
+    /// destination; a stuck presentation is overridden after `LIFT_GRACE`. Never before the clock.
+    #[test]
+    fn the_overlay_lifts_when_the_clock_is_done_and_the_tiles_are_presented_there() {
+        assert!(!lift_now(false, true, true, false), "the clock has not run out");
+        assert!(!lift_now(false, true, true, true), "overdue is meaningless before the clock is done");
+        assert!(!lift_now(true, false, true, false), "clock done, render server a frame behind: wait");
+        assert!(!lift_now(true, true, false, false), "clock done, a real window still travelling: wait");
+        assert!(lift_now(true, true, true, false));
+        assert!(lift_now(true, false, false, true), "the grace ran out: lift anyway");
+        assert!(LIFT_GRACE < Duration::from_millis(500), "a stall is a hold, not a hang");
+    }
+
     #[test]
     fn progress_is_complete_for_a_zero_length_animation() {
         // Guards a division by zero, and makes `--no-animate` style zero durations resolve at once
@@ -6589,6 +6634,7 @@ mod tests {
             refresh_targets: Vec::new(),
             harvested: HashSet::new(),
             focus: None,
+            plan: plan::FlightPlan::empty(),
             _clock: None,
         };
         assert_eq!(running.progress(), 1.0);
@@ -6611,6 +6657,7 @@ mod tests {
             refresh_targets: Vec::new(),
             harvested: HashSet::new(),
             focus: None,
+            plan: plan::FlightPlan::empty(),
             _clock: None,
         };
         assert!(running.progress() < 0.2, "just started");
@@ -6629,6 +6676,7 @@ mod tests {
             refresh_targets: Vec::new(),
             harvested: HashSet::new(),
             focus: None,
+            plan: plan::FlightPlan::empty(),
             _clock: None,
         };
         // Clamped rather than allowed past 1.0, since the easing would otherwise overshoot the
@@ -6637,15 +6685,15 @@ mod tests {
         assert!(finished.is_done());
     }
 
-    /// A pass merging into a flight moves what it did not compose too, so the flight ends where
-    /// the strip ends: reserved entrances take the pass's frame, tiles the pass names only by
-    /// frame are retargeted, and exit ghosts ride a strip movement's travel. The 3:27:20 tear:
-    /// an open (`no_snapshot=1`) merged with a pan 56ms later; 22 survivors scrolled 574pt, the
-    /// newcomer and the ghost did not. See "Mid-flight passes" in `docs/animation-smoothness.md`.
+    /// A pass merging into a flight in progress: `merge_plans` retargets containers, reparents
+    /// only on a membership change, and carries a pan to every group. The 3:27:20 tear (an open
+    /// merged with a pan 56ms later; 22 survivors scrolled 574pt, the newcomer did not) is the
+    /// case it exists for. See "Mid-flight passes" in `docs/animation-smoothness.md`.
     mod rigid_strip {
-        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::preservation::{DISPLAY, Gen, RUNS};
+        use super::rigid_groups::random_requests;
         use super::*;
-        use crate::ui::window_snapshot::test_snapshot;
+        use crate::actor::workspace_animation::plan::*;
 
         fn wid(idx: u32) -> WindowId {
             WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
@@ -6658,22 +6706,56 @@ mod tests {
             size: CGSize { width: 3008.0, height: 1692.0 },
         };
 
-        fn ghost(window: WindowId, closed_at: CGRect) -> OverlayTile {
-            let exit = PendingExit {
-                window,
-                frame: closed_at,
-                snapshot: test_snapshot(closed_at.size),
-                floating: false,
-                expires: Instant::now() + COALESCE_WINDOW,
-            };
-            exit.tile(EXTERNAL)
-        }
-
         fn shifted(frame: CGRect, delta: CGPoint) -> CGRect {
             CGRect::new(
                 CGPoint::new(frame.origin.x + delta.x, frame.origin.y + delta.y),
                 frame.size,
             )
+        }
+
+        fn column(i: f64) -> CGRect {
+            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
+        }
+
+        fn flight_of(requests: &[(WindowId, CGRect, CGRect, bool)]) -> FlightPlan {
+            FlightPlan::from(reflow_plan(requests, DISPLAY))
+        }
+
+        /// A window's destination in overlay space, whatever it rides.
+        fn dest(plan: &FlightPlan, window: WindowId) -> Option<CGRect> {
+            Some(match plan.member(window)? {
+                Member::Rigid { key, rel } => overlay_of(rel, plan.position_of(key)),
+                Member::Changing { to, .. } | Member::Entrance { to, .. } => to,
+                Member::Floating { to, .. } => overlay_of(to, plan.position_of(GroupKey::Floating)),
+            })
+        }
+
+        fn key_of(plan: &FlightPlan, window: WindowId) -> Option<GroupKey> {
+            match plan.member(window)? {
+                Member::Rigid { key, .. } => Some(key),
+                Member::Changing { .. } | Member::Entrance { .. } => Some(GroupKey::StripLoose),
+                Member::Floating { .. } => Some(GroupKey::Floating),
+            }
+        }
+
+        /// Model positions as the presented ones: a flight that has not started drawing.
+        fn at_model(plan: &FlightPlan) -> HashMap<GroupKey, CGPoint> {
+            plan.positions.clone()
+        }
+
+        /// Halfway between install (`p - travel`) and destination, per container.
+        fn midway(plan: &FlightPlan) -> HashMap<GroupKey, CGPoint> {
+            plan.positions
+                .iter()
+                .map(|(key, p)| {
+                    let travel = match key {
+                        GroupKey::Floating => plan.floating_travel,
+                        GroupKey::StripLoose => CGPoint::new(0.0, 0.0),
+                        key => plan.groups.iter().find(|g| g.key == *key).map(|g| g.travel).unwrap_or(CGPoint::new(0.0, 0.0)),
+                    };
+                    (*key, CGPoint::new(p.x - travel.x / 2.0, p.y - travel.y / 2.0))
+                })
+                .collect()
         }
 
         /// An entrance with a frame in the later pass takes it, converted to overlay space; one
@@ -6692,219 +6774,1254 @@ mod tests {
             let mut entrances = vec![newcomer, untouched.clone()];
             let frames = vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0)), (wid(51462), shifted(slot, pan))];
 
-            let travel = PassTravel::new(&[], Some(pan), EXTERNAL);
-            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL, &travel), 1);
+            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 1);
             assert_eq!(entrances[0].to, to_overlay_space(shifted(slot, pan), EXTERNAL));
             assert_eq!(entrances[1].to, untouched.to, "no frame for it: left alone");
-            assert_eq!(
-                retarget_entrances(&mut entrances, &frames, EXTERNAL, &travel),
-                0,
-                "already there"
+            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 0, "already there");
+        }
+
+        /// A pan `d` merging into an open: every group's position moves by `d`, nothing changes
+        /// hands, the entrance's destination moves by `d`.
+        #[test]
+        fn a_pan_merging_into_an_open_shifts_every_group_and_reparents_nothing() {
+            let (a, b, c) = (column(0.0), column(1.0), column(2.0));
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut current = flight_of(&[
+                (wid(1), a, a, false),
+                (wid(2), b, shifted(b, CGPoint::new(859.0, 0.0)), false),
+                (wid(3), c, shifted(c, CGPoint::new(859.0, 0.0)), false),
+            ]);
+            current.entrances.push((wid(9), entrance_from(slot), slot));
+            let before = current.clone();
+
+            let d = CGPoint::new(-574.0, 0.0);
+            let pan = strip_plan(
+                &[
+                    StripWindow { window: wid(1), server_id: WindowServerId::new(1), frame: a, pinned: false, floating: false },
+                    StripWindow { window: wid(2), server_id: WindowServerId::new(2), frame: shifted(b, CGPoint::new(859.0, 0.0)), pinned: false, floating: false },
+                ],
+                CGPoint::new(-574.0, 0.0),
+                CGPoint::new(0.0, 0.0),
             );
-            // The tile it becomes flies to the new slot.
-            let tile = entrance_tile(&entrances[0], &test_snapshot(slot.size));
-            assert_eq!(tile.to, to_overlay_space(shifted(slot, pan), EXTERNAL));
-            assert_eq!(tile.from, entrance_from(tile.to));
+            let (merged, delta) = merge_plans(&current, &pan, Some(d), &at_model(&current), None, DISPLAY);
+
+            for group in before.groups.iter().filter(|g| !g.members.is_empty()) {
+                let p = merged.position_of(group.key);
+                assert_eq!(p, CGPoint::new(before.position_of(group.key).x + d.x, before.position_of(group.key).y + d.y));
+                assert!(delta.retargeted_groups.contains(&(group.key, p)), "{:?} retargeted", group.key);
+                let after = merged.groups.iter().find(|g| g.key == group.key).unwrap();
+                assert_eq!(after.members, group.members, "membership and rel untouched");
+            }
+            assert!(delta.reparented.is_empty());
+            assert!(delta.new_groups.is_empty(), "the pan names known windows only");
+            assert_eq!(merged.entrances[0].2, shifted(slot, d));
+            assert_eq!(delta.retargeted_tiles, vec![(wid(9), shifted(slot, d))]);
+            assert_eq!(dest(&merged, wid(3)), Some(shifted(c, CGPoint::new(859.0 + d.x, 0.0))), "a member the pan did not compose rides its group");
         }
 
-        /// A flight tile the pass names by frame but not by tile (a strip pass with no usable
-        /// picture for it, `missing`) is retargeted to the frame; tiles the pass composes, tiles
-        /// with no frame in the pass, companions and ghosts are not.
+        /// A pass confirming destinations the flight already has changes nothing.
         #[test]
-        fn a_tile_carried_by_frames_but_not_tiles_is_retargeted() {
-            let a = rect(EXTERNAL.origin.x + 4.0, 32.0, 859.0, 1081.0);
-            let b = rect(EXTERNAL.origin.x + 867.0, 32.0, 859.0, 1081.0);
-            let c = rect(EXTERNAL.origin.x + 1730.0, 32.0, 859.0, 1081.0);
-            let pan = CGPoint::new(-574.0, 0.0);
-            let tile = |w: u32, f: CGRect| {
-                stacked(wid(w), to_overlay_space(f, EXTERNAL), to_overlay_space(f, EXTERNAL), Some(0), false)
-            };
-            let mut companion = tile(9, a);
-            companion.companion = true;
-            let flight = vec![tile(1, a), tile(2, b), tile(3, c), companion, ghost(wid(4), c)];
-            // The pass composes 1 and names 2 by frame; 3 is not in it; the companion and the
-            // ghost have frames in it (they never do in life) to prove they are skipped.
-            let pass = vec![stacked(
-                wid(1),
-                to_overlay_space(a, EXTERNAL),
-                to_overlay_space(shifted(a, pan), EXTERNAL),
-                Some(0),
-                false,
-            )];
-            let frames = vec![
-                (wid(1), shifted(a, pan)),
-                (wid(2), shifted(b, pan)),
-                (wid(9), shifted(a, pan)),
-                (wid(4), shifted(c, pan)),
-            ];
-
-            let travel = PassTravel::new(&pass, Some(pan), EXTERNAL);
-            let retargets = retargets_from_frames(&flight, &pass, &frames, EXTERNAL, &travel);
-            assert_eq!(retargets.len(), 1);
-            let retarget = &retargets[0];
-            assert_eq!(retarget.window, wid(2));
-            assert_eq!(retarget.to, to_overlay_space(shifted(b, pan), EXTERNAL));
-            assert_eq!(retarget.from, flight[1].from, "keeps its start");
-            assert_eq!(retarget.snapshot.coverage, flight[1].snapshot.coverage, "and its picture");
-
-            // Fed to the merge, it is a retarget, not a join, and lands the frame.
-            let mut running = super::render_stability_fix::flight(Some(Instant::now()));
-            running.tiles = flight.clone();
-            let mut pass = pass;
-            pass.extend(retargets);
-            let outcomes = running.merge_pass(pass, None);
-            assert_eq!(outcomes, vec![(wid(1), Admitted::Retargeted), (wid(2), Admitted::Retargeted)]);
-            let two = running.tiles.iter().find(|t| t.window == wid(2)).unwrap();
-            assert_eq!(two.to, to_overlay_space(shifted(b, pan), EXTERNAL));
-            assert_eq!(running.tiles.len(), 5, "nothing joined");
+        fn a_redundant_pass_is_an_empty_delta() {
+            let (a, b) = (column(0.0), column(1.0));
+            let requests = [(wid(1), a, a, false), (wid(2), b, shifted(b, CGPoint::new(-300.0, 0.0)), false)];
+            let current = flight_of(&requests);
+            let again = reflow_plan(&requests, DISPLAY);
+            let (merged, delta) = merge_plans(&current, &again, None, &midway(&current), None, DISPLAY);
+            assert!(delta.is_empty(), "{delta:?}");
+            assert_eq!(merged, current);
         }
 
-        /// A strip movement carries the flight's ghosts by its travel: `to` moves, `from` does
-        /// not, nothing else is touched, and a still pan moves nothing.
+        /// One member of a two-member group is sent elsewhere: it is reparented, the other keeps
+        /// the container, and both end where the pass says.
         #[test]
-        fn ghosts_ride_the_pan_and_nothing_else_does() {
-            let closed_at = rect(EXTERNAL.origin.x + 867.0, 32.0, 859.0, 1081.0);
-            let column = rect(EXTERNAL.origin.x + 4.0, 32.0, 859.0, 1081.0);
-            let mut tiles = vec![
-                stacked(wid(1), to_overlay_space(column, EXTERNAL), to_overlay_space(column, EXTERNAL), Some(1), false),
-                ghost(wid(2), closed_at),
-            ];
-            let before: Vec<(CGRect, CGRect)> = tiles.iter().map(|t| (t.from, t.to)).collect();
-            let delta = strip_pan_travel(CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
-            assert_eq!(delta, CGPoint::new(-574.0, 0.0));
-
-            assert_eq!(shift_ghosts(&mut tiles, delta), vec![wid(2)]);
-            assert!(tiles[1].ghost);
-            assert_eq!(tiles[1].from, before[1].0, "the ghost starts where it was");
-            assert_eq!(tiles[1].to, shifted(before[1].1, delta));
-            assert_eq!(tiles[1].to.size.width, 0.0, "still shrinking to nothing");
-            assert_eq!((tiles[0].from, tiles[0].to), before[0], "the survivor is the pass's job");
-
-            assert!(shift_ghosts(&mut tiles, CGPoint::new(0.0, 0.0)).is_empty());
-            assert_eq!(tiles[1].to, shifted(before[1].1, delta), "a still pan moves nothing");
+        fn a_pass_moving_one_member_elsewhere_reparents_it_and_keeps_the_other() {
+            let (a, b) = (column(0.0), column(1.0));
+            let v = CGPoint::new(-300.0, 0.0);
+            let current = flight_of(&[(wid(1), a, shifted(a, v), false), (wid(2), b, shifted(b, v), false)]);
+            let group = current.groups[1].key;
+            let presented = midway(&current);
+            let elsewhere = shifted(b, CGPoint::new(500.0, 0.0));
+            let pass = reflow_plan(&[(wid(1), a, shifted(a, v), false), (wid(2), b, elsewhere, false)], DISPLAY);
+            let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
+            assert_eq!(delta.reparented.len(), 1);
+            let (window, from, to) = delta.reparented[0];
+            assert_eq!((window, from), (wid(2), group));
+            assert_ne!(to, group);
+            assert_eq!(key_of(&merged, wid(1)), Some(group), "the other member keeps the container");
+            assert!(delta.retargeted_groups.is_empty(), "the winning cluster confirmed the destination");
+            assert!(dest(&merged, wid(2)).unwrap().same_as(elsewhere), "{:?}", dest(&merged, wid(2)));
+            assert!(dest(&merged, wid(1)).unwrap().same_as(shifted(a, v)));
+            assert_eq!(delta.new_groups.len(), 1, "no group had that remaining travel");
+            assert_eq!(delta.new_groups[0].1, presented[&group], "installs where the old container is drawn");
         }
 
-        /// The exit tile is the only ghost; nothing else composed carries the flag.
+        /// The 1:07 switch: the whole row rides one container up by a display height; the layout
+        /// pass 16ms later parks two of its windows, whose visual destination is past the display
+        /// edge. Those members keep riding the row instead of opening a sideways group (the
+        /// zig-zag). A member of a STILL container sent off screen still votes and leaves.
         #[test]
-        fn only_an_exit_tile_is_a_ghost() {
-            let frame = rect(EXTERNAL.origin.x + 867.0, 32.0, 859.0, 1081.0);
-            assert!(ghost(wid(1), frame).ghost);
-            let (entrance, _) = entrance_reservation(wid(2), frame, false);
-            assert!(!entrance_tile(&entrance, &test_snapshot(frame.size)).ghost);
-            assert!(!stacked(wid(3), frame, frame, None, false).ghost);
+        fn a_member_parked_by_a_later_pass_rides_its_moving_container_out() {
+            let (a, b, c) = (column(0.0), column(1.0), column(2.0));
+            let up = CGPoint::new(0.0, -DISPLAY.size.height);
+            let current = flight_of(&[
+                (wid(1), a, shifted(a, up), false),
+                (wid(2), b, shifted(b, up), false),
+                (wid(3), c, shifted(c, up), false),
+            ]);
+            let group = key_of(&current, wid(1)).unwrap();
+            let past_right = rect(DISPLAY.size.width + 1.0, b.origin.y, b.size.width, b.size.height);
+            let past_left = rect(-c.size.width - 1.0, c.origin.y, c.size.width, c.size.height);
+            let pass = reflow_plan(
+                &[(wid(1), a, shifted(a, up), false), (wid(2), b, past_right, false), (wid(3), c, past_left, false)],
+                DISPLAY,
+            );
+            let (merged, delta) = merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
+            assert!(delta.is_empty(), "{delta:?}");
+            assert_eq!(merged, current);
+            for w in [wid(1), wid(2), wid(3)] {
+                assert_eq!(key_of(&merged, w), Some(group));
+            }
+
+            // A still container lends no motion: the member leaves on its own vector.
+            let still = flight_of(&[(wid(1), a, a, false), (wid(2), b, b, false)]);
+            let pass = reflow_plan(&[(wid(1), a, a, false), (wid(2), b, past_right, false)], DISPLAY);
+            let (merged, delta) = merge_plans(&still, &pass, None, &midway(&still), None, DISPLAY);
+            assert_eq!(delta.reparented.len(), 1, "{delta:?}");
+            assert!(dest(&merged, wid(2)).unwrap().same_as(past_right));
         }
 
-        /// Property (seed 111, 200 runs). A per-window pass composes a flight with survivors, a
-        /// reserved entrance and a ghost; a random strip pan then merges into it. Afterwards
-        /// every non-companion, non-ghost tile with a final frame in the pan ends at that frame
-        /// in overlay space, every entrance does too, and every ghost's destination moved by
-        /// exactly the pan's travel.
+        /// A rigid member the pass now resizes leaves its container for `StripLoose` at the frame
+        /// it is drawn at, and is retargeted as a resize.
         #[test]
-        fn after_a_merged_pan_everything_ends_where_the_strip_ends() {
-            let mut rng = Gen(111);
+        fn a_rigid_member_turning_into_a_resize_goes_loose() {
+            let (a, b) = (column(0.0), column(1.0));
+            let v = CGPoint::new(-300.0, 0.0);
+            let current = flight_of(&[(wid(1), a, shifted(a, v), false), (wid(2), b, shifted(b, v), false)]);
+            let group = current.groups[1].key;
+            let presented = midway(&current);
+            let grown = rect(b.origin.x + v.x, b.origin.y, b.size.width + 400.0, b.size.height);
+            let pass = reflow_plan(&[(wid(2), shifted(b, v), grown, false)], DISPLAY);
+            let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
+            assert_eq!(delta.reparented, vec![(wid(2), group, GroupKey::StripLoose)]);
+            assert_eq!(delta.retargeted_tiles, vec![(wid(2), grown)]);
+            let Some(Member::Changing { from, to }) = merged.member(wid(2)) else { panic!("loose") };
+            assert_eq!(from, overlay_of(b, presented[&group]), "leaves at the presented frame");
+            assert_eq!(to, grown);
+            assert_eq!(key_of(&merged, wid(1)), Some(group));
+        }
+
+        /// A newcomer whose vector matches a group's remaining travel rides it, with `rel` taken
+        /// from the container's presented position.
+        #[test]
+        fn a_join_matching_a_groups_remaining_travel_joins_it() {
+            let (a, b) = (column(0.0), column(1.0));
+            let v = CGPoint::new(-400.0, 0.0);
+            let current = flight_of(&[(wid(1), a, shifted(a, v), false)]);
+            let group = current.groups[1].key;
+            let presented = midway(&current);
+            let remaining = CGPoint::new(v.x - presented[&group].x, 0.0);
+            let pass = reflow_plan(&[(wid(2), b, shifted(b, remaining), false)], DISPLAY);
+            let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
+            assert_eq!(delta.joined_tiles, vec![(wid(2), group)]);
+            assert!(delta.new_groups.is_empty());
+            let Some(Member::Rigid { key, rel }) = merged.member(wid(2)) else { panic!("rigid") };
+            assert_eq!(key, group);
+            assert_eq!(rel, group_relative(b, presented[&group]));
+            assert!(dest(&merged, wid(2)).unwrap().same_as(shifted(b, remaining)));
+        }
+
+        /// A newcomer with a vector no group is still travelling by opens a group of its own.
+        #[test]
+        fn a_join_with_a_new_vector_opens_a_group() {
+            let (a, b) = (column(0.0), column(1.0));
+            let current = flight_of(&[(wid(1), a, shifted(a, CGPoint::new(-400.0, 0.0)), false)]);
+            let pass = reflow_plan(&[(wid(2), b, shifted(b, CGPoint::new(120.0, 0.0)), false)], DISPLAY);
+            let (merged, delta) = merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
+            assert!(delta.joined_tiles.is_empty());
+            assert_eq!(delta.new_groups.len(), 1);
+            let (key, install) = delta.new_groups[0];
+            assert_eq!(install, CGPoint::new(0.0, 0.0));
+            assert_eq!(key_of(&merged, wid(2)), Some(key));
+            assert_eq!(merged.position_of(key), CGPoint::new(120.0, 0.0));
+            assert_eq!(merged.next_key, current.next_key + 1);
+        }
+
+        #[test]
+        fn group_travel_after_merge_is_none_only_when_nothing_changed() {
+            let presented = CGPoint::new(-200.0, 0.0);
+            let old = CGPoint::new(-574.0, 0.0);
+            assert_eq!(group_travel_after_merge(presented, old, old), None);
+            assert_eq!(group_travel_after_merge(presented, old, CGPoint::new(-574.05, 0.0)), None);
+            assert_eq!(
+                group_travel_after_merge(presented, old, CGPoint::new(-900.0, 0.0)),
+                Some((presented, CGPoint::new(-900.0, 0.0)))
+            );
+        }
+
+        /// The 3:27:20 case: an open with 22 survivors and one entrance, then a 574pt pan 56ms
+        /// later. Every survivor and the entrance end at the pan's frames.
+        #[test]
+        fn the_3_27_20_open_then_pan_ends_everything_at_the_pans_frames() {
+            let col = |i: f64| rect(EXTERNAL.origin.x + 4.0 + i * 863.0, EXTERNAL.origin.y + 32.0, 859.0, 1081.0);
+            let push = CGPoint::new(859.0, 0.0);
+            // The open: columns from index 1 shift right by the newcomer's width.
+            let requests: Vec<(WindowId, CGRect, CGRect, bool)> = (0..22)
+                .map(|i| {
+                    let f = col(i as f64);
+                    let to = if i == 0 { f } else { shifted(f, push) };
+                    (wid(i + 1), f, to, false)
+                })
+                .collect();
+            let slot = col(1.0);
+            let mut current = FlightPlan::from(reflow_plan(&requests, EXTERNAL));
+            let slot_o = to_overlay_space(slot, EXTERNAL);
+            current.entrances.push((wid(100), entrance_from(slot_o), slot_o));
+
+            let d = CGPoint::new(-574.0, 0.0);
+            let windows: Vec<StripWindow> = requests
+                .iter()
+                .map(|(w, _, to, _)| StripWindow {
+                    window: *w,
+                    server_id: WindowServerId::new(w.idx.get()),
+                    frame: to_overlay_space(*to, EXTERNAL),
+                    pinned: false,
+                    floating: false,
+                })
+                .collect();
+            let pan = strip_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
+            let (merged, delta) = merge_plans(&current, &pan, Some(d), &midway(&current), None, DISPLAY);
+
+            for (w, _, to, _) in &requests {
+                let expected = shifted(to_overlay_space(*to, EXTERNAL), d);
+                assert!(dest(&merged, *w).unwrap().same_as(expected), "{w:?}: {:?} vs {expected:?}", dest(&merged, *w));
+            }
+            assert_eq!(merged.entrances[0].2, shifted(slot_o, d));
+            assert!(delta.reparented.is_empty());
+            assert_eq!(delta.retargeted_groups.len(), 2, "the still group and the pushed group");
+            assert!(delta.moves_anything());
+        }
+
+        /// A member the pass names by frame but does not compose (a strip pass with no usable
+        /// picture for it) rides its group: its destination moves with the container's.
+        #[test]
+        fn a_member_the_pass_names_by_frame_only_rides_its_group() {
+            let (a, b, c) = (column(0.0), column(1.0), column(2.0));
+            let v = CGPoint::new(-300.0, 0.0);
+            let current = flight_of(&[
+                (wid(1), a, shifted(a, v), false),
+                (wid(2), b, shifted(b, v), false),
+                (wid(3), c, shifted(c, v), false),
+            ]);
+            let group = current.groups[1].key;
+            // The pass composes 1 and 3 with a further 100pt; 2 has no picture.
+            let further = CGPoint::new(-400.0, 0.0);
+            let pass = reflow_plan(&[(wid(1), a, shifted(a, further), false), (wid(3), c, shifted(c, further), false)], DISPLAY);
+            let (merged, delta) = merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
+            assert_eq!(delta.retargeted_groups, vec![(group, further)]);
+            assert!(delta.reparented.is_empty() && delta.joined_tiles.is_empty());
+            assert!(dest(&merged, wid(2)).unwrap().same_as(shifted(b, further)), "rides along");
+        }
+
+        fn is_zero(p: CGPoint) -> bool {
+            p.x == 0.0 && p.y == 0.0
+        }
+
+        /// Property P1 (seed 149, 200 runs): a random initial plan, then 1-4 random merged passes
+        /// (layout passes over a subset with random vectors, pans, a resize, a new window), with
+        /// `presented` at the model position or midway. After every merge each named window ends
+        /// within 2pt of the pass's destination in the key the delta says (P4); no window is in
+        /// two groups; a pan-only step changes no membership and shifts every position by `d`.
+        #[test]
+        fn merges_honour_every_destination_and_keep_the_partition() {
+            let mut rng = Gen(149);
             for run in 0..RUNS {
-                let display = if run % 2 == 0 { DISPLAY } else { EXTERNAL };
-                let count = 1 + rng.below(5) as u32;
-                let column = |i: u32, rng: &mut Gen| {
-                    let w = rng.pt(400.0, 1200.0);
-                    rect(display.origin.x + 4.0 + i as f64 * 870.0, display.origin.y + 32.0, w, 1081.0)
-                };
-                // Survivors: tiles standing at their columns. Some have no picture at pan time.
-                let mut flight: Vec<OverlayTile> = Vec::new();
-                let mut frames_before: Vec<(WindowId, CGRect)> = Vec::new();
-                for i in 0..count {
-                    let f = column(i, &mut rng);
-                    flight.push(stacked(
-                        wid(i + 1),
-                        to_overlay_space(f, display),
-                        to_overlay_space(f, display),
-                        Some(i as usize),
-                        false,
-                    ));
-                    frames_before.push((wid(i + 1), f));
-                }
-                let newcomer = wid(100);
-                let slot = column(count, &mut rng);
-                let (entrance, waiting) =
-                    entrance_reservation(newcomer, to_overlay_space(slot, display), false);
-                frames_before.push((newcomer, slot));
-                let closed_at = column(count + 1, &mut rng);
-                let mut ghost_tile = ghost(wid(200), closed_at);
-                ghost_tile.from = to_overlay_space(closed_at, display);
-                ghost_tile.to = to_overlay_space(exit_to(closed_at), display);
-                flight.push(ghost_tile);
-                let mut running = super::render_stability_fix::flight(Some(Instant::now()));
-                running.tiles = flight;
-                running.final_frames = frames_before.clone();
-                running.entrances.push(entrance);
-                running.awaiting.extend(waiting);
+                let mut plan = flight_of(&random_requests(&mut rng));
+                let steps = 1 + rng.below(4) as usize;
+                for step in 0..steps {
+                    let tag = format!("seed 149 run {run} step {step}");
+                    let presented = if rng.coin() { at_model(&plan) } else { midway(&plan) };
+                    let windows = plan.windows();
+                    let before = plan.clone();
+                    let mut pan: Option<CGPoint> = None;
+                    let incoming: ReflowPlan = match rng.below(4) {
+                        // A pan.
+                        0 => {
+                            let mut d = CGPoint::new(rng.pt(-9.0, 9.0) * 100.0, 0.0);
+                            if is_zero(d) {
+                                d.x = 100.0;
+                            }
+                            pan = Some(d);
+                            let mut p = ReflowPlan::empty();
+                            for w in &windows {
+                                let Some(from) = dest(&plan, *w) else { continue };
+                                match plan.member(*w) {
+                                    Some(Member::Rigid { .. }) => {
+                                        p.adopt(&super::preservation::stacked(*w, from, shifted(from, d), None, false));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            p
+                        }
+                        // A layout pass over a subset with a fresh vector or two.
+                        1 | 2 => {
+                            let v1 = CGPoint::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
+                            let v2 = CGPoint::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
+                            let mut reqs: Vec<(WindowId, CGRect, CGRect, bool)> = Vec::new();
+                            for w in &windows {
+                                if rng.coin() {
+                                    continue;
+                                }
+                                let Some(Member::Rigid { key, rel }) = plan.member(*w) else { continue };
+                                let from = overlay_of(rel, presented[&key]);
+                                let v = if rng.coin() { v1 } else { v2 };
+                                reqs.push((*w, from, shifted(from, v), false));
+                            }
+                            // Sometimes a newcomer.
+                            if rng.coin() {
+                                let from = rng.on_screen();
+                                reqs.push((wid(500 + step as u32), from, shifted(from, v1), false));
+                            }
+                            reflow_plan(&reqs, DISPLAY)
+                        }
+                        // A resize of a random rigid member.
+                        _ => {
+                            let rigid: Vec<WindowId> = windows.iter().copied().filter(|w| matches!(plan.member(*w), Some(Member::Rigid { .. }))).collect();
+                            let mut reqs: Vec<(WindowId, CGRect, CGRect, bool)> = Vec::new();
+                            if let Some(w) = rigid.first() {
+                                let Some(Member::Rigid { key, rel }) = plan.member(*w) else { unreachable!() };
+                                let from = overlay_of(rel, presented[&key]);
+                                let to = rect(from.origin.x, from.origin.y, from.size.width + 300.0, from.size.height);
+                                reqs.push((*w, from, to, false));
+                            }
+                            reflow_plan(&reqs, DISPLAY)
+                        }
+                    };
+                    let (merged, delta) = merge_plans(&plan, &incoming, pan, &presented, None, DISPLAY);
 
-                // The pan: every window's frame moves by `delta`; the pass composes the windows
-                // with a picture (a random subset of the survivors, never the newcomer).
-                let delta = CGPoint::new(rng.pt(-900.0, 900.0), if rng.coin() { 0.0 } else { rng.pt(-200.0, 200.0) });
-                let from_offset = CGPoint::new(delta.x, delta.y);
-                let to_offset = CGPoint::new(0.0, 0.0);
-                assert_eq!(strip_pan_travel(from_offset, to_offset), delta, "seed 111 run {run}");
-                let frames_after: Vec<(WindowId, CGRect)> =
-                    frames_before.iter().map(|(w, f)| (*w, shifted(*f, delta))).collect();
-                let mut pass: Vec<OverlayTile> = Vec::new();
-                for (w, f) in &frames_after {
-                    if *w == newcomer || rng.coin() {
-                        continue;
+                    // Partition: no window in two groups, none lost.
+                    let mut named = merged.windows();
+                    let count = named.len();
+                    named.sort();
+                    named.dedup();
+                    assert_eq!(named.len(), count, "{tag}: a window in two places");
+                    for w in &windows {
+                        assert!(merged.member(*w).is_some(), "{tag}: {w:?} dropped");
                     }
-                    let strip_frame = CGRect::new(
-                        CGPoint::new(f.origin.x - display.origin.x, f.origin.y - display.origin.y),
-                        f.size,
-                    );
-                    let (from, to) = strip_travel(strip_frame, from_offset, to_offset, false);
-                    pass.push(stacked(*w, from, to, Some(0), false));
+
+                    // P4: every window the pass names ends within 2pt of its destination, in the
+                    // key the delta says.
+                    for w in incoming.windows() {
+                        let want = match incoming.member(w).unwrap() {
+                            Member::Rigid { key, rel } => overlay_of(rel, incoming.groups.iter().find(|g| g.key == key).unwrap().travel),
+                            Member::Changing { to, .. } | Member::Entrance { to, .. } | Member::Floating { to, .. } => to,
+                        };
+                        let got = dest(&merged, w).unwrap_or_else(|| panic!("{tag}: {w:?} unnamed after merge"));
+                        // The one exception to P4: a member sent off the viewport while its
+                        // container moves rides the container (`rides_out`); it keeps its key.
+                        let rode_out = pan.is_none()
+                            && crate::model::HiddenWindowPlacement::is_off_screen(DISPLAY, want)
+                            && matches!(before.member(w), Some(Member::Rigid { key, .. })
+                                if before.groups.iter().any(|g| g.key == key && !g.is_still()));
+                        if rode_out {
+                            assert_eq!(key_of(&merged, w), key_of(&before, w), "{tag}: rides its container");
+                            continue;
+                        }
+                        assert!(
+                            (got.origin.x - want.origin.x).abs() <= GROUP_TOLERANCE + 0.01
+                                && (got.origin.y - want.origin.y).abs() <= GROUP_TOLERANCE + 0.01,
+                            "{tag}: {w:?} ends at {got:?}, pass wants {want:?}"
+                        );
+                        if let Some((_, _, to_key)) = delta.reparented.iter().find(|(x, _, _)| *x == w) {
+                            assert_eq!(key_of(&merged, w), Some(*to_key), "{tag}");
+                        }
+                        if let Some((_, key)) = delta.joined_tiles.iter().find(|(x, _)| *x == w) {
+                            assert_eq!(key_of(&merged, w), Some(*key), "{tag}");
+                        }
+                    }
+
+                    // A pan: no membership change, every occupied position shifted by d.
+                    if let Some(d) = pan {
+                        assert!(delta.reparented.is_empty(), "{tag}");
+                        for g in before.groups.iter().filter(|g| !g.members.is_empty()) {
+                            let after = merged.groups.iter().find(|x| x.key == g.key).unwrap();
+                            assert_eq!(after.members, g.members, "{tag}");
+                            let (p0, p1) = (before.position_of(g.key), merged.position_of(g.key));
+                            assert_eq!((p1.x - p0.x, p1.y - p0.y), (d.x, d.y), "{tag}");
+                        }
+                        assert_eq!(delta.retargeted_groups.is_empty(), is_zero(d) || before.groups.iter().all(|g| g.members.is_empty()), "{tag}");
+                    }
+                    plan = merged;
+                }
+            }
+        }
+
+        /// Property P5 (seed 151, 200 runs): merging a plan with itself changes nothing.
+        #[test]
+        fn a_pass_with_the_same_destinations_is_an_empty_delta() {
+            let mut rng = Gen(151);
+            for run in 0..RUNS {
+                let requests = random_requests(&mut rng);
+                let current = flight_of(&requests);
+                let presented = if rng.coin() { at_model(&current) } else { midway(&current) };
+                // The same destinations, expressed from the presented frames.
+                let mut reqs: Vec<(WindowId, CGRect, CGRect, bool)> = Vec::new();
+                for &(w, _, _, floating) in &requests {
+                    let (from, to) = match current.member(w).unwrap() {
+                        Member::Rigid { key, rel } => (overlay_of(rel, presented[&key]), overlay_of(rel, current.position_of(key))),
+                        Member::Changing { from, to } | Member::Entrance { from, to } => (from, to),
+                        Member::Floating { from, to } => (overlay_of(from, presented[&GroupKey::Floating]), overlay_of(to, current.position_of(GroupKey::Floating))),
+                    };
+                    reqs.push((w, from, to, floating));
+                }
+                let same = reflow_plan(&reqs, DISPLAY);
+                let (merged, delta) = merge_plans(&current, &same, None, &presented, None, DISPLAY);
+                assert!(delta.is_empty(), "seed 151 run {run}: {delta:?}");
+                assert_eq!(merged, current, "seed 151 run {run}");
+            }
+        }
+    }
+
+    /// Task 1 of `.kiro/specs/rigid-strip-groups`: a pass as rigid pieces. `reflow_plan` groups
+    /// by translation vector within `GROUP_TOLERANCE`; `strip_plan` is one group. See "Layout
+    /// changes" and "Strip movements" in `docs/animation-smoothness.md`.
+    mod rigid_groups {
+        use super::preservation::{DISPLAY, Gen, RUNS, stacked};
+        use super::*;
+        use crate::actor::workspace_animation::plan::*;
+        use crate::model::HiddenWindowPlacement;
+        use crate::model::z_group::StackGroup;
+        use crate::ui::window_snapshot::is_a_resize;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
+            CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y + dy), frame.size)
+        }
+
+        fn column(i: f64) -> CGRect {
+            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
+        }
+
+        fn moving(plan: &ReflowPlan) -> Vec<&StripGroup> {
+            plan.groups.iter().filter(|g| !g.members.is_empty() && g.key != GroupKey::STILL).collect()
+        }
+
+        fn members(group: &StripGroup) -> Vec<WindowId> {
+            group.members.iter().map(|m| m.window).collect()
+        }
+
+        #[test]
+        fn two_columns_shifting_by_the_same_vector_are_one_group() {
+            let a = column(0.0);
+            let b = column(1.0);
+            let plan = reflow_plan(
+                &[(wid(1), a, shifted(a, -859.0, 0.0), false), (wid(2), b, shifted(b, -859.0, 0.0), false)],
+                DISPLAY,
+            );
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].travel, CGPoint::new(-859.0, 0.0));
+            assert_eq!(members(groups[0]), vec![wid(1), wid(2)]);
+            assert_eq!(groups[0].members[0].rel, a, "a container installs at (0,0), so rel is from");
+            assert!(plan.groups[0].members.is_empty(), "nothing stands still");
+            assert!(plan.changing.is_empty() && plan.floating.is_empty() && plan.entrances.is_empty());
+        }
+
+        #[test]
+        fn a_column_two_points_off_shares_the_group_and_three_points_off_opens_one() {
+            let a = column(0.0);
+            let b = column(1.0);
+            let same = reflow_plan(
+                &[(wid(1), a, shifted(a, 300.0, 0.0), false), (wid(2), b, shifted(b, 302.0, 0.0), false)],
+                DISPLAY,
+            );
+            assert_eq!(moving(&same).len(), 1, "2pt apart: one group");
+            assert_eq!(members(moving(&same)[0]), vec![wid(1), wid(2)]);
+
+            let split = reflow_plan(
+                &[(wid(1), a, shifted(a, 300.0, 0.0), false), (wid(2), b, shifted(b, 303.0, 0.0), false)],
+                DISPLAY,
+            );
+            let groups = moving(&split);
+            assert_eq!(groups.len(), 2, "3pt apart: two groups");
+            assert_eq!(members(groups[0]), vec![wid(1)]);
+            assert_eq!(members(groups[1]), vec![wid(2)]);
+            assert_eq!(groups[1].travel, CGPoint::new(303.0, 0.0));
+            assert_eq!(groups[0].key, GroupKey::Strip(1));
+            assert_eq!(groups[1].key, GroupKey::Strip(2));
+        }
+
+        #[test]
+        fn a_resizing_column_is_changing_and_in_no_group() {
+            let a = column(0.0);
+            let grown = rect(a.origin.x, a.origin.y, a.size.width + 400.0, a.size.height);
+            let plan = reflow_plan(&[(wid(1), a, grown, false)], DISPLAY);
+            assert_eq!(plan.changing, vec![(wid(1), a, grown)]);
+            assert!(plan.group_of(wid(1)).is_none());
+            assert!(moving(&plan).is_empty());
+            assert_eq!(plan.member(wid(1)), Some(Member::Changing { from: a, to: grown }));
+        }
+
+        #[test]
+        fn a_floating_window_is_floating_and_never_grouped() {
+            let a = column(0.0);
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let plan = reflow_plan(
+                &[
+                    (wid(1), a, shifted(a, -100.0, 0.0), false),
+                    (wid(2), settings, shifted(settings, -100.0, 0.0), true),
+                    (wid(3), settings, settings, true),
+                ],
+                DISPLAY,
+            );
+            assert_eq!(members(moving(&plan)[0]), vec![wid(1)], "the same vector does not pull it in");
+            assert_eq!(
+                plan.floating,
+                vec![(wid(2), settings, shifted(settings, -100.0, 0.0)), (wid(3), settings, settings)]
+            );
+            assert!(plan.group_of(wid(2)).is_none() && plan.group_of(wid(3)).is_none());
+            assert_eq!(plan.floating_travel, CGPoint::new(0.0, 0.0), "a layout pass never moves the container");
+        }
+
+        #[test]
+        fn the_still_window_is_in_the_still_group() {
+            let a = column(0.0);
+            let b = column(1.0);
+            let plan = reflow_plan(&[(wid(1), a, a, false), (wid(2), b, shifted(b, 40.0, 0.0), false)], DISPLAY);
+            assert_eq!(plan.groups[0].key, GroupKey::STILL);
+            assert_eq!(plan.groups[0].travel, CGPoint::new(0.0, 0.0));
+            assert_eq!(members(&plan.groups[0]), vec![wid(1)]);
+            assert_eq!(plan.member(wid(1)), Some(Member::Rigid { key: GroupKey::STILL, rel: a }));
+            assert_eq!(members(moving(&plan)[0]), vec![wid(2)]);
+        }
+
+        /// The park rule feeds grouping: `resolve_end` gives a window leaving for a park its
+        /// neighbour's vector, so `reflow_plan` puts the two in one group.
+        #[test]
+        fn a_window_leaving_for_a_park_rides_its_moving_neighbours_group() {
+            let a = column(0.0);
+            let b = column(1.0);
+            let park = Gen(5).park(a.size);
+            assert!(HiddenWindowPlacement::is_off_screen(DISPLAY, park));
+            let b_to = shifted(b, -863.0, 0.0);
+            let others = [(b, b_to, false)];
+            let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &others, DISPLAY);
+            assert_eq!(travel, Some(CGPoint::new(-863.0, 0.0)));
+            let a_end = resolve_end(a, park, DISPLAY, travel);
+            assert_eq!(a_end, shifted(a, -863.0, 0.0));
+
+            let plan = reflow_plan(&[(wid(1), a, a_end, false), (wid(2), b, b_to, false)], DISPLAY);
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(members(groups[0]), vec![wid(1), wid(2)]);
+            assert_eq!(groups[0].travel, CGPoint::new(-863.0, 0.0));
+        }
+
+        /// With no moving neighbour the parked window leaves past the edge (`entry_frame`) and is a
+        /// group of one with that vector.
+        #[test]
+        fn a_window_leaving_for_a_park_alone_is_a_group_of_one() {
+            let a = column(1.0);
+            let park = rect(DISPLAY.size.width - 1.0, DISPLAY.size.height - 1.0, a.size.width, a.size.height);
+            let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &[], DISPLAY);
+            assert_eq!(travel, None);
+            let a_end = resolve_end(a, park, DISPLAY, travel);
+            assert_eq!(a_end, HiddenWindowPlacement::entry_frame(park, a, DISPLAY));
+            let still = column(0.0);
+
+            let plan = reflow_plan(&[(wid(1), a, a_end, false), (wid(2), still, still, false)], DISPLAY);
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(members(groups[0]), vec![wid(1)]);
+            assert_eq!(groups[0].travel, CGPoint::new(a_end.origin.x - a.origin.x, 0.0));
+            assert_eq!(members(&plan.groups[0]), vec![wid(2)]);
+        }
+
+        fn strip_window(idx: u32, frame: CGRect, pinned: bool, floating: bool) -> StripWindow {
+            StripWindow { window: wid(idx), server_id: WindowServerId::new(idx), frame, pinned, floating }
+        }
+
+        /// The 3:27:20 pan: 22 survivors scrolled 574pt. One group, 22 members, one travel.
+        #[test]
+        fn the_3_27_20_pan_is_one_group_of_twenty_two() {
+            let windows: Vec<StripWindow> =
+                (0..22).map(|i| strip_window(i + 1, column(i as f64), false, false)).collect();
+            let from_offset = CGPoint::new(-574.0, 0.0);
+            let to_offset = CGPoint::new(0.0, 0.0);
+            let plan = strip_plan(&windows, from_offset, to_offset);
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].members.len(), 22);
+            assert_eq!(groups[0].travel, CGPoint::new(-574.0, 0.0));
+            assert_eq!(groups[0].travel, strip_pan_travel(from_offset, to_offset));
+            for (window, member) in windows.iter().zip(&groups[0].members) {
+                let (from, to) = strip_travel(window.frame, from_offset, to_offset, false);
+                assert_eq!(member.window, window.window);
+                assert_eq!(member.rel, from);
+                assert_eq!(overlay_of(member.rel, groups[0].travel), to, "rel plus travel is the destination");
+            }
+            assert!(plan.groups[0].members.is_empty());
+            assert!(plan.floating.is_empty() && plan.changing.is_empty());
+            assert_eq!(plan.floating_travel, CGPoint::new(0.0, 0.0));
+        }
+
+        /// A pan pins its floating windows: they stand in the floating container, which does not move.
+        #[test]
+        fn pinned_windows_are_floating_with_zero_travel() {
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let windows = vec![
+                strip_window(1, column(0.0), false, false),
+                strip_window(2, settings, true, true),
+            ];
+            let plan = strip_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
+            assert_eq!(plan.floating, vec![(wid(2), settings, settings)]);
+            assert_eq!(plan.floating_travel, CGPoint::new(0.0, 0.0));
+            assert_eq!(plan.member(wid(2)), Some(Member::Floating { from: settings, to: settings }));
+            assert_eq!(members(moving(&plan)[0]), vec![wid(1)]);
+        }
+
+        /// A switch moves its floating windows by the strip's travel: the container carries them.
+        #[test]
+        fn a_switch_moves_the_floating_container_by_the_strip_travel() {
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let windows = vec![
+                strip_window(1, column(0.0), false, false),
+                strip_window(2, settings, false, true),
+            ];
+            let from_offset = CGPoint::new(0.0, 0.0);
+            let to_offset = CGPoint::new(0.0, 1117.0);
+            let plan = strip_plan(&windows, from_offset, to_offset);
+            let travel = strip_pan_travel(from_offset, to_offset);
+            assert_eq!(travel, CGPoint::new(0.0, -1117.0));
+            assert_eq!(moving(&plan)[0].travel, travel);
+            assert_eq!(plan.floating_travel, travel);
+            assert_eq!(plan.floating, vec![(wid(2), settings, settings)], "the tile itself stands in its container");
+            let (_, to) = strip_travel(settings, from_offset, to_offset, false);
+            assert_eq!(overlay_of(settings, plan.floating_travel), to);
+        }
+
+        #[test]
+        fn group_relative_and_overlay_of_are_inverses() {
+            let f = rect(867.0, 32.0, 859.0, 1081.0);
+            let p = CGPoint::new(-574.0, 12.0);
+            assert_eq!(overlay_of(group_relative(f, p), p), f);
+            assert_eq!(group_relative(f, p), rect(1441.0, 20.0, 859.0, 1081.0));
+            assert_eq!(group_relative(f, CGPoint::new(0.0, 0.0)), f, "at install rel is from");
+            let mut rng = Gen(3);
+            for _ in 0..RUNS {
+                let f = rng.on_screen();
+                let p = CGPoint::new(rng.pt(-2000.0, 2000.0), rng.pt(-2000.0, 2000.0));
+                assert_eq!(overlay_of(group_relative(f, p), p), f);
+                assert_eq!(group_relative(f, p).size, f.size);
+            }
+        }
+
+        #[test]
+        fn a_fresh_flight_plan_positions_every_container_at_its_travel() {
+            let a = column(0.0);
+            let plan = reflow_plan(&[(wid(1), a, shifted(a, -100.0, 0.0), false), (wid(2), a, a, false)], DISPLAY);
+            let flight = FlightPlan::from(plan.clone());
+            assert_eq!(flight.groups, plan.groups);
+            assert_eq!(flight.positions[&GroupKey::STILL], CGPoint::new(0.0, 0.0));
+            assert_eq!(flight.positions[&GroupKey::Strip(1)], CGPoint::new(-100.0, 0.0));
+            assert_eq!(flight.positions[&GroupKey::StripLoose], CGPoint::new(0.0, 0.0));
+            assert_eq!(flight.positions[&GroupKey::Floating], CGPoint::new(0.0, 0.0));
+            assert_eq!(flight.next_key, 2);
+            assert!(PlanDelta::default().is_empty());
+        }
+
+        /// A random pass: 1-12 windows with vectors from a palette of 1-4 distinct vectors (at
+        /// least 4pt apart on some axis, and from zero) plus ±1pt jitter, some still, some
+        /// resizing, some floating.
+        pub(super) fn random_requests(rng: &mut Gen) -> Vec<(WindowId, CGRect, CGRect, bool)> {
+            let mut palette: Vec<CGPoint> = Vec::new();
+            let wanted = 1 + rng.below(4) as usize;
+            while palette.len() < wanted {
+                let v = CGPoint::new(rng.pt(-12.0, 12.0) * 50.0, if rng.coin() { 0.0 } else { rng.pt(-6.0, 6.0) * 50.0 });
+                if (v.x == 0.0 && v.y == 0.0) || palette.contains(&v) {
+                    continue;
+                }
+                palette.push(v);
+            }
+            let count = 1 + rng.below(12) as usize;
+            (0..count)
+                .map(|i| {
+                    let from = rng.on_screen();
+                    let window = wid(i as u32 + 1);
+                    match rng.below(10) {
+                        0 => (window, from, from, false),
+                        1 => {
+                            let to = rect(from.origin.x, from.origin.y, from.size.width + rng.pt(-300.0, 300.0), from.size.height);
+                            let to = if is_a_resize(from.size, to.size) { to } else { rect(to.origin.x, to.origin.y, from.size.width + 200.0, to.size.height) };
+                            (window, from, to, false)
+                        }
+                        2 => {
+                            let v = palette[rng.below(palette.len() as u64) as usize];
+                            (window, from, shifted(from, v.x, v.y), true)
+                        }
+                        _ => {
+                            let v = palette[rng.below(palette.len() as u64) as usize];
+                            let (jx, jy) = (rng.pt(-1.0, 1.0), rng.pt(-1.0, 1.0));
+                            (window, from, shifted(from, v.x + jx, v.y + jy), false)
+                        }
+                    }
+                })
+                .collect()
+        }
+
+        /// Property (seed 131, 200 runs): partition; every member within 2pt of its group's
+        /// travel; members of different groups more than 2pt apart on some axis; the still group
+        /// is `groups[0]` at zero; no changing or floating member in a group.
+        #[test]
+        fn a_reflow_plan_partitions_the_pass_into_rigid_groups() {
+            let mut rng = Gen(131);
+            for run in 0..RUNS {
+                let requests = random_requests(&mut rng);
+                let display = if run % 2 == 0 { DISPLAY } else { rect(1728.0, -300.0, 3008.0, 1692.0) };
+                let plan = reflow_plan(&requests, display);
+                let tag = format!("seed 131 run {run}");
+
+                let mut named = plan.windows();
+                named.sort();
+                let mut asked: Vec<WindowId> = requests.iter().map(|r| r.0).collect();
+                asked.sort();
+                assert_eq!(named, asked, "{tag}: partition");
+                assert!(plan.entrances.is_empty(), "{tag}");
+
+                assert_eq!(plan.groups[0].key, GroupKey::STILL, "{tag}");
+                assert_eq!(plan.groups[0].travel, CGPoint::new(0.0, 0.0), "{tag}");
+                for (i, group) in plan.groups.iter().enumerate() {
+                    assert_eq!(group.key, GroupKey::Strip(i as u16), "{tag}: keys in plan order");
+                    assert!(i == 0 || !group.members.is_empty(), "{tag}: an empty moving group");
                 }
 
-                // `begin_group`'s merge, in order.
-                let travel = PassTravel::new(&pass, Some(delta), display);
-                retarget_entrances(&mut running.entrances, &frames_after, display, &travel);
-                let mut pass = pass;
-                pass.extend(retargets_from_frames(
-                    &running.tiles,
-                    &pass,
-                    &frames_after,
-                    display,
-                    &travel,
-                ));
-                let ghosts_before: Vec<(WindowId, CGRect)> =
-                    running.tiles.iter().filter(|t| t.ghost).map(|t| (t.window, t.to)).collect();
-                let shifted_ghosts = shift_ghosts(&mut running.tiles, delta);
-                merge_final_frames(&mut running.final_frames, frames_after.clone());
-                running.merge_pass(pass, None);
+                for &(window, start, end, floating) in &requests {
+                    let from = to_overlay_space(start, display);
+                    let to = to_overlay_space(end, display);
+                    let v = CGPoint::new(to.origin.x - from.origin.x, to.origin.y - from.origin.y);
+                    match plan.member(window).unwrap_or_else(|| panic!("{tag}: {window:?} unnamed")) {
+                        Member::Rigid { key, rel } => {
+                            assert!(!floating, "{tag}: a floating window grouped");
+                            assert!(!is_a_resize(from.size, to.size), "{tag}: a resize grouped");
+                            assert_eq!(rel, from, "{tag}");
+                            let group = plan.group_of(window).unwrap();
+                            assert_eq!(group.key, key, "{tag}");
+                            assert!(same_vector(group.travel, v), "{tag}: {v:?} in group at {:?}", group.travel);
+                            if !is_moving(from, to) {
+                                assert_eq!(key, GroupKey::STILL, "{tag}: a still window off the still group");
+                            }
+                        }
+                        Member::Changing { from: f, to: t } => {
+                            assert!(!floating && is_a_resize(from.size, to.size), "{tag}");
+                            assert_eq!((f, t), (from, to), "{tag}");
+                        }
+                        Member::Floating { from: f, to: t } => {
+                            assert!(floating, "{tag}");
+                            assert_eq!((f, t), (from, to), "{tag}");
+                        }
+                        Member::Entrance { .. } => panic!("{tag}: no entrance was asked for"),
+                    }
+                }
 
-                for tile in running.tiles.iter().filter(|t| !t.companion && !t.ghost) {
-                    let (_, frame) = frames_after
-                        .iter()
-                        .find(|(w, _)| *w == tile.window)
-                        .unwrap_or_else(|| panic!("seed 111 run {run}: tile with no frame"));
-                    assert!(
-                        tile.to.same_as(to_overlay_space(*frame, display)),
-                        "seed 111 run {run}: {:?} ends at {:?}, strip at {:?}",
-                        tile.window,
-                        tile.to,
-                        to_overlay_space(*frame, display)
+                let vector_of = |window: WindowId| {
+                    let r = requests.iter().find(|r| r.0 == window).unwrap();
+                    CGPoint::new(r.2.origin.x - r.1.origin.x, r.2.origin.y - r.1.origin.y)
+                };
+                for (i, a) in plan.groups.iter().enumerate() {
+                    for b in plan.groups.iter().skip(i + 1) {
+                        for ma in &a.members {
+                            for mb in &b.members {
+                                let (va, vb) = (vector_of(ma.window), vector_of(mb.window));
+                                assert!(
+                                    (va.x - vb.x).abs() > GROUP_TOLERANCE || (va.y - vb.y).abs() > GROUP_TOLERANCE,
+                                    "{tag}: {va:?} and {vb:?} in different groups"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// The 2026-09-15 3:28:10 open: the newcomer's slot at x=867, the neighbour shifted right
+        /// by 859. One moving group with the neighbour, and the still group.
+        #[test]
+        fn an_open_beside_a_column_moves_the_neighbour_as_one_group() {
+            let neighbour = rect(867.0, 32.0, 859.0, 1081.0);
+            let left = column(0.0);
+            let plan = reflow_plan(
+                &[(wid(1), left, left, false), (wid(2), neighbour, shifted(neighbour, 859.0, 0.0), false)],
+                DISPLAY,
+            );
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(members(groups[0]), vec![wid(2)]);
+            assert_eq!(groups[0].travel, CGPoint::new(859.0, 0.0));
+            assert_eq!(members(&plan.groups[0]), vec![wid(1)]);
+            assert!(plan.changing.is_empty() && plan.entrances.is_empty());
+        }
+
+        /// A preset resize of the middle column: the left neighbour stands, the middle changes,
+        /// the right neighbour shifts by the width change and is the one moving group.
+        #[test]
+        fn a_preset_resize_changes_the_middle_and_shifts_the_right_neighbour_as_a_group() {
+            let (left, middle, right) = (column(0.0), column(1.0), column(2.0));
+            let dw = 300.0;
+            let grown = rect(middle.origin.x, middle.origin.y, middle.size.width + dw, middle.size.height);
+            let plan = reflow_plan(
+                &[
+                    (wid(1), left, left, false),
+                    (wid(2), middle, grown, false),
+                    (wid(3), right, shifted(right, dw, 0.0), false),
+                ],
+                DISPLAY,
+            );
+            assert_eq!(plan.changing, vec![(wid(2), middle, grown)]);
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(members(groups[0]), vec![wid(3)]);
+            assert_eq!(groups[0].travel, CGPoint::new(dw, 0.0));
+            assert_eq!(members(&plan.groups[0]), vec![wid(1)]);
+        }
+
+        /// A close: every survivor to the right shifts left by the closed width, as one group.
+        #[test]
+        fn a_close_shifts_every_survivor_as_one_group() {
+            let w = 863.0;
+            let survivors: Vec<(WindowId, CGRect, CGRect, bool)> = (1..=4)
+                .map(|i| {
+                    let f = column(i as f64);
+                    (wid(i as u32), f, shifted(f, -w, 0.0), false)
+                })
+                .collect();
+            let plan = reflow_plan(&survivors, DISPLAY);
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(members(groups[0]), (1..=4).map(wid).collect::<Vec<_>>());
+            assert_eq!(groups[0].travel, CGPoint::new(-w, 0.0));
+            assert!(plan.groups[0].members.is_empty());
+        }
+
+        /// A close: the closed window is not in the pass at all; the survivors are one group. A
+        /// pass is worth flying when something drawable moves or a flight runs, and only then.
+        #[test]
+        fn a_close_composes_only_the_survivors_and_worth_flying_needs_a_mover() {
+            let w = 863.0;
+            let closed = wid(2);
+            let survivors: Vec<(WindowId, CGRect, CGRect, bool)> = [1u32, 3, 4]
+                .iter()
+                .map(|&i| {
+                    let f = column(i as f64);
+                    let to = if i > 2 { shifted(f, -w, 0.0) } else { f };
+                    (wid(i), f, to, false)
+                })
+                .collect();
+            let plan = reflow_plan(&survivors, DISPLAY);
+            assert!(plan.member(closed).is_none(), "nothing is drawn for the closed window");
+            assert_eq!(moving(&plan).len(), 1);
+            assert_eq!(members(moving(&plan)[0]), vec![wid(3), wid(4)]);
+            assert!(!worth_flying(false, false));
+            assert!(worth_flying(true, false));
+            assert!(worth_flying(false, true));
+        }
+
+        /// A pass with only a floating move: no groups, one floating member, nothing rigid.
+        #[test]
+        fn a_floating_only_pass_has_no_groups_and_one_floating_member() {
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let plan = reflow_plan(&[(wid(1), settings, shifted(settings, 40.0, 20.0), true)], DISPLAY);
+            assert!(moving(&plan).is_empty());
+            assert!(plan.groups[0].members.is_empty());
+            assert_eq!(plan.floating, vec![(wid(1), settings, shifted(settings, 40.0, 20.0))]);
+            let flight = FlightPlan::from(plan);
+            let targets = crate::ui::workspace_overlay::animation_targets(&flight);
+            assert_eq!(targets.len(), 1, "the floating tile flies on its own");
+        }
+
+        /// A grow still holds: `outgrows` on the picture against the destination puts the window
+        /// in `awaiting`, and `extend_hold` on a collecting flight takes it.
+        #[test]
+        fn a_grow_still_enters_awaiting() {
+            use crate::ui::window_snapshot::{outgrows, test_snapshot};
+            let a = column(0.0);
+            let grown = rect(a.origin.x, a.origin.y, a.size.width + 600.0, a.size.height);
+            let snapshot = test_snapshot(a.size);
+            assert!(outgrows(snapshot.coverage.covered, grown.size));
+            let mut running = RunningAnimation {
+                tiles: Vec::new(),
+                final_frames: vec![(wid(1), grown)],
+                frames_applied: false,
+                started: None,
+                duration: Duration::from_millis(350),
+                apply_at: 0.0,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                plan: FlightPlan::empty(),
+                _clock: None,
+            };
+            let frames = running.extend_hold(&[(wid(1), grown.size)], false, running.duration, Instant::now());
+            assert_eq!(running.awaiting, vec![(wid(1), grown.size)]);
+            assert!(running.hold_deadline.is_some());
+            assert_eq!(frames, Some(vec![(wid(1), grown)]), "the held frames go out under the overlay");
+        }
+
+        /// `entrance_plan`: `Travel` from the spawn frame, or a reservation with its reason.
+        #[test]
+        fn entrance_plan_travels_from_spawn_or_reserves_with_a_reason() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let spawn = rect(300.0, 200.0, 640.0, 480.0);
+            assert_eq!(
+                entrance_plan(Some(spawn), slot, true, true),
+                EntranceDecision::Travel { from: spawn, to: slot }
+            );
+            assert_eq!(entrance_plan(None, slot, true, true), EntranceDecision::Reserve("no server frame"));
+            assert_eq!(
+                entrance_plan(Some(rect(300.0, 200.0, 0.0, 0.0)), slot, true, true),
+                EntranceDecision::Reserve("zero server frame")
+            );
+            assert_eq!(entrance_plan(Some(spawn), slot, false, true), EntranceDecision::Reserve("capture unusable"));
+            assert_eq!(entrance_plan(Some(spawn), slot, true, false), EntranceDecision::Reserve("capture budget"));
+        }
+
+        /// `frame_zero_work`: holding sends every frame; a spawn entrance alone sends its slot and
+        /// chases; nothing pending sends nothing.
+        #[test]
+        fn frame_zero_work_sends_all_frames_when_holding_and_only_slots_otherwise() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let grown = rect(4.0, 32.0, 1200.0, 1081.0);
+            let final_frames = vec![(wid(1), grown), (wid(2), slot)];
+            let (holding, chase_set, now) = frame_zero_work(
+                &[(wid(1), grown.size)],
+                &[(wid(2), slot.size)],
+                &final_frames,
+                &[(wid(2), slot)],
+            );
+            assert!(holding);
+            assert_eq!(now, final_frames, "holding: every frame goes out under the overlay");
+            assert_eq!(chase_set, vec![(wid(1), grown.size), (wid(2), slot.size)]);
+
+            let (holding, chase_set, now) =
+                frame_zero_work(&[], &[(wid(2), slot.size)], &final_frames, &[(wid(2), slot)]);
+            assert!(!holding);
+            assert_eq!(now, vec![(wid(2), slot)], "not holding: the newcomer's slot alone");
+            assert_eq!(chase_set, vec![(wid(2), slot.size)]);
+
+            let (holding, chase_set, now) = frame_zero_work(&[], &[], &final_frames, &[]);
+            assert!(!holding && chase_set.is_empty() && now.is_empty());
+        }
+
+        /// A flight composed with a spawn entrance does not hold: `awaiting` is empty, the chase
+        /// set is not, there is no hold deadline, and the entrance's tile is a reveal in waiting
+        /// while its spawn picture does not cover the slot.
+        #[test]
+        fn a_spawn_entrance_flies_without_a_hold_and_is_a_reveal_in_waiting() {
+            use crate::ui::window_snapshot::test_snapshot;
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let spawn = rect(300.0, 200.0, 400.0, 300.0);
+            let EntranceDecision::Travel { from, to } = entrance_plan(Some(spawn), slot, true, true) else {
+                panic!("travels");
+            };
+            let tile = OverlayTile {
+                window: wid(9),
+                from,
+                to,
+                snapshot: test_snapshot(spawn.size),
+                floating: false,
+                server_order: Some(0),
+                depth: 0,
+                companion: false,
+                focused: true,
+            };
+            let awaiting: Vec<(WindowId, CGSize)> = Vec::new();
+            let (holding, chase_set, now) =
+                frame_zero_work(&awaiting, &[(wid(9), slot.size)], &[(wid(9), slot)], &[(wid(9), slot)]);
+            assert!(!holding);
+            assert_eq!(now, vec![(wid(9), slot)]);
+            let running = RunningAnimation {
+                tiles: vec![tile],
+                final_frames: vec![(wid(9), slot)],
+                frames_applied: holding,
+                started: None,
+                duration: Duration::from_millis(350),
+                apply_at: 0.0,
+                entrances: Vec::new(),
+                awaiting: awaiting.clone(),
+                hold_deadline: holding.then(|| Instant::now() + reveal_hold_limit(Duration::from_millis(350))),
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: Some(wid(9)),
+                plan: FlightPlan::empty(),
+                _clock: None,
+            };
+            assert!(running.awaiting.is_empty());
+            assert!(!chase_set.is_empty());
+            assert_eq!(running.hold_deadline, None);
+            assert_eq!(running.phase(), FlightPhase::FrameZero);
+            assert_eq!(
+                running.tile_state(wid(9), &test_snapshot(spawn.size)),
+                TileState::Reveal { fits: false },
+                "the spawn picture does not cover the slot"
+            );
+            assert_eq!(running.tile_state(wid(9), &test_snapshot(slot.size)), TileState::Reveal { fits: true });
+            // The plan calls it an entrance; the tile is a loose resize from spawn to slot.
+            let mut plan = ReflowPlan::empty();
+            plan.entrances.push((wid(9), from, to));
+            assert_eq!(plan.member(wid(9)), Some(Member::Entrance { from, to }));
+            let targets = crate::ui::workspace_overlay::animation_targets(&FlightPlan::from(plan));
+            assert_eq!(targets.len(), 1);
+        }
+
+        /// A spawn entrance's chase landing before the flight moves replaces its picture without
+        /// releasing anything; a picture that does not cover the slot is refused.
+        #[test]
+        fn a_spawn_entrances_early_chase_picture_is_taken_without_a_release() {
+            use crate::ui::window_snapshot::test_snapshot;
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let spawn = rect(300.0, 200.0, 400.0, 300.0);
+            let mut running = RunningAnimation {
+                tiles: vec![stacked(wid(9), spawn, slot, Some(0), false)],
+                final_frames: vec![(wid(9), slot)],
+                frames_applied: false,
+                started: None,
+                duration: Duration::from_millis(350),
+                apply_at: 0.0,
+                entrances: Vec::new(),
+                awaiting: Vec::new(),
+                hold_deadline: None,
+                destination_refreshed: false,
+                refresh_targets: Vec::new(),
+                harvested: HashSet::new(),
+                focus: None,
+                plan: FlightPlan::empty(),
+                _clock: None,
+            };
+            running.tiles[0].snapshot = test_snapshot(spawn.size);
+            assert_eq!(running.claim(wid(9), &test_snapshot(spawn.size)), None, "still spawn-sized");
+            assert_eq!(running.claim(wid(9), &test_snapshot(slot.size)), Some(Claimed::Refreshed));
+            assert!(running.tiles[0].snapshot.fits(slot.size));
+            assert_eq!(running.claim(wid(77), &test_snapshot(slot.size)), None, "no such tile");
+        }
+
+        /// Property (seed 157, 200 runs): `entrance_plan` is `Travel` iff the spawn frame has
+        /// size, the picture is usable and the budget is left; `Travel` carries the spawn frame
+        /// and the slot, and the spawn has positive width.
+        #[test]
+        fn entrance_plan_travels_exactly_when_it_can() {
+            let mut rng = Gen(157);
+            for run in 0..RUNS {
+                let slot = rng.on_screen();
+                let spawn = match rng.below(4) {
+                    0 => None,
+                    1 => Some(rect(rng.pt(0.0, 1000.0), rng.pt(0.0, 800.0), 0.0, rng.pt(0.0, 500.0))),
+                    _ => Some(rng.on_screen()),
+                };
+                let usable = rng.coin();
+                let budget = rng.coin();
+                let decision = entrance_plan(spawn, slot, usable, budget);
+                let can = spawn.is_some_and(|f| f.size.width > 0.0 && f.size.height > 0.0) && usable && budget;
+                match decision {
+                    EntranceDecision::Travel { from, to } => {
+                        assert!(can, "seed 157 run {run}");
+                        assert_eq!(Some(from), spawn, "seed 157 run {run}");
+                        assert_eq!(to, slot, "seed 157 run {run}");
+                        assert!(from.size.width > 0.0, "seed 157 run {run}");
+                    }
+                    EntranceDecision::Reserve(_) => assert!(!can, "seed 157 run {run}"),
+                }
+            }
+        }
+
+        /// The 50/50 pair with Settings over them (`model/z_group.rs`): with a strip focus the
+        /// floating container is behind; with Settings focused it is in front. The strip container
+        /// holding the focus comes first; a companion carries its window's depth.
+        #[test]
+        fn band_plan_puts_the_floating_container_behind_the_strip_unless_it_holds_focus() {
+            use crate::model::z_group::{GROUP_STRIDE, tile_depth};
+            let (left, right) = (rect(4.0, 32.0, 860.0, 1081.0), rect(868.0, 32.0, 856.0, 1081.0));
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let far = column(2.0);
+            let v = CGPoint::new(-300.0, 0.0);
+            // Left half focused: the pair stands, a far column slides, Settings floats.
+            let mut tiles = vec![
+                stacked(wid(90), left, left, Some(0), false),
+                stacked(wid(5830), settings, settings, Some(1), true),
+                stacked(wid(89), right, right, Some(2), false),
+                stacked(wid(91), far, shifted(far, v.x, v.y), Some(3), false),
+            ];
+            let mut companion = stacked(wid(900), left, left, None, false);
+            companion.companion = true;
+            tiles.push(companion);
+            restack(&mut tiles, Some(wid(90)));
+            let plan = FlightPlan::from(plan_from_tiles(&tiles));
+            let still = plan.groups[0].key;
+            let moving = plan.groups[1].key;
+
+            let banding = band_plan(&plan, &tiles, Some(wid(90)));
+            assert!(!banding.floating_in_front);
+            assert_eq!(banding.strip_order, vec![still, moving], "the focused group first");
+            assert_eq!(banding.within[&wid(90)], 0, "the focused window leads its container");
+            assert_eq!(banding.within[&wid(89)], tile_depth(Some(2), false, StackGroup::Strip, StackGroup::Strip));
+            assert_eq!(banding.within[&wid(5830)], tile_depth(Some(1), false, StackGroup::Floating, StackGroup::Floating));
+            let anchor = tiles.iter().find(|t| t.window == wid(90)).unwrap().depth;
+            assert_eq!(banding.within[&wid(900)], anchor % GROUP_STRIDE, "a companion takes its window's depth");
+
+            restack(&mut tiles, Some(wid(5830)));
+            let banding = band_plan(&plan, &tiles, Some(wid(5830)));
+            assert!(banding.floating_in_front);
+            assert_eq!(banding.within[&wid(5830)], 0);
+            assert_eq!(banding.strip_order, vec![still, moving], "no strip group holds focus: shallowest first");
+        }
+
+        /// Property P3 (seed 163, 200 runs): for random tiles and a random focused group, the
+        /// container's band less the tile's within-band depth is `-tile_depth` exactly, so every
+        /// floating tile is behind every strip tile with a strip focus and in front with a floating one.
+        #[test]
+        fn container_bands_plus_within_depths_reproduce_tile_depth() {
+            use crate::model::z_group::{container_z, tile_depth};
+            let mut rng = Gen(163);
+            for run in 0..RUNS {
+                let count = 1 + rng.below(8) as usize;
+                let mut tiles: Vec<OverlayTile> = (0..count)
+                    .map(|i| {
+                        let f = rng.on_screen();
+                        let order = if rng.below(6) == 0 { None } else { Some(rng.below(40) as usize) };
+                        stacked(wid(i as u32 + 1), f, f, order, rng.coin())
+                    })
+                    .collect();
+                let focus = if rng.coin() { Some(wid(1 + rng.below(count as u64) as u32)) } else { None };
+                restack(&mut tiles, focus);
+                let plan = FlightPlan::from(plan_from_tiles(&tiles));
+                let banding = band_plan(&plan, &tiles, focus);
+                let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
+                assert_eq!(banding.floating_in_front, focused_group == StackGroup::Floating, "seed 163 run {run}");
+                let tag = format!("seed 163 run {run}");
+                let mut strip_total: Vec<f64> = Vec::new();
+                let mut floating_total: Vec<f64> = Vec::new();
+                for tile in &tiles {
+                    let group = group_of(tile.floating);
+                    let within = banding.within[&tile.window];
+                    let total = container_z(group, focused_group) - within as f64;
+                    let expected = -(tile_depth(tile.server_order, focus == Some(tile.window), group, focused_group) as f64);
+                    assert_eq!(total, expected, "{tag}: {:?}", tile.window);
+                    assert_eq!(total, -(tile.depth as f64), "{tag}: restack agrees");
+                    if tile.floating { floating_total.push(total) } else { strip_total.push(total) }
+                }
+                for f in &floating_total {
+                    for s in &strip_total {
+                        if focused_group == StackGroup::Strip {
+                            assert!(f < s, "{tag}: floating {f} in front of strip {s}");
+                        } else {
+                            assert!(f > s, "{tag}: floating {f} behind strip {s}");
+                        }
+                    }
+                }
+                // Every occupied strip container is ordered once; the floating one never is.
+                let mut order = banding.strip_order.clone();
+                order.sort_by_key(|k| format!("{k:?}"));
+                order.dedup();
+                assert_eq!(order.len(), banding.strip_order.len(), "{tag}");
+                assert!(!banding.strip_order.contains(&GroupKey::Floating), "{tag}");
+                for g in plan.groups.iter().filter(|g| !g.members.is_empty()) {
+                    assert!(banding.strip_order.contains(&g.key), "{tag}: {:?} unordered", g.key);
+                }
+            }
+        }
+
+        /// `plan_from_tiles` on the merged tiles is the same partition `reflow_plan` gives the
+        /// requests they came from: a coalescing merge recomposes frame zero without the requests.
+        #[test]
+        fn a_plan_rebuilt_from_tiles_matches_the_plan_from_requests() {
+            let mut rng = Gen(139);
+            for run in 0..RUNS {
+                let requests = random_requests(&mut rng);
+                let expected = reflow_plan(&requests, DISPLAY);
+                let tiles: Vec<OverlayTile> = requests
+                    .iter()
+                    .map(|&(window, start, end, floating)| {
+                        stacked(window, to_overlay_space(start, DISPLAY), to_overlay_space(end, DISPLAY), None, floating)
+                    })
+                    .collect();
+                let rebuilt = plan_from_tiles(&tiles);
+                assert_eq!(rebuilt, expected, "seed 139 run {run}");
+            }
+        }
+
+        /// Property (seed 137, 200 runs): `fly` installs what `animation_targets` names and
+        /// nothing else, so no rigid member is a tile target, every non-still group is a
+        /// container target exactly once, and every changing / entrance / moving floating member
+        /// is a tile target exactly once (Requirement 11.4).
+        #[test]
+        fn animation_targets_name_every_moving_piece_once_and_no_rigid_member() {
+            use crate::ui::workspace_overlay::{AnimationTarget, animation_targets};
+            let mut rng = Gen(137);
+            for run in 0..RUNS {
+                let requests = random_requests(&mut rng);
+                let mut plan = reflow_plan(&requests, DISPLAY);
+                // A switch now and then: the floating container itself travels.
+                let switch = run % 5 == 0 && !plan.floating.is_empty();
+                if switch {
+                    plan.floating_travel = CGPoint::new(0.0, -DISPLAY.size.height);
+                    for (_, from, to) in plan.floating.iter_mut() {
+                        *to = *from;
+                    }
+                }
+                let flight = FlightPlan::from(plan.clone());
+                let targets = animation_targets(&flight);
+                let tag = format!("seed 137 run {run}");
+
+                let mut containers: Vec<GroupKey> = Vec::new();
+                let mut tiles: Vec<WindowId> = Vec::new();
+                for target in &targets {
+                    match *target {
+                        AnimationTarget::Container { key, from, to } => {
+                            assert!(!containers.contains(&key), "{tag}: {key:?} named twice");
+                            containers.push(key);
+                            let travel = match key {
+                                GroupKey::Floating => plan.floating_travel,
+                                key => plan.groups.iter().find(|g| g.key == key).unwrap().travel,
+                            };
+                            assert_eq!(from, CGPoint::new(0.0, 0.0), "{tag}: a fresh flight installs at the origin");
+                            assert_eq!(to, travel, "{tag}");
+                            assert!(travel.x != 0.0 || travel.y != 0.0, "{tag}: a zero-travel container");
+                        }
+                        AnimationTarget::Tile { window, .. } => {
+                            assert!(!tiles.contains(&window), "{tag}: {window:?} named twice");
+                            tiles.push(window);
+                        }
+                    }
+                }
+                for group in &plan.groups {
+                    for member in &group.members {
+                        assert!(!tiles.contains(&member.window), "{tag}: rigid {:?} as a tile", member.window);
+                    }
+                    assert_eq!(
+                        containers.contains(&group.key),
+                        !group.is_still(),
+                        "{tag}: group {:?} travel {:?}",
+                        group.key,
+                        group.travel
                     );
                 }
-                for entrance in &running.entrances {
-                    assert!(
-                        entrance.to.same_as(to_overlay_space(shifted(slot, delta), display)),
-                        "seed 111 run {run}: entrance at {:?}",
-                        entrance.to
-                    );
-                }
-                assert_eq!(shifted_ghosts, vec![wid(200)], "seed 111 run {run}");
-                for (window, to) in ghosts_before {
-                    let ghost = running.tiles.iter().find(|t| t.window == window).unwrap();
-                    assert_eq!(ghost.to.origin.x, to.origin.x + delta.x, "seed 111 run {run}");
-                    assert_eq!(ghost.to.origin.y, to.origin.y + delta.y, "seed 111 run {run}");
-                    assert_eq!(ghost.to.size, to.size, "seed 111 run {run}");
-                }
-                assert_eq!(running.tiles.len(), count as usize + 1, "seed 111 run {run}: nothing joined");
+                assert_eq!(containers.contains(&GroupKey::Floating), switch, "{tag}");
+                let mut expected: Vec<WindowId> = plan
+                    .changing
+                    .iter()
+                    .chain(&plan.entrances)
+                    .map(|(w, _, _)| *w)
+                    .chain(plan.floating.iter().filter(|(_, f, t)| !f.same_as(*t)).map(|(w, _, _)| *w))
+                    .collect();
+                expected.sort();
+                tiles.sort();
+                assert_eq!(tiles, expected, "{tag}: tile targets");
             }
         }
     }

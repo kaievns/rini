@@ -1121,6 +1121,9 @@ So each press sets a new destination for the same viewport rather than restartin
 anything, which is what the sign of `from_offset = delta` buys. Reversing it would
 start every chained press on the wrong side.
 
+The canvas was dissolved into per-tile animations for a while and is back as one
+container per rigid piece (`docs/animation-smoothness.md`, "The overlay engine").
+
 ## A one-point size change sent the whole strip to the Accessibility engine
 
 The overlay animates a picture, so a real size change would stretch that picture

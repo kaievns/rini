@@ -454,6 +454,11 @@ impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
         self.entries.retain(|wid, _| live(*wid));
     }
 
+    /// Every cached entry, for the debug dump.
+    pub fn iter(&self) -> impl Iterator<Item = (&WindowId, &T)> {
+        self.entries.iter()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

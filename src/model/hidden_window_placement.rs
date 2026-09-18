@@ -31,7 +31,7 @@ impl HiddenWindowPlacement {
         CGRect::new(CGPoint::new(x, screen.max().y - Self::REVEAL_PX), window.size)
     }
 
-    fn intersection_area(a: CGRect, b: CGRect) -> f64 {
+    pub fn intersection_area(a: CGRect, b: CGRect) -> f64 {
         let width = (a.max().x.min(b.max().x) - a.origin.x.max(b.origin.x)).max(0.0);
         let height = (a.max().y.min(b.max().y) - a.origin.y.max(b.origin.y)).max(0.0);
         width * height

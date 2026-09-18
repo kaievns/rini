@@ -1,10 +1,10 @@
 //! The animation overlay: one rini-owned window holding a picture of every animating window.
 //!
 //! Nothing real moves during an animation. Real windows are placed at their final frames once,
-//! underneath an opaque overlay, and every layer inside it is repositioned in a single Core Animation
-//! transaction, so windows cannot tear against each other the way per-frame `AXPosition` writes did.
-//!
-//! Design constraints, all measured, in `docs/capture-overlay-research.md`.
+//! underneath an opaque overlay. Tiles ride containers, one per rigid piece of the flight; a
+//! container's position is the only translation its members get, so a strip cannot tear.
+//! See "The overlay engine" in `docs/animation-smoothness.md`; capture measurements in
+//! `docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -24,7 +24,11 @@ use objc2_quartz_core::{
 };
 
 use crate::actor::app::WindowId;
-use crate::sys::geometry::SameAs;
+use crate::actor::workspace_animation::plan::{
+    Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
+};
+use crate::model::z_group::{StackGroup, container_z};
+use crate::sys::geometry::{Round, SameAs};
 use crate::sys::screen::CoordinateConverter;
 use crate::ui::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
@@ -78,9 +82,6 @@ pub struct OverlayTile {
     pub companion: bool,
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow.
     pub focused: bool,
-    /// A closed window's ghost, shrinking out with no real window behind it. No later pass names
-    /// it, so a strip movement merging into the flight carries it by its travel instead.
-    pub ghost: bool,
 }
 
 impl OverlayTile {
@@ -288,9 +289,35 @@ pub fn ease_out_cubic(t: f64) -> f64 {
     1.0 - inv * inv * inv
 }
 
+/// A frame on whole points. The window server places real windows on whole points (a layout
+/// offset of 4592.67 lands a window at x=4593), while a layer at a fractional position is
+/// resampled and sits that fraction off. Drawn there, every tile popped by the fraction and
+/// sharpened at the lift, on every flight. See "Real windows land before lift" in
+/// `docs/animation-smoothness.md`.
+fn whole(rect: CGRect) -> CGRect {
+    rect.round()
+}
+
+fn whole_point(point: CGPoint) -> CGPoint {
+    point.round()
+}
+
+/// Commits the explicit transaction AND flushes the run loop's implicit one, so the change reaches
+/// the render server now. The overlay shares the main thread with the reactor; an explicit commit
+/// nested in the run loop's implicit transaction is only sent when that iteration ends, after
+/// whatever synchronous AX and window-server calls the reactor makes next. A flight whose start
+/// was sent late skipped its first frames. See "Mid-flight passes" in `docs/animation-smoothness.md`.
+fn commit_now() {
+    CATransaction::commit();
+    CATransaction::flush();
+}
+
 /// One key for every tile movement, so a retarget replaces the animation in flight rather than
 /// stacking a second one on the same property.
 const TILE_ANIMATION_KEY: &str = "rini.tile.move";
+
+/// One key per container movement, for the same reason.
+const GROUP_ANIMATION_KEY: &str = "rini.group.move";
 
 /// `ease_out_cubic` in Core Animation form — exactly, not approximately. Derivation in
 /// `docs/animation-smoothness.md`; the identity is pinned by test.
@@ -298,10 +325,38 @@ fn ease_out_cubic_timing() -> Retained<CAMediaTimingFunction> {
     CAMediaTimingFunction::functionWithControlPoints(1.0 / 3.0, 1.0, 2.0 / 3.0, 1.0)
 }
 
+/// When an animation runs: an explicit begin on the media clock plus its length. Every animation
+/// of one leg shares one `Timing`, and a leg re-installed with the same `Timing` (a picture swap
+/// on a resizing tile) continues on the same curve instead of restarting. See "Mid-flight passes"
+/// in `docs/animation-smoothness.md`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Timing {
+    begin: f64,
+    seconds: f64,
+}
+
+impl Timing {
+    fn starting_now(duration: Duration) -> Self {
+        Timing { begin: objc2_quartz_core::CACurrentMediaTime(), seconds: duration.as_secs_f64() }
+    }
+
+    fn apply(&self, animation: &CABasicAnimation) {
+        animation.setTimingFunction(Some(&ease_out_cubic_timing()));
+        animation.setDuration(self.seconds);
+        animation.setBeginTime(self.begin);
+    }
+
+    /// When the leg ends, on the wall clock.
+    fn ends_at(&self) -> Instant {
+        let left = self.begin + self.seconds - objc2_quartz_core::CACurrentMediaTime();
+        Instant::now() + Duration::from_secs_f64(left.max(0.0))
+    }
+}
+
 /// An explicit position animation from `from` to `to`, in layer coordinates. The caller sets the
 /// model to the destination; this carries the presentation there and is removed on completion,
 /// revealing the model value — no snap-back, no completion delegate.
-fn position_animation(from: CGPoint, to: CGPoint, seconds: f64) -> Retained<CABasicAnimation> {
+fn position_animation(from: CGPoint, to: CGPoint, timing: Timing) -> Retained<CABasicAnimation> {
     let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
     // SAFETY: an NSValue holding a CGPoint is the value type Core Animation expects for the
     // "position" key path.
@@ -309,8 +364,7 @@ fn position_animation(from: CGPoint, to: CGPoint, seconds: f64) -> Retained<CABa
         animation.setFromValue(Some(&NSValue::valueWithPoint(from)));
         animation.setToValue(Some(&NSValue::valueWithPoint(to)));
     }
-    animation.setTimingFunction(Some(&ease_out_cubic_timing()));
-    animation.setDuration(seconds);
+    timing.apply(&animation);
     animation
 }
 
@@ -319,7 +373,7 @@ fn rect_animation(
     key_path: &str,
     from: CGRect,
     to: CGRect,
-    seconds: f64,
+    timing: Timing,
 ) -> Retained<CABasicAnimation> {
     let animation =
         CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
@@ -329,8 +383,7 @@ fn rect_animation(
         animation.setFromValue(Some(&NSValue::valueWithRect(from)));
         animation.setToValue(Some(&NSValue::valueWithRect(to)));
     }
-    animation.setTimingFunction(Some(&ease_out_cubic_timing()));
-    animation.setDuration(seconds);
+    timing.apply(&animation);
     animation
 }
 
@@ -341,7 +394,7 @@ fn path_animation(
     key_path: &str,
     from: &objc2_core_graphics::CGPath,
     to: &objc2_core_graphics::CGPath,
-    seconds: f64,
+    timing: Timing,
 ) -> Retained<CABasicAnimation> {
     let animation =
         CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
@@ -353,22 +406,21 @@ fn path_animation(
         let _: () = msg_send![&*animation, setFromValue: from_raw];
         let _: () = msg_send![&*animation, setToValue: to_raw];
     }
-    animation.setTimingFunction(Some(&ease_out_cubic_timing()));
-    animation.setDuration(seconds);
+    timing.apply(&animation);
     animation
 }
 
 /// Installs position-and-bounds animations carrying `layer` between two frames. Anchor points are
 /// (0,0) throughout, so position is the frame origin.
-fn animate_layer_frame(layer: &CALayer, from: CGRect, to: CGRect, seconds: f64, key_prefix: &str) {
-    let position = position_animation(from.origin, to.origin, seconds);
+fn animate_layer_frame(layer: &CALayer, from: CGRect, to: CGRect, timing: Timing, key_prefix: &str) {
+    let position = position_animation(from.origin, to.origin, timing);
     layer.addAnimation_forKey(&position, Some(&NSString::from_str(&format!("{key_prefix}.move"))));
     if from.size != to.size {
         let bounds = rect_animation(
             "bounds",
             CGRect::new(CGPoint::new(0.0, 0.0), from.size),
             CGRect::new(CGPoint::new(0.0, 0.0), to.size),
-            seconds,
+            timing,
         );
         layer.addAnimation_forKey(&bounds, Some(&NSString::from_str(&format!("{key_prefix}.size"))));
     }
@@ -397,6 +449,13 @@ struct Tile {
     crop_of: Option<CGSize>,
     /// When the installed resize animation ends; a mismatched hairline is deferred until then.
     resize_until: Option<Instant>,
+    /// The resize leg the tile is riding, so a picture swap re-installs it on the same timing.
+    resize_leg: Option<(CGRect, CGRect, Timing)>,
+    /// The container the tile's layers hang under; `None` before the first install. Frames on the
+    /// layers are in that parent's space.
+    key: Option<GroupKey>,
+    /// A border window's tile: drawn a quarter step in front of its window, no shadow.
+    companion: bool,
 }
 
 /// The four layers a crop-drawn tile is composed of, children of the tile's picture layer.
@@ -404,11 +463,52 @@ struct CropGrid {
     pieces: [Retained<CALayer>; 4],
 }
 
+/// One movement `fly` installs: a container's translation, or one loose tile's own animation.
+/// Pure output of [`animation_targets`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum AnimationTarget {
+    Container { key: GroupKey, from: CGPoint, to: CGPoint },
+    Tile { window: WindowId, from: CGRect, to: CGRect },
+}
+
+/// What a flight animates, and nothing else: one `Container` per strip group with travel, the
+/// floating container when it travels, and a `Tile` per changing, entrance and moving floating
+/// member. Rigid members are never named. See "The overlay engine" in `docs/animation-smoothness.md`.
+pub(crate) fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
+    let mut out = Vec::new();
+    let position = |key: GroupKey, travel: CGPoint| {
+        plan.positions.get(&key).copied().unwrap_or(travel)
+    };
+    for group in plan.groups.iter().filter(|g| !g.is_still()) {
+        let to = position(group.key, group.travel);
+        let from = CGPoint::new(to.x - group.travel.x, to.y - group.travel.y);
+        out.push(AnimationTarget::Container { key: group.key, from, to });
+    }
+    let ft = plan.floating_travel;
+    if ft.x != 0.0 || ft.y != 0.0 {
+        let to = position(GroupKey::Floating, ft);
+        let from = CGPoint::new(to.x - ft.x, to.y - ft.y);
+        out.push(AnimationTarget::Container { key: GroupKey::Floating, from, to });
+    }
+    for &(window, from, to) in plan.changing.iter().chain(&plan.entrances) {
+        out.push(AnimationTarget::Tile { window, from, to });
+    }
+    for &(window, from, to) in &plan.floating {
+        if !from.same_as(to) {
+            out.push(AnimationTarget::Tile { window, from, to });
+        }
+    }
+    out
+}
+
 pub struct WorkspaceOverlay {
     window: Retained<NSWindow>,
     /// The layer every tile is added to. Owned by the window's content view, which is layer-backed,
     /// so AppKit presents it on the GPU with no manual rasterisation.
     root: Retained<CALayer>,
+    /// One layer per rigid piece of a flight, under `root`. A container's `position` is the only
+    /// animated translation its members get; the tiles inside sit at group-relative frames.
+    containers: HashMap<GroupKey, Retained<CALayer>>,
     /// The real desktop, drawn behind everything and held still while the tiles move, so the gaps
     /// around strips look like the desktop instead of flickering as a flat colour.
     backdrop: Retained<CALayer>,
@@ -510,6 +610,7 @@ impl WorkspaceOverlay {
             backdrop,
             bar,
             bar_drawn: false,
+            containers: HashMap::new(),
             tile_layers: HashMap::new(),
             frame,
             scale,
@@ -548,7 +649,7 @@ impl WorkspaceOverlay {
             // slightly stale bar.
             None => self.bar.setHidden(!self.bar_drawn),
         }
-        CATransaction::commit();
+        commit_now();
     }
 
     /// Sets the still image drawn behind the moving tiles.
@@ -570,7 +671,7 @@ impl WorkspaceOverlay {
         self.backdrop.setContentsScale(self.scale);
         set_layer_contents(&self.backdrop, snapshot);
         self.backdrop.setHidden(false);
-        CATransaction::commit();
+        commit_now();
     }
 
     pub fn is_visible(&self) -> bool {
@@ -611,7 +712,7 @@ impl WorkspaceOverlay {
         let Some(entry) = self.tile_layers.get_mut(&window) else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        let mut rekey: Option<(CGRect, CGRect)> = None;
+        let mut rekey: Option<(CGRect, CGRect, Timing)> = None;
         if entry.crop_of.is_some() {
             // A crop-drawn tile carries its picture on the pieces — and the new picture is the
             // window at its NEW size (the recapture exists precisely because it changed), so the
@@ -626,17 +727,22 @@ impl WorkspaceOverlay {
             let covered = snapshot.coverage.covered;
             entry.crop_of = Some(CGSize::new(covered.0, covered.1));
             let final_rect = entry.picture.frame();
-            match remaining.filter(|left| !left.is_zero()) {
-                Some(_) => {
-                    // SAFETY: `presentationLayer` returns a read-only copy of the layer as
-                    // currently presented.
-                    let presented = unsafe { entry.picture.presentationLayer() }
-                        .map(|p| CGRect::new(p.position(), p.bounds().size))
-                        .unwrap_or(final_rect);
-                    layout_crop_grid(entry, final_rect.size);
-                    rekey = Some((presented, final_rect));
-                }
-                None => layout_crop_grid(entry, final_rect.size),
+            layout_crop_grid(entry, final_rect.size);
+            // The new picture maps onto a new piece grid, so the leg is re-installed: on the SAME
+            // timing when the tile is riding one, so the frame keeps its curve and only the pixels
+            // cut; from the presented frame over what is left otherwise.
+            if remaining.is_some_and(|left| !left.is_zero()) {
+                rekey = Some(match entry.resize_leg {
+                    Some((from, to, timing)) => (from, to, timing),
+                    None => {
+                        // SAFETY: `presentationLayer` returns a read-only copy of the layer as
+                        // currently presented.
+                        let presented = unsafe { entry.picture.presentationLayer() }
+                            .map(|p| CGRect::new(p.position(), p.bounds().size))
+                            .unwrap_or(final_rect);
+                        (presented, final_rect, Timing::starting_now(remaining.unwrap_or_default()))
+                    }
+                });
             }
         } else {
             // A hard cut on purpose. A crossfade veil was tried and rejected: stacking two copies
@@ -652,10 +758,10 @@ impl WorkspaceOverlay {
             let resizing = resize_in_flight(entry.resize_until, Instant::now());
             apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale, true, resizing);
         }
-        if let (Some((presented, final_rect)), Some(left)) = (rekey, remaining) {
-            self.animate_tile_resize(window, presented, final_rect, left);
+        if let Some((from, to, timing)) = rekey {
+            self.animate_tile_resize(window, from, to, timing);
         }
-        CATransaction::commit();
+        commit_now();
     }
 
     /// Swaps one in-flight tile's hairline, for a harvest that landed after its picture did.
@@ -671,28 +777,103 @@ impl WorkspaceOverlay {
         let size = entry.picture.bounds().size;
         let resizing = resize_in_flight(entry.resize_until, Instant::now());
         apply_edge_dressing(entry, Some(dressing), size, scale, true, resizing);
-        CATransaction::commit();
+        commit_now();
     }
 
-    /// Installs the tiles for one animation and draws frame zero.
+    /// Composes a flight at frame zero as rigid pieces: one container per group, every member at
+    /// its group-relative frame inside it; changing, entrance and floating members loose under
+    /// `StripLoose` / `Floating`. `tiles` carries the pictures, found by window.
     ///
-    /// Layers are pooled per window, since handing one a bitmap is the expensive part. Anything absent
-    /// is removed, or the previous switch's windows linger as ghosts.
-    ///
-    /// Pre-flight only: this places every tile at its START. A tile already animating must not pass
-    /// through here — its model sits at the destination while Core Animation carries the
-    /// presentation, and re-placing it at `from` would end the flight on the wrong frame. Mid-flight
-    /// changes go through `retarget_tile` and `add_tile`.
-    pub fn set_tiles(&mut self, tiles: &[OverlayTile]) {
+    /// Layers are pooled per window, since handing one a bitmap is the expensive part. Anything
+    /// absent is removed. Pre-flight only: a tile already animating must not pass through here,
+    /// because its model sits at the destination while Core Animation carries the presentation.
+    /// See "The overlay engine" in `docs/animation-smoothness.md`.
+    pub(crate) fn install(&mut self, plan: &FlightPlan, tiles: &[OverlayTile], banding: &Banding) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-
-        let mut keep = Vec::with_capacity(tiles.len());
-        for tile in tiles {
-            keep.push(tile.window);
-            self.install_tile(tile);
+        let mut keep: Vec<WindowId> = Vec::new();
+        let find = |window: WindowId| tiles.iter().find(|t| t.window == window);
+        for group in &plan.groups {
+            if group.members.is_empty() {
+                continue;
+            }
+            self.reset_container(group.key);
+            for member in &group.members {
+                let Some(tile) = find(member.window) else { continue };
+                keep.push(tile.window);
+                self.install_tile(tile, member.rel, Some(group.key));
+            }
         }
+        let strip_loose: Vec<(WindowId, CGRect, CGRect)> =
+            plan.changing.iter().chain(&plan.entrances).copied().collect();
+        for (key, members) in [(GroupKey::StripLoose, &strip_loose), (GroupKey::Floating, &plan.floating)] {
+            if members.is_empty() {
+                continue;
+            }
+            self.reset_container(key);
+            for &(window, from, _) in members {
+                let Some(tile) = find(window) else { continue };
+                keep.push(tile.window);
+                self.install_tile(tile, from, Some(key));
+            }
+        }
+        self.remove_stale(&keep);
+        self.rebank(banding);
+        commit_now();
+    }
 
+    /// Writes every container's and tile's `zPosition` from `banding`, nothing else. Containers
+    /// sort among themselves (`container_z`, then `strip_order` a quarter step apart); tiles sort
+    /// inside their container at `-within`, a companion a quarter step in front of its window, a
+    /// shadow half a step behind its picture. A hard cut: z does not interpolate. Callers hold the
+    /// transaction. See "The overlay engine" in `docs/animation-smoothness.md`.
+    pub(crate) fn rebank(&self, banding: &Banding) {
+        let focused = if banding.floating_in_front { StackGroup::Floating } else { StackGroup::Strip };
+        for (key, layer) in &self.containers {
+            let z = match key {
+                GroupKey::Floating => container_z(StackGroup::Floating, focused),
+                key => {
+                    let index = banding
+                        .strip_order
+                        .iter()
+                        .position(|k| k == key)
+                        .unwrap_or(banding.strip_order.len());
+                    container_z(StackGroup::Strip, focused) - index as f64 * 0.25
+                }
+            };
+            layer.setZPosition(z);
+        }
+        for (window, tile) in &self.tile_layers {
+            let Some(&within) = banding.within.get(window) else { continue };
+            let z = -(within as f64) + if tile.companion { 0.25 } else { 0.0 };
+            tile.picture.setZPosition(z);
+            tile.shadow.setZPosition(z - 0.5);
+        }
+    }
+
+    /// The container for `key`, created on first use, put back at the origin with no animation
+    /// riding it. Callers hold the transaction.
+    fn reset_container(&mut self, key: GroupKey) -> Retained<CALayer> {
+        let root = &self.root;
+        let layer = self
+            .containers
+            .entry(key)
+            .or_insert_with(|| {
+                let layer = CALayer::layer();
+                layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
+                layer.setMasksToBounds(false);
+                root.addSublayer(&layer);
+                layer
+            })
+            .clone();
+        layer.removeAllAnimations();
+        layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), self.frame.size));
+        layer.setPosition(CGPoint::new(0.0, 0.0));
+        layer
+    }
+
+    /// Drops every tile not in `keep`, and every container left with no tile.
+    fn remove_stale(&mut self, keep: &[WindowId]) {
         let stale: Vec<WindowId> =
             self.tile_layers.keys().copied().filter(|w| !keep.contains(w)).collect();
         for window in stale {
@@ -701,18 +882,86 @@ impl WorkspaceOverlay {
                 entry.shadow.removeFromSuperlayer();
             }
         }
-
-        CATransaction::commit();
+        let occupied: Vec<GroupKey> = self.tile_layers.values().filter_map(|t| t.key).collect();
+        let empty: Vec<GroupKey> =
+            self.containers.keys().copied().filter(|k| !occupied.contains(k)).collect();
+        for key in empty {
+            if let Some(layer) = self.containers.remove(&key) {
+                layer.removeFromSuperlayer();
+            }
+        }
     }
 
-    /// Installs one tile at its start position. Callers hold the transaction.
-    fn install_tile(&mut self, tile: &OverlayTile) {
+    /// Hands a composed flight to Core Animation: exactly the movements `animation_targets` names,
+    /// in ONE transaction. Containers get one position animation; loose tiles get their own move or
+    /// resize. A zero duration lands everything at its destination with no animation.
+    pub(crate) fn fly(&mut self, plan: &FlightPlan, duration: Duration) {
+        let timing = Timing::starting_now(duration);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        for target in animation_targets(plan) {
+            match target {
+                AnimationTarget::Container { key, from, to } => {
+                    let Some(layer) = self.containers.get(&key) else { continue };
+                    let (from, to) = (whole_point(from), whole_point(to));
+                    layer.setPosition(to);
+                    if !duration.is_zero() {
+                        let animation = position_animation(from, to, timing);
+                        layer.addAnimation_forKey(
+                            &animation,
+                            Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
+                        );
+                    }
+                }
+                AnimationTarget::Tile { window, from, to } => {
+                    let Some(entry) = self.tile_layers.get(&window) else { continue };
+                    // Loose members sit in a container too; their frames are in its space.
+                    let offset = self.container_position(entry.key);
+                    let (from, to) =
+                        (whole(group_relative(from, offset)), whole(group_relative(to, offset)));
+                    let z = entry.picture.zPosition();
+                    if duration.is_zero() {
+                        place_tile(entry, to, z);
+                    } else {
+                        self.animate_tile_movement(window, from, to, z, duration);
+                    }
+                }
+            }
+        }
+        commit_now();
+    }
+
+    /// Model position of the container `key` names; the origin for the root.
+    fn container_position(&self, key: Option<GroupKey>) -> CGPoint {
+        key.and_then(|k| self.containers.get(&k))
+            .map(|layer| layer.position())
+            .unwrap_or(CGPoint::new(0.0, 0.0))
+    }
+
+    /// Presented position of the container `key` names (model when nothing is presented).
+    fn presented_container_position(&self, key: Option<GroupKey>) -> CGPoint {
+        let Some(layer) = key.and_then(|k| self.containers.get(&k)) else {
+            return CGPoint::new(0.0, 0.0);
+        };
+        // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
+        unsafe { layer.presentationLayer() }.map(|p| p.position()).unwrap_or(layer.position())
+    }
+
+    /// Installs one tile at `at`, in the space of the parent `key` names (the root for `None`).
+    /// Callers hold the transaction.
+    fn install_tile(&mut self, tile: &OverlayTile, at: CGRect, key: Option<GroupKey>) {
+        let parent = match key.and_then(|k| self.containers.get(&k)) {
+            Some(container) => container.clone(),
+            None => self.root.clone(),
+        };
         let entry = self
             .tile_layers
             .entry(tile.window)
-            .or_insert_with(|| new_tile(&self.root));
-        reparent(&entry.picture, &self.root);
-        reparent(&entry.shadow, &self.root);
+            .or_insert_with(|| new_tile(&parent));
+        reparent(&entry.picture, &parent);
+        reparent(&entry.shadow, &parent);
+        entry.key = key;
+        entry.companion = tile.companion;
         entry.picture.setContentsScale(self.scale);
         // A fresh install ends whatever resize the pooled tile was riding.
         entry.resize_until = None;
@@ -734,89 +983,194 @@ impl WorkspaceOverlay {
         entry.shadow.setShadowRadius(style.radius);
         entry.shadow.setShadowOffset(CGSize::new(0.0, style.offset_y));
         // Negated so a smaller depth, meaning nearer the front, draws on top.
-        place_tile(entry, tile.from, tile.z());
+        place_tile(entry, whole(at), tile.z());
         entry.picture.setHidden(false);
         // A border window casts no shadow, so its tile must not either.
         entry.shadow.setHidden(tile.companion);
     }
 
-    /// Adds one tile to an animation already in flight and starts its movement from where it
-    /// stands, over `duration`. The caller picks the duration: a pass that restarts the flight's
-    /// clock gives the full one, a late entrance gets what is left of the flight so it lands with
-    /// its neighbours (`docs/animation-smoothness.md`, "Entrances are holds").
-    pub fn add_tile(&mut self, tile: &OverlayTile, duration: Duration) {
+    /// Adds one loose tile to a flight in progress under `key`, moving from `tile.from` to
+    /// `tile.to` (the container's space) over `duration`: a late entrance gets what is left of the
+    /// flight so it lands with its neighbours.
+    pub(crate) fn add_tile(
+        &mut self,
+        tile: &OverlayTile,
+        key: GroupKey,
+        banding: &Banding,
+        duration: Duration,
+    ) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        self.install_tile(tile);
-        self.animate_tile_movement(tile.window, tile.from, tile.to, tile.z(), duration);
-        CATransaction::commit();
+        self.ensure_container(key, CGPoint::new(0.0, 0.0));
+        self.install_tile(tile, tile.from, Some(key));
+        self.animate_tile_movement(tile.window, whole(tile.from), whole(tile.to), tile.z(), duration);
+        self.rebank(banding);
+        commit_now();
     }
 
-    /// Hands every tile's movement to Core Animation, in ONE transaction.
-    ///
-    /// One commit, one timebase, one curve: the render server starts every animation on the same
-    /// beat and interpolates them vsync-locked at the display's native refresh, so tiles cannot
-    /// tear against each other and a busy actor thread cannot drop drawn frames. The model layers
-    /// jump straight to their destinations; the animations carry the presentation and are removed
-    /// on completion, revealing the model — the same handoff the whole overlay uses.
-    pub fn animate_tiles(&mut self, tiles: &[OverlayTile], duration: Duration) {
-        // Core Animation reads a zero duration as "use the default 0.25s".
-        if duration.is_zero() {
-            self.draw_frame(tiles, 1.0);
-            return;
+    /// The container for `key`, created at `position` when the flight has none yet. Unlike
+    /// `reset_container` this leaves a moving container alone. Callers hold the transaction.
+    fn ensure_container(&mut self, key: GroupKey, position: CGPoint) -> Retained<CALayer> {
+        if let Some(layer) = self.containers.get(&key) {
+            return layer.clone();
         }
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        for tile in tiles {
-            if tile.from.same_as(tile.to) {
-                continue;
-            }
-            self.animate_tile_movement(tile.window, tile.from, tile.to, tile.z(), duration);
-        }
-        CATransaction::commit();
+        let layer = self.reset_container(key);
+        layer.setPosition(position);
+        layer
     }
 
-    /// Puts every installed tile at its current depth, touching nothing else. A hard cut: a pass
-    /// merged mid-flight can rebank tiles it did not move, and z-order does not interpolate.
-    pub fn restack(&mut self, tiles: &[OverlayTile]) {
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        for tile in tiles {
-            let Some(entry) = self.tile_layers.get(&tile.window) else { continue };
-            let z = tile.z();
-            entry.picture.setZPosition(z);
-            entry.shadow.setZPosition(z - 0.5);
-        }
-        CATransaction::commit();
-    }
-
-    /// Retargets one tile mid-flight: continues from wherever it is DRAWN right now to the new
-    /// destination, over a fresh duration.
-    ///
-    /// The presentation tree is the truth about the current position — the model already sits at
-    /// the old destination — and re-adding under the same key replaces the old animation, so the
-    /// tile bends toward the new target instead of restarting. Same chaining pattern as the canvas.
-    pub fn retarget_tile(&mut self, tile: &OverlayTile, duration: Duration) {
-        let scale = self.scale;
-        let Some(entry) = self.tile_layers.get_mut(&tile.window) else { return };
+    /// Whether every container and picture is presented where its model sits, within half a
+    /// point: the render server has finished the flight. Read at the lift, because the render
+    /// server runs a frame or so behind the actor's clock and lifting on the clock alone showed
+    /// the real windows one frame ahead of their tiles.
+    pub fn settled(&self) -> bool {
+        let close = |a: CGPoint, b: CGPoint| (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() < 0.5;
+        let same_size =
+            |a: CGSize, b: CGSize| (a.width - b.width).abs() < 0.5 && (a.height - b.height).abs() < 0.5;
         // SAFETY: `presentationLayer` returns a read-only copy of the layer as currently presented.
-        // Position AND size: a resize retargeted mid-flight continues from the size it is drawn
-        // at, or rapid preset cycling snaps the tile to full size before each new leg.
-        let (current, current_size) = unsafe { entry.picture.presentationLayer() }
-            .map(|presented| (presented.position(), presented.bounds().size))
-            .unwrap_or_else(|| (entry.picture.position(), entry.picture.bounds().size));
-        let from = CGRect::new(current, current_size);
+        let containers = self.containers.values().all(|layer| {
+            unsafe { layer.presentationLayer() }.is_none_or(|p| close(p.position(), layer.position()))
+        });
+        let tiles = self.tile_layers.values().all(|tile| {
+            unsafe { tile.picture.presentationLayer() }.is_none_or(|p| {
+                close(p.position(), tile.picture.position())
+                    && same_size(p.bounds().size, tile.picture.bounds().size)
+            })
+        });
+        containers && tiles
+    }
+
+    /// Presented position of every container, model position when nothing is presented: what
+    /// `merge_plans` retargets from.
+    pub(crate) fn presented_positions(&self) -> HashMap<GroupKey, CGPoint> {
+        self.containers
+            .keys()
+            .map(|key| (*key, self.presented_container_position(Some(*key))))
+            .collect()
+    }
+
+    /// Applies one merged pass to a flight in progress, in ONE transaction: containers bend from
+    /// their presented position, members changing container are reparented at the frame they are
+    /// drawn at, new groups install and fly, loose tiles bend or join. Reads before writes. See
+    /// "Mid-flight passes" in `docs/animation-smoothness.md`.
+    pub(crate) fn retarget(
+        &mut self,
+        delta: &PlanDelta,
+        plan: &FlightPlan,
+        tiles: &[OverlayTile],
+        banding: &Banding,
+        duration: Duration,
+    ) {
+        let timing = Timing::starting_now(duration);
+        let presented = self.presented_positions();
+        let find = |window: WindowId| tiles.iter().find(|t| t.window == window);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        // The content mode is judged against the NEW leg, not the one the tile was installed for:
-        // a retarget can turn a plain move into a resize — a window expanding after a sibling
-        // closes arrives exactly this way — and a tile left stretching draws the resize as a
-        // stretch. Applied at the presented size, so the switch to the crop grid is invisible.
-        let covered = tile.snapshot.coverage.covered;
-        let mode = content_mode(covered, from.size, tile.to.size);
-        set_tile_content(entry, &tile.snapshot, mode, from.size, scale);
-        self.animate_tile_movement(tile.window, from, tile.to, tile.z(), duration);
-        CATransaction::commit();
+
+        // New containers, at the install position the merge chose; members the merge did not
+        // reparent are fresh tiles.
+        for &(key, install) in &delta.new_groups {
+            let container = self.reset_container(key);
+            container.setPosition(whole_point(install));
+            let Some(group) = plan.groups.iter().find(|g| g.key == key) else { continue };
+            for member in &group.members {
+                if delta.reparented.iter().any(|(w, _, to)| *w == member.window && *to == key) {
+                    continue;
+                }
+                if let Some(tile) = find(member.window) {
+                    self.install_tile(tile, member.rel, Some(key));
+                }
+            }
+        }
+
+        // Members changing hands: the merged plan already holds their frame in the new parent.
+        let mut placed: Vec<WindowId> = Vec::new();
+        for &(window, _, to_key) in &delta.reparented {
+            let frame = match plan.member(window) {
+                Some(Member::Rigid { rel, .. }) => rel,
+                Some(Member::Changing { from, .. })
+                | Some(Member::Entrance { from, .. })
+                | Some(Member::Floating { from, .. }) => from,
+                None => continue,
+            };
+            let container = self.ensure_container(to_key, plan.positions.get(&to_key).copied().unwrap_or(CGPoint::new(0.0, 0.0)));
+            let Some(entry) = self.tile_layers.get_mut(&window) else { continue };
+            reparent(&entry.picture, &container);
+            reparent(&entry.shadow, &container);
+            entry.key = Some(to_key);
+            let z = entry.picture.zPosition();
+            place_tile(entry, whole(frame), z);
+            placed.push(window);
+        }
+
+        // Containers: from where they are drawn to the new destination, replacing the running
+        // animation under the same key so the group bends instead of restarting.
+        for &(key, to) in &delta.retargeted_groups {
+            let Some(layer) = self.containers.get(&key) else { continue };
+            let from = presented.get(&key).copied().unwrap_or(layer.position());
+            let to = whole_point(to);
+            layer.setPosition(to);
+            if !duration.is_zero() {
+                let animation = position_animation(from, to, timing);
+                layer.addAnimation_forKey(&animation, Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+            }
+        }
+        for &(key, install) in &delta.new_groups {
+            let Some(layer) = self.containers.get(&key) else { continue };
+            let to = whole_point(plan.positions.get(&key).copied().unwrap_or(install));
+            let install = whole_point(install);
+            layer.setPosition(to);
+            if !duration.is_zero() && !install.same_as(to) {
+                let animation = position_animation(install, to, timing);
+                layer.addAnimation_forKey(&animation, Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+            }
+        }
+
+        // Newcomers: a rigid join rides its container from `rel`; a loose join flies on its own.
+        for &(window, key) in &delta.joined_tiles {
+            let Some(tile) = find(window) else { continue };
+            let position = plan.positions.get(&key).copied().unwrap_or(CGPoint::new(0.0, 0.0));
+            self.ensure_container(key, position);
+            match plan.member(window) {
+                Some(Member::Rigid { rel, .. }) => self.install_tile(tile, rel, Some(key)),
+                Some(Member::Changing { from, to })
+                | Some(Member::Entrance { from, to })
+                | Some(Member::Floating { from, to }) => {
+                    self.install_tile(tile, from, Some(key));
+                    self.animate_tile_movement(window, whole(from), whole(to), tile.z(), duration);
+                }
+                None => {}
+            }
+        }
+
+        // Loose tiles bending to a new destination, from where they are drawn.
+        for &(window, to) in &delta.retargeted_tiles {
+            let Some(tile) = find(window) else { continue };
+            let scale = self.scale;
+            let Some(entry) = self.tile_layers.get_mut(&window) else { continue };
+            let from = if placed.contains(&window) {
+                entry.picture.frame()
+            } else {
+                // SAFETY: `presentationLayer` returns a read-only copy of the layer as presented.
+                // Position AND size: a resize retargeted mid-flight continues from the size it is
+                // drawn at.
+                unsafe { entry.picture.presentationLayer() }
+                    .map(|p| CGRect::new(p.position(), p.bounds().size))
+                    .unwrap_or_else(|| entry.picture.frame())
+            };
+            // Judged against the new leg: a retarget can turn a plain move into a resize, and a
+            // tile left stretching draws the resize as a stretch.
+            let to = whole(to);
+            let covered = tile.snapshot.coverage.covered;
+            let mode = content_mode(covered, from.size, to.size);
+            set_tile_content(entry, &tile.snapshot, mode, from.size, scale);
+            let z = entry.picture.zPosition();
+            self.animate_tile_movement(window, from, to, z, duration);
+        }
+
+        self.remove_stale(&tiles.iter().map(|t| t.window).collect::<Vec<_>>());
+        self.rebank(banding);
+        commit_now();
     }
 
     /// Places one tile's model at its destination and installs the movement animation on both of
@@ -829,20 +1183,23 @@ impl WorkspaceOverlay {
         z: f64,
         duration: Duration,
     ) {
-        let Some(entry) = self.tile_layers.get(&window) else { return };
+        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
         place_tile(entry, to, z);
+        let timing = Timing::starting_now(duration);
         // The proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move
         // and lets its size snap the point it always did.
         if !crate::ui::window_snapshot::is_a_resize(from.size, to.size) {
+            // A fresh leg ends whatever resize the tile was riding.
+            entry.resize_leg = None;
             // Anchor points are (0,0), so position is the frame origin. addAnimation copies, so
             // one instance serves picture and shadow.
-            let animation = position_animation(from.origin, to.origin, duration.as_secs_f64());
+            let animation = position_animation(from.origin, to.origin, timing);
             let key = NSString::from_str(TILE_ANIMATION_KEY);
             entry.picture.addAnimation_forKey(&animation, Some(&key));
             entry.shadow.addAnimation_forKey(&animation, Some(&key));
             return;
         }
-        self.animate_tile_resize(window, from, to, duration);
+        self.animate_tile_resize(window, from, to, timing);
     }
 
     /// The resize choreography: every layer of the tile rides its own pair of endpoint geometries,
@@ -853,18 +1210,18 @@ impl WorkspaceOverlay {
     /// plain interpolation between the endpoint grids IS the per-frame crop layout. The shadow's
     /// path and its ring mask interpolate because both endpoints are built by the same
     /// constructors, and the hairline pieces ride between their two boundary layouts.
-    fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, duration: Duration) {
+    fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, timing: Timing) {
         let Some(entry) = self.tile_layers.get_mut(&window) else { return };
-        let seconds = duration.as_secs_f64();
-        // A re-key or retarget replaces the animation, so the end moves with it.
-        entry.resize_until = Some(Instant::now() + duration);
+        // A retarget replaces the leg, so the end moves with it; a re-key keeps the leg's timing.
+        entry.resize_until = Some(timing.ends_at());
+        entry.resize_leg = Some((from, to, timing));
 
         // The shadow's movement uses the SAME key prefix as the plain-move branch. Keys are
         // per-layer, so picture and shadow do not collide — but a plain-move leg retargeted into
         // a resize left its old position animation (under the plain key) fighting the resize's
         // one, and the shadow visibly tore away from its tile.
-        animate_layer_frame(&entry.picture, from, to, seconds, "rini.tile");
-        animate_layer_frame(&entry.shadow, from, to, seconds, "rini.tile");
+        animate_layer_frame(&entry.picture, from, to, timing, "rini.tile");
+        animate_layer_frame(&entry.shadow, from, to, timing, "rini.tile");
 
         // The shadow's shape and the hole in its ring both follow the window silhouette.
         let origin = CGPoint::new(0.0, 0.0);
@@ -872,7 +1229,7 @@ impl WorkspaceOverlay {
             "shadowPath",
             &silhouette_path(from.size, origin),
             &silhouette_path(to.size, origin),
-            seconds,
+            timing,
         );
         entry
             .shadow
@@ -881,11 +1238,11 @@ impl WorkspaceOverlay {
             &entry.shadow_mask,
             shadow_mask_frame(from.size),
             shadow_mask_frame(to.size),
-            seconds,
+            timing,
             "rini.tile.mask",
         );
         let mask_path =
-            path_animation("path", &ring_path(from.size), &ring_path(to.size), seconds);
+            path_animation("path", &ring_path(from.size), &ring_path(to.size), timing);
         entry
             .shadow_mask
             .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
@@ -895,8 +1252,8 @@ impl WorkspaceOverlay {
             let from_pieces = crop_pieces(picture, from.size);
             let to_pieces = crop_pieces(picture, to.size);
             for ((layer, a), b) in grid.pieces.iter().zip(from_pieces).zip(to_pieces) {
-                animate_layer_frame(layer, a.frame, b.frame, seconds, "rini.piece");
-                let contents = rect_animation("contentsRect", a.contents, b.contents, seconds);
+                animate_layer_frame(layer, a.frame, b.frame, timing, "rini.piece");
+                let contents = rect_animation("contentsRect", a.contents, b.contents, timing);
                 layer.addAnimation_forKey(
                     &contents,
                     Some(&NSString::from_str("rini.piece.contents")),
@@ -917,27 +1274,9 @@ impl WorkspaceOverlay {
                 let a = rect_at(&from_layout, *index);
                 let b = rect_at(&to_layout, *index);
                 layer.setFrame(b);
-                animate_layer_frame(layer, a, b, seconds, "rini.dressing");
+                animate_layer_frame(layer, a, b, timing, "rini.dressing");
             }
         }
-    }
-
-    /// Positions every tile for a given progress through the animation, in ONE transaction.
-    ///
-    /// The single transaction is the whole point: it makes tearing between windows impossible rather
-    /// than merely unlikely, which is what per-window Accessibility writes could never achieve.
-    pub fn draw_frame(&mut self, tiles: &[OverlayTile], t: f64) {
-        let eased = ease_out_cubic(t);
-        CATransaction::begin();
-        // Implicit animations must be off. Core Animation would otherwise add its own quarter-second
-        // ease to every frame, so our interpolation would fight a second one and lag behind.
-        CATransaction::setDisableActions(true);
-        for tile in tiles {
-            if let Some(entry) = self.tile_layers.get(&tile.window) {
-                place_tile(entry, lerp_rect(tile.from, tile.to, eased), tile.z());
-            }
-        }
-        CATransaction::commit();
     }
 
     /// Shows the overlay. Costs about 0.36ms, measured, because it is only an alpha change.
@@ -968,7 +1307,10 @@ impl WorkspaceOverlay {
             entry.picture.removeFromSuperlayer();
             entry.shadow.removeFromSuperlayer();
         }
-        CATransaction::commit();
+        for (_, container) in self.containers.drain() {
+            container.removeFromSuperlayer();
+        }
+        commit_now();
         let _ = self.mtm;
     }
 }
@@ -1107,6 +1449,9 @@ fn new_tile(container: &CALayer) -> Tile {
         crop_grid: None,
         crop_of: None,
         resize_until: None,
+        resize_leg: None,
+        key: None,
+        companion: false,
     }
 }
 
@@ -1329,12 +1674,154 @@ mod tests {
         assert_eq!(action, DressingAction::Defer, "hairline rebuilt mid-resize: {action:?}");
     }
 
+    /// Tiles sit on whole points, where the window server puts the real windows: a layout offset
+    /// of 4592.67 rounds the same way for every column, so a strip stays rigid.
+    #[test]
+    fn tiles_sit_on_whole_points_like_the_real_windows() {
+        let a = rect(4.0 - 4592.6724 + 4592.0, 32.0, 859.0, 1081.0);
+        let b = rect(a.origin.x + 861.0, 32.0, 861.0, 1081.0);
+        assert_eq!(whole(a).origin.x, 3.0);
+        assert_eq!(whole(b).origin.x - whole(a).origin.x, 861.0, "one rounding for the strip");
+        assert_eq!(whole(a).size, a.size);
+        assert_eq!(whole_point(CGPoint::new(-861.3276, 0.4)), CGPoint::new(-861.0, 0.0));
+        assert_eq!(whole(rect(10.0, 20.0, 100.0, 50.0)), rect(10.0, 20.0, 100.0, 50.0));
+    }
+
     #[test]
     fn dressing_rebuild_allowed_full_table() {
         assert_eq!(dressing_rebuild_allowed(false, true), DressingAction::SwapInPlace);
         assert_eq!(dressing_rebuild_allowed(true, true), DressingAction::SwapInPlace);
         assert_eq!(dressing_rebuild_allowed(false, false), DressingAction::Rebuild);
         assert_eq!(dressing_rebuild_allowed(true, false), DressingAction::Defer);
+    }
+
+    /// `animation_targets`: what `fly` installs and nothing else (Requirement 11.4 of
+    /// `rigid-strip-groups`). Plans built with `reflow_plan` on a 1728x1117 display at the origin,
+    /// so overlay space equals display space.
+    mod targets {
+        use super::*;
+        use crate::actor::workspace_animation::plan::{FlightPlan, reflow_plan};
+
+        const DISPLAY: CGRect = CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize { width: 1728.0, height: 1117.0 },
+        };
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn column(i: f64) -> CGRect {
+            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
+        }
+
+        fn shifted(frame: CGRect, dx: f64) -> CGRect {
+            CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y), frame.size)
+        }
+
+        fn flight(requests: &[(WindowId, CGRect, CGRect, bool)]) -> FlightPlan {
+            FlightPlan::from(reflow_plan(requests, DISPLAY))
+        }
+
+        fn containers(targets: &[AnimationTarget]) -> Vec<GroupKey> {
+            targets
+                .iter()
+                .filter_map(|t| match t {
+                    AnimationTarget::Container { key, .. } => Some(*key),
+                    AnimationTarget::Tile { .. } => None,
+                })
+                .collect()
+        }
+
+        fn tiles(targets: &[AnimationTarget]) -> Vec<WindowId> {
+            targets
+                .iter()
+                .filter_map(|t| match t {
+                    AnimationTarget::Tile { window, .. } => Some(*window),
+                    AnimationTarget::Container { .. } => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn a_one_group_plan_is_exactly_one_container_target() {
+            let (a, b) = (column(0.0), column(1.0));
+            let plan = flight(&[
+                (wid(1), a, shifted(a, -859.0), false),
+                (wid(2), b, shifted(b, -859.0), false),
+            ]);
+            let targets = animation_targets(&plan);
+            assert_eq!(
+                targets,
+                vec![AnimationTarget::Container {
+                    key: GroupKey::Strip(1),
+                    from: CGPoint::new(0.0, 0.0),
+                    to: CGPoint::new(-859.0, 0.0),
+                }]
+            );
+        }
+
+        #[test]
+        fn a_still_group_and_two_moving_groups_are_two_container_targets() {
+            let (a, b, c) = (column(0.0), column(1.0), column(2.0));
+            let plan = flight(&[
+                (wid(1), a, a, false),
+                (wid(2), b, shifted(b, 300.0), false),
+                (wid(3), c, shifted(c, -300.0), false),
+            ]);
+            let targets = animation_targets(&plan);
+            assert_eq!(containers(&targets), vec![GroupKey::Strip(1), GroupKey::Strip(2)]);
+            assert!(tiles(&targets).is_empty(), "no rigid member is a tile target");
+        }
+
+        #[test]
+        fn a_changing_member_is_a_tile_target_and_rigid_members_are_not() {
+            let (a, b) = (column(0.0), column(1.0));
+            let grown = rect(a.origin.x, a.origin.y, a.size.width + 400.0, a.size.height);
+            let plan = flight(&[
+                (wid(1), a, grown, false),
+                (wid(2), b, shifted(b, 400.0), false),
+            ]);
+            let targets = animation_targets(&plan);
+            assert_eq!(tiles(&targets), vec![wid(1)]);
+            assert_eq!(containers(&targets), vec![GroupKey::Strip(1)]);
+            assert!(targets.contains(&AnimationTarget::Tile { window: wid(1), from: a, to: grown }));
+        }
+
+        #[test]
+        fn the_floating_container_is_a_target_iff_it_travels() {
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let mut plan = flight(&[(wid(1), settings, settings, true)]);
+            assert!(animation_targets(&plan).is_empty(), "a standing floating window: nothing flies");
+
+            plan.floating_travel = CGPoint::new(0.0, -1117.0);
+            plan.positions.insert(GroupKey::Floating, plan.floating_travel);
+            assert_eq!(
+                animation_targets(&plan),
+                vec![AnimationTarget::Container {
+                    key: GroupKey::Floating,
+                    from: CGPoint::new(0.0, 0.0),
+                    to: CGPoint::new(0.0, -1117.0),
+                }]
+            );
+
+            let moved = shifted(settings, -100.0);
+            let plan = flight(&[(wid(1), settings, moved, true)]);
+            assert_eq!(
+                animation_targets(&plan),
+                vec![AnimationTarget::Tile { window: wid(1), from: settings, to: moved }],
+                "a floating window moving on its own is a tile target, not a container"
+            );
+        }
+
+        #[test]
+        fn zero_travel_groups_are_never_targets() {
+            let (a, b) = (column(0.0), column(1.0));
+            let plan = flight(&[(wid(1), a, a, false), (wid(2), b, b, false)]);
+            assert!(animation_targets(&plan).is_empty());
+            assert_eq!(plan.groups.len(), 1, "everything standing is the still group");
+        }
+
     }
 
     #[test]

@@ -8,8 +8,8 @@
 //! sandwiched between two columns that sit side by side on screen — so one half of a 50/50 pair is in
 //! front of it and the other half behind.
 //!
-//! The same rule decides two different things: which tiles the animation overlay draws in front, and
-//! which real windows have to be raised to put the order back.
+//! The same rule decides two different things: which containers the animation overlay draws in front
+//! (`container_z`), and which real windows have to be raised to put the order back.
 
 /// Which z-order group a window belongs to.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -32,6 +32,14 @@ pub const GROUP_STRIDE: usize = 1 << 20;
 
 /// The deepest depth `tile_depth` can produce: the unreported-window fallback of the back group.
 pub const MAX_TILE_DEPTH: usize = 2 * GROUP_STRIDE - 1;
+
+/// A container's zPosition among its siblings in the overlay: the focused group's containers at
+/// zero, the other group's one stride behind. With each tile at `-within` inside its container,
+/// `container_z - within` is `-tile_depth`, so containers band the way tiles did. See "The
+/// overlay engine" in `docs/animation-smoothness.md`.
+pub fn container_z(group: StackGroup, focused_group: StackGroup) -> f64 {
+    if group == focused_group { 0.0 } else { -(GROUP_STRIDE as f64) }
+}
 
 /// Front-to-back position for a tile, 0 being frontmost.
 ///
@@ -194,5 +202,25 @@ mod tests {
         let deepest_in_front = tile_depth(Some(usize::MAX), false, Strip, Strip);
         let shallowest_behind = tile_depth(Some(0), false, Floating, Strip);
         assert!(deepest_in_front < shallowest_behind);
+    }
+
+    /// A container sits at zero with its group focused and one stride behind otherwise, so the
+    /// overlay's containers band exactly as `tile_depth` bands tiles.
+    #[test]
+    fn a_container_is_at_zero_when_its_group_is_focused_and_a_stride_behind_otherwise() {
+        assert_eq!(container_z(Strip, Strip), 0.0);
+        assert_eq!(container_z(Floating, Floating), 0.0);
+        assert_eq!(container_z(Floating, Strip), -(GROUP_STRIDE as f64));
+        assert_eq!(container_z(Strip, Floating), -(GROUP_STRIDE as f64));
+        // The band less the within-band depth is the tile's negated depth, for both groups.
+        let within = tile_depth(Some(3), false, Floating, Floating);
+        assert_eq!(
+            container_z(Floating, Strip) - within as f64,
+            -(tile_depth(Some(3), false, Floating, Strip) as f64)
+        );
+        assert_eq!(
+            container_z(Strip, Strip) - within as f64,
+            -(tile_depth(Some(3), false, Strip, Strip) as f64)
+        );
     }
 }

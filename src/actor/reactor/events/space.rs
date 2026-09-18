@@ -192,13 +192,13 @@ pub fn handle_window_server_destroyed(
                     reported_space = ?sid,
                     "Promoting WindowServer disappearance to immediate WindowDestroyed"
                 );
-                // The AX `WindowDestroyed` lands after this has removed the window, so the exit
-                // ghost is queued here or not at all. Same gates as the AX path.
+                // The AX `WindowDestroyed` lands after this has removed the window, so the cached
+                // picture is dropped here or not at all. Same gates as the AX path.
                 if let Some(window) = state.windows.window(wid)
                     && window.is_effectively_manageable()
                     && !window.info.is_minimized
                 {
-                    outcome = outcome.with_window_exit(wid, window.frame_monotonic);
+                    outcome = outcome.with_forgotten_window(wid);
                 }
                 if let Ok(destroyed_outcome) = window::handle_window_destroyed(
                     state,

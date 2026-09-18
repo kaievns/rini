@@ -106,6 +106,64 @@ fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<boo
     painted
 }
 
+/// Copies a capture's pixels into an IOSurface this process owns.
+///
+/// ScreenCaptureKit's sample buffers come from its own pool: once the completion returns, the
+/// surface is recycled for the next capture, and a layer still holding it draws whatever landed
+/// there next. Two same-size Chrome windows on different workspaces swapped pictures that way
+/// (a use-count bump kept the backing store from being reclaimed, not from being reused). One
+/// memcpy per capture, off the main thread. `None` when the surface cannot be read or allocated.
+fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
+    use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
+    use objc2_io_surface::{
+        IOSurfaceLockOptions, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow, kIOSurfaceHeight,
+        kIOSurfacePixelFormat, kIOSurfaceWidth,
+    };
+    let (width, height) = (source.width(), source.height());
+    let stride = source.bytes_per_row();
+    if width == 0 || height == 0 || stride < width * 4 {
+        return None;
+    }
+    let keys: [&CFString; 5] = [
+        unsafe { kIOSurfaceWidth },
+        unsafe { kIOSurfaceHeight },
+        unsafe { kIOSurfaceBytesPerElement },
+        unsafe { kIOSurfaceBytesPerRow },
+        unsafe { kIOSurfacePixelFormat },
+    ];
+    let values = [
+        CFNumber::new_i64(width as i64),
+        CFNumber::new_i64(height as i64),
+        CFNumber::new_i64(4),
+        CFNumber::new_i64(stride as i64),
+        CFNumber::new_i64(source.pixel_format() as i64),
+    ];
+    let value_refs: [&CFNumber; 5] = std::array::from_fn(|i| &*values[i]);
+    let properties = CFDictionary::from_slices(&keys, &value_refs);
+    // SAFETY: a fresh surface from a well-formed property list; locks are paired below and the
+    // copy stays inside both buffers' `bytes_per_row * height` extents.
+    let copy = unsafe { IOSurfaceRef::new(properties.as_opaque()) }?;
+    let copy_stride = copy.bytes_per_row();
+    let row_bytes = stride.min(copy_stride);
+    unsafe {
+        if source.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) != 0 {
+            return None;
+        }
+        if copy.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()) != 0 {
+            source.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+            return None;
+        }
+        let src = source.base_address().as_ptr() as *const u8;
+        let dst = copy.base_address().as_ptr() as *mut u8;
+        for row in 0..height {
+            std::ptr::copy_nonoverlapping(src.add(row * stride), dst.add(row * copy_stride), row_bytes);
+        }
+        copy.unlock(IOSurfaceLockOptions::empty(), std::ptr::null_mut());
+        source.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+    }
+    Some(copy)
+}
+
 /// A window to capture, and the size its pixels should represent.
 #[derive(Debug, Clone, Copy)]
 pub struct SnapshotTarget {
@@ -407,11 +465,11 @@ impl SnapshotService {
             state.desktop_in_flight = false;
             match surface {
                 Some(surface) if revision == self.revision.load(Ordering::Acquire) => {
-                    // Marked in use for as long as it is cached. A surface whose pixel buffer has been
-                    // released is eligible to have its backing store reclaimed, and a layer still
-                    // holding it then draws nothing, which is the desktop and the bar going black after
-                    // the overlay has sat idle for a few minutes.
-                    surface.increment_use_count();
+                    // Our own copy: the pool's surface is recycled or reclaimed under a layer that
+                    // still holds it (see `own_copy`).
+                    let Some(surface) = own_copy(&surface) else {
+                        return;
+                    };
                     let width = unsafe { surface.width() } as f64 / scale;
                     let height = unsafe { surface.height() } as f64 / scale;
                     state.desktop = Some(WindowSnapshot {
@@ -513,10 +571,8 @@ impl SnapshotService {
                      buffer is sized wrongly (captureResolution, or points given as pixels)"
                 );
                 false
-            } else if let Some(surface) = surface {
-                // In use for as long as it is cached, or its backing store can be reclaimed and the
-                // tile draws nothing. See the desktop capture above.
-                surface.increment_use_count();
+            } else if let Some(surface) = surface.as_deref().and_then(own_copy) {
+                // Our own copy, not the pool's surface (see `own_copy`).
                 let width = unsafe { surface.width() } as f64 / scale;
                 let height = unsafe { surface.height() } as f64 / scale;
                 state.ready.insert(
@@ -571,6 +627,59 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
+
+    /// The copy is a different surface with the same pixels, so the pool recycling its own cannot
+    /// change what a cached snapshot shows.
+    #[test]
+    fn a_captures_copy_is_its_own_surface_with_the_same_pixels() {
+        use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
+        use objc2_io_surface::{
+            IOSurfaceLockOptions, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfacePixelFormat,
+            kIOSurfaceWidth,
+        };
+        let keys: [&CFString; 4] = [
+            unsafe { kIOSurfaceWidth },
+            unsafe { kIOSurfaceHeight },
+            unsafe { kIOSurfaceBytesPerElement },
+            unsafe { kIOSurfacePixelFormat },
+        ];
+        let values = [
+            CFNumber::new_i64(7),
+            CFNumber::new_i64(5),
+            CFNumber::new_i64(4),
+            CFNumber::new_i64(u32::from_be_bytes(*b"BGRA") as i64),
+        ];
+        let value_refs: [&CFNumber; 4] = std::array::from_fn(|i| &*values[i]);
+        let source = unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
+            .expect("a source surface");
+        let stride = source.bytes_per_row();
+        unsafe {
+            assert_eq!(source.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()), 0);
+            let base = source.base_address().as_ptr() as *mut u8;
+            for y in 0..5 {
+                for x in 0..7 * 4 {
+                    *base.add(y * stride + x) = (y * 31 + x) as u8;
+                }
+            }
+            source.unlock(IOSurfaceLockOptions::empty(), std::ptr::null_mut());
+        }
+
+        let copy = own_copy(&source).expect("a copy");
+        assert_ne!(copy.id(), source.id(), "a surface of our own");
+        assert_eq!((copy.width(), copy.height()), (7, 5));
+        assert_eq!(copy.pixel_format(), source.pixel_format());
+        unsafe {
+            assert_eq!(copy.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()), 0);
+            let base = copy.base_address().as_ptr() as *const u8;
+            let copy_stride = copy.bytes_per_row();
+            for y in 0..5 {
+                for x in 0..7 * 4 {
+                    assert_eq!(*base.add(y * copy_stride + x), (y * 31 + x) as u8, "({x},{y})");
+                }
+            }
+            copy.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+        }
+    }
 
     fn wid(idx: u32) -> WindowId {
         WindowId { pid: 1, idx: NonZeroU32::new(idx).unwrap() }
