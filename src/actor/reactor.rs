@@ -5407,11 +5407,11 @@ impl Reactor {
     }
 
     /// Which z-order group a window belongs to.
-    fn stack_group_of(&self, window: WindowId) -> crate::model::z_group::StackGroup {
+    fn stack_group_of(&self, window: WindowId) -> rini_motion::z_group::StackGroup {
         if self.layout_manager.layout_engine.is_window_floating(window) {
-            crate::model::z_group::StackGroup::Floating
+            rini_motion::z_group::StackGroup::Floating
         } else {
-            crate::model::z_group::StackGroup::Strip
+            rini_motion::z_group::StackGroup::Tiled
         }
     }
 
@@ -6277,7 +6277,7 @@ pub(crate) struct StackedWindow {
     pub(crate) window: WindowId,
     /// Front-to-back position, 0 being frontmost.
     pub(crate) depth: usize,
-    pub(crate) group: crate::model::z_group::StackGroup,
+    pub(crate) group: rini_motion::z_group::StackGroup,
 }
 
 /// The windows to raise so the strip is one group in front of the floating windows, in raise order:
@@ -6290,15 +6290,15 @@ pub(crate) struct StackedWindow {
 pub(crate) fn strip_group_to_lift_for(
     order: &[StackedWindow],
     focused: WindowId,
-    focused_group: crate::model::z_group::StackGroup,
+    focused_group: rini_motion::z_group::StackGroup,
 ) -> Vec<WindowId> {
-    use crate::model::z_group::StackGroup;
+    use rini_motion::z_group::StackGroup;
 
     if focused_group == StackGroup::Floating {
         return Vec::new();
     }
     let groups: Vec<(WindowId, StackGroup)> = order.iter().map(|s| (s.window, s.group)).collect();
-    let back_to_front = crate::model::z_group::strip_regroup(&groups);
+    let back_to_front = rini_motion::z_group::regroup_tiled(&groups);
     let mut raise: Vec<WindowId> =
         back_to_front.iter().copied().filter(|wid| *wid != focused).collect();
     if back_to_front.contains(&focused) {

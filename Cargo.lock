@@ -1493,6 +1493,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-motion"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "rini-shared",
+]
+
+[[package]]
 name = "rini-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1562,6 +1570,7 @@ dependencies = [
  "rini-ipc",
  "rini-layout",
  "rini-macos",
+ "rini-motion",
  "rini-protocol",
  "rini-shared",
  "ron",

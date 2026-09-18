@@ -33,7 +33,10 @@ use crate::ui::window_snapshot::{
 };
 use crate::ui::workspace_overlay::{OverlayTile, WorkspaceOverlay};
 
-pub(crate) mod plan;
+pub(crate) use rini_motion::plan;
+pub(crate) use rini_motion::surface::{
+    SurfaceWindow, pan_travel as strip_pan_travel, surface_travel as strip_travel, to_overlay_space,
+};
 
 /// One window's fixed place on the strip surface.
 ///
@@ -54,6 +57,17 @@ pub struct StripWindow {
     /// Off the strip, and so in the other z-order group. Separate from `pinned`, which is about whether the
     /// strip carries the window along: a workspace switch moves floating windows without unpinning them.
     pub floating: bool,
+}
+
+impl From<&StripWindow> for SurfaceWindow {
+    fn from(window: &StripWindow) -> Self {
+        SurfaceWindow {
+            window: window.window,
+            frame: window.frame,
+            pinned: window.pinned,
+            floating: window.floating,
+        }
+    }
 }
 
 /// One window's part in an animation, as the caller describes it.
@@ -296,28 +310,6 @@ fn companion_of(
         .copied()
 }
 
-/// Where each tile of a strip movement starts and ends on screen, in overlay coordinates.
-///
-/// The strip surface is fixed; the viewport travels from `from_offset` to `to_offset`, so every
-/// unpinned window translates by the opposite of that travel. A pinned window stands still — and a
-/// standing tile still has to exist, because the overlay is opaque and anything it omits vanishes.
-fn strip_travel(
-    frame: CGRect,
-    from_offset: CGPoint,
-    to_offset: CGPoint,
-    pinned: bool,
-) -> (CGRect, CGRect) {
-    if pinned {
-        return (frame, frame);
-    }
-    let at = |offset: CGPoint| {
-        CGRect::new(
-            CGPoint::new(frame.origin.x - offset.x, frame.origin.y - offset.y),
-            frame.size,
-        )
-    };
-    (at(from_offset), at(to_offset))
-}
 
 struct RunningAnimation {
     tiles: Vec<OverlayTile>,
@@ -760,10 +752,6 @@ fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
     }
 }
 
-/// How far a strip movement carries every unpinned tile: `strip_travel`'s `to - from`.
-fn strip_pan_travel(from_offset: CGPoint, to_offset: CGPoint) -> CGPoint {
-    CGPoint::new(from_offset.x - to_offset.x, from_offset.y - to_offset.y)
-}
 
 /// The frames a coalescing merge must send again, if any: frames already placed at frame zero are
 /// stale once a later pass moves a window, and `step` will not place them a second time. See
@@ -926,12 +914,12 @@ fn worth_flying(moving_drawable: bool, running: bool) -> bool {
 /// order kept within a band. The strip is one z-order group, so with a strip focus (or none)
 /// every floating tile is behind every strip tile, whichever pass composed it. Companions keep
 /// the depth of the window they trace. The real windows are put in the same order by the
-/// reactor's regroup (`strip_regroup`), so both ends of a flight match. See "Mid-flight passes"
+/// reactor's regroup (`regroup_tiled`), so both ends of a flight match. See "Mid-flight passes"
 /// in `docs/animation-smoothness.md`.
 fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
     let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
     for tile in tiles.iter_mut().filter(|t| !t.companion) {
-        tile.depth = crate::model::z_group::tile_depth(
+        tile.depth = rini_motion::z_group::tile_depth(
             tile.server_order,
             focus == Some(tile.window),
             group_of(tile.floating),
@@ -949,7 +937,7 @@ fn band_plan(
     tiles: &[OverlayTile],
     focus: Option<WindowId>,
 ) -> plan::Banding {
-    use crate::model::z_group::{GROUP_STRIDE, StackGroup, tile_depth};
+    use rini_motion::z_group::{GROUP_STRIDE, StackGroup, tile_depth};
     let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
     let within: HashMap<WindowId, usize> = tiles
         .iter()
@@ -976,13 +964,13 @@ fn band_plan(
             plan.changing.iter().chain(&plan.entrances).map(|(w, _, _)| *w).collect();
         let holds_focus = focus.is_some_and(|f| loose.contains(&f));
         let shallowest = loose.iter().filter_map(|w| within.get(w)).copied().min().unwrap_or(0);
-        strip.push((plan::GroupKey::StripLoose, holds_focus, shallowest));
+        strip.push((plan::GroupKey::Loose, holds_focus, shallowest));
     }
     strip.sort_by_key(|(_, holds_focus, shallowest)| (!*holds_focus, *shallowest));
     plan::Banding {
         floating_in_front: focused_group == StackGroup::Floating,
         within,
-        strip_order: strip.into_iter().map(|(key, _, _)| key).collect(),
+        group_order: strip.into_iter().map(|(key, _, _)| key).collect(),
     }
 }
 
@@ -1001,11 +989,11 @@ fn managed_server_ids(
 }
 
 /// Which group a window belongs to.
-fn group_of(floating: bool) -> crate::model::z_group::StackGroup {
+fn group_of(floating: bool) -> rini_motion::z_group::StackGroup {
     if floating {
-        crate::model::z_group::StackGroup::Floating
+        rini_motion::z_group::StackGroup::Floating
     } else {
-        crate::model::z_group::StackGroup::Strip
+        rini_motion::z_group::StackGroup::Tiled
     }
 }
 
@@ -1016,12 +1004,12 @@ fn group_of(floating: bool) -> crate::model::z_group::StackGroup {
 fn focus_group(
     focus: Option<WindowId>,
     mut windows: impl Iterator<Item = (WindowId, bool)>,
-) -> crate::model::z_group::StackGroup {
-    let Some(focus) = focus else { return crate::model::z_group::StackGroup::Strip };
+) -> rini_motion::z_group::StackGroup {
+    let Some(focus) = focus else { return rini_motion::z_group::StackGroup::Tiled };
     windows
         .find(|(window, _)| *window == focus)
         .map(|(_, floating)| group_of(floating))
-        .unwrap_or(crate::model::z_group::StackGroup::Strip)
+        .unwrap_or(rini_motion::z_group::StackGroup::Tiled)
 }
 
 impl RunningAnimation {
@@ -1864,7 +1852,7 @@ impl WorkspaceAnimation {
         running.plan.entrances.push((tile.window, tile.from, tile.to));
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.add_tile(&tile, plan::GroupKey::StripLoose, &banding, duration);
+            overlay.add_tile(&tile, plan::GroupKey::Loose, &banding, duration);
         }
         debug!(pid = window.pid, idx = window.idx.get(), "window entered mid-flight");
         true
@@ -2673,7 +2661,11 @@ impl WorkspaceAnimation {
             .filter(|w| tiles.iter().any(|t| t.window == w.window && !t.companion))
             .cloned()
             .collect();
-        let mut plan = plan::strip_plan(&drawn, from_offset, to_offset);
+        let mut plan = plan::surface_plan(
+            &drawn.iter().map(SurfaceWindow::from).collect::<Vec<_>>(),
+            from_offset,
+            to_offset,
+        );
         for tile in &tiles {
             if plan.member(tile.window).is_none() {
                 plan.adopt(tile);
@@ -3398,25 +3390,15 @@ fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
     WindowId { pid: 0, idx: std::num::NonZeroU32::new(server_id.as_u32().max(1)).unwrap() }
 }
 
-/// A snapshot's pixels as packed RGB, downsampled by four in each axis, for the debug dump.
-/// Converts a display-space rect into the overlay's own coordinate space.
-///
-/// The overlay's layer tree has its origin at the overlay's top-left, not the display's, so a window
-/// frame has to have the overlay's origin subtracted. Skipping this puts every tile off by the menu
-/// bar inset, which reads as the whole animation being shifted down.
-pub fn to_overlay_space(frame: CGRect, overlay_frame: CGRect) -> CGRect {
-    CGRect::new(
-        CGPoint::new(
-            frame.origin.x - overlay_frame.origin.x,
-            frame.origin.y - overlay_frame.origin.y,
-        ),
-        frame.size,
-    )
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The strip-window form of `surface_plan`, so the strip tests read as they did.
+    fn strip_plan(windows: &[StripWindow], from: CGPoint, to: CGPoint) -> plan::ReflowPlan {
+        plan::surface_plan(&windows.iter().map(SurfaceWindow::from).collect::<Vec<_>>(), from, to)
+    }
 
     /// The built-in display, for tests that need a screen to judge parks against.
     const DISPLAY: CGRect = CGRect {
@@ -5213,7 +5195,7 @@ mod tests {
     mod preservation {
         use super::*;
         use crate::model::HiddenWindowPlacement;
-        use crate::model::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+        use rini_motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
         use crate::ui::window_snapshot::{SnapshotCache, test_snapshot};
 
         pub(super) const DISPLAY: CGRect = CGRect {
@@ -5587,7 +5569,7 @@ mod tests {
     mod flight_restack {
         use super::preservation::{Gen, RUNS, stacked};
         use super::*;
-        use crate::model::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+        use rini_motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
 
         fn wid(idx: u32) -> WindowId {
             WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
@@ -6738,7 +6720,7 @@ mod tests {
         fn key_of(plan: &FlightPlan, window: WindowId) -> Option<GroupKey> {
             match plan.member(window)? {
                 Member::Rigid { key, .. } => Some(key),
-                Member::Changing { .. } | Member::Entrance { .. } => Some(GroupKey::StripLoose),
+                Member::Changing { .. } | Member::Entrance { .. } => Some(GroupKey::Loose),
                 Member::Floating { .. } => Some(GroupKey::Floating),
             }
         }
@@ -6755,7 +6737,7 @@ mod tests {
                 .map(|(key, p)| {
                     let travel = match key {
                         GroupKey::Floating => plan.floating_travel,
-                        GroupKey::StripLoose => CGPoint::new(0.0, 0.0),
+                        GroupKey::Loose => CGPoint::new(0.0, 0.0),
                         key => plan.groups.iter().find(|g| g.key == *key).map(|g| g.travel).unwrap_or(CGPoint::new(0.0, 0.0)),
                     };
                     (*key, CGPoint::new(p.x - travel.x / 2.0, p.y - travel.y / 2.0))
@@ -6907,7 +6889,7 @@ mod tests {
             let grown = rect(b.origin.x + v.x, b.origin.y, b.size.width + 400.0, b.size.height);
             let pass = reflow_plan(&[(wid(2), shifted(b, v), grown, false)], DISPLAY);
             let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
-            assert_eq!(delta.reparented, vec![(wid(2), group, GroupKey::StripLoose)]);
+            assert_eq!(delta.reparented, vec![(wid(2), group, GroupKey::Loose)]);
             assert_eq!(delta.retargeted_tiles, vec![(wid(2), grown)]);
             let Some(Member::Changing { from, to }) = merged.member(wid(2)) else { panic!("loose") };
             assert_eq!(from, overlay_of(b, presented[&group]), "leaves at the presented frame");
@@ -7184,7 +7166,7 @@ mod tests {
         use super::*;
         use crate::actor::workspace_animation::plan::*;
         use crate::model::HiddenWindowPlacement;
-        use crate::model::z_group::StackGroup;
+        use rini_motion::z_group::StackGroup;
         use crate::ui::window_snapshot::is_a_resize;
 
         fn wid(idx: u32) -> WindowId {
@@ -7199,11 +7181,11 @@ mod tests {
             rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
         }
 
-        fn moving(plan: &ReflowPlan) -> Vec<&StripGroup> {
+        fn moving(plan: &ReflowPlan) -> Vec<&RigidGroup> {
             plan.groups.iter().filter(|g| !g.members.is_empty() && g.key != GroupKey::STILL).collect()
         }
 
-        fn members(group: &StripGroup) -> Vec<WindowId> {
+        fn members(group: &RigidGroup) -> Vec<WindowId> {
             group.members.iter().map(|m| m.window).collect()
         }
 
@@ -7244,8 +7226,8 @@ mod tests {
             assert_eq!(members(groups[0]), vec![wid(1)]);
             assert_eq!(members(groups[1]), vec![wid(2)]);
             assert_eq!(groups[1].travel, CGPoint::new(303.0, 0.0));
-            assert_eq!(groups[0].key, GroupKey::Strip(1));
-            assert_eq!(groups[1].key, GroupKey::Strip(2));
+            assert_eq!(groups[0].key, GroupKey::Rigid(1));
+            assert_eq!(groups[1].key, GroupKey::Rigid(2));
         }
 
         #[test]
@@ -7420,8 +7402,8 @@ mod tests {
             let flight = FlightPlan::from(plan.clone());
             assert_eq!(flight.groups, plan.groups);
             assert_eq!(flight.positions[&GroupKey::STILL], CGPoint::new(0.0, 0.0));
-            assert_eq!(flight.positions[&GroupKey::Strip(1)], CGPoint::new(-100.0, 0.0));
-            assert_eq!(flight.positions[&GroupKey::StripLoose], CGPoint::new(0.0, 0.0));
+            assert_eq!(flight.positions[&GroupKey::Rigid(1)], CGPoint::new(-100.0, 0.0));
+            assert_eq!(flight.positions[&GroupKey::Loose], CGPoint::new(0.0, 0.0));
             assert_eq!(flight.positions[&GroupKey::Floating], CGPoint::new(0.0, 0.0));
             assert_eq!(flight.next_key, 2);
             assert!(PlanDelta::default().is_empty());
@@ -7488,7 +7470,7 @@ mod tests {
                 assert_eq!(plan.groups[0].key, GroupKey::STILL, "{tag}");
                 assert_eq!(plan.groups[0].travel, CGPoint::new(0.0, 0.0), "{tag}");
                 for (i, group) in plan.groups.iter().enumerate() {
-                    assert_eq!(group.key, GroupKey::Strip(i as u16), "{tag}: keys in plan order");
+                    assert_eq!(group.key, GroupKey::Rigid(i as u16), "{tag}: keys in plan order");
                     assert!(i == 0 || !group.members.is_empty(), "{tag}: an empty moving group");
                 }
 
@@ -7839,7 +7821,7 @@ mod tests {
         /// holding the focus comes first; a companion carries its window's depth.
         #[test]
         fn band_plan_puts_the_floating_container_behind_the_strip_unless_it_holds_focus() {
-            use crate::model::z_group::{GROUP_STRIDE, tile_depth};
+            use rini_motion::z_group::{GROUP_STRIDE, tile_depth};
             let (left, right) = (rect(4.0, 32.0, 860.0, 1081.0), rect(868.0, 32.0, 856.0, 1081.0));
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let far = column(2.0);
@@ -7861,9 +7843,9 @@ mod tests {
 
             let banding = band_plan(&plan, &tiles, Some(wid(90)));
             assert!(!banding.floating_in_front);
-            assert_eq!(banding.strip_order, vec![still, moving], "the focused group first");
+            assert_eq!(banding.group_order, vec![still, moving], "the focused group first");
             assert_eq!(banding.within[&wid(90)], 0, "the focused window leads its container");
-            assert_eq!(banding.within[&wid(89)], tile_depth(Some(2), false, StackGroup::Strip, StackGroup::Strip));
+            assert_eq!(banding.within[&wid(89)], tile_depth(Some(2), false, StackGroup::Tiled, StackGroup::Tiled));
             assert_eq!(banding.within[&wid(5830)], tile_depth(Some(1), false, StackGroup::Floating, StackGroup::Floating));
             let anchor = tiles.iter().find(|t| t.window == wid(90)).unwrap().depth;
             assert_eq!(banding.within[&wid(900)], anchor % GROUP_STRIDE, "a companion takes its window's depth");
@@ -7872,7 +7854,7 @@ mod tests {
             let banding = band_plan(&plan, &tiles, Some(wid(5830)));
             assert!(banding.floating_in_front);
             assert_eq!(banding.within[&wid(5830)], 0);
-            assert_eq!(banding.strip_order, vec![still, moving], "no strip group holds focus: shallowest first");
+            assert_eq!(banding.group_order, vec![still, moving], "no strip group holds focus: shallowest first");
         }
 
         /// Property P3 (seed 163, 200 runs): for random tiles and a random focused group, the
@@ -7880,7 +7862,7 @@ mod tests {
         /// floating tile is behind every strip tile with a strip focus and in front with a floating one.
         #[test]
         fn container_bands_plus_within_depths_reproduce_tile_depth() {
-            use crate::model::z_group::{container_z, tile_depth};
+            use rini_motion::z_group::{container_z, tile_depth};
             let mut rng = Gen(163);
             for run in 0..RUNS {
                 let count = 1 + rng.below(8) as usize;
@@ -7911,7 +7893,7 @@ mod tests {
                 }
                 for f in &floating_total {
                     for s in &strip_total {
-                        if focused_group == StackGroup::Strip {
+                        if focused_group == StackGroup::Tiled {
                             assert!(f < s, "{tag}: floating {f} in front of strip {s}");
                         } else {
                             assert!(f > s, "{tag}: floating {f} behind strip {s}");
@@ -7919,13 +7901,13 @@ mod tests {
                     }
                 }
                 // Every occupied strip container is ordered once; the floating one never is.
-                let mut order = banding.strip_order.clone();
+                let mut order = banding.group_order.clone();
                 order.sort_by_key(|k| format!("{k:?}"));
                 order.dedup();
-                assert_eq!(order.len(), banding.strip_order.len(), "{tag}");
-                assert!(!banding.strip_order.contains(&GroupKey::Floating), "{tag}");
+                assert_eq!(order.len(), banding.group_order.len(), "{tag}");
+                assert!(!banding.group_order.contains(&GroupKey::Floating), "{tag}");
                 for g in plan.groups.iter().filter(|g| !g.members.is_empty()) {
-                    assert!(banding.strip_order.contains(&g.key), "{tag}: {:?} unordered", g.key);
+                    assert!(banding.group_order.contains(&g.key), "{tag}: {:?} unordered", g.key);
                 }
             }
         }

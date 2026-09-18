@@ -25,10 +25,10 @@ use objc2_quartz_core::{
 };
 
 use rini_shared::ids::WindowId;
-use crate::actor::workspace_animation::plan::{
+use rini_motion::plan::{
     Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
 };
-use crate::model::z_group::{StackGroup, container_z};
+use rini_motion::z_group::{StackGroup, container_z};
 use rini_shared::geometry::{Round, SameAs};
 use rini_macos::screen::CoordinateConverter;
 use crate::ui::edge_dressing::{boundary_layout, tile_corner_radius};
@@ -83,6 +83,24 @@ pub struct OverlayTile {
     pub companion: bool,
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow.
     pub focused: bool,
+}
+
+impl rini_motion::surface::TileGeometry for OverlayTile {
+    fn window(&self) -> WindowId {
+        self.window
+    }
+    fn from(&self) -> CGRect {
+        self.from
+    }
+    fn to(&self) -> CGRect {
+        self.to
+    }
+    fn floating(&self) -> bool {
+        self.floating
+    }
+    fn companion(&self) -> bool {
+        self.companion
+    }
 }
 
 impl OverlayTile {
@@ -280,7 +298,7 @@ const BAR_Z: f64 = 10_000.0;
 /// strides for the back group's unreported windows, and a backdrop above that swallowed every
 /// floating tile — the Settings window behind the strip was drawn in every animation and visible
 /// in none, because its picture sat behind the wallpaper.
-const BACKDROP_Z: f64 = -((crate::model::z_group::MAX_TILE_DEPTH + 1024) as f64);
+const BACKDROP_Z: f64 = -((rini_motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
 
 /// The one curve every movement runs on, as CSS-style cubic Bezier control points `(x1, y1, x2, y2)`.
 ///
@@ -454,7 +472,7 @@ pub const BOUNCE_TURN: f64 = 0.35;
 pub(crate) fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
     match key {
         GroupKey::Floating => overshoot.y != 0.0,
-        GroupKey::Strip(_) | GroupKey::StripLoose => true,
+        GroupKey::Rigid(_) | GroupKey::Loose => true,
     }
 }
 
@@ -941,7 +959,7 @@ impl WorkspaceOverlay {
         }
         let strip_loose: Vec<(WindowId, CGRect, CGRect)> =
             plan.changing.iter().chain(&plan.entrances).copied().collect();
-        for (key, members) in [(GroupKey::StripLoose, &strip_loose), (GroupKey::Floating, &plan.floating)] {
+        for (key, members) in [(GroupKey::Loose, &strip_loose), (GroupKey::Floating, &plan.floating)] {
             if members.is_empty() {
                 continue;
             }
@@ -958,22 +976,22 @@ impl WorkspaceOverlay {
     }
 
     /// Writes every container's and tile's `zPosition` from `banding`, nothing else. Containers
-    /// sort among themselves (`container_z`, then `strip_order` a quarter step apart); tiles sort
+    /// sort among themselves (`container_z`, then `group_order` a quarter step apart); tiles sort
     /// inside their container at `-within`, a companion a quarter step in front of its window, a
     /// shadow half a step behind its picture. A hard cut: z does not interpolate. Callers hold the
     /// transaction. See "The overlay engine" in `docs/animation-smoothness.md`.
     pub(crate) fn rebank(&self, banding: &Banding) {
-        let focused = if banding.floating_in_front { StackGroup::Floating } else { StackGroup::Strip };
+        let focused = if banding.floating_in_front { StackGroup::Floating } else { StackGroup::Tiled };
         for (key, layer) in &self.containers {
             let z = match key {
                 GroupKey::Floating => container_z(StackGroup::Floating, focused),
                 key => {
                     let index = banding
-                        .strip_order
+                        .group_order
                         .iter()
                         .position(|k| k == key)
-                        .unwrap_or(banding.strip_order.len());
-                    container_z(StackGroup::Strip, focused) - index as f64 * 0.25
+                        .unwrap_or(banding.group_order.len());
+                    container_z(StackGroup::Tiled, focused) - index as f64 * 0.25
                 }
             };
             layer.setZPosition(z);
@@ -1858,7 +1876,7 @@ mod tests {
     /// so overlay space equals display space.
     mod targets {
         use super::*;
-        use crate::actor::workspace_animation::plan::{FlightPlan, reflow_plan};
+        use rini_motion::plan::{FlightPlan, reflow_plan};
 
         const DISPLAY: CGRect = CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
@@ -1912,7 +1930,7 @@ mod tests {
             assert_eq!(
                 targets,
                 vec![AnimationTarget::Container {
-                    key: GroupKey::Strip(1),
+                    key: GroupKey::Rigid(1),
                     from: CGPoint::new(0.0, 0.0),
                     to: CGPoint::new(-859.0, 0.0),
                 }]
@@ -1928,7 +1946,7 @@ mod tests {
                 (wid(3), c, shifted(c, -300.0), false),
             ]);
             let targets = animation_targets(&plan);
-            assert_eq!(containers(&targets), vec![GroupKey::Strip(1), GroupKey::Strip(2)]);
+            assert_eq!(containers(&targets), vec![GroupKey::Rigid(1), GroupKey::Rigid(2)]);
             assert!(tiles(&targets).is_empty(), "no rigid member is a tile target");
         }
 
@@ -1942,7 +1960,7 @@ mod tests {
             ]);
             let targets = animation_targets(&plan);
             assert_eq!(tiles(&targets), vec![wid(1)]);
-            assert_eq!(containers(&targets), vec![GroupKey::Strip(1)]);
+            assert_eq!(containers(&targets), vec![GroupKey::Rigid(1)]);
             assert!(targets.contains(&AnimationTarget::Tile { window: wid(1), from: a, to: grown }));
         }
 
@@ -2133,7 +2151,7 @@ mod tests {
     fn the_floating_container_bounces_only_vertically() {
         let sideways = CGPoint::new(-36.0, 0.0);
         let upward = CGPoint::new(0.0, -36.0);
-        for key in [GroupKey::Strip(0), GroupKey::Strip(3), GroupKey::StripLoose] {
+        for key in [GroupKey::Rigid(0), GroupKey::Rigid(3), GroupKey::Loose] {
             assert!(bounce_carries(key, sideways), "{key:?}");
             assert!(bounce_carries(key, upward), "{key:?}");
         }
@@ -2304,9 +2322,9 @@ mod tests {
     /// the DEEPEST depth the grouping can produce, and the bar in front of the shallowest.
     #[test]
     fn every_possible_tile_draws_between_the_backdrop_and_the_bar() {
-        use crate::model::z_group::{StackGroup, tile_depth};
-        let deepest = tile_depth(None, false, StackGroup::Floating, StackGroup::Strip);
-        let shallowest = tile_depth(Some(0), true, StackGroup::Strip, StackGroup::Strip);
+        use rini_motion::z_group::{StackGroup, tile_depth};
+        let deepest = tile_depth(None, false, StackGroup::Floating, StackGroup::Tiled);
+        let shallowest = tile_depth(Some(0), true, StackGroup::Tiled, StackGroup::Tiled);
         assert!(-(deepest as f64) > BACKDROP_Z, "the deepest tile clears the backdrop");
         assert!(-(shallowest as f64) < BAR_Z, "the shallowest tile stays under the bar");
         // The shadow caster sits half a step behind its picture and must clear the backdrop too.

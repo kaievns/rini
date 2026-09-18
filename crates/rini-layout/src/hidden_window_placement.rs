@@ -58,45 +58,13 @@ impl HiddenWindowPlacement {
         }
     }
 
-    /// Whether a frame shows nothing the eye can use on the display.
-    ///
-    /// A strip position thousands of points along the strip is off screen, and macOS will not honour it:
-    /// asked for x = -12396 it places the window with 40pt showing instead, which is the row of slivers
-    /// down each edge. Those frames get a corner park instead, which macOS does honour at 1pt.
-    ///
-    /// A park itself keeps a sliver on screen, so "any intersection at all" misclassified every
-    /// parked window as visible — and a parked window animated back in then travelled from its park
-    /// in the bottom corner instead of entering from the strip's edge. Off screen therefore means:
-    /// no intersection, or a sliver within the park clamp in both axes. Nothing genuinely meant to
-    /// be seen shows 40pt or less in BOTH axes — a column peeking in at an edge shows its full height.
-    ///
-    /// Apps clamp a park past 40pt (Kiro 41pt, Finder 52pt), so the animation's park remap also
-    /// consults the requested frame, not only this test. See docs/animation-smoothness.md.
+    /// `rini_shared::geometry::is_off_screen`; see `docs/strip.md` "Parking".
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
-        const PARK_CLAMP_PX: f64 = 40.0;
-        if Self::intersection_area(window, screen) <= 0.0 {
-            return true;
-        }
-        let visible_width =
-            (window.max().x.min(screen.max().x) - window.origin.x.max(screen.origin.x)).max(0.0);
-        let visible_height =
-            (window.max().y.min(screen.max().y) - window.origin.y.max(screen.origin.y)).max(0.0);
-        visible_width <= PARK_CLAMP_PX && visible_height <= PARK_CLAMP_PX
+        rini_shared::geometry::is_off_screen(screen, window)
     }
 
-    /// Where a parked window should start an animation that brings it back on screen.
-    ///
-    /// Its real frame is a corner, so animating from there flies it in diagonally from the bottom of the
-    /// display. It belongs to the strip, so it comes back the way it left: same row as its destination, just
-    /// past the edge it was parked against.
     pub fn entry_frame(park: CGRect, destination: CGRect, display: CGRect) -> CGRect {
-        let from_the_left = park.mid().x < display.mid().x;
-        let x = if from_the_left {
-            display.origin.x - destination.size.width
-        } else {
-            display.max().x
-        };
-        CGRect::new(CGPoint::new(x, destination.origin.y), destination.size)
+        rini_shared::geometry::park_entry_frame(park, destination, display)
     }
 
     pub fn is_hidden(screen: CGRect, window: CGRect, other_screens: &[CGRect]) -> bool {

@@ -155,6 +155,37 @@ impl<'de> DeserializeAs<'de, ic::CGRect> for CGRectDef {
     }
 }
 
+/// A frame keeps only a sliver within this many points on screen when macOS refuses the requested
+/// off-screen position. Apps clamp further (Kiro 41pt, Finder 52pt); see
+/// `crates/rini-layout/docs/strip.md` "Parking".
+pub const PARK_CLAMP_PX: f64 = 40.0;
+
+/// Whether `window` shows nothing usable on `display`: no intersection, or a sliver within
+/// `PARK_CLAMP_PX` in both axes. A column peeking in at an edge shows its full height, so it is
+/// never "off screen" by this test.
+pub fn is_off_screen(display: ic::CGRect, window: ic::CGRect) -> bool {
+    let visible_width =
+        (window.max().x.min(display.max().x) - window.origin.x.max(display.origin.x)).max(0.0);
+    let visible_height =
+        (window.max().y.min(display.max().y) - window.origin.y.max(display.origin.y)).max(0.0);
+    if visible_width <= 0.0 || visible_height <= 0.0 {
+        return true;
+    }
+    visible_width <= PARK_CLAMP_PX && visible_height <= PARK_CLAMP_PX
+}
+
+/// Where a window parked at `park` should start an animation towards `destination`: the same row,
+/// just past the display edge on the park's side, so it enters from the side it left by.
+pub fn park_entry_frame(park: ic::CGRect, destination: ic::CGRect, display: ic::CGRect) -> ic::CGRect {
+    let from_the_left = park.mid().x < display.mid().x;
+    let x = if from_the_left {
+        display.origin.x - destination.size.width
+    } else {
+        display.max().x
+    };
+    ic::CGRect::new(ic::CGPoint::new(x, destination.origin.y), destination.size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +233,26 @@ mod tests {
         let w = Wrapper(rect(1.5, 2.5, 3.5, 4.5));
         let json = serde_json::to_string(&w).unwrap();
         assert_eq!(serde_json::from_str::<Wrapper>(&json).unwrap(), w);
+    }
+
+    #[test]
+    fn a_park_sliver_is_off_screen_but_a_peeking_column_is_not() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        assert!(is_off_screen(display, rect(1727.0, 1116.0, 800.0, 600.0)), "1pt corner park");
+        assert!(is_off_screen(display, rect(-1719.0, 1116.0, 1720.0, 600.0)), "1pt corner park, left");
+        assert!(is_off_screen(display, rect(-3000.0, 0.0, 800.0, 600.0)), "no intersection");
+        assert!(!is_off_screen(display, rect(1600.0, 0.0, 800.0, 1117.0)), "column peeking in 128pt");
+        assert!(!is_off_screen(display, rect(-770.0, 0.0, 800.0, 1117.0)), "30pt wide but full height");
+    }
+
+    #[test]
+    fn a_parked_window_enters_from_the_side_it_was_parked_on() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let destination = rect(400.0, 32.0, 800.0, 1000.0);
+        let from_left = park_entry_frame(rect(-799.0, 1116.0, 800.0, 600.0), destination, display);
+        assert_eq!((from_left.origin.x, from_left.origin.y), (-800.0, 32.0));
+        let from_right = park_entry_frame(rect(1727.0, 1116.0, 800.0, 600.0), destination, display);
+        assert_eq!(from_right.origin.x, 1728.0);
+        assert_eq!(from_right.size.width, 800.0);
     }
 }

@@ -3,7 +3,6 @@ pub mod server;
 pub mod space_activation;
 pub mod strip_stack;
 pub mod tx_store;
-pub mod z_group;
 
 pub use reactor::RiniState;
 pub use rini_layout::{

@@ -5221,7 +5221,7 @@ fn replug_returns_the_windows_that_were_on_that_display() {
 /// re-assigned from scratch in discovery order, which is what reshuffled the built-in's
 /// column order on every dock/undock cycle.
 #[test]
-fn replug_leaves_the_other_display_strip_order_untouched() {
+fn replug_leaves_the_other_display_group_order_untouched() {
     let mut reactor = test_reactor();
     let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
     let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
@@ -5895,7 +5895,7 @@ mod strip_regroup {
     use test_log::test;
     use crate::actor::raise_manager::{self, RaiseRequest};
     use crate::actor::reactor::{StackedWindow, strip_group_to_lift_for};
-    use crate::model::z_group::StackGroup::{Floating, Strip};
+    use rini_motion::z_group::StackGroup::{Floating, Tiled};
 
     const SCREEN: CGRect = CGRect {
         origin: CGPoint { x: 0., y: 0. },
@@ -5957,7 +5957,7 @@ mod strip_regroup {
         StackedWindow {
             window: WindowId::new(1, idx),
             depth,
-            group: if floating { Floating } else { Strip },
+            group: if floating { Floating } else { Tiled },
         }
     }
 
@@ -5967,17 +5967,17 @@ mod strip_regroup {
     fn a_sandwich_lifts_the_strip_back_to_front_with_the_focused_window_last() {
         let order = [stacked(2, 0, false), stacked(4, 1, true), stacked(1, 2, false)];
         assert_eq!(
-            strip_group_to_lift_for(&order, WindowId::new(1, 2), Strip),
+            strip_group_to_lift_for(&order, WindowId::new(1, 2), Tiled),
             vec![WindowId::new(1, 1), WindowId::new(1, 2)]
         );
         // Focus on the column that was behind (a keyboard move, not raised yet): it still goes last.
         assert_eq!(
-            strip_group_to_lift_for(&order, WindowId::new(1, 1), Strip),
+            strip_group_to_lift_for(&order, WindowId::new(1, 1), Tiled),
             vec![WindowId::new(1, 2), WindowId::new(1, 1)]
         );
         // A focus not in the order (no server depth yet) is left to the caller's own raise.
         assert_eq!(
-            strip_group_to_lift_for(&order, WindowId::new(1, 9), Strip),
+            strip_group_to_lift_for(&order, WindowId::new(1, 9), Tiled),
             vec![WindowId::new(1, 1), WindowId::new(1, 2)]
         );
     }
@@ -5985,7 +5985,7 @@ mod strip_regroup {
     #[test]
     fn a_grouped_order_or_a_floating_focus_lifts_nothing() {
         let grouped = [stacked(2, 0, false), stacked(1, 1, false), stacked(4, 2, true)];
-        assert!(strip_group_to_lift_for(&grouped, WindowId::new(1, 2), Strip).is_empty());
+        assert!(strip_group_to_lift_for(&grouped, WindowId::new(1, 2), Tiled).is_empty());
         let sandwich = [stacked(2, 0, false), stacked(4, 1, true), stacked(1, 2, false)];
         assert!(strip_group_to_lift_for(&sandwich, WindowId::new(1, 4), Floating).is_empty());
     }

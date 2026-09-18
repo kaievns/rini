@@ -1,4 +1,4 @@
-//! The strip is one z-order group.
+//! Tiled windows are one z-order group.
 //!
 //! A scrolling workspace is a single surface, so its windows belong together in front-to-back order as
 //! well as in position: focusing any window on the strip brings the whole strip in front of the windows
@@ -14,8 +14,8 @@
 /// Which z-order group a window belongs to.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum StackGroup {
-    /// On the strip, and therefore part of the group that moves as one.
-    Strip,
+    /// Part of the tiled surface, which moves as one.
+    Tiled,
     /// Off the strip: floating, or otherwise not part of the scrolling surface.
     Floating,
 }
@@ -72,10 +72,10 @@ pub fn tile_depth(
 /// It is broken as soon as something off the strip sits in front of something on it. Checked before doing
 /// anything about it, because putting it back costs one Accessibility raise per window on screen, and a
 /// click that lands on an order which is already grouped should cost nothing.
-pub fn strip_is_behind(front_to_back: &[StackGroup]) -> bool {
+pub fn tiled_is_behind(front_to_back: &[StackGroup]) -> bool {
     let first_floating = front_to_back.iter().position(|group| *group == StackGroup::Floating);
     match first_floating {
-        Some(floating) => front_to_back[floating..].contains(&StackGroup::Strip),
+        Some(floating) => front_to_back[floating..].contains(&StackGroup::Tiled),
         None => false,
     }
 }
@@ -89,22 +89,22 @@ pub fn strip_is_behind(front_to_back: &[StackGroup]) -> bool {
 /// within the sequence the last one raised is the frontmost. The windows that are NOT on the strip are left
 /// out entirely rather than raised first: their order relative to each other is not this rule's business,
 /// and leaving them alone is what puts them behind.
-pub fn strip_regroup<T: Copy>(front_to_back: &[(T, StackGroup)]) -> Vec<T> {
+pub fn regroup_tiled<T: Copy>(front_to_back: &[(T, StackGroup)]) -> Vec<T> {
     let groups: Vec<StackGroup> = front_to_back.iter().map(|(_, group)| *group).collect();
-    if !strip_is_behind(&groups) {
+    if !tiled_is_behind(&groups) {
         return Vec::new();
     }
     front_to_back
         .iter()
         .rev()
-        .filter(|(_, group)| *group == StackGroup::Strip)
+        .filter(|(_, group)| *group == StackGroup::Tiled)
         .map(|(window, _)| *window)
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::StackGroup::{Floating, Strip};
+    use super::StackGroup::{Floating, Tiled};
     use super::*;
 
     /// The measured order after clicking the left half of a 50/50 pair: the clicked terminal, then the
@@ -112,54 +112,54 @@ mod tests {
     /// clicked one has to end up last so it stays in front.
     #[test]
     fn regrouping_raises_the_whole_strip_back_to_front() {
-        let order = [(90, Strip), (5830, Floating), (89, Strip), (91, Strip)];
-        assert_eq!(strip_regroup(&order), vec![91, 89, 90]);
+        let order = [(90, Tiled), (5830, Floating), (89, Tiled), (91, Tiled)];
+        assert_eq!(regroup_tiled(&order), vec![91, 89, 90]);
     }
 
     #[test]
     fn an_order_that_already_obeys_the_rule_is_left_alone() {
-        assert!(strip_regroup(&[(90, Strip), (91, Strip), (5830, Floating)]).is_empty());
-        assert!(strip_regroup(&[(90, Strip), (91, Strip)]).is_empty());
-        assert!(strip_regroup::<i32>(&[]).is_empty());
+        assert!(regroup_tiled(&[(90, Tiled), (91, Tiled), (5830, Floating)]).is_empty());
+        assert!(regroup_tiled(&[(90, Tiled), (91, Tiled)]).is_empty());
+        assert!(regroup_tiled::<i32>(&[]).is_empty());
     }
 
     /// The floating windows are left out rather than raised first. Raising them in the same sequence would
     /// leave their order against the strip up to whichever app answered first.
     #[test]
     fn regrouping_never_raises_a_window_off_the_strip() {
-        let order = [(5830, Floating), (1350, Floating), (90, Strip)];
-        assert_eq!(strip_regroup(&order), vec![90]);
+        let order = [(5830, Floating), (1350, Floating), (90, Tiled)];
+        assert_eq!(regroup_tiled(&order), vec![90]);
     }
 
     /// The measured case: clicking the left half of a 50/50 pair left the floating Settings window between
     /// the two terminals, in front of one and behind the other.
     #[test]
     fn a_floating_window_in_front_of_any_strip_window_breaks_the_rule() {
-        assert!(strip_is_behind(&[Strip, Floating, Strip, Strip]));
-        assert!(strip_is_behind(&[Floating, Strip]));
-        assert!(strip_is_behind(&[Strip, Strip, Floating, Strip]));
+        assert!(tiled_is_behind(&[Tiled, Floating, Tiled, Tiled]));
+        assert!(tiled_is_behind(&[Floating, Tiled]));
+        assert!(tiled_is_behind(&[Tiled, Tiled, Floating, Tiled]));
     }
 
     #[test]
     fn the_whole_strip_in_front_of_the_floating_windows_is_the_rule_kept() {
-        assert!(!strip_is_behind(&[Strip, Strip, Strip, Floating, Floating]));
-        assert!(!strip_is_behind(&[Strip, Floating]));
+        assert!(!tiled_is_behind(&[Tiled, Tiled, Tiled, Floating, Floating]));
+        assert!(!tiled_is_behind(&[Tiled, Floating]));
     }
 
     #[test]
     fn an_order_with_only_one_kind_of_window_is_never_broken() {
-        assert!(!strip_is_behind(&[Strip, Strip, Strip]));
-        assert!(!strip_is_behind(&[Floating, Floating]));
-        assert!(!strip_is_behind(&[]));
+        assert!(!tiled_is_behind(&[Tiled, Tiled, Tiled]));
+        assert!(!tiled_is_behind(&[Floating, Floating]));
+        assert!(!tiled_is_behind(&[]));
     }
 
     /// Focusing either half of a 50/50 pair has to lift BOTH of them over the floating window, which is the
     /// whole point: they sit side by side on screen and cannot be on opposite sides of it.
     #[test]
     fn focusing_one_strip_window_puts_its_whole_group_in_front() {
-        let focused = tile_depth(Some(0), true, Strip, Strip);
-        let partner = tile_depth(Some(3), false, Strip, Strip);
-        let settings = tile_depth(Some(1), false, Floating, Strip);
+        let focused = tile_depth(Some(0), true, Tiled, Tiled);
+        let partner = tile_depth(Some(3), false, Tiled, Tiled);
+        let settings = tile_depth(Some(1), false, Floating, Tiled);
         assert!(focused < partner, "the focused window leads its group");
         assert!(partner < settings, "and its partner still beats the floating window");
     }
@@ -169,18 +169,18 @@ mod tests {
     #[test]
     fn focusing_a_floating_window_puts_it_in_front_of_the_whole_strip() {
         let settings = tile_depth(Some(0), true, Floating, Floating);
-        let nearest_column = tile_depth(Some(1), false, Strip, Floating);
-        let far_column = tile_depth(Some(9), false, Strip, Floating);
+        let nearest_column = tile_depth(Some(1), false, Tiled, Floating);
+        let far_column = tile_depth(Some(9), false, Tiled, Floating);
         assert!(settings < nearest_column);
         assert!(nearest_column < far_column, "the strip keeps its own order behind it");
     }
 
     #[test]
     fn within_a_group_the_window_servers_order_is_kept() {
-        assert!(tile_depth(Some(0), false, Strip, Strip) < tile_depth(Some(1), false, Strip, Strip));
-        assert!(tile_depth(Some(1), false, Strip, Strip) < tile_depth(Some(17), false, Strip, Strip));
+        assert!(tile_depth(Some(0), false, Tiled, Tiled) < tile_depth(Some(1), false, Tiled, Tiled));
+        assert!(tile_depth(Some(1), false, Tiled, Tiled) < tile_depth(Some(17), false, Tiled, Tiled));
         assert!(
-            tile_depth(Some(0), false, Floating, Strip) < tile_depth(Some(1), false, Floating, Strip)
+            tile_depth(Some(0), false, Floating, Tiled) < tile_depth(Some(1), false, Floating, Tiled)
         );
     }
 
@@ -188,9 +188,9 @@ mod tests {
     /// front of the group that is meant to be behind.
     #[test]
     fn an_unreported_window_stays_inside_its_own_group() {
-        let unknown_strip = tile_depth(None, false, Strip, Strip);
-        let known_strip = tile_depth(Some(50), false, Strip, Strip);
-        let nearest_floating = tile_depth(Some(0), false, Floating, Strip);
+        let unknown_strip = tile_depth(None, false, Tiled, Tiled);
+        let known_strip = tile_depth(Some(50), false, Tiled, Tiled);
+        let nearest_floating = tile_depth(Some(0), false, Floating, Tiled);
         assert!(known_strip < unknown_strip, "behind the windows the server did report");
         assert!(unknown_strip < nearest_floating, "but still in front of the other group");
     }
@@ -199,8 +199,8 @@ mod tests {
     /// past a shallow one in the back group and the grouping would silently invert.
     #[test]
     fn no_window_count_can_make_the_groups_overlap() {
-        let deepest_in_front = tile_depth(Some(usize::MAX), false, Strip, Strip);
-        let shallowest_behind = tile_depth(Some(0), false, Floating, Strip);
+        let deepest_in_front = tile_depth(Some(usize::MAX), false, Tiled, Tiled);
+        let shallowest_behind = tile_depth(Some(0), false, Floating, Tiled);
         assert!(deepest_in_front < shallowest_behind);
     }
 
@@ -208,19 +208,19 @@ mod tests {
     /// overlay's containers band exactly as `tile_depth` bands tiles.
     #[test]
     fn a_container_is_at_zero_when_its_group_is_focused_and_a_stride_behind_otherwise() {
-        assert_eq!(container_z(Strip, Strip), 0.0);
+        assert_eq!(container_z(Tiled, Tiled), 0.0);
         assert_eq!(container_z(Floating, Floating), 0.0);
-        assert_eq!(container_z(Floating, Strip), -(GROUP_STRIDE as f64));
-        assert_eq!(container_z(Strip, Floating), -(GROUP_STRIDE as f64));
+        assert_eq!(container_z(Floating, Tiled), -(GROUP_STRIDE as f64));
+        assert_eq!(container_z(Tiled, Floating), -(GROUP_STRIDE as f64));
         // The band less the within-band depth is the tile's negated depth, for both groups.
         let within = tile_depth(Some(3), false, Floating, Floating);
         assert_eq!(
-            container_z(Floating, Strip) - within as f64,
-            -(tile_depth(Some(3), false, Floating, Strip) as f64)
+            container_z(Floating, Tiled) - within as f64,
+            -(tile_depth(Some(3), false, Floating, Tiled) as f64)
         );
         assert_eq!(
-            container_z(Strip, Strip) - within as f64,
-            -(tile_depth(Some(3), false, Strip, Strip) as f64)
+            container_z(Tiled, Tiled) - within as f64,
+            -(tile_depth(Some(3), false, Tiled, Tiled) as f64)
         );
     }
 }

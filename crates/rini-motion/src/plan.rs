@@ -6,62 +6,61 @@ use std::collections::HashMap;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use super::{StripWindow, strip_pan_travel, strip_travel, to_overlay_space};
+use crate::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
 use rini_shared::ids::WindowId;
 use rini_shared::geometry::SameAs;
-use crate::ui::window_snapshot::is_a_resize;
-use crate::ui::workspace_overlay::OverlayTile;
+use crate::fit::is_a_resize;
 
 /// Two translation vectors this close on both axes ride one container.
-pub(crate) const GROUP_TOLERANCE: f64 = 2.0;
+pub const GROUP_TOLERANCE: f64 = 2.0;
 
 /// Which container a member lives in. Stable for the flight; a reparent changes a member's key.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum GroupKey {
+pub enum GroupKey {
     /// A rigid strip piece. `0` is the still group; others are allocated in plan order.
-    Strip(u16),
+    Rigid(u16),
     /// Changing members and entrances: strip band, per-tile animations.
-    StripLoose,
+    Loose,
     Floating,
 }
 
 impl GroupKey {
-    pub(crate) const STILL: GroupKey = GroupKey::Strip(0);
+    pub const STILL: GroupKey = GroupKey::Rigid(0);
 }
 
 /// One rigid piece of the strip.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct StripGroup {
-    pub(crate) key: GroupKey,
+pub struct RigidGroup {
+    pub key: GroupKey,
     /// Total displacement of the container from install to the current destination.
-    pub(crate) travel: CGPoint,
+    pub travel: CGPoint,
     /// Members with their group-relative frames (constant for the flight unless reparented).
-    pub(crate) members: Vec<GroupMember>,
+    pub members: Vec<GroupMember>,
 }
 
-impl StripGroup {
+impl RigidGroup {
     fn new(key: GroupKey, travel: CGPoint) -> Self {
-        StripGroup { key, travel, members: Vec::new() }
+        RigidGroup { key, travel, members: Vec::new() }
     }
 
-    pub(crate) fn is_still(&self) -> bool {
+    pub fn is_still(&self) -> bool {
         self.travel.x == 0.0 && self.travel.y == 0.0
     }
 }
 
 /// A tile riding a container. The picture itself stays in `RunningAnimation.tiles`, found by window.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct GroupMember {
-    pub(crate) window: WindowId,
+pub struct GroupMember {
+    pub window: WindowId,
     /// Frame inside the container: overlay-space `from` minus the container position at install.
-    pub(crate) rel: CGRect,
+    pub rel: CGRect,
     /// A border window riding the window it traces; drawn a quarter step in front of it.
-    pub(crate) companion: bool,
+    pub companion: bool,
 }
 
 /// How one window takes part in a plan.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Member {
+pub enum Member {
     /// Rigid: rides its container. No per-tile animation.
     Rigid { key: GroupKey, rel: CGRect },
     /// Its size changes: own layer under `StripLoose`, animated as a resize from `from` to `to`.
@@ -75,20 +74,20 @@ pub(crate) enum Member {
 /// A pass, described as rigid pieces. Pure output of [`reflow_plan`] / [`strip_plan`].
 /// Every rect is in overlay space.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ReflowPlan {
+pub struct ReflowPlan {
     /// `groups[0]` is the still group, always present, possibly empty.
-    pub(crate) groups: Vec<StripGroup>,
-    pub(crate) changing: Vec<(WindowId, CGRect, CGRect)>,
-    pub(crate) entrances: Vec<(WindowId, CGRect, CGRect)>,
-    pub(crate) floating: Vec<(WindowId, CGRect, CGRect)>,
+    pub groups: Vec<RigidGroup>,
+    pub changing: Vec<(WindowId, CGRect, CGRect)>,
+    pub entrances: Vec<(WindowId, CGRect, CGRect)>,
+    pub floating: Vec<(WindowId, CGRect, CGRect)>,
     /// Travel the floating container itself takes (a switch); zero for a pan or a layout pass.
-    pub(crate) floating_travel: CGPoint,
+    pub floating_travel: CGPoint,
 }
 
 impl ReflowPlan {
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         ReflowPlan {
-            groups: vec![StripGroup::new(GroupKey::STILL, CGPoint::new(0.0, 0.0))],
+            groups: vec![RigidGroup::new(GroupKey::STILL, CGPoint::new(0.0, 0.0))],
             changing: Vec::new(),
             entrances: Vec::new(),
             floating: Vec::new(),
@@ -104,8 +103,8 @@ impl ReflowPlan {
             group.members.push(member);
             return group.key;
         }
-        let key = GroupKey::Strip(self.groups.len() as u16);
-        let mut group = StripGroup::new(key, vector);
+        let key = GroupKey::Rigid(self.groups.len() as u16);
+        let mut group = RigidGroup::new(key, vector);
         group.members.push(member);
         self.groups.push(group);
         key
@@ -113,16 +112,17 @@ impl ReflowPlan {
 
     /// Adds a tile the plan did not derive itself (a border companion) by the same
     /// rules: floating stays loose, a resize is `changing`, anything else rides the group with its vector.
-    pub(crate) fn adopt(&mut self, tile: &OverlayTile) {
-        if tile.floating {
-            self.floating.push((tile.window, tile.from, tile.to));
-        } else if is_a_resize(tile.from.size, tile.to.size) {
-            self.changing.push((tile.window, tile.from, tile.to));
+    pub fn adopt<T: TileGeometry>(&mut self, tile: &T) {
+        let (window, from, to) = (tile.window(), tile.from(), tile.to());
+        if tile.floating() {
+            self.floating.push((window, from, to));
+        } else if is_a_resize(from.size, to.size) {
+            self.changing.push((window, from, to));
         } else {
-            let key = self.place(tile.window, tile.from, vector_of(tile.from, tile.to));
-            if tile.companion
+            let key = self.place(window, from, vector_of(from, to));
+            if tile.companion()
                 && let Some(group) = self.groups.iter_mut().find(|g| g.key == key)
-                && let Some(member) = group.members.iter_mut().find(|m| m.window == tile.window)
+                && let Some(member) = group.members.iter_mut().find(|m| m.window == window)
             {
                 member.companion = true;
             }
@@ -130,7 +130,7 @@ impl ReflowPlan {
     }
 
     /// Moves the named windows from `changing` to `entrances`: a rebuilt plan sees only a resize.
-    pub(crate) fn mark_entrances(&mut self, windows: &[WindowId]) {
+    pub fn mark_entrances(&mut self, windows: &[WindowId]) {
         let (entrances, changing): (Vec<_>, Vec<_>) =
             self.changing.drain(..).partition(|(w, _, _)| windows.contains(w));
         self.changing = changing;
@@ -138,26 +138,24 @@ impl ReflowPlan {
     }
 
     /// The group `window` rides, if it is a rigid member.
-    #[cfg(test)]
-    pub(crate) fn group_of(&self, window: WindowId) -> Option<&StripGroup> {
+    pub fn group_of(&self, window: WindowId) -> Option<&RigidGroup> {
         self.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))
     }
 
     /// How `window` takes part, or `None` when the plan does not name it.
-    pub(crate) fn member(&self, window: WindowId) -> Option<Member> {
+    pub fn member(&self, window: WindowId) -> Option<Member> {
         member_in(&self.groups, &self.changing, &self.entrances, &self.floating, window)
     }
 
     /// Every window the plan names, in plan order: groups, changing, entrances, floating.
-    #[cfg(test)]
-    pub(crate) fn windows(&self) -> Vec<WindowId> {
+    pub fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
 }
 
 /// How `window` takes part in a plan's lists, or `None` when none names it.
 fn member_in(
-    groups: &[StripGroup],
+    groups: &[RigidGroup],
     changing: &[(WindowId, CGRect, CGRect)],
     entrances: &[(WindowId, CGRect, CGRect)],
     floating: &[(WindowId, CGRect, CGRect)],
@@ -184,9 +182,8 @@ fn member_in(
 }
 
 /// Every window in the lists, in plan order, companions left out.
-#[cfg(test)]
 fn windows_in(
-    groups: &[StripGroup],
+    groups: &[RigidGroup],
     changing: &[(WindowId, CGRect, CGRect)],
     entrances: &[(WindowId, CGRect, CGRect)],
     floating: &[(WindowId, CGRect, CGRect)],
@@ -203,32 +200,30 @@ fn windows_in(
 
 /// The running flight's plan. Adds container state the overlay needs to retarget.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct FlightPlan {
-    pub(crate) groups: Vec<StripGroup>,
+pub struct FlightPlan {
+    pub groups: Vec<RigidGroup>,
     /// Model position of each container: install position plus every retarget's travel.
-    pub(crate) positions: HashMap<GroupKey, CGPoint>,
-    pub(crate) changing: Vec<(WindowId, CGRect, CGRect)>,
-    pub(crate) entrances: Vec<(WindowId, CGRect, CGRect)>,
-    pub(crate) floating: Vec<(WindowId, CGRect, CGRect)>,
-    pub(crate) floating_travel: CGPoint,
-    pub(crate) next_key: u16,
+    pub positions: HashMap<GroupKey, CGPoint>,
+    pub changing: Vec<(WindowId, CGRect, CGRect)>,
+    pub entrances: Vec<(WindowId, CGRect, CGRect)>,
+    pub floating: Vec<(WindowId, CGRect, CGRect)>,
+    pub floating_travel: CGPoint,
+    pub next_key: u16,
 }
 
 impl FlightPlan {
     /// A flight with nothing in it: the still group only.
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         FlightPlan::from(ReflowPlan::empty())
     }
 
     /// How `window` takes part. Floating frames are in the floating container's space.
-    pub(crate) fn member(&self, window: WindowId) -> Option<Member> {
+    pub fn member(&self, window: WindowId) -> Option<Member> {
         member_in(&self.groups, &self.changing, &self.entrances, &self.floating, window)
     }
 
     /// Every window the flight names, companions left out.
-    #[cfg(test)]
-    pub(crate) fn windows(&self) -> Vec<WindowId> {
+    pub fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
 }
@@ -238,7 +233,7 @@ impl From<ReflowPlan> for FlightPlan {
     fn from(plan: ReflowPlan) -> Self {
         let mut positions: HashMap<GroupKey, CGPoint> =
             plan.groups.iter().map(|g| (g.key, g.travel)).collect();
-        positions.insert(GroupKey::StripLoose, CGPoint::new(0.0, 0.0));
+        positions.insert(GroupKey::Loose, CGPoint::new(0.0, 0.0));
         positions.insert(GroupKey::Floating, plan.floating_travel);
         let next_key = plan.groups.len() as u16;
         FlightPlan {
@@ -254,42 +249,42 @@ impl From<ReflowPlan> for FlightPlan {
 }
 
 /// Where every container and tile sits front to back. Pure output of `band_plan`: the floating
-/// container in front or behind as a whole, strip containers in `strip_order`, each tile at its
+/// container in front or behind as a whole, strip containers in `group_order`, each tile at its
 /// within-band depth. `container_z - within` is `-tile_depth` (`model/z_group.rs`).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Banding {
-    pub(crate) floating_in_front: bool,
+pub struct Banding {
+    pub floating_in_front: bool,
     /// Depth inside its container per tile; a companion carries its window's.
-    pub(crate) within: HashMap<WindowId, usize>,
+    pub within: HashMap<WindowId, usize>,
     /// Strip containers front to back: the one holding focus first, then by shallowest member.
-    pub(crate) strip_order: Vec<GroupKey>,
+    pub group_order: Vec<GroupKey>,
 }
 
 /// What one merge changed, for the overlay. Pure output of [`merge_plans`]; every frame the
 /// overlay needs is in the merged plan, found by window.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct PlanDelta {
+pub struct PlanDelta {
     /// Containers to animate from their presented position to `to` (overlay space).
-    pub(crate) retargeted_groups: Vec<(GroupKey, CGPoint)>,
+    pub retargeted_groups: Vec<(GroupKey, CGPoint)>,
     /// New containers with the position they install at; members and destination are in the plan.
-    pub(crate) new_groups: Vec<(GroupKey, CGPoint)>,
+    pub new_groups: Vec<(GroupKey, CGPoint)>,
     /// Members moving container: (window, from_key, to_key). The new frame is in the plan.
-    pub(crate) reparented: Vec<(WindowId, GroupKey, GroupKey)>,
+    pub reparented: Vec<(WindowId, GroupKey, GroupKey)>,
     /// Loose tiles to bend toward a new destination, in their container's space.
-    pub(crate) retargeted_tiles: Vec<(WindowId, CGRect)>,
+    pub retargeted_tiles: Vec<(WindowId, CGRect)>,
     /// Tiles joining the flight, with their container; frames are in the plan.
-    pub(crate) joined_tiles: Vec<(WindowId, GroupKey)>,
-    pub(crate) focus_changed: bool,
+    pub joined_tiles: Vec<(WindowId, GroupKey)>,
+    pub focus_changed: bool,
 }
 
 impl PlanDelta {
     /// A merge that changed nothing: the redundant pass of a rapid press.
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         !self.moves_anything() && !self.focus_changed
     }
 
     /// Whether any geometry changed: what restarts the flight's clock.
-    pub(crate) fn moves_anything(&self) -> bool {
+    pub fn moves_anything(&self) -> bool {
         !(self.retargeted_groups.is_empty()
             && self.new_groups.is_empty()
             && self.reparented.is_empty()
@@ -333,11 +328,11 @@ impl FlightPlan {
     }
 
     /// Model position of container `key`: where its members' `rel` frames land.
-    pub(crate) fn position_of(&self, key: GroupKey) -> CGPoint {
+    pub fn position_of(&self, key: GroupKey) -> CGPoint {
         self.position(key)
     }
 
-    fn group_mut(&mut self, key: GroupKey) -> &mut StripGroup {
+    fn group_mut(&mut self, key: GroupKey) -> &mut RigidGroup {
         self.groups.iter_mut().find(|g| g.key == key).expect("a key the plan allocated")
     }
 
@@ -368,10 +363,10 @@ impl FlightPlan {
         presented: &mut HashMap<GroupKey, CGPoint>,
         delta: &mut PlanDelta,
     ) -> GroupKey {
-        let key = GroupKey::Strip(self.next_key);
+        let key = GroupKey::Rigid(self.next_key);
         self.next_key += 1;
         let travel = CGPoint::new(destination.x - install.x, destination.y - install.y);
-        let mut group = StripGroup::new(key, travel);
+        let mut group = RigidGroup::new(key, travel);
         group.members.push(member);
         self.groups.push(group);
         self.positions.insert(key, destination);
@@ -398,7 +393,7 @@ fn is_zero(p: CGPoint) -> bool {
 /// are reparented at presented frames, a pan adds its travel to every group. `presented` is each
 /// container's presented position, read by the overlay just before. See "Mid-flight passes" in
 /// `docs/animation-smoothness.md`.
-pub(crate) fn merge_plans(
+pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,
     pan: Option<CGPoint>,
@@ -535,7 +530,7 @@ pub(crate) fn merge_plans(
                     next.take_member(key, window);
                     let at = overlay_of(rel, presented_of(&presented, key));
                     next.changing.push((window, at, to));
-                    delta.reparented.push((window, key, GroupKey::StripLoose));
+                    delta.reparented.push((window, key, GroupKey::Loose));
                     delta.retargeted_tiles.push((window, to));
                 }
                 Located::Changing(i) => retarget_loose(&mut next.changing, i, to, &mut delta),
@@ -550,7 +545,7 @@ pub(crate) fn merge_plans(
                     } else {
                         next.changing.push((window, from, to));
                     }
-                    delta.joined_tiles.push((window, GroupKey::StripLoose));
+                    delta.joined_tiles.push((window, GroupKey::Loose));
                 }
             }
         }
@@ -586,9 +581,8 @@ pub(crate) fn merge_plans(
 /// on a switch whose layout pass parked the departing row). A still container has no motion to
 /// lend, so its member votes and exits on its own.
 fn rides_out(next: &FlightPlan, key: GroupKey, to: CGRect, viewport: CGRect) -> bool {
-    use crate::model::HiddenWindowPlacement;
     let moving = next.groups.iter().any(|g| g.key == key && !g.is_still());
-    moving && HiddenWindowPlacement::is_off_screen(viewport, to)
+    moving && rini_shared::geometry::is_off_screen(viewport, to)
 }
 
 /// Bends one loose tile toward `to` (its container's space) unless it is already going there.
@@ -644,7 +638,7 @@ fn join(
 }
 
 /// Two translation vectors within `GROUP_TOLERANCE` on both axes.
-pub(crate) fn same_vector(a: CGPoint, b: CGPoint) -> bool {
+pub fn same_vector(a: CGPoint, b: CGPoint) -> bool {
     (a.x - b.x).abs() <= GROUP_TOLERANCE && (a.y - b.y).abs() <= GROUP_TOLERANCE
 }
 
@@ -654,7 +648,7 @@ fn vector_of(from: CGRect, to: CGRect) -> CGPoint {
 }
 
 /// A frame in its container's space: `frame` less the container's position.
-pub(crate) fn group_relative(frame: CGRect, position: CGPoint) -> CGRect {
+pub fn group_relative(frame: CGRect, position: CGPoint) -> CGRect {
     CGRect::new(
         CGPoint::new(frame.origin.x - position.x, frame.origin.y - position.y),
         frame.size,
@@ -662,13 +656,13 @@ pub(crate) fn group_relative(frame: CGRect, position: CGPoint) -> CGRect {
 }
 
 /// The inverse of [`group_relative`]: a group-relative frame back in overlay space.
-pub(crate) fn overlay_of(rel: CGRect, position: CGPoint) -> CGRect {
+pub fn overlay_of(rel: CGRect, position: CGPoint) -> CGRect {
     CGRect::new(CGPoint::new(rel.origin.x + position.x, rel.origin.y + position.y), rel.size)
 }
 
 /// A layout pass as rigid pieces. `requests` are display-space `(window, start, end, floating)`
 /// after `start` has resolved parks and dropped what is not worth animating.
-pub(crate) fn reflow_plan(requests: &[(WindowId, CGRect, CGRect, bool)], display: CGRect) -> ReflowPlan {
+pub fn reflow_plan(requests: &[(WindowId, CGRect, CGRect, bool)], display: CGRect) -> ReflowPlan {
     let mut plan = ReflowPlan::empty();
     for &(window, start, end, floating) in requests {
         let from = to_overlay_space(start, display);
@@ -686,7 +680,7 @@ pub(crate) fn reflow_plan(requests: &[(WindowId, CGRect, CGRect, bool)], display
 
 /// Frame zero again from a flight's merged tiles (overlay space): every tile adopted by the
 /// `reflow_plan` rules. Used while a flight is still collecting passes.
-pub(crate) fn plan_from_tiles(tiles: &[OverlayTile]) -> ReflowPlan {
+pub fn plan_from_tiles<T: TileGeometry>(tiles: &[T]) -> ReflowPlan {
     let mut plan = ReflowPlan::empty();
     for tile in tiles {
         plan.adopt(tile);
@@ -696,14 +690,14 @@ pub(crate) fn plan_from_tiles(tiles: &[OverlayTile]) -> ReflowPlan {
 
 /// A strip movement as one rigid piece. `strip_travel` already yields overlay space.
 /// Pinned windows stand in the floating container; unpinned floating windows ride it by the strip's travel.
-pub(crate) fn strip_plan(windows: &[StripWindow], from_offset: CGPoint, to_offset: CGPoint) -> ReflowPlan {
-    let travel = strip_pan_travel(from_offset, to_offset);
+pub fn surface_plan(windows: &[SurfaceWindow], from_offset: CGPoint, to_offset: CGPoint) -> ReflowPlan {
+    let travel = pan_travel(from_offset, to_offset);
     let mut plan = ReflowPlan::empty();
     // A pan pins its floating windows; a switch pins none. Both in one pass would need the floating
     // container to move some tiles and not others, so that case falls back to per-tile floating moves.
     let mixed = windows.iter().any(|w| w.pinned) && windows.iter().any(|w| w.floating && !w.pinned);
     for window in windows {
-        let (from, to) = strip_travel(window.frame, from_offset, to_offset, window.pinned);
+        let (from, to) = surface_travel(window.frame, from_offset, to_offset, window.pinned);
         if window.pinned {
             plan.floating.push((window.window, from, from));
         } else if window.floating {
