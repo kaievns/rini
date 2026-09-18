@@ -727,7 +727,10 @@ mod test {
     use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGRect, CGSize};
     use objc2_core_graphics::CGError;
 
-    use super::{CGScreenInfo, NSScreenInfo, ScreenCache, ScreenId, System};
+    use super::{
+        CGScreenInfo, CoordinateConverter, NSScreenInfo, ScreenCache, ScreenId, System,
+        rects_intersect,
+    };
     use crate::screen::{SpaceId, order_visible_spaces_by_position};
 
     #[test]
@@ -920,4 +923,34 @@ mod test {
         let ordered = order_visible_spaces_by_position(spaces);
         assert_eq!(ordered, vec![SpaceId::new(10), SpaceId::new(11)]);
     }
+    #[test]
+    fn coordinate_converter_flips_y_against_the_first_screen_and_is_an_involution() {
+        let converter = CoordinateConverter::from_height(1000.0);
+        let point = converter.convert_point(CGPoint::new(10.0, 100.0)).unwrap();
+        assert_eq!((point.x, point.y), (10.0, 900.0));
+        let rect = CGRect::new(CGPoint::new(10.0, 100.0), CGSize::new(50.0, 20.0));
+        let flipped = converter.convert_rect(rect).unwrap();
+        assert_eq!((flipped.origin.x, flipped.origin.y), (10.0, 880.0));
+        assert_eq!(flipped.size.width, 50.0);
+        let back = converter.convert_rect(flipped).unwrap();
+        assert_eq!((back.origin.x, back.origin.y), (10.0, 100.0));
+    }
+
+    #[test]
+    fn a_default_converter_has_no_screen_and_converts_nothing() {
+        let converter = CoordinateConverter::default();
+        assert_eq!(converter.screen_height(), None);
+        assert!(converter.convert_point(CGPoint::new(1.0, 1.0)).is_none());
+        assert!(converter.convert_rect(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0))).is_none());
+    }
+
+    #[test]
+    fn rects_touching_at_an_edge_do_not_intersect() {
+        let a = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(10.0, 10.0));
+        let b = CGRect::new(CGPoint::new(10.0, 0.0), CGSize::new(10.0, 10.0));
+        let c = CGRect::new(CGPoint::new(9.0, 9.0), CGSize::new(10.0, 10.0));
+        assert!(!rects_intersect(&a, &b));
+        assert!(rects_intersect(&a, &c));
+    }
+
 }

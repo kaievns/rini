@@ -1444,6 +1444,7 @@ dependencies = [
  "parking_lot",
  "rini-shared",
  "serde",
+ "serde_json",
  "static_assertions",
  "tempfile",
  "tokio",

@@ -580,8 +580,7 @@ fn bounds_from_dict(dict: CFRetained<CFDictionary>) -> Option<CGRect> {
     ))
 }
 
-/// Do two rects share any area? Written out rather than using the `CGRectExt` helper, which is only
-/// imported outside test builds and would make this function untestable.
+/// Do two rects share any area?
 fn overlaps(a: CGRect, b: CGRect) -> bool {
     a.origin.x < b.origin.x + b.size.width
         && b.origin.x < a.origin.x + a.size.width
@@ -592,19 +591,12 @@ fn overlaps(a: CGRect, b: CGRect) -> bool {
 /// The windows making up the desktop backdrop, and whether the wallpaper is among them.
 pub struct DesktopBackdrop {
     pub windows: Vec<WindowServerId>,
-    /// Whether the wallpaper window itself was found.
-    ///
-    /// macOS recreates the wallpaper window, so a listing taken at the wrong moment holds the icons
-    /// and widgets without it. Compositing that produces a desktop with nothing behind its icons,
-    /// which draws as a black screen for the length of an animation, so the caller needs to know.
+    /// macOS recreates the wallpaper window; a listing without it composites to black.
     pub has_wallpaper: bool,
 }
 
-/// Window server ids of the desktop backdrop: the wallpaper and the desktop icons.
-///
-/// Everything at or below the desktop window level, which is where the wallpaper and Finder's icon
-/// layer live, and nothing else. Captured so the animation overlay can show the real desktop in the
-/// gaps between strips rather than a flat colour, which flickers as it appears and disappears.
+/// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
+/// See "The wallpaper is not reliably a window" in `docs/capture-overlay-research.md`.
 pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
 
     let mut windows = Vec::new();
@@ -634,10 +626,7 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
         let Some(id) = get_num(&window, unsafe { kCGWindowNumber }) else {
             continue;
         };
-        // Either name can carry it. A wallpaper agent reports an owner called "Wallpaper"; the Dock
-        // process reports an owner of "Dock" and a window NAME of "Wallpaper-<uuid>". Checking only the
-        // owner missed the second, so `has_wallpaper` was always false here and every composite was
-        // treated as the wallpaperless kind.
+        // Owner "Wallpaper" (wallpaper agent) or owner "Dock" with name "Wallpaper-<uuid>".
         let names_wallpaper = |key| {
             get_string(&window, key).is_some_and(|value: String| value.contains("Wallpaper"))
         };
@@ -652,28 +641,14 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
 /// Anything at or below this level is the desktop behind every app window.
 const DESKTOP_CEILING: i64 = -2147483600;
 
-/// Whether a window at this level is part of the desktop rather than something drawn over it.
-///
-/// Measured on a live system: the display backstop at -2147483626, the wallpaper at -2147483624, Finder's
-/// desktop icons at -2147483603, the window server's "underbelly" at -2147483602, Notification Center's
-/// widgets at -2147483601.
-///
-/// -2147483624 was excluded for a while as "the Dock", on an earlier reading of the same list. It is where
-/// the WALLPAPER lives, owned by the Dock process, and excluding it left a composite of desktop icons on a
-/// black backstop: the whole background went almost black for the length of every animation. The Dock's own
-/// strip sits above layer 0 and is nowhere near this range.
+/// Levels measured in `docs/capture-overlay-research.md` ("The wallpaper is not reliably a window");
+/// the wallpaper at -2147483624 is owned by the Dock process and must count as desktop.
 pub fn is_desktop_layer(layer: i64) -> bool {
     layer <= DESKTOP_CEILING
 }
 
-/// Whether a window at this level belongs to the bar in the menu bar strip.
-///
-/// Strictly between the desktop backdrop and normal windows, which is where a status bar like
-/// sketchybar lives: measured at -20 here, 24 windows of it across the strip.
-///
-/// Both capture routes need this. The overlay draws the bar from a capture of the bar's own windows,
-/// which keeps its translucency, so a second copy baked into the desktop picture would sit underneath
-/// that one and hide the strips scrolling past.
+/// Between the desktop backdrop and normal windows: where a status bar lives (sketchybar: -20).
+/// The bar is captured on its own, so it must be out of the desktop picture.
 pub fn is_bar_layer(layer: i64) -> bool {
     !is_desktop_layer(layer) && layer < 0
 }
@@ -681,13 +656,9 @@ pub fn is_bar_layer(layer: i64) -> bool {
 /// The bar's windows and the rect they occupy together.
 pub struct BarStrip {
     pub windows: Vec<WindowServerId>,
-    /// Union of those windows' bounds, or `None` when there is no bar.
-    ///
-    /// Needed because a composite capture covers only the union, not the whole display, and drawing it
-    /// at the overlay's top-left puts it in the wrong place. sketchybar is not one window: it is dozens
-    /// of small ones, and the union is whatever they happen to span. Measured here as the full display
-    /// width, 0,0 1728x32, but a bar with no full-width background behind its items spans only its
-    /// items, and drawing that at the overlay's corner is what put a second bar on screen.
+    /// Union of the windows' bounds, or `None` without a bar. A composite capture covers only this
+    /// union, so it must be drawn at the union's origin ("The bar has to be captured on its own" in
+    /// `docs/capture-overlay-research.md`).
     pub bounds: Option<CGRect>,
 }
 
@@ -729,8 +700,7 @@ pub fn bar_strip(display: CGRect) -> BarStrip {
     BarStrip { windows, bounds }
 }
 
-/// Smallest rect containing both. Written out rather than using `CGRectExt`, which is only imported
-/// outside test builds and would make this untestable.
+/// Smallest rect containing both.
 fn union_rect(a: CGRect, b: CGRect) -> CGRect {
     let x0 = a.origin.x.min(b.origin.x);
     let y0 = a.origin.y.min(b.origin.y);
@@ -742,11 +712,8 @@ fn union_rect(a: CGRect, b: CGRect) -> CGRect {
     )
 }
 
-/// Front-to-back position of every on-screen window, keyed by window server id, 0 being frontmost.
-///
-/// `CGWindowListCopyWindowInfo` returns on-screen windows in front-to-back order, so the index is the
-/// depth. Used by the animation overlay to stack its tiles the way the screen is stacked, and by the
-/// reactor's strip regroup to see whether a floating window sits in front of the strip.
+/// Front-to-back position of every on-screen window, 0 being frontmost.
+/// `CGWindowListCopyWindowInfo` lists on-screen windows front to back, so the index is the depth.
 #[cfg(not(any(test, feature = "test-support")))]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
     get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
@@ -772,14 +739,8 @@ pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
     TEST_FRONT_TO_BACK_OVERRIDE.with(|current| *current.borrow_mut() = order.unwrap_or_default());
 }
 
-/// Ordinary application windows currently on screen and intersecting `display`, with their frames.
-///
-/// Only layer 0 is returned. Every managed application window sits there, while the bar, the Dock
-/// and notifications live at other layers and must not be animated: sketchybar in particular sits at
-/// layer -20, so picking up other layers would mean animating the user's bar.
-///
-/// Slivers are filtered out. rini parks off-strip windows as narrow strips, so CoreGraphics reports
-/// them as on screen, but they have no useful pixels to capture and no business in an animation.
+/// Layer-0 windows on screen and intersecting `display`, with their frames. Other layers hold the
+/// bar, Dock and notifications. Parked slivers are filtered: on screen to CoreGraphics, no pixels.
 pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRect)> {
     /// Below this in either axis a window is a parked strip rather than something worth drawing.
     const MIN_SIDE: f64 = 100.0;
@@ -977,9 +938,6 @@ fn tags_match_app_window_role(tags: SLSWindowTags) -> bool {
 fn iterator_window_suitable(iterator: *mut CFType) -> bool {
     let tags = iterator_window_tags(iterator);
     let parent_wid = unsafe { SLSWindowIteratorGetParentID(iterator) };
-
-    // Previous Rust filter also required attribute/high-bit hints plus
-    // ATTACHED, IGNORES_CYCLE, and DOCUMENT or (FLOATING && MODAL).
     parent_wid == 0 && tags_match_app_window_role(tags)
 }
 
@@ -1058,8 +1016,6 @@ fn space_window_list_from_window_server(
         let tags = iterator_window_tags(iterator.iter);
         let parent_id = iterator.parent_id();
         let wid = iterator.window_id();
-        // Previous Rust path also checked level, attributes, and
-        // fullscreen/minimized tag hints before accepting the window.
         let is_candidate = parent_id == 0 && tags_match_app_window_role(tags);
 
         if is_candidate {
@@ -1070,14 +1026,8 @@ fn space_window_list_from_window_server(
     windows
 }
 
-/// Resolve the actual key window on `space` from WindowServer state.
-///
-/// The key-focus process can differ briefly from the globally frontmost process,
-/// especially during rapid focus changes. Scoping the native, z-ordered window
-/// list to that process avoids the delayed or missing `AXMainWindow` read used by
-/// the application actors. The returned id is intentionally independent of the
-/// reactor's tracked-window state so callers can use it to trigger discovery of
-/// a newly materialized native tab.
+/// The key window on `space` per the window server. The key-focus process can briefly differ from
+/// the frontmost one, and this does not wait on the app's `AXMainWindow`.
 pub fn key_focused_window(space: SpaceId) -> Option<WindowId> {
     let mut psn = ProcessSerialNumber::default();
     let mut fallback = 0u8;

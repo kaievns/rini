@@ -1,4 +1,4 @@
-//! A simple async executor that integrates with CFRunLoop.
+//! One future per run loop, polled from a manual `CFRunLoopSource`. See `docs/run-loop-executor.md`.
 
 use std::cell::RefCell;
 use std::future::Future;
@@ -62,9 +62,7 @@ impl Executor {
             }
 
             while handle.0.borrow().main_task.is_some() {
-                // Run the loop until it is stopped by process_tasks below.
-                // We do this in a loop just in case there were "spurious"
-                // stops by some other code.
+                // Other code can stop the loop spuriously; only a finished main task ends this.
                 loop_fn();
             }
         })
@@ -209,12 +207,8 @@ mod tests {
     }
 }
 
-/// Waits for `duration`, driven by the CFRunLoop this executor is built on.
-///
-/// `tokio::time::sleep` cannot be used with this executor. It needs a Tokio reactor for its timer
-/// and panics with "there is no reactor running" when polled here. That panic took the whole window
-/// manager down twice: once from the animation frame clock, and once from the cursor warp poll,
-/// which only reached its sleep branch after a second display appeared and so hid the bug for weeks.
+/// Waits for `duration` on the current run loop. `tokio::time::sleep` panics under this executor;
+/// see `docs/run-loop-executor.md`.
 pub fn sleep(duration: Duration) -> Sleep {
     Sleep { deadline: Instant::now() + duration, timer: None }
 }

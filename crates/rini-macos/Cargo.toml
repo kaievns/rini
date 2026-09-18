@@ -41,4 +41,5 @@ tokio-stream = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 tempfile = { version = "3.17.1", default-features = false }

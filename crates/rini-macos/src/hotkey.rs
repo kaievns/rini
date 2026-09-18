@@ -1160,4 +1160,57 @@ mod tests {
         assert!(modifiers.contains(Modifiers::ALT_RIGHT));
         assert!(!modifiers.contains(Modifiers::ALT_LEFT));
     }
+    #[test]
+    fn a_binding_string_parses_modifiers_in_any_order_and_spelling() {
+        let a: Hotkey = "Alt + Shift + H".parse().unwrap();
+        let b: Hotkey = "shift+option + h".parse().unwrap();
+        assert_eq!(a, b);
+        let mut alt_shift = Modifiers::ALT;
+        alt_shift.insert(Modifiers::SHIFT);
+        assert_eq!(a.modifiers, alt_shift);
+        assert!("Alt + Shift".parse::<Hotkey>().is_err(), "a hotkey needs a key");
+        assert!("Alt + NoSuchKey".parse::<Hotkey>().is_err());
+    }
+
+    #[test]
+    fn side_prefixes_and_suffixes_pick_one_key_of_the_pair() {
+        let left: Hotkey = "LAlt + H".parse().unwrap();
+        let right: Hotkey = "Right Alt + H".parse().unwrap();
+        let suffix: Hotkey = "AltRight + H".parse().unwrap();
+        assert_eq!(left.modifiers, Modifiers::ALT_LEFT);
+        assert_eq!(right.modifiers, Modifiers::ALT_RIGHT);
+        assert_eq!(suffix.modifiers, Modifiers::ALT_RIGHT);
+    }
+
+    #[test]
+    fn display_round_trips_through_from_str() {
+        for text in ["Alt + H", "LAlt + Shift + H", "RCtrl + Cmd + Space"] {
+            let hotkey: Hotkey = text.parse().unwrap();
+            let again: Hotkey = hotkey.to_string().parse().unwrap();
+            assert_eq!(again, hotkey, "{text} -> {hotkey}");
+        }
+    }
+
+    #[test]
+    fn a_generic_modifier_expands_to_left_right_and_both() {
+        assert_eq!(Modifiers::ALT.expand_to_specific().len(), 3);
+        assert_eq!(Modifiers::ALT_LEFT.expand_to_specific(), vec![Modifiers::ALT_LEFT]);
+        let mut alt_shift = Modifiers::ALT;
+        alt_shift.insert(Modifiers::SHIFT);
+        assert_eq!(alt_shift.expand_to_specific().len(), 9);
+        assert_eq!(Modifiers::empty().expand_to_specific(), vec![Modifiers::empty()]);
+    }
+
+    #[test]
+    fn a_modifiers_only_spec_gets_the_matching_modifier_key() {
+        let spec: HotkeySpec = serde_json::from_str(r#""Alt""#).unwrap();
+        assert_eq!(spec, HotkeySpec::ModifiersOnly { modifiers: Modifiers::ALT });
+        assert_eq!(spec.to_hotkey().unwrap().key_code, KeyCode::AltLeft);
+        let right: HotkeySpec = serde_json::from_str(r#""RAlt""#).unwrap();
+        assert_eq!(right.to_hotkey().unwrap().key_code, KeyCode::AltRight);
+        let full: HotkeySpec = serde_json::from_str(r#""Alt + H""#).unwrap();
+        assert!(matches!(full, HotkeySpec::Hotkey(_)));
+        assert!(serde_json::from_str::<HotkeySpec>(r#""""#).is_err());
+    }
+
 }

@@ -1401,3 +1401,30 @@ pub unsafe fn mach_server_run(context: *mut c_void, handler: mach_handler) -> bo
     CFRunLoopRun();
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segname_eq_compares_up_to_the_first_nul_of_a_fixed_16_byte_name() {
+        let mut name = [0 as c_char; 16];
+        for (dst, src) in name.iter_mut().zip(b"__LINKEDIT") {
+            *dst = *src as c_char;
+        }
+        assert!(segname_eq(&name, b"__LINKEDIT"));
+        assert!(!segname_eq(&name, b"__LINKEDI"));
+        assert!(!segname_eq(&name, b"__LINKEDIT2"));
+        let full = [b'A' as c_char; 16];
+        assert!(segname_eq(&full, &[b'A'; 16]));
+    }
+
+    #[test]
+    fn cstr_bytes_eq_requires_a_nul_terminated_needle_and_a_live_haystack() {
+        let hay = CString::new("SkyLight").unwrap();
+        assert!(cstr_bytes_eq(hay.as_ptr(), b"SkyLight\0"));
+        assert!(!cstr_bytes_eq(hay.as_ptr(), b"SkyLight"));
+        assert!(!cstr_bytes_eq(hay.as_ptr(), b"Skylight\0"));
+        assert!(!cstr_bytes_eq(std::ptr::null(), b"SkyLight\0"));
+    }
+}

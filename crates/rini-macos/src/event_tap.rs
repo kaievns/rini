@@ -57,11 +57,8 @@ extern "C-unwind" fn trampoline_callback(
     // kCGEventTapDisabledByTimeout (-2) & kCGEventTapDisabledByUserInput (-1)
     let ety = etype.0 as i32;
     if ety == -1 || ety == -2 {
-        // NEVER re-enabled from here. A disable is the OS reporting that this tap stopped being
-        // serviced; re-enabling in the callback re-inserted a stalled active tap at the head of
-        // the event path and froze all input system-wide until a reboot. The owner decides from
-        // its own thread, through [`ReEnableGovernor`] — which also means a genuinely stuck
-        // thread cannot re-enable anything until it is healthy again. See "A revoked
+        // Never re-enabled from the callback: that re-inserts a stalled tap and freezes all input
+        // until reboot. The owner decides through [`ReEnableGovernor`]. See "A revoked
         // screen-recording grant froze all input" in docs/permissions-and-the-launch-agent.md.
         let reason = if ety == -2 { "timeout" } else { "user input" };
         warn!(reason, "Event tap was disabled; deferring to the owner's governor");
@@ -98,14 +95,9 @@ pub struct EventTap {
     drop_ctx: Option<unsafe fn(*mut c_void)>,
 }
 
-/// Whether a disabled tap may be re-armed right away, or has to sit out a cooldown first.
-///
-/// A tap disable is the OS reporting that the callback was not serviced in time. One is routine —
-/// wake from sleep, a long garbage-collection-ish stall — and re-enabling immediately is right. A
-/// burst means the servicing thread is genuinely stuck (measured: a revoked screen-recording grant
-/// stalling SkyLight calls inside the callback), and re-enabling just re-freezes every input
-/// device in the session for another timeout round. The cooldown keeps input flowing without rini
-/// while whatever is stalling clears; hotkeys and gestures come back when the tap re-arms.
+/// Whether a disabled tap may be re-armed now or must sit out a cooldown. One disable is routine
+/// (wake from sleep); a burst means the servicing thread is stuck and re-arming would re-freeze
+/// input. Mechanism in docs/permissions-and-the-launch-agent.md.
 pub struct ReEnableGovernor {
     disables: std::collections::VecDeque<std::time::Instant>,
 }

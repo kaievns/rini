@@ -45,13 +45,7 @@ impl WakeupHandle {
     pub fn for_current_thread<F: Fn() + 'static>(order: CFIndex, handler: F) -> WakeupHandle {
         let handler_ptr = Box::into_raw(Box::new(Handler { ref_count: 0, func: handler }));
 
-        // Use the C-unwind ABI and the exact pointer types expected by
-        // CFRunLoopSourceContext.
-        //
-        // The callbacks are unsafe and may be called from C code. Each callback
-        // receives the `info` pointer we stored (a *mut Handler<F>). We cast it
-        // back and operate on it. The retain/release callbacks mutate the
-        // `ref_count` and free the box when it reaches zero.
+        // `info` is a *mut Handler<F>; retain/release keep its count and free the box at zero.
         unsafe extern "C-unwind" fn perform<F: Fn() + 'static>(info: *mut c_void) {
             // SAFETY: `info` was created from a Box<Handler<F>> and is valid.
             let handler = unsafe { &mut *(info as *mut Handler<F>) };
@@ -104,21 +98,12 @@ impl WakeupHandle {
     }
 }
 
-/// A repeating timer attached to the current [`CFRunLoop`].
-///
-/// Exists because rini's executor is CFRunLoop-based rather than a Tokio runtime, so
-/// `tokio::time::sleep` panics with "there is no reactor running". Anything that needs a periodic
-/// wakeup on an actor thread has to come from the run loop itself.
-///
-/// The timer is invalidated and removed on drop, so an animation that ends stops costing wakeups.
+/// A repeating timer on the current [`CFRunLoop`], invalidated on drop. The run-loop replacement for
+/// `tokio::time` (`docs/run-loop-executor.md`).
 pub struct RepeatingTimer {
     timer: CFRetained<CFRunLoopTimer>,
     run_loop: CFRetained<CFRunLoop>,
-    /// Owns the boxed callback for as long as the timer can fire.
-    ///
-    /// Type-erased to `dyn Fn()` rather than generic, so `Drop` can free it correctly without the
-    /// struct carrying a type parameter. Freeing this as the wrong type would skip the closure's
-    /// own destructor, which matters as soon as it captures something like a channel sender.
+    /// Type-erased so `Drop` frees it as the right type and runs the closure's own destructor.
     handler: *mut Box<dyn Fn()>,
 }
 
