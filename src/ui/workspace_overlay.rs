@@ -30,7 +30,7 @@ use crate::actor::workspace_animation::plan::{
 };
 use crate::model::z_group::{StackGroup, container_z};
 use rini_core::geometry::{Round, SameAs};
-use crate::sys::screen::CoordinateConverter;
+use rini_macos::screen::CoordinateConverter;
 use crate::ui::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};
 

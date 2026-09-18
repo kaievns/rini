@@ -34,12 +34,13 @@ targets and hands them over.
 |---|---|
 | `rini-protocol`, `rini-client` | done before the split |
 | `rini-core` | done: `ids`, `collections`, `geometry`, `log`, `util`, `channel` |
-| `rini-macos` | next: `src/sys/` has no imports from `actor`, `layout_engine`, `model`, `ui` or `common` any more |
+| `rini-macos` | done: the former `src/sys/`. Its `test-support` feature swaps the window-server reads for thread-local overrides (see `docs/testing.md`) |
 | everything else | still modules inside the `rini-wm` crate |
 
-Inside `rini-wm`, `crate::actor::app::WindowId`, `crate::sys::window_server::WindowServerId`
-and `crate::sys::screen::SpaceId` are re-exports of `rini_core::ids`. They exist so
-brace imports keep compiling until each module is lifted, and go away with it.
+Inside `rini-wm`, `crate::actor::app::WindowId` and `crate::actor::{Sender, Receiver, channel}`
+re-export `rini_core`; `rini_macos::window_server::WindowServerId` and
+`rini_macos::screen::SpaceId` re-export `rini_core::ids`. They exist so brace imports
+keep compiling until each module is lifted, and go away with it.
 
 ## What belongs in `rini-core`
 

@@ -25,7 +25,7 @@ use crate::actor;
 use rini_core::ids::WindowId;
 use crate::model::HiddenWindowPlacement;
 use rini_core::geometry::SameAs;
-use crate::sys::run_loop::RepeatingTimer;
+use rini_macos::run_loop::RepeatingTimer;
 use rini_core::ids::WindowServerId;
 use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::ui::window_snapshot::{
@@ -1570,7 +1570,7 @@ impl WorkspaceAnimation {
             warn!("no display geometry yet; cannot warm the snapshot cache");
             return;
         };
-        let windows = crate::sys::window_server::visible_windows_on_display(display_frame);
+        let windows = rini_macos::window_server::visible_windows_on_display(display_frame);
         let targets: Vec<SnapshotTarget> = windows
             .into_iter()
             .map(|(server_id, frame)| SnapshotTarget {
@@ -1777,7 +1777,7 @@ impl WorkspaceAnimation {
                     let mut last_print: Option<Vec<u8>> = None;
                     for _ in 0..REVEAL_CHASE_ATTEMPTS {
                         std::thread::sleep(REVEAL_CHASE_INTERVAL);
-                        let Some(info) = crate::sys::window_server::get_window(server_id) else {
+                        let Some(info) = rini_macos::window_server::get_window(server_id) else {
                             continue;
                         };
                         let frame_fits = crate::ui::window_snapshot::fits_frame(
@@ -1913,7 +1913,7 @@ impl WorkspaceAnimation {
             self.deferred_warm.iter().chain(self.after_flight.iter().flat_map(|a| a.targets.iter())).map(|t| t.window),
         );
         let candidates: Vec<(WindowServerId, CGRect)> =
-            crate::sys::window_server::visible_windows_on_display(display)
+            rini_macos::window_server::visible_windows_on_display(display)
                 .into_iter()
                 .filter(|(id, _)| !managed.contains(&id.as_u32()))
                 .collect();
@@ -1986,7 +1986,7 @@ impl WorkspaceAnimation {
 
         // Front-to-back order straight from the window server, so the overlay stacks tiles the way
         // the screen is actually stacked.
-        let depths = crate::sys::window_server::front_to_back_depths();
+        let depths = rini_macos::window_server::front_to_back_depths();
 
         let any_resize = windows.iter().any(|request| {
             crate::ui::window_snapshot::is_a_resize(request.from.size, request.to.size)
@@ -2105,7 +2105,7 @@ impl WorkspaceAnimation {
                 None => {
                     // Only a frame on this display counts as a spawn: a parked window with a
                     // cold cache is not a newcomer, and capturing off screen is slow.
-                    let spawn = crate::sys::window_server::get_window(request.server_id)
+                    let spawn = rini_macos::window_server::get_window(request.server_id)
                         .map(|info| info.frame)
                         .filter(|f| !HiddenWindowPlacement::is_off_screen(display_frame, *f));
                     let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
@@ -2585,7 +2585,7 @@ impl WorkspaceAnimation {
             })
             .collect();
 
-        let depths = crate::sys::window_server::front_to_back_depths();
+        let depths = rini_macos::window_server::front_to_back_depths();
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
@@ -2607,7 +2607,7 @@ impl WorkspaceAnimation {
                     // The border rides only where the window genuinely is: an arriving row's
                     // window sits parked, its real border parked with it, so no companion matches
                     // — matching reality, where the border reappears once its tool catches up.
-                    if let Some(info) = crate::sys::window_server::get_window(window.server_id) {
+                    if let Some(info) = rini_macos::window_server::get_window(window.server_id) {
                         starts.push((window.window, info.frame));
                     }
                     tiles.push(OverlayTile {
@@ -2871,8 +2871,8 @@ impl WorkspaceAnimation {
             .iter()
             .filter(|(window, _)| tiled.contains(window))
             .filter_map(|(window, _)| {
-                let info = crate::sys::window_server::get_window(
-                    crate::sys::window_server::WindowServerId::new(window.idx.get()),
+                let info = rini_macos::window_server::get_window(
+                    rini_macos::window_server::WindowServerId::new(window.idx.get()),
                 )?;
                 Some((*window, info.frame))
             })
@@ -2935,7 +2935,7 @@ impl WorkspaceAnimation {
         // No render yet, which is the first switch after starting or after moving to another display. A
         // composite of the desktop's own windows is right everywhere except that top band, and it is
         // available synchronously, so it covers the gap rather than leaving the overlay black.
-        let desktop = crate::sys::window_server::desktop_backdrop_windows(display_frame);
+        let desktop = rini_macos::window_server::desktop_backdrop_windows(display_frame);
         let composite = crate::ui::window_snapshot::capture_composite_via_skylight(
             &desktop.windows,
             display_size,
@@ -3003,7 +3003,7 @@ impl WorkspaceAnimation {
     /// captures inline, since the alternative is a switch with no bar at all.
     fn bar_picture(&mut self) -> (Option<WindowSnapshot>, Option<CGRect>) {
         let Some((display_frame, _)) = self.display else { return (None, None) };
-        let strip = crate::sys::window_server::bar_strip(display_frame);
+        let strip = rini_macos::window_server::bar_strip(display_frame);
         let Some(bounds) = strip.bounds else { return (None, None) };
         if self.pictures.bar.is_none() {
             self.refresh_bar();
@@ -3045,7 +3045,7 @@ impl WorkspaceAnimation {
         if self.overlay.as_ref().is_some_and(WorkspaceOverlay::is_visible) {
             return;
         }
-        let strip = crate::sys::window_server::bar_strip(display_frame);
+        let strip = rini_macos::window_server::bar_strip(display_frame);
         let Some(bounds) = strip.bounds else { return };
         let fresh = crate::ui::window_snapshot::capture_composite_via_skylight(
             &strip.windows,
@@ -3163,7 +3163,7 @@ impl WorkspaceAnimation {
             warn!("no display geometry yet; cannot run the debug slide");
             return;
         };
-        let windows = crate::sys::window_server::visible_windows_on_display(display_frame);
+        let windows = rini_macos::window_server::visible_windows_on_display(display_frame);
         if windows.is_empty() {
             warn!("no visible windows found for the debug slide");
             return;
@@ -3215,7 +3215,7 @@ pub(crate) fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
 /// The window server always knows the truth, and asking it is a read rather than a round trip into
 /// the owning application.
 fn actual_start(request: &AnimationRequest, display: CGRect, travel: Option<CGPoint>) -> CGRect {
-    let real = match crate::sys::window_server::get_window(request.server_id) {
+    let real = match rini_macos::window_server::get_window(request.server_id) {
         Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => {
             Some(info.frame)
         }

@@ -43,7 +43,7 @@ impl ConfigActor {
                     reactor_tx,
                     config_path,
                 };
-                crate::sys::executor::Executor::run(actor.run(rx));
+                rini_macos::executor::Executor::run(actor.run(rx));
             })
             .unwrap();
         tx

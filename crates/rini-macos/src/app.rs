@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use rini_core::geometry::CGRectDef;
 use super::window_server::{WindowServerId, WindowServerInfo};
-use crate::sys::axuielement::{
+use crate::axuielement::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
 
@@ -419,7 +419,7 @@ impl WindowInfo {
         } else if let Some(info) = server_info {
             bundle_info_for_pid(info.pid)
         } else if let Some(window_id) = id {
-            server_info = crate::sys::window_server::get_window(window_id);
+            server_info = crate::window_server::get_window(window_id);
             server_info.map(|info| bundle_info_for_pid(info.pid)).unwrap_or((None, None))
         } else {
             (None, None)

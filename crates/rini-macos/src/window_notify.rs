@@ -18,7 +18,7 @@ use super::skylight::{
 };
 use rini_core::channel as actor;
 use rini_core::collections::{HashMap, HashSet};
-use crate::sys::skylight::KnownCGSEvent;
+use crate::skylight::KnownCGSEvent;
 
 type Wid = u32;
 type Sid = u64;

@@ -1,6 +1,6 @@
 use objc2_application_services::AXError;
 
-use crate::sys::axuielement::{AXUIElement, Error as AxError};
+use crate::axuielement::{AXUIElement, Error as AxError};
 
 const ATTRIBUTE: &str = "AXEnhancedUserInterface";
 

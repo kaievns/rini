@@ -33,7 +33,7 @@ mod SpaceEventHandler {
             resolved_space: reactor.resolve_native_space(wsid, None),
             active_spaces: reactor.active_spaces.clone(),
             mission_control_active: reactor.is_mission_control_active(),
-            ordered_in: crate::sys::window_server::window_ordered_in(wsid),
+            ordered_in: rini_macos::window_server::window_ordered_in(wsid),
             assigned_space,
             last_known_user_space: super::events::space::resolve_last_known_user_space(
                 tracked_window.and_then(|window| reactor.best_space_for_window_id(window)),
@@ -53,8 +53,8 @@ mod SpaceEventHandler {
 
     pub fn handle_window_server_appeared(
         reactor: &mut super::Reactor,
-        window_server_id: crate::sys::window_server::WindowServerId,
-        space: crate::sys::screen::SpaceId,
+        window_server_id: rini_macos::window_server::WindowServerId,
+        space: rini_macos::screen::SpaceId,
         kind: super::SpaceEventKind,
     ) {
         reactor.handle_event(super::Event::WindowServerAppeared(window_server_id, space, kind));
@@ -96,12 +96,12 @@ use crate::model::broadcast::{
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::model::tx_store::WindowTxStore;
 use crate::model::{AppRuleResult, RiniState};
-use crate::sys::event::MouseState;
-use crate::sys::executor::Executor;
+use rini_macos::event::MouseState;
+use rini_macos::executor::Executor;
 use rini_core::geometry::{CGRectDef, CGRectExt};
-pub use crate::sys::screen::ScreenInfo;
-use crate::sys::screen::{SpaceId, order_visible_spaces_by_position};
-use crate::sys::window_server::{
+pub use rini_macos::screen::ScreenInfo;
+use rini_macos::screen::{SpaceId, order_visible_spaces_by_position};
+use rini_macos::window_server::{
     self, WindowServerId, WindowServerInfo, window_level, window_sub_level,
 };
 
@@ -221,13 +221,13 @@ pub enum Event {
     WindowDestroyed(WindowId),
     #[serde(skip)]
     WindowServerDestroyed(
-        crate::sys::window_server::WindowServerId,
+        rini_macos::window_server::WindowServerId,
         SpaceId,
         SpaceEventKind,
     ),
     #[serde(skip)]
     WindowServerAppeared(
-        crate::sys::window_server::WindowServerId,
+        rini_macos::window_server::WindowServerId,
         SpaceId,
         SpaceEventKind,
     ),
@@ -960,7 +960,7 @@ impl Reactor {
     }
 
     fn should_quarantine_during_display_churn(&self, event: &Event) -> bool {
-        if !crate::sys::display_churn::is_active() {
+        if !rini_macos::display_churn::is_active() {
             return false;
         }
 
@@ -1432,7 +1432,7 @@ impl Reactor {
                 ) {
                     let mut outcome = EventOutcome::no_change();
                     outcome.dispatch_mouse_up = effective_mouse_state
-                        == Some(crate::sys::event::MouseState::Up)
+                        == Some(rini_macos::event::MouseState::Up)
                         && matches!(
                             self.drag_manager.drag_state,
                             DragState::Active { .. } | DragState::PendingSwap { .. }
@@ -1497,7 +1497,7 @@ impl Reactor {
                 // Frame acknowledgements and no-op geometry changes can return
                 // early from the reducer. Mouse release still has to terminate
                 // an existing drag session in those cases.
-                if effective_mouse_state == Some(crate::sys::event::MouseState::Up)
+                if effective_mouse_state == Some(rini_macos::event::MouseState::Up)
                     && matches!(
                         self.drag_manager.drag_state,
                         DragState::Active { .. } | DragState::PendingSwap { .. }
@@ -2222,7 +2222,7 @@ impl Reactor {
             ids.sort_unstable();
 
             if ids != self.notification_manager.last_sls_notification_ids {
-                crate::sys::window_notify::update_window_notifications(&ids);
+                rini_macos::window_notify::update_window_notifications(&ids);
 
                 self.notification_manager.last_sls_notification_ids = ids;
             }
@@ -3208,7 +3208,7 @@ impl Reactor {
     /// Cheap enough to run on every settled layout because it only walks the active
     /// workspace of each screen, which is what the layout pass just computed anyway.
     fn sync_display_affinity_from_live_layout(&mut self) {
-        if crate::sys::display_churn::is_active() {
+        if rini_macos::display_churn::is_active() {
             return;
         }
         // Closed windows keep their affinity otherwise, because the display-change path
@@ -4078,7 +4078,7 @@ impl Reactor {
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. See "Edge bounce" in `docs/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
-        if !self.config.settings.animate || crate::sys::power::is_low_power_mode_enabled() {
+        if !self.config.settings.animate || rini_macos::power::is_low_power_mode_enabled() {
             return;
         }
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
@@ -4656,7 +4656,7 @@ impl Reactor {
 
         let order = {
             let space_id = space.get();
-            crate::sys::window_server::space_window_list_for_connection(&[space_id], 0, false)
+            rini_macos::window_server::space_window_list_for_connection(&[space_id], 0, false)
         };
         let candidate_u32 = candidate_wsid.as_u32();
         let candidate_level = window_level(candidate_u32);
@@ -5143,7 +5143,7 @@ impl Reactor {
                     );
 
                     if self.config.settings.gestures.haptics_enabled {
-                        let _ = crate::sys::haptics::perform_haptic(
+                        let _ = rini_macos::haptics::perform_haptic(
                             self.config.settings.gestures.haptic_pattern,
                         );
                     }
@@ -5378,7 +5378,7 @@ impl Reactor {
     /// column's place cannot be seen; it is judged again by `regroup_after_layout` once a layout pass
     /// brings it on screen, since nothing else raises a column that scrolls back into view.
     fn strip_group_to_lift(&mut self, space: SpaceId, focused: WindowId) -> Vec<WindowId> {
-        let depths = crate::sys::window_server::front_to_back_depths();
+        let depths = rini_macos::window_server::front_to_back_depths();
         let mut order: Vec<StackedWindow> = self
             .layout_manager
             .layout_engine

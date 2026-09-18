@@ -1,4 +1,4 @@
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::cell::RefCell;
 use std::ffi::{CStr, c_int};
 use std::ptr::NonNull;
@@ -21,21 +21,21 @@ use serde::{Deserialize, Serialize};
 
 use rini_core::geometry::{CGRectDef, CGSizeDef};
 pub use rini_core::ids::{WindowId, WindowServerId};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use rini_core::collections::HashMap;
 use rini_core::ids::pid_t;
-use crate::sys::axuielement::{AXUIElement, Error as AxError};
-use crate::sys::cg_ok;
-#[cfg(not(test))]
+use crate::axuielement::{AXUIElement, Error as AxError};
+use crate::cg_ok;
+#[cfg(not(any(test, feature = "test-support")))]
 use rini_core::geometry::CGRectExt;
-use crate::sys::mach::mach_get_window_sub_level;
-use crate::sys::process::ProcessSerialNumber;
-use crate::sys::screen::{ScreenInfo, SpaceId};
-use crate::sys::skylight::*;
+use crate::mach::mach_get_window_sub_level;
+use crate::process::ProcessSerialNumber;
+use crate::screen::{ScreenInfo, SpaceId};
+use crate::skylight::*;
 
 static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 static LAST_WINDOWSERVER_ACTIVITY_US: AtomicU64 = AtomicU64::new(0);
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static TEST_SPACE_WINDOW_LIST_OVERRIDE: RefCell<Option<Vec<u32>>> = const { RefCell::new(None) };
     static TEST_SPACE_WINDOW_LIST_BY_SPACE_OVERRIDE: RefCell<HashMap<u64, Vec<u32>>> = RefCell::new(HashMap::default());
@@ -45,7 +45,7 @@ thread_local! {
 }
 
 pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 const EFFECTIVELY_INVISIBLE_WINDOW_ALPHA: f32 = 0.01;
 
 impl TryFrom<&AXUIElement> for WindowServerId {
@@ -370,7 +370,7 @@ pub struct WindowServerInfo {
 /// we want is the presence of the Dock's Mission Control UI itself, not
 /// ordinary native-space membership.
 pub fn mission_control_dock_overlay_visible() -> bool {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(override_value) =
         TEST_MISSION_CONTROL_DOCK_OVERLAY_VISIBLE.with(|value| *value.borrow())
     {
@@ -423,18 +423,18 @@ pub fn window_is_sticky(id: WindowServerId) -> bool {
 ///
 /// A test with no override gets nothing: window server ids collide with real ones. See "A unit test must
 /// not read the live window server" in `docs/testing.md`.
-#[cfg(test)]
-pub fn window_spaces(id: WindowServerId) -> Vec<crate::sys::screen::SpaceId> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn window_spaces(id: WindowServerId) -> Vec<crate::screen::SpaceId> {
     TEST_WINDOW_SPACES_OVERRIDE
         .with(|spaces| spaces.borrow().get(&id.as_u32()).cloned())
         .unwrap_or_default()
         .into_iter()
-        .map(crate::sys::screen::SpaceId::new)
+        .map(crate::screen::SpaceId::new)
         .collect()
 }
 
-#[cfg(not(test))]
-pub fn window_spaces(id: WindowServerId) -> Vec<crate::sys::screen::SpaceId> {
+#[cfg(not(any(test, feature = "test-support")))]
+pub fn window_spaces(id: WindowServerId) -> Vec<crate::screen::SpaceId> {
     let cf_windows = cf_array_from_ids(&[id]);
     let space_list_ref = unsafe {
         SLSCopySpacesForWindows(*G_CONNECTION, 0x7, CFRetained::as_ptr(&cf_windows).as_ptr())
@@ -448,11 +448,11 @@ pub fn window_spaces(id: WindowServerId) -> Vec<crate::sys::screen::SpaceId> {
         .iter()
         .filter_map(|num| num.as_i64())
         .filter_map(|value| u64::try_from(value).ok())
-        .filter_map(|value| (value != 0).then(|| crate::sys::screen::SpaceId::new(value)))
+        .filter_map(|value| (value != 0).then(|| crate::screen::SpaceId::new(value)))
         .collect()
 }
 
-pub fn window_space(id: WindowServerId) -> Option<crate::sys::screen::SpaceId> {
+pub fn window_space(id: WindowServerId) -> Option<crate::screen::SpaceId> {
     let spaces = window_spaces(id);
     // SLSCopySpacesForWindows can return multiple space IDs for a window during
     // Mission Control or fullscreen transitions — the window's real home space plus
@@ -469,13 +469,13 @@ pub fn window_space(id: WindowServerId) -> Option<crate::sys::screen::SpaceId> {
 ///
 /// `None` means unanswerable, and `Some(false)` retires the window, so a test with no override gets `None`.
 /// See "A unit test must not read the live window server" in `docs/testing.md`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
     TEST_WINDOW_ORDERED_IN_OVERRIDE
         .with(|override_ordered| override_ordered.borrow().get(&id.as_u32()).copied())
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
     let mut ordered: u8 = 0;
     if let Ok(_) = cg_ok(unsafe { SLSWindowIsOrderedIn(*G_CONNECTION, id.as_u32(), &mut ordered) })
@@ -510,7 +510,7 @@ fn get_visible_windows_raw<T: Type>() -> CFRetained<CFArray<T>> {
     )
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
     ids.iter()
         .map(|&id| WindowServerInfo {
@@ -524,7 +524,7 @@ pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
         .collect()
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
     let Some(query) = WindowIterator::new(ids) else {
         return Vec::new();
@@ -540,12 +540,12 @@ pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
 }
 
 pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         return get_windows(&[id]).into_iter().next();
     }
 
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     {
         let query = WindowIterator::new(&[id])?;
         if query.count() != 1 || query.advance().is_none() {
@@ -747,7 +747,7 @@ fn union_rect(a: CGRect, b: CGRect) -> CGRect {
 /// `CGWindowListCopyWindowInfo` returns on-screen windows in front-to-back order, so the index is the
 /// depth. Used by the animation overlay to stack its tiles the way the screen is stacked, and by the
 /// reactor's strip regroup to see whether a floating window sits in front of the strip.
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
     get_visible_windows_raw::<CFDictionary<CFString, CFType>>()
         .iter()
@@ -759,7 +759,7 @@ pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
 
 /// See "A unit test must not read the live window server" in `docs/testing.md`. Empty until a test
 /// sets the order with `set_front_to_back_override`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
     TEST_FRONT_TO_BACK_OVERRIDE.with(|order| {
         order.borrow().iter().enumerate().map(|(depth, id)| (*id, depth)).collect()
@@ -767,7 +767,7 @@ pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
 }
 
 /// The on-screen order for test builds, frontmost first. `None` clears it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn set_front_to_back_override(order: Option<Vec<u32>>) {
     TEST_FRONT_TO_BACK_OVERRIDE.with(|current| *current.borrow_mut() = order.unwrap_or_default());
 }
@@ -811,7 +811,7 @@ fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> 
     Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
     let Some(display_uuid) = screen.display_uuid_opt() else {
         return false;
@@ -838,17 +838,17 @@ pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool {
     false
 }
 
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 fn window_is_effectively_invisible(alpha: f32, layer: i32) -> bool {
     layer == 0 && alpha <= EFFECTIVELY_INVISIBLE_WINDOW_ALPHA
 }
 
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 fn window_info_from_query(query: &WindowIterator) -> Option<WindowServerInfo> {
     let layer = query.level();
     if window_is_effectively_invisible(query.alpha(), layer) {
@@ -865,7 +865,7 @@ fn window_info_from_query(query: &WindowIterator) -> Option<WindowServerInfo> {
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     static TEST_MISSION_CONTROL_DOCK_OVERLAY_VISIBLE: RefCell<Option<bool>> = const { RefCell::new(None) };
 }
@@ -945,12 +945,12 @@ pub fn window_under_cursor() -> Option<WindowServerId> {
     get_window_at_point(point)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn window_level(_wid: u32) -> Option<NSWindowLevel> {
     Some(0)
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 pub fn window_level(wid: u32) -> Option<NSWindowLevel> {
     let query = WindowIterator::new(&[WindowServerId::new(wid)])?;
     Some(query.advance()?.level() as NSWindowLevel)
@@ -961,19 +961,19 @@ pub fn window_sub_level(wid: u32) -> c_int {
 }
 
 /// Returns the typed Skylight tags exposed by a window-query iterator.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 fn iterator_window_tags(iterator: *mut CFType) -> SLSWindowTags {
     SLSWindowTags::from_bits_retain(unsafe { SLSWindowIteratorGetTags(iterator) })
 }
 
 /// Returns whether the tags describe a document or floating app window.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 fn tags_match_app_window_role(tags: SLSWindowTags) -> bool {
     tags.contains(SLSWindowTags::DOCUMENT) || tags.contains(SLSWindowTags::FLOATING)
 }
 
 /// Returns whether the iterator points at a top-level application window.
-#[cfg_attr(test, allow(dead_code))]
+#[cfg_attr(any(test, feature = "test-support"), allow(dead_code))]
 fn iterator_window_suitable(iterator: *mut CFType) -> bool {
     let tags = iterator_window_tags(iterator);
     let parent_wid = unsafe { SLSWindowIteratorGetParentID(iterator) };
@@ -992,7 +992,7 @@ pub fn space_window_list_for_connection(
     owner: u32,
     include_minimized: bool,
 ) -> Vec<u32> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     {
         if spaces.len() == 1
             && let Some(override_ids) = TEST_SPACE_WINDOW_LIST_BY_SPACE_OVERRIDE
@@ -1008,12 +1008,12 @@ pub fn space_window_list_for_connection(
         }
         Vec::new()
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-support")))]
     space_window_list_from_window_server(spaces, owner, include_minimized)
 }
 
 // credit to yabai
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 fn space_window_list_from_window_server(
     spaces: &[u64],
     owner: u32,
@@ -1117,12 +1117,12 @@ pub fn active_space() -> SpaceId {
     SpaceId::new(unsafe { CGSGetActiveSpace(*G_CONNECTION) })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn set_space_window_list_for_connection_override(ids: Option<Vec<u32>>) {
     TEST_SPACE_WINDOW_LIST_OVERRIDE.with(|override_ids| *override_ids.borrow_mut() = ids);
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn set_space_window_list_for_space_override(space: u64, ids: Option<Vec<u32>>) {
     TEST_SPACE_WINDOW_LIST_BY_SPACE_OVERRIDE.with(|override_ids| {
         let mut override_ids = override_ids.borrow_mut();
@@ -1134,7 +1134,7 @@ pub fn set_space_window_list_for_space_override(space: u64, ids: Option<Vec<u32>
     });
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn set_window_spaces_override(id: WindowServerId, spaces: Option<Vec<u64>>) {
     TEST_WINDOW_SPACES_OVERRIDE.with(|override_spaces| {
         let mut override_spaces = override_spaces.borrow_mut();
@@ -1146,7 +1146,7 @@ pub fn set_window_spaces_override(id: WindowServerId, spaces: Option<Vec<u64>>) 
     });
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>) {
     TEST_WINDOW_ORDERED_IN_OVERRIDE.with(|override_ordered| {
         let mut override_ordered = override_ordered.borrow_mut();
@@ -1162,12 +1162,12 @@ pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>)
 ///
 /// `None` means unanswerable, which is no evidence either way, while `Some(false)` retires the window. A
 /// test gets `None`. See "A unit test must not read the live window server" in `docs/testing.md`.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> {
     None
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
     let query = WindowIterator::new(&[id])?;
 
@@ -1229,7 +1229,7 @@ pub fn allow_hide_mouse() -> Result<(), CGError> {
 // credit: https://gist.github.com/amaanq/6991c7054b6c9816fafa9e29814b1509
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn switch_space(direction: rini_core::Direction) {
-    unsafe { crate::sys::space_switch::switch_space(direction) };
+    unsafe { crate::space_switch::switch_space(direction) };
 }
 
 #[cfg(test)]

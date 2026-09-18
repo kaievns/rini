@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use rini_core::collections::HashMap;
 use crate::actor::wm_controller::WmCommand;
-use crate::sys::hotkey::{Hotkey, HotkeySpec};
-pub use crate::sys::haptics::HapticPattern;
+use rini_macos::hotkey::{Hotkey, HotkeySpec};
+pub use rini_macos::haptics::HapticPattern;
 
 pub const MAX_WORKSPACES: usize = 128;
 

@@ -9,7 +9,7 @@ use crate::actor::app::{AppThreadHandle, Quiet, Request, WindowId};
 use crate::actor::{self, event_tap, reactor};
 use rini_core::collections::{HashMap, HashSet};
 use rini_core::ids::pid_t;
-use crate::sys::timer::Timer;
+use rini_macos::timer::Timer;
 
 /// Messages that can be sent to the raise manager
 #[derive(Debug)]
@@ -333,7 +333,7 @@ mod tests {
     use super::*;
     use crate::actor;
     use crate::actor::app::{AppThreadHandle, WindowId};
-    use crate::sys::executor::Executor;
+    use rini_macos::executor::Executor;
 
     fn create_test_app_handles() -> (HashMap<i32, AppThreadHandle>, actor::Receiver<Request>) {
         let mut app_handles = HashMap::default();

@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::sys::skylight::DisplayReconfigFlags;
+use crate::skylight::DisplayReconfigFlags;
 
 static DISPLAY_CHURN_ACTIVE: AtomicBool = AtomicBool::new(false);
 static DISPLAY_CHURN_EPOCH: AtomicU64 = AtomicU64::new(0);

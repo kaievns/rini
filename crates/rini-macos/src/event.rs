@@ -9,9 +9,9 @@ use objc2_core_graphics::{
 use serde::{Deserialize, Serialize};
 
 pub use super::window_server::current_cursor_location;
-use crate::sys::cg_ok;
-pub use crate::sys::hotkey::{Hotkey, HotkeySpec, KeyCode, Modifiers};
-use crate::sys::skylight::{
+use crate::cg_ok;
+pub use crate::hotkey::{Hotkey, HotkeySpec, KeyCode, Modifiers};
+use crate::skylight::{
     CFRelease, CGEventSourceCreate, CGEventSourceSetLocalEventsSuppressionInterval,
     CGWarpMouseCursorPosition,
 };
@@ -80,7 +80,7 @@ pub fn show_mouse() -> Result<(), CGError> {
 ///
 /// Posting to the owning process preserves application-specific close behavior (for example,
 /// closing a tab or prompting to save) instead of pressing the window's AX close button.
-pub fn post_command_w(pid: crate::sys::app::pid_t) -> bool {
+pub fn post_command_w(pid: crate::app::pid_t) -> bool {
     let Some(key_down) = CGEvent::new_keyboard_event(None, KEYCODE_W, true) else {
         return false;
     };

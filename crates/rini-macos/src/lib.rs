@@ -1,4 +1,5 @@
-//! Utilities for interfacing with OS-specific APIs.
+#![allow(non_upper_case_globals)]
+//! macOS platform layer. Nothing here knows about workspaces or layouts; see `docs/architecture.md`.
 
 use objc2_core_graphics::CGError;
 

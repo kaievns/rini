@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use rini_core::ids::WindowId;
-use crate::sys::app::WindowInfo;
+use rini_macos::app::WindowInfo;
 use rini_core::geometry::CGRectDef;
-use crate::sys::screen::{ScreenId, ScreenInfo, SpaceId};
+use rini_macos::screen::{ScreenId, ScreenInfo, SpaceId};
 use rini_core::ids::WindowServerId;
 
 /// Runtime-only workspace projection. Its windows retain the macOS

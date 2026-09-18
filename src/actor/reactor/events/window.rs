@@ -9,11 +9,11 @@ use crate::actor::reactor::{DragState, Quiet, TransactionId, WindowState, utils}
 use crate::layout_engine::LayoutEvent;
 use crate::model::WindowVisibility;
 use crate::model::reactor::WindowFilter;
-use crate::sys::app::WindowInfo as Window;
-use crate::sys::event::MouseState;
+use rini_macos::app::WindowInfo as Window;
+use rini_macos::event::MouseState;
 use rini_core::geometry::SameAs;
 use rini_core::ids::SpaceId;
-use crate::sys::window_server::WindowServerInfo;
+use rini_macos::window_server::WindowServerInfo;
 
 #[derive(Debug)]
 pub struct WindowCreatedPayload {
@@ -243,7 +243,7 @@ pub fn classify_window_frame_change(
             return FrameChangeDisposition::Handled;
         }
         if mouse_state.is_none() {
-            *mouse_state = crate::sys::event::get_mouse_state();
+            *mouse_state = rini_macos::event::get_mouse_state();
         }
         if *mouse_state == Some(MouseState::Down) {
             transactions.clear_target_for_window(server);
@@ -269,7 +269,7 @@ pub fn classify_window_frame_change(
     }
 
     if mouse_state.is_none() {
-        *mouse_state = crate::sys::event::get_mouse_state();
+        *mouse_state = rini_macos::event::get_mouse_state();
     }
     FrameChangeDisposition::NeedsGeometryAnalysis
 }
@@ -281,7 +281,7 @@ fn query_mouse_for_active_drag(drag: &DragManager, mouse_state: &mut Option<Mous
             DragState::Active { .. } | DragState::PendingSwap { .. }
         )
     {
-        *mouse_state = crate::sys::event::get_mouse_state();
+        *mouse_state = rini_macos::event::get_mouse_state();
     }
 }
 

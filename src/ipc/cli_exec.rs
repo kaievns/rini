@@ -224,7 +224,7 @@ impl CliExecutor for DefaultCliExecutor {
             return Err(std::io::Error::from_raw_os_error(rc));
         }
 
-        crate::sys::dispatch::reap_on_exit_proc(child_pid);
+        rini_macos::dispatch::reap_on_exit_proc(child_pid);
 
         Ok(child_pid)
     }

@@ -11,7 +11,7 @@ use crate::actor::reactor::{Event, Reactor, Sender};
 use rini_core::collections::HashSet;
 use crate::model::server::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
 use crate::model::virtual_workspace::VirtualWorkspaceId;
-use crate::sys::screen::{ScreenInfo, SpaceId};
+use rini_macos::screen::{ScreenInfo, SpaceId};
 
 #[derive(Clone)]
 pub struct ReactorQueryHandle {

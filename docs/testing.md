@@ -2,10 +2,12 @@
 
 ## A unit test must not read the live window server
 
-`sys/window_server.rs` answers queries from fakes and thread-local overrides in
-test builds. Four of them used to fall through to the real window server when no
-override was set, which made reactor tests depend on the windows the developer
-happened to have open.
+`crates/rini-macos/src/window_server.rs` answers queries from fakes and thread-local
+overrides when built with `cfg(test)` or the `test-support` feature. `rini-wm` turns
+the feature on as a dev-dependency, so its tests get the fakes although `rini-macos`
+itself is compiled as a normal dependency. Four of the fakes used to fall through to
+the real window server when no override was set, which made reactor tests depend on
+the windows the developer happened to have open.
 
 Two tests flapped on that, and which of the two failed changed through the day as
 windows opened and closed:

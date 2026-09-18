@@ -18,10 +18,10 @@ use tracing::{debug, info_span, trace, warn};
 
 use super::spaces;
 use super::wm_controller::{self, WmEvent};
-use crate::sys::app::NSRunningApplicationExt;
-use crate::sys::dispatch::DispatchExt;
-use crate::sys::power::{init_power_state, set_low_power_mode_state};
-use crate::sys::skylight::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
+use rini_macos::app::NSRunningApplicationExt;
+use rini_macos::dispatch::DispatchExt;
+use rini_macos::power::{init_power_state, set_low_power_mode_state};
+use rini_macos::skylight::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
 
 #[repr(C)]
 struct Instance {

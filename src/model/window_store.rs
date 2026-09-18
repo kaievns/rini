@@ -7,7 +7,7 @@ use rini_core::collections::{HashMap, HashSet};
 use crate::model::VirtualWorkspaceId;
 use crate::model::reactor::WindowState;
 use rini_core::ids::SpaceId;
-use crate::sys::window_server::{WindowServerId, WindowServerInfo};
+use rini_macos::window_server::{WindowServerId, WindowServerInfo};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WindowVisibility {
@@ -1272,7 +1272,7 @@ mod tests {
         );
         window_store.insert_window(
             wid,
-            WindowState::from(crate::sys::app::WindowInfo {
+            WindowState::from(rini_macos::app::WindowInfo {
                 is_standard: true,
                 is_root: true,
                 is_minimized: false,

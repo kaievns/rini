@@ -344,7 +344,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
-    use crate::sys::executor::Executor;
+    use crate::executor::Executor;
 
     #[test]
     fn timer_fires_after_delay() {

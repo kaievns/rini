@@ -13,8 +13,8 @@ use once_cell::sync::Lazy;
 
 use rini_core::collections::BTreeMap;
 use rini_core::Direction;
-use crate::sys::dispatch::DispatchExt;
-use crate::sys::skylight::{CGEventPost, CGEventTapLocation};
+use crate::dispatch::DispatchExt;
+use crate::skylight::{CGEventPost, CGEventTapLocation};
 
 const K_CGS_EVENT_TYPE_FIELD: CGEventField = CGEventField(55);
 const K_CGS_EVENT_MARKER: i64 = 29;

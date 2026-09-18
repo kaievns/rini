@@ -14,7 +14,7 @@ use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
 use rini_core::ids::WindowId;
-use crate::sys::skylight::{SLSHWCaptureWindowList, SLSMainConnectionID};
+use rini_macos::skylight::{SLSHWCaptureWindowList, SLSMainConnectionID};
 use crate::ui::edge_dressing::dressing_after_insert;
 use rini_core::ids::WindowServerId;
 
@@ -263,7 +263,7 @@ pub fn capture_via_skylight(
 /// because the dressing sublayers draw the same pixels over it. Only works for a window that is
 /// actually composited on screen; the chase only calls it for one that is.
 pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSnapshot> {
-    let frame = crate::sys::window_server::get_window(window)?.frame;
+    let frame = rini_macos::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }
@@ -299,7 +299,7 @@ pub fn capture_via_framed_with_dressing(
     use crate::ui::edge_dressing::{
         capture_ring_expanded, harvest_from_capture, picture_within_ring,
     };
-    let frame = crate::sys::window_server::get_window(window)?.frame;
+    let frame = rini_macos::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }

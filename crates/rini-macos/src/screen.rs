@@ -728,7 +728,7 @@ mod test {
     use objc2_core_graphics::CGError;
 
     use super::{CGScreenInfo, NSScreenInfo, ScreenCache, ScreenId, System};
-    use crate::sys::screen::{SpaceId, order_visible_spaces_by_position};
+    use crate::screen::{SpaceId, order_visible_spaces_by_position};
 
     #[test]
     fn auto_hidden_menu_bar_does_not_inset_a_display_without_a_notch() {

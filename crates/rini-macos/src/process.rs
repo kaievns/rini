@@ -1,7 +1,7 @@
 use objc2_core_graphics::CGError;
 
 use super::app::pid_t;
-use crate::sys::cg_ok;
+use crate::cg_ok;
 
 pub struct ProcessInfo {
     pub is_xpc: bool,

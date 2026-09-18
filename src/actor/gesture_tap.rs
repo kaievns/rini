@@ -20,7 +20,7 @@ use crate::actor::reactor;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
 use crate::common::config::{Config, HapticPattern};
 use crate::layout_engine::LayoutCommand as LC;
-use crate::sys::haptics;
+use rini_macos::haptics;
 
 const K_CGS_EVENT_TYPE_FIELD: CGEventField = CGEventField(55);
 const K_CGS_EVENT_DOCK_CONTROL: i64 = 30;
@@ -42,7 +42,7 @@ pub struct GestureTap {
     wm_sender: wm_controller::Sender,
     swipe: RefCell<Option<SwipeHandler>>,
     scroll: RefCell<Option<ScrollHandler>>,
-    tap: RefCell<Option<crate::sys::event_tap::EventTap>>,
+    tap: RefCell<Option<rini_macos::event_tap::EventTap>>,
     tap_generation: Cell<u64>,
     requests_rx: Option<Receiver>,
 }
@@ -219,8 +219,8 @@ impl GestureTap {
 
         // Same re-arm policy as the input tap: only a healthy thread re-enables, and a burst of
         // disables stands the tap down so macOS keeps delivering events without it.
-        let mut governor = crate::sys::event_tap::ReEnableGovernor::new();
-        let mut _cooldown: Option<crate::sys::run_loop::RepeatingTimer> = None;
+        let mut governor = rini_macos::event_tap::ReEnableGovernor::new();
+        let mut _cooldown: Option<rini_macos::run_loop::RepeatingTimer> = None;
 
         loop {
             tokio::select! {
@@ -232,16 +232,16 @@ impl GestureTap {
                                 continue;
                             }
                             match governor.on_disabled(std::time::Instant::now()) {
-                                crate::sys::event_tap::ReEnableDecision::Now => {
+                                rini_macos::event_tap::ReEnableDecision::Now => {
                                     this.re_enable_tap(generation, &recovery_tx);
                                 }
-                                crate::sys::event_tap::ReEnableDecision::After(wait) => {
+                                rini_macos::event_tap::ReEnableDecision::After(wait) => {
                                     warn!(
                                         ?wait,
                                         "Gesture tap is being disabled repeatedly; standing down"
                                     );
                                     let tx = recovery_tx.clone();
-                                    _cooldown = crate::sys::run_loop::RepeatingTimer::every(wait, move || {
+                                    _cooldown = rini_macos::run_loop::RepeatingTimer::every(wait, move || {
                                         _ = tx.send(Recovery::CooldownElapsed(generation));
                                     });
                                     if _cooldown.is_none() {
@@ -360,7 +360,7 @@ impl GestureTap {
                 recovery_tx: recovery_tx.clone(),
                 tap_generation,
             })) as *mut std::ffi::c_void;
-            match crate::sys::event_tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
+            match rini_macos::event_tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
                 tap_location,
                 CGTapOpt::Default,
                 mask,
@@ -379,7 +379,7 @@ impl GestureTap {
                         recovery_tx: recovery_tx.clone(),
                         tap_generation,
                     })) as *mut std::ffi::c_void;
-                    match crate::sys::event_tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
+                    match rini_macos::event_tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
                         tap_location,
                         CGTapOpt::ListenOnly,
                         mask,

@@ -28,13 +28,13 @@ use objc2_foundation::MainThreadMarker;
 use crate::actor;
 use crate::actor::{reactor, wm_controller};
 use rini_core::collections::{HashMap, HashSet};
-use crate::sys::dispatch::DispatchExt;
+use rini_macos::dispatch::DispatchExt;
 #[cfg(not(test))]
-use crate::sys::screen::managed_display_space_ids;
-use crate::sys::screen::{CoordinateConverter, ScreenCache, ScreenInfo, SpaceId};
-use crate::sys::skylight::DisplayReconfigFlags;
+use rini_macos::screen::managed_display_space_ids;
+use rini_macos::screen::{CoordinateConverter, ScreenCache, ScreenInfo, SpaceId};
+use rini_macos::skylight::DisplayReconfigFlags;
 use rini_core::ids::WindowServerId;
-use crate::sys::{display_churn, window_server};
+use rini_macos::{display_churn, window_server};
 
 const REFRESH_DEFAULT_DELAY_NS: i64 = 100_000_000;
 const REFRESH_SPACE_SWITCH_DELAY_NS: i64 = 50_000_000;
@@ -430,7 +430,7 @@ impl SpacesActor {
 
     fn handle_active_display_changed(&mut self) {
         #[cfg(not(test))]
-        let active_display_uuid = crate::sys::screen::active_menu_bar_display_uuid();
+        let active_display_uuid = rini_macos::screen::active_menu_bar_display_uuid();
         #[cfg(test)]
         let active_display_uuid: Option<String> = None;
 
@@ -633,7 +633,7 @@ impl SpacesActor {
         let space_remaps = self.compute_space_remaps(&screens, allow_space_remap);
         let menu_bar_space = self.resolve_menu_bar_space(&screens);
         #[cfg(not(test))]
-        let active_display_uuid = crate::sys::screen::active_menu_bar_display_uuid();
+        let active_display_uuid = rini_macos::screen::active_menu_bar_display_uuid();
         #[cfg(test)]
         let active_display_uuid: Option<String> = None;
         let command_space = self.resolve_command_space(&screens, active_display_uuid.as_deref());
@@ -851,7 +851,7 @@ impl SpacesActor {
         }
         #[cfg(not(test))]
         {
-            let active_space = crate::sys::screen::get_active_space_number();
+            let active_space = rini_macos::screen::get_active_space_number();
             if let Some(space) =
                 Self::resolve_active_display_space(screens, active_display_uuid, active_space)
             {
@@ -891,7 +891,7 @@ impl SpacesActor {
         }
         #[cfg(not(test))]
         {
-            if let Some(active_space) = crate::sys::screen::get_active_space_number()
+            if let Some(active_space) = rini_macos::screen::get_active_space_number()
                 && screens.iter().any(|screen| screen.space == Some(active_space))
             {
                 return Some(active_space);

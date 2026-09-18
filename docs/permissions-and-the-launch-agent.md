@@ -1,7 +1,7 @@
 # Permissions and the launch agent
 
-Why rini works when launched from a terminal and does not work when launchd
-starts it. All of this is measured on this machine, macOS Darwin 25.6.
+What a launchd-started rini needs that a terminal-launched one gets for free.
+All of this is measured on this machine, macOS Darwin 25.6.
 
 ## Accessibility trust is inherited from the launching app
 
@@ -79,25 +79,28 @@ xml.parsers.expat.ExpatError: XML declaration not well-formed: line 1, column 14
 Apple's parser accepts it, so `plutil -lint` reported the installed file as `OK`
 and this went unnoticed. `plutil -lint` is not a well-formedness check.
 
-## The CLI cannot reach a launchd-started rini
+## The CLI reaches a launchd-started rini
 
-Still open. Under launchd the agent starts and logs no error, but:
+An earlier build failed with:
 
 ```
 $ rini-cli query workspaces
 Communication error: Rini's Mach service is not registered
 ```
 
-rini registers its Mach service in its own bootstrap domain. A terminal-launched
-rini and a terminal-launched `rini-cli` share that domain, so the lookup
-succeeds; a launchd-started agent does not share it with the user's shell.
+and this was read as the launchd agent registering its Mach service in a
+bootstrap domain the user's shell does not share. That reading is not borne
+out. Measured 2026-09-18: a rini started by `rini service restart` (launchd,
+`gui/<uid>` domain) logs `mach_server_begin: registered 'git.kaievns.rini' in
+current bootstrap domain` and `rini-cli query workspaces` from a shell reaches
+it, as do the four sketchybar `subscribe` hooks in the user config. The cause of
+the earlier failure was not established; a stale binary at a second path (see
+"Deploy is `service restart`") is the likeliest candidate.
 
-The fix is the `MachServices` key, which is present but commented out in
-`src/sys/service.rs`. It is not a one-line change: with `MachServices` launchd
-owns the port and hands it over, so the process has to `bootstrap_check_in`
-rather than register its own. Until that is done, rini under launchd manages
-windows but cannot be driven by the CLI, which also breaks the sketchybar
-subscriptions.
+`MachServices` stays commented out in `crates/rini-macos/src/service.rs`. Enabling
+it would make launchd own the port and start rini on demand, which needs
+`bootstrap_check_in` instead of `bootstrap_register`. Not needed for the CLI to
+work.
 
 ## Deploy is `service restart`, never `stop` then `start`
 
@@ -111,10 +114,11 @@ plist alone. Delete stale copies of the binary so a lookup cannot find them.
 
 ## Current state
 
-rini runs as a terminal-launched process, which has Accessibility by inheritance
-and a reachable Mach service. It does not survive a reboot. Making it survive
-one needs both of the open items above: an explicit Accessibility grant for the
-binary, and `MachServices` check-in so the CLI still works.
+rini runs as the launchd agent, deployed with `rini service restart`, with its
+own Accessibility and Screen Recording grants keyed to the signed binary
+(`docs/signing.md`). The CLI and sketchybar hooks reach it. Whether the grants
+survive a reboot has not been measured since the signing identity was
+introduced.
 
 ## A revoked screen-recording grant froze all input
 

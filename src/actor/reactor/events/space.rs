@@ -10,7 +10,7 @@ use rini_core::collections::HashSet;
 use crate::model::RiniState;
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::model::window_store::NativeFullscreenTransition;
-use crate::sys::app::AppInfo;
+use rini_macos::app::AppInfo;
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
 
@@ -98,7 +98,7 @@ pub struct WindowServerAppearedObservations {
     pub mission_control_active: bool,
     pub assigned_space: Option<SpaceId>,
     pub last_known_user_space: Option<SpaceId>,
-    pub window_server_info: Option<crate::sys::window_server::WindowServerInfo>,
+    pub window_server_info: Option<rini_macos::window_server::WindowServerInfo>,
     pub app_known: bool,
     pub running_app_info: Option<AppInfo>,
 }

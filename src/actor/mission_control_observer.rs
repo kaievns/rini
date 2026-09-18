@@ -10,9 +10,9 @@ use tracing::{error, info, instrument, warn};
 
 use crate::actor::reactor;
 use crate::actor::reactor::Event;
-use crate::sys::app::NSRunningApplicationExt;
-use crate::sys::axuielement::AXUIElement;
-use crate::sys::observer::Observer;
+use rini_macos::app::NSRunningApplicationExt;
+use rini_macos::axuielement::AXUIElement;
+use rini_macos::observer::Observer;
 
 const K_AX_EXPOSE_SHOW_ALL_WINDOWS: &str = "AXExposeShowAllWindows";
 const K_AX_EXPOSE_SHOW_FRONT_WINDOWS: &str = "AXExposeShowFrontWindows";

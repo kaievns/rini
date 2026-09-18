@@ -7,7 +7,7 @@ use crate::actor::app::{AppThreadHandle, Request, WindowId, pid_t};
 use crate::actor::reactor::Reactor;
 use rini_core::collections::HashMap;
 use rini_core::geometry::{Round, SameAs};
-use crate::sys::power;
+use rini_macos::power;
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
 
@@ -481,7 +481,7 @@ mod tests {
     fn moving(from_x: f64, to_x: f64) -> crate::actor::workspace_animation::AnimationRequest {
         crate::actor::workspace_animation::AnimationRequest {
             window: WindowId::new(1, (from_x.abs() as u32).max(1)),
-            server_id: crate::sys::window_server::WindowServerId::new(1),
+            server_id: rini_macos::window_server::WindowServerId::new(1),
             from: CGRect::new(CGPoint::new(from_x, 32.0), CGSize::new(859.0, 1081.0)),
             to: CGRect::new(CGPoint::new(to_x, 32.0), CGSize::new(859.0, 1081.0)),
             floating: false,

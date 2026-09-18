@@ -6,7 +6,7 @@ use crate::actor::wm_controller::WmEvent;
 use crate::common::config::Config;
 use crate::layout_engine::{Direction, EventResponse, LayoutEvent};
 use rini_core::ids::SpaceId;
-use crate::sys::window_server::{WindowServerId, WindowServerInfo};
+use rini_macos::window_server::{WindowServerId, WindowServerInfo};
 
 #[derive(Debug)]
 pub(crate) struct WindowDiscoveryRequest {

@@ -41,7 +41,7 @@ impl ConfigWatcher {
                     config_tx,
                     enabled: config.settings.hot_reload,
                 };
-                crate::sys::executor::Executor::run(async move {
+                rini_macos::executor::Executor::run(async move {
                     if let Err(e) = actor.run().await {
                         warn!("config-watcher: error: {e:?}");
                     }

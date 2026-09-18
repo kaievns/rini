@@ -6,7 +6,7 @@ use crate::actor::{reactor, wm_controller};
 
 fn make_screen(space: Option<SpaceId>) -> ScreenInfo {
     ScreenInfo {
-        id: crate::sys::screen::ScreenId::new(1),
+        id: rini_macos::screen::ScreenId::new(1),
         frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)),
         display_uuid: "display-1".to_string(),
         name: Some("Display".to_string()),
@@ -22,7 +22,7 @@ fn make_screen_with(
     space: Option<SpaceId>,
 ) -> ScreenInfo {
     ScreenInfo {
-        id: crate::sys::screen::ScreenId::new(screen_id),
+        id: rini_macos::screen::ScreenId::new(screen_id),
         frame: CGRect::new(CGPoint::new(origin_x, 0.0), CGSize::new(width, 800.0)),
         display_uuid: display_uuid.to_string(),
         name: Some(display_uuid.to_string()),
@@ -158,11 +158,11 @@ fn confirmed_window_move_forwards_membership_without_space_switch() {
     actor.state.screens = vec![make_screen(Some(origin))];
     actor.state.last_sent_spaces = Some(vec![Some(origin)]);
     actor.state.visible_window_spaces.insert(wsid, origin);
-    crate::sys::window_server::set_window_spaces_override(wsid, Some(vec![destination.get()]));
+    rini_macos::window_server::set_window_spaces_override(wsid, Some(vec![destination.get()]));
 
     actor.handle_event(Event::WindowServerDestroyed(wsid, origin));
 
-    crate::sys::window_server::set_window_spaces_override(wsid, None);
+    rini_macos::window_server::set_window_spaces_override(wsid, None);
 
     match recv_wm(&mut wm_rx) {
         wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
@@ -528,9 +528,9 @@ fn display_setting_reconfig_starts_churn() {
 
     actor.handle_event(Event::DisplayReconfigured {
         display_id: 1,
-        flags: crate::sys::skylight::DisplayReconfigFlags::BEGIN_CONFIGURATION
-            | crate::sys::skylight::DisplayReconfigFlags::SET_MAIN
-            | crate::sys::skylight::DisplayReconfigFlags::DESKTOP_SHAPE_CHANGED,
+        flags: rini_macos::skylight::DisplayReconfigFlags::BEGIN_CONFIGURATION
+            | rini_macos::skylight::DisplayReconfigFlags::SET_MAIN
+            | rini_macos::skylight::DisplayReconfigFlags::DESKTOP_SHAPE_CHANGED,
     });
 
     assert!(actor.state.display_churn_active);
@@ -547,7 +547,7 @@ fn benign_display_reconfig_does_not_start_churn() {
 
     actor.handle_event(Event::DisplayReconfigured {
         display_id: 1,
-        flags: crate::sys::skylight::DisplayReconfigFlags::BEGIN_CONFIGURATION,
+        flags: rini_macos::skylight::DisplayReconfigFlags::BEGIN_CONFIGURATION,
     });
 
     assert!(!actor.state.display_churn_active);
@@ -561,7 +561,7 @@ fn physical_display_reconfig_starts_churn() {
 
     actor.handle_event(Event::DisplayReconfigured {
         display_id: 1,
-        flags: crate::sys::skylight::DisplayReconfigFlags::MOVED,
+        flags: rini_macos::skylight::DisplayReconfigFlags::MOVED,
     });
 
     assert!(actor.state.display_churn_active);
@@ -839,7 +839,7 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
 
     actor.state.visible_window_spaces.insert(wsid, space);
     actor.state.pre_churn_visible_window_spaces.insert(wsid, space);
-    actor.state.display_churn_flags = crate::sys::skylight::DisplayReconfigFlags::MOVED;
+    actor.state.display_churn_flags = rini_macos::skylight::DisplayReconfigFlags::MOVED;
 
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
@@ -847,13 +847,13 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
     );
     let _ = recv_wm(&mut wm_rx);
 
-    crate::sys::window_server::set_space_window_list_for_space_override(space.get(), Some(vec![]));
+    rini_macos::window_server::set_space_window_list_for_space_override(space.get(), Some(vec![]));
     actor.synthesize_topology_window_delta(
         9,
         actor.state.display_churn_flags,
         &[make_screen(Some(space))],
     );
-    crate::sys::window_server::set_space_window_list_for_space_override(space.get(), None);
+    rini_macos::window_server::set_space_window_list_for_space_override(space.get(), None);
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(800.0),
@@ -879,14 +879,14 @@ fn first_empty_post_wake_snapshot_preserves_known_visible_windows() {
     actor.state.screens = vec![make_screen(Some(space))];
     actor.state.visible_window_spaces.insert(wsid, space);
     actor.state.release_reactor_quarantine_on_next_forward = true;
-    crate::sys::window_server::set_space_window_list_for_space_override(space.get(), Some(vec![]));
+    rini_macos::window_server::set_space_window_list_for_space_override(space.get(), Some(vec![]));
 
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(800.0),
     );
 
-    crate::sys::window_server::set_space_window_list_for_space_override(space.get(), None);
+    rini_macos::window_server::set_space_window_list_for_space_override(space.get(), None);
     match recv_wm(&mut wm_rx) {
         wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(state.active_window_spaces.get(&wsid), Some(&space));
@@ -905,7 +905,7 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
 
     actor.state.visible_window_spaces.insert(wsid, old_space);
     actor.state.pre_churn_visible_window_spaces.insert(wsid, old_space);
-    actor.state.display_churn_flags = crate::sys::skylight::DisplayReconfigFlags::MOVED;
+    actor.state.display_churn_flags = rini_macos::skylight::DisplayReconfigFlags::MOVED;
 
     actor.forward_screen_parameters(
         vec![
@@ -918,7 +918,7 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
 
     actor.state.visible_window_spaces.clear();
     actor.state.visible_window_spaces.insert(wsid, new_space);
-    crate::sys::window_server::set_space_window_list_for_space_override(
+    rini_macos::window_server::set_space_window_list_for_space_override(
         new_space.get(),
         Some(vec![wsid.as_u32()]),
     );
@@ -930,7 +930,7 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(new_space)),
         ],
     );
-    crate::sys::window_server::set_space_window_list_for_space_override(new_space.get(), None);
+    rini_macos::window_server::set_space_window_list_for_space_override(new_space.get(), None);
     actor.forward_screen_parameters(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),

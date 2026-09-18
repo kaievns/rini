@@ -4,8 +4,8 @@ use objc2_app_kit::NSRunningApplication;
 use tracing::{debug, warn};
 
 use crate::actor::wm_controller::{self, WmEvent};
-use crate::sys::app::{AppInfo, NSRunningApplicationExt, pid_t};
-use crate::sys::carbon::{CarbonListener, Event, event_type};
+use rini_macos::app::{AppInfo, NSRunningApplicationExt, pid_t};
+use rini_macos::carbon::{CarbonListener, Event, event_type};
 
 const NO_ERR: i32 = 0;
 

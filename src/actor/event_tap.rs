@@ -32,14 +32,14 @@ use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
 use rini_core::collections::{HashMap, HashSet};
 use crate::common::config::Config;
-use crate::sys::event::{self, Hotkey, KeyCode, MouseState, set_mouse_state};
-use crate::sys::hotkey::{
+use rini_macos::event::{self, Hotkey, KeyCode, MouseState, set_mouse_state};
+use rini_macos::hotkey::{
     Modifiers, is_modifier_key, key_code_from_event, modifier_key_is_active,
     modifiers_from_flags_with_keys,
 };
-use crate::sys::screen::CoordinateConverter;
+use rini_macos::screen::CoordinateConverter;
 use rini_core::ids::WindowServerId;
-use crate::sys::{power, window_server};
+use rini_macos::{power, window_server};
 
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
 const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
@@ -66,7 +66,7 @@ pub struct EventTap {
     mouse_move_last_timestamp: Cell<Option<u64>>,
     mouse_move_min_interval_ns: Cell<u64>,
     mouse_window: Cell<MouseWindow>,
-    tap: RefCell<Option<crate::sys::event_tap::EventTap>>,
+    tap: RefCell<Option<rini_macos::event_tap::EventTap>>,
     tap_generation: Cell<u64>,
     disable_hotkey: RefCell<Option<Hotkey>>,
     hotkey_specs: RefCell<Vec<(String, WmCommand)>>,
@@ -169,7 +169,7 @@ impl EventTap {
         self: &Arc<Self>,
         mask: CGEventMask,
         recovery_tx: tokio::sync::mpsc::UnboundedSender<Recovery>,
-    ) -> Option<crate::sys::event_tap::EventTap> {
+    ) -> Option<rini_macos::event_tap::EventTap> {
         let tap_generation = self.tap_generation.get().wrapping_add(1);
         let ctx = Box::new(CallbackCtx {
             this: Arc::clone(self),
@@ -179,7 +179,7 @@ impl EventTap {
         let ctx_ptr = Box::into_raw(ctx) as *mut std::ffi::c_void;
 
         let tap = unsafe {
-            crate::sys::event_tap::EventTap::new_with_options_and_recovery_callbacks(
+            rini_macos::event_tap::EventTap::new_with_options_and_recovery_callbacks(
                 CGTapOpt::Default,
                 mask,
                 Some(mouse_callback),
@@ -308,8 +308,8 @@ impl EventTap {
         // Local to the input thread on purpose: the cooldown timer is a CFRunLoop timer for THIS
         // thread's run loop, and the governor's whole point is that only a healthy input thread
         // gets to re-arm the tap.
-        let mut governor = crate::sys::event_tap::ReEnableGovernor::new();
-        let mut _cooldown: Option<crate::sys::run_loop::RepeatingTimer> = None;
+        let mut governor = rini_macos::event_tap::ReEnableGovernor::new();
+        let mut _cooldown: Option<rini_macos::run_loop::RepeatingTimer> = None;
 
         loop {
             tokio::select! {
@@ -321,17 +321,17 @@ impl EventTap {
                                 continue;
                             }
                             match governor.on_disabled(std::time::Instant::now()) {
-                                crate::sys::event_tap::ReEnableDecision::Now => {
+                                rini_macos::event_tap::ReEnableDecision::Now => {
                                     this.re_enable_tap(generation, &recovery_tx);
                                 }
-                                crate::sys::event_tap::ReEnableDecision::After(wait) => {
+                                rini_macos::event_tap::ReEnableDecision::After(wait) => {
                                     warn!(
                                         ?wait,
                                         "Event tap is being disabled repeatedly; standing down \
                                          so input keeps flowing without it"
                                     );
                                     let tx = recovery_tx.clone();
-                                    _cooldown = crate::sys::run_loop::RepeatingTimer::every(wait, move || {
+                                    _cooldown = rini_macos::run_loop::RepeatingTimer::every(wait, move || {
                                         _ = tx.send(Recovery::CooldownElapsed(generation));
                                     });
                                     if _cooldown.is_none() {

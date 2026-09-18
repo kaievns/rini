@@ -1,6 +1,6 @@
 use objc2_app_kit::NSNormalWindowLevel;
 
-use crate::sys::window_server::{WindowServerId, WindowServerInfo, window_is_sticky, window_level};
+use rini_macos::window_server::{WindowServerId, WindowServerInfo, window_is_sticky, window_level};
 
 /// Computes whether a window is manageable based on its properties and window server information.
 ///

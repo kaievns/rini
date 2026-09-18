@@ -5,8 +5,8 @@ use crate::actor::reactor::AppState;
 use crate::actor::reactor::events::{EventOutcome, WindowDiscoveryRequest};
 use crate::actor::reactor::managers::AppManager;
 use crate::layout_engine::LayoutEvent;
-use crate::sys::app::WindowInfo;
-use crate::sys::window_server::WindowServerInfo;
+use rini_macos::app::WindowInfo;
+use rini_macos::window_server::WindowServerInfo;
 
 #[derive(Debug)]
 pub struct ApplicationLaunchedPayload {

@@ -16,7 +16,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::actor::gesture_tap;
 use crate::common::config::WorkspaceSelector;
-use crate::sys::app::{NSRunningApplicationExt, pid_t};
+use rini_macos::app::{NSRunningApplicationExt, pid_t};
 
 pub type Sender = actor::Sender<WmEvent>;
 
@@ -27,9 +27,11 @@ use crate::actor::app::AppInfo;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::{self, config, event_tap, reactor};
 use crate::model::tx_store::WindowTxStore;
-use crate::sys::dispatch::DispatchExt;
-use crate::sys::screen::CoordinateConverter;
-use crate::{layout_engine as layout, sys};
+use rini_macos::dispatch::DispatchExt;
+use rini_macos::screen::CoordinateConverter;
+use rini_macos as sys;
+
+use crate::layout_engine as layout;
 
 #[derive(Debug)]
 pub enum WmEvent {

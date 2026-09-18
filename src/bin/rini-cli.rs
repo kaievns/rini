@@ -9,7 +9,7 @@ use rini_wm::actor::reactor::{self, DisplaySelector};
 use rini_wm::common::config::WorkspaceSelector;
 use rini_wm::ipc::RiniMachClient;
 use rini_wm::layout_engine as layout;
-use rini_wm::sys::window_server::WindowServerId;
+use rini_macos::window_server::WindowServerId;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;

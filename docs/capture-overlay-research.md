@@ -214,7 +214,7 @@ while every foreign attempt failed.
    each other by construction. rini's per-app batching reduced the tear but
    cannot eliminate it, because separate apps still answer separately.
 3. **`CVDisplayLink` for the tick.** This is item 39 in the backlog. The old
-   `src/sys/display_link.rs` binding was deleted unused; its `Drop` was unsound
+   `sys/display_link.rs` binding was deleted unused; its `Drop` was unsound
    (`CVDisplayLinkStop` does not wait for an in-flight callback before the `Box`
    is freed), so a new binding must not copy it.
 
@@ -313,8 +313,8 @@ which is exactly the case that returns a sliver.
 - The transform convention is `CGAffineTransformMakeTranslation(-tx, -ty)`, the
   negative of the target origin in top-left space. This matches
   `SLSGetWindowTransform` returning the negated origin, measured above.
-- The binding already exists at `src/sys/skylight.rs:495`, so reaching it is
-  cheap.
+- The binding already exists in `crates/rini-macos/src/skylight.rs`
+  (`SLSHWCaptureWindowList`), so reaching it is cheap.
 - Captures exclude the drop shadow, which is why yabai calls
   `sls_window_disable_shadow` on its proxies to match (`window_manager.c:473`),
   and it runs `cgimage_restore_alpha` when the source window's alpha is not 1.0

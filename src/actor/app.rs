@@ -25,20 +25,20 @@ use crate::actor::reactor::transaction_manager::TransactionId;
 use crate::actor::reactor::{self, Event, Requested};
 use rini_core::collections::HashMap;
 use crate::model::tx_store::WindowTxStore;
-use crate::sys::app::NSRunningApplicationExt;
+use rini_macos::app::NSRunningApplicationExt;
 pub use rini_core::ids::{WindowId, pid_t};
 
-pub use crate::sys::app::{AppInfo, WindowInfo};
-use crate::sys::axuielement::{
+pub use rini_macos::app::{AppInfo, WindowInfo};
+use rini_macos::axuielement::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
-use crate::sys::enhanced_ui::EnhancedUi;
-use crate::sys::event;
-use crate::sys::executor::Executor;
-use crate::sys::observer::Observer;
-use crate::sys::process::ProcessInfo;
-use crate::sys::timer::Timer;
-use crate::sys::window_server::{self, WindowServerId, WindowServerInfo};
+use rini_macos::enhanced_ui::EnhancedUi;
+use rini_macos::event;
+use rini_macos::executor::Executor;
+use rini_macos::observer::Observer;
+use rini_macos::process::ProcessInfo;
+use rini_macos::timer::Timer;
+use rini_macos::window_server::{self, WindowServerId, WindowServerInfo};
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";
 const kAXApplicationDeactivatedNotification: &str = "AXApplicationDeactivated";

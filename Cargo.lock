@@ -1418,6 +1418,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-macos"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 2.11.0",
+ "clap",
+ "continue",
+ "dispatchr",
+ "futures-task",
+ "libc",
+ "nix 0.30.1",
+ "num_enum",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-application-services",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "once_cell",
+ "parking_lot",
+ "rini-core",
+ "serde",
+ "static_assertions",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+]
+
+[[package]]
 name = "rini-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1465,6 +1495,7 @@ dependencies = [
  "regex",
  "rini-client",
  "rini-core",
+ "rini-macos",
  "rini-protocol",
  "ron",
  "rustc-hash",

@@ -15,8 +15,8 @@ pub use rini_client::{ClientError as RiniMachClientError, RiniMachClient, RiniMa
 use crate::actor::config as config_actor;
 use crate::actor::reactor::{self, Event};
 use crate::ipc::subscriptions::SharedServerState;
-use crate::sys::dispatch::block_on;
-use crate::sys::mach::{
+use rini_macos::dispatch::block_on;
+use rini_macos::mach::{
     is_mach_server_registered, mach_msg_header_t, mach_server_run, send_mach_reply,
 };
 
@@ -141,7 +141,7 @@ impl MachHandler {
 
             RiniRequest::GetWorkspaces { space_id } => {
                 let workspaces =
-                    self.reactor.query_workspaces(space_id.map(crate::sys::screen::SpaceId::new));
+                    self.reactor.query_workspaces(space_id.map(rini_macos::screen::SpaceId::new));
                 RiniResponse::Success {
                     data: serde_json::to_value(
                         workspaces
@@ -167,7 +167,7 @@ impl MachHandler {
             }
 
             RiniRequest::GetWindows { space_id } => {
-                let space_id = space_id.map(|id| crate::sys::screen::SpaceId::new(id));
+                let space_id = space_id.map(|id| rini_macos::screen::SpaceId::new(id));
 
                 let windows = self.reactor.query_windows(space_id);
                 RiniResponse::Success {
@@ -216,7 +216,7 @@ impl MachHandler {
             }
             RiniRequest::GetWorkspaceLayouts { space_id, workspace_id } => {
                 let workspace_layouts = self.reactor.query_workspace_layouts(
-                    space_id.map(crate::sys::screen::SpaceId::new),
+                    space_id.map(rini_macos::screen::SpaceId::new),
                     workspace_id,
                 );
                 RiniResponse::Success {

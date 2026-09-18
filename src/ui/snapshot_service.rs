@@ -405,7 +405,7 @@ impl SnapshotService {
                 .iter()
                 .filter(|window| {
                     let layer = unsafe { window.windowLayer() } as i64;
-                    layer >= 0 || crate::sys::window_server::is_bar_layer(layer)
+                    layer >= 0 || rini_macos::window_server::is_bar_layer(layer)
                 })
                 .collect();
             let excluded_refs: Vec<&SCWindow> = excluded.iter().map(|window| &**window).collect();

@@ -14,7 +14,7 @@ use objc2_core_graphics::{
     CGColorSpace, CGContext, CGImage, CGImageAlphaInfo, CGWindowListOption,
 };
 
-use crate::sys::window_server::{self, WindowServerId};
+use rini_macos::window_server::{self, WindowServerId};
 
 /// Corner radius of a macOS window, measured from where a capture's own alpha starts along its top row:
 /// transparent for the first 18px to 20px at 2x backing scale.

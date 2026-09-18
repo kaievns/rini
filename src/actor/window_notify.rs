@@ -11,9 +11,9 @@ use crate::actor::reactor::Requested;
 use rini_core::collections::{HashMap, HashSet};
 use crate::model::tx_store::WindowTxStore;
 use rini_core::ids::SpaceId;
-use crate::sys::skylight::{CGSEventType, KnownCGSEvent};
-use crate::sys::window_server::{self, WindowIterator, WindowServerId};
-use crate::sys::{event, window_notify};
+use rini_macos::skylight::{CGSEventType, KnownCGSEvent};
+use rini_macos::window_server::{self, WindowIterator, WindowServerId};
+use rini_macos::{event, window_notify};
 
 #[derive(Default)]
 pub struct Ignored {

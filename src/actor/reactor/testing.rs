@@ -8,10 +8,10 @@ use crate::actor::spaces::ForwardedSpaceState;
 use rini_core::collections::BTreeMap;
 use crate::common::config::Config;
 use crate::layout_engine::{LayoutCommand, LayoutEngine};
-use crate::sys::app::{AppInfo, WindowInfo, pid_t};
+use rini_macos::app::{AppInfo, WindowInfo, pid_t};
 use rini_core::geometry::SameAs;
 use rini_core::ids::SpaceId;
-use crate::sys::window_server::{WindowServerId, WindowServerInfo};
+use rini_macos::window_server::{WindowServerId, WindowServerInfo};
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {
@@ -31,7 +31,7 @@ impl Reactor {
 
     pub fn test_workspace_ids(
         &mut self,
-        space: crate::sys::screen::SpaceId,
+        space: rini_macos::screen::SpaceId,
     ) -> Vec<crate::model::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager
             .layout_engine
@@ -44,7 +44,7 @@ impl Reactor {
 
     pub fn test_workspace(
         &mut self,
-        space: crate::sys::screen::SpaceId,
+        space: rini_macos::screen::SpaceId,
         index: usize,
     ) -> crate::model::virtual_workspace::VirtualWorkspaceId {
         self.test_workspace_ids(space)[index]
@@ -62,14 +62,14 @@ impl Reactor {
     /// Which workspace `space` is currently showing.
     pub fn test_active_workspace(
         &self,
-        space: crate::sys::screen::SpaceId,
+        space: rini_macos::screen::SpaceId,
     ) -> Option<crate::model::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager.layout_engine.active_workspace(space)
     }
 
     pub fn test_workspace_for_window(
         &self,
-        space: crate::sys::screen::SpaceId,
+        space: rini_macos::screen::SpaceId,
         wid: WindowId,
     ) -> Option<crate::model::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager
@@ -296,7 +296,7 @@ pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) 
         .zip(spaces.into_iter())
         .enumerate()
         .map(|(idx, (frame, space))| ScreenInfo {
-            id: crate::sys::screen::ScreenId::new(idx as u32),
+            id: rini_macos::screen::ScreenId::new(idx as u32),
             frame,
             space,
             display_uuid: format!("test-display-{idx}"),
@@ -355,7 +355,7 @@ pub fn fullscreen_startup_space_state(
     fullscreen_space: SpaceId,
 ) -> Event {
     let mut state = forwarded_space_state(vec![ScreenInfo {
-        id: crate::sys::screen::ScreenId::new(0),
+        id: rini_macos::screen::ScreenId::new(0),
         frame: screen,
         space: None,
         display_uuid,

@@ -156,7 +156,7 @@ pub(crate) struct StaleCleanupSnapshot {
 
 #[derive(Debug)]
 pub(crate) struct StaleWindowObservation {
-    pub(crate) info: Option<crate::sys::window_server::WindowServerInfo>,
+    pub(crate) info: Option<rini_macos::window_server::WindowServerInfo>,
     pub(crate) suitable: Option<bool>,
     pub(crate) ordered_in: Option<bool>,
 }
