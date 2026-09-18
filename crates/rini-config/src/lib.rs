@@ -55,16 +55,12 @@ pub struct VirtualWorkspaceSettings {
     pub app_rules: Vec<AppWorkspaceRule>,
 }
 
-// Allow specifying a workspace by numeric index or by name in the config.
-// This supports both `workspace = 2` and `workspace = "coding"` in app rules.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AppWorkspaceRule {
-    /// Application bundle identifier (e.g., "com.apple.Terminal")
     pub app_id: Option<String>,
     /// Target workspace index (0 based) OR workspace name. If None, window goes to active workspace.
     pub workspace: Option<WorkspaceSelector>,
-    /// Whether windows should be floating in this workspace
     #[serde(default)]
     pub floating: bool,
     /// Initial normalized position for a floating window. `(0, 0)` is the top-left
@@ -79,28 +75,15 @@ pub struct AppWorkspaceRule {
     /// window invisible to Rini (no tiling, floating, or assignments).
     #[serde(default = "yes")]
     pub manage: bool,
-    /// Optional: Application name pattern (alternative to app_id)
     pub app_name: Option<String>,
-    /// Optional: Regular expression to match window title (applies to window.title)
-    ///
-    /// If present, this regex will be used when attempting to match a window by
-    /// title.
     pub title_regex: Option<String>,
-    /// Optional: Substring to search for in window title (applies to window.title)
-    ///
-    /// If present, rini will internally treat this as a substring match and will
-    /// construct a regex to match titles containing this substring. This allows
-    /// people who don't want to write full regexes to match by a simple substring.
+    /// Matched as a literal substring of the title; `title_regex` for anything else.
     pub title_substring: Option<String>,
 
-    /// Optional: Accessibility role to match (AXRole). If present, it must be a
-    /// non-empty string and will be compared against the accessibility role
-    /// reported by the AX APIs for a window (exact string match).
+    /// Exact match on `AXRole`.
     pub ax_role: Option<String>,
 
-    /// Optional: Accessibility subrole to match (AXSubrole). If present, it must be a
-    /// non-empty string and will be compared against the accessibility subrole
-    /// reported by the AX APIs for a window (exact string match).
+    /// Exact match on `AXSubrole`.
     pub ax_subrole: Option<String>,
 
     /// Optional: match on the window's `AXModal` attribute. `true` matches modal dialogs,
@@ -390,19 +373,13 @@ impl<'de> Deserialize<'de> for Config {
 unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
-/// Which side the logically-upper of two stacked displays physically occupies.
-///
-/// macOS knows the displays are stacked but has no idea how they sit on the desk, and matching the
-/// desk is the entire point of warping, so this cannot be inferred.
+/// Which side of the desk the logically-upper display sits on; macOS cannot tell us. Semantics in
+/// `rini.default.toml` under `stacked_display_upper_is`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StackedUpperSide {
-    /// The upper display sits to the LEFT on the desk, so pushing the pointer left off the lower
-    /// display continues onto the upper one's right edge. Default because it matches a laptop parked
-    /// to the right of a larger external screen.
     #[default]
     Left,
-    /// The upper display sits to the RIGHT on the desk.
     Right,
 }
 
@@ -413,7 +390,6 @@ pub struct Settings {
     /// animates through the overlay (`docs/animation-smoothness.md`); off places windows at once.
     #[serde(default = "yes")]
     pub animate: bool,
-    /// How long one movement takes, in seconds.
     #[serde(default = "default_animation_duration")]
     pub animation_duration: f64,
     #[serde(default = "yes")]
@@ -422,71 +398,33 @@ pub struct Settings {
     pub mouse_follows_focus: bool,
     #[serde(default = "yes")]
     pub mouse_hides_on_focus: bool,
-    /// Warp the cursor between displays that are stacked VERTICALLY, so left/right
-    /// travel crosses them as if they sat side by side.
-    ///
-    /// This pays back the cost of a compromise the scrolling layout forces. Off-strip
-    /// columns are parked just past the screen edge, at large negative x — measured on
-    /// this machine at x=-1680, -857 and -819 while the display spans 0..1728. With
-    /// displays arranged side by side those coordinates land inside the NEIGHBOUR, so
-    /// scrolled-away windows appear on the wrong screen and focus follows them there.
-    /// Upstream closed that as not-planned (rift issue #266): "displays simply have to be
-    /// arranged vertically. consequence of native multi display behavior in macOS".
-    ///
-    /// Stacking removes the bleed and costs horizontal cursor travel: with nothing beside
-    /// either display, the pointer stops dead at the edge. This restores it.
+    // The three stacked-display keys are explained where the user reads them: rini.default.toml.
     #[serde(default = "no")]
     pub warp_cursor_between_stacked_displays: bool,
-    /// Which side the logically-upper display physically sits on.
-    ///
-    /// macOS knows the displays are stacked but has no idea how they are arranged on the desk,
-    /// and the whole point of warping is to match the desk rather than the coordinate space. So
-    /// this cannot be inferred and has to be stated.
-    ///
-    /// With the upper display on the left, pushing the pointer LEFT off the lower display
-    /// continues onto the upper one's right edge, which is what a physical left-to-right sweep
-    /// across both screens feels like.
     #[serde(default)]
     pub stacked_display_upper_is: StackedUpperSide,
-    /// Where the lower display's TOP edge sits on the upper display's height, as a fraction measured
-    /// up from the upper display's BOTTOM edge.
-    ///
-    /// Only the vertical relationship needs stating. Each display's physical size comes from
-    /// `CGDisplayScreenSize`, so the rest of the geometry follows, and no pixel offset needs
-    /// hand-tuning when the arrangement changes.
-    ///
-    /// Worked example, measured on this machine: the external is 391mm tall and the laptop 223mm.
-    /// At 0.4 the laptop's top edge sits 156mm above the external's bottom, which puts its bottom
-    /// 67mm below the external's bottom. Set this to 1.0 to align their top edges, and to the
-    /// height ratio to align their bottoms.
+    /// Fraction up the upper display's height at which the lower display's top edge sits.
     #[serde(default = "default_stacked_lower_top_at")]
     pub stacked_display_lower_top_at: f64,
     #[serde(default = "yes")]
     pub focus_follows_mouse: bool,
-    /// Hotkey that disables focus-follows-mouse while held.
-    /// Accepts either a full hotkey (e.g. "Ctrl + A") or a modifier-only spec (e.g. "Ctrl")
+    /// Held to suspend focus-follows-mouse; a full hotkey or a modifier-only spec.
     #[serde(default)]
     pub focus_follows_mouse_disable_hotkey: Option<HotkeySpec>,
-    /// Apps that should not trigger automatic workspace switching when activated.
-    /// List of bundle identifiers (e.g., "com.apple.Spotlight") that often
-    /// inappropriately steal focus and shouldn't cause workspace switches.
+    /// Bundle ids whose activation must not switch workspaces (Spotlight-style focus stealers).
     #[serde(default)]
     pub auto_focus_blacklist: Vec<String>,
     #[serde(default)]
     pub layout: LayoutSettings,
-    /// Trackpad gesture settings
     #[serde(default)]
     pub gestures: GestureSettings,
 
     #[serde(default)]
     pub window_snapping: WindowSnappingSettings,
 
-    /// Commands to run on startup (e.g., for subscribing to events)
     #[serde(default)]
     pub run_on_start: Vec<String>,
 
-    /// Whether to reapply app rules when a window title changes.
-    /// Enable hot-reloading of the config file when it changes
     #[serde(default = "yes")]
     pub hot_reload: bool,
 }
@@ -494,14 +432,12 @@ pub struct Settings {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct GestureSettings {
-    /// Enable horizontal swipes to switch virtual workspaces
     #[serde(default = "no")]
     pub enabled: bool,
     /// If true, consume horizontal swipe events owned by Rini so macOS and the
     /// foreground app do not also handle them.
     #[serde(default = "yes")]
     pub consume_dock_swipe: bool,
-    /// Invert horizontal direction (swap next/prev)
     #[serde(default)]
     pub invert_horizontal_swipe: bool,
     /// Maximum absolute Y delta allowed for the gesture to count as horizontal
@@ -510,16 +446,13 @@ pub struct GestureSettings {
     /// If true, attempt to skip empty workspaces on swipe (if supported)
     #[serde(default)]
     pub skip_empty: bool,
-    /// Number of fingers required for swipe (default = 3)
     #[serde(default = "default_swipe_fingers")]
     pub fingers: usize,
     /// Normalized horizontal distance (0..1) required to fire a swipe
     #[serde(default = "default_distance_pct")]
     pub distance_pct: f64,
-    /// Enable haptic feedback when a swipe commits
     #[serde(default = "yes")]
     pub haptics_enabled: bool,
-    /// Haptic feedback pattern (generic | alignment | level_change)
     #[serde(default)]
     pub haptic_pattern: HapticPattern,
 }
@@ -572,10 +505,8 @@ fn default_scrolling_preset_column_widths() -> Vec<f64> {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowInsertionPoint {
-    /// Insert a new window immediately after the current selection.
     #[default]
     NextToSelection,
-    /// Append a new window at the end of the layout tree.
     EndOfTree,
 }
 
@@ -584,7 +515,6 @@ pub enum WindowInsertionPoint {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BaseLayoutSettings {
-    /// Where newly managed windows are inserted.
     #[serde(default)]
     pub window_insertion_point: Option<WindowInsertionPoint>,
 }
@@ -595,10 +525,8 @@ pub struct LayoutSettings {
     /// Settings inherited by `scrolling` unless overridden in its table.
     #[serde(flatten)]
     pub base: BaseLayoutSettings,
-    /// Gap configuration for window spacing
     #[serde(default)]
     pub gaps: GapSettings,
-    /// Scrolling layout configuration (niri-style columns)
     #[serde(default)]
     pub scrolling: ScrollingLayoutSettings,
 }
@@ -608,13 +536,10 @@ pub struct LayoutSettings {
 pub struct ScrollingLayoutSettings {
     #[serde(flatten)]
     pub base: BaseLayoutSettings,
-    /// Default width of the active column, as a fraction of the screen width.
     #[serde(default = "default_scrolling_column_width_ratio")]
     pub column_width_ratio: f64,
-    /// Minimum column width ratio allowed by resize commands.
     #[serde(default = "default_scrolling_min_column_width_ratio")]
     pub min_column_width_ratio: f64,
-    /// Maximum column width ratio allowed by resize commands.
     #[serde(default = "default_scrolling_max_column_width_ratio")]
     pub max_column_width_ratio: f64,
     /// Column widths cycled by `cycle_preset_column_width`, as ratios of the
@@ -626,7 +551,6 @@ pub struct ScrollingLayoutSettings {
     /// isolated strip, which is what niri does with its per-output workspaces.
     #[serde(default)]
     pub isolate_displays: bool,
-    /// Alignment for the focused column (left, center, right).
     #[serde(default)]
     pub alignment: ScrollingAlignment,
     /// Horizontal focus navigation behavior:
@@ -634,7 +558,6 @@ pub struct ScrollingLayoutSettings {
     /// - anchored: always align focused column to `alignment`.
     #[serde(default)]
     pub focus_navigation_style: ScrollingFocusNavigationStyle,
-    /// Trackpad gestures for scrolling layout
     #[serde(default)]
     pub gestures: ScrollingGestureSettings,
 }
@@ -675,16 +598,13 @@ pub enum ScrollingFocusNavigationStyle {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub struct ScrollingGestureSettings {
-    /// Enable horizontal scroll gestures to switch columns
     #[serde(default = "no")]
     pub enabled: bool,
-    /// Invert horizontal direction (swap left/right)
     #[serde(default)]
     pub invert_horizontal: bool,
     /// Maximum absolute Y delta allowed for the gesture to count as horizontal
     #[serde(default = "default_swipe_vertical_tolerance")]
     pub vertical_tolerance: f64,
-    /// Number of fingers required for scroll gesture
     #[serde(default = "default_swipe_fingers")]
     pub fingers: usize,
     /// Normalized horizontal distance (0..1) required to fire a scroll step
@@ -712,59 +632,44 @@ impl Default for ScrollingGestureSettings {
     }
 }
 
-/// Gap configuration for window spacing
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct GapSettings {
-    /// Outer gaps (space between windows and screen edges)
     #[serde(default)]
     pub outer: OuterGaps,
-    /// Inner gaps (space between windows)
     #[serde(default)]
     pub inner: InnerGaps,
-    /// Display-specific gap overrides keyed by display UUID
     #[serde(default)]
     pub per_display: HashMap<String, GapOverride>,
 }
 
-/// Outer gap configuration (space between windows and screen edges)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct OuterGaps {
-    /// Gap at the top of the screen
     #[serde(default)]
     pub top: f64,
-    /// Gap at the left of the screen
     #[serde(default)]
     pub left: f64,
-    /// Gap at the bottom of the screen
     #[serde(default)]
     pub bottom: f64,
-    /// Gap at the right of the screen
     #[serde(default)]
     pub right: f64,
 }
 
-/// Inner gap configuration (space between windows)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct InnerGaps {
-    /// Horizontal gap between windows
     #[serde(default)]
     pub horizontal: f64,
-    /// Vertical gap between windows
     #[serde(default)]
     pub vertical: f64,
 }
 
-/// Overrides for gaps on a per-display basis
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct GapOverride {
-    /// Override outer gaps completely for the display
     #[serde(default)]
     pub outer: Option<OuterGaps>,
-    /// Override inner gaps completely for the display
     #[serde(default)]
     pub inner: Option<InnerGaps>,
 }
@@ -876,10 +781,8 @@ impl GapSettings {
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
 
-        // Validate outer gaps
         issues.extend(self.outer.validate());
 
-        // Validate inner gaps
         issues.extend(self.inner.validate());
 
         for (uuid, overrides) in &self.per_display {
@@ -919,7 +822,6 @@ impl GapSettings {
 }
 
 impl OuterGaps {
-    /// Validates outer gap configuration values and returns a list of issues found.
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
 
@@ -950,7 +852,6 @@ impl OuterGaps {
 }
 
 impl InnerGaps {
-    /// Validates inner gap configuration values and returns a list of issues found.
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
 
@@ -1050,14 +951,11 @@ impl Config {
         Ok(())
     }
 
-    /// Validates the entire configuration and returns a list of issues found.
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
 
-        // Validate settings
         issues.extend(self.settings.validate());
 
-        // Validate virtual workspace settings
         issues.extend(self.virtual_workspaces.validate());
 
         issues
@@ -1286,17 +1184,25 @@ impl Config {
             }
             Err(e) => {
                 let msg = e.to_string();
-                if let Some(unknown_token) = Self::extract_unknown_variant(&msg) {
-                    if let Some(suggestion) = Self::suggest_similar_command(&unknown_token) {
-                        bail!("{msg}\nDid you mean `{}`?", suggestion);
-                    } else {
-                        bail!("{msg}");
-                    }
-                } else {
-                    bail!("{msg}");
+                let unknown = Self::extract_unknown_variant(&msg)
+                    .or_else(|| Self::first_unbindable_command(buf));
+                match unknown.and_then(|token| Self::suggest_similar_command(&token)) {
+                    Some(suggestion) => bail!("{msg}\nDid you mean `{}`?", suggestion),
+                    None => bail!("{msg}"),
                 }
             }
         }
+    }
+
+    /// `WmCommand` is `#[serde(untagged)]`, so a misspelt binding reports "did not match any
+    /// variant" and names nothing. Find the offending string in `[keys]` so it can be suggested for.
+    fn first_unbindable_command(buf: &str) -> Option<String> {
+        let document: toml::Value = toml::from_str(buf).ok()?;
+        let keys = document.get("keys")?.as_table()?;
+        keys.values()
+            .filter_map(toml::Value::as_str)
+            .find(|command| serde_json::from_value::<WmCommand>(serde_json::Value::String(command.to_string())).is_err())
+            .map(str::to_owned)
     }
 }
 
@@ -1517,4 +1423,73 @@ mod tests {
         let suggestion = Config::suggest_similar_command(&token);
         assert_eq!(suggestion.as_deref(), Some("toggle_stack"));
     }
+    #[test]
+    fn the_default_config_validates_clean() {
+        assert_eq!(Config::default().validate(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn workspace_settings_validation_names_each_rule_it_rejects() {
+        let mut vw = VirtualWorkspaceSettings::default();
+        vw.default_workspace_count = 2;
+        vw.default_workspace = 2;
+        vw.workspace_names = vec!["a".into(), "b".into(), "c".into()];
+        let issues = vw.validate();
+        assert!(issues.iter().any(|i| i.contains("default_workspace (2)")));
+        assert!(issues.iter().any(|i| i.contains("More workspace names")));
+
+        let mut too_many = VirtualWorkspaceSettings::default();
+        too_many.default_workspace_count = MAX_WORKSPACES + 1;
+        assert!(too_many.validate().iter().any(|i| i.contains("should not exceed")));
+        let mut none = VirtualWorkspaceSettings::default();
+        none.default_workspace_count = 0;
+        assert!(none.validate().iter().any(|i| i.contains("at least 1")));
+    }
+
+    #[test]
+    fn scrolling_width_ratios_must_nest() {
+        let mut layout = LayoutSettings::default();
+        layout.scrolling.min_column_width_ratio = 0.8;
+        layout.scrolling.max_column_width_ratio = 0.5;
+        layout.scrolling.column_width_ratio = 0.7;
+        let issues = layout.validate();
+        assert!(issues.iter().any(|i| i.contains("must be <= max_column_width_ratio")));
+        assert!(issues.iter().any(|i| i.contains("within min/max bounds")));
+        let mut settings = Config::default().settings;
+        settings.animation_duration = -1.0;
+        assert!(settings.validate().iter().any(|i| i.contains("animation_duration")));
+    }
+
+    #[test]
+    fn save_then_read_gives_back_the_same_bindings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = Config::default();
+        original.save(&path).unwrap();
+        let reread = Config::read(&path).unwrap();
+        assert_eq!(reread.settings, original.settings);
+        assert_eq!(reread.virtual_workspaces, original.virtual_workspaces);
+        let mut a = original.key_specs.clone();
+        let mut b = reread.key_specs.clone();
+        a.sort_by(|x, y| x.0.cmp(&y.0));
+        b.sort_by(|x, y| x.0.cmp(&y.0));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn an_unknown_key_in_the_file_is_an_error_with_the_key_named() {
+        let err = Config::parse("[settings]\nno_such_key = 1\n[keys]\n").unwrap_err().to_string();
+        assert!(err.contains("no_such_key"), "{err}");
+    }
+
+    #[test]
+    fn a_misspelt_command_gets_a_suggestion() {
+        let err = Config::parse(
+            "[settings]\n[keys]\n\"Alt + Z\" = \"toggle_space_activate\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Did you mean `toggle_space_activated`"), "{err}");
+    }
+
 }
