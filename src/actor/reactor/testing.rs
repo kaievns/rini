@@ -445,7 +445,6 @@ pub struct Apps {
 pub struct TestWindowState {
     pub last_seen_txid: TransactionId,
     pub last_sent_txid: TransactionId,
-    pub animating: bool,
     pub frame: CGRect,
 }
 
@@ -601,7 +600,7 @@ impl Apps {
                     window.last_seen_txid = txid;
                     let old_frame = window.frame;
                     window.frame = frame;
-                    if !window.animating && !old_frame.same_as(frame) {
+                    if !old_frame.same_as(frame) {
                         events.push(Event::WindowFrameChanged(
                             wid,
                             frame,
@@ -617,7 +616,7 @@ impl Apps {
                         window.last_seen_txid = txid;
                         let old_frame = window.frame;
                         window.frame = frame;
-                        if !window.animating && !old_frame.same_as(frame) {
+                        if !old_frame.same_as(frame) {
                             events.push(Event::WindowFrameChanged(
                                 wid,
                                 frame,
@@ -634,7 +633,7 @@ impl Apps {
                         window.last_seen_txid = txid;
                         let old_frame = window.frame;
                         window.frame.origin = position;
-                        if !window.animating && !old_frame.same_as(window.frame) {
+                        if !old_frame.same_as(window.frame) {
                             events.push(Event::WindowFrameChanged(
                                 wid,
                                 window.frame,
@@ -650,7 +649,7 @@ impl Apps {
                     window.last_seen_txid = txid;
                     let old_frame = window.frame;
                     window.frame.origin = pos;
-                    if !window.animating && !old_frame.same_as(window.frame) {
+                    if !old_frame.same_as(window.frame) {
                         events.push(Event::WindowFrameChanged(
                             wid,
                             window.frame,
@@ -659,62 +658,6 @@ impl Apps {
                             None,
                         ));
                     }
-                }
-                Request::AnimationFrame { wid, frame, set_size, txid } => {
-                    let window = self.windows.entry(wid).or_default();
-                    window.last_seen_txid = txid;
-                    let old_frame = window.frame;
-                    if set_size {
-                        window.frame = frame;
-                    } else {
-                        window.frame.origin = frame.origin;
-                    }
-                    if !window.animating && !old_frame.same_as(window.frame) {
-                        events.push(Event::WindowFrameChanged(
-                            wid,
-                            window.frame,
-                            Some(txid),
-                            Requested(true),
-                            None,
-                        ));
-                    }
-                }
-                Request::AnimationFrames { frames, set_size } => {
-                    // Same handling as the single-window form, once per entry, so tests see
-                    // identical behaviour whichever shape the animation used.
-                    for (wid, frame, txid) in frames {
-                        let window = self.windows.entry(wid).or_default();
-                        window.last_seen_txid = txid;
-                        let old_frame = window.frame;
-                        if set_size {
-                            window.frame = frame;
-                        } else {
-                            window.frame.origin = frame.origin;
-                        }
-                        if !window.animating && !old_frame.same_as(window.frame) {
-                            events.push(Event::WindowFrameChanged(
-                                wid,
-                                window.frame,
-                                Some(txid),
-                                Requested(true),
-                                None,
-                            ));
-                        }
-                    }
-                }
-                Request::BeginWindowAnimation(wid, _) => {
-                    self.windows.entry(wid).or_default().animating = true;
-                }
-                Request::EndWindowAnimation(wid) => {
-                    let window = self.windows.entry(wid).or_default();
-                    window.animating = false;
-                    events.push(Event::WindowFrameChanged(
-                        wid,
-                        window.frame,
-                        Some(window.last_seen_txid),
-                        Requested(true),
-                        None,
-                    ));
                 }
                 Request::Raise(..) => todo!(),
                 Request::CloseWindow(..) => todo!(),

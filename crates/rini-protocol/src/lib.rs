@@ -12,7 +12,7 @@ mod selectors;
 mod transport;
 
 pub use commands::{
-    AnimationEasing, ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand,
+    ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand,
 };
 pub use events::{EventKind, RiniEvent, StackInfo, WorkspaceId};
 pub use layout::{Direction, LayoutKind, LayoutMode, Orientation, ResizeOrientation};

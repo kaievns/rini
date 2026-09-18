@@ -132,9 +132,6 @@ pub struct LayoutEngine {
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
     connected_displays: Vec<String>,
-    /// Direction of the in-flight workspace switch per display, consumed by the animation.
-    #[allow(clippy::type_complexity)]
-    workspace_switch_directions: HashMap<SpaceId, crate::model::reactor::WorkspaceSwitchDirection>,
     persistence: PersistenceState,
     /// Set only while a master-file startup restore is waiting for the first display snapshot.
     startup_restore_pending: bool,
@@ -426,16 +423,6 @@ impl LayoutEngine {
         }
     }
 
-    pub fn layout_specific_animate_settings(&self, space: SpaceId) -> Option<bool> {
-        if let Some(ws_id) = self.virtual_workspace_manager.active_workspace(space) {
-            match self.workspace_tree(ws_id) {
-                LayoutSystemKind::Scrolling(_) => self.layout_settings.scrolling.animate,
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
 
     fn active_floating_windows_in_workspace(
         &self,
@@ -546,25 +533,6 @@ impl LayoutEngine {
         }
     }
 
-    /// Which way the last switch on this display travelled, for the slide animation.
-    ///
-    /// Workspaces are stacked vertically, so moving to a higher ordinal reads as going DOWN.
-    pub fn take_workspace_switch_direction(
-        &mut self,
-        space: SpaceId,
-    ) -> Option<crate::model::reactor::WorkspaceSwitchDirection> {
-        // Peek, do not consume.
-        //
-        // A switch runs several arrange passes (outcome.arrange.passes), and removing the
-        // direction on the first one left the rest with nothing, so they fell back to the
-        // instant path and cancelled the slide already in flight. That is the "animation works
-        // every other time" report: whether you saw it depended on which pass won.
-        //
-        // The entry is instead replaced on the next switch and cleared when the workspace does
-        // not change, so a stale direction cannot animate anything on its own.
-        self.workspace_switch_directions.get(&space).copied()
-    }
-
     fn activate_workspace(
         &mut self,
         window_store: &WindowStore,
@@ -572,26 +540,6 @@ impl LayoutEngine {
         workspace_id: VirtualWorkspaceId,
         preferred_focus_window: Option<WindowId>,
     ) -> EventResponse {
-        // Record the travel direction before the active workspace changes, while both
-        // ordinals are still known.
-        let ordered = self.virtual_workspace_manager_mut().list_workspaces(space);
-        let index_of = |target: VirtualWorkspaceId| {
-            ordered.iter().position(|(candidate, _)| *candidate == target)
-        };
-        if let Some(previous) = self.virtual_workspace_manager.active_workspace(space)
-            && let (Some(from), Some(to)) = (index_of(previous), index_of(workspace_id))
-            && from != to
-        {
-            let direction = if to > from {
-                crate::model::reactor::WorkspaceSwitchDirection::Down
-            } else {
-                crate::model::reactor::WorkspaceSwitchDirection::Up
-            };
-            self.workspace_switch_directions.insert(space, direction);
-        } else {
-            // Same workspace, so there is no movement to animate.
-            self.workspace_switch_directions.remove(&space);
-        }
         self.virtual_workspace_manager.set_active_workspace(space, workspace_id);
         self.update_active_floating_windows(window_store, space);
         self.broadcast_workspace_changed(space);
@@ -631,9 +579,6 @@ impl LayoutEngine {
                         return self.activate_workspace(window_store, space, last_workspace, None);
                     }
                 }
-                // Nothing moved, so no slide should be pending. activate_workspace is not
-                // reached on this path, which is why the clear has to happen here too.
-                self.workspace_switch_directions.remove(&space);
                 return EventResponse::default();
             }
             return self.activate_workspace(
@@ -1662,7 +1607,6 @@ impl LayoutEngine {
             display_affinity: DisplayAffinity::default(),
             launch_memory: crate::model::launch_memory::LaunchMemory::default(),
             connected_displays: Vec::new(),
-            workspace_switch_directions: HashMap::default(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
         }

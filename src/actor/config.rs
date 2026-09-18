@@ -108,21 +108,6 @@ impl ConfigActor {
                 0.0,
                 5.0,
             ),
-            ConfigCommand::SetAnimationFps(v) => set_range(
-                "animation_fps",
-                &mut new_config.settings.animation_fps,
-                v,
-                0.0,
-                240.0,
-            ),
-            ConfigCommand::SetAnimationEasing(v) => {
-                new_config.settings.animation_easing = v.clone();
-                config_changed = true;
-                info!(
-                    "Updated animation_easing to: {:?}",
-                    new_config.settings.animation_easing
-                );
-            }
             ConfigCommand::SetMouseFollowsFocus(v) => {
                 set_flag!(new_config.settings.mouse_follows_focus, v, "mouse_follows_focus")
             }

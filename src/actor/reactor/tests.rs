@@ -5756,76 +5756,6 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
     );
 }
 
-/// Switching workspace records which way the switch travels, per display.
-///
-/// The animation needs this to slide the arriving strip in from the correct edge. Recording it
-/// per display matters because displays switch independently: the built-in can be moving down
-/// to "comms" while the external stays where it is.
-#[test]
-fn workspace_switch_records_its_direction_per_display() {
-    let mut reactor = test_reactor();
-    let builtin = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
-    let external = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
-    let builtin_space = SpaceId::new(1);
-    let external_space = SpaceId::new(479);
-
-    set_space_membership(&[(builtin_space, &[]), (external_space, &[])]);
-    reactor.handle_event(space_state_event(
-        vec![builtin, external],
-        vec![Some(builtin_space), Some(external_space)],
-    ));
-
-    // Going to a higher ordinal travels DOWN the stack.
-    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(2));
-    assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .take_workspace_switch_direction(builtin_space),
-        Some(crate::model::reactor::WorkspaceSwitchDirection::Down),
-    );
-    assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .take_workspace_switch_direction(external_space),
-        None,
-        "the other display did not switch, so it has no direction to animate"
-    );
-
-    // And back to a lower ordinal travels UP.
-    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
-    assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .take_workspace_switch_direction(builtin_space),
-        Some(crate::model::reactor::WorkspaceSwitchDirection::Up),
-    );
-
-    // Reading is a PEEK, not a consume: a switch runs several arrange passes and every one
-    // needs the direction, otherwise the later passes cancel the slide the first one started.
-    assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .take_workspace_switch_direction(builtin_space),
-        Some(crate::model::reactor::WorkspaceSwitchDirection::Up),
-        "repeated reads within one switch must return the same direction"
-    );
-
-    // Switching to the workspace already showing is not movement, and clears the direction so
-    // a stale one cannot animate anything later.
-    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(0));
-    assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .take_workspace_switch_direction(builtin_space),
-        None,
-    );
-}
-
 /// A window rini parked off-screen must not be treated as having changed display.
 ///
 /// Windows belonging to a workspace their display is not showing are moved off-screen, and
@@ -6720,7 +6650,6 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = true;
     reactor.config.settings.animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
@@ -6773,7 +6702,6 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = true;
     reactor.config.settings.animate = true;
     let mut settings = reactor.config.virtual_workspaces.clone();
     settings.prevent_wrapping = true;
@@ -6828,7 +6756,6 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = true;
     reactor.config.settings.animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
@@ -6879,7 +6806,6 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = true;
     reactor.config.settings.animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
@@ -6919,7 +6845,6 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = true;
     reactor.config.settings.animate = true;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
@@ -6957,15 +6882,14 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     assert_eq!(forgotten, 1, "one forget, from the promotion; the AX destruction adds none");
 }
 
-/// P-3.13 (`.kiro/specs/exit-entrance-animation-regressions`): with overlay animations off, a
+/// P-3.13 (`.kiro/specs/exit-entrance-animation-regressions`): with animations off, a
 /// close sends the engine nothing but the forget, and the window state is still removed.
 #[test]
-fn a_destroyed_window_does_not_exit_when_overlay_animations_are_off() {
+fn a_destroyed_window_does_not_exit_when_animations_are_off() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = false;
-    reactor.config.settings.animate = true;
+    reactor.config.settings.animate = false;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
@@ -6984,21 +6908,20 @@ fn a_destroyed_window_does_not_exit_when_overlay_animations_are_off() {
                 crate::actor::workspace_animation::Event::Animate { .. }
                     | crate::actor::workspace_animation::Event::AnimateStrip { .. }
             ),
-            "nothing flies with overlay animations off: {event:?}"
+            "nothing flies with animations off: {event:?}"
         );
     }
     assert!(reactor.state.windows.window(wid).is_none(), "the window state is still removed");
 }
 
-/// P-3.13: with overlay animations off, a layout pass places the windows and sends the engine no
+/// P-3.13: with animations off, a layout pass places the windows and sends the engine no
 /// flight.
 #[test]
-fn a_layout_pass_does_not_fly_when_overlay_animations_are_off() {
+fn a_layout_pass_does_not_fly_when_animations_are_off() {
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
-    reactor.config.settings.overlay_animations = false;
-    reactor.config.settings.animate = true;
+    reactor.config.settings.animate = false;
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
@@ -7028,7 +6951,7 @@ fn a_layout_pass_does_not_fly_when_overlay_animations_are_off() {
                 crate::actor::workspace_animation::Event::Animate { .. }
                     | crate::actor::workspace_animation::Event::AnimateStrip { .. }
             ),
-            "nothing flies with overlay animations off: {event:?}"
+            "nothing flies with animations off: {event:?}"
         );
     }
     assert!(

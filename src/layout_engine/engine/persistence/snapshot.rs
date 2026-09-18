@@ -88,7 +88,6 @@ impl PersistedLayout {
             display_affinity: self.display_affinity,
             launch_memory: self.launch_memory,
             connected_displays: Vec::new(),
-            workspace_switch_directions: HashMap::default(),
             persistence: self.persistence,
             startup_restore_pending: false,
         }

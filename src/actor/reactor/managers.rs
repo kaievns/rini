@@ -84,10 +84,6 @@ pub struct WorkspaceSwitchManager {
     pub active_workspace_switch: Option<u64>,
     pub pending_workspace_switch_origin: Option<WorkspaceSwitchOrigin>,
     pub pending_workspace_mouse_warp: Option<WindowId>,
-    // Switch DIRECTION deliberately does not live here. It is owned by
-    // LayoutEngine::workspace_switch_directions, which is where the switch is decided and
-    // where the animation reads it from. A second copy here was only ever written, never
-    // read.
 }
 
 impl WorkspaceSwitchManager {

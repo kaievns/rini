@@ -374,12 +374,6 @@ enum ConfigCommands {
     SetAnimationDuration {
         value: f64,
     },
-    SetAnimationFps {
-        value: f64,
-    },
-    SetAnimationEasing {
-        value: String,
-    },
 
     /// Update mouse settings
     SetMouseFollowsFocus {
@@ -960,7 +954,7 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
 }
 
 fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
-    use rini_wm::common::config::{AnimationEasing, ConfigCommand};
+    use rini_wm::common::config::ConfigCommand;
 
     let cfg_cmd = match cmd {
         ConfigCommands::SetAnimate { value } => {
@@ -973,36 +967,6 @@ fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
         }
         ConfigCommands::SetAnimationDuration { value } => {
             ConfigCommand::SetAnimationDuration(value)
-        }
-        ConfigCommands::SetAnimationFps { value } => ConfigCommand::SetAnimationFps(value),
-        ConfigCommands::SetAnimationEasing { value } => {
-            let easing = match value.as_str() {
-                "ease_in_out" => AnimationEasing::EaseInOut,
-                "linear" => AnimationEasing::Linear,
-                "ease_in_sine" => AnimationEasing::EaseInSine,
-                "ease_out_sine" => AnimationEasing::EaseOutSine,
-                "ease_in_out_sine" => AnimationEasing::EaseInOutSine,
-                "ease_in_quad" => AnimationEasing::EaseInQuad,
-                "ease_out_quad" => AnimationEasing::EaseOutQuad,
-                "ease_in_out_quad" => AnimationEasing::EaseInOutQuad,
-                "ease_in_cubic" => AnimationEasing::EaseInCubic,
-                "ease_out_cubic" => AnimationEasing::EaseOutCubic,
-                "ease_in_out_cubic" => AnimationEasing::EaseInOutCubic,
-                "ease_in_quart" => AnimationEasing::EaseInQuart,
-                "ease_out_quart" => AnimationEasing::EaseOutQuart,
-                "ease_in_out_quart" => AnimationEasing::EaseInOutQuart,
-                "ease_in_quint" => AnimationEasing::EaseInQuint,
-                "ease_out_quint" => AnimationEasing::EaseOutQuint,
-                "ease_in_out_quint" => AnimationEasing::EaseInOutQuint,
-                "ease_in_expo" => AnimationEasing::EaseInExpo,
-                "ease_out_expo" => AnimationEasing::EaseOutExpo,
-                "ease_in_out_expo" => AnimationEasing::EaseInOutExpo,
-                "ease_in_circ" => AnimationEasing::EaseInCirc,
-                "ease_out_circ" => AnimationEasing::EaseOutCirc,
-                "ease_in_out_circ" => AnimationEasing::EaseInOutCirc,
-                _ => return Err(format!("Invalid animation easing: {}", value)),
-            };
-            ConfigCommand::SetAnimationEasing(easing)
         }
         ConfigCommands::SetMouseFollowsFocus { value } => {
             ConfigCommand::SetMouseFollowsFocus(value)

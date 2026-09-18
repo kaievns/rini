@@ -5,55 +5,26 @@ comments were measured when those fixes landed; anything marked *estimated* has
 not been measured yet. Companion to `capture-overlay-research.md`, which holds
 the capture measurements this builds on.
 
-## The two engines
+## One engine
 
-Rini animates through two mechanisms, selected per layout pass in
-`AnimationManager::animate_layout` (`src/actor/reactor/animation.rs`):
+Every animated movement runs through the overlay engine
+(`src/actor/workspace_animation.rs` + `src/ui/workspace_overlay.rs`): window
+bitmaps composited in one opaque overlay window, the real windows placed once
+behind it (see "The apply point"). Layout passes, strip pans, workspace
+switches, resizes, entrances and the edge bounce are all flights of it.
+`AnimationManager` (`src/actor/reactor/animation.rs`) is the layout side: it
+decides per pass whether the overlay flies (`config.settings.animate`, not low
+power, not a drag, something visibly travels) and places the real windows
+directly when it does not.
 
-1. **The AX engine** (`src/actor/reactor/animation.rs` + `src/actor/app.rs`).
-   Per-frame `AXPosition`/`AXSize` writes into each owning application, ticked
-   by a CFRunLoopTimer at `animation_fps` (default 100). Handles everything the
-   overlay cannot, which since "Resizes through the overlay" landed means: all
-   animation when `overlay_animations` is off.
-2. **The overlay engine** (`src/actor/workspace_animation.rs` +
-   `src/ui/workspace_overlay.rs`). Window bitmaps composited in one opaque
-   overlay window; the real windows are placed once mid-flight, hidden
-   behind it (see "The apply point"). Ticked by a CFRunLoopTimer at a fixed
-   60fps. Handles pure translations: workspace switches (strip), strip pans
-   (strip), and per-window slides.
-
-## The AX engine is at its physical ceiling
-
-Every frame write is a synchronous Mach round trip into a process that answers
-at its own speed, and AX has no atomic set-frame call. The engine already
-carries every fix that mechanism admits:
-
-- One message per app per tick (`Request::AnimationFrames`), not per window.
-  Cut inter-window drift from 155pt to the residual cross-app skew.
-- `pending_frames` coalescing in the app actor: a slow app drops frames
-  instead of queueing them.
-- The 1-vs-3 write distinction in `flush_frames`: a resize costs
-  `set_size; set_position; set_size`, a pure move costs one `set_position`.
-- `BeginWindowAnimation` seeds `last_animation_frame` so the first frame of a
-  slide does not take the 3x path ("jumps the first one or two times").
-- Wall-clock frame indexing, so late ticks skip instead of stretching.
-- A refcounted `AXEnhancedUserInterface` lease held across the animation.
-
-What remains is either consolidation or marginal:
-
-- **The 100fps default is wasted.** No app accepts AX writes at 100Hz; the
-  coalescing collapses most ticks anyway, but each one still costs a channel
-  send and an app-thread wakeup. ~60 (or the display refresh rate, which
-  `display_link.rs` can query) loses nothing visible. *Estimated.*
-- ~~The ticker shares the reactor's executor.~~ Fixed: `AnimationManager::run`
-  now runs on its own `animation` thread with its own run loop, so an arrange
-  pass cannot delay a tick and the wall-clock skip has nothing to skip.
-- ~~The curve disagrees with the overlay.~~ Fixed: the engine's `ease` now
-  delegates to the overlay's `ease` (`MOTION_CURVE`), so a resize (AX) next to a pan
-  (overlay) from one keystroke follows one curve, and the sluggish
-  ease-in-out start is gone.
-- **Cross-app skew is unfixable here.** The real fix is to stop using AX for
-  animation entirely — see "Endgame" below.
+The per-frame Accessibility engine that preceded it (`AXPosition`/`AXSize`
+writes into every owning app on every tick, `animation_fps`, the
+`BeginWindowAnimation`/`AnimationFrames`/`EndWindowAnimation` app requests,
+the top-clamped vertical slide) was removed once resizes rode the overlay:
+its cross-app skew (100-150px between neighbouring columns mid-scroll) was
+the mechanism's, not a bug in it, and the overlay never had it. The
+"Endgame" this document set out is done; what follows describes the one
+engine that is left.
 
 ## The overlay engine: containers carry the rigid pieces
 
@@ -278,7 +249,7 @@ and popped by the fraction at the lift.
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
-  exponential ease-out. The actor's clock and the AX engine evaluate it by
+  exponential ease-out. The actor's clock evaluates it by
   solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
   and Core Animation gets the same four control points (`motion_timing`),
   so the apply point and the drawn motion agree; pinned by
@@ -335,7 +306,7 @@ by `a_bounce_goes_out_once_and_comes_home`.
 
 ## Resizes through the overlay
 
-A resize rides the per-window overlay path instead of the AX engine, ported
+A resize rides the per-window overlay path, ported
 from the parked `resize-rounds-1-2` branch onto the per-tile Core Animation
 machinery. The tile travels between its two rects like any other tile; what
 changes is how the picture maps onto it (`content_mode` in
@@ -622,70 +593,33 @@ Options, in order of expected value:
 
 ## Structural findings
 
-The engines' mechanisms are genuinely different (per-frame IPC writes vs one
-layer transform), so a trait over the engines themselves would be forced. The
-duplication that hurts is elsewhere:
-
-1. **Two copies of the motion math.** Wall-clock progress with clamp and
-   zero-duration guard: `ActiveAnimation::frame_for_now` and
-   `RunningAnimation::progress`. Rect interpolation twice: `get_frame`/
-   `blend` (AX) vs `lerp_rect` (overlay). The curves agree now (the AX
-   `ease` delegates to the overlay's `ease`), but the definitions
-   should live in one `motion` module.
-2. **`config.settings.animation_easing` is dead.** Plumbed through protocol,
-   CLI (`set-animation-easing`), and the config actor — and never read by
-   either engine. Wire it into the shared easing table or delete it.
-3. **`animate_layout` is the real strategy point, and it is a god function.**
-   It computes eligibility, builds *both* engines' inputs (the AX `Animation`
-   is fully constructed and then discarded on the overlay path), decides skip
-   conditions, detects pans, and dispatches — as a static method reaching
+1. **`animate_layout` is the real strategy point, and it is a god function.**
+   It computes eligibility, builds the overlay's requests, decides skip
+   conditions, detects pans, and dispatches, as a static method reaching
    into `&mut Reactor`. The decomposition: a pure pass-analysis step producing
    a `LayoutMotion` value (moved/unmoved windows, warm targets, pan delta,
-   all-translations flag, skip reasons) — independently testable — then
-   engine selection, then dispatch through a narrow `present(motion)`
-   boundary. That is the strategy seam: "how a settled layout is presented,"
-   not "how frames are produced."
-4. **app.rs mechanics.** The `set_size; set_position; set_size` triple
-   appears four times (`SetWindowFrame`, `SetBatchWindowFrame`,
-   `EndWindowAnimation`, `flush_frames`) — one helper. `AnimationFrame`
-   (singular) is subsumed by `AnimationFrames`. The `BeginWindowAnimation`
-   handler carries two overlapping copies of the same explanatory comment.
-5. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,
-   `start_strip_pan`, and `warm_all_workspaces` each repeat the
-   screen-lookup / gaps / `calculate_layout_for_workspace` loop — and
-   `warm_all_workspaces` recomputes every workspace's layout immediately
+   all-translations flag, skip reasons), independently testable, then
+   dispatch through a narrow `present(motion)` boundary.
+2. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,
+   `start_strip_pan`, `start_edge_bounce` and `warm_all_workspaces` each
+   repeat the screen-lookup / gaps / `calculate_layout_for_workspace` loop,
+   and `warm_all_workspaces` recomputes every workspace's layout immediately
    after `start_strip_switch` computed the same layouts.
 
-## Endgame
+## Endgame (done)
 
-If the overlay learns resizes — anchor the bitmap top-left in the tile
-(`contentsGravity`), animate the tile frame so the picture is cropped or
-revealed rather than scaled, apply the real resize once behind the overlay,
-recapture at the end — the AX engine's remaining jobs shrink to the
-`overlay_animations = false` fallback and the vertical slide in
-`workspace_switch_layout`, whose own comments describe it as fundamentally
-compromised by the AX top-edge clamp ("instaswap from the top"). At that
-point the trajectory is: promote the overlay to the only engine, keep instant
-placement as the no-animation path, delete the per-frame AX machinery.
-
-## Detour: resizes stay on AX while it gets a fair trial
-
-The first pass at overlay resizes (a `contentsCenter` nine-part draw, then a
-2x2 `contentsRect` crop grid, window entrances, focused shadows and borders,
-park-entry fixes, capture-size fixes) accumulated visual bugs faster than it
-fixed them, and is parked in `git stash` ("overlay resize round 1+2"). The
-trial: give the AX engine — real windows resizing live, real borders,
-shadows and blur, apps re-rendering mid-flight — a steady ticker and the
-right curve (the two fixes above), and judge whether it is good enough for
-resizes. The overlay keeps switches, pans and slides either way. Next after
-the trial: per-tile CA animations for the overlay's per-window path, then
-the resize question again with whichever engine earned it.
+The overlay learned resizes (anchored, cropped rather than scaled, the real
+resize applied once behind the overlay), then switches, pans, entrances and
+closes, and the AX engine's last job was the `overlay_animations = false`
+fallback. That switch is gone: `animate` is on/off, on means the overlay,
+off means placement. The AX resize trial ("Detour" in earlier revisions)
+ended in the overlay's favour.
 
 ## Order of attack
 
 1. ~~CA-driven canvas animation~~ — subsumed by 3 and 4.
-2. ~~Steady ticker + matching curve for the AX engine~~ — done, see the
-   detour note.
+2. ~~Steady ticker + matching curve for the AX engine~~ — done, then the
+   engine itself was removed (see "One engine").
 3. ~~CA-driven per-window overlay path~~ — done, see the overlay section.
 4. ~~Dissolve the canvas into per-tile groups~~ — done, then reversed: the
    per-tile groups teleported on every merge, and containers carry the
@@ -694,10 +628,9 @@ the resize question again with whichever engine earned it.
 5. Pan classifier collapse (`strip_pan_delta`, routing in `animate_layout`),
    once the strip visuals are validated; `take_strip_movement` also feeds
    the switch's scroll-offset claim and needs care.
-6. Shared `motion` module + wire or delete `animation_easing` (small; the
-   curves already agree, the definitions should live in one place).
+6. ~~Shared `motion` module + wire or delete `animation_easing`~~ — the AX
+   engine and `animation_easing` are gone; `MOTION_CURVE` is the one curve.
 7. Staleness: change-driven warming or a stream pool; measure the mid-flight
    refresh cap first since it is nearly free.
 8. `animate_layout` decomposition, next time selection logic changes anyway.
-9. The resize question again — un-stash the overlay resize work (re-keyed to
-   the per-tile machinery) or keep AX, whichever the trial earns.
+9. ~~The resize question again~~ — resizes ride the overlay; AX removed.

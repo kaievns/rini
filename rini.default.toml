@@ -3,13 +3,11 @@
 
 [settings]
 # Animations
-# - animate: master switch for all window animations
-# - animation_duration: seconds per animation (>= 0.0, typical 0.15–0.35)
-# - animation_fps: frames per second (0.0 = display refresh rate). 60–120 recommended.
-#   ease_in_circ, ease_out_circ, ease_in_out_circ
-animate = false
-animation_duration = 0.3
-animation_fps = 100.0
+# - animate: every layout change, strip movement and workspace switch is drawn as one
+#   Core Animation flight in an overlay (docs/animation-smoothness.md); off places windows at once
+# - animation_duration: seconds per movement (>= 0.0; 0.35 reads well)
+animate = true
+animation_duration = 0.35
 
 # Space activation behavior
 # - If true, spaces start inactive (rini does not manage windows there)
@@ -142,10 +140,6 @@ alignment = "center"
 # 			(disrespects alignment setting above)
 # - "anchored": always align focused column according to `alignment`
 focus_navigation_style = "niri"
-# the scrolling layout tends to function better without animations,
-# so you can disable them if you like
-# animate = false
-
 [settings.layout.scrolling.gestures]
 # Enable horizontal scroll gestures to switch columns
 enabled = false

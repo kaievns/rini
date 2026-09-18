@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::bail;
-pub use rini_protocol::{AnimationEasing, ConfigCommand, LayoutMode, WorkspaceSelector};
+pub use rini_protocol::{ConfigCommand, LayoutMode, WorkspaceSelector};
 use serde::{Deserialize, Serialize};
 
 use super::collections::HashMap;
@@ -425,28 +425,13 @@ pub enum StackedUpperSide {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
-    #[serde(default = "no")]
+    /// Whether layout changes, strip movements and workspace switches are animated. Everything
+    /// animates through the overlay (`docs/animation-smoothness.md`); off places windows at once.
+    #[serde(default = "yes")]
     pub animate: bool,
+    /// How long one movement takes, in seconds.
     #[serde(default = "default_animation_duration")]
     pub animation_duration: f64,
-    /// Animate workspace switches by sliding bitmaps in an overlay instead of moving the real
-    /// windows frame by frame.
-    ///
-    /// The Accessibility route writes a position to every animating window on every frame, and each
-    /// write is a synchronous request into a different process that answers at its own speed. That is
-    /// the cross-app tear, measured at 100 to 150px between neighbouring windows mid-scroll. It also
-    /// cannot place a window above a display's usable top edge, which is why a slide from the top has
-    /// never worked.
-    ///
-    /// With this on, real windows are placed at their final frames once, underneath an opaque overlay,
-    /// and what moves is a layer per window composited in a single transaction. Off by default while
-    /// it is still being evaluated.
-    #[serde(default = "no")]
-    pub overlay_animations: bool,
-    #[serde(default = "default_animation_fps")]
-    pub animation_fps: f64,
-    #[serde(default)]
-    pub animation_easing: AnimationEasing,
     #[serde(default = "yes")]
     pub default_disable: bool,
     #[serde(default = "yes")]
@@ -691,9 +676,6 @@ pub struct LayoutSettings {
 pub struct ScrollingLayoutSettings {
     #[serde(flatten)]
     pub base: BaseLayoutSettings,
-    /// Whether to animate window transitions in this layout.
-    #[serde(default)]
-    pub animate: Option<bool>,
     /// Default width of the active column, as a fraction of the screen width.
     #[serde(default = "default_scrolling_column_width_ratio")]
     pub column_width_ratio: f64,
@@ -729,7 +711,6 @@ impl Default for ScrollingLayoutSettings {
     fn default() -> Self {
         Self {
             base: BaseLayoutSettings::default(),
-            animate: None,
             column_width_ratio: default_scrolling_column_width_ratio(),
             min_column_width_ratio: default_scrolling_min_column_width_ratio(),
             max_column_width_ratio: default_scrolling_max_column_width_ratio(),
@@ -964,12 +945,6 @@ impl Settings {
             ));
         }
 
-        if self.animation_fps <= 0.0 {
-            issues.push(format!(
-                "animation_fps must be positive, got {}",
-                self.animation_fps
-            ));
-        }
 
         issues.extend(self.layout.validate());
 
@@ -1222,12 +1197,9 @@ fn default_master_stack_new_window_placement() -> MasterStackNewWindowPlacement 
 }
 
 fn default_animation_duration() -> f64 {
-    0.3
+    0.35
 }
 
-fn default_animation_fps() -> f64 {
-    100.0
-}
 
 #[allow(dead_code)]
 pub fn default_stacked_lower_top_at() -> f64 {
@@ -1596,7 +1568,6 @@ mod tests {
 
                 [scrolling]
                 window_insertion_point = "next_to_selection"
-                animate = false
             "#,
         )
         .unwrap();
@@ -1604,7 +1575,6 @@ mod tests {
             overridden.window_insertion_point_for(LayoutMode::Scrolling),
             WindowInsertionPoint::NextToSelection
         );
-        assert_eq!(overridden.scrolling.animate, Some(false));
 
         let inherited: LayoutSettings = toml::from_str(
             r#"

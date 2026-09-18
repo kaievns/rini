@@ -133,8 +133,6 @@ pub enum MetricsCommand {
 pub enum ConfigCommand {
     SetAnimate(bool),
     SetAnimationDuration(f64),
-    SetAnimationFps(f64),
-    SetAnimationEasing(AnimationEasing),
     SetMouseFollowsFocus(bool),
     SetMouseHidesOnFocus(bool),
     SetFocusFollowsMouse(bool),
@@ -157,35 +155,6 @@ pub enum ConfigCommand {
     GetConfig,
     SaveConfig,
     ReloadConfig,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AnimationEasing {
-    #[default]
-    EaseInOut,
-    Linear,
-    EaseInSine,
-    EaseOutSine,
-    EaseInOutSine,
-    EaseInQuad,
-    EaseOutQuad,
-    EaseInOutQuad,
-    EaseInCubic,
-    EaseOutCubic,
-    EaseInOutCubic,
-    EaseInQuart,
-    EaseOutQuart,
-    EaseInOutQuart,
-    EaseInQuint,
-    EaseOutQuint,
-    EaseInOutQuint,
-    EaseInExpo,
-    EaseOutExpo,
-    EaseInOutExpo,
-    EaseInCirc,
-    EaseOutCirc,
-    EaseInOutCirc,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -67,7 +67,6 @@ mod tests;
 use std::path::PathBuf;
 use std::thread;
 
-use animation::Sender as AnimationSender;
 use events::{
     EventOutcome, app as application_workflow, command as command_workflow,
     drag as interaction_workflow, focus as focus_service, space as topology_workflow,
@@ -352,18 +351,6 @@ pub struct Reactor {
     refresh_quarantine_manager: managers::RefreshQuarantineManager,
     pending_space_change_manager: managers::PendingSpaceChangeManager,
     active_spaces: HashSet<SpaceId>,
-    pub animation_tx: Option<AnimationSender>,
-    /// Windows currently part-way through a workspace slide, and when the slide ends.
-    ///
-    /// A sliding window's coordinates are ours, not the user's, so WindowServer reporting it
-    /// on a neighbouring display is not evidence of a display change. A top-entering slide
-    /// necessarily travels through the display above (the only placeable space up there), so
-    /// without this the affinity pass re-homes every window that slides in from the top.
-    ///
-    /// Held here rather than queried from the animation thread because that thread owns its
-    /// own state and this is consulted from the hot WindowServerAppeared path. Entries carry a
-    /// deadline so a dropped or superseded animation cannot pin a window forever.
-    sliding_windows: HashMap<WindowId, std::time::Instant>,
     /// When the layout file was last written, for debouncing autosaves.
     last_autosave: Option<std::time::Instant>,
     /// A layout change arrived inside the debounce window and has not been written
@@ -499,8 +486,6 @@ impl Reactor {
                 pending_space_change: None,
             },
             active_spaces: HashSet::default(),
-            animation_tx: None,
-            sliding_windows: HashMap::default(),
             last_autosave: None,
             autosave_pending: false,
             #[cfg(not(test))]
@@ -891,25 +876,10 @@ impl Reactor {
 
     async fn run(mut reactor: Reactor, events: Receiver, events_tx: Sender) {
         let (raise_manager_tx, raise_manager_rx) = actor::channel();
-        let (animation_tx, animation_rx) = tokio::sync::mpsc::unbounded_channel();
         reactor.communication_manager.raise_manager_tx = raise_manager_tx.clone();
-        reactor.animation_tx = Some(animation_tx);
         let event_tap_tx = reactor.communication_manager.event_tap_tx.clone();
         let reactor_task = Self::run_reactor_loop(reactor, events);
         let raise_manager_task = RaiseManager::run(raise_manager_rx, events_tx, event_tap_tx);
-        // On its own thread, not joined with the reactor: the animation ticker shared the
-        // reactor's executor, so a heavy arrange pass delayed ticks and the wall-clock frame
-        // skip turned the delay into dropped frames. The manager only sends channel messages,
-        // so it needs nothing of the reactor's state — only a run loop of its own for its timer.
-        std::thread::Builder::new()
-            .name("animation".into())
-            .spawn(move || {
-                crate::sys::executor::Executor::run(animation::AnimationManager::run(animation_rx));
-                // Reachable only if the reactor dropped the sender, and the reactor never exits
-                // without panicking itself; abort loudly rather than animate nothing quietly.
-                panic!("animation thread exited");
-            })
-            .expect("failed to spawn animation thread");
         let _ = tokio::join!(reactor_task, raise_manager_task);
     }
 
@@ -1375,21 +1345,6 @@ impl Reactor {
                     .windows
                     .tracked_window_id(wsid)
                     .and_then(|wid| {
-                        // A window part-way through a workspace slide is in the same position
-                        // as a parked one: its coordinates are OURS, not the user's, so they
-                        // are not evidence of anything.
-                        //
-                        // Load-bearing for top-entering slides. The only placeable space above
-                        // a display is another display, so a slide that enters from above must
-                        // travel through the neighbour — probed directly: with one display,
-                        // y=32 is accepted and y=-48 is clamped to 32, while with a display
-                        // stacked above the same negative y is accepted because it is real
-                        // screen. Without this guard WindowServer reports the window on the
-                        // neighbour mid-flight and the affinity pass re-homes it for good,
-                        // which is the original "windows teleport between displays" bug.
-                        if self.window_is_mid_slide(wid) {
-                            return Some(true);
-                        }
                         let assignment = self.state.windows.workspace_info_for_window(wid)?;
                         let showing =
                             self.layout_manager.layout_engine.active_workspace(assignment.space)?;
@@ -4130,10 +4085,7 @@ impl Reactor {
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. See "Edge bounce" in `docs/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
-        if !self.config.settings.overlay_animations
-            || !self.config.settings.animate
-            || crate::sys::power::is_low_power_mode_enabled()
-        {
+        if !self.config.settings.animate || crate::sys::power::is_low_power_mode_enabled() {
             return;
         }
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
@@ -4440,35 +4392,6 @@ impl Reactor {
             // is a safe default until there is a reason to plumb the real value through.
             scale: 2.0,
         });
-    }
-
-    /// Note that `windows` are about to slide, for `duration`.
-    ///
-    /// Called by the animation path before the frames go out, so the guard is in place before
-    /// the first off-display frame can be observed.
-    pub(crate) fn mark_windows_sliding(
-        &mut self,
-        windows: impl IntoIterator<Item = WindowId>,
-        duration: std::time::Duration,
-    ) {
-        // A generous margin over the animation's own length. The cost of expiring late is a
-        // brief window where a genuine user-driven display change is ignored; the cost of
-        // expiring early is a window permanently re-homed to the wrong display, which is much
-        // worse and much harder to notice.
-        let deadline = std::time::Instant::now() + duration + std::time::Duration::from_millis(250);
-        for window in windows {
-            self.sliding_windows.insert(window, deadline);
-        }
-    }
-
-    /// Whether `window` is part-way through a workspace slide.
-    ///
-    /// Expires entries lazily rather than on a timer: the map is small (one workspace's visible
-    /// columns) and this is the only reader.
-    fn window_is_mid_slide(&mut self, window: WindowId) -> bool {
-        let now = std::time::Instant::now();
-        self.sliding_windows.retain(|_, deadline| *deadline > now);
-        self.sliding_windows.contains_key(&window)
     }
 
     pub fn warp_mouse(&mut self, point: CGPoint) {

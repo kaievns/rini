@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use objc2::rc::Retained;
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
-use objc2_core_foundation::{CFRunLoop, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRunLoop, CGPoint, CGRect};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 use tokio::{join, select};
@@ -32,7 +32,6 @@ use crate::sys::axuielement::{
 };
 use crate::sys::enhanced_ui::EnhancedUi;
 use crate::sys::event;
-use crate::sys::event::MouseState;
 use crate::sys::executor::Executor;
 use crate::sys::observer::Observer;
 use crate::sys::process::ProcessInfo;
@@ -116,10 +115,6 @@ const WINDOW_NOTIFICATIONS: &[(AxNotificationKind, &str)] = &[
     (AxNotificationKind::TitleChanged, kAXTitleChangedNotification),
 ];
 
-const WINDOW_ANIMATION_NOTIFICATIONS: &[AxNotificationKind] = &[
-    AxNotificationKind::WindowMoved,
-    AxNotificationKind::WindowResized,
-];
 
 /// An identifier representing a window.
 ///
@@ -272,24 +267,6 @@ impl AxNotificationKind {
         })
     }
 
-    fn name(self) -> &'static str {
-        match self {
-            Self::ApplicationActivated => kAXApplicationActivatedNotification,
-            Self::ApplicationDeactivated => kAXApplicationDeactivatedNotification,
-            Self::ApplicationHidden => kAXApplicationHiddenNotification,
-            Self::ApplicationShown => kAXApplicationShownNotification,
-            Self::MainWindowChanged => kAXMainWindowChangedNotification,
-            Self::WindowCreated => kAXWindowCreatedNotification,
-            Self::MenuOpened => kAXMenuOpenedNotification,
-            Self::MenuClosed => kAXMenuClosedNotification,
-            Self::WindowDestroyed => kAXUIElementDestroyedNotification,
-            Self::WindowMoved => kAXWindowMovedNotification,
-            Self::WindowResized => kAXWindowResizedNotification,
-            Self::WindowMiniaturized => kAXWindowMiniaturizedNotification,
-            Self::WindowDeminiaturized => kAXWindowDeminiaturizedNotification,
-            Self::TitleChanged => kAXTitleChangedNotification,
-        }
-    }
 }
 
 fn encode_notification_data(kind: AxNotificationKind, wid: Option<WindowId>) -> usize {
@@ -348,40 +325,6 @@ pub enum Request {
     /// Position-only batch reserved for virtual workspace switches.
     SetWorkspaceSwitchPositions(Vec<(WindowId, CGPoint)>, TransactionId, bool),
     SetWindowPos(WindowId, CGPoint, TransactionId, bool),
-    AnimationFrame {
-        wid: WindowId,
-        frame: CGRect,
-        set_size: bool,
-        txid: TransactionId,
-    },
-    /// Every window of THIS APP that moves on one animation tick, in a single message.
-    ///
-    /// One message per window per tick made each window's frame land at a different moment,
-    /// because the requests are drained and applied in order and every AX write is a
-    /// synchronous round trip. Two columns sliding together visibly drifted apart: measured
-    /// at 155pt of vertical skew on ~540pt of travel, still 112pt after a separate fix.
-    ///
-    /// Batching cannot make the writes simultaneous — AX has no such call — but it does put
-    /// every window of an app in ONE drain, under one enhanced-UI lease, with no queue
-    /// wakeups in between. What remains is only the unavoidable cost of the writes
-    /// themselves.
-    AnimationFrames {
-        /// Per-window, because a transaction id is minted per WindowServer id. Sharing one
-        /// across a batch would stamp every window of an app with a sibling's txid, and the
-        /// reactor uses that id to recognise its own writes when the frame change comes back.
-        frames: Vec<(WindowId, CGRect, TransactionId)>,
-        set_size: bool,
-    },
-
-    /// Start animating `WindowId`, whose size at that moment is the second field.
-    ///
-    /// The size is PASSED rather than read back with `elem.frame()`. Reading it cost a
-    /// synchronous AX round trip at the start of every animation, on every window, which is
-    /// exactly the per-window latency that makes windows animating together drift apart. The
-    /// caller already knows the start frame, so asking the app for it was pure overhead.
-    BeginWindowAnimation(WindowId, CGSize),
-    EndWindowAnimation(WindowId),
-
     /// Raise the windows within a single space, in the given order. All windows must be
     /// in the same space, or they will not be raised correctly.
     ///
@@ -443,7 +386,6 @@ struct State {
     enhanced_ui: EnhancedUi,
     raises_tx: actor::Sender<RaiseRequest>,
     tx_store: Option<WindowTxStore>,
-    pending_frames: HashMap<WindowId, PendingFrame>,
 }
 
 struct AppWindowState {
@@ -452,15 +394,6 @@ struct AppWindowState {
     hidden_by_app: bool,
     window_server_id: Option<WindowServerId>,
     title: String,
-    is_animating: bool,
-    last_animation_frame: Option<CGRect>,
-}
-
-struct PendingFrame {
-    span: Span,
-    frame: CGRect,
-    set_size: bool,
-    txid: TransactionId,
 }
 
 impl State {
@@ -635,9 +568,6 @@ impl State {
             }
         }
 
-        if !should_terminate {
-            this.borrow_mut().flush_all_frames();
-        }
 
         if disable_enhanced_ui {
             let mut state = this.borrow_mut();
@@ -646,63 +576,6 @@ impl State {
         }
 
         should_terminate
-    }
-
-    fn flush_frames(&mut self, wid: WindowId) -> Result<(), AxError> {
-        let Some(PendingFrame { span, frame, set_size, txid }) = self.pending_frames.remove(&wid)
-        else {
-            return Ok(());
-        };
-        let _guard = span.enter();
-        let window = self.window_mut(wid)?;
-        window.last_seen_txid = txid;
-
-        // Only pay for a resize on frames where the size actually changed.
-        //
-        // The set_size path costs THREE synchronous AX round-trips: size, position,
-        // then size again (the repeat works around apps that ignore a resize until
-        // they are repositioned). Doing that on every frame of every window makes
-        // each window's frame land measurably later than the last, so windows
-        // animating together visibly drini apart and tear against each other
-        // mid-scroll.
-        //
-        // During a pure scroll the size is constant, so this collapses to one
-        // set_position per window per frame and the group moves in lockstep. A real
-        // resize still gets the full treatment, but only on the frames where the size
-        // genuinely moves.
-        // 0.5pt tolerance: frames are rounded before being sent, so an unchanged
-        // size can differ by a hair without meaning anything.
-        let size_changed = window
-            .last_animation_frame
-            .map(|last| {
-                (last.size.width - frame.size.width).abs() > 0.5
-                    || (last.size.height - frame.size.height).abs() > 0.5
-            })
-            .unwrap_or(true);
-
-        if set_size && size_changed {
-            window.last_animation_frame = Some(frame);
-            let _ = window.elem.set_size(frame.size);
-            let _ = window.elem.set_position(frame.origin);
-            let _ = window.elem.set_size(frame.size);
-        } else {
-            if set_size {
-                // Keep the record current so the next comparison is against what we
-                // last asked for rather than a stale frame.
-                window.last_animation_frame = Some(frame);
-            }
-            let _ = window.elem.set_position(frame.origin);
-        }
-        Ok(())
-    }
-
-    fn flush_all_frames(&mut self) {
-        let wids: Vec<WindowId> = self.pending_frames.keys().copied().collect();
-        for wid in wids {
-            if let Err(err) = self.flush_frames(wid) {
-                warn!(?wid, ?err, "Failed to apply animation frame");
-            }
-        }
     }
 
     async fn handle_raises(this: &RefCell<Self>, mut rx: actor::Receiver<RaiseRequest>) {
@@ -886,28 +759,6 @@ impl State {
                     None,
                 ));
             }
-            Request::AnimationFrames { frames, set_size } => {
-                // Same destination as the single-window form: these are coalesced into
-                // pending_frames and applied together by flush_all_frames at the end of the
-                // drain, so a burst that supersedes itself only pays for the final position.
-                for (wid, frame, txid) in frames {
-                    self.pending_frames.insert(
-                        wid,
-                        PendingFrame { span: Span::current(), frame, set_size, txid },
-                    );
-                }
-            }
-            Request::AnimationFrame { wid, frame, set_size, txid } => {
-                self.pending_frames.insert(
-                    wid,
-                    PendingFrame {
-                        span: Span::current(),
-                        frame,
-                        set_size,
-                        txid,
-                    },
-                );
-            }
             Request::SetWindowFrame(wid, desired, txid, _) => {
                 let elem = match self.window_mut(wid) {
                     Ok(window) => {
@@ -1018,100 +869,6 @@ impl State {
                     ));
                 }
             }
-            Request::BeginWindowAnimation(wid, start_size) => {
-                let (elem, started_animation) = {
-                    let window = self.window_mut(wid)?;
-                    let started_animation = !std::mem::replace(&mut window.is_animating, true);
-                    // Seed the size record from the window's CURRENT frame rather than
-                    // clearing it.
-                    //
-                    // flush_frames only pays for the expensive resize path (set_size,
-                    // set_position, set_size — three synchronous AX round trips) when the size
-                    // has changed since the last animated frame. Clearing the record made
-                    // `size_changed` unconditionally true for the FIRST frame of every
-                    // animation, so every animation opened with a 3x write on every window
-                    // before settling into the cheap one-call path.
-                    //
-                    // That is the "jumps the first one or two times and then goes more smooth"
-                    // report. It shows up on workspace switches and not on sideways scrolls
-                    // because a switch animates windows arriving from a parked position, whose
-                    // owning apps have been idle for minutes and are slow to answer the first
-                    // AX call; a scroll animates windows that were just being written to.
-                    //
-                    // The current frame is the right seed: a pure slide keeps the size
-                    // constant, so the first comparison correctly reports no change. A genuine
-                    // resize still differs from it and takes the full path.
-                    // Seed from the size the caller is starting from, so the first frame of a
-                    // pure slide correctly reports "size unchanged" and takes the cheap
-                    // single set_position path. Clearing it made size_changed unconditionally
-                    // true, so every animation opened with a 3x write (set_size,
-                    // set_position, set_size) on every window — the "jumps the first one or
-                    // two times then goes smooth" report.
-                    //
-                    // Only the size matters here; flush_frames compares sizes only.
-                    window.last_animation_frame =
-                        Some(CGRect::new(CGPoint::new(0.0, 0.0), start_size));
-                    (window.elem.clone(), started_animation)
-                };
-                if started_animation {
-                    let app = self.app.clone();
-                    self.enhanced_ui.acquire(&app);
-                }
-                self.stop_notifications_for_animation(&elem);
-            }
-            Request::EndWindowAnimation(wid) => {
-                if let Err(err) = self.flush_frames(wid) {
-                    warn!(?wid, ?err, "Failed to flush animation frame on end");
-                }
-                let (elem, window_server_id, last_seen_txid, last_animation_frame, ended_animation) =
-                    match self.window_mut(wid) {
-                        Ok(window) => {
-                            let ended_animation =
-                                std::mem::replace(&mut window.is_animating, false);
-                            (
-                                window.elem.clone(),
-                                window.window_server_id,
-                                window.last_seen_txid,
-                                window.last_animation_frame.take(),
-                                ended_animation,
-                            )
-                        }
-                        Err(err) => match err {
-                            AxError::Ax(code) => {
-                                if self.handle_ax_error(wid, &code) {
-                                    return Ok(false);
-                                }
-                                return Err(AxError::Ax(code));
-                            }
-                            AxError::NotFound => return Ok(false),
-                        },
-                    };
-                let txid = self
-                    .txid_from_store(window_server_id)
-                    .or_else(|| Self::some_txid(last_seen_txid));
-                if let Some(frame) = last_animation_frame {
-                    let _ = elem.set_size(frame.size);
-                    let _ = elem.set_position(frame.origin);
-                    let _ = elem.set_size(frame.size);
-                }
-                if ended_animation {
-                    let app = self.app.clone();
-                    self.enhanced_ui.release(&app);
-                }
-                self.restart_notifications_after_animation(&elem);
-                let frame =
-                    match self.handle_ax_result(wid, trace("frame", &elem, || elem.frame()))? {
-                        Some(frame) => frame,
-                        None => return Ok(false),
-                    };
-                self.send_event(Event::WindowFrameChanged(
-                    wid,
-                    frame,
-                    txid,
-                    Requested(true),
-                    None,
-                ));
-            }
             Request::Raise(wids, token, sequence_id, quiet) => {
                 self.raises_tx.send(RaiseRequest(wids, token, sequence_id, quiet));
             }
@@ -1190,16 +947,6 @@ impl State {
                 let mouse_state = event::get_mouse_state();
                 let txid = match self.window(wid) {
                     Ok(window) => {
-                        // Ignoring move/resize notifications while WE are animating a window
-                        // is right: they are echoes of rini's own set_position calls. But it
-                        // must not swallow a move the USER is making. A held mouse button is
-                        // the strongest available evidence of that, and honouring it also
-                        // means a leaked is_animating flag degrades to a cosmetic problem
-                        // rather than a window that never reports its position again.
-                        if window.is_animating && mouse_state != Some(MouseState::Down) {
-                            trace!(?wid, ?notif, "Ignoring notification during animation");
-                            return;
-                        }
                         self.txid_for_window_state(window)
                     }
                     Err(err) => {
@@ -1748,8 +1495,6 @@ impl State {
                 hidden_by_app,
                 window_server_id,
                 title: info.title.clone(),
-                is_animating: false,
-                last_animation_frame: None,
             },
         );
         debug_assert!(old.is_none(), "Duplicate window id {wid:?}");
@@ -1786,9 +1531,7 @@ impl State {
     }
 
     fn rebind_window_element(&mut self, wid: WindowId, elem: AXUIElement, info: &WindowInfo) {
-        let Some((old_elem, was_animating)) =
-            self.windows.get(&wid).map(|window| (window.elem.clone(), window.is_animating))
-        else {
+        let Some(old_elem) = self.windows.get(&wid).map(|window| window.elem.clone()) else {
             return;
         };
         if old_elem == elem {
@@ -1806,9 +1549,6 @@ impl State {
             self.remove_window_notifications(&elem);
             let _ = self.register_window_notifications(&old_elem, wid);
             return;
-        }
-        if was_animating {
-            self.stop_notifications_for_animation(&elem);
         }
 
         self.elem_to_wid.remove(&old_elem);
@@ -1958,51 +1698,9 @@ impl State {
         self.windows.get(&wid).is_some_and(|window| window.elem == *elem)
     }
 
-    fn stop_notifications_for_animation(&self, elem: &AXUIElement) {
-        for &kind in WINDOW_ANIMATION_NOTIFICATIONS {
-            let res = self.observer.remove_notification(elem, kind.name());
-            if let Err(err) = res {
-                debug!(
-                    notif = kind.name(),
-                    ?elem,
-                    "Removing notification failed with error {err}"
-                );
-            }
-        }
-    }
-
-    fn restart_notifications_after_animation(&self, elem: &AXUIElement) {
-        let hinted_wid = self.id(elem).ok();
-        for &kind in WINDOW_ANIMATION_NOTIFICATIONS {
-            let res = match hinted_wid {
-                Some(wid) => self.observer.add_notification_with_data(
-                    elem,
-                    kind.name(),
-                    encode_notification_data(kind, Some(wid)),
-                ),
-                None => self.observer.add_notification_with_data(
-                    elem,
-                    kind.name(),
-                    encode_notification_data(kind, None),
-                ),
-            };
-            if let Err(err) = res {
-                debug!(
-                    notif = kind.name(),
-                    ?elem,
-                    "Adding notification failed with error {err}"
-                );
-            }
-        }
-    }
-
     fn remove_window(&mut self, wid: WindowId) -> Option<AppWindowState> {
         let window = self.windows.remove(&wid)?;
         self.elem_to_wid.remove(&window.elem);
-        if window.is_animating {
-            let app = self.app.clone();
-            self.enhanced_ui.release(&app);
-        }
         Some(window)
     }
 }
@@ -2081,7 +1779,6 @@ fn app_thread_main(
         enhanced_ui: EnhancedUi::default(),
         raises_tx,
         tx_store,
-        pending_frames: HashMap::default(),
     };
 
     let (requests_tx, requests_rx) = actor::channel();
