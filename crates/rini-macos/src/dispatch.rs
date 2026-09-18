@@ -20,7 +20,7 @@ use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use rini_core::collections::HashMap;
+use rini_shared::collections::HashMap;
 
 const DISPATCH_PROC_EXIT: usize = 0x8000_0000;
 

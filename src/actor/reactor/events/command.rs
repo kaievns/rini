@@ -9,16 +9,16 @@ use crate::actor::reactor::managers::{
     AppManager, DragManager, LayoutManager, WorkspaceSwitchManager,
 };
 use crate::actor::spaces::ForwardedSpaceState;
-use rini_core::collections::HashMap;
+use rini_shared::collections::HashMap;
 use crate::common::config::{self as config, Config};
-use rini_core::log::{MetricsCommand, handle_command as handle_metrics_command};
+use rini_shared::log::{MetricsCommand, handle_command as handle_metrics_command};
 use crate::layout_engine::{EventResponse, LayoutCommand, LayoutEvent};
 use crate::model::RiniState;
 use crate::model::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowServerId;
+use rini_shared::ids::SpaceId;
+use rini_shared::ids::WindowServerId;
 
 #[derive(Debug, Clone)]
 pub struct LayoutCommandPayload {

@@ -1,8 +1,8 @@
 [package]
-name = "rini-core"
+name = "rini-shared"
 version = "0.1.0"
 edition = "2024"
-description = "Shared kernel for rini: identities, collections, geometry, logging, channels"
+description = "Types every rini crate agrees on: ids, collections, geometry, logging, channels"
 license = "Apache-2.0"
 publish = false
 

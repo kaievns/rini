@@ -2,9 +2,9 @@ use std::cmp::Ordering;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use rini_core::ids::WindowId;
+use rini_shared::ids::WindowId;
 use crate::common::config::WindowSnappingSettings;
-use rini_core::geometry::CGRectExt;
+use rini_shared::geometry::CGRectExt;
 
 // less overlap once activated for a sticky
 const STICK_RATIO: f64 = 0.6;
@@ -195,7 +195,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     use super::*;
-    use rini_core::ids::WindowId;
+    use rini_shared::ids::WindowId;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect {

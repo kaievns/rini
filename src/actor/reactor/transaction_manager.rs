@@ -2,7 +2,7 @@ use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 
 use crate::model::tx_store::WindowTxStore;
-use rini_core::ids::WindowServerId;
+use rini_shared::ids::WindowServerId;
 
 /// A per-window counter that tracks the last time the reactor sent a request to
 /// change the window frame.

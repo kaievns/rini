@@ -1,4 +1,4 @@
-use rini_core::collections::{HashMap, HashSet};
+use rini_shared::collections::{HashMap, HashSet};
 use rini_macos::screen::{ScreenId, ScreenInfo, SpaceId};
 
 /// this is how we decide which macos spaces (and/or displays) are considered active.

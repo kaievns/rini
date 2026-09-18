@@ -5,7 +5,7 @@ use anyhow::bail;
 pub use rini_protocol::{ConfigCommand, WorkspaceSelector};
 use serde::{Deserialize, Serialize};
 
-use rini_core::collections::HashMap;
+use rini_shared::collections::HashMap;
 use crate::actor::wm_controller::WmCommand;
 use rini_macos::hotkey::{Hotkey, HotkeySpec};
 pub use rini_macos::haptics::HapticPattern;
@@ -156,12 +156,12 @@ impl VirtualWorkspaceSettings {
         }
 
         // Validate rules and check duplicates in a single pass
-        let mut seen_app_ids = rini_core::collections::HashSet::default();
-        let mut seen_app_names = rini_core::collections::HashSet::default();
-        let mut seen_title_regexes = rini_core::collections::HashSet::default();
-        let mut seen_title_substrings = rini_core::collections::HashSet::default();
-        let mut seen_ax_roles = rini_core::collections::HashSet::default();
-        let mut seen_ax_subroles = rini_core::collections::HashSet::default();
+        let mut seen_app_ids = rini_shared::collections::HashSet::default();
+        let mut seen_app_names = rini_shared::collections::HashSet::default();
+        let mut seen_title_regexes = rini_shared::collections::HashSet::default();
+        let mut seen_title_substrings = rini_shared::collections::HashSet::default();
+        let mut seen_ax_roles = rini_shared::collections::HashSet::default();
+        let mut seen_ax_subroles = rini_shared::collections::HashSet::default();
 
         for (index, rule) in self.app_rules.iter().enumerate() {
             let app_id_empty = rule.app_id.as_ref().map_or(true, |id| id.is_empty());

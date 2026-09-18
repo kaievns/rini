@@ -11,8 +11,8 @@ use objc2_core_foundation::{
 };
 
 use super::skylight::{CGSGetWindowBounds, G_CONNECTION};
-use rini_core::ids::WindowId;
-use rini_core::ids::pid_t;
+use rini_shared::ids::WindowId;
+use rini_shared::ids::pid_t;
 use crate::skylight::_AXUIElementCreateWithRemoteToken;
 
 pub const AX_WINDOW_ROLE: &str = "AXWindow";

@@ -11,8 +11,8 @@ use objc2_core_graphics::{CGEvent, CGEventField};
 use objc2_foundation::NSProcessInfo;
 use once_cell::sync::Lazy;
 
-use rini_core::collections::BTreeMap;
-use rini_core::Direction;
+use rini_shared::collections::BTreeMap;
+use rini_shared::Direction;
 use crate::dispatch::DispatchExt;
 use crate::skylight::{CGEventPost, CGEventTapLocation};
 

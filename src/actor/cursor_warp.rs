@@ -73,7 +73,7 @@ use objc2_core_graphics::{CGError, CGEvent};
 use tracing::{debug, info};
 
 use crate::common::config::StackedUpperSide;
-use rini_core::geometry::CGRectExt;
+use rini_shared::geometry::CGRectExt;
 use rini_macos::screen::ScreenInfo;
 
 /// How close to an edge counts as pressing against it.

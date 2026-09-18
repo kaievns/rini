@@ -15,4 +15,4 @@ pub mod window_notify;
 pub mod wm_controller;
 pub mod workspace_animation;
 
-pub use rini_core::channel::{Receiver, Sender, channel};
+pub use rini_shared::channel::{Receiver, Sender, channel};

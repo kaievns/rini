@@ -22,9 +22,9 @@ use super::skylight::{
     SLSCopyActiveMenuBarDisplayIdentifier, SLSGetDisplayMenubarHeight, SLSGetDockRectWithReason,
     SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode, SLSMainConnectionID,
 };
-use rini_core::collections::HashMap;
-use rini_core::geometry::CGRectDef;
-pub use rini_core::ids::SpaceId;
+use rini_shared::collections::HashMap;
+use rini_shared::geometry::CGRectDef;
+pub use rini_shared::ids::SpaceId;
 
 #[derive(Debug, Clone)]
 struct ScreenState {

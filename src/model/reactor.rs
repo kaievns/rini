@@ -3,11 +3,11 @@ pub use rini_protocol::{DisplaySelector, ReactorCommand};
 use serde::{Deserialize, Serialize};
 
 use crate::actor::app::{AppInfo, AppThreadHandle, WindowId, pid_t};
-use rini_core::log::MetricsCommand;
+use rini_shared::log::MetricsCommand;
 use crate::layout_engine::LayoutCommand;
 use crate::model::WindowStore;
 use rini_macos::app::WindowInfo;
-use rini_core::ids::SpaceId;
+use rini_shared::ids::SpaceId;
 
 /// All mutable domain state is owned by the reactor thread.
 ///

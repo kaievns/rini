@@ -22,11 +22,11 @@ use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
 use crate::actor;
-use rini_core::ids::WindowId;
+use rini_shared::ids::WindowId;
 use crate::model::HiddenWindowPlacement;
-use rini_core::geometry::SameAs;
+use rini_shared::geometry::SameAs;
 use rini_macos::run_loop::RepeatingTimer;
-use rini_core::ids::WindowServerId;
+use rini_shared::ids::WindowServerId;
 use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::ui::window_snapshot::{
     SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing,

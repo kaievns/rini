@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-client", "crates/rini-core", "crates/rini-macos", "crates/rini-protocol"]
+members = [".", "crates/rini-client", "crates/rini-shared", "crates/rini-macos", "crates/rini-protocol"]
 resolver = "3"
 
 [[bin]]
@@ -163,7 +163,7 @@ futures-task = { version = "0.3.31", features = ["alloc"], default-features = fa
 num_enum = "0.7.4"
 rustc-hash = "2.1.1"
 rini-client = { path = "crates/rini-client" }
-rini-core = { path = "crates/rini-core" }
+rini-shared = { path = "crates/rini-shared" }
 rini-macos = { path = "crates/rini-macos" }
 rini-protocol = { path = "crates/rini-protocol" }
 libc = "0.2"
@@ -271,7 +271,7 @@ sigpipe = "0.1.3"
 embed_plist = "1.2.2"
 rustc-hash = { workspace = true }
 rini-client = { workspace = true }
-rini-core = { workspace = true }
+rini-shared = { workspace = true }
 rini-macos = { workspace = true }
 rini-protocol = { workspace = true }
 

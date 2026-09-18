@@ -6,13 +6,13 @@ use crate::actor::reactor::managers::{DragManager, MissionControlManager};
 use crate::actor::reactor::{DragState, LayoutEvent, MissionControlState, SpaceEventKind};
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::wm_controller::WmEvent;
-use rini_core::collections::HashSet;
+use rini_shared::collections::HashSet;
 use crate::model::RiniState;
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::model::window_store::NativeFullscreenTransition;
 use rini_macos::app::AppInfo;
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowServerId;
+use rini_shared::ids::SpaceId;
+use rini_shared::ids::WindowServerId;
 
 #[derive(Debug)]
 pub(crate) struct SpaceSnapshotAnalysis {

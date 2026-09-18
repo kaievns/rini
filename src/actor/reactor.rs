@@ -87,7 +87,7 @@ use crate::actor::raise_manager::{self, RaiseManager, RaiseRequest};
 use crate::actor::reactor::events::window_discovery;
 use crate::actor::spaces::{ForwardedSpaceState, TopologyWindowDelta};
 use crate::actor;
-use rini_core::collections::{BTreeMap, HashMap, HashSet};
+use rini_shared::collections::{BTreeMap, HashMap, HashSet};
 use crate::common::config::Config;
 use crate::layout_engine::{self as layout, Direction, LayoutEngine, LayoutEvent};
 use crate::model::broadcast::{
@@ -98,7 +98,7 @@ use crate::model::tx_store::WindowTxStore;
 use crate::model::{AppRuleResult, RiniState};
 use rini_macos::event::MouseState;
 use rini_macos::executor::Executor;
-use rini_core::geometry::{CGRectDef, CGRectExt};
+use rini_shared::geometry::{CGRectDef, CGRectExt};
 pub use rini_macos::screen::ScreenInfo;
 use rini_macos::screen::{SpaceId, order_visible_spaces_by_position};
 use rini_macos::window_server::{

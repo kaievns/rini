@@ -13,10 +13,10 @@ use objc2_core_foundation::{CFArray, CFRetained, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
-use rini_core::ids::WindowId;
+use rini_shared::ids::WindowId;
 use rini_macos::skylight::{SLSHWCaptureWindowList, SLSMainConnectionID};
 use crate::ui::edge_dressing::dressing_after_insert;
-use rini_core::ids::WindowServerId;
+use rini_shared::ids::WindowServerId;
 
 /// Capture options cribbed verbatim from yabai (`window_manager.c:521`). The bits are undocumented,
 /// so they are not named: 1 << 11 asks for nominal resolution and 1 << 8 for best. Measured to make

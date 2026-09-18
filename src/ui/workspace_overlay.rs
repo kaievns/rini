@@ -24,12 +24,12 @@ use objc2_quartz_core::{
     CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
 };
 
-use rini_core::ids::WindowId;
+use rini_shared::ids::WindowId;
 use crate::actor::workspace_animation::plan::{
     Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
 };
 use crate::model::z_group::{StackGroup, container_z};
-use rini_core::geometry::{Round, SameAs};
+use rini_shared::geometry::{Round, SameAs};
 use rini_macos::screen::CoordinateConverter;
 use crate::ui::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::ui::window_snapshot::{SnapshotImage, WindowSnapshot};

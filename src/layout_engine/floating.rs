@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use rini_core::ids::{WindowId, pid_t};
-use rini_core::collections::{BTreeExt, BTreeSet, HashMap, HashSet};
-use rini_core::ids::SpaceId;
+use rini_shared::ids::{WindowId, pid_t};
+use rini_shared::collections::{BTreeExt, BTreeSet, HashMap, HashSet};
+use rini_shared::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FloatingFullscreenKind {

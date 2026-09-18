@@ -19,15 +19,15 @@ use objc2_core_graphics::{
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-use rini_core::geometry::{CGRectDef, CGSizeDef};
-pub use rini_core::ids::{WindowId, WindowServerId};
+use rini_shared::geometry::{CGRectDef, CGSizeDef};
+pub use rini_shared::ids::{WindowId, WindowServerId};
 #[cfg(any(test, feature = "test-support"))]
-use rini_core::collections::HashMap;
-use rini_core::ids::pid_t;
+use rini_shared::collections::HashMap;
+use rini_shared::ids::pid_t;
 use crate::axuielement::{AXUIElement, Error as AxError};
 use crate::cg_ok;
 #[cfg(not(any(test, feature = "test-support")))]
-use rini_core::geometry::CGRectExt;
+use rini_shared::geometry::CGRectExt;
 use crate::mach::mach_get_window_sub_level;
 use crate::process::ProcessSerialNumber;
 use crate::screen::{ScreenInfo, SpaceId};
@@ -1228,7 +1228,7 @@ pub fn allow_hide_mouse() -> Result<(), CGError> {
 // fast space switching with no animations
 // credit: https://gist.github.com/amaanq/6991c7054b6c9816fafa9e29814b1509
 #[allow(unsafe_op_in_unsafe_fn)]
-pub unsafe fn switch_space(direction: rini_core::Direction) {
+pub unsafe fn switch_space(direction: rini_shared::Direction) {
     unsafe { crate::space_switch::switch_space(direction) };
 }
 

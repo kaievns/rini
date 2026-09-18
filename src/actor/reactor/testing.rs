@@ -5,12 +5,12 @@ use super::{Event, EventOutcome, Reactor, Record, Requested, ScreenInfo, Transac
 use crate::actor;
 use crate::actor::app::{AppThreadHandle, Quiet, Request, WindowId};
 use crate::actor::spaces::ForwardedSpaceState;
-use rini_core::collections::BTreeMap;
+use rini_shared::collections::BTreeMap;
 use crate::common::config::Config;
 use crate::layout_engine::{LayoutCommand, LayoutEngine};
 use rini_macos::app::{AppInfo, WindowInfo, pid_t};
-use rini_core::geometry::SameAs;
-use rini_core::ids::SpaceId;
+use rini_shared::geometry::SameAs;
+use rini_shared::ids::SpaceId;
 use rini_macos::window_server::{WindowServerId, WindowServerInfo};
 
 impl Reactor {

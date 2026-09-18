@@ -1,14 +1,14 @@
 use objc2_core_foundation::CGPoint;
 use tracing::{trace, warn};
 
-use rini_core::ids::WindowId;
+use rini_shared::ids::WindowId;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::{DragManager, LayoutManager};
 use crate::actor::reactor::{DragState, LayoutEvent};
-use rini_core::collections::HashMap;
+use rini_shared::collections::HashMap;
 use crate::layout_engine::LayoutCommand;
 use crate::model::RiniState;
-use rini_core::ids::SpaceId;
+use rini_shared::ids::SpaceId;
 
 #[derive(Debug, Clone)]
 pub struct MouseUpPayload {

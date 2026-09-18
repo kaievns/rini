@@ -23,10 +23,10 @@ use tracing::{Instrument, Span, debug, info, instrument, trace, warn};
 use crate::actor;
 use crate::actor::reactor::transaction_manager::TransactionId;
 use crate::actor::reactor::{self, Event, Requested};
-use rini_core::collections::HashMap;
+use rini_shared::collections::HashMap;
 use crate::model::tx_store::WindowTxStore;
 use rini_macos::app::NSRunningApplicationExt;
-pub use rini_core::ids::{WindowId, pid_t};
+pub use rini_shared::ids::{WindowId, pid_t};
 
 pub use rini_macos::app::{AppInfo, WindowInfo};
 use rini_macos::axuielement::{

@@ -1399,25 +1399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rini-core"
-version = "0.1.0"
-dependencies = [
- "libc",
- "objc2-core-foundation",
- "rini-protocol",
- "ron",
- "rustc-hash",
- "serde",
- "serde_json",
- "serde_with",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tracing-timing",
- "tracing-tree",
-]
-
-[[package]]
 name = "rini-macos"
 version = "0.1.0"
 dependencies = [
@@ -1438,7 +1419,7 @@ dependencies = [
  "objc2-foundation",
  "once_cell",
  "parking_lot",
- "rini-core",
+ "rini-shared",
  "serde",
  "static_assertions",
  "tempfile",
@@ -1453,6 +1434,25 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "rini-shared"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
+ "rini-protocol",
+ "ron",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-timing",
+ "tracing-tree",
 ]
 
 [[package]]
@@ -1494,9 +1494,9 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "rini-client",
- "rini-core",
  "rini-macos",
  "rini-protocol",
+ "rini-shared",
  "ron",
  "rustc-hash",
  "serde",

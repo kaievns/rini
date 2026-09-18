@@ -2,11 +2,11 @@ use objc2_core_foundation::CGSize;
 use serde::{Deserialize, Serialize};
 
 use super::{LayoutId, LayoutSystem};
-use rini_core::ids::SpaceId;
+use rini_shared::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub(crate) struct WorkspaceLayouts {
-    map: rini_core::collections::HashMap<
+    map: rini_shared::collections::HashMap<
         (SpaceId, crate::model::VirtualWorkspaceId),
         SpaceLayoutInfo,
     >,
@@ -14,7 +14,7 @@ pub(crate) struct WorkspaceLayouts {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct SpaceLayoutInfo {
-    configurations: rini_core::collections::HashMap<Size, LayoutId>,
+    configurations: rini_shared::collections::HashMap<Size, LayoutId>,
     active_size: Size,
     last_saved: Option<LayoutId>,
 }
@@ -124,7 +124,7 @@ impl WorkspaceLayouts {
         for workspace_id in workspaces {
             let workspace_key = (space, workspace_id);
             let (workspace_layout, mut unchanged) = match self.map.entry(workspace_key) {
-                rini_core::collections::hash_map::Entry::Vacant(entry) => (
+                rini_shared::collections::hash_map::Entry::Vacant(entry) => (
                     entry.insert(SpaceLayoutInfo {
                         active_size: size,
                         configurations: Default::default(),
@@ -132,7 +132,7 @@ impl WorkspaceLayouts {
                     }),
                     None,
                 ),
-                rini_core::collections::hash_map::Entry::Occupied(entry) => {
+                rini_shared::collections::hash_map::Entry::Occupied(entry) => {
                     let info = entry.into_mut();
                     let old_size = info.active_size;
                     if old_size != size {
@@ -149,7 +149,7 @@ impl WorkspaceLayouts {
             };
 
             let layout = match workspace_layout.configurations.entry(size) {
-                rini_core::collections::hash_map::Entry::Vacant(entry) => {
+                rini_shared::collections::hash_map::Entry::Vacant(entry) => {
                     *entry.insert(if let Some(source) = unchanged.take() {
                         source
                     } else if let Some(source) = workspace_layout.last_saved {
@@ -158,7 +158,7 @@ impl WorkspaceLayouts {
                         tree.create_layout()
                     })
                 }
-                rini_core::collections::hash_map::Entry::Occupied(entry) => {
+                rini_shared::collections::hash_map::Entry::Occupied(entry) => {
                     workspace_layout.last_saved = Some(*entry.get());
                     *entry.get()
                 }
@@ -278,7 +278,7 @@ impl WorkspaceLayouts {
         self.ensure_active_for_space(space, size, std::iter::once(workspace_id), tree);
     }
 
-    pub(crate) fn spaces(&self) -> rini_core::collections::BTreeSet<SpaceId> {
+    pub(crate) fn spaces(&self) -> rini_shared::collections::BTreeSet<SpaceId> {
         self.map.keys().map(|(sp, _)| *sp).collect()
     }
 }

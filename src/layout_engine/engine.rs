@@ -8,7 +8,7 @@ use super::{
     Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
 };
 use crate::actor::app::{AppInfo, WindowId, pid_t};
-use rini_core::collections::{HashMap, HashSet};
+use rini_shared::collections::{HashMap, HashSet};
 use crate::common::config::{LayoutSettings, WorkspaceSelector};
 use crate::layout_engine::LayoutSystem;
 use crate::layout_engine::floating::FloatingFullscreenKind;
@@ -21,7 +21,7 @@ use crate::model::{
     AppRuleEffects, AppRuleEngine, AppRuleResult, DisplayAffinity, FloatingPositionStore,
     WindowRuleContext, WindowStore,
 };
-use rini_core::ids::SpaceId;
+use rini_shared::ids::SpaceId;
 
 mod persistence;
 
@@ -3235,7 +3235,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
-    use rini_core::collections::HashMap;
+    use rini_shared::collections::HashMap;
     use crate::common::config::{
         AppRulePosition, AppRuleSize, AppWorkspaceRule, LayoutSettings, VirtualWorkspaceSettings,
         WorkspaceSelector,

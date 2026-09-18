@@ -10,7 +10,7 @@ use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
-use rini_core::collections::{HashMap, HashSet};
+use rini_shared::collections::{HashMap, HashSet};
 use crate::model::broadcast::BroadcastEvent;
 use rini_macos::mach::{mach_release_send_right, mach_retain_send_right, mach_try_send_message};
 

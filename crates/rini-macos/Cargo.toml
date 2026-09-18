@@ -33,7 +33,7 @@ objc2-core-graphics = { workspace = true }
 objc2-foundation = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
-rini-core = { workspace = true }
+rini-shared = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 static_assertions = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

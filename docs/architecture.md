@@ -9,7 +9,7 @@ crate and not by module (see "Why crates").
 
 ```
 rini-protocol   wire types for the Mach IPC API (exists)
-rini-core       shared kernel: ids, collections, geometry, log, channel   -> protocol
+rini-shared     ids, collections, geometry, log, channel (see below)     -> protocol
 rini-macos      sys/: AX, SkyLight, event tap, run loop, executor, mach   -> core
 rini-config     config file, validation, hot reload, hotkey specs        -> core, macos
 rini-layout     scrolling strip, virtual workspaces, floating, app
@@ -33,18 +33,32 @@ targets and hands them over.
 | Crate | Status |
 |---|---|
 | `rini-protocol`, `rini-client` | done before the split |
-| `rini-core` | done: `ids`, `collections`, `geometry`, `log`, `util`, `channel` |
+| `rini-shared` | done: `ids`, `collections`, `geometry`, `log`, `util`, `channel` |
 | `rini-macos` | done: the former `src/sys/`. Its `test-support` feature swaps the window-server reads for thread-local overrides (see `docs/testing.md`) |
 | everything else | still modules inside the `rini-wm` crate |
 
 Inside `rini-wm`, `crate::actor::app::WindowId` and `crate::actor::{Sender, Receiver, channel}`
-re-export `rini_core`; `rini_macos::window_server::WindowServerId` and
-`rini_macos::screen::SpaceId` re-export `rini_core::ids`. They exist so brace imports
+re-export `rini_shared`; `rini_macos::window_server::WindowServerId` and
+`rini_macos::screen::SpaceId` re-export `rini_shared::ids`. They exist so brace imports
 keep compiling until each module is lifted, and go away with it.
 
-## What belongs in `rini-core`
+## IPC is one context in three crates
 
-Types every crate agrees on and nothing that touches a window or a display:
+`rini-protocol`, `rini-client` and `rini-ipc` are one bounded context, the Mach
+IPC API, split because they sit at different heights of the graph. The protocol
+is a leaf and `rini-shared` depends on it. The client must depend on nothing but
+the protocol, so a companion tool can link it without the window manager. The
+server needs the reactor's query handle, the config actor and `macos::mach`, so
+it sits just under `rini-wm`. Merged, the three would form a cycle.
+
+## What belongs in `rini-shared`, and why it should shrink
+
+Types every crate agrees on and nothing that touches a window or a display. It
+exists because these had no better home while the split is in progress; the
+intent is to dissolve it once the domain crates exist. Likely destinations:
+`ids` and the `Direction` re-exports to `rini-protocol` (`WindowId` already has
+a wire twin there), `geometry` to `rini-macos`, and `channel`, `log`,
+`collections` to whichever crate is left using them.
 
 - `ids`: `WindowId` (pid + per-process index, serde accepts struct, seq, and
   its own `Debug` string), `WindowServerId` (CGWindowID), `SpaceId`, `pid_t`,

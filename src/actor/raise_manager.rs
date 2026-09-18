@@ -7,8 +7,8 @@ use tracing::{debug, trace, warn};
 
 use crate::actor::app::{AppThreadHandle, Quiet, Request, WindowId};
 use crate::actor::{self, event_tap, reactor};
-use rini_core::collections::{HashMap, HashSet};
-use rini_core::ids::pid_t;
+use rini_shared::collections::{HashMap, HashSet};
+use rini_shared::ids::pid_t;
 use rini_macos::timer::Timer;
 
 /// Messages that can be sent to the raise manager

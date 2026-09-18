@@ -1,7 +1,7 @@
 use objc2_core_foundation::CGRect;
 use tracing::{debug, trace};
 
-use rini_core::ids::WindowId;
+use rini_shared::ids::WindowId;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::DragManager;
 use crate::actor::reactor::transaction_manager::TransactionManager;
@@ -11,8 +11,8 @@ use crate::model::WindowVisibility;
 use crate::model::reactor::WindowFilter;
 use rini_macos::app::WindowInfo as Window;
 use rini_macos::event::MouseState;
-use rini_core::geometry::SameAs;
-use rini_core::ids::SpaceId;
+use rini_shared::geometry::SameAs;
+use rini_shared::ids::SpaceId;
 use rini_macos::window_server::WindowServerInfo;
 
 #[derive(Debug)]
@@ -464,7 +464,7 @@ pub fn handle_mouse_moved_over_window(
 
     let mut outcome = crate::actor::reactor::events::EventOutcome::default();
     if !payload.is_main {
-        let mut app_handles = rini_core::collections::HashMap::default();
+        let mut app_handles = rini_shared::collections::HashMap::default();
         if let Some(app) = apps.apps.get(&window.pid) {
             app_handles.insert(window.pid, app.handle.clone());
         }

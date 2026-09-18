@@ -26,8 +26,8 @@ use objc2_screen_capture_kit::{
 
 use tracing::{debug, warn};
 
-use rini_core::ids::WindowId;
-use rini_core::ids::WindowServerId;
+use rini_shared::ids::WindowId;
+use rini_shared::ids::WindowServerId;
 use crate::ui::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, WindowSnapshot};
 
 /// Concurrent captures. Measured: wall clock stops improving past four, because ScreenCaptureKit

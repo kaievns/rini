@@ -9,8 +9,8 @@ use crate::common::config::{OuterGaps, WorkspaceSelector};
 use crate::layout_engine::{Direction, LayoutCommand, LayoutEvent};
 use crate::model::window_store::NativeFullscreenTransition;
 use rini_macos::app::{AppInfo, WindowInfo};
-use rini_core::geometry::SameAs;
-use rini_core::ids::WindowServerId;
+use rini_shared::geometry::SameAs;
+use rini_shared::ids::WindowServerId;
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {

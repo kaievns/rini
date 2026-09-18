@@ -1,6 +1,6 @@
 use super::Event;
 use crate::actor::app::{Quiet, WindowId, pid_t};
-use rini_core::collections::HashMap;
+use rini_shared::collections::HashMap;
 
 #[derive(Default)]
 pub(crate) struct MainWindowTracker {

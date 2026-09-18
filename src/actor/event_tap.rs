@@ -30,7 +30,7 @@ use super::reactor::{self, Event};
 use crate::actor;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
-use rini_core::collections::{HashMap, HashSet};
+use rini_shared::collections::{HashMap, HashSet};
 use crate::common::config::Config;
 use rini_macos::event::{self, Hotkey, KeyCode, MouseState, set_mouse_state};
 use rini_macos::hotkey::{
@@ -38,7 +38,7 @@ use rini_macos::hotkey::{
     modifiers_from_flags_with_keys,
 };
 use rini_macos::screen::CoordinateConverter;
-use rini_core::ids::WindowServerId;
+use rini_shared::ids::WindowServerId;
 use rini_macos::{power, window_server};
 
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
