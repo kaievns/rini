@@ -1146,7 +1146,7 @@ fn get_frame(a: CGRect, b: CGRect, t: f64) -> CGRect {
 /// start also compounded the keypress-to-motion latency; ease-out is fast off the line and
 /// settles, which is what niri does and what the strip surface already does.
 fn ease(t: f64) -> f64 {
-    crate::ui::workspace_overlay::ease_out_cubic(t)
+    crate::ui::workspace_overlay::ease(t)
 }
 
 fn blend(a: f64, b: f64, s: f64) -> f64 {

@@ -282,12 +282,81 @@ const BAR_Z: f64 = 10_000.0;
 /// in none, because its picture sat behind the wallpaper.
 const BACKDROP_Z: f64 = -((crate::model::z_group::MAX_TILE_DEPTH + 1024) as f64);
 
-/// Ease-out cubic. Fast at the start and settling at the end, which reads as the strip being flicked
-/// rather than dragged, and matches what niri does.
-pub fn ease_out_cubic(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    let inv = 1.0 - t;
-    1.0 - inv * inv * inv
+/// The one curve every movement runs on, as CSS-style cubic Bezier control points `(x1, y1, x2, y2)`.
+///
+/// An exponential ease-out: off the line at once and 97% of the way there by half time, so the
+/// motion reads as finished well inside `animation_duration` and the tail is a settle, not a crawl.
+/// Ease-out cubic (`(1/3, 1, 2/3, 1)`) was tried first and felt sluggish at the same duration:
+/// it spends the whole second half of the flight on the last 12.5% of the distance. Derivation and
+/// the numbers in "The curve" in `docs/animation-smoothness.md`.
+pub const MOTION_CURVE: CubicBezier = CubicBezier { x1: 0.16, y1: 1.0, x2: 0.3, y2: 1.0 };
+
+/// A CSS-style cubic Bezier timing curve from `(0,0)` to `(1,1)`, evaluated as progress in terms
+/// of time. Core Animation takes the same four numbers (`CAMediaTimingFunction`), so what the
+/// actor's clock computes and what the render server draws are one curve.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CubicBezier {
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+}
+
+impl CubicBezier {
+    fn coordinate(s: f64, p1: f64, p2: f64) -> f64 {
+        let inv = 1.0 - s;
+        3.0 * inv * inv * s * p1 + 3.0 * inv * s * s * p2 + s * s * s
+    }
+
+    /// `(x, y)` at parameter `s`.
+    pub fn at(&self, s: f64) -> (f64, f64) {
+        (Self::coordinate(s, self.x1, self.x2), Self::coordinate(s, self.y1, self.y2))
+    }
+
+    /// Progress at time `t` in `[0, 1]`: the `y` where the curve's `x` is `t`. Newton's method from
+    /// `s = t`, bisection when it strays; both converge fast because `x(s)` is monotone for control
+    /// x's inside `[0, 1]`.
+    pub fn ease(&self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        if t == 0.0 || t == 1.0 {
+            return t;
+        }
+        let x = |s: f64| Self::coordinate(s, self.x1, self.x2);
+        let dx = |s: f64| {
+            let inv = 1.0 - s;
+            3.0 * inv * inv * self.x1 + 6.0 * inv * s * (self.x2 - self.x1) + 3.0 * s * s * (1.0 - self.x2)
+        };
+        let mut s = t;
+        for _ in 0..8 {
+            let error = x(s) - t;
+            if error.abs() < 1e-7 {
+                return Self::coordinate(s, self.y1, self.y2);
+            }
+            let slope = dx(s);
+            if slope.abs() < 1e-6 {
+                break;
+            }
+            s -= error / slope;
+            if !(0.0..=1.0).contains(&s) {
+                break;
+            }
+        }
+        let (mut lo, mut hi) = (0.0, 1.0);
+        for _ in 0..64 {
+            s = (lo + hi) / 2.0;
+            if x(s) < t { lo = s } else { hi = s }
+            if hi - lo < 1e-9 {
+                break;
+            }
+        }
+        Self::coordinate(s, self.y1, self.y2)
+    }
+}
+
+/// Progress at time `t` on the motion curve: what the actor's clock uses for the apply point and
+/// what the AX engine interpolates with, so both engines and the render server agree.
+pub fn ease(t: f64) -> f64 {
+    MOTION_CURVE.ease(t)
 }
 
 /// A frame on whole points. The window server places real windows on whole points (a layout
@@ -320,10 +389,13 @@ const TILE_ANIMATION_KEY: &str = "rini.tile.move";
 /// One key per container movement, for the same reason.
 const GROUP_ANIMATION_KEY: &str = "rini.group.move";
 
-/// `ease_out_cubic` in Core Animation form — exactly, not approximately. Derivation in
-/// `docs/animation-smoothness.md`; the identity is pinned by test.
-fn ease_out_cubic_timing() -> Retained<CAMediaTimingFunction> {
-    CAMediaTimingFunction::functionWithControlPoints(1.0 / 3.0, 1.0, 2.0 / 3.0, 1.0)
+/// `MOTION_CURVE` in Core Animation form: the same four control points, so `ease` and the render
+/// server agree (pinned by `the_clock_and_the_render_server_run_one_curve`).
+fn motion_timing() -> Retained<CAMediaTimingFunction> {
+    let c = MOTION_CURVE;
+    CAMediaTimingFunction::functionWithControlPoints(
+        c.x1 as f32, c.y1 as f32, c.x2 as f32, c.y2 as f32,
+    )
 }
 
 /// When an animation runs: an explicit begin on the media clock plus its length. Every animation
@@ -342,7 +414,7 @@ impl Timing {
     }
 
     fn apply(&self, animation: &CABasicAnimation) {
-        animation.setTimingFunction(Some(&ease_out_cubic_timing()));
+        animation.setTimingFunction(Some(&motion_timing()));
         animation.setDuration(self.seconds);
         animation.setBeginTime(self.begin);
     }
@@ -392,7 +464,7 @@ pub fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
 pub fn bounce_displacement(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     if t <= BOUNCE_TURN {
-        ease_out_cubic(t / BOUNCE_TURN)
+        ease(t / BOUNCE_TURN)
     } else {
         let u = (t - BOUNCE_TURN) / (1.0 - BOUNCE_TURN);
         // ease-in-out cubic, from 1 down to 0
@@ -422,7 +494,7 @@ fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAn
         [0.0, BOUNCE_TURN, 1.0].into_iter().map(NSNumber::numberWithDouble).collect();
     animation.setKeyTimes(Some(&NSArray::from_retained_slice(&key_times)));
     animation.setTimingFunctions(Some(&NSArray::from_retained_slice(&[
-        ease_out_cubic_timing(),
+        motion_timing(),
         CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseInEaseOut }),
     ])));
     animation.setAdditive(true);
@@ -2000,36 +2072,37 @@ mod tests {
 
     #[test]
     fn easing_is_pinned_at_both_ends() {
-        assert_eq!(ease_out_cubic(0.0), 0.0);
-        assert_eq!(ease_out_cubic(1.0), 1.0);
+        assert_eq!(ease(0.0), 0.0);
+        assert_eq!(ease(1.0), 1.0);
     }
 
-    /// The Bezier control points in `ease_out_cubic_timing` must trace `ease_out_cubic` exactly,
-    /// or a chained retarget starts with a visible jump. Derivation in
-    /// `docs/animation-smoothness.md`.
+    /// `ease` solves the same Bezier `motion_timing` hands to Core Animation: for every parameter
+    /// `s`, the curve's `(x, y)` satisfies `ease(x) == y`. Otherwise the actor's apply point and
+    /// the drawn motion disagree, and a chained retarget starts with a visible jump.
     #[test]
-    fn the_core_animation_curve_is_exactly_ease_out_cubic() {
-        let (c1x, c1y, c2x, c2y) = (1.0 / 3.0, 1.0, 2.0 / 3.0, 1.0);
+    fn the_clock_and_the_render_server_run_one_curve() {
         for step in 0..=1000 {
-            let t = step as f64 / 1000.0;
-            let b = |p1: f64, p2: f64| {
-                3.0 * (1.0 - t).powi(2) * t * p1 + 3.0 * (1.0 - t) * t.powi(2) * p2 + t.powi(3)
-            };
-            // x controls at the thirds make x(t) = t, so y(t) is progress as a function of time.
-            assert!((b(c1x, c2x) - t).abs() < 1e-12, "x(t) is not the identity at t={t}");
-            assert!(
-                (b(c1y, c2y) - ease_out_cubic(t)).abs() < 1e-12,
-                "the curves diverge at t={t}"
-            );
+            let s = step as f64 / 1000.0;
+            let (x, y) = MOTION_CURVE.at(s);
+            assert!((ease(x) - y).abs() < 1e-6, "the curves diverge at s={s}: ease({x})={} y={y}", ease(x));
+        }
+        // The solver is exact where a closed form exists: ease-out cubic is the thirds Bezier.
+        let cubic = CubicBezier { x1: 1.0 / 3.0, y1: 1.0, x2: 2.0 / 3.0, y2: 1.0 };
+        for step in 0..=100 {
+            let t = step as f64 / 100.0;
+            assert!((cubic.ease(t) - (1.0 - (1.0 - t).powi(3))).abs() < 1e-6, "t={t}");
         }
     }
 
+    /// Why this curve: the motion is nearly done by half time, so the flight reads as finished
+    /// inside its duration and the rest is a settle. Ease-out cubic reached 87.5% at half time and
+    /// crawled through the last 12.5% for the whole second half, which read as sluggish at 350ms.
     #[test]
-    fn easing_is_front_loaded() {
-        // Ease-out means most of the distance is covered early. If this ever inverts, the animation
-        // reads as sluggish to start and abrupt to finish.
-        assert!(ease_out_cubic(0.5) > 0.5);
-        assert!(ease_out_cubic(0.25) > 0.25);
+    fn the_motion_is_nearly_home_by_half_time() {
+        assert!(ease(0.5) > 0.95, "{}", ease(0.5));
+        assert!(ease(0.25) > 0.8, "{}", ease(0.25));
+        assert!(ease(0.7) > 0.99, "{}", ease(0.7));
+        assert!(ease(0.1) < 0.6, "not a cut: {}", ease(0.1));
     }
 
     /// A bounce leaves rest, peaks at the turn, and is back at rest at the end, with no
@@ -2073,7 +2146,7 @@ mod tests {
         // A non-monotonic easing curve makes windows visibly step backwards mid-slide.
         let mut previous = -1.0;
         for i in 0..=100 {
-            let value = ease_out_cubic(i as f64 / 100.0);
+            let value = ease(i as f64 / 100.0);
             assert!(value >= previous, "easing went backwards at t = {}", i);
             previous = value;
         }
@@ -2322,8 +2395,8 @@ mod tests {
     fn easing_clamps_out_of_range_input() {
         // A time-based driver can hand over t slightly outside 0..1 when a frame is late, and an
         // unclamped cubic would overshoot the target position.
-        assert_eq!(ease_out_cubic(-0.5), 0.0);
-        assert_eq!(ease_out_cubic(1.5), 1.0);
+        assert_eq!(ease(-0.5), 0.0);
+        assert_eq!(ease(1.5), 1.0);
     }
 
     /// T3 (bugfix.md 1.5). An entrance is dressed at zero width; if that wears fewer pieces than

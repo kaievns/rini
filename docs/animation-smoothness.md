@@ -49,7 +49,7 @@ What remains is either consolidation or marginal:
   now runs on its own `animation` thread with its own run loop, so an arrange
   pass cannot delay a tick and the wall-clock skip has nothing to skip.
 - ~~The curve disagrees with the overlay.~~ Fixed: the engine's `ease` now
-  delegates to the overlay's `ease_out_cubic`, so a resize (AX) next to a pan
+  delegates to the overlay's `ease` (`MOTION_CURVE`), so a resize (AX) next to a pan
   (overlay) from one keystroke follows one curve, and the sluggish
   ease-in-out start is gone.
 - **Cross-app skew is unfixable here.** The real fix is to stop using AX for
@@ -277,14 +277,18 @@ and popped by the fraction at the lift.
 
 Mechanics worth remembering:
 
-- The curve is preserved exactly. `ease_out_cubic` (`1 - (1-t)^3`) is
-  precisely the cubic Bezier timing function with control points
-  `(1/3, 1)` and `(2/3, 1)`: with x-control-points at 1/3 and 2/3 the
-  Bezier's x(t) collapses to t (the Bernstein terms sum to
-  `t[(1-t) + t]^2 = t`), and y(t) with both y-controls at 1 expands to
-  `1 - (1-t)^3`. So `CAMediaTimingFunction(controlPoints: 1/3, 1, 2/3, 1)`
-  is not an approximation. Pinned by
-  `the_core_animation_curve_is_exactly_ease_out_cubic`.
+- **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
+  exponential ease-out. The actor's clock and the AX engine evaluate it by
+  solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
+  and Core Animation gets the same four control points (`motion_timing`),
+  so the apply point and the drawn motion agree; pinned by
+  `the_clock_and_the_render_server_run_one_curve`. Progress at quarter,
+  half and 70% of the duration: 0.87, 0.97, 0.995. Ease-out cubic
+  (`1 - (1-t)^3`, the thirds Bezier `(1/3, 1, 2/3, 1)`, for which x(t) is
+  the identity) ran before it and read as sluggish at 350ms: 0.58, 0.875,
+  0.973 at the same marks, so the whole second half of every flight was a
+  crawl through the last 12.5% of the distance. The duration was right; the
+  tail was the problem. Pinned by `the_motion_is_nearly_home_by_half_time`.
 - `CAAnimation` treats a zero duration as "use the default 0.25s", so zero
   durations bypass the animation and draw the final frame directly.
 - `NSValue::valueWithPoint` (the from/to carrier) is gated behind the
@@ -626,7 +630,7 @@ duplication that hurts is elsewhere:
    zero-duration guard: `ActiveAnimation::frame_for_now` and
    `RunningAnimation::progress`. Rect interpolation twice: `get_frame`/
    `blend` (AX) vs `lerp_rect` (overlay). The curves agree now (the AX
-   `ease` delegates to the overlay's `ease_out_cubic`), but the definitions
+   `ease` delegates to the overlay's `ease`), but the definitions
    should live in one `motion` module.
 2. **`config.settings.animation_easing` is dead.** Plumbed through protocol,
    CLI (`set-animation-easing`), and the config actor — and never read by
