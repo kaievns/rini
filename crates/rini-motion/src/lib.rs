@@ -6,4 +6,5 @@ pub mod fit;
 pub mod plan;
 pub mod surface;
 pub mod tile;
+pub mod travel;
 pub mod z_group;
