@@ -377,10 +377,10 @@ rest can be refreshed occasionally.
 animation and is replaced by the real window at the end. A slightly stale moving
 image is not perceptible.
 
-**rini needs the Screen Recording grant.** It does not have it today. This is
-also why Mission Control currently renders black. `src/ui/mission_control.rs`
-already contains the full ScreenCaptureKit pipeline, so that feature has never
-worked on this machine, and fixing the grant may fix it for free.
+**rini needs the Screen Recording grant.** It did not have it when this was
+written. (The rift-inherited overview overlay that first carried a
+ScreenCaptureKit pipeline has since been removed; `ui/snapshot_service.rs` is
+the pipeline now.)
 
 **Capture in a background thread.** At 14.5ms per window, refreshing even a few
 windows would blow several frames if it ran on the animation thread.

@@ -335,9 +335,6 @@ impl LayoutEngine {
         space: SpaceId,
         screen: CGRect,
         gaps: &crate::common::config::GapSettings,
-        stack_line_thickness: f64,
-        stack_line_horiz: crate::common::config::HorizontalPlacement,
-        stack_line_vert: crate::common::config::VerticalPlacement,
         selection_path_only: bool,
     ) -> Vec<GroupContainerInfo> {
         // Group containers described the tree-based layouts' nested stacks. The scrolling
@@ -348,9 +345,6 @@ impl LayoutEngine {
             space,
             screen,
             gaps,
-            stack_line_thickness,
-            stack_line_horiz,
-            stack_line_vert,
             selection_path_only,
         );
         Vec::new()
@@ -2471,9 +2465,6 @@ impl LayoutEngine {
         space: SpaceId,
         screen: CGRect,
         gaps: &crate::common::config::GapSettings,
-        stack_line_thickness: f64,
-        stack_line_horiz: crate::common::config::HorizontalPlacement,
-        stack_line_vert: crate::common::config::VerticalPlacement,
     ) -> Vec<(WindowId, CGRect)> {
         let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
             return Vec::new();
@@ -2484,9 +2475,6 @@ impl LayoutEngine {
             self.layout_settings.stack.stack_offset,
             &self.window_layout_constraints,
             gaps,
-            stack_line_thickness,
-            stack_line_horiz,
-            stack_line_vert,
         )
     }
 
@@ -2496,9 +2484,6 @@ impl LayoutEngine {
         space: SpaceId,
         screen: CGRect,
         gaps: &crate::common::config::GapSettings,
-        stack_line_thickness: f64,
-        stack_line_horiz: crate::common::config::HorizontalPlacement,
-        stack_line_vert: crate::common::config::VerticalPlacement,
         get_window_frame: F,
         all_screens: &[CGRect],
     ) -> Vec<(WindowId, CGRect)>
@@ -2559,9 +2544,6 @@ impl LayoutEngine {
                     self.layout_settings.stack.stack_offset,
                     &self.window_layout_constraints,
                     gaps,
-                    stack_line_thickness,
-                    stack_line_horiz,
-                    stack_line_vert,
                 );
 
                 for (wid, rect) in tiled_positions {
@@ -2709,17 +2691,11 @@ impl LayoutEngine {
         space: SpaceId,
         screen: CGRect,
         gaps: &crate::common::config::GapSettings,
-        stack_line_thickness: f64,
-        stack_line_horiz: crate::common::config::HorizontalPlacement,
-        stack_line_vert: crate::common::config::VerticalPlacement,
     ) -> Vec<GroupContainerInfo> {
         self.collect_group_containers_for_space(
             space,
             screen,
             gaps,
-            stack_line_thickness,
-            stack_line_horiz,
-            stack_line_vert,
             true,
         )
     }
@@ -2736,17 +2712,11 @@ impl LayoutEngine {
         space: SpaceId,
         screen: CGRect,
         gaps: &crate::common::config::GapSettings,
-        stack_line_thickness: f64,
-        stack_line_horiz: crate::common::config::HorizontalPlacement,
-        stack_line_vert: crate::common::config::VerticalPlacement,
     ) -> Vec<GroupContainerInfo> {
         self.collect_group_containers_for_space(
             space,
             screen,
             gaps,
-            stack_line_thickness,
-            stack_line_horiz,
-            stack_line_vert,
             false,
         )
     }
@@ -2758,9 +2728,6 @@ impl LayoutEngine {
         workspace_id: crate::model::VirtualWorkspaceId,
         screen: CGRect,
         gaps: &crate::common::config::GapSettings,
-        stack_line_thickness: f64,
-        stack_line_horiz: crate::common::config::HorizontalPlacement,
-        stack_line_vert: crate::common::config::VerticalPlacement,
     ) -> Vec<(WindowId, CGRect)> {
         let mut positions = HashMap::default();
 
@@ -2771,9 +2738,6 @@ impl LayoutEngine {
                 self.layout_settings.stack.stack_offset,
                 &self.window_layout_constraints,
                 gaps,
-                stack_line_thickness,
-                stack_line_horiz,
-                stack_line_vert,
             );
             for (wid, rect) in tiled_positions {
                 positions.insert(wid, rect);
@@ -3855,9 +3819,6 @@ mod tests {
             space,
             screen,
             &layout_settings.gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
         assert_eq!(frame.size.width, 234.0);
@@ -3876,9 +3837,6 @@ mod tests {
             space,
             screen,
             &layout_settings.gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
         assert_eq!(frame.size.width, 400.0);
@@ -3923,9 +3881,6 @@ mod tests {
             space_a,
             screen,
             &LayoutSettings::default().gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
 
         let _ = engine.handle_event(
@@ -3941,9 +3896,6 @@ mod tests {
             space_a,
             screen,
             &LayoutSettings::default().gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         assert_eq!(
             resized_layout, after_other_space_sync,
@@ -4067,9 +4019,6 @@ mod tests {
                     source_workspace,
                     source_screen,
                     &LayoutSettings::default().gaps,
-                    0.0,
-                    Default::default(),
-                    Default::default(),
                 )
                 .into_iter()
                 .any(|(window_id, _)| window_id == wid),
@@ -4430,9 +4379,6 @@ mod tests {
             space,
             screen,
             &gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
 
         // Simulate a discovery snapshot that temporarily omitted w2.
@@ -4446,9 +4392,6 @@ mod tests {
                 space,
                 screen,
                 &gaps,
-                0.0,
-                Default::default(),
-                Default::default(),
             ),
             before,
             "partial discovery must not remove an assigned window or reset its split"
@@ -4505,9 +4448,6 @@ mod tests {
             space_a,
             screen,
             &gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
 
         let _ = engine.handle_event(
@@ -4522,9 +4462,6 @@ mod tests {
                 space_a,
                 screen,
                 &gaps,
-                0.0,
-                Default::default(),
-                Default::default(),
             ),
             before,
             "removing a window must not rebalance layouts in other workspaces"
@@ -4599,9 +4536,6 @@ mod tests {
             space,
             screen,
             &gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
 
         let _ = engine.handle_event(
@@ -4614,9 +4548,6 @@ mod tests {
                 space,
                 screen,
                 &gaps,
-                0.0,
-                Default::default(),
-                Default::default(),
             ),
             modified
         );
@@ -4657,9 +4588,6 @@ mod tests {
             space,
             screen,
             &gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
 
         assert!(!engine.add_window_to_layout(&mut window_store, space, wid));
@@ -4668,9 +4596,6 @@ mod tests {
                 space,
                 screen,
                 &gaps,
-                0.0,
-                Default::default(),
-                Default::default(),
             ),
             before
         );

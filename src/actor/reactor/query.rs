@@ -7,7 +7,6 @@ use rini_protocol::{
 };
 
 use crate::actor::app::WindowId;
-use crate::actor::menu_bar;
 use crate::actor::reactor::{Event, Reactor, Sender};
 use crate::common::collections::HashSet;
 use crate::model::server::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
@@ -224,57 +223,6 @@ impl Reactor {
         self.handle_metrics_query()
     }
 
-    pub(super) fn maybe_send_menu_update(&mut self) {
-        let menu_tx = match self.menu_manager.menu_tx.as_ref() {
-            Some(tx) => tx.clone(),
-            None => return,
-        };
-
-        let active_space = match self.menu_bar_space() {
-            Some(space) => space,
-            None => return,
-        };
-
-        let workspaces = self.handle_workspace_query(Some(active_space));
-        let active_space_is_activated = self.is_space_active(active_space);
-        let active_workspace = self.layout_manager.layout_engine.active_workspace(active_space);
-        let active_workspace_idx =
-            self.layout_manager.layout_engine.active_workspace_idx(active_space);
-        let windows = self.handle_windows_query(Some(active_space));
-
-        menu_tx.send(menu_bar::Event::Update(menu_bar::Update {
-            active_space,
-            active_space_is_activated,
-            workspaces,
-            active_workspace_idx,
-            active_workspace,
-            windows,
-        }));
-    }
-
-    fn menu_bar_space(&self) -> Option<SpaceId> {
-        self.resolve_menu_bar_space_with_preferred(self.space_state.menu_bar_space)
-    }
-
-    fn resolve_menu_bar_space_with_preferred(
-        &self,
-        preferred_space: Option<SpaceId>,
-    ) -> Option<SpaceId> {
-        preferred_space
-            .filter(|space| {
-                self.space_state.screens.iter().any(|screen| screen.space == Some(*space))
-            })
-            .or_else(|| self.default_query_space())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_resolve_menu_bar_space_with_preferred(
-        &self,
-        preferred_space: Option<SpaceId>,
-    ) -> Option<SpaceId> {
-        self.resolve_menu_bar_space_with_preferred(preferred_space)
-    }
-
     fn handle_workspace_query(
         &mut self,
         space_id_param: Option<SpaceId>,
@@ -330,9 +278,6 @@ impl Reactor {
                             *workspace_id,
                             screen.frame,
                             &gaps,
-                            self.config.settings.ui.stack_line.thickness(),
-                            self.config.settings.ui.stack_line.horiz_placement,
-                            self.config.settings.ui.stack_line.vert_placement,
                         )
                     } else {
                         vec![]

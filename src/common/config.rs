@@ -505,8 +505,6 @@ pub struct Settings {
     pub auto_focus_blacklist: Vec<String>,
     #[serde(default)]
     pub layout: LayoutSettings,
-    #[serde(default)]
-    pub ui: UiSettings,
     /// Trackpad gesture settings
     #[serde(default)]
     pub gestures: GestureSettings,
@@ -522,17 +520,6 @@ pub struct Settings {
     /// Enable hot-reloading of the config file when it changes
     #[serde(default = "yes")]
     pub hot_reload: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct UiSettings {
-    #[serde(default)]
-    pub menu_bar: MenuBarSettings,
-    #[serde(default)]
-    pub stack_line: StackLineSettings,
-    #[serde(default)]
-    pub mission_control: MissionControlSettings,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -591,113 +578,6 @@ pub struct WindowSnappingSettings {
     pub drag_swap_fraction: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum MenuBarDisplayMode {
-    #[default]
-    All,
-    Active,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ActiveWorkspaceLabel {
-    #[default]
-    Index,
-    Name,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkspaceDisplayStyle {
-    #[default]
-    Layout,
-    Label,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct MenuBarSettings {
-    #[serde(default = "no")]
-    pub enabled: bool,
-    #[serde(default = "no")]
-    pub show_empty: bool,
-    #[serde(default)]
-    pub mode: MenuBarDisplayMode,
-    #[serde(default)]
-    pub active_label: ActiveWorkspaceLabel,
-    #[serde(default)]
-    pub display_style: WorkspaceDisplayStyle,
-    #[serde(default = "default_layout_folder")]
-    pub layout_folder: PathBuf,
-}
-
-impl MenuBarSettings {
-    pub fn resolved_layout_folder(&self) -> PathBuf {
-        let Ok(relative) = self.layout_folder.strip_prefix("~") else {
-            return self.layout_folder.clone();
-        };
-        dirs::home_dir()
-            .map(|home| home.join(relative))
-            .unwrap_or_else(|| self.layout_folder.clone())
-    }
-}
-
-impl Default for MenuBarSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            show_empty: false,
-            mode: MenuBarDisplayMode::default(),
-            active_label: ActiveWorkspaceLabel::default(),
-            display_style: WorkspaceDisplayStyle::default(),
-            layout_folder: default_layout_folder(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct StackLineSettings {
-    #[serde(default = "no")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub hover: StackLineHoverMode,
-    #[serde(default = "default_stack_line_thickness")]
-    pub thickness: f64,
-    #[serde(default)]
-    pub horiz_placement: HorizontalPlacement,
-    #[serde(default)]
-    pub vert_placement: VerticalPlacement,
-    /// Distance to position the stack line away from the window edge (in points)
-    /// This creates spacing between the window and the stack line
-    #[serde(default = "default_stack_line_spacing")]
-    pub spacing: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum StackLineHoverMode {
-    Click,
-    #[default]
-    Hover,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct MissionControlSettings {
-    #[serde(default = "no")]
-    pub enabled: bool,
-    #[serde(default = "no")]
-    pub fade_enabled: bool,
-    #[serde(default = "default_mission_control_fade_duration_ms")]
-    pub fade_duration_ms: f64,
-}
-
-fn default_mission_control_fade_duration_ms() -> f64 {
-    180.0
-}
-
 fn default_drag_swap_fraction() -> f64 {
     0.3
 }
@@ -726,28 +606,6 @@ fn default_scrolling_max_column_width_ratio() -> f64 {
 /// `layout.preset-column-widths` defaults: a third, a half, two thirds.
 fn default_scrolling_preset_column_widths() -> Vec<f64> {
     vec![0.33333, 0.5, 0.66667]
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum HorizontalPlacement {
-    #[default]
-    Top,
-    Bottom,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum VerticalPlacement {
-    #[default]
-    Left,
-    Right,
-}
-
-impl StackLineSettings {
-    pub fn thickness(&self) -> f64 {
-        if self.enabled { self.thickness } else { 0.0 }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
@@ -1382,10 +1240,6 @@ fn no() -> bool {
     false
 }
 
-fn default_layout_folder() -> PathBuf {
-    PathBuf::from("~/.config/rini/layouts")
-}
-
 fn default_workspace_count() -> usize {
     4
 }
@@ -1405,13 +1259,6 @@ fn default_swipe_vertical_tolerance() -> f64 { 0.4 }
 fn default_swipe_fingers() -> usize { 3 }
 fn default_distance_pct() -> f64 { 0.08 }
 fn default_overscroll_threshold() -> f64 { 0.15 }
-
-fn default_stack_line_spacing() -> f64 {
-    1.0
-}
-fn default_stack_line_thickness() -> f64 {
-    20.0
-}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
@@ -1882,28 +1729,6 @@ mod tests {
             WmCommand::ReactorCommand(reactor::Command::Layout(LayoutCommand::ResizeWindowGrow(
                 ResizeOrientation::Smart
             )))
-        );
-    }
-
-    #[test]
-    fn menu_bar_layout_folder_defaults_and_expands_home() {
-        let settings: MenuBarSettings = toml::from_str("").unwrap();
-
-        assert_eq!(settings.layout_folder, PathBuf::from("~/.config/rini/layouts"));
-        assert_eq!(
-            settings.resolved_layout_folder(),
-            dirs::home_dir().unwrap().join(".config/rini/layouts")
-        );
-    }
-
-    #[test]
-    fn menu_bar_layout_folder_preserves_absolute_paths() {
-        let settings: MenuBarSettings =
-            toml::from_str("layout_folder = \"/tmp/rini-layouts\"").unwrap();
-
-        assert_eq!(
-            settings.resolved_layout_folder(),
-            PathBuf::from("/tmp/rini-layouts")
         );
     }
 

@@ -9,8 +9,6 @@
 //! `Arc<ArcSwap<T>>` primitives:
 //! - `SharedHotkeyTable`: hotkey bindings, written by the input thread on
 //!   config/layout changes, read by the callback.
-//! - `SharedHitRects`: stack-line indicator frames, written by the main-thread
-//!   `StackLine` actor, read by the callback.
 //!
 //! Requests from the main thread arrive via the actor channel (`Receiver`).
 //! The main thread's `GestureTap` is a separate `ListenOnly` tap for gestures.
@@ -29,12 +27,11 @@ use objc2_core_graphics::{
 use tracing::{debug, error, trace, warn};
 
 use super::reactor::{self, Event};
-use super::stack_line;
 use crate::actor;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
 use crate::common::collections::{HashMap, HashSet};
-use crate::common::config::{Config, LayoutMode, StackLineHoverMode};
+use crate::common::config::{Config, LayoutMode};
 use crate::sys::event::{self, Hotkey, KeyCode, MouseState, set_mouse_state};
 use crate::sys::hotkey::{
     Modifiers, is_modifier_key, key_code_from_event, modifier_key_is_active,
@@ -43,7 +40,6 @@ use crate::sys::hotkey::{
 use crate::sys::screen::{CoordinateConverter, SpaceId};
 use crate::sys::window_server::WindowServerId;
 use crate::sys::{power, window_server};
-use crate::ui::stack_line::point_hits_indicator_frame;
 
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
 const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
@@ -77,8 +73,6 @@ pub struct EventTap {
     hotkey_specs: RefCell<Vec<(String, WmCommand)>>,
     hotkeys: SharedHotkeyTable,
     wm_sender: wm_controller::Sender,
-    stack_line_tx: stack_line::Sender,
-    stack_line_hit_rects: stack_line::SharedHitRects,
 }
 
 // SAFETY: EventTap is constructed on the input thread and all access occurs on
@@ -96,15 +90,12 @@ struct State {
     screens: Vec<CGRect>,
     event_processing_enabled: bool,
     focus_follows_mouse_enabled: bool,
-    stack_line_enabled: bool,
-    stack_line_hover_mode: StackLineHoverMode,
     disable_hotkey_active: bool,
     low_power_mode: bool,
     pressed_keys: HashSet<KeyCode>,
     current_flags: CGEventFlags,
     screen_spaces: Vec<(CGRect, SpaceId)>,
     layout_mode_by_space: HashMap<SpaceId, crate::common::config::LayoutMode>,
-    last_stack_line_hit: Option<bool>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -125,15 +116,12 @@ impl Default for State {
             screens: Vec::new(),
             event_processing_enabled: false,
             focus_follows_mouse_enabled: true,
-            stack_line_enabled: false,
-            stack_line_hover_mode: StackLineHoverMode::default(),
             disable_hotkey_active: false,
             low_power_mode: power::is_low_power_mode_enabled(),
             pressed_keys: HashSet::default(),
             current_flags: CGEventFlags::empty(),
             screen_spaces: Vec::new(),
             layout_mode_by_space: HashMap::default(),
-            last_stack_line_hit: None,
         }
     }
 }
@@ -164,11 +152,6 @@ unsafe fn drop_mouse_ctx(ptr: *mut std::ffi::c_void) {
 
 impl EventTap {
     #[inline]
-    fn stack_line_hover_enabled(&self, state: &State) -> bool {
-        state.stack_line_enabled
-    }
-
-    #[inline]
     fn focus_follows_mouse_handler_enabled(state: &State) -> bool {
         state.focus_follows_mouse_config_enabled && state.focus_follows_mouse_enabled
     }
@@ -179,9 +162,7 @@ impl EventTap {
 
     fn mouse_move_handlers_enabled(&self) -> bool {
         let state = self.state.borrow();
-        state.event_processing_enabled
-            && (self.stack_line_hover_enabled(&state)
-                || Self::focus_follows_mouse_handler_enabled(&state))
+        state.event_processing_enabled && Self::focus_follows_mouse_handler_enabled(&state)
     }
 
     fn desired_event_mask(&self) -> CGEventMask {
@@ -272,8 +253,6 @@ impl EventTap {
         events_tx: reactor::Sender,
         requests_rx: Receiver,
         wm_sender: wm_controller::Sender,
-        stack_line_tx: stack_line::Sender,
-        stack_line_hit_rects: stack_line::SharedHitRects,
     ) -> Self {
         let disable_hotkey = config
             .settings
@@ -283,8 +262,6 @@ impl EventTap {
         let mut state = State::default();
         state.mouse_hides_on_focus = config.settings.mouse_hides_on_focus;
         state.focus_follows_mouse_config_enabled = config.settings.focus_follows_mouse;
-        state.stack_line_enabled = config.settings.ui.stack_line.enabled;
-        state.stack_line_hover_mode = config.settings.ui.stack_line.hover;
         state.default_layout_mode = config.settings.layout.mode;
         state.disable_hotkey_active = disable_hotkey
             .as_ref()
@@ -292,8 +269,7 @@ impl EventTap {
             .unwrap_or(false);
         let event_mask = build_event_mask(
             disable_hotkey.is_some(),
-            state.event_processing_enabled
-                && (state.stack_line_enabled || Self::focus_follows_mouse_handler_enabled(&state)),
+            state.event_processing_enabled && Self::focus_follows_mouse_handler_enabled(&state),
         );
         let mouse_move_min_interval_ns = mouse_move_sampling_profile(state.low_power_mode);
         EventTap {
@@ -310,8 +286,6 @@ impl EventTap {
             hotkey_specs: RefCell::new(Vec::new()),
             hotkeys: Arc::new(ArcSwap::from_pointee(HashMap::default())),
             wm_sender,
-            stack_line_tx,
-            stack_line_hit_rects,
         }
     }
 
@@ -483,8 +457,6 @@ impl EventTap {
             Request::ConfigUpdated(new_config) => {
                 let mouse_hides_on_focus = new_config.settings.mouse_hides_on_focus;
                 let focus_follows_mouse_config_enabled = new_config.settings.focus_follows_mouse;
-                let stack_line_enabled = new_config.settings.ui.stack_line.enabled;
-                let stack_line_hover_mode = new_config.settings.ui.stack_line.hover;
                 let default_layout_mode = new_config.settings.layout.mode;
                 let disable_hotkey = new_config
                     .settings
@@ -496,12 +468,8 @@ impl EventTap {
                     let prev_mouse_hides_on_focus = state.mouse_hides_on_focus;
                     let prev_focus_follows_mouse_config_enabled =
                         state.focus_follows_mouse_config_enabled;
-                    let prev_stack_line_enabled = state.stack_line_enabled;
-                    let prev_stack_line_hover_mode = state.stack_line_hover_mode;
                     state.mouse_hides_on_focus = mouse_hides_on_focus;
                     state.focus_follows_mouse_config_enabled = focus_follows_mouse_config_enabled;
-                    state.stack_line_enabled = stack_line_enabled;
-                    state.stack_line_hover_mode = stack_line_hover_mode;
                     state.default_layout_mode = default_layout_mode;
                     let prev_active = state.disable_hotkey_active;
                     state.disable_hotkey_active = self
@@ -517,8 +485,6 @@ impl EventTap {
                     }
                     if prev_focus_follows_mouse_config_enabled
                         != state.focus_follows_mouse_config_enabled
-                        || prev_stack_line_enabled != state.stack_line_enabled
-                        || prev_stack_line_hover_mode != state.stack_line_hover_mode
                     {
                         state.reset_mouse_sampling();
                         self.reset_mouse_move_sample_gate();
@@ -622,23 +588,6 @@ impl EventTap {
         match event_type {
             CGEventType::LeftMouseDown | CGEventType::RightMouseDown => {
                 set_mouse_state(MouseState::Down);
-
-                let loc = CGEvent::location(Some(event));
-
-                // The event tap is the single source of hit-testing for
-                // stack-line indicators. Only forward the click and
-                // suppress propagation when it lands on a visible,
-                // non-occluded indicator.
-                let hits_stack_line = self
-                    .stack_line_hit_rects
-                    .load()
-                    .iter()
-                    .copied()
-                    .any(|frame| point_hits_indicator_frame(loc, frame));
-                if hits_stack_line && !window_server::is_point_occluded_by_external_window(loc) {
-                    let _ = self.stack_line_tx.try_send(stack_line::Event::MouseDown(loc));
-                    return false;
-                }
             }
             CGEventType::LeftMouseDragged | CGEventType::RightMouseDragged => {
                 set_mouse_state(MouseState::Down);
@@ -708,26 +657,6 @@ impl EventTap {
             }
         }
 
-        // Click mode only needs hit-test transitions for cursor feedback.
-        // Hover mode forwards samples so the actor can detect segment changes.
-        if state.stack_line_enabled {
-            let hits = self
-                .stack_line_hit_rects
-                .load()
-                .iter()
-                .copied()
-                .any(|frame| point_hits_indicator_frame(loc, frame))
-                && !window_server::is_point_occluded_by_external_window(loc);
-            if state.stack_line_hover_mode == StackLineHoverMode::Click
-                || state.last_stack_line_hit != Some(hits)
-            {
-                state.last_stack_line_hit = Some(hits);
-                let _ = self.stack_line_tx.try_send(stack_line::Event::MouseMoved {
-                    point: loc,
-                    hits_indicator: hits,
-                });
-            }
-        }
 
         // Resolve and deduplicate the window on the input thread. The reactor
         // only needs to see transitions; it must not receive a message for
@@ -1042,9 +971,7 @@ impl State {
     }
 
     #[inline]
-    fn reset_mouse_sampling(&mut self) {
-        self.last_stack_line_hit = None;
-    }
+    fn reset_mouse_sampling(&mut self) {}
 }
 
 #[inline]

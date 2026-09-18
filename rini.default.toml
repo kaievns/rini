@@ -202,44 +202,6 @@ vertical = 0
 # [settings.layout.gaps.per_display."11111111-2222-3333-4444-555555555555".inner]
 # horizontal = 8
 # vertical = 8
-[settings.ui.menu_bar]
-# enable menu bar workspace indicators
-enabled = false
-# if enabled, it will show all workspaces including empty ones. disabled because this
-# tends to take up too much room in the menubar and then is auto hidden by macos
-show_empty = false
-# choose between drawing every workspace or only the active workspace
-mode = "all"
-# when showing workspaces as labels ("index" or "name"), choose which label to render
-active_label = "index"
-# when displaying workspaces, choose whether to draw the layout preview or a set of labels
-# options are "layout" or "label"
-display_style = "layout"
-# .ron files in this folder appear under Layout Files in the menu bar
-layout_folder = "~/.config/rini/layouts"
-
-[settings.ui.stack_line]
-# experimental stack line indicator (defaults to off)
-enabled = false
-# action on hover: "click" or "hover" (defaults to "hover" which is just a visual indicator)
-hover = "hover"
-# in a horizontal stack where the line will be (top/bottom)
-horiz_placement = "top"
-# in a vertical stack where the line will be (left/right)
-vert_placement = "left"
-# how thick the indicator will be (in px)
-thickness = 20.0
-# spacing between the stack line and window edges (in px)
-spacing = 1.0
-
-# experimental mission control
-[settings.ui.mission_control]
-enabled = false
-# enable fade animation when entering/exiting mission control
-fade_enabled = false
-# native macos mission control fade is about 180ms
-fade_duration_ms = 180.0
-
 # Trackpad gestures
 [settings.gestures]
 # Enable horizontal swipes to switch virtual workspaces
@@ -448,7 +410,6 @@ comb1 = "Alt + Shift"
 # - move_window_to_display = { selector = "left"|"right"|"up"|"down"|N|"<display_uuid>", window_id = 123 }
 # - close_window / close_window = { window_server_id = 123 } (optional window id)
 # - focus_window = { window_id = 123, window_server_id = 456 }
-# - show_mission_control_all / show_mission_control_current / dismiss_mission_control (this is rini's own mission control, not macOS's)
 
 # the following commands *only* work when the master stack layout is active
 # - adjust_master_ratio = 0.05 / adjust_master_count = 1
@@ -523,12 +484,6 @@ comb1 = "Alt + Shift"
 # "Alt + Ctrl + Left" = { move_window_to_display = { selector = "left" } }
 # "Alt + Ctrl + Right" = { move_window_to_display = { selector = "right" } }
 # "Alt + Ctrl + A" = { move_window_to_display = { selector = 0 } }
-
-# if mission control is enabled
-# this will show an exploded view of the windows in the active workspace
-# "Alt + Ctrl + Shift + M" = "show_mission_control_current"
-# this will show the mission control view shown in the readme
-# "Alt + Ctrl + M" = "show_mission_control_all"
 
 "Alt + Enter" = { "exec" = ["/bin/bash", "-c", "open -a \"/System/Applications/Utilities/Terminal.app\""] }
 

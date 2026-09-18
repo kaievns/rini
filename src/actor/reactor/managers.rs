@@ -11,7 +11,7 @@ use crate::actor::reactor::Reactor;
 use crate::actor::reactor::animation::AnimationManager;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::{
-    event_tap, gesture_tap, menu_bar, raise_manager, stack_line, window_notify, wm_controller,
+    event_tap, gesture_tap, raise_manager, window_notify, wm_controller,
 };
 use crate::common::collections::{HashMap, HashSet};
 use crate::common::config::{LayoutMode, WindowSnappingSettings};
@@ -69,7 +69,6 @@ pub struct NotificationManager {
 /// Manages menu state and interactions
 pub struct MenuManager {
     pub menu_state: super::MenuState,
-    pub menu_tx: Option<menu_bar::Sender>,
 }
 
 /// Manages Mission Control state
@@ -156,7 +155,6 @@ impl RefreshQuarantineManager {
 pub struct CommunicationManager {
     pub event_tap_tx: Option<event_tap::Sender>,
     pub gesture_tap_tx: Option<gesture_tap::Sender>,
-    pub stack_line_tx: Option<stack_line::Sender>,
     pub cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
     pub workspace_animation_tx: Option<crate::actor::workspace_animation::Sender>,
     pub raise_manager_tx: raise_manager::Sender,
@@ -295,9 +293,6 @@ impl LayoutManager {
                     space,
                     screen.frame.clone(),
                     &gaps,
-                    reactor.config.settings.ui.stack_line.thickness(),
-                    reactor.config.settings.ui.stack_line.horiz_placement,
-                    reactor.config.settings.ui.stack_line.vert_placement,
                     |wid| reactor.state.windows.window(wid).map(|w| w.frame_monotonic),
                     &all_screen_frames,
                 );
@@ -371,39 +366,7 @@ impl LayoutManager {
                     space,
                     screen_frame,
                     &gaps,
-                    reactor.config.settings.ui.stack_line.thickness(),
-                    reactor.config.settings.ui.stack_line.horiz_placement,
-                    reactor.config.settings.ui.stack_line.vert_placement,
                 );
-
-                // Keep internal stack-line UI actor fed from the same group snapshot.
-                if reactor.config.settings.ui.stack_line.enabled
-                    && let Some(tx) = &reactor.communication_manager.stack_line_tx
-                {
-                    let groups: Vec<crate::actor::stack_line::GroupInfo> = group_infos
-                        .iter()
-                        .map(|g| crate::actor::stack_line::GroupInfo {
-                            node_id: g.node_id,
-                            space_id: space,
-                            container_kind: g.container_kind,
-                            frame: g.frame,
-                            total_count: g.total_count,
-                            selected_index: g.selected_index,
-                            window_ids: g.window_ids.clone(),
-                        })
-                        .collect();
-                    let active_space_ids: Vec<crate::sys::screen::SpaceId> =
-                        reactor.iter_active_spaces().collect();
-
-                    if let Err(e) = tx.try_send(crate::actor::stack_line::Event::GroupsUpdated {
-                        active_space_ids,
-                        space_id: space,
-                        groups,
-                        active_workspace_for_space_has_fullscreen,
-                    }) {
-                        tracing::warn!("Failed to send groups update to stack_line: {}", e);
-                    }
-                }
 
                 if let Some(workspace_id) =
                     reactor.layout_manager.layout_engine.active_workspace(space)

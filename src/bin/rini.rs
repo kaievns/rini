@@ -9,14 +9,11 @@ use rini_wm::actor::config::ConfigActor;
 use rini_wm::actor::config_watcher::ConfigWatcher;
 use rini_wm::actor::event_tap::EventTap;
 use rini_wm::actor::gesture_tap::GestureTap;
-use rini_wm::actor::menu_bar::Menu;
-use rini_wm::actor::mission_control::MissionControlActor;
 use rini_wm::actor::mission_control_observer::NativeMissionControl;
 use rini_wm::actor::notification_center::NotificationCenter;
 use rini_wm::actor::process::ProcessActor;
 use rini_wm::actor::reactor::{self, Reactor};
 use rini_wm::actor::spaces::SpacesActor;
-use rini_wm::actor::stack_line::StackLine;
 use rini_wm::actor::window_notify as window_notify_actor;
 use rini_wm::actor::wm_controller::{self, WmController};
 use rini_wm::common::config::{Config, config_file, restore_file};
@@ -28,7 +25,7 @@ use rini_wm::model::tx_store::WindowTxStore;
 use rini_wm::sys::accessibility::ensure_accessibility_permission;
 use rini_wm::sys::executor::Executor;
 use rini_wm::sys::mach::init_window_sub_level_server_port;
-use rini_wm::sys::screen::{CoordinateConverter, displays_have_separate_spaces};
+use rini_wm::sys::screen::displays_have_separate_spaces;
 use rini_wm::sys::service::{ServiceCommands, handle_service_command};
 use rini_wm::sys::skylight::{
     CGEnableEventStateCombining, CGSEventType, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
@@ -234,8 +231,6 @@ stays usable. Fix the config and restart. Error: {error}",
         Some(broadcast_tx.clone()),
     );
     let (event_tap_tx, event_tap_rx) = rini_wm::actor::channel();
-    let (menu_tx, menu_rx) = rini_wm::actor::channel();
-    let (stack_line_tx, stack_line_rx) = rini_wm::actor::channel();
     let (wnd_tx, wnd_rx) = rini_wm::actor::channel();
     let window_tx_store = WindowTxStore::new();
     let (gesture_tap_tx, gesture_tap_rx) = rini_wm::actor::channel();
@@ -247,8 +242,6 @@ stays usable. Fix the config and restart. Error: {error}",
         reactor::Record::new(opt.record.as_deref()),
         event_tap_tx.clone(),
         broadcast_tx.clone(),
-        menu_tx.clone(),
-        stack_line_tx.clone(),
         Some(cursor_warp_tx.clone()),
         Some(workspace_animation_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
@@ -293,15 +286,12 @@ stays usable. Fix the config and restart. Error: {error}",
         restore_file: restore_file(),
         config: config.clone(),
     };
-    let (mc_tx, mc_rx) = rini_wm::actor::channel();
     let (_mc_native_tx, mc_native_rx) = rini_wm::actor::channel();
     let (wm_controller, wm_controller_sender) = WmController::new(
         wm_config,
         config_tx.clone(),
         events_tx.clone(),
         event_tap_tx.clone(),
-        stack_line_tx.clone(),
-        mc_tx.clone(),
         Some(gesture_tap_tx.clone()),
         Some(window_tx_store.clone()),
     );
@@ -342,31 +332,13 @@ stays usable. Fix the config and restart. Error: {error}",
 
     let process_actor = ProcessActor::new(wm_controller_sender.clone());
 
-    let stack_line_hit_rects = rini_wm::actor::stack_line::new_shared_hit_rects();
     let event_tap = EventTap::new(
         config.clone(),
         events_tx.clone(),
         event_tap_rx,
         wm_controller_sender.clone(),
-        stack_line_tx.clone(),
-        stack_line_hit_rects.clone(),
     );
     let gesture_tap = GestureTap::new(config.clone(), wm_controller_sender.clone(), gesture_tap_rx);
-    let menu = Menu::new(
-        config.clone(),
-        menu_rx,
-        events_tx.clone(),
-        config_tx.clone(),
-        mtm,
-    );
-    let stack_line = StackLine::new(
-        config.clone(),
-        stack_line_rx,
-        mtm,
-        events_tx.clone(),
-        CoordinateConverter::default(),
-        stack_line_hit_rects,
-    );
 
     // Warping needs no main-thread access and no permissions, so it is just another
     // actor. It stays parked until the reactor sends it geometry for two or more displays.
@@ -386,8 +358,6 @@ stays usable. Fix the config and restart. Error: {error}",
     );
     workspace_animation.set_reactor(events_tx.clone());
 
-    let mission_control =
-        MissionControlActor::new(config.clone(), mc_rx, mc_tx.clone(), reactor.clone(), mtm);
     let mission_control_native = NativeMissionControl::new(events_tx.clone(), mc_native_rx);
 
     if config.settings.default_disable {
@@ -422,11 +392,8 @@ stays usable. Fix the config and restart. Error: {error}",
             ),
             supervise("spaces", spaces_actor.run()),
             supervise("gesture_tap", gesture_tap.run()),
-            supervise("menu", menu.run()),
-            supervise("stack_line", stack_line.run()),
             supervise("window_notify", wn_actor.run()),
             supervise("mc_native", mission_control_native.run()),
-            supervise("mission_control", mission_control.run()),
             supervise("process_actor", process_actor.run()),
             supervise("cursor_warp", cursor_warp.run()),
             supervise("workspace_animation", workspace_animation.run()),

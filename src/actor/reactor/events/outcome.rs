@@ -2,7 +2,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 
 use crate::actor::app::{AppInfo, Request, WindowId, WindowInfo, pid_t};
 use crate::actor::raise_manager;
-use crate::actor::wm_controller::{WmCmd, WmEvent};
+use crate::actor::wm_controller::WmEvent;
 use crate::common::config::Config;
 use crate::layout_engine::{Direction, EventResponse, LayoutEvent};
 use crate::sys::screen::SpaceId;
@@ -53,7 +53,6 @@ pub(crate) struct EventOutcome {
     pub(crate) refresh_after_mission_control: bool,
     pub(crate) force_refresh_all_windows: bool,
     pub(crate) switch_native_space: Option<Direction>,
-    pub(crate) wm_commands: Vec<WmCmd>,
     pub(crate) wm_events: Vec<WmEvent>,
     pub(crate) app_requests: Vec<(pid_t, Request)>,
     pub(crate) topology_reassignments: Vec<TopologyReassignment>,
@@ -108,7 +107,6 @@ impl EventOutcome {
         self.refresh_after_mission_control |= other.refresh_after_mission_control;
         self.force_refresh_all_windows |= other.force_refresh_all_windows;
         self.switch_native_space = other.switch_native_space.or(self.switch_native_space);
-        self.wm_commands.append(&mut other.wm_commands);
         self.wm_events.append(&mut other.wm_events);
         self.app_requests.append(&mut other.app_requests);
         self.topology_reassignments.append(&mut other.topology_reassignments);
@@ -163,7 +161,6 @@ impl EventOutcome {
             refresh_after_mission_control: false,
             force_refresh_all_windows: false,
             switch_native_space: None,
-            wm_commands: Vec::new(),
             wm_events: Vec::new(),
             app_requests: Vec::new(),
             topology_reassignments: Vec::new(),
@@ -290,10 +287,6 @@ impl EventOutcome {
         self
     }
 
-    pub(crate) fn with_wm_command(mut self, command: WmCmd) -> Self {
-        self.wm_commands.push(command);
-        self
-    }
 
     pub(crate) fn with_wm_event(mut self, event: WmEvent) -> Self {
         self.wm_events.push(event);

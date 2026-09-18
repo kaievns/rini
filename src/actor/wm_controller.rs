@@ -25,7 +25,7 @@ type Receiver = actor::Receiver<WmEvent>;
 use self::WmCmd::*;
 use crate::actor::app::AppInfo;
 use crate::actor::spaces::ForwardedSpaceState;
-use crate::actor::{self, config, event_tap, mission_control, reactor};
+use crate::actor::{self, config, event_tap, reactor};
 use crate::model::tx_store::WindowTxStore;
 use crate::sys::dispatch::DispatchExt;
 use crate::sys::screen::CoordinateConverter;
@@ -67,9 +67,6 @@ pub enum WmCmd {
     CreateWorkspace,
     SwitchToLastWorkspace,
 
-    ShowMissionControlAll,
-    ShowMissionControlCurrent,
-    DismissMissionControl,
     CloseWindow,
 
     /// Cycle the focused app's windows across workspaces and displays.
@@ -136,8 +133,6 @@ pub struct WmController {
     events_tx: reactor::Sender,
     event_tap_tx: event_tap::Sender,
     gesture_tap_tx: Option<gesture_tap::Sender>,
-    stack_line_tx: Option<crate::actor::stack_line::Sender>,
-    mission_control_tx: Option<mission_control::Sender>,
     window_tx_store: Option<WindowTxStore>,
     receiver: Receiver,
     sender: Sender,
@@ -150,8 +145,6 @@ impl WmController {
         config_tx: config::Sender,
         events_tx: reactor::Sender,
         event_tap_tx: event_tap::Sender,
-        stack_line_tx: crate::actor::stack_line::Sender,
-        mission_control_tx: crate::actor::mission_control::Sender,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         window_tx_store: Option<WindowTxStore>,
     ) -> (Self, actor::Sender<WmEvent>) {
@@ -166,8 +159,6 @@ impl WmController {
             events_tx,
             event_tap_tx,
             gesture_tap_tx,
-            stack_line_tx: Some(stack_line_tx),
-            mission_control_tx: Some(mission_control_tx),
             window_tx_store,
             receiver,
             sender: sender.clone(),
@@ -191,17 +182,6 @@ impl WmController {
         use self::WmCommand::*;
         use self::WmEvent::*;
 
-        if matches!(
-            event,
-            Command(Wm(crate::actor::wm_controller::WmCmd::NextWorkspace))
-                | Command(Wm(crate::actor::wm_controller::WmCmd::PrevWorkspace))
-                | Command(Wm(crate::actor::wm_controller::WmCmd::SwitchToWorkspace(_)))
-                | Command(Wm(crate::actor::wm_controller::WmCmd::SwitchToLastWorkspace))
-                | SpaceStateUpdated(..)
-        ) && let Some(tx) = &self.mission_control_tx
-        {
-            tx.send(mission_control::Event::RefreshCurrentWorkspace);
-        }
 
         match event {
             SpaceStateUpdated(space_state, converter) => {
@@ -213,12 +193,6 @@ impl WmController {
                 if let Some(tx) = &self.gesture_tap_tx {
                     tx.send(gesture_tap::GestureRequest::SpaceStateUpdated(
                         space_state.clone(),
-                    ));
-                }
-                if let Some(tx) = &self.stack_line_tx {
-                    _ = tx.try_send(crate::actor::stack_line::Event::SpaceStateUpdated(
-                        converter,
-                        space_state,
                     ));
                 }
             }
@@ -362,21 +336,6 @@ impl WmController {
                 self.events_tx.send(reactor::Event::Command(reactor::Command::Layout(
                     layout::LayoutCommand::SwitchToLastWorkspace,
                 )));
-            }
-            Command(Wm(ShowMissionControlAll)) => {
-                if let Some(tx) = &self.mission_control_tx {
-                    let _ = tx.try_send(mission_control::Event::ShowAll);
-                }
-            }
-            Command(Wm(ShowMissionControlCurrent)) => {
-                if let Some(tx) = &self.mission_control_tx {
-                    let _ = tx.try_send(mission_control::Event::ShowCurrent);
-                }
-            }
-            Command(Wm(DismissMissionControl)) => {
-                if let Some(tx) = &self.mission_control_tx {
-                    let _ = tx.try_send(mission_control::Event::Dismiss);
-                }
             }
             Command(Wm(CloseWindow)) => {
                 self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(

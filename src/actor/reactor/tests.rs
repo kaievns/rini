@@ -680,43 +680,6 @@ fn queries_prefer_authoritative_active_space_over_stale_command_space() {
 }
 
 #[test]
-fn menu_bar_space_prefers_active_menu_bar_display_space() {
-    let mut reactor = test_reactor();
-    let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
-    let right = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
-    let space1 = SpaceId::new(1);
-    let space2 = SpaceId::new(2);
-
-    reactor.handle_event(space_state_event(
-        vec![left, right],
-        vec![Some(space1), Some(space2)],
-    ));
-
-    assert_eq!(reactor.test_default_query_space(), Some(space1));
-    assert_eq!(
-        reactor.test_resolve_menu_bar_space_with_preferred(Some(space2)),
-        Some(space2),
-        "menubar updates should follow the display currently hosting the menu bar"
-    );
-}
-
-#[test]
-fn menu_bar_space_falls_back_when_preferred_space_is_not_visible() {
-    let mut reactor = test_reactor();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
-    let visible_space = SpaceId::new(1);
-    let hidden_space = SpaceId::new(2);
-
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(visible_space)]));
-
-    assert_eq!(
-        reactor.test_resolve_menu_bar_space_with_preferred(Some(hidden_space)),
-        Some(visible_space),
-        "menubar updates should fall back to the normal active context if the preferred menubar space is unavailable"
-    );
-}
-
-#[test]
 fn workspace_queries_are_isolated_per_macos_space() {
     let mut reactor = test_reactor();
     let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
@@ -2371,9 +2334,6 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
             space,
             screen,
             &gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
             |query_wid| {
                 reactor.state.windows.window(query_wid).map(|window| window.frame_monotonic)
             },
@@ -3790,7 +3750,7 @@ fn has_window_in_layout(
     reactor
         .layout_manager
         .layout_engine
-        .calculate_layout(space, screen, &gaps, 0.0, Default::default(), Default::default())
+        .calculate_layout(space, screen, &gaps)
         .iter()
         .any(|(layout_wid, _)| *layout_wid == wid)
 }
@@ -3801,9 +3761,6 @@ fn test_layout(reactor: &mut Reactor, space: SpaceId, screen: CGRect) -> Vec<(Wi
         space,
         screen,
         &gaps,
-        0.0,
-        crate::common::config::HorizontalPlacement::Top,
-        crate::common::config::VerticalPlacement::Right,
     )
 }
 
@@ -4981,9 +4938,6 @@ fn laid_out_frame(
             space,
             screen,
             &gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
             |q| reactor.state.windows.window(q).map(|w| w.frame_monotonic),
             &[screen],
         )

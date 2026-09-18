@@ -179,11 +179,6 @@ pub fn handle_switch_native_space(
     Ok(EventOutcome::no_change().with_native_space_switch(direction))
 }
 
-pub fn handle_mission_control_command(
-    command: crate::actor::wm_controller::WmCmd,
-) -> anyhow::Result<EventOutcome> {
-    Ok(EventOutcome::no_change().with_wm_command(command))
-}
 
 pub fn handle_close_window(
     window_server_id: Option<WindowServerId>,

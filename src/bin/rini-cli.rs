@@ -131,11 +131,6 @@ enum ExecuteCommands {
         #[command(subcommand)]
         config_cmd: ConfigCommands,
     },
-    /// Mission control commands
-    MissionControl {
-        #[command(subcommand)]
-        mission_cmd: MissionControlCommands,
-    },
     /// Display/mouse commands
     Display {
         #[command(subcommand)]
@@ -442,15 +437,6 @@ enum ConfigCommands {
     Reload,
 }
 
-#[derive(Subcommand)]
-enum MissionControlCommands {
-    /// Show all workspaces in mission control
-    ShowAll,
-    /// Show current workspace in mission control
-    ShowCurrent,
-    /// Dismiss mission control
-    Dismiss,
-}
 
 #[derive(Subcommand)]
 enum DisplayCommands {
@@ -655,9 +641,6 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::Workspace { workspace_cmd } => map_workspace_command(workspace_cmd)?,
         ExecuteCommands::Layout { layout_cmd } => map_layout_command(layout_cmd)?,
         ExecuteCommands::Config { config_cmd } => map_config_command(config_cmd)?,
-        ExecuteCommands::MissionControl { mission_cmd } => {
-            map_mission_control_command(mission_cmd)?
-        }
         ExecuteCommands::Display { display_cmd } => map_display_command(display_cmd)?,
         ExecuteCommands::Space { space_cmd } => map_space_command(space_cmd)?,
         ExecuteCommands::SaveAndExit => {
@@ -1060,19 +1043,6 @@ fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
     Ok(CliCommand::Config(cfg_cmd))
 }
 
-fn map_mission_control_command(cmd: MissionControlCommands) -> Result<CliCommand, String> {
-    match cmd {
-        MissionControlCommands::ShowAll => Ok(CliCommand::Reactor(reactor::Command::Reactor(
-            reactor::ReactorCommand::ShowMissionControlAll,
-        ))),
-        MissionControlCommands::ShowCurrent => Ok(CliCommand::Reactor(reactor::Command::Reactor(
-            reactor::ReactorCommand::ShowMissionControlCurrent,
-        ))),
-        MissionControlCommands::Dismiss => Ok(CliCommand::Reactor(reactor::Command::Reactor(
-            reactor::ReactorCommand::DismissMissionControl,
-        ))),
-    }
-}
 
 fn map_space_command(cmd: SpaceCommands) -> Result<CliCommand, String> {
     let command = match cmd {

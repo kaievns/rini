@@ -764,9 +764,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
         _stack_offset: f64,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
         gaps: &crate::common::config::GapSettings,
-        _stack_line_thickness: f64,
-        _stack_line_horiz: crate::common::config::HorizontalPlacement,
-        _stack_line_vert: crate::common::config::VerticalPlacement,
     ) -> Vec<(WindowId, CGRect)> {
         let Some(state) = self.layouts.get(layout) else {
             return Vec::new();
@@ -2071,9 +2068,6 @@ mod tests {
             0.0,
             &constraints,
             gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         )
     }
 
@@ -2136,9 +2130,6 @@ mod tests {
             0.0,
             &constraints,
             &GapSettings::default(),
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         let frame = frame_for(&frames, window);
         assert!(frame.size.width >= 699.0);
@@ -2184,9 +2175,6 @@ mod tests {
             0.0,
             &constraints,
             &GapSettings::default(),
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         let frame = frame_for(&frames, w1);
         assert!(frame.size.width >= 499.0);
@@ -2221,9 +2209,6 @@ mod tests {
             0.0,
             &constraints,
             &GapSettings::default(),
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         let frame = frame_for(&frames, window);
         assert!(frame.size.width <= 600.0);
@@ -2281,9 +2266,6 @@ mod tests {
             0.0,
             &constraints,
             &GapSettings::default(),
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         let locked_frame = frame_for(&frames, locked);
         let capped_frame = frame_for(&frames, capped);
@@ -2323,9 +2305,6 @@ mod tests {
             0.0,
             &constraints,
             &gaps,
-            0.0,
-            Default::default(),
-            Default::default(),
         );
         let frame = frame_for(&frames, window);
         assert!(frame.size.width <= tiling.size.width);

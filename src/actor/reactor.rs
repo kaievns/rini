@@ -87,7 +87,7 @@ use crate::actor::app::{AppInfo, AppThreadHandle, Quiet, Request, WindowId, Wind
 use crate::actor::raise_manager::{self, RaiseManager, RaiseRequest};
 use crate::actor::reactor::events::window_discovery;
 use crate::actor::spaces::{ForwardedSpaceState, TopologyWindowDelta};
-use crate::actor::{self, menu_bar, stack_line};
+use crate::actor;
 use crate::common::collections::{BTreeMap, HashMap, HashSet};
 use crate::common::config::Config;
 use crate::layout_engine::{self as layout, Direction, LayoutEngine, LayoutEvent};
@@ -385,8 +385,6 @@ impl Reactor {
         record: Record,
         event_tap_tx: event_tap::Sender,
         broadcast_tx: BroadcastSender,
-        menu_tx: menu_bar::Sender,
-        stack_line_tx: stack_line::Sender,
         cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
         workspace_animation_tx: Option<crate::actor::workspace_animation::Sender>,
         window_notify: Option<(crate::actor::window_notify::Sender, WindowTxStore)>,
@@ -404,8 +402,6 @@ impl Reactor {
             one_space,
         );
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
-        reactor.menu_manager.menu_tx = Some(menu_tx);
-        reactor.communication_manager.stack_line_tx = Some(stack_line_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.communication_manager.workspace_animation_tx = workspace_animation_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
@@ -466,7 +462,6 @@ impl Reactor {
             communication_manager: managers::CommunicationManager {
                 event_tap_tx: None,
                 gesture_tap_tx: None,
-                stack_line_tx: None,
                 cursor_warp_tx: None,
                 workspace_animation_tx: None,
                 raise_manager_tx,
@@ -482,7 +477,6 @@ impl Reactor {
             transaction_manager: transaction_manager::TransactionManager::new(window_tx_store),
             menu_manager: managers::MenuManager {
                 menu_state: MenuState::Closed,
-                menu_tx: None,
             },
             mission_control_manager: managers::MissionControlManager {
                 mission_control_state: MissionControlState::Inactive,
@@ -1829,21 +1823,6 @@ impl Reactor {
                     command_workflow::ToggleSpacePayload { config, space, display_uuid },
                 );
             }
-            Event::Command(Command::Reactor(ReactorCommand::ShowMissionControlAll)) => {
-                return command_workflow::handle_mission_control_command(
-                    crate::actor::wm_controller::WmCmd::ShowMissionControlAll,
-                );
-            }
-            Event::Command(Command::Reactor(ReactorCommand::ShowMissionControlCurrent)) => {
-                return command_workflow::handle_mission_control_command(
-                    crate::actor::wm_controller::WmCmd::ShowMissionControlCurrent,
-                );
-            }
-            Event::Command(Command::Reactor(ReactorCommand::DismissMissionControl)) => {
-                return command_workflow::handle_mission_control_command(
-                    crate::actor::wm_controller::WmCmd::DismissMissionControl,
-                );
-            }
             Event::Command(Command::Reactor(ReactorCommand::CloseWindow { window_server_id })) => {
                 return command_workflow::handle_close_window(
                     window_server_id.map(WindowServerId::new),
@@ -2208,8 +2187,6 @@ impl Reactor {
                     outcome.arrange.space_scope,
                 );
             }
-            // Publish the menu state once after all arrange passes have completed.
-            self.maybe_send_menu_update();
         }
 
         for request in outcome.raise_requests {
@@ -2241,19 +2218,6 @@ impl Reactor {
             self.warp_mouse(point);
         }
 
-        for command in outcome.wm_commands {
-            let is_dismiss = matches!(
-                command,
-                crate::actor::wm_controller::WmCmd::DismissMissionControl
-            );
-            if let Some(wm) = self.communication_manager.wm_sender.as_ref() {
-                wm.send(crate::actor::wm_controller::WmEvent::Command(
-                    crate::actor::wm_controller::WmCommand::Wm(command),
-                ));
-            } else if is_dismiss {
-                self.set_mission_control_active(false);
-            }
-        }
         for event in outcome.wm_events {
             if let Some(wm) = self.communication_manager.wm_sender.as_ref() {
                 wm.send(event);
@@ -2273,16 +2237,6 @@ impl Reactor {
         }
 
         if let Some(config) = outcome.service_config_update {
-            if let Some(tx) = &self.communication_manager.stack_line_tx
-                && let Err(error) = tx.try_send(stack_line::Event::ConfigUpdated(config.clone()))
-            {
-                warn!(%error, "failed to update stack line config");
-            }
-            if let Some(tx) = &self.menu_manager.menu_tx
-                && let Err(error) = tx.try_send(menu_bar::Event::ConfigUpdated(config.clone()))
-            {
-                warn!(%error, "failed to update menu bar config");
-            }
             if let Some(wm) = &self.communication_manager.wm_sender {
                 wm.send(crate::actor::wm_controller::WmEvent::ConfigUpdated(config));
             }
@@ -4007,9 +3961,6 @@ impl Reactor {
             .layout
             .gaps
             .effective_for_display(screen.display_uuid_opt());
-        let thickness = self.config.settings.ui.stack_line.thickness();
-        let horiz = self.config.settings.ui.stack_line.horiz_placement;
-        let vert = self.config.settings.ui.stack_line.vert_placement;
 
         let mut targets: Vec<crate::ui::snapshot_service::SnapshotTarget> = Vec::new();
         for (workspace_id, _) in &workspaces {
@@ -4019,9 +3970,6 @@ impl Reactor {
                 *workspace_id,
                 screen.frame,
                 &gaps,
-                thickness,
-                horiz,
-                vert,
             );
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
@@ -4098,9 +4046,6 @@ impl Reactor {
             workspace_id,
             screen.frame,
             &gaps,
-            self.config.settings.ui.stack_line.thickness(),
-            self.config.settings.ui.stack_line.horiz_placement,
-            self.config.settings.ui.stack_line.vert_placement,
         );
 
         // Full-display coordinates, matching the overlay's own space.
@@ -4219,9 +4164,6 @@ impl Reactor {
             workspace_id,
             screen.frame,
             &gaps,
-            self.config.settings.ui.stack_line.thickness(),
-            self.config.settings.ui.stack_line.horiz_placement,
-            self.config.settings.ui.stack_line.vert_placement,
         );
         let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
         let vertical = matches!(direction, Direction::Up | Direction::Down);
@@ -4294,9 +4236,6 @@ impl Reactor {
             .layout
             .gaps
             .effective_for_display(screen.display_uuid_opt());
-        let thickness = self.config.settings.ui.stack_line.thickness();
-        let horiz = self.config.settings.ui.stack_line.horiz_placement;
-        let vert = self.config.settings.ui.stack_line.vert_placement;
 
         let low = from_index.min(to_index);
         let high = from_index.max(to_index);
@@ -4325,9 +4264,6 @@ impl Reactor {
                 *workspace_id,
                 screen.frame,
                 &gaps,
-                thickness,
-                horiz,
-                vert,
             );
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
@@ -6034,18 +5970,6 @@ impl Reactor {
         event_tap_tx.send(crate::actor::event_tap::Request::LayoutModesChanged(modes));
     }
 
-    fn set_mission_control_active(&mut self, active: bool) {
-        let new_state = if active {
-            MissionControlState::Active
-        } else {
-            MissionControlState::Inactive
-        };
-        if self.is_mission_control_active() == active {
-            return;
-        }
-        self.mission_control_manager.mission_control_state = new_state;
-        self.update_focus_follows_mouse_state();
-    }
 
     fn refresh_windows_after_mission_control(&mut self) {
         debug!("Refreshing window state after Mission Control");
@@ -6079,7 +6003,6 @@ impl Reactor {
         self.force_refresh_all_windows();
         self.check_for_new_windows();
         self.update_layout_or_warn(false, false, None);
-        self.maybe_send_menu_update();
     }
 
     // Uses the same "pending refresh" path as Mission Control recovery so a bulk
