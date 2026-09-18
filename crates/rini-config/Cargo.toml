@@ -1,0 +1,31 @@
+[package]
+name = "rini-config"
+version = "0.1.0"
+edition = "2024"
+description = "rini's config file: schema, parsing, validation, hot reload, and the commands a key can be bound to"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+anyhow = { workspace = true }
+continue = { workspace = true }
+dirs = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+once_cell = { workspace = true }
+rini-macos = { workspace = true }
+rini-protocol = { workspace = true }
+rini-shared = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

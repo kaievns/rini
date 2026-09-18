@@ -1,6 +1,4 @@
 pub mod app;
-pub mod config;
-pub mod config_watcher;
 pub mod cursor_warp;
 pub mod drag_swap;
 pub mod event_tap;

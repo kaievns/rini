@@ -3,7 +3,7 @@ use regex::{Regex, RegexBuilder};
 use tracing::warn;
 
 use rini_shared::ids::WindowId;
-use crate::common::config::{AppRulePosition, AppRuleSize, AppWorkspaceRule, WorkspaceSelector};
+use rini_config::{AppRulePosition, AppRuleSize, AppWorkspaceRule, WorkspaceSelector};
 use crate::model::VirtualWorkspaceId;
 use rini_shared::ids::SpaceId;
 

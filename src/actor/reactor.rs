@@ -88,7 +88,7 @@ use crate::actor::reactor::events::window_discovery;
 use crate::actor::spaces::{ForwardedSpaceState, TopologyWindowDelta};
 use crate::actor;
 use rini_shared::collections::{BTreeMap, HashMap, HashSet};
-use crate::common::config::Config;
+use rini_config::Config;
 use crate::layout_engine::{self as layout, Direction, LayoutEngine, LayoutEvent};
 use crate::model::broadcast::{
     BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id,
@@ -488,7 +488,7 @@ impl Reactor {
             last_autosave: None,
             autosave_pending: false,
             #[cfg(not(test))]
-            autosave_path: Some(crate::common::config::restore_file()),
+            autosave_path: Some(rini_config::restore_file()),
             // Tests drive update_layout, which autosaves. Never let the suite write to the
             // real layout file; a test that wants to exercise autosave sets a temp path.
             #[cfg(test)]

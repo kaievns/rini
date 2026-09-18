@@ -13,7 +13,7 @@ use crate::actor::{
     event_tap, gesture_tap, raise_manager, window_notify, wm_controller,
 };
 use rini_shared::collections::{HashMap, HashSet};
-use crate::common::config::WindowSnappingSettings;
+use rini_config::WindowSnappingSettings;
 use crate::layout_engine::LayoutEngine;
 use crate::model::broadcast::BroadcastSender;
 use rini_shared::ids::SpaceId;

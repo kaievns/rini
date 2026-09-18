@@ -12,7 +12,7 @@ pub mod subscriptions;
 use rini_protocol::{RiniRequest, RiniResponse};
 pub use rini_client::{ClientError as RiniMachClientError, RiniMachClient, RiniMachSubscription};
 
-use crate::actor::config as config_actor;
+use rini_config::actor as config_actor;
 use crate::actor::reactor::{self, Event};
 use crate::ipc::subscriptions::SharedServerState;
 use rini_macos::dispatch::block_on;

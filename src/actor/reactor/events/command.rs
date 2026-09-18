@@ -10,7 +10,7 @@ use crate::actor::reactor::managers::{
 };
 use crate::actor::spaces::ForwardedSpaceState;
 use rini_shared::collections::HashMap;
-use crate::common::config::{self as config, Config};
+use rini_config::{self as config, Config};
 use rini_shared::log::{MetricsCommand, handle_command as handle_metrics_command};
 use crate::layout_engine::{EventResponse, LayoutCommand, LayoutEvent};
 use crate::model::RiniState;

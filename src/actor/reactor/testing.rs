@@ -6,7 +6,7 @@ use crate::actor;
 use crate::actor::app::{AppThreadHandle, Quiet, Request, WindowId};
 use crate::actor::spaces::ForwardedSpaceState;
 use rini_shared::collections::BTreeMap;
-use crate::common::config::Config;
+use rini_config::Config;
 use crate::layout_engine::{LayoutCommand, LayoutEngine};
 use rini_macos::app::{AppInfo, WindowInfo, pid_t};
 use rini_shared::geometry::SameAs;
@@ -270,21 +270,21 @@ impl Reactor {
 /// The default reactor used by the tests. Keep the individual tests focused on
 /// the behavior they exercise instead of repeating the production wiring.
 pub fn test_reactor() -> Reactor {
-    test_reactor_with_workspace_settings(&crate::common::config::VirtualWorkspaceSettings::default())
+    test_reactor_with_workspace_settings(&rini_config::VirtualWorkspaceSettings::default())
 }
 
 pub fn test_reactor_with_workspace_settings(
-    workspace_settings: &crate::common::config::VirtualWorkspaceSettings,
+    workspace_settings: &rini_config::VirtualWorkspaceSettings,
 ) -> Reactor {
     Reactor::new_for_test(LayoutEngine::new(
         workspace_settings,
-        &crate::common::config::LayoutSettings::default(),
+        &rini_config::LayoutSettings::default(),
         None,
     ))
 }
 
 pub fn test_reactor_with_workspace_count(count: usize) -> Reactor {
-    let mut settings = crate::common::config::VirtualWorkspaceSettings::default();
+    let mut settings = rini_config::VirtualWorkspaceSettings::default();
     settings.default_workspace_count = count;
     test_reactor_with_workspace_settings(&settings)
 }
@@ -658,7 +658,7 @@ pub fn test_context() -> (Apps, Reactor) {
 }
 
 pub fn test_context_with_workspace_count(count: usize) -> (Apps, Reactor) {
-    let mut settings = crate::common::config::VirtualWorkspaceSettings::default();
+    let mut settings = rini_config::VirtualWorkspaceSettings::default();
     settings.default_workspace_count = count;
     (Apps::new(), test_reactor_with_workspace_settings(&settings))
 }

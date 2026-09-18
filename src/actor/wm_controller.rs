@@ -2,20 +2,18 @@
 //! window manager on certain spaces and launching app threads. It also
 //! controls hotkey registration.
 
-use std::borrow::Cow;
 use std::path::PathBuf;
 
 use dispatchr::queue;
 use dispatchr::time::Time;
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
 use serde_json;
-use strum::VariantNames;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::actor::gesture_tap;
-use crate::common::config::WorkspaceSelector;
+use rini_config::actor as config;
+pub use rini_config::{ExecCmd, WmCmd, WmCommand};
+use rini_config::WorkspaceSelector;
 use rini_macos::app::{NSRunningApplicationExt, pid_t};
 
 pub type Sender = actor::Sender<WmEvent>;
@@ -25,7 +23,7 @@ type Receiver = actor::Receiver<WmEvent>;
 use self::WmCmd::*;
 use crate::actor::app::AppInfo;
 use crate::actor::spaces::ForwardedSpaceState;
-use crate::actor::{self, config, event_tap, reactor};
+use crate::actor::{self, event_tap, reactor};
 use crate::model::tx_store::WindowTxStore;
 use rini_macos::dispatch::DispatchExt;
 use rini_macos::screen::CoordinateConverter;
@@ -44,89 +42,13 @@ pub enum WmEvent {
     SpaceStateUpdated(ForwardedSpaceState, CoordinateConverter),
     PowerStateChanged(bool),
     KeyboardLayoutChanged,
-    ConfigUpdated(crate::common::config::Config),
+    ConfigUpdated(rini_config::Config),
     Command(WmCommand),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum WmCommand {
-    Wm(WmCmd),
-    ReactorCommand(reactor::Command),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, strum_macros::VariantNames)]
-#[serde(rename_all = "snake_case")]
-pub enum WmCmd {
-    ToggleSpaceActivated,
-    Exec(ExecCmd),
-    ReloadConfig,
-
-    NextWorkspace,
-    PrevWorkspace,
-    SwitchToWorkspace(WorkspaceSelector),
-    MoveWindowToWorkspace(WorkspaceSelector),
-    CreateWorkspace,
-    SwitchToLastWorkspace,
-
-    CloseWindow,
-
-    /// Cycle the focused app's windows across workspaces and displays.
-    ///
-    /// Two unit variants rather than one taking `{ backward: bool }`. `WmCommand` is
-    /// `#[serde(untagged)]`, so a struct-bodied variant whose only field has a default
-    /// cannot be written as a bare string in a keybinding: `"cycle_app_windows"` matched
-    /// neither arm, and rini PANICS at startup on an unparseable binding rather than
-    /// skipping it, so the whole WM failed to start. Unit variants keep both directions
-    /// expressible as plain strings.
-    CycleAppWindows,
-    CycleAppWindowsBackward,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
-pub enum ExecCmd {
-    String(String),
-    Array(Vec<String>),
-}
-
-static BUILTIN_WM_CMD_VARIANTS: Lazy<Vec<String>> = Lazy::new(|| {
-    WmCmd::VARIANTS
-        .iter()
-        .map(|v| {
-            let mut out = String::with_capacity(v.len());
-            for (i, ch) in v.chars().enumerate() {
-                if ch.is_uppercase() {
-                    if i != 0 {
-                        out.push('_');
-                    }
-                    for lc in ch.to_lowercase() {
-                        out.push(lc);
-                    }
-                } else {
-                    out.push(ch);
-                }
-            }
-            out
-        })
-        .collect()
-});
-
-impl WmCmd {
-    pub fn snake_case_variants() -> &'static [String] {
-        &BUILTIN_WM_CMD_VARIANTS
-    }
-}
-
-impl WmCommand {
-    pub fn builtin_candidates() -> &'static [String] {
-        WmCmd::snake_case_variants()
-    }
 }
 
 pub struct Config {
     pub restore_file: PathBuf,
-    pub config: crate::common::config::Config,
+    pub config: rini_config::Config,
 }
 
 pub struct WmController {
@@ -414,7 +336,7 @@ impl WmController {
     fn reload_config(&self) {
         let (response, _fut) = r#continue::continuation();
         let msg = config::Event::ApplyConfig {
-            cmd: crate::common::config::ConfigCommand::ReloadConfig,
+            cmd: rini_config::ConfigCommand::ReloadConfig,
             response,
         };
         if let Err(e) = self.config_tx.try_send(msg) {
@@ -455,11 +377,3 @@ impl WmController {
     }
 }
 
-impl ExecCmd {
-    fn as_array(&self) -> Cow<'_, [String]> {
-        match self {
-            ExecCmd::Array(vec) => Cow::Borrowed(&*vec),
-            ExecCmd::String(s) => s.split(' ').map(|s| s.to_owned()).collect::<Vec<_>>().into(),
-        }
-    }
-}

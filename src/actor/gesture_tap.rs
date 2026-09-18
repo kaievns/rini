@@ -18,7 +18,7 @@ use tracing::{trace, warn};
 use crate::actor;
 use crate::actor::reactor;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
-use crate::common::config::{Config, HapticPattern};
+use rini_config::{Config, HapticPattern};
 use crate::layout_engine::LayoutCommand as LC;
 use rini_macos::haptics;
 

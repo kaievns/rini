@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
 use rini_shared::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
-use crate::common::config::{LayoutSettings, VirtualWorkspaceSettings};
+use rini_config::{LayoutSettings, VirtualWorkspaceSettings};
 use crate::layout_engine::LayoutSystem;
 use crate::model::broadcast::BroadcastSender;
 use crate::model::{

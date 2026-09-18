@@ -10,7 +10,7 @@ use tracing::Span;
 use super::{Event, Reactor};
 use crate::actor::app::{AppThreadHandle, Request};
 use crate::actor::{self};
-use crate::common::config::Config;
+use rini_config::Config;
 use crate::layout_engine::LayoutEngine;
 
 thread_local! {

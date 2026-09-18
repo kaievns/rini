@@ -3,8 +3,6 @@ pub use rini_protocol::{DisplaySelector, ReactorCommand};
 use serde::{Deserialize, Serialize};
 
 use crate::actor::app::{AppInfo, AppThreadHandle, WindowId, pid_t};
-use rini_shared::log::MetricsCommand;
-use crate::layout_engine::LayoutCommand;
 use crate::model::WindowStore;
 use rini_macos::app::WindowInfo;
 use rini_shared::ids::SpaceId;
@@ -23,13 +21,7 @@ pub struct RiniState {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Requested(pub bool);
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum Command {
-    Layout(LayoutCommand),
-    Metrics(MetricsCommand),
-    Reactor(ReactorCommand),
-}
+pub use rini_config::commands::Command;
 
 #[derive(Debug, Clone)]
 pub struct DragSession {

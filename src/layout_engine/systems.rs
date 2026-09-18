@@ -103,7 +103,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
         layout: LayoutId,
         screen: CGRect,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
-        gaps: &crate::common::config::GapSettings,
+        gaps: &rini_config::GapSettings,
     ) -> Vec<(WindowId, CGRect)>;
 
     fn selected_window(&self, layout: LayoutId) -> Option<WindowId>;
@@ -166,7 +166,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
         old_frame: CGRect,
         new_frame: CGRect,
         screen: CGRect,
-        gaps: &crate::common::config::GapSettings,
+        gaps: &rini_config::GapSettings,
     );
 
     fn swap_windows(&mut self, layout: LayoutId, a: WindowId, b: WindowId) -> bool;
@@ -203,7 +203,7 @@ pub use scrolling::ScrollingLayoutSystem;
 mod tests {
     use super::{LayoutSystem, ScrollingLayoutSystem, WindowLayoutConstraints};
     use rini_shared::ids::WindowId;
-    use crate::common::config::{ScrollingLayoutSettings, WindowInsertionPoint};
+    use rini_config::{ScrollingLayoutSettings, WindowInsertionPoint};
 
     fn w(idx: u32) -> WindowId {
         WindowId::new(1, idx)

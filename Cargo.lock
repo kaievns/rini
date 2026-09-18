@@ -1399,6 +1399,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "continue",
+ "dirs",
+ "notify",
+ "notify-debouncer-mini",
+ "once_cell",
+ "rini-macos",
+ "rini-protocol",
+ "rini-shared",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "rini-macos"
 version = "0.1.0"
 dependencies = [
@@ -1494,6 +1517,7 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "rini-client",
+ "rini-config",
  "rini-macos",
  "rini-protocol",
  "rini-shared",

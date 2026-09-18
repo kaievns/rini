@@ -72,7 +72,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{CGError, CGEvent};
 use tracing::{debug, info};
 
-use crate::common::config::StackedUpperSide;
+use rini_config::StackedUpperSide;
 use rini_shared::geometry::CGRectExt;
 use rini_macos::screen::ScreenInfo;
 

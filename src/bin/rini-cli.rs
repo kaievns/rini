@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use rini_protocol::{EventKind, RiniRequest, RiniResponse};
 use rini_wm::actor::app::WindowId as InternalWindowId;
 use rini_wm::actor::reactor::{self, DisplaySelector};
-use rini_wm::common::config::WorkspaceSelector;
+use rini_config::WorkspaceSelector;
 use rini_wm::ipc::RiniMachClient;
 use rini_wm::layout_engine as layout;
 use rini_macos::window_server::WindowServerId;
@@ -24,7 +24,7 @@ struct Cli {
 
 enum CliCommand {
     Reactor(reactor::Command),
-    Config(rini_wm::common::config::ConfigCommand),
+    Config(rini_config::ConfigCommand),
 }
 
 #[derive(Subcommand)]
@@ -590,7 +590,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         }
         ExecuteCommands::SaveLayout { file } => {
             let path = if file.saved {
-                rini_wm::common::config::restore_file()
+                rini_config::restore_file()
             } else {
                 absolute_layout_path(file.path.expect("clap requires either PATH or --saved"))?
             };
@@ -601,7 +601,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::LoadLayout { file, scope } => {
             let (path, source) = if file.saved {
                 (
-                    rini_wm::common::config::restore_file(),
+                    rini_config::restore_file(),
                     layout::RestoreSource::CurrentSpace,
                 )
             } else {
@@ -657,7 +657,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ),
     };
 
-    if let CliCommand::Config(rini_wm::common::config::ConfigCommand::GetConfig) = &rini_command {
+    if let CliCommand::Config(rini_config::ConfigCommand::GetConfig) = &rini_command {
         return Ok(RiniRequest::GetConfig);
     }
 
@@ -882,7 +882,7 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
 }
 
 fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
-    use rini_wm::common::config::ConfigCommand;
+    use rini_config::ConfigCommand;
 
     let cfg_cmd = match cmd {
         ConfigCommands::SetAnimate { value } => {

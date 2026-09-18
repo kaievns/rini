@@ -3,7 +3,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use crate::actor::app::{AppInfo, Request, WindowId, WindowInfo, pid_t};
 use crate::actor::raise_manager;
 use crate::actor::wm_controller::WmEvent;
-use crate::common::config::Config;
+use rini_config::Config;
 use crate::layout_engine::{Direction, EventResponse, LayoutEvent};
 use rini_shared::ids::SpaceId;
 use rini_macos::window_server::{WindowServerId, WindowServerInfo};

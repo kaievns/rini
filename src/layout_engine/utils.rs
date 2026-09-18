@@ -1,6 +1,6 @@
 use objc2_core_foundation::CGRect;
 
-pub fn compute_tiling_area(screen: CGRect, gaps: &crate::common::config::GapSettings) -> CGRect {
+pub fn compute_tiling_area(screen: CGRect, gaps: &rini_config::GapSettings) -> CGRect {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use rini_shared::geometry::Round;

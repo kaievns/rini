@@ -9,7 +9,7 @@ use super::{
 };
 use crate::actor::app::{AppInfo, WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
-use crate::common::config::{LayoutSettings, WorkspaceSelector};
+use rini_config::{LayoutSettings, WorkspaceSelector};
 use crate::layout_engine::LayoutSystem;
 use crate::layout_engine::floating::FloatingFullscreenKind;
 use crate::layout_engine::systems::WindowLayoutConstraints;
@@ -239,7 +239,7 @@ impl LayoutEngine {
 
     pub fn update_virtual_workspace_settings(
         &mut self,
-        settings: &crate::common::config::VirtualWorkspaceSettings,
+        settings: &rini_config::VirtualWorkspaceSettings,
     ) {
         self.app_rules = AppRuleEngine::new(&settings.app_rules, settings.float_modal_windows);
         self.virtual_workspace_manager.update_settings(settings, &self.layout_settings);
@@ -1420,7 +1420,7 @@ impl LayoutEngine {
     }
 
     pub fn new(
-        virtual_workspace_config: &crate::common::config::VirtualWorkspaceSettings,
+        virtual_workspace_config: &rini_config::VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
         broadcast_tx: Option<BroadcastSender>,
     ) -> Self {
@@ -2217,7 +2217,7 @@ impl LayoutEngine {
         &mut self,
         space: SpaceId,
         screen: CGRect,
-        gaps: &crate::common::config::GapSettings,
+        gaps: &rini_config::GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
         let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
             return Vec::new();
@@ -2235,7 +2235,7 @@ impl LayoutEngine {
         window_store: &WindowStore,
         space: SpaceId,
         screen: CGRect,
-        gaps: &crate::common::config::GapSettings,
+        gaps: &rini_config::GapSettings,
         get_window_frame: F,
         all_screens: &[CGRect],
     ) -> Vec<(WindowId, CGRect)>
@@ -2443,7 +2443,7 @@ impl LayoutEngine {
         space: SpaceId,
         workspace_id: crate::model::VirtualWorkspaceId,
         screen: CGRect,
-        gaps: &crate::common::config::GapSettings,
+        gaps: &rini_config::GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
         let mut positions = HashMap::default();
 
@@ -3236,7 +3236,7 @@ mod tests {
 
     use super::*;
     use rini_shared::collections::HashMap;
-    use crate::common::config::{
+    use rini_config::{
         AppRulePosition, AppRuleSize, AppWorkspaceRule, LayoutSettings, VirtualWorkspaceSettings,
         WorkspaceSelector,
     };

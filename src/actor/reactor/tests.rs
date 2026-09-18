@@ -5,7 +5,7 @@ use super::testing::*;
 use super::*;
 use crate::actor::app::{AppThreadHandle, Request, pid_t};
 use crate::actor::wm_controller::WmEvent;
-use crate::common::config::{OuterGaps, WorkspaceSelector};
+use rini_config::{OuterGaps, WorkspaceSelector};
 use crate::layout_engine::{Direction, LayoutCommand, LayoutEvent};
 use crate::model::window_store::NativeFullscreenTransition;
 use rini_macos::app::{AppInfo, WindowInfo};
@@ -3624,14 +3624,14 @@ fn fullscreen_startup_fixture(
     crate::model::virtual_workspace::VirtualWorkspaceId,
     crate::model::virtual_workspace::VirtualWorkspaceId,
 ) {
-    let mut workspace_cfg = crate::common::config::VirtualWorkspaceSettings {
+    let mut workspace_cfg = rini_config::VirtualWorkspaceSettings {
         default_workspace_count: 2,
-        ..crate::common::config::VirtualWorkspaceSettings::default()
+        ..rini_config::VirtualWorkspaceSettings::default()
     };
     if with_app_rule {
-        workspace_cfg.app_rules = vec![crate::common::config::AppWorkspaceRule {
+        workspace_cfg.app_rules = vec![rini_config::AppWorkspaceRule {
             app_id: Some("com.testapp1".to_string()),
-            workspace: Some(crate::common::config::WorkspaceSelector::Index(1)),
+            workspace: Some(rini_config::WorkspaceSelector::Index(1)),
             floating: false,
             position: None,
             size: None,

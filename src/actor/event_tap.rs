@@ -31,7 +31,7 @@ use crate::actor;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
 use rini_shared::collections::{HashMap, HashSet};
-use crate::common::config::Config;
+use rini_config::Config;
 use rini_macos::event::{self, Hotkey, KeyCode, MouseState, set_mouse_state};
 use rini_macos::hotkey::{
     Modifiers, is_modifier_key, key_code_from_event, modifier_key_is_active,

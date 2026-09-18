@@ -1,3 +1,6 @@
+//! The config file: schema, parsing with suggestions, validation, save. Defaults and the
+//! documented shape live in `rini.default.toml`, which is embedded here.
+
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -6,8 +9,13 @@ pub use rini_protocol::{ConfigCommand, WorkspaceSelector};
 use serde::{Deserialize, Serialize};
 
 use rini_shared::collections::HashMap;
-use crate::actor::wm_controller::WmCommand;
 use rini_macos::hotkey::{Hotkey, HotkeySpec};
+
+pub mod actor;
+pub mod commands;
+pub mod watcher;
+
+pub use commands::{Command, ExecCmd, WmCmd, WmCommand};
 pub use rini_macos::haptics::HapticPattern;
 
 pub const MAX_WORKSPACES: usize = 128;
@@ -1013,7 +1021,7 @@ impl Config {
     }
 
     pub fn default() -> Config {
-        Self::parse(include_str!("../../rini.default.toml")).unwrap()
+        Self::parse(include_str!("../../../rini.default.toml")).unwrap()
     }
 
     /// Writes the config back out. Bindings are written expanded: `modifier_combinations`
@@ -1232,7 +1240,7 @@ impl Config {
             }
         } else {
             // Use dynamically generated builtin candidates.
-            let builtin_candidates = crate::actor::wm_controller::WmCommand::builtin_candidates();
+            let builtin_candidates = WmCommand::builtin_candidates();
             for cand in builtin_candidates.iter() {
                 let dist = Self::levenshtein(&unknown_token, &cand.to_lowercase());
                 if best.is_none() || dist < best.as_ref().unwrap().1 {
@@ -1295,8 +1303,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::reactor;
-    use crate::layout_engine::{LayoutCommand, ResizeOrientation};
+    use rini_protocol::{LayoutCommand, ResizeOrientation};
 
     #[test]
     fn scrolling_insertion_point_falls_back_to_the_global_default() {
@@ -1422,19 +1429,19 @@ mod tests {
 
         assert_eq!(
             config.keys["legacy"],
-            WmCommand::ReactorCommand(reactor::Command::Layout(LayoutCommand::ResizeWindowGrow(
+            WmCommand::ReactorCommand(Command::Layout(LayoutCommand::ResizeWindowGrow(
                 ResizeOrientation::Horizontal
             )))
         );
         assert_eq!(
             config.keys["vertical"],
-            WmCommand::ReactorCommand(reactor::Command::Layout(LayoutCommand::ResizeWindowShrink(
+            WmCommand::ReactorCommand(Command::Layout(LayoutCommand::ResizeWindowShrink(
                 ResizeOrientation::Vertical
             )))
         );
         assert_eq!(
             config.keys["smart"],
-            WmCommand::ReactorCommand(reactor::Command::Layout(LayoutCommand::ResizeWindowGrow(
+            WmCommand::ReactorCommand(Command::Layout(LayoutCommand::ResizeWindowGrow(
                 ResizeOrientation::Smart
             )))
         );

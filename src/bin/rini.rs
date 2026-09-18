@@ -5,8 +5,8 @@ use std::process;
 use clap::{Parser, Subcommand};
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
-use rini_wm::actor::config::ConfigActor;
-use rini_wm::actor::config_watcher::ConfigWatcher;
+use rini_config::actor::ConfigActor;
+use rini_config::watcher::ConfigWatcher;
 use rini_wm::actor::event_tap::EventTap;
 use rini_wm::actor::gesture_tap::GestureTap;
 use rini_wm::actor::mission_control_observer::NativeMissionControl;
@@ -16,7 +16,7 @@ use rini_wm::actor::reactor::{self, Reactor};
 use rini_wm::actor::spaces::SpacesActor;
 use rini_wm::actor::window_notify as window_notify_actor;
 use rini_wm::actor::wm_controller::{self, WmController};
-use rini_wm::common::config::{Config, config_file, restore_file};
+use rini_config::{Config, config_file, restore_file};
 use rini_shared::log;
 use rini_shared::util::execute_startup_commands;
 use rini_wm::ipc;
@@ -250,8 +250,14 @@ stays usable. Fix the config and restart. Error: {error}",
     );
     let events_tx = reactor.sender();
 
-    let config_tx =
-        ConfigActor::spawn_with_path(config.clone(), events_tx.clone(), config_path.clone());
+    let config_tx = ConfigActor::spawn_with_path(
+        config.clone(),
+        Box::new({
+            let events_tx = events_tx.clone();
+            move |config| events_tx.send(reactor::Event::ConfigUpdated(config))
+        }),
+        config_path.clone(),
+    );
 
     ConfigWatcher::spawn(config_tx.clone(), config.clone(), config_path.clone());
 

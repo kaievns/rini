@@ -460,8 +460,8 @@ mod tests {
         use Event::*;
         let mut apps = Apps::new();
         let mut reactor = Reactor::new_for_test(LayoutEngine::new(
-            &crate::common::config::VirtualWorkspaceSettings::default(),
-            &crate::common::config::LayoutSettings::default(),
+            &rini_config::VirtualWorkspaceSettings::default(),
+            &rini_config::LayoutSettings::default(),
             None,
         ));
         let space = SpaceId::new(1);
@@ -532,8 +532,8 @@ mod tests {
         use Event::*;
         let mut apps = Apps::new();
         let mut reactor = Reactor::new_for_test(LayoutEngine::new(
-            &crate::common::config::VirtualWorkspaceSettings::default(),
-            &crate::common::config::LayoutSettings::default(),
+            &rini_config::VirtualWorkspaceSettings::default(),
+            &rini_config::LayoutSettings::default(),
             None,
         ));
         let space = SpaceId::new(1);
@@ -613,8 +613,8 @@ mod tests {
         use Event::*;
         let mut apps = Apps::new();
         let mut reactor = Reactor::new_for_test(LayoutEngine::new(
-            &crate::common::config::VirtualWorkspaceSettings::default(),
-            &crate::common::config::LayoutSettings::default(),
+            &rini_config::VirtualWorkspaceSettings::default(),
+            &rini_config::LayoutSettings::default(),
             None,
         ));
         let pid = 3;

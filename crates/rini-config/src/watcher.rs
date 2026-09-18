@@ -10,8 +10,8 @@ use notify_debouncer_mini::{
 };
 use tracing::{debug, info, trace, warn};
 
-use crate::actor::config::{self as config_actor, Event as ConfigEvent};
-use crate::common::config::{self, ConfigCommand};
+use crate::actor::{self as config_actor, Event as ConfigEvent};
+use crate::{self as config, ConfigCommand};
 
 pub struct ConfigWatcher {
     file: PathBuf,
@@ -91,7 +91,7 @@ impl ConfigWatcher {
             let mut should_reload = self.enabled;
 
             if !should_reload {
-                match crate::common::config::Config::read(&self.file) {
+                match crate::Config::read(&self.file) {
                     Ok(new_cfg) => {
                         if let Ok(current_cfg) = self.query_config().await {
                             if new_cfg.keys != current_cfg.keys {

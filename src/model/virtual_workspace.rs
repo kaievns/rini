@@ -6,8 +6,8 @@ use tracing::{error, warn};
 use rini_shared::ids::WindowId;
 use rini_shared::collections::{HashMap, HashSet};
 #[cfg(test)]
-use crate::common::config::AppWorkspaceRule;
-use crate::common::config::{
+use rini_config::AppWorkspaceRule;
+use rini_config::{
     LayoutSettings, MAX_WORKSPACES, VirtualWorkspaceSettings, WorkspaceSelector,
 };
 use rini_shared::log::trace_misc;

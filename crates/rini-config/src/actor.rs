@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::actor::{self, reactor};
-use crate::common::config::{Config, ConfigCommand, MAX_WORKSPACES};
+use rini_shared::channel as actor;
+
+use crate::{Config, ConfigCommand, MAX_WORKSPACES};
 
 pub type Sender = actor::Sender<Event>;
 pub type Receiver = actor::Receiver<Event>;
@@ -21,26 +22,25 @@ pub enum Event {
     },
 }
 
+/// Called with the new config after every accepted change, on the config thread.
+pub type OnChange = Box<dyn Fn(Config) + Send>;
+
 pub struct ConfigActor {
     config: Config,
-    reactor_tx: reactor::Sender,
+    on_change: OnChange,
     config_path: PathBuf,
 }
 
 impl ConfigActor {
 
-    pub fn spawn_with_path(
-        config: Config,
-        reactor_tx: reactor::Sender,
-        config_path: PathBuf,
-    ) -> Sender {
+    pub fn spawn_with_path(config: Config, on_change: OnChange, config_path: PathBuf) -> Sender {
         let (tx, rx) = actor::channel();
         std::thread::Builder::new()
             .name("config".to_string())
             .spawn(move || {
                 let actor = ConfigActor {
                     config,
-                    reactor_tx,
+                    on_change,
                     config_path,
                 };
                 rini_macos::executor::Executor::run(actor.run(rx));
@@ -245,7 +245,7 @@ impl ConfigActor {
         if config_changed {
             self.config = new_config;
 
-            self.reactor_tx.send(reactor::Event::ConfigUpdated(self.config.clone()));
+            (self.on_change)(self.config.clone());
         }
 
         Ok(())
@@ -259,11 +259,11 @@ impl ConfigActor {
 
     fn load_config_from_file(
         &mut self,
-    ) -> Result<crate::common::config::Config, Box<dyn std::error::Error>> {
+    ) -> Result<Config, Box<dyn std::error::Error>> {
         let config_path = &self.config_path;
 
         if config_path.exists() {
-            let new_config = crate::common::config::Config::read(config_path)?;
+            let new_config = Config::read(config_path)?;
             Ok(new_config)
         } else {
             Err("Config file not found".into())
