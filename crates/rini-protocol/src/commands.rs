@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::{
-    Direction, DisplaySelector, LayoutMode, ResizeOrientation, RestoreScope, RestoreSource,
+    Direction, DisplaySelector, ResizeOrientation, RestoreScope, RestoreSource,
     WindowId, WorkspaceSelector,
 };
 
@@ -15,13 +15,10 @@ pub enum LayoutCommand {
     NextWindow,
     PrevWindow,
     MoveFocus(#[serde(rename = "direction")] Direction),
-    Ascend,
-    Descend,
     MoveNode(Direction),
     JoinWindow(Direction),
     ConsumeOrExpelWindow(Direction),
     ToggleStack,
-    ToggleOrientation,
     UnjoinWindows,
     ToggleFocusFloating,
     ToggleWindowFloating,
@@ -50,10 +47,6 @@ pub enum LayoutCommand {
         workspace: WorkspaceSelector,
         follow: bool,
         window_id: Option<u32>,
-    },
-    SetWorkspaceLayout {
-        workspace: Option<usize>,
-        mode: LayoutMode,
     },
     CreateWorkspace,
     SwitchToLastWorkspace,
@@ -136,7 +129,6 @@ pub enum ConfigCommand {
     SetMouseFollowsFocus(bool),
     SetMouseHidesOnFocus(bool),
     SetFocusFollowsMouse(bool),
-    SetStackOffset(f64),
     SetOuterGaps {
         top: f64,
         left: f64,

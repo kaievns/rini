@@ -11,7 +11,7 @@ use crate::common::config::{
 use crate::layout_engine::systems::constraints::{AxisConstraints, solve_axis_lengths};
 use crate::layout_engine::systems::{LayoutSystem, WindowLayoutConstraints};
 use crate::layout_engine::utils::compute_tiling_area;
-use crate::layout_engine::{Direction, LayoutId, LayoutKind, ResizeOrientation};
+use crate::layout_engine::{Direction, LayoutId, ResizeOrientation};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 struct Column {
@@ -761,7 +761,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
         &self,
         layout: LayoutId,
         screen: CGRect,
-        _stack_offset: f64,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
         gaps: &crate::common::config::GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
@@ -1157,19 +1156,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
         state.columns[col_idx].windows.clone()
     }
 
-    fn ascend_selection(&mut self, layout: LayoutId) -> bool {
-        let Some(state) = self.layout_state_mut(layout) else {
-            return false;
-        };
-        Self::move_focus_vertical(state, Direction::Up).is_some()
-    }
-
-    fn descend_selection(&mut self, layout: LayoutId) -> bool {
-        let Some(state) = self.layout_state_mut(layout) else {
-            return false;
-        };
-        Self::move_focus_vertical(state, Direction::Down).is_some()
-    }
 
     fn move_focus(
         &mut self,
@@ -1588,43 +1574,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
         moved
     }
 
-    fn move_selection_to_layout_after_selection(
-        &mut self,
-        from_layout: LayoutId,
-        to_layout: LayoutId,
-    ) {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
-        let Some(selected) = self.selected_window(from_layout) else {
-            return;
-        };
-        if let Some(state) = self.layout_state_mut(from_layout) {
-            state.remove_window(selected);
-            if niri_navigation {
-                state.reveal_selected_without_direction();
-            } else {
-                state.align_scroll_to_selected();
-            }
-        }
-        if let Some(state) = self.layout_state_mut(to_layout) {
-            if let Some((col_idx, _)) = state.selected_location() {
-                state.insert_column_after(col_idx, selected);
-            } else {
-                state.insert_column_at_end(selected);
-            }
-            if niri_navigation {
-                state.reveal_selected_without_direction();
-            } else {
-                state.align_scroll_to_selected();
-            }
-        }
-    }
-
-    fn split_selection(&mut self, _layout: LayoutId, _kind: LayoutKind) {
-        // Not applicable for scrolling layout.
-    }
 
     fn toggle_fullscreen_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state_mut(layout) else {
@@ -1739,12 +1688,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
         vec![selected]
     }
 
-    fn has_any_fullscreen_node(&self, layout: LayoutId) -> bool {
-        let Some(state) = self.layout_state(layout) else {
-            return false;
-        };
-        !state.fullscreen.is_empty() || !state.fullscreen_within_gaps.is_empty()
-    }
 
     fn join_selection_with_direction(&mut self, layout: LayoutId, direction: Direction) {
         let Some(state) = self.layout_state_mut(layout) else {
@@ -1818,11 +1761,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         state.clamp_scroll_offset();
     }
 
-    fn apply_stacking_to_parent_of_selection(
-        &mut self,
-        layout: LayoutId,
-        _default_orientation: crate::common::config::StackDefaultOrientation,
-    ) -> Vec<WindowId> {
+    fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
@@ -1863,11 +1802,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         vec![selected]
     }
 
-    fn unstack_parent_of_selection(
-        &mut self,
-        layout: LayoutId,
-        _default_orientation: crate::common::config::StackDefaultOrientation,
-    ) -> Vec<WindowId> {
+    fn unstack_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
@@ -2025,9 +1960,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn rebalance(&mut self, _layout: LayoutId) {}
-
-    fn toggle_tile_orientation(&mut self, _layout: LayoutId) {}
 }
 
 #[cfg(test)]
@@ -2065,7 +1997,6 @@ mod tests {
         system.calculate_layout(
             layout,
             screen,
-            0.0,
             &constraints,
             gaps,
         )
@@ -2127,7 +2058,6 @@ mod tests {
         let frames = system.calculate_layout(
             layout,
             screen(800.0, 600.0),
-            0.0,
             &constraints,
             &GapSettings::default(),
         );
@@ -2172,7 +2102,6 @@ mod tests {
         let frames = system.calculate_layout(
             layout,
             screen(700.0, 600.0),
-            0.0,
             &constraints,
             &GapSettings::default(),
         );
@@ -2206,7 +2135,6 @@ mod tests {
         let frames = system.calculate_layout(
             layout,
             screen(1200.0, 700.0),
-            0.0,
             &constraints,
             &GapSettings::default(),
         );
@@ -2263,7 +2191,6 @@ mod tests {
         let frames = system.calculate_layout(
             layout,
             screen(1200.0, 700.0),
-            0.0,
             &constraints,
             &GapSettings::default(),
         );
@@ -2302,7 +2229,6 @@ mod tests {
         let frames = system.calculate_layout(
             layout,
             screen,
-            0.0,
             &constraints,
             &gaps,
         );
@@ -3314,10 +3240,7 @@ mod tests {
 
         // Select the middle column and stack it leftwards.
         assert!(system.select_window(layout, w2));
-        let moved = system.apply_stacking_to_parent_of_selection(
-            layout,
-            crate::common::config::StackDefaultOrientation::Perpendicular,
-        );
+        let moved = system.apply_stacking_to_parent_of_selection(layout);
 
         assert_eq!(moved, vec![w2], "expected the SELECTED window to move");
 
@@ -3340,10 +3263,7 @@ mod tests {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
 
         assert!(system.select_window(layout, w1));
-        let moved = system.apply_stacking_to_parent_of_selection(
-            layout,
-            crate::common::config::StackDefaultOrientation::Perpendicular,
-        );
+        let moved = system.apply_stacking_to_parent_of_selection(layout);
 
         assert_eq!(moved, vec![w1]);
         let state = system.layouts.get(layout).expect("layout state");
@@ -3440,10 +3360,7 @@ mod tests {
 
         // Stack w2 into w1's column.
         assert!(system.select_window(layout, w2));
-        system.apply_stacking_to_parent_of_selection(
-            layout,
-            crate::common::config::StackDefaultOrientation::Perpendicular,
-        );
+        system.apply_stacking_to_parent_of_selection(layout);
 
         let frames = render(&system, layout, screen, &gaps);
         let h1 = frame_for(&frames, w1).size.height;

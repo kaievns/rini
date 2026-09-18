@@ -130,7 +130,6 @@ pub struct WorkspaceData {
     pub id: String,
     pub index: usize,
     pub name: String,
-    pub layout_mode: String,
     pub is_active: bool,
     pub window_count: usize,
     pub windows: Vec<WindowData>,
@@ -141,7 +140,6 @@ pub struct WorkspaceLayoutData {
     pub id: String,
     pub index: usize,
     pub name: String,
-    pub layout_mode: String,
     pub is_active: bool,
 }
 
@@ -159,7 +157,6 @@ pub struct LayoutStateData {
     pub space_id: u64,
     pub workspace_id: usize,
     pub is_active_workspace: bool,
-    pub mode: String,
     pub floating_windows: Vec<WindowId>,
     pub tiled_windows: Vec<WindowId>,
     pub focused_window: Option<WindowId>,
@@ -237,7 +234,6 @@ pub struct DiagnosticSpace {
     pub display_name: Option<String>,
     pub display_frame: Rect,
     pub is_active: bool,
-    pub mode: String,
     pub workspace_id: Option<String>,
     pub workspace_name: Option<String>,
     pub workspace_index: Option<usize>,

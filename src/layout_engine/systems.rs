@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actor::app::{WindowId, pid_t};
 use crate::common::collections::HashMap;
-use crate::layout_engine::{Direction, LayoutKind, ResizeOrientation};
+use crate::layout_engine::{Direction, ResizeOrientation};
 
 slotmap::new_key_type! { pub struct LayoutId; }
 
@@ -102,7 +102,6 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
         &self,
         layout: LayoutId,
         screen: CGRect,
-        stack_offset: f64,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
         gaps: &crate::common::config::GapSettings,
     ) -> Vec<(WindowId, CGRect)>;
@@ -114,8 +113,6 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     fn all_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId>;
     fn visible_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId>;
     fn visible_windows_under_selection(&self, layout: LayoutId) -> Vec<WindowId>;
-    fn ascend_selection(&mut self, layout: LayoutId) -> bool;
-    fn descend_selection(&mut self, layout: LayoutId) -> bool;
     fn move_focus(
         &mut self,
         layout: LayoutId,
@@ -156,9 +153,6 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     /// (strip) per display, so normalizing a single display's strip must not reach into the
     /// others — doing so deleted windows from the display they legitimately sat on.
     fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId);
-    fn remove_window_and_rebalance_parent(&mut self, wid: WindowId) {
-        self.remove_window(wid)
-    }
     fn remove_windows_for_app(&mut self, pid: pid_t);
     fn windows_for_app(&self, layout: LayoutId, pid: pid_t) -> Vec<WindowId>;
     fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>);
@@ -178,39 +172,19 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     fn swap_windows(&mut self, layout: LayoutId, a: WindowId, b: WindowId) -> bool;
 
     fn move_selection(&mut self, layout: LayoutId, direction: Direction) -> bool;
-    fn move_selection_to_layout_after_selection(
-        &mut self,
-        from_layout: LayoutId,
-        to_layout: LayoutId,
-    );
-    fn split_selection(&mut self, layout: LayoutId, kind: LayoutKind);
 
     fn toggle_fullscreen_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
-    fn has_any_fullscreen_node(&self, layout: LayoutId) -> bool;
 
     /// Cycle the selected column through the configured preset widths.
-    ///
-    /// Only the scrolling layout has a meaningful notion of column width presets;
-    /// every other layout ignores this.
-    fn cycle_preset_column_width(&mut self, _layout: LayoutId) -> Vec<WindowId> {
-        Vec::new()
-    }
+    fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId>;
 
     fn join_selection_with_direction(&mut self, layout: LayoutId, direction: Direction);
     fn consume_or_expel_selection(&mut self, layout: LayoutId, direction: Direction) {
         self.join_selection_with_direction(layout, direction);
     }
-    fn apply_stacking_to_parent_of_selection(
-        &mut self,
-        layout: LayoutId,
-        default_orientation: crate::common::config::StackDefaultOrientation,
-    ) -> Vec<WindowId>;
-    fn unstack_parent_of_selection(
-        &mut self,
-        layout: LayoutId,
-        default_orientation: crate::common::config::StackDefaultOrientation,
-    ) -> Vec<WindowId>;
+    fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
+    fn unstack_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
     fn parent_of_selection_is_stacked(&self, layout: LayoutId) -> bool;
     fn unjoin_selection(&mut self, _layout: LayoutId);
     fn resize_selection_by(
@@ -219,8 +193,6 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
         amount: f64,
         orientation: ResizeOrientation,
     );
-    fn rebalance(&mut self, layout: LayoutId);
-    fn toggle_tile_orientation(&mut self, layout: LayoutId);
 }
 
 pub(crate) mod constraints;

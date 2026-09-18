@@ -55,7 +55,6 @@ pub fn handle_command_layout(
             | LayoutCommand::PrevWorkspace(_)
             | LayoutCommand::SwitchToWorkspace(_)
             | LayoutCommand::MoveWindowToWorkspace { follow: true, .. }
-            | LayoutCommand::SetWorkspaceLayout { .. }
             | LayoutCommand::CreateWorkspace
             | LayoutCommand::SwitchToLastWorkspace
     );
@@ -65,7 +64,6 @@ pub fn handle_command_layout(
             | LayoutCommand::PrevWorkspace(_)
             | LayoutCommand::SwitchToWorkspace(_)
             | LayoutCommand::MoveWindowToWorkspace { .. }
-            | LayoutCommand::SetWorkspaceLayout { .. }
             | LayoutCommand::CreateWorkspace
             | LayoutCommand::SwitchToLastWorkspace
     );
@@ -87,7 +85,6 @@ pub fn handle_command_layout(
         LayoutCommand::NextWorkspace(_)
         | LayoutCommand::PrevWorkspace(_)
         | LayoutCommand::SwitchToWorkspace(_)
-        | LayoutCommand::SetWorkspaceLayout { .. }
         | LayoutCommand::CreateWorkspace
         | LayoutCommand::SwitchToLastWorkspace => {
             if let Some(space) = workspace_space {
@@ -189,7 +186,6 @@ pub fn handle_close_window(
 pub fn handle_config_updated(
     config: &mut Config,
     layout: &mut LayoutManager,
-    state: &RiniState,
     drag: &mut DragManager,
     new_config: Config,
 ) -> anyhow::Result<EventOutcome> {
@@ -198,7 +194,7 @@ pub fn handle_config_updated(
 
     layout
         .layout_engine
-        .update_virtual_workspace_settings(&state.windows, &config.virtual_workspaces);
+        .update_virtual_workspace_settings(&config.virtual_workspaces);
 
     drag.update_config(config.settings.window_snapping);
 

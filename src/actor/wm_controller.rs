@@ -190,11 +190,6 @@ impl WmController {
                     space_state.clone(),
                     converter,
                 ));
-                if let Some(tx) = &self.gesture_tap_tx {
-                    tx.send(gesture_tap::GestureRequest::SpaceStateUpdated(
-                        space_state.clone(),
-                    ));
-                }
             }
             AppEventsRegistered => {
                 _ = self.event_tap_tx.send(event_tap::Request::SetEventProcessing(false));

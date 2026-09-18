@@ -27,14 +27,10 @@ current behaviour annoys me.
   layout keeps reasserting the stored frame.
 
 ## Cleanup
-
-- **Delete the stack-line subsystem.** `collect_group_containers` now permanently returns
-  empty, so roughly 1.3k lines are dead — but it is referenced from 13 files and scrolling
-  still reads `stack_line.thickness()` for insets, so it needs unpicking rather than
-  deleting.
-- **Audit what else the single-layout prune left stranded.** The layout-mode removal was
-  broad; there are likely more `LayoutMode`-shaped abstractions that now have exactly one
-  case.
+- **Collapse the `LayoutSystem` trait onto `ScrollingLayoutSystem`.** One implementation is
+  left. Doing it means bumping the `layout.ron` schema (the enum wrapper is serialized).
+- **Merge the two gesture tables.** `[settings.gestures]` (workspace swipe) and
+  `[settings.layout.scrolling.gestures]` (column scroll) configure one event tap.
 
 ## Wanted
 

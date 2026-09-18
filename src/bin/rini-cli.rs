@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use rini_protocol::{EventKind, RiniRequest, RiniResponse};
 use rini_wm::actor::app::WindowId as InternalWindowId;
 use rini_wm::actor::reactor::{self, DisplaySelector};
-use rini_wm::common::config::{LayoutMode, WorkspaceSelector};
+use rini_wm::common::config::WorkspaceSelector;
 use rini_wm::ipc::RiniMachClient;
 use rini_wm::layout_engine as layout;
 use rini_wm::sys::window_server::WindowServerId;
@@ -321,22 +321,10 @@ enum WorkspaceCommands {
     Create,
     /// Switch to the last workspace
     Last,
-    /// Set layout mode for a workspace (or active workspace when omitted)
-    SetLayout {
-        /// Workspace index (0-based). Defaults to active workspace if omitted.
-        #[arg(long)]
-        workspace_id: Option<usize>,
-        /// Layout mode: traditional, bsp, stack, master_stack, scrolling
-        mode: String,
-    },
 }
 
 #[derive(Subcommand)]
 enum LayoutCommands {
-    /// Move selection up the tree
-    Ascend,
-    /// Move selection down the tree
-    Descend,
     /// Move the selected node in a direction
     MoveNode { direction: String },
     /// Join the selected window with neighbor in a direction
@@ -345,8 +333,6 @@ enum LayoutCommands {
     ConsumeOrExpelWindow { direction: String },
     /// Toggle stacked state for the selected container
     ToggleStack,
-    /// Global orientation toggle that works consistently across layout modes (and between splits/stacks)
-    ToggleOrientation,
     /// Unjoin previously joined windows
     Unjoin,
     /// Toggle floating on the focused selection (tree focus)
@@ -386,15 +372,6 @@ enum ConfigCommands {
         value: bool,
     },
 
-    /// Update layout settings
-    SetStackOffset {
-        value: f64,
-    },
-    /// Set the default stack orientation behavior. Value should be one of:
-    /// "perpendicular", "same", "horizontal", or "vertical"
-    SetStackDefaultOrientation {
-        value: String,
-    },
     SetOuterGaps {
         top: f64,
         left: f64,
@@ -859,14 +836,6 @@ fn parse_event_kind(input: &str) -> Result<EventKind, String> {
     }
 }
 
-fn parse_layout_mode(value: &str) -> Result<LayoutMode, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "scrolling" => Ok(LayoutMode::Scrolling),
-        other => Err(format!(
-            "Invalid layout mode '{other}'; the only mode is scrolling"
-        )),
-    }
-}
 
 fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
     use layout::LayoutCommand as LC;
@@ -897,20 +866,12 @@ fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
         WorkspaceCommands::Last => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::SwitchToLastWorkspace,
         ))),
-        WorkspaceCommands::SetLayout { workspace_id, mode } => {
-            let mode = parse_layout_mode(&mode)?;
-            Ok(CliCommand::Reactor(reactor::Command::Layout(
-                LC::SetWorkspaceLayout { workspace: workspace_id, mode },
-            )))
-        }
     }
 }
 
 fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
     use layout::LayoutCommand as LC;
     match cmd {
-        LayoutCommands::Ascend => Ok(CliCommand::Reactor(reactor::Command::Layout(LC::Ascend))),
-        LayoutCommands::Descend => Ok(CliCommand::Reactor(reactor::Command::Layout(LC::Descend))),
         LayoutCommands::MoveNode { direction } => Ok(CliCommand::Reactor(
             reactor::Command::Layout(LC::MoveNode(direction.into())),
         )),
@@ -923,9 +884,6 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
         LayoutCommands::ToggleStack => {
             Ok(CliCommand::Reactor(reactor::Command::Layout(LC::ToggleStack)))
         }
-        LayoutCommands::ToggleOrientation => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::ToggleOrientation,
-        ))),
         LayoutCommands::Unjoin => {
             Ok(CliCommand::Reactor(reactor::Command::Layout(LC::UnjoinWindows)))
         }
@@ -975,14 +933,6 @@ fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
         }
         ConfigCommands::SetFocusFollowsMouse { value } => {
             ConfigCommand::SetFocusFollowsMouse(value)
-        }
-        ConfigCommands::SetStackOffset { value } => ConfigCommand::SetStackOffset(value),
-        ConfigCommands::SetStackDefaultOrientation { value } => {
-            let parsed_value: serde_json::Value = serde_json::Value::String(value.clone());
-            ConfigCommand::Set {
-                key: "settings.layout.stack.default_orientation".to_string(),
-                value: parsed_value,
-            }
         }
         ConfigCommands::SetOuterGaps { top, left, bottom, right } => {
             ConfigCommand::SetOuterGaps { top, left, bottom, right }

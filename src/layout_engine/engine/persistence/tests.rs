@@ -2,7 +2,6 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
 use crate::actor::app::WindowInfo;
-use crate::common::config::LayoutMode;
 use crate::layout_engine::{LayoutEvent, LayoutSystemKind};
 use crate::model::VirtualWorkspace;
 use crate::model::reactor::WindowState;
@@ -1298,7 +1297,6 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
         )
         .unwrap();
 
-    assert_eq!(engine.active_layout_mode_at(target_space), LayoutMode::Scrolling);
     assert_eq!(
         engine
             .virtual_workspace_manager
@@ -1323,10 +1321,6 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
         )
         .unwrap();
     let _ = std::fs::remove_file(path);
-    assert_eq!(
-        master_target.active_layout_mode_at(target_space),
-        LayoutMode::Scrolling
-    );
     assert_eq!(
         master_target
             .virtual_workspace_manager
@@ -1394,8 +1388,6 @@ fn master_workspace_restore_uses_target_ordinal_and_preserves_configured_name() 
 
     let restored = engine.virtual_workspace_manager.workspace_info(space, target_s).unwrap();
     assert_eq!(restored.name, "S");
-    assert_eq!(restored.layout_mode(), LayoutMode::Scrolling);
-    assert_eq!(engine.active_layout_mode_at(space), LayoutMode::Scrolling);
 }
 
 #[test]
@@ -1439,7 +1431,6 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
         .unwrap();
     let _ = std::fs::remove_file(path);
 
-    assert_eq!(engine.active_layout_mode_at(current_a), LayoutMode::Scrolling);
 }
 
 #[test]
@@ -1955,18 +1946,14 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
 }
 
 #[test]
-fn every_layout_system_round_trips_through_ron() {
-    let settings = LayoutSettings::default();
-    for mode in [LayoutMode::Scrolling] {
-        let system = VirtualWorkspace::create_layout_system(mode, &settings);
-        let serialized = ron::ser::to_string(&system).unwrap();
-        let restored: LayoutSystemKind = ron::from_str(&serialized)
-            .unwrap_or_else(|error| panic!("{mode:?} failed to round-trip: {error}"));
-        assert_eq!(
-            std::mem::discriminant(&system),
-            std::mem::discriminant(&restored)
-        );
-    }
+fn layout_system_round_trips_through_ron() {
+    let system = VirtualWorkspace::create_layout_system(&LayoutSettings::default());
+    let serialized = ron::ser::to_string(&system).unwrap();
+    let restored: LayoutSystemKind = ron::from_str(&serialized).unwrap();
+    assert_eq!(
+        std::mem::discriminant(&system),
+        std::mem::discriminant(&restored)
+    );
 }
 
 #[test]

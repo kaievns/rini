@@ -1,19 +1,4 @@
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Orientation {
-    Horizontal,
-    Vertical,
-}
-
-impl Default for Orientation {
-    fn default() -> Self {
-        Self::Horizontal
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,13 +10,6 @@ pub enum Direction {
 }
 
 impl Direction {
-    pub fn orientation(self) -> Orientation {
-        match self {
-            Self::Left | Self::Right => Orientation::Horizontal,
-            Self::Up | Self::Down => Orientation::Vertical,
-        }
-    }
-
     pub const fn opposite(self) -> Self {
         match self {
             Self::Left => Self::Right,
@@ -41,13 +19,6 @@ impl Direction {
         }
     }
 
-    pub fn step(self, index: usize, len: usize) -> usize {
-        match self {
-            Self::Left => (index + len - 1) % len,
-            Self::Right => (index + 1) % len,
-            Self::Up | Self::Down => 0,
-        }
-    }
 }
 
 impl From<String> for Direction {
@@ -77,55 +48,4 @@ pub enum LayoutKind {
     #[default]
     Horizontal,
     Vertical,
-    HorizontalStack,
-    VerticalStack,
-}
-
-impl LayoutKind {
-    pub const fn from(orientation: Orientation) -> Self {
-        match orientation {
-            Orientation::Horizontal => Self::Horizontal,
-            Orientation::Vertical => Self::Vertical,
-        }
-    }
-
-    pub const fn stack_with_offset(orientation: Orientation) -> Self {
-        match orientation {
-            Orientation::Horizontal => Self::HorizontalStack,
-            Orientation::Vertical => Self::VerticalStack,
-        }
-    }
-
-    pub const fn is_stacked(self) -> bool {
-        matches!(self, Self::HorizontalStack | Self::VerticalStack)
-    }
-
-    pub const fn orientation(self) -> Orientation {
-        match self {
-            Self::Horizontal | Self::HorizontalStack => Orientation::Horizontal,
-            Self::Vertical | Self::VerticalStack => Orientation::Vertical,
-        }
-    }
-
-    pub const fn is_group(self) -> bool {
-        self.is_stacked()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LayoutMode {
-    /// The only layout. Kept as an enum so existing config files that say
-    /// `mode = "scrolling"` still parse, and so the per-workspace plumbing does not have
-    /// to be torn out; the tree-based layouts it used to select were removed.
-    #[default]
-    Scrolling,
-}
-
-impl fmt::Display for LayoutMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Scrolling => "scrolling",
-        })
-    }
 }

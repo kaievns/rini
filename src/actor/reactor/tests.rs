@@ -5,7 +5,7 @@ use super::testing::*;
 use super::*;
 use crate::actor::app::{AppThreadHandle, Request, pid_t};
 use crate::actor::wm_controller::WmEvent;
-use crate::common::config::{LayoutMode, OuterGaps, WorkspaceSelector};
+use crate::common::config::{OuterGaps, WorkspaceSelector};
 use crate::layout_engine::{Direction, LayoutCommand, LayoutEvent};
 use crate::model::window_store::NativeFullscreenTransition;
 use crate::sys::app::{AppInfo, WindowInfo};
@@ -990,7 +990,7 @@ fn matching_rini_frame_clears_pending_target() {
         reactor.transaction_manager.get_target_frame(wsid),
         Some(adjusted_target)
     );
-    assert!(!outcome.arrange.requested && !outcome.refresh_layout_mode);
+    assert!(!outcome.arrange.requested);
 
     // A user drag beginning during the transaction clears it instead of accepting it blindly.
     reactor.handle_event(Event::WindowFrameChanged(
@@ -1023,7 +1023,6 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
         ))
         .unwrap();
     assert!(!acknowledgement.arrange.requested);
-    assert!(!acknowledgement.refresh_layout_mode);
 
     let unchanged = reactor
         .dispatch_workflow(Event::WindowFrameChanged(
@@ -1035,7 +1034,6 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
         ))
         .unwrap();
     assert!(!unchanged.arrange.requested);
-    assert!(!unchanged.refresh_layout_mode);
 
     let explicitly_requested_frame = CGRect::new(
         CGPoint::new(target_frame.origin.x + 10.0, target_frame.origin.y),
@@ -1051,7 +1049,6 @@ fn frame_acknowledgements_and_unchanged_frames_do_not_invalidate_layout() {
         ))
         .unwrap();
     assert!(!requested.arrange.requested);
-    assert!(!requested.refresh_layout_mode);
 }
 
 #[test]
@@ -1074,7 +1071,6 @@ fn genuine_external_frame_changes_invalidate_layout() {
 
     assert!(outcome.arrange.requested);
     assert_eq!(outcome.arrange.passes, 1);
-    assert!(outcome.refresh_layout_mode);
 }
 
 #[test]
@@ -2484,11 +2480,6 @@ fn dock_activation_reveals_window_in_active_scrolling_workspace() {
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, pid, make_windows(3));
-    reactor.handle_test_layout_command(LayoutCommand::SetWorkspaceLayout {
-        workspace: None,
-        mode: LayoutMode::Scrolling,
-    });
-    apps.simulate_until_quiet(&mut reactor);
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(pid, 1)));
     apps.simulate_until_quiet(&mut reactor);
     let _ = apps.requests();
@@ -6708,7 +6699,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     reactor
         .layout_manager
         .layout_engine
-        .update_virtual_workspace_settings(&reactor.state.windows, &settings);
+        .update_virtual_workspace_settings(&settings);
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));

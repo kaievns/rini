@@ -9,7 +9,6 @@ use std::rc::Rc;
 
 use objc2::exception;
 use objc2_app_kit::{NSEvent, NSEventPhase, NSEventType, NSTouchPhase, NSTouchType};
-use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventMask, CGEventTapLocation as CGTapLoc,
     CGEventTapOptions as CGTapOpt, CGEventTapProxy, CGEventType,
@@ -18,13 +17,10 @@ use tracing::{trace, warn};
 
 use crate::actor;
 use crate::actor::reactor;
-use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
-use crate::common::collections::HashMap;
-use crate::common::config::{Config, HapticPattern, LayoutMode};
+use crate::common::config::{Config, HapticPattern};
 use crate::layout_engine::LayoutCommand as LC;
 use crate::sys::haptics;
-use crate::sys::screen::SpaceId;
 
 const K_CGS_EVENT_TYPE_FIELD: CGEventField = CGEventField(55);
 const K_CGS_EVENT_DOCK_CONTROL: i64 = 30;
@@ -36,8 +32,6 @@ const K_CG_GESTURE_MOTION_HORIZONTAL: i64 = 1;
 #[derive(Debug)]
 pub enum GestureRequest {
     ConfigUpdated(Config),
-    LayoutModesChanged(Vec<(SpaceId, LayoutMode)>),
-    SpaceStateUpdated(ForwardedSpaceState),
 }
 
 pub type Sender = actor::Sender<GestureRequest>;
@@ -50,9 +44,6 @@ pub struct GestureTap {
     scroll: RefCell<Option<ScrollHandler>>,
     tap: RefCell<Option<crate::sys::event_tap::EventTap>>,
     tap_generation: Cell<u64>,
-    screen_spaces: RefCell<Vec<(CGRect, SpaceId)>>,
-    layout_mode_by_space: RefCell<HashMap<SpaceId, LayoutMode>>,
-    default_layout_mode: RefCell<LayoutMode>,
     requests_rx: Option<Receiver>,
 }
 
@@ -204,7 +195,6 @@ unsafe fn drop_gesture_ctx(ptr: *mut std::ffi::c_void) {
 
 impl GestureTap {
     pub fn new(config: Config, wm_sender: wm_controller::Sender, requests_rx: Receiver) -> Self {
-        let default_layout_mode = config.settings.layout.mode;
         let (swipe, scroll) = Self::build_gesture_handlers(&config);
         GestureTap {
             config: RefCell::new(config),
@@ -213,9 +203,6 @@ impl GestureTap {
             scroll: RefCell::new(scroll),
             tap: RefCell::new(None),
             tap_generation: Cell::new(0),
-            screen_spaces: RefCell::new(Vec::new()),
-            layout_mode_by_space: RefCell::new(HashMap::default()),
-            default_layout_mode: RefCell::new(default_layout_mode),
             requests_rx: Some(requests_rx),
         }
     }
@@ -307,23 +294,8 @@ impl GestureTap {
     ) {
         match request {
             GestureRequest::ConfigUpdated(new_config) => {
-                *self.default_layout_mode.borrow_mut() = new_config.settings.layout.mode;
                 *self.config.borrow_mut() = new_config;
                 self.update_gesture_handlers(recovery_tx);
-            }
-            GestureRequest::LayoutModesChanged(modes) => {
-                let mut map = self.layout_mode_by_space.borrow_mut();
-                map.clear();
-                for (space, mode) in modes {
-                    map.insert(space, mode);
-                }
-            }
-            GestureRequest::SpaceStateUpdated(space_state) => {
-                *self.screen_spaces.borrow_mut() = space_state
-                    .screens
-                    .into_iter()
-                    .filter_map(|screen| screen.space.map(|space| (screen.frame, space)))
-                    .collect();
             }
         }
     }
@@ -471,19 +443,9 @@ impl GestureTap {
             return true;
         }
 
-        let cursor = CGEvent::location(Some(event));
-        let mode = self.layout_mode_at_point(cursor).unwrap_or(*self.default_layout_mode.borrow());
-        let is_scrolling_mode = matches!(mode, LayoutMode::Scrolling);
-
         if is_physical_horizontal_dock_swipe(event_type, event) {
-            if self.should_consume_physical_dock_swipe(
-                is_scrolling_mode,
-                scroll_handler.as_ref(),
-                swipe_handler.as_ref(),
-            ) {
-                return false;
-            }
-            return true;
+            let consume = scroll_handler.as_ref().is_some_and(|handler| handler.cfg.consume_dock_swipe);
+            return !consume;
         }
 
         if event_type.0 != NSEventType::Gesture.0 as u32 {
@@ -493,7 +455,7 @@ impl GestureTap {
         if let Some(nsevent) = NSEvent::eventWithCGEvent(event)
             && nsevent.r#type() == NSEventType::Gesture
         {
-            if is_scrolling_mode && let Some(handler) = scroll_handler.as_ref() {
+            if let Some(handler) = scroll_handler.as_ref() {
                 return !self.handle_scroll_gesture_event(handler, &nsevent);
             } else if let Some(handler) = swipe_handler.as_ref() {
                 return !self.handle_gesture_event(handler, &nsevent);
@@ -501,33 +463,6 @@ impl GestureTap {
         }
 
         true
-    }
-
-    fn should_consume_physical_dock_swipe(
-        &self,
-        is_scrolling_mode: bool,
-        scroll_handler: Option<&ScrollHandler>,
-        swipe_handler: Option<&SwipeHandler>,
-    ) -> bool {
-        if is_scrolling_mode {
-            scroll_handler.is_some_and(|handler| handler.cfg.consume_dock_swipe)
-        } else {
-            swipe_handler.is_some_and(|handler| handler.cfg.consume_dock_swipe)
-        }
-    }
-
-    fn layout_mode_at_point(&self, loc: CGPoint) -> Option<LayoutMode> {
-        let screen_spaces = self.screen_spaces.borrow();
-        let layout_modes = self.layout_mode_by_space.borrow();
-        screen_spaces
-            .iter()
-            .find(|(frame, _)| {
-                loc.x >= frame.origin.x
-                    && loc.x < frame.origin.x + frame.size.width
-                    && loc.y >= frame.origin.y
-                    && loc.y < frame.origin.y + frame.size.height
-            })
-            .and_then(|(_, space)| layout_modes.get(space).copied())
     }
 
     /// Returns whether this event belongs to a horizontal swipe Rini owns and

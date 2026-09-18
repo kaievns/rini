@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::bail;
-pub use rini_protocol::{ConfigCommand, LayoutMode, WorkspaceSelector};
+pub use rini_protocol::{ConfigCommand, WorkspaceSelector};
 use serde::{Deserialize, Serialize};
 
 use super::collections::HashMap;
@@ -10,13 +10,6 @@ use crate::actor::wm_controller::WmCommand;
 use crate::sys::hotkey::{Hotkey, HotkeySpec};
 
 pub const MAX_WORKSPACES: usize = 128;
-
-// TODO: when to remove these?
-const DEPRECATED_MAP: &[(&str, &str)] = &[
-    ("stack_windows", "toggle_stack"),
-    ("unstack_windows", "toggle_stack"),
-    ("toggle_tile_orientation", "toggle_orientation"),
-];
 
 pub fn data_dir() -> PathBuf {
     dirs::home_dir().unwrap().join(".rini")
@@ -35,10 +28,6 @@ pub struct VirtualWorkspaceSettings {
     pub enabled: bool,
     #[serde(default = "default_workspace_count")]
     pub default_workspace_count: usize,
-    #[serde(default = "yes")]
-    pub auto_assign_windows: bool,
-    #[serde(default = "yes")]
-    pub preserve_focus_per_workspace: bool,
     #[serde(default = "no")]
     pub workspace_auto_back_and_forth: bool,
     #[serde(default, alias = "prevent_wrapping_around")]
@@ -55,17 +44,6 @@ pub struct VirtualWorkspaceSettings {
     pub float_modal_windows: bool,
     #[serde(default)]
     pub app_rules: Vec<AppWorkspaceRule>,
-    #[serde(default)]
-    pub workspace_rules: Vec<WorkspaceLayoutRule>,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct WorkspaceLayoutRule {
-    /// Target workspace by index or name
-    pub workspace: WorkspaceSelector,
-    /// Layout mode to use for this workspace
-    pub layout: LayoutMode,
 }
 
 // Allow specifying a workspace by numeric index or by name in the config.
@@ -140,8 +118,6 @@ impl Default for VirtualWorkspaceSettings {
         Self {
             enabled: true,
             default_workspace_count: default_workspace_count(),
-            auto_assign_windows: true,
-            preserve_focus_per_workspace: true,
             workspace_auto_back_and_forth: false,
             prevent_wrapping: false,
             workspace_names: default_workspace_names(),
@@ -149,7 +125,6 @@ impl Default for VirtualWorkspaceSettings {
             reapply_app_rules_on_title_change: false,
             float_modal_windows: true,
             app_rules: Vec::new(),
-            workspace_rules: Vec::new(),
         }
     }
 }
@@ -567,14 +542,6 @@ fn default_drag_swap_fraction() -> f64 {
     0.3
 }
 
-fn default_master_stack_ratio() -> f64 {
-    0.6
-}
-
-fn default_master_stack_count() -> usize {
-    1
-}
-
 fn default_scrolling_column_width_ratio() -> f64 {
     0.7
 }
@@ -603,10 +570,8 @@ pub enum WindowInsertionPoint {
     EndOfTree,
 }
 
-/// Options understood by every layout system.
-///
-/// These fields are flattened into both `[settings.layout]` and every
-/// per-layout table. A per-layout value overrides the layout-wide value.
+/// Options flattened into both `[settings.layout]` and `[settings.layout.scrolling]`.
+/// The scrolling value overrides the layout-wide value.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BaseLayoutSettings {
@@ -615,54 +580,12 @@ pub struct BaseLayoutSettings {
     pub window_insertion_point: Option<WindowInsertionPoint>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct TraditionalLayoutSettings {
-    #[serde(flatten)]
-    pub base: BaseLayoutSettings,
-    /// Use Sway-style sibling normalization when inserting nodes. New nodes receive the
-    /// average sibling weight instead of splitting the selected node's share.
-    #[serde(default = "yes")]
-    pub equalize_nodes: bool,
-}
-
-impl Default for TraditionalLayoutSettings {
-    fn default() -> Self {
-        Self {
-            base: BaseLayoutSettings::default(),
-            equalize_nodes: true,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct BspLayoutSettings {
-    #[serde(flatten)]
-    pub base: BaseLayoutSettings,
-}
-
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutSettings {
-    /// Settings inherited by every layout type unless overridden by its table.
+    /// Settings inherited by `scrolling` unless overridden in its table.
     #[serde(flatten)]
     pub base: BaseLayoutSettings,
-    /// Layout mode: "traditional", "bsp", "stack", "master_stack", or "scrolling"
-    #[serde(default)]
-    pub mode: LayoutMode,
-    /// Traditional layout configuration
-    #[serde(default)]
-    pub traditional: TraditionalLayoutSettings,
-    /// BSP layout configuration
-    #[serde(default)]
-    pub bsp: BspLayoutSettings,
-    /// Stack system configuration
-    #[serde(default)]
-    pub stack: StackSettings,
-    /// Master/stack layout configuration
-    #[serde(default)]
-    pub master_stack: MasterStackSettings,
     /// Gap configuration for window spacing
     #[serde(default)]
     pub gaps: GapSettings,
@@ -725,16 +648,6 @@ impl Default for ScrollingLayoutSettings {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum MasterStackSide {
-    #[default]
-    Left,
-    Right,
-    Top,
-    Bottom,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
 pub enum ScrollingAlignment {
     Left,
     #[default]
@@ -748,39 +661,6 @@ pub enum ScrollingFocusNavigationStyle {
     #[default]
     Niri,
     Anchored,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct MasterStackSettings {
-    #[serde(flatten)]
-    pub base: BaseLayoutSettings,
-    /// Fraction of space reserved for the master area (0.05..0.95)
-    #[serde(default = "default_master_stack_ratio")]
-    pub master_ratio: f64,
-    /// Number of windows kept in the master area (>= 1)
-    #[serde(default = "default_master_stack_count")]
-    pub master_count: usize,
-    /// Which side the master area occupies
-    #[serde(default)]
-    pub master_side: MasterStackSide,
-    /// Where new windows are inserted when the master area is already full
-    #[serde(default = "default_master_stack_new_window_placement")]
-    pub new_window_placement: MasterStackNewWindowPlacement,
-    /// Orientation arrangement for the master area (override default derived from master_side)
-    #[serde(default)]
-    pub master_arrangement: Option<crate::layout_engine::Orientation>,
-    /// Orientation arrangement for the stack area (override default derived from master_side)
-    #[serde(default)]
-    pub stack_arrangement: Option<crate::layout_engine::Orientation>,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum MasterStackNewWindowPlacement {
-    Master,
-    Stack,
-    Focused,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
@@ -821,36 +701,6 @@ impl Default for ScrollingGestureSettings {
             workspace_switch_threshold: default_overscroll_threshold(),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum StackDefaultOrientation {
-    Perpendicular,
-    Same,
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct StackSettings {
-    #[serde(flatten)]
-    pub base: BaseLayoutSettings,
-    /// Stack offset - how much each stacked window is offset (in pixels)
-    /// With the enhanced stacking system, this creates meaningful visible edges
-    /// for each window in the stack while the focused window remains fully visible.
-    /// Recommended values: 30-50 pixels for good visibility.
-    #[serde(default = "default_stack_offset")]
-    pub stack_offset: f64,
-
-    /// Default orientation behavior when stacking windows.
-    /// Options:
-    /// - "perpendicular" (default): choose the perpendicular orientation to the parent layout
-    /// - "same": use the same orientation as the parent layout
-    /// - "horizontal"/"vertical": explicitly use a specific orientation
-    #[serde(default = "default_stack_orientation")]
-    pub default_orientation: StackDefaultOrientation,
 }
 
 /// Gap configuration for window spacing
@@ -910,30 +760,6 @@ pub struct GapOverride {
     pub inner: Option<InnerGaps>,
 }
 
-impl Default for StackSettings {
-    fn default() -> Self {
-        Self {
-            base: BaseLayoutSettings::default(),
-            stack_offset: default_stack_offset(),
-            default_orientation: default_stack_orientation(),
-        }
-    }
-}
-
-impl Default for MasterStackSettings {
-    fn default() -> Self {
-        Self {
-            base: BaseLayoutSettings::default(),
-            master_ratio: default_master_stack_ratio(),
-            master_count: default_master_stack_count(),
-            master_side: MasterStackSide::Left,
-            new_window_placement: default_master_stack_new_window_placement(),
-            master_arrangement: None,
-            stack_arrangement: None,
-        }
-    }
-}
-
 impl Settings {
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
@@ -960,31 +786,22 @@ impl Settings {
 }
 
 impl LayoutSettings {
-    pub fn base_for(&self, mode: LayoutMode) -> &BaseLayoutSettings {
-        match mode {
-            LayoutMode::Scrolling => &self.scrolling.base,
-        }
-    }
-
-    pub fn window_insertion_point_for(&self, mode: LayoutMode) -> WindowInsertionPoint {
-        self.base_for(mode)
+    pub fn window_insertion_point(&self) -> WindowInsertionPoint {
+        self.scrolling
+            .base
             .window_insertion_point
             .or(self.base.window_insertion_point)
             .unwrap_or_default()
     }
 
-    pub fn resolved_base_for(&self, mode: LayoutMode) -> BaseLayoutSettings {
+    pub fn resolved_base(&self) -> BaseLayoutSettings {
         BaseLayoutSettings {
-            window_insertion_point: Some(self.window_insertion_point_for(mode)),
+            window_insertion_point: Some(self.window_insertion_point()),
         }
     }
 
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
-
-        issues.extend(self.stack.validate());
-
-        issues.extend(self.master_stack.validate());
 
         issues.extend(self.gaps.validate());
 
@@ -1040,40 +857,6 @@ impl ScrollingLayoutSettings {
                 "layout.scrolling.gestures.vertical_tolerance must be non-negative, got {}",
                 self.gestures.vertical_tolerance
             ));
-        }
-
-        issues
-    }
-}
-
-impl StackSettings {
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
-
-        if self.stack_offset < 0.0 {
-            issues.push(format!(
-                "stack_offset must be non-negative, got {}",
-                self.stack_offset
-            ));
-        }
-
-        issues
-    }
-}
-
-impl MasterStackSettings {
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
-
-        if !(0.05..=0.95).contains(&self.master_ratio) {
-            issues.push(format!(
-                "master_stack.master_ratio must be between 0.05 and 0.95, got {}",
-                self.master_ratio
-            ));
-        }
-
-        if self.master_count == 0 {
-            issues.push("master_stack.master_count must be at least 1".to_string());
         }
 
         issues
@@ -1184,17 +967,6 @@ fn yes() -> bool {
     true
 }
 
-fn default_stack_offset() -> f64 {
-    40.0
-}
-
-pub fn default_stack_orientation() -> StackDefaultOrientation {
-    StackDefaultOrientation::Perpendicular
-}
-
-fn default_master_stack_new_window_placement() -> MasterStackNewWindowPlacement {
-    MasterStackNewWindowPlacement::Master
-}
 
 fn default_animation_duration() -> f64 {
     0.35
@@ -1436,7 +1208,7 @@ impl Config {
     // conservative builtin list.
     //
     // Returns the best candidate if its distance is within a reasonable threshold.
-    fn suggest_similar_command(unknown: &str) -> Option<(String, Option<String>)> {
+    fn suggest_similar_command(unknown: &str) -> Option<String> {
         // Detect if `unknown` was augmented with serde-provided expected variants.
         let (unknown_token, serde_candidates): (String, Option<Vec<String>>) =
             if let Some(idx) = unknown.find("||") {
@@ -1478,22 +1250,7 @@ impl Config {
             // Heuristic threshold: allow suggestions if distance is <= half the length (or <=3).
             let threshold = std::cmp::max(3usize, best_cand.len() / 2);
             if dist <= threshold {
-                // If the best candidate is in deprecated map, return the non-deprecated suggestion.
-                let mut replacement = None;
-                for &(dep, repl) in DEPRECATED_MAP.iter() {
-                    if dep == best_cand {
-                        replacement = Some(repl.to_string());
-                        break;
-                    }
-                }
-                return Some((best_cand.to_string(), replacement));
-            }
-        }
-
-        // Also check if the unknown token itself matched a deprecated name exactly
-        for &(dep, repl) in DEPRECATED_MAP.iter() {
-            if dep == unknown_token {
-                return Some((repl.to_string(), None)); // recommend replacement
+                return Some(best_cand);
             }
         }
 
@@ -1527,19 +1284,8 @@ impl Config {
             Err(e) => {
                 let msg = e.to_string();
                 if let Some(unknown_token) = Self::extract_unknown_variant(&msg) {
-                    if let Some((suggestion, deprecated_replacement)) =
-                        Self::suggest_similar_command(&unknown_token)
-                    {
-                        if let Some(repl) = deprecated_replacement {
-                            bail!(
-                                "{msg}\nDid you mean `{}`? Note: `{}` is deprecated; use `{}` instead.",
-                                suggestion,
-                                suggestion,
-                                repl
-                            );
-                        } else {
-                            bail!("{msg}\nDid you mean `{}`?", suggestion);
-                        }
+                    if let Some(suggestion) = Self::suggest_similar_command(&unknown_token) {
+                        bail!("{msg}\nDid you mean `{}`?", suggestion);
                     } else {
                         bail!("{msg}");
                     }
@@ -1559,9 +1305,6 @@ mod tests {
 
     #[test]
     fn scrolling_insertion_point_falls_back_to_the_global_default() {
-        // Was a per-mode override test. With one layout mode left there is no second mode
-        // to override against, so what remains worth asserting is the fallback chain:
-        // the mode's own setting wins, and the global default applies when it is absent.
         let overridden: LayoutSettings = toml::from_str(
             r#"
                 window_insertion_point = "end_of_tree"
@@ -1572,7 +1315,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            overridden.window_insertion_point_for(LayoutMode::Scrolling),
+            overridden.window_insertion_point(),
             WindowInsertionPoint::NextToSelection
         );
 
@@ -1583,7 +1326,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            inherited.window_insertion_point_for(LayoutMode::Scrolling),
+            inherited.window_insertion_point(),
             WindowInsertionPoint::EndOfTree
         );
     }
@@ -1766,12 +1509,10 @@ mod tests {
     #[test]
     fn test_levenshtein_suggests() {
         let err =
-            "unknown variant `toggle_stak`, expected one of `toggle_stack`, `toggle_orientation`";
+            "unknown variant `toggle_stak`, expected one of `toggle_stack`, `unjoin_windows`";
         let token = Config::extract_unknown_variant(err).unwrap();
-        assert_eq!(token, "toggle_stak||toggle_stack,toggle_orientation");
+        assert_eq!(token, "toggle_stak||toggle_stack,unjoin_windows");
         let suggestion = Config::suggest_similar_command(&token);
-        assert!(suggestion.is_some());
-        let (s, _maybe_dep) = suggestion.unwrap();
-        assert_eq!(s, "toggle_stack");
+        assert_eq!(suggestion.as_deref(), Some("toggle_stack"));
     }
 }

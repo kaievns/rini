@@ -1,6 +1,5 @@
 pub mod engine;
 mod floating;
-pub(crate) mod graph;
 pub mod systems;
 pub mod utils;
 mod workspaces;
@@ -10,7 +9,7 @@ pub use engine::{
     RestoreRequest, RestoreScope, RestoreSource, RestoreWarning,
 };
 pub(crate) use floating::FloatingManager;
-pub use graph::{Direction, LayoutKind, Orientation, ResizeOrientation};
+pub use rini_protocol::{Direction, ResizeOrientation};
 pub(crate) use systems::LayoutId;
 pub use systems::{LayoutSystem, LayoutSystemKind, ScrollingLayoutSystem};
 pub(crate) use workspaces::WorkspaceLayouts;

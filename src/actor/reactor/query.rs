@@ -300,20 +300,10 @@ impl Reactor {
                 }
             }
 
-            let layout_mode = space_id
-                .and_then(|space| {
-                    self.layout_manager
-                        .layout_engine
-                        .virtual_workspace_manager()
-                        .workspace_info(space, *workspace_id)
-                        .map(|ws| ws.layout_mode().to_string())
-                })
-                .unwrap_or_else(|| "unknown".to_string());
 
             workspaces.push(RuntimeWorkspaceData {
                 id: format!("{:?}", workspace_id),
                 name: workspace_name.to_string(),
-                layout_mode,
                 is_active,
                 window_count: windows.len(),
                 windows,
@@ -344,21 +334,11 @@ impl Reactor {
             .iter()
             .enumerate()
             .filter(|(index, _)| workspace_id.map(|target| target == *index).unwrap_or(true))
-            .filter_map(|(index, (id, name))| {
-                let layout_mode = self
-                    .layout_manager
-                    .layout_engine
-                    .virtual_workspace_manager()
-                    .workspace_info(space, *id)
-                    .map(|ws| ws.layout_mode().to_string())?;
-
-                Some(WorkspaceLayoutData {
-                    id: format!("{:?}", id),
-                    index,
-                    name: name.clone(),
-                    layout_mode,
-                    is_active: active_workspace == Some(*id),
-                })
+            .map(|(index, (id, name))| WorkspaceLayoutData {
+                id: format!("{:?}", id),
+                index,
+                name: name.clone(),
+                is_active: active_workspace == Some(*id),
             })
             .collect()
     }
@@ -526,7 +506,6 @@ impl Reactor {
                 display_name: screen.name.clone(),
                 display_frame: crate::model::server::to_protocol_rect(screen.frame),
                 is_active: self.is_space_active(space),
-                mode: self.layout_manager.layout_engine.layout_mode_at(space).to_string(),
                 workspace_id: workspace.map(|workspace| format!("{workspace:?}")),
                 workspace_name: workspace.and_then(|workspace| {
                     self.layout_manager.layout_engine.workspace_name(space, workspace)
@@ -732,7 +711,6 @@ impl Reactor {
             space_id: space_id.get(),
             workspace_id: snapshot.workspace_index,
             is_active_workspace: snapshot.is_active,
-            mode: snapshot.mode.to_string(),
             floating_windows: floating_windows.into_iter().map(Into::into).collect(),
             tiled_windows: tiled_windows.into_iter().map(Into::into).collect(),
             focused_window: focused_window.map(Into::into),

@@ -15,7 +15,7 @@ pub use commands::{
     ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand,
 };
 pub use events::{EventKind, RiniEvent, WorkspaceId};
-pub use layout::{Direction, LayoutKind, LayoutMode, Orientation, ResizeOrientation};
+pub use layout::{Direction, LayoutKind, ResizeOrientation};
 pub use queries::{
     ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticCensusWindow,
     DiagnosticDisplayCensus, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, DisplayData,

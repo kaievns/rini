@@ -13,7 +13,7 @@ use crate::actor::{
     event_tap, gesture_tap, raise_manager, window_notify, wm_controller,
 };
 use crate::common::collections::{HashMap, HashSet};
-use crate::common::config::{LayoutMode, WindowSnappingSettings};
+use crate::common::config::WindowSnappingSettings;
 use crate::layout_engine::LayoutEngine;
 use crate::model::broadcast::BroadcastSender;
 use crate::sys::screen::SpaceId;
@@ -61,7 +61,6 @@ impl DragManager {
 /// Manages window notifications
 pub struct NotificationManager {
     pub last_sls_notification_ids: Vec<u32>,
-    pub last_layout_modes_by_space: HashMap<SpaceId, crate::common::config::LayoutMode>,
     pub _window_notify_tx: Option<window_notify::Sender>,
 }
 
@@ -291,10 +290,7 @@ impl LayoutManager {
                     |wid| reactor.state.windows.window(wid).map(|w| w.frame_monotonic),
                     &all_screen_frames,
                 );
-            if active_space_count > 1
-                && reactor.layout_manager.layout_engine.active_layout_mode_at(space)
-                    == LayoutMode::Scrolling
-            {
+            if active_space_count > 1 {
                 let active_workspace_windows: HashSet<WindowId> = reactor
                     .layout_manager
                     .layout_engine

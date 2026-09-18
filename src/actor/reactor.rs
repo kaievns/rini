@@ -458,7 +458,6 @@ impl Reactor {
             },
             notification_manager: managers::NotificationManager {
                 last_sls_notification_ids: Vec::new(),
-                last_layout_modes_by_space: HashMap::default(),
                 _window_notify_tx: window_notify_tx,
             },
             transaction_manager: transaction_manager::TransactionManager::new(window_tx_store),
@@ -1460,9 +1459,7 @@ impl Reactor {
                     .and_then(|server| self.pending_target_space_for_window_server_id(server));
                 let assigned_space = self.assigned_space_for_window_id(wid);
                 let keep_assigned_for_scrolling = old_space.is_some_and(|space| {
-                    self.layout_manager.layout_engine.active_layout_mode_at(space)
-                        == crate::common::config::LayoutMode::Scrolling
-                        && !self.layout_manager.layout_engine.is_window_floating(wid)
+                    !self.layout_manager.layout_engine.is_window_floating(wid)
                         && self
                             .layout_manager
                             .layout_engine
@@ -1662,7 +1659,6 @@ impl Reactor {
                 return command_workflow::handle_config_updated(
                     &mut self.config,
                     &mut self.layout_manager,
-                    &self.state,
                     &mut self.drag_manager,
                     new_cfg,
                 );
@@ -2233,9 +2229,6 @@ impl Reactor {
         }
         if outcome.refresh_focus_follows_mouse {
             self.update_focus_follows_mouse_state();
-        }
-        if outcome.refresh_layout_mode {
-            self.update_event_tap_layout_mode();
         }
         for broadcast in outcome.window_title_broadcasts {
             self.broadcast_window_title_changed(
@@ -5157,7 +5150,6 @@ impl Reactor {
 
                     // Recurse to handle the new response (e.g. focus window on the new workspace)
                     self.handle_layout_response(resp, Some(space));
-                    self.update_event_tap_layout_mode();
                     return;
                 }
             }
@@ -5854,44 +5846,6 @@ impl Reactor {
         self.set_focus_follows_mouse_enabled(should_enable);
     }
 
-    fn update_event_tap_layout_mode(&mut self) {
-        let Some(event_tap_tx) = self.communication_manager.event_tap_tx.as_ref() else {
-            return;
-        };
-
-        let last_modes = &self.notification_manager.last_layout_modes_by_space;
-        let mut modes: Vec<(SpaceId, crate::common::config::LayoutMode)> =
-            Vec::with_capacity(self.space_state.screens.len());
-        let mut changed = false;
-
-        for screen in &self.space_state.screens {
-            let Some(space) = screen.space else {
-                continue;
-            };
-
-            // Keep first occurrence only if multiple screens briefly report the same space.
-            if modes.iter().any(|(existing, _)| *existing == space) {
-                continue;
-            }
-
-            let mode = self.layout_manager.layout_engine.active_layout_mode_at(space);
-            if last_modes.get(&space).copied() != Some(mode) {
-                changed = true;
-            }
-            modes.push((space, mode));
-        }
-
-        if modes.is_empty() || (!changed && modes.len() == last_modes.len()) {
-            return;
-        }
-
-        let modes_by_space = modes.iter().copied().collect();
-        self.notification_manager.last_layout_modes_by_space = modes_by_space;
-        if let Some(gesture_tap_tx) = self.communication_manager.gesture_tap_tx.as_ref() {
-            gesture_tap_tx.send(gesture_tap::GestureRequest::LayoutModesChanged(modes.clone()));
-        }
-        event_tap_tx.send(crate::actor::event_tap::Request::LayoutModesChanged(modes));
-    }
 
 
     fn refresh_windows_after_mission_control(&mut self) {

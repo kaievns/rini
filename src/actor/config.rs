@@ -121,13 +121,6 @@ impl ConfigActor {
             ConfigCommand::SetFocusFollowsMouse(v) => {
                 set_flag!(new_config.settings.focus_follows_mouse, v, "focus_follows_mouse")
             }
-            ConfigCommand::SetStackOffset(v) => set_range(
-                "stack_offset",
-                &mut new_config.settings.layout.stack.stack_offset,
-                v,
-                0.0,
-                200.0,
-            ),
             ConfigCommand::SetOuterGaps { top, left, bottom, right } => {
                 if [top, left, bottom, right].into_iter().all(|v| v >= 0.0) {
                     let gaps = &mut new_config.settings.layout.gaps.outer;

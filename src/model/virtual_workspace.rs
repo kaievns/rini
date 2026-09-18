@@ -8,7 +8,7 @@ use crate::common::collections::{HashMap, HashSet};
 #[cfg(test)]
 use crate::common::config::AppWorkspaceRule;
 use crate::common::config::{
-    LayoutMode, LayoutSettings, MAX_WORKSPACES, VirtualWorkspaceSettings, WorkspaceSelector,
+    LayoutSettings, MAX_WORKSPACES, VirtualWorkspaceSettings, WorkspaceSelector,
 };
 use crate::common::log::trace_misc;
 use crate::layout_engine::Direction;
@@ -61,22 +61,18 @@ pub struct VirtualWorkspace {
     last_focused: HashMap<SpaceId, WindowId>,
     #[serde(default = "default_layout_system_kind")]
     pub layout_system: LayoutSystemKind,
-    #[serde(default)]
-    pub layout_mode: LayoutMode,
 }
 
 fn default_layout_system_kind() -> LayoutSystemKind {
-    VirtualWorkspace::create_layout_system(LayoutMode::default(), &LayoutSettings::default())
+    VirtualWorkspace::create_layout_system(&LayoutSettings::default())
 }
 
 impl VirtualWorkspace {
-    fn new(name: String, mode: LayoutMode, settings: &LayoutSettings) -> Self {
-        let layout_system = Self::create_layout_system(mode, settings);
+    fn new(name: String, settings: &LayoutSettings) -> Self {
         Self {
             name,
             last_focused: HashMap::default(),
-            layout_system,
-            layout_mode: mode,
+            layout_system: Self::create_layout_system(settings),
         }
     }
 
@@ -88,15 +84,11 @@ impl VirtualWorkspace {
         &mut self.layout_system
     }
 
-    pub fn layout_mode(&self) -> LayoutMode {
-        self.layout_mode
-    }
-
-    pub fn create_layout_system(mode: LayoutMode, settings: &LayoutSettings) -> LayoutSystemKind {
-        let mut mode_settings = settings.scrolling.clone();
-        mode_settings.base = settings.resolved_base_for(mode);
+    pub fn create_layout_system(settings: &LayoutSettings) -> LayoutSystemKind {
+        let mut scrolling = settings.scrolling.clone();
+        scrolling.base = settings.resolved_base();
         LayoutSystemKind::Scrolling(crate::layout_engine::systems::ScrollingLayoutSystem::new(
-            &mode_settings,
+            &scrolling,
         ))
     }
 
@@ -185,10 +177,6 @@ pub struct WorkspaceStore {
     #[serde(skip)]
     prevent_wrapping: bool,
     #[serde(skip)]
-    pub workspace_rules: Vec<crate::common::config::WorkspaceLayoutRule>,
-    #[serde(skip)]
-    pub default_layout_mode: LayoutMode,
-    #[serde(skip)]
     pub layout_settings: LayoutSettings,
 }
 
@@ -223,8 +211,6 @@ impl WorkspaceStore {
             default_workspace,
             workspace_auto_back_and_forth: config.workspace_auto_back_and_forth,
             prevent_wrapping: config.prevent_wrapping,
-            workspace_rules: config.workspace_rules.clone(),
-            default_layout_mode: layout_settings.mode,
             layout_settings: layout_settings.clone(),
         }
     }
@@ -239,8 +225,6 @@ impl WorkspaceStore {
         if self.max_workspaces == 0 {
             self.max_workspaces = MAX_WORKSPACES;
         }
-        self.workspace_rules = config.workspace_rules.clone();
-        self.default_layout_mode = layout_settings.mode;
         self.layout_settings = layout_settings.clone();
         self.default_workspace_count = config.default_workspace_count;
         self.default_workspace_names = config.workspace_names.clone();
@@ -260,39 +244,6 @@ impl WorkspaceStore {
             }
         }
 
-        // Migrate restored workspaces whose layout mode no longer matches config.
-        //
-        // A workspace deserialized from the layout file keeps the mode it was saved with,
-        // so a file written under a different default would otherwise never adopt the
-        // configured one. The old tree cannot be carried across — layout systems have
-        // different internal shapes — so the system is replaced with an empty one of the
-        // right kind. Window membership is not lost: rini re-discovers on-screen windows
-        // at startup and adds them to the active layout, the same path a fresh launch
-        // takes. Strip ORDER is not preserved through a mode change, which is an acceptable
-        // one-off cost for a config change that has to rebuild the tree anyway.
-        for (index, workspace_id) in self.workspace_order.clone().into_iter().enumerate() {
-            let Some(workspace) = self.workspaces.get(workspace_id) else {
-                continue;
-            };
-            let name = workspace.name.clone();
-            let desired = self.resolve_layout_mode_for_workspace(index, &name);
-            if workspace.layout_mode == desired {
-                continue;
-            }
-            let settings = self.layout_settings.clone();
-            let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
-                continue;
-            };
-            tracing::info!(
-                ?workspace_id,
-                from = ?workspace.layout_mode,
-                to = ?desired,
-                "Migrating restored workspace to the configured layout mode"
-            );
-            workspace.layout_mode = desired;
-            workspace.layout_system = VirtualWorkspace::create_layout_system(desired, &settings);
-        }
-
         // Grow to the configured count. Shrinking is deliberately not done: windows would
         // have to be relocated, and a mistyped count should not silently destroy a strip.
         while self.workspace_order.len() < target_count {
@@ -302,8 +253,7 @@ impl WorkspaceStore {
                 self.workspace_counter += 1;
                 name
             });
-            let mode = self.resolve_layout_mode_for_workspace(idx, &name);
-            let workspace = VirtualWorkspace::new(name, mode, &self.layout_settings);
+            let workspace = VirtualWorkspace::new(name, &self.layout_settings);
             let id = self.workspaces.insert(workspace);
             self.workspace_order.push(id);
         }
@@ -322,8 +272,7 @@ impl WorkspaceStore {
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| format!("Workspace {}", i + 1));
-                let mode = self.resolve_layout_mode_for_workspace(i, &name);
-                let workspace = VirtualWorkspace::new(name, mode, &self.layout_settings);
+                let workspace = VirtualWorkspace::new(name, &self.layout_settings);
                 let id = self.workspaces.insert(workspace);
                 self.workspace_order.push(id);
             }
@@ -337,23 +286,6 @@ impl WorkspaceStore {
                 self.active_workspace_per_space.insert(space, (None, default_id));
             }
         }
-    }
-
-    fn resolve_layout_mode_for_workspace(&self, index: usize, name: &str) -> LayoutMode {
-        // Check workspace_rules (last matching rule wins, like app_rules)
-        for rule in self.workspace_rules.iter().rev() {
-            match &rule.workspace {
-                WorkspaceSelector::Index(idx) if *idx == index => return rule.layout,
-                WorkspaceSelector::Name(n) if n == name => return rule.layout,
-                _ => continue,
-            }
-        }
-        // Fall back to global default
-        self.default_layout_mode
-    }
-
-    pub fn desired_layout_mode_for_workspace(&self, index: usize, name: &str) -> LayoutMode {
-        self.resolve_layout_mode_for_workspace(index, name)
     }
 
     pub fn initialized_spaces(&self) -> Vec<SpaceId> {
@@ -459,9 +391,7 @@ impl WorkspaceStore {
             name
         });
 
-        let idx = self.workspace_order.len();
-        let mode = self.resolve_layout_mode_for_workspace(idx, &name);
-        let workspace = VirtualWorkspace::new(name, mode, &self.layout_settings);
+        let workspace = VirtualWorkspace::new(name, &self.layout_settings);
         let workspace_id = self.workspaces.insert(workspace);
         self.workspace_order.push(workspace_id);
 

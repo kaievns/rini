@@ -197,7 +197,7 @@ impl LayoutEngine {
             // is still right; removing the other displays' strips of the SAME workspace is
             // not, and would delete the window from the display it legitimately sits on.
             if workspace != keep.1 {
-                entry.layout_system.remove_window_and_rebalance_parent(window);
+                entry.layout_system.remove_window(window);
             }
         }
     }

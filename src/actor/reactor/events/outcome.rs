@@ -79,7 +79,6 @@ pub(crate) struct EventOutcome {
     pub(crate) focused_window: Option<WindowId>,
     pub(crate) refresh_window_notifications: bool,
     pub(crate) refresh_focus_follows_mouse: bool,
-    pub(crate) refresh_layout_mode: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -148,7 +147,6 @@ impl EventOutcome {
         self.focused_window = other.focused_window.or(self.focused_window);
         self.refresh_window_notifications |= other.refresh_window_notifications;
         self.refresh_focus_follows_mouse |= other.refresh_focus_follows_mouse;
-        self.refresh_layout_mode |= other.refresh_layout_mode;
     }
 
     /// The event changed geometry or layout state and requires one arrange pass.
@@ -192,7 +190,6 @@ impl EventOutcome {
             focused_window: None,
             refresh_window_notifications: false,
             refresh_focus_follows_mouse: false,
-            refresh_layout_mode: true,
         }
     }
 
@@ -430,7 +427,6 @@ mod tests {
             assert!(!outcome.arrange.requested);
             assert_eq!(outcome.arrange.passes, 0);
             assert!(!outcome.refresh_window_notifications);
-            assert!(!outcome.refresh_layout_mode);
         }
     }
 
@@ -443,7 +439,6 @@ mod tests {
         assert!(!outcome.arrange.window_was_destroyed);
         assert!(!outcome.refresh_window_notifications);
         assert!(!outcome.refresh_focus_follows_mouse);
-        assert!(outcome.refresh_layout_mode);
 
         let outcome = EventOutcome::window_membership_changed(true, true);
         assert!(outcome.arrange.requested);
