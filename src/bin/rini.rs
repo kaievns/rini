@@ -361,7 +361,10 @@ stays usable. Fix the config and restart. Error: {error}",
         workspace_animation_tx.clone(),
         mtm,
     );
-    workspace_animation.set_reactor(events_tx.clone());
+    workspace_animation.set_place_frames(Box::new({
+        let events_tx = events_tx.clone();
+        move |frames| events_tx.send(reactor::Event::ApplyOverlayFrames(frames))
+    }));
 
     let mission_control_native = NativeMissionControl::new(events_tx.clone());
 

@@ -6673,7 +6673,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
             crate::actor::workspace_animation::Event::Animate { windows, .. } => animated = windows,
             // Opposite vectors are not a pan, so this must not reach the strip path: that path takes
             // its windows from the layout and so never had this bug to begin with.
-            crate::actor::workspace_animation::Event::AnimateStrip { .. } => {
+            crate::actor::workspace_animation::Event::AnimateSurface { .. } => {
                 panic!("a layout that is not a pan must go to the per-window path")
             }
             _ => {}
@@ -6689,7 +6689,8 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 /// stays where it was in both cases. See "Edge bounce" in `docs/animation-smoothness.md`.
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
-    use crate::actor::workspace_animation::{EDGE_BOUNCE_OVERSHOOT, Event as Anim};
+    use crate::actor::reactor::animation::EDGE_BOUNCE_OVERSHOOT;
+    use crate::actor::workspace_animation::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -6712,7 +6713,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     let bounces = |rx: &mut actor::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
-            if let Anim::BounceStrip { overshoot, windows, .. } = event {
+            if let Anim::Bounce { overshoot, windows, .. } = event {
                 out.push((overshoot, windows.len()));
             }
         }
@@ -6775,7 +6776,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
             !matches!(
                 event,
                 crate::actor::workspace_animation::Event::Animate { .. }
-                    | crate::actor::workspace_animation::Event::AnimateStrip { .. }
+                    | crate::actor::workspace_animation::Event::AnimateSurface { .. }
             ),
             "a one-point move must not run an animation: {event:?}"
         );
@@ -6897,7 +6898,7 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
             !matches!(
                 event,
                 crate::actor::workspace_animation::Event::Animate { .. }
-                    | crate::actor::workspace_animation::Event::AnimateStrip { .. }
+                    | crate::actor::workspace_animation::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );
@@ -6940,7 +6941,7 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
             !matches!(
                 event,
                 crate::actor::workspace_animation::Event::Animate { .. }
-                    | crate::actor::workspace_animation::Event::AnimateStrip { .. }
+                    | crate::actor::workspace_animation::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );

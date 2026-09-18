@@ -23,7 +23,6 @@ use tracing::{debug, warn};
 
 use crate::actor;
 use rini_shared::ids::WindowId;
-use crate::model::HiddenWindowPlacement;
 use rini_shared::geometry::SameAs;
 use rini_macos::run_loop::RepeatingTimer;
 use rini_shared::ids::WindowServerId;
@@ -37,41 +36,9 @@ pub(crate) use rini_motion::plan;
 use rini_motion::travel::{
     is_moving, neighbour_travel, resolve_end, resolve_start, travel_subject, worth_animating,
 };
-pub(crate) use rini_motion::surface::{
-    SurfaceWindow, pan_travel as strip_pan_travel, surface_travel as strip_travel, to_overlay_space,
-};
+pub use rini_motion::surface::SurfaceWindow;
+pub(crate) use rini_motion::surface::{pan_travel, surface_travel, to_overlay_space};
 
-/// One window's fixed place on the strip surface.
-///
-/// The surface holds every window across every workspace involved in a movement, laid out as one
-/// continuous plane: x is the strip position, y is the workspace stacked below the one above it.
-/// A group movement translates every window on it by the viewport's travel.
-#[derive(Debug, Clone)]
-pub struct StripWindow {
-    pub window: WindowId,
-    pub server_id: WindowServerId,
-    /// Position on the strip surface, never interpolated.
-    pub frame: CGRect,
-    /// Held still while the strip moves under it.
-    ///
-    /// A floating window does not belong to the strip, so a strip scroll must not carry it along. It does
-    /// belong to a workspace, so a switch between workspaces DOES move it, and that path leaves this false.
-    pub pinned: bool,
-    /// Off the strip, and so in the other z-order group. Separate from `pinned`, which is about whether the
-    /// strip carries the window along: a workspace switch moves floating windows without unpinning them.
-    pub floating: bool,
-}
-
-impl From<&StripWindow> for SurfaceWindow {
-    fn from(window: &StripWindow) -> Self {
-        SurfaceWindow {
-            window: window.window,
-            frame: window.frame,
-            pinned: window.pinned,
-            floating: window.floating,
-        }
-    }
-}
 
 /// One window's part in an animation, as the caller describes it.
 #[derive(Debug, Clone)]
@@ -105,8 +72,8 @@ pub enum Event {
     /// Drawn as one rigid group in one container ("Strip movements" in
     /// `docs/animation-smoothness.md`); the visual destinations are distinct from `final_frames`,
     /// because a window leaving the screen animates off it while its real frame goes to a park.
-    AnimateStrip {
-        windows: Vec<StripWindow>,
+    AnimateSurface {
+        windows: Vec<SurfaceWindow>,
         from_offset: CGPoint,
         to_offset: CGPoint,
         /// Real screen frames to apply once the overlay is covering them.
@@ -119,8 +86,8 @@ pub enum Event {
     /// the strip or of the workspace stack. The real windows stay where they are; `final_frames`
     /// is the layout they already sit at. Rides an in-flight movement additively when one is
     /// running. See "Edge bounce" in `docs/animation-smoothness.md`.
-    BounceStrip {
-        windows: Vec<StripWindow>,
+    Bounce {
+        windows: Vec<SurfaceWindow>,
         overshoot: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
         focus: Option<WindowId>,
@@ -164,6 +131,9 @@ pub enum Event {
     WarmCache,
 }
 
+/// Called with real-window frames to apply while the overlay covers them.
+pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, CGRect)>)>;
+
 pub type Sender = actor::Sender<Event>;
 pub type Receiver = actor::Receiver<Event>;
 
@@ -171,23 +141,7 @@ pub type Receiver = actor::Receiver<Event>;
 /// paces the mid-flight orchestration: frame placement, destination recaptures, teardown.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
-/// How far the surface gives when a command pushes past an end, in points. Enough to read as
-/// the view straining against a stop, small enough that no column leaves its place.
-pub const EDGE_BOUNCE_OVERSHOOT: f64 = 36.0;
 
-/// The surface's nudge for a push in `direction`: the way the view was pushed, so the content
-/// moves the opposite way, as it would have had there been anything further. Focus right at the
-/// last column pulls the strip left; the next workspace at the bottom of the stack pulls the
-/// row up.
-pub fn edge_bounce_overshoot(direction: crate::layout_engine::Direction) -> CGPoint {
-    use crate::layout_engine::Direction;
-    match direction {
-        Direction::Left => CGPoint::new(EDGE_BOUNCE_OVERSHOOT, 0.0),
-        Direction::Right => CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
-        Direction::Up => CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT),
-        Direction::Down => CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT),
-    }
-}
 
 /// How long to keep collecting windows before the animation starts moving.
 ///
@@ -291,7 +245,7 @@ fn companion_of(
     candidates: &[(WindowServerId, CGRect)],
     display: CGRect,
 ) -> Option<(WindowServerId, CGRect)> {
-    if HiddenWindowPlacement::is_off_screen(display, frame) {
+    if rini_shared::geometry::is_off_screen(display, frame) {
         return None;
     }
     let center = |r: CGRect| {
@@ -300,7 +254,7 @@ fn companion_of(
     let (cx, cy) = center(frame);
     candidates
         .iter()
-        .filter(|(_, candidate)| !HiddenWindowPlacement::is_off_screen(display, *candidate))
+        .filter(|(_, candidate)| !rini_shared::geometry::is_off_screen(display, *candidate))
         .find(|(_, candidate)| {
             let dw = candidate.size.width - frame.size.width;
             let dh = candidate.size.height - frame.size.height;
@@ -387,7 +341,7 @@ const APPLY_FRAMES_AT_RESIZE: f64 = 0.5;
 /// serialized AX writes across Electron apps take longer than half a flight (24 of 162 flights
 /// lifted with every window 1700-2600pt from its tile). See "The apply point" in
 /// `docs/animation-smoothness.md`.
-const APPLY_FRAMES_AT_STRIP: f64 = 0.0;
+const APPLY_FRAMES_AT_PAN: f64 = 0.0;
 
 /// Which path composed a flight. See "The apply point" in `docs/animation-smoothness.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,7 +349,7 @@ enum FlightKind {
     /// A per-window layout pass: moves and resizes.
     Layout,
     /// A strip movement: pure translations.
-    Strip,
+    Pan,
 }
 
 /// Which apply point an animation needs.
@@ -403,7 +357,7 @@ fn apply_frames_at(kind: FlightKind, any_resize: bool) -> f64 {
     match (kind, any_resize) {
         (_, true) => APPLY_FRAMES_AT_RESIZE,
         (FlightKind::Layout, false) => APPLY_FRAMES_AT,
-        (FlightKind::Strip, false) => APPLY_FRAMES_AT_STRIP,
+        (FlightKind::Pan, false) => APPLY_FRAMES_AT_PAN,
     }
 }
 
@@ -611,7 +565,7 @@ fn handover_report(
         if !tiled.contains(window) {
             continue;
         }
-        if crate::model::HiddenWindowPlacement::is_off_screen(display, *intended) {
+        if rini_shared::geometry::is_off_screen(display, *intended) {
             continue;
         }
         let Some(actual) = real.get(window) else { continue };
@@ -1315,8 +1269,9 @@ pub struct WorkspaceAnimation {
     pictures: DisplayPictures,
     /// Fires once after an animation, to recapture the bar away from the critical path.
     bar_refresh: Option<RepeatingTimer>,
-    /// Used to ask the reactor to place real windows once they are hidden behind the overlay.
-    reactor_tx: Option<actor::Sender<crate::actor::reactor::Event>>,
+    /// Places the real windows once the overlay covers them. Supplied by the owner; the engine
+    /// knows nothing about who moves windows.
+    place_frames: Option<PlaceFrames>,
 }
 
 impl WorkspaceAnimation {
@@ -1349,13 +1304,12 @@ impl WorkspaceAnimation {
             last_focus: None,
             pictures: DisplayPictures::default(),
             bar_refresh: None,
-            reactor_tx: None,
+            place_frames: None,
         }
     }
 
-    /// Gives the actor a way back to the reactor, for placing real windows mid-animation.
-    pub fn set_reactor(&mut self, reactor_tx: actor::Sender<crate::actor::reactor::Event>) {
-        self.reactor_tx = Some(reactor_tx);
+    pub fn set_place_frames(&mut self, place: PlaceFrames) {
+        self.place_frames = Some(place);
     }
 
     pub async fn run(mut self) {
@@ -1369,7 +1323,7 @@ impl WorkspaceAnimation {
         match event {
             Event::SetDisplay { id, frame, scale } => self.set_display(id, frame, scale),
             Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
-            Event::AnimateStrip {
+            Event::AnimateSurface {
                 windows,
                 from_offset,
                 to_offset,
@@ -1377,9 +1331,9 @@ impl WorkspaceAnimation {
                 focus,
                 duration,
             } => {
-                self.start_strip(windows, from_offset, to_offset, final_frames, focus, duration)
+                self.start_surface(windows, from_offset, to_offset, final_frames, focus, duration)
             }
-            Event::BounceStrip { windows, overshoot, final_frames, focus, duration } => {
+            Event::Bounce { windows, overshoot, final_frames, focus, duration } => {
                 self.start_bounce(windows, overshoot, final_frames, focus, duration)
             }
             Event::ForgetWindow(window) => self.cache.forget(window),
@@ -2098,7 +2052,7 @@ impl WorkspaceAnimation {
                     // cold cache is not a newcomer, and capturing off screen is slow.
                     let spawn = rini_macos::window_server::get_window(request.server_id)
                         .map(|info| info.frame)
-                        .filter(|f| !HiddenWindowPlacement::is_off_screen(display_frame, *f));
+                        .filter(|f| !rini_shared::geometry::is_off_screen(display_frame, *f));
                     let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
                     let captured_at = Instant::now();
                     let picture = spawn
@@ -2556,9 +2510,9 @@ impl WorkspaceAnimation {
 
     /// Animates the whole strip surface as one rigid group: one container, one position
     /// animation. See "Strip movements" in `docs/animation-smoothness.md`.
-    fn start_strip(
+    fn start_surface(
         &mut self,
-        windows: Vec<StripWindow>,
+        windows: Vec<SurfaceWindow>,
         from_offset: CGPoint,
         to_offset: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
@@ -2584,7 +2538,7 @@ impl WorkspaceAnimation {
         // Real frame per drawn window; depths are filled in after the restack.
         let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
         for window in &windows {
-            let (from, to) = strip_travel(window.frame, from_offset, to_offset, window.pinned);
+            let (from, to) = surface_travel(window.frame, from_offset, to_offset, window.pinned);
             match self.cache.usable(window.window).cloned() {
                 Some(snapshot) => {
                     // A picture of the wrong shape is stretched to the frame rather than dropped.
@@ -2653,22 +2607,18 @@ impl WorkspaceAnimation {
                 "{:.0},{:.0} -> {:.0},{:.0}",
                 from_offset.x, from_offset.y, to_offset.x, to_offset.y
             ),
-            "strip group animation"
+            "surface group animation"
         );
 
         // One rigid piece for the strip, from the windows that have a picture; companions are
         // adopted by their own vectors. See "Strip movements" in
         // `docs/animation-smoothness.md`.
-        let drawn: Vec<StripWindow> = windows
+        let drawn: Vec<SurfaceWindow> = windows
             .iter()
             .filter(|w| tiles.iter().any(|t| t.window == w.window && !t.companion))
             .cloned()
             .collect();
-        let mut plan = plan::surface_plan(
-            &drawn.iter().map(SurfaceWindow::from).collect::<Vec<_>>(),
-            from_offset,
-            to_offset,
-        );
+        let mut plan = plan::surface_plan(&drawn, from_offset, to_offset);
         for tile in &tiles {
             if plan.member(tile.window).is_none() {
                 plan.adopt(tile);
@@ -2684,15 +2634,15 @@ impl WorkspaceAnimation {
             tiles,
             final_frames,
             duration,
-            "strip",
+            "surface",
             GroupStart::Immediate,
-            apply_frames_at(FlightKind::Strip, false),
+            apply_frames_at(FlightKind::Pan, false),
             Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
             focus,
-            Some(strip_pan_travel(from_offset, to_offset)),
+            Some(pan_travel(from_offset, to_offset)),
             plan,
         );
     }
@@ -2704,7 +2654,7 @@ impl WorkspaceAnimation {
     /// `docs/animation-smoothness.md`.
     fn start_bounce(
         &mut self,
-        windows: Vec<StripWindow>,
+        windows: Vec<SurfaceWindow>,
         overshoot: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
         focus: Option<WindowId>,
@@ -2712,7 +2662,7 @@ impl WorkspaceAnimation {
     ) {
         if self.running.is_none() {
             let at_rest = CGPoint::new(0.0, 0.0);
-            self.start_strip(windows, at_rest, at_rest, final_frames, focus, duration);
+            self.start_surface(windows, at_rest, at_rest, final_frames, focus, duration);
         }
         let Self { overlay, running, .. } = self;
         let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
@@ -3058,12 +3008,12 @@ impl WorkspaceAnimation {
         if frames.is_empty() {
             return;
         }
-        let Some(tx) = &self.reactor_tx else {
-            warn!("no reactor channel; cannot place windows at their final frames");
+        let Some(place) = &self.place_frames else {
+            warn!("no frame sink; cannot place windows at their final frames");
             return;
         };
         debug!(count = frames.len(), "placing real windows behind the overlay");
-        _ = tx.send(crate::actor::reactor::Event::ApplyOverlayFrames(frames));
+        place(frames);
     }
 
     /// Jumps to the end and tears down, for the case where no frame clock could be created.
@@ -3230,10 +3180,6 @@ fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
 mod tests {
     use super::*;
 
-    /// The strip-window form of `surface_plan`, so the strip tests read as they did.
-    fn strip_plan(windows: &[StripWindow], from: CGPoint, to: CGPoint) -> plan::ReflowPlan {
-        plan::surface_plan(&windows.iter().map(SurfaceWindow::from).collect::<Vec<_>>(), from, to)
-    }
 
     /// The built-in display, for tests that need a screen to judge parks against.
     const DISPLAY: CGRect = CGRect {
@@ -3309,7 +3255,7 @@ mod tests {
         assert!(!managed.contains(&9001), "a border seen before is still a border");
         // The clamped park itself is not judged off screen, which is why geometry alone failed.
         let park = rect(1727.0, 1076.0, 1720.0, 1081.0);
-        assert!(!HiddenWindowPlacement::is_off_screen(DISPLAY, park));
+        assert!(!rini_shared::geometry::is_off_screen(DISPLAY, park));
         assert!(companion_of(park, &[(WindowServerId::new(102682), park)], DISPLAY).is_some());
     }
 
@@ -3319,7 +3265,7 @@ mod tests {
     #[test]
     fn a_parked_window_neither_traces_nor_is_traced() {
         let park = rect(DISPLAY.size.width - 1.0, DISPLAY.size.height - 1.0, 859.0, 1081.0);
-        assert!(HiddenWindowPlacement::is_off_screen(DISPLAY, park));
+        assert!(rini_shared::geometry::is_off_screen(DISPLAY, park));
         let twin = (WindowServerId::new(7), park);
         assert!(companion_of(park, &[twin], DISPLAY).is_none(), "a parked anchor");
         let on_screen = rect(4.0, 32.0, 859.0, 1081.0);
@@ -3432,8 +3378,7 @@ mod tests {
     /// unfixed code; a failure here is the defect, reproduced.
     mod exploration {
         use super::*;
-        use crate::model::HiddenWindowPlacement;
-        use crate::ui::window_snapshot::test_snapshot;
+                use crate::ui::window_snapshot::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
             WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
@@ -3591,7 +3536,7 @@ mod tests {
             let wrong: Vec<String> = cases
                 .iter()
                 .filter_map(|(name, real, from, to)| {
-                    let expected = HiddenWindowPlacement::entry_frame(*from, *to, display);
+                    let expected = rini_shared::geometry::park_entry_frame(*from, *to, display);
                     let got = resolve_start(*real, *from, *to, display, None);
                     (got != expected).then(|| {
                         format!(
@@ -3683,7 +3628,7 @@ mod tests {
         /// 0.75 of a 300ms flight leaves 75ms. Unfixed: 0.75.
         #[test]
         fn a_strip_movement_applies_frames_by_the_midpoint() {
-            let at = apply_frames_at(FlightKind::Strip, false);
+            let at = apply_frames_at(FlightKind::Pan, false);
             assert!(at <= 0.5, "strip apply point is {at}, leaving too little runway");
         }
 
@@ -4244,9 +4189,9 @@ mod tests {
         fn apply_points_by_flight_kind() {
             assert_eq!(apply_frames_at(FlightKind::Layout, false), 0.75);
             assert_eq!(apply_frames_at(FlightKind::Layout, true), 0.5);
-            assert_eq!(apply_frames_at(FlightKind::Strip, false), APPLY_FRAMES_AT_STRIP);
-            assert_eq!(APPLY_FRAMES_AT_STRIP, 0.0, "a strip movement places its windows at frame zero");
-            assert_eq!(apply_frames_at(FlightKind::Strip, true), 0.5);
+            assert_eq!(apply_frames_at(FlightKind::Pan, false), APPLY_FRAMES_AT_PAN);
+            assert_eq!(APPLY_FRAMES_AT_PAN, 0.0, "a strip movement places its windows at frame zero");
+            assert_eq!(apply_frames_at(FlightKind::Pan, true), 0.5);
         }
 
         /// 2.3. Applied frames go stale when a tile changed or any final frame did.
@@ -4376,7 +4321,7 @@ mod tests {
                 let visible: Vec<_> = frames
                     .iter()
                     .filter(|(_, intended, _)| {
-                        !crate::model::HiddenWindowPlacement::is_off_screen(DISPLAY, *intended)
+                        !rini_shared::geometry::is_off_screen(DISPLAY, *intended)
                     })
                     .collect();
                 let error = |intended: &CGRect, actual: &CGRect| {
@@ -4397,7 +4342,7 @@ mod tests {
                         .find(|(w, _, _)| w.idx.get() == report.worst_wsid)
                         .expect("seed 97: the worst names a measured window");
                     assert!(
-                        !crate::model::HiddenWindowPlacement::is_off_screen(DISPLAY, worst.1),
+                        !rini_shared::geometry::is_off_screen(DISPLAY, worst.1),
                         "seed 97: the worst came from a park"
                     );
                 }
@@ -4577,8 +4522,7 @@ mod tests {
     mod render_stability_preservation {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
-        use crate::model::HiddenWindowPlacement;
-        use crate::ui::window_snapshot::{
+                use crate::ui::window_snapshot::{
             SnapshotCache, WindowSnapshot, needs_capture, outgrows, should_replace, test_snapshot,
         };
 
@@ -4877,7 +4821,7 @@ mod tests {
                 cache.insert(wid(3), test_snapshot(slot.size));
                 assert!(cache.usable(wid(3)).is_some(), "seed 95: the drawn neighbour");
 
-                let (from, to) = strip_travel(slot, CGPoint::new(0.0, 0.0), CGPoint::new(861.0, 0.0), false);
+                let (from, to) = surface_travel(slot, CGPoint::new(0.0, 0.0), CGPoint::new(861.0, 0.0), false);
                 let mut running = flight(None);
                 running.tiles.push(stacked(wid(3), from, to, Some(0), false));
                 running.final_frames = vec![(wid(1), to), (wid(2), to), (wid(3), to)];
@@ -4886,7 +4830,7 @@ mod tests {
                     running.final_frames.iter().copied().collect();
                 let report = handover_report(&running.final_frames, &tiled, &real, DISPLAY);
                 // A destination past the edge is a park, which the report excludes (2.3).
-                let measured = usize::from(!HiddenWindowPlacement::is_off_screen(DISPLAY, to));
+                let measured = usize::from(!rini_shared::geometry::is_off_screen(DISPLAY, to));
                 assert_eq!(report.total, measured, "seed 95: only the drawn window is measured");
                 assert_eq!(report.count_over, 0);
 
@@ -4908,10 +4852,10 @@ mod tests {
                 let count = rng.below(4) as u32 + 1;
                 let travel = CGPoint::new(rng.pt(-1720.0, 1720.0), 0.0);
                 let mut running = flight(None);
-                running.apply_at = apply_frames_at(FlightKind::Strip, false);
+                running.apply_at = apply_frames_at(FlightKind::Pan, false);
                 for i in 1..=count {
                     let frame = rng.on_screen();
-                    let (from, to) = strip_travel(frame, CGPoint::new(0.0, 0.0), travel, false);
+                    let (from, to) = surface_travel(frame, CGPoint::new(0.0, 0.0), travel, false);
                     running.tiles.push(stacked(wid(i), from, to, Some(i as usize), false));
                     running.final_frames.push((wid(i), to));
                 }
@@ -4929,8 +4873,7 @@ mod tests {
     /// code before the fix, over generated inputs outside the bug condition.
     mod preservation {
         use super::*;
-        use crate::model::HiddenWindowPlacement;
-        use rini_motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+                use rini_motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
         use crate::ui::window_snapshot::{SnapshotCache, test_snapshot};
 
         pub(super) const DISPLAY: CGRect = CGRect {
@@ -5039,7 +4982,7 @@ mod tests {
                     from.size.width,
                     from.size.height,
                 );
-                if real.same_as(to) || HiddenWindowPlacement::is_off_screen(DISPLAY, real) {
+                if real.same_as(to) || rini_shared::geometry::is_off_screen(DISPLAY, real) {
                     continue;
                 }
                 checked += 1;
@@ -5156,13 +5099,13 @@ mod tests {
                 let frame = rng.park(size);
                 let from_offset = CGPoint::new(rng.pt(-4000.0, 4000.0), 0.0);
                 let to_offset = CGPoint::new(rng.pt(-4000.0, 4000.0), 0.0);
-                let (from, to) = strip_travel(frame, from_offset, to_offset, false);
+                let (from, to) = surface_travel(frame, from_offset, to_offset, false);
                 assert_eq!(from.origin.x, frame.origin.x - from_offset.x);
                 assert_eq!(to.origin.x, frame.origin.x - to_offset.x);
                 assert_eq!(from.size, frame.size);
                 assert_eq!(to.origin.x - from.origin.x, from_offset.x - to_offset.x);
                 assert_eq!(from.origin.y, frame.origin.y, "a pan keeps the park's row");
-                let entry = HiddenWindowPlacement::entry_frame(frame, to, DISPLAY);
+                let entry = rini_shared::geometry::park_entry_frame(frame, to, DISPLAY);
                 if from_offset.x.abs() != 1.0 {
                     assert_ne!(from, entry, "the pan path does not consult the park remap");
                 }
@@ -5828,7 +5771,7 @@ mod tests {
         fn a_pan_flies() {
             let frame = rect(867.0, 32.0, 859.0, 1081.0);
             let (from, to) =
-                strip_travel(frame, CGPoint::new(0.0, 0.0), CGPoint::new(867.0, 0.0), false);
+                surface_travel(frame, CGPoint::new(0.0, 0.0), CGPoint::new(867.0, 0.0), false);
             let tiles = vec![stacked(wid(1), from, to, Some(1), false)];
             assert!(worth_flying(moving_drawable(&tiles), false));
         }
@@ -5885,18 +5828,6 @@ mod tests {
         assert_eq!(to_overlay_space(window, overlay), rect(865.0, 0.0, 859.0, 1081.0));
     }
 
-    /// The surface gives the way the view was pushed: focus right at the last column pulls the
-    /// strip left, the next workspace at the bottom pulls the row up.
-    #[test]
-    fn an_edge_bounce_moves_the_content_the_way_it_would_have_gone() {
-        use crate::layout_engine::Direction;
-        let o = EDGE_BOUNCE_OVERSHOOT;
-        assert_eq!(edge_bounce_overshoot(Direction::Right), CGPoint::new(-o, 0.0));
-        assert_eq!(edge_bounce_overshoot(Direction::Left), CGPoint::new(o, 0.0));
-        assert_eq!(edge_bounce_overshoot(Direction::Down), CGPoint::new(0.0, -o));
-        assert_eq!(edge_bounce_overshoot(Direction::Up), CGPoint::new(0.0, o));
-        assert!(o < 100.0, "a nudge, not a scroll");
-    }
 
     /// A bounce joining a flight keeps the overlay up until its return leg is done, and never
     /// shortens a flight that outlasts it.
@@ -6129,10 +6060,10 @@ mod tests {
             let before = current.clone();
 
             let d = CGPoint::new(-574.0, 0.0);
-            let pan = strip_plan(
+            let pan = plan::surface_plan(
                 &[
-                    StripWindow { window: wid(1), server_id: WindowServerId::new(1), frame: a, pinned: false, floating: false },
-                    StripWindow { window: wid(2), server_id: WindowServerId::new(2), frame: shifted(b, CGPoint::new(859.0, 0.0)), pinned: false, floating: false },
+                    SurfaceWindow { window: wid(1), server_id: WindowServerId::new(1), frame: a, pinned: false, floating: false },
+                    SurfaceWindow { window: wid(2), server_id: WindowServerId::new(2), frame: shifted(b, CGPoint::new(859.0, 0.0)), pinned: false, floating: false },
                 ],
                 CGPoint::new(-574.0, 0.0),
                 CGPoint::new(0.0, 0.0),
@@ -6301,9 +6232,9 @@ mod tests {
             current.entrances.push((wid(100), entrance_from(slot_o), slot_o));
 
             let d = CGPoint::new(-574.0, 0.0);
-            let windows: Vec<StripWindow> = requests
+            let windows: Vec<SurfaceWindow> = requests
                 .iter()
-                .map(|(w, _, to, _)| StripWindow {
+                .map(|(w, _, to, _)| SurfaceWindow {
                     window: *w,
                     server_id: WindowServerId::new(w.idx.get()),
                     frame: to_overlay_space(*to, EXTERNAL),
@@ -6311,7 +6242,7 @@ mod tests {
                     floating: false,
                 })
                 .collect();
-            let pan = strip_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
+            let pan = plan::surface_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
             let (merged, delta) = merge_plans(&current, &pan, Some(d), &midway(&current), None, DISPLAY);
 
             for (w, _, to, _) in &requests {
@@ -6443,7 +6374,7 @@ mod tests {
                         // The one exception to P4: a member sent off the viewport while its
                         // container moves rides the container (`rides_out`); it keeps its key.
                         let rode_out = pan.is_none()
-                            && crate::model::HiddenWindowPlacement::is_off_screen(DISPLAY, want)
+                            && rini_shared::geometry::is_off_screen(DISPLAY, want)
                             && matches!(before.member(w), Some(Member::Rigid { key, .. })
                                 if before.groups.iter().any(|g| g.key == key && !g.is_still()));
                         if rode_out {
@@ -6512,8 +6443,7 @@ mod tests {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
         use crate::actor::workspace_animation::plan::*;
-        use crate::model::HiddenWindowPlacement;
-        use rini_motion::z_group::StackGroup;
+                use rini_motion::z_group::StackGroup;
         use crate::ui::window_snapshot::is_a_resize;
 
         fn wid(idx: u32) -> WindowId {
@@ -6628,7 +6558,7 @@ mod tests {
             let a = column(0.0);
             let b = column(1.0);
             let park = Gen(5).park(a.size);
-            assert!(HiddenWindowPlacement::is_off_screen(DISPLAY, park));
+            assert!(rini_shared::geometry::is_off_screen(DISPLAY, park));
             let b_to = shifted(b, -863.0, 0.0);
             let others = [(b, b_to, false)];
             let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &others, DISPLAY);
@@ -6652,7 +6582,7 @@ mod tests {
             let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &[], DISPLAY);
             assert_eq!(travel, None);
             let a_end = resolve_end(a, park, DISPLAY, travel);
-            assert_eq!(a_end, HiddenWindowPlacement::entry_frame(park, a, DISPLAY));
+            assert_eq!(a_end, rini_shared::geometry::park_entry_frame(park, a, DISPLAY));
             let still = column(0.0);
 
             let plan = reflow_plan(&[(wid(1), a, a_end, false), (wid(2), still, still, false)], DISPLAY);
@@ -6663,25 +6593,25 @@ mod tests {
             assert_eq!(members(&plan.groups[0]), vec![wid(2)]);
         }
 
-        fn strip_window(idx: u32, frame: CGRect, pinned: bool, floating: bool) -> StripWindow {
-            StripWindow { window: wid(idx), server_id: WindowServerId::new(idx), frame, pinned, floating }
+        fn strip_window(idx: u32, frame: CGRect, pinned: bool, floating: bool) -> SurfaceWindow {
+            SurfaceWindow { window: wid(idx), server_id: WindowServerId::new(idx), frame, pinned, floating }
         }
 
         /// The 3:27:20 pan: 22 survivors scrolled 574pt. One group, 22 members, one travel.
         #[test]
         fn the_3_27_20_pan_is_one_group_of_twenty_two() {
-            let windows: Vec<StripWindow> =
+            let windows: Vec<SurfaceWindow> =
                 (0..22).map(|i| strip_window(i + 1, column(i as f64), false, false)).collect();
             let from_offset = CGPoint::new(-574.0, 0.0);
             let to_offset = CGPoint::new(0.0, 0.0);
-            let plan = strip_plan(&windows, from_offset, to_offset);
+            let plan = plan::surface_plan(&windows, from_offset, to_offset);
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(groups[0].members.len(), 22);
             assert_eq!(groups[0].travel, CGPoint::new(-574.0, 0.0));
-            assert_eq!(groups[0].travel, strip_pan_travel(from_offset, to_offset));
+            assert_eq!(groups[0].travel, pan_travel(from_offset, to_offset));
             for (window, member) in windows.iter().zip(&groups[0].members) {
-                let (from, to) = strip_travel(window.frame, from_offset, to_offset, false);
+                let (from, to) = surface_travel(window.frame, from_offset, to_offset, false);
                 assert_eq!(member.window, window.window);
                 assert_eq!(member.rel, from);
                 assert_eq!(overlay_of(member.rel, groups[0].travel), to, "rel plus travel is the destination");
@@ -6699,7 +6629,7 @@ mod tests {
                 strip_window(1, column(0.0), false, false),
                 strip_window(2, settings, true, true),
             ];
-            let plan = strip_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
+            let plan = plan::surface_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
             assert_eq!(plan.floating, vec![(wid(2), settings, settings)]);
             assert_eq!(plan.floating_travel, CGPoint::new(0.0, 0.0));
             assert_eq!(plan.member(wid(2)), Some(Member::Floating { from: settings, to: settings }));
@@ -6708,7 +6638,7 @@ mod tests {
 
         /// A switch moves its floating windows by the strip's travel: the container carries them.
         #[test]
-        fn a_switch_moves_the_floating_container_by_the_strip_travel() {
+        fn a_switch_moves_the_floating_container_by_the_surface_travel() {
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let windows = vec![
                 strip_window(1, column(0.0), false, false),
@@ -6716,13 +6646,13 @@ mod tests {
             ];
             let from_offset = CGPoint::new(0.0, 0.0);
             let to_offset = CGPoint::new(0.0, 1117.0);
-            let plan = strip_plan(&windows, from_offset, to_offset);
-            let travel = strip_pan_travel(from_offset, to_offset);
+            let plan = plan::surface_plan(&windows, from_offset, to_offset);
+            let travel = pan_travel(from_offset, to_offset);
             assert_eq!(travel, CGPoint::new(0.0, -1117.0));
             assert_eq!(moving(&plan)[0].travel, travel);
             assert_eq!(plan.floating_travel, travel);
             assert_eq!(plan.floating, vec![(wid(2), settings, settings)], "the tile itself stands in its container");
-            let (_, to) = strip_travel(settings, from_offset, to_offset, false);
+            let (_, to) = surface_travel(settings, from_offset, to_offset, false);
             assert_eq!(overlay_of(settings, plan.floating_travel), to);
         }
 

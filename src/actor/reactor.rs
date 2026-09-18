@@ -4081,7 +4081,7 @@ impl Reactor {
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::AnimateStrip {
+        _ = tx.send(crate::actor::workspace_animation::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -4101,13 +4101,13 @@ impl Reactor {
         layout: &[(WindowId, CGRect)],
         display_bounds: CGRect,
         pin_floating: bool,
-    ) -> Vec<crate::actor::workspace_animation::StripWindow> {
+    ) -> Vec<crate::actor::workspace_animation::SurfaceWindow> {
         let mut windows = Vec::with_capacity(layout.len());
         for (wid, frame) in layout {
             let Some(window) = self.state.windows.window(*wid) else { continue };
             let Some(server_id) = window.info.sys_id else { continue };
             let floating = self.layout_manager.layout_engine.is_window_floating(*wid);
-            windows.push(crate::actor::workspace_animation::StripWindow {
+            windows.push(crate::actor::workspace_animation::SurfaceWindow {
                 window: *wid,
                 server_id,
                 frame: CGRect::new(
@@ -4169,12 +4169,12 @@ impl Reactor {
         if windows.is_empty() {
             return;
         }
-        let overshoot = crate::actor::workspace_animation::edge_bounce_overshoot(direction);
+        let overshoot = super::reactor::animation::edge_bounce_overshoot(direction);
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         tracing::debug!(?direction, windows = windows.len(), "edge bounce");
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::BounceStrip {
+        _ = tx.send(crate::actor::workspace_animation::Event::Bounce {
             windows,
             overshoot,
             final_frames: layout,
@@ -4250,7 +4250,7 @@ impl Reactor {
         let row_pitch = display_bounds.size.height;
         let height = row_pitch;
 
-        let mut windows: Vec<crate::actor::workspace_animation::StripWindow> = Vec::new();
+        let mut windows: Vec<crate::actor::workspace_animation::SurfaceWindow> = Vec::new();
         let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else { continue };
@@ -4267,7 +4267,7 @@ impl Reactor {
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };
-                windows.push(crate::actor::workspace_animation::StripWindow {
+                windows.push(crate::actor::workspace_animation::SurfaceWindow {
                     window: wid,
                     server_id,
                     frame: crate::model::strip_stack::strip_frame(
@@ -4341,7 +4341,7 @@ impl Reactor {
         }
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::actor::workspace_animation::Event::AnimateStrip {
+        _ = tx.send(crate::actor::workspace_animation::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,

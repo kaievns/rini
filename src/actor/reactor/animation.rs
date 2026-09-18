@@ -648,6 +648,20 @@ mod tests {
     }
 
 
+
+    /// The surface gives the way the view was pushed: focus right at the last column pulls the
+    /// strip left, the next workspace at the bottom pulls the row up.
+    #[test]
+    fn an_edge_bounce_moves_the_content_the_way_it_would_have_gone() {
+        use rini_layout::Direction;
+        let o = EDGE_BOUNCE_OVERSHOOT;
+        assert_eq!(edge_bounce_overshoot(Direction::Right), CGPoint::new(-o, 0.0));
+        assert_eq!(edge_bounce_overshoot(Direction::Left), CGPoint::new(o, 0.0));
+        assert_eq!(edge_bounce_overshoot(Direction::Down), CGPoint::new(0.0, -o));
+        assert_eq!(edge_bounce_overshoot(Direction::Up), CGPoint::new(0.0, o));
+        assert!(o < 100.0, "a nudge, not a scroll");
+    }
+
 }
 
 
@@ -714,3 +728,20 @@ fn travels_visibly(requests: &[crate::actor::workspace_animation::AnimationReque
     requests.iter().any(|request| travel(request) >= MIN_VISIBLE_TRAVEL)
 }
 
+/// How far the surface gives when a command pushes past an end, in points. Enough to read as
+/// the view straining against a stop, small enough that no column leaves its place.
+pub const EDGE_BOUNCE_OVERSHOOT: f64 = 36.0;
+
+/// The surface's nudge for a push in `direction`: the way the view was pushed, so the content
+/// moves the opposite way, as it would have had there been anything further. Focus right at the
+/// last column pulls the strip left; the next workspace at the bottom of the stack pulls the
+/// row up.
+pub fn edge_bounce_overshoot(direction: rini_layout::Direction) -> objc2_core_foundation::CGPoint {
+    use rini_layout::Direction;
+    match direction {
+        Direction::Left => objc2_core_foundation::CGPoint::new(EDGE_BOUNCE_OVERSHOOT, 0.0),
+        Direction::Right => objc2_core_foundation::CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
+        Direction::Up => objc2_core_foundation::CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT),
+        Direction::Down => objc2_core_foundation::CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT),
+    }
+}
