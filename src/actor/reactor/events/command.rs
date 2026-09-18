@@ -126,8 +126,14 @@ pub fn handle_command_layout(
         }
     };
 
+    // A blocked workspace step still reaches `handle_layout_response` when it hit an end, so the
+    // stack can bounce; nothing else about it is worth an arrange.
     if is_virtual_workspace_command && !response.changed {
-        return Ok(EventOutcome::no_change());
+        return Ok(if response.edge_hit.is_some() {
+            EventOutcome::no_change().with_layout_response(response, workspace_space)
+        } else {
+            EventOutcome::no_change()
+        });
     }
 
     let arrange_space_scope = is_workspace_switch.then_some(workspace_space).flatten();

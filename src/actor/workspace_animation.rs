@@ -101,6 +101,17 @@ pub enum Event {
         focus: Option<WindowId>,
         duration: Duration,
     },
+    /// Nudge the strip surface by `overshoot` and bring it back: a command ran into an end of
+    /// the strip or of the workspace stack. The real windows stay where they are; `final_frames`
+    /// is the layout they already sit at. Rides an in-flight movement additively when one is
+    /// running. See "Edge bounce" in `docs/animation-smoothness.md`.
+    BounceStrip {
+        windows: Vec<StripWindow>,
+        overshoot: CGPoint,
+        final_frames: Vec<(WindowId, CGRect)>,
+        focus: Option<WindowId>,
+        duration: Duration,
+    },
     /// One frame of the running animation. Posted by the run loop timer, not by any other actor.
     Tick,
     /// The layout passes have settled; start the clock. Posted by the coalesce timer.
@@ -145,6 +156,24 @@ pub type Receiver = actor::Receiver<Event>;
 /// Tick interval. Nothing is drawn on ticks — Core Animation carries every movement — so this only
 /// paces the mid-flight orchestration: frame placement, destination recaptures, teardown.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+
+/// How far the surface gives when a command pushes past an end, in points. Enough to read as
+/// the view straining against a stop, small enough that no column leaves its place.
+pub const EDGE_BOUNCE_OVERSHOOT: f64 = 36.0;
+
+/// The surface's nudge for a push in `direction`: the way the view was pushed, so the content
+/// moves the opposite way, as it would have had there been anything further. Focus right at the
+/// last column pulls the strip left; the next workspace at the bottom of the stack pulls the
+/// row up.
+pub fn edge_bounce_overshoot(direction: crate::layout_engine::Direction) -> CGPoint {
+    use crate::layout_engine::Direction;
+    match direction {
+        Direction::Left => CGPoint::new(EDGE_BOUNCE_OVERSHOOT, 0.0),
+        Direction::Right => CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
+        Direction::Up => CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT),
+        Direction::Down => CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT),
+    }
+}
 
 /// How long to keep collecting windows before the animation starts moving.
 ///
@@ -790,6 +819,14 @@ const LIFT_GRACE: Duration = Duration::from_millis(350);
 /// Whether the overlay lifts now: the clock has run out AND the render server presents every layer
 /// at its destination AND every visible real window is where its tile finished; or the clock ran
 /// out `LIFT_GRACE` ago. Lifting over windows still travelling showed them jump into place.
+/// The flight's clock once a bounce of `bounce` joins it: long enough that the lift waits for the
+/// return leg, never shorter than it was. `started` is when the flight began moving; a flight
+/// still collecting keeps at least the bounce.
+fn clock_for_bounce(started: Option<Instant>, duration: Duration, bounce: Duration) -> Duration {
+    let needed = started.map_or(bounce, |s| s.elapsed() + bounce);
+    duration.max(needed)
+}
+
 fn lift_now(clock_done: bool, settled: bool, landed: bool, overdue: bool) -> bool {
     clock_done && ((settled && landed) || overdue)
 }
@@ -1353,6 +1390,9 @@ impl WorkspaceAnimation {
                 duration,
             } => {
                 self.start_strip(windows, from_offset, to_offset, final_frames, focus, duration)
+            }
+            Event::BounceStrip { windows, overshoot, final_frames, focus, duration } => {
+                self.start_bounce(windows, overshoot, final_frames, focus, duration)
             }
             Event::RefreshSnapshot { window, server_id, size } => {
                 self.refresh_snapshot(window, server_id, size)
@@ -2678,6 +2718,36 @@ impl WorkspaceAnimation {
             focus,
             Some(strip_pan_travel(from_offset, to_offset)),
             plan,
+        );
+    }
+
+    /// Nudges the strip surface by `overshoot` and back. With a flight in progress the bounce is
+    /// added to it: an additive animation on every container, and the clock extended so the lift
+    /// waits for the return. Otherwise a flight with no travel is composed from `windows` (every
+    /// tile at rest) and the bounce is its only motion. See "Edge bounce" in
+    /// `docs/animation-smoothness.md`.
+    fn start_bounce(
+        &mut self,
+        windows: Vec<StripWindow>,
+        overshoot: CGPoint,
+        final_frames: Vec<(WindowId, CGRect)>,
+        focus: Option<WindowId>,
+        duration: Duration,
+    ) {
+        if self.running.is_none() {
+            let at_rest = CGPoint::new(0.0, 0.0);
+            self.start_strip(windows, at_rest, at_rest, final_frames, focus, duration);
+        }
+        let Self { overlay, running, .. } = self;
+        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
+            return;
+        };
+        running.duration = clock_for_bounce(running.started, running.duration, duration);
+        overlay.bounce(overshoot, duration);
+        debug!(
+            overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
+            joined = running.started.is_some(),
+            "edge bounce"
         );
     }
 
@@ -6579,6 +6649,36 @@ mod tests {
         let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
         let window = rect(865.0, 32.0, 859.0, 1081.0);
         assert_eq!(to_overlay_space(window, overlay), rect(865.0, 0.0, 859.0, 1081.0));
+    }
+
+    /// The surface gives the way the view was pushed: focus right at the last column pulls the
+    /// strip left, the next workspace at the bottom pulls the row up.
+    #[test]
+    fn an_edge_bounce_moves_the_content_the_way_it_would_have_gone() {
+        use crate::layout_engine::Direction;
+        let o = EDGE_BOUNCE_OVERSHOOT;
+        assert_eq!(edge_bounce_overshoot(Direction::Right), CGPoint::new(-o, 0.0));
+        assert_eq!(edge_bounce_overshoot(Direction::Left), CGPoint::new(o, 0.0));
+        assert_eq!(edge_bounce_overshoot(Direction::Down), CGPoint::new(0.0, -o));
+        assert_eq!(edge_bounce_overshoot(Direction::Up), CGPoint::new(0.0, o));
+        assert!(o < 100.0, "a nudge, not a scroll");
+    }
+
+    /// A bounce joining a flight keeps the overlay up until its return leg is done, and never
+    /// shortens a flight that outlasts it.
+    #[test]
+    fn a_bounce_extends_the_clock_to_cover_its_return() {
+        let bounce = Duration::from_millis(350);
+        assert_eq!(clock_for_bounce(None, Duration::from_millis(100), bounce), bounce);
+        assert_eq!(
+            clock_for_bounce(None, Duration::from_millis(900), bounce),
+            Duration::from_millis(900)
+        );
+        let started = Instant::now() - Duration::from_millis(300);
+        let extended = clock_for_bounce(Some(started), Duration::from_millis(350), bounce);
+        assert!(extended >= Duration::from_millis(650), "{extended:?}");
+        let long = clock_for_bounce(Some(started), Duration::from_secs(5), bounce);
+        assert_eq!(long, Duration::from_secs(5));
     }
 
     #[test]

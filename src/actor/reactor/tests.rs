@@ -2183,6 +2183,7 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
             ],
             focus_window: None,
             boundary_hit: None,
+            edge_hit: None,
         },
         None,
     );
@@ -2223,6 +2224,7 @@ fn handle_layout_response_includes_handles_for_raise_and_focus_windows() {
             raise_windows: vec![WindowId::new(1, 1)],
             focus_window: Some(WindowId::new(2, 1)),
             boundary_hit: None,
+            edge_hit: None,
         },
         None,
     );
@@ -6128,6 +6130,7 @@ mod strip_regroup {
                 raise_windows: vec![WindowId::new(1, 1)],
                 focus_window: Some(WindowId::new(1, 1)),
                 boundary_hit: None,
+                edge_hit: None,
             },
             None,
         );
@@ -6153,6 +6156,7 @@ mod strip_regroup {
                 raise_windows: vec![WindowId::new(1, 4)],
                 focus_window: Some(WindowId::new(1, 4)),
                 boundary_hit: None,
+                edge_hit: None,
             },
             None,
         );
@@ -6172,6 +6176,7 @@ mod strip_regroup {
                 raise_windows: vec![WindowId::new(1, 1)],
                 focus_window: Some(WindowId::new(1, 1)),
                 boundary_hit: None,
+                edge_hit: None,
             },
             None,
         );
@@ -6803,6 +6808,63 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     assert_eq!(animated.len(), 3, "every window on the display, not just the movers: {animated:?}");
     let still = animated.iter().find(|request| request.window == held).expect("the still window");
     assert_eq!(still.from, still.to, "it is handed over to be drawn, not to be moved");
+}
+
+/// Pushing past an end bounces the view instead of doing nothing: focus right at the last column
+/// nudges the strip left; the previous workspace at the top of the stack nudges the row up. Focus
+/// stays where it was in both cases. See "Edge bounce" in `docs/animation-smoothness.md`.
+#[test]
+fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
+    use crate::actor::workspace_animation::{EDGE_BOUNCE_OVERSHOOT, Event as Anim};
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.overlay_animations = true;
+    reactor.config.settings.animate = true;
+    let mut settings = reactor.config.virtual_workspaces.clone();
+    settings.prevent_wrapping = true;
+    reactor
+        .layout_manager
+        .layout_engine
+        .update_virtual_workspace_settings(&reactor.state.windows, &settings);
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    let last_column = WindowId::new(1, 2);
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, last_column));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = actor::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let bounces = |rx: &mut actor::Receiver<Anim>| {
+        let mut out = Vec::new();
+        while let Ok((_, event)) = rx.try_recv() {
+            if let Anim::BounceStrip { overshoot, windows, .. } = event {
+                out.push((overshoot, windows.len()));
+            }
+        }
+        out
+    };
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    assert_eq!(
+        bounces(&mut animation_rx),
+        vec![(CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
+        "the strip's end: one bounce to the left carrying both columns"
+    );
+    assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(last_column));
+
+    reactor.handle_test_layout_command(LayoutCommand::PrevWorkspace(None));
+    assert_eq!(
+        bounces(&mut animation_rx),
+        vec![(CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
+        "the top of the stack: one bounce downward"
+    );
+    assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(last_column));
+
+    // A step that lands somewhere is a switch, not a bounce.
+    reactor.handle_test_layout_command(LayoutCommand::NextWorkspace(None));
+    assert!(bounces(&mut animation_rx).is_empty());
 }
 
 /// A floating window oscillated between x = 502 and x = 503 on every space-state refresh. Animating that

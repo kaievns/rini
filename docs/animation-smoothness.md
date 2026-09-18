@@ -306,6 +306,29 @@ and both routes land in the same machinery. `take_strip_movement` also
 feeds the switch's claim on the destination's scroll offset, which needs
 care.
 
+**Edge bounce.** A command that pushes past an end of the strip (focus
+left/right at the first/last column) or of the workspace stack (next/prev at
+the bottom/top with `prevent_wrapping`, or nothing further to skip to) used
+to stop dead, which read as a dropped keypress. The layout reports it as
+`EventResponse::edge_hit` (`move_focus_internal`'s fallback for left/right
+only; `handle_virtual_workspace_command` for up/down), distinct from
+`boundary_hit`, which is the gesture's threshold crossing. The reactor
+(`start_edge_bounce`) sends `BounceStrip` with the active workspace's surface
+and `edge_bounce_overshoot`: `EDGE_BOUNCE_OVERSHOOT` (36pt) the way the
+content would have gone, so focus right pulls the strip left and the next
+workspace pulls the row up. The actor (`start_bounce`) composes a flight with
+no travel when none is running (every tile at rest, `final_frames` the layout
+the windows already sit at) and adds the bounce to whatever is running
+otherwise, extending the clock to cover the return (`clock_for_bounce`). The
+overlay's `bounce` is one additive `CAKeyframeAnimation` per container
+(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; ease-out then ease-in-out) under
+its own key, so an in-flight movement is neither replaced nor disturbed and
+the model positions stay put; `settled` reads false until it is home, which
+holds the lift. The floating container rides only a vertical bounce
+(`bounce_carries`), the rule a pan (pinned) and a switch (carried) already
+follow. Real windows never move. The shape is `bounce_displacement`, pinned
+by `a_bounce_goes_out_once_and_comes_home`.
+
 ## Resizes through the overlay
 
 A resize rides the per-window overlay path instead of the AX engine, ported

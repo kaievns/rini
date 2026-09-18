@@ -4105,26 +4105,9 @@ impl Reactor {
 
         // Full-display coordinates, matching the overlay's own space.
         let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
-        let mut windows: Vec<crate::actor::workspace_animation::StripWindow> = Vec::new();
-        for (wid, frame) in &full {
-            let Some(window) = self.state.windows.window(*wid) else { continue };
-            let Some(server_id) = window.info.sys_id else { continue };
-            windows.push(crate::actor::workspace_animation::StripWindow {
-                window: *wid,
-                server_id,
-                frame: CGRect::new(
-                    CGPoint::new(
-                        frame.origin.x - display_bounds.origin.x,
-                        frame.origin.y - display_bounds.origin.y,
-                    ),
-                    frame.size,
-                ),
-                // A floating window is not in the strip. Panning it with the strip dragged it sideways
-                // and snapped it back at the handover.
-                pinned: self.layout_manager.layout_engine.is_window_floating(*wid),
-                floating: self.layout_manager.layout_engine.is_window_floating(*wid),
-            });
-        }
+        // A floating window is not in the strip. Panning it with the strip dragged it sideways
+        // and snapped it back at the handover.
+        let windows = self.strip_windows_at(&full, display_bounds, true);
         if windows.is_empty() {
             return false;
         }
@@ -4163,6 +4146,103 @@ impl Reactor {
             duration,
         });
         true
+    }
+
+    /// The strip surface for one workspace's layout: every window with a server id, at its layout
+    /// frame expressed relative to the display's own origin (the overlay's space). `pin_floating`
+    /// holds floating windows still while the strip moves under them (a pan); a vertical movement
+    /// carries them with their workspace.
+    fn strip_windows_at(
+        &self,
+        layout: &[(WindowId, CGRect)],
+        display_bounds: CGRect,
+        pin_floating: bool,
+    ) -> Vec<crate::actor::workspace_animation::StripWindow> {
+        let mut windows = Vec::with_capacity(layout.len());
+        for (wid, frame) in layout {
+            let Some(window) = self.state.windows.window(*wid) else { continue };
+            let Some(server_id) = window.info.sys_id else { continue };
+            let floating = self.layout_manager.layout_engine.is_window_floating(*wid);
+            windows.push(crate::actor::workspace_animation::StripWindow {
+                window: *wid,
+                server_id,
+                frame: CGRect::new(
+                    CGPoint::new(
+                        frame.origin.x - display_bounds.origin.x,
+                        frame.origin.y - display_bounds.origin.y,
+                    ),
+                    frame.size,
+                ),
+                pinned: pin_floating && floating,
+                floating,
+            });
+        }
+        windows
+    }
+
+    /// Bounces the view against the end a command ran into: the strip's first or last column
+    /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
+    /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
+    /// the real windows do not move. See "Edge bounce" in `docs/animation-smoothness.md`.
+    fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
+        if !self.config.settings.overlay_animations
+            || !self.config.settings.animate
+            || crate::sys::power::is_low_power_mode_enabled()
+        {
+            return;
+        }
+        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+            return;
+        };
+        let Some(screen) = self
+            .space_state
+            .screens
+            .iter()
+            .find(|s| s.space == Some(space))
+            .or_else(|| self.space_state.screens.first())
+            .cloned()
+        else {
+            return;
+        };
+        let Some(workspace_id) = self.layout_manager.layout_engine.active_workspace(space) else {
+            return;
+        };
+        let gaps = self
+            .config
+            .settings
+            .layout
+            .gaps
+            .effective_for_display(screen.display_uuid_opt());
+        let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
+            &self.state.windows,
+            space,
+            workspace_id,
+            screen.frame,
+            &gaps,
+            self.config.settings.ui.stack_line.thickness(),
+            self.config.settings.ui.stack_line.horiz_placement,
+            self.config.settings.ui.stack_line.vert_placement,
+        );
+        let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
+        let vertical = matches!(direction, Direction::Up | Direction::Down);
+        // A strip bounce leaves floating windows where they are, as a pan does; a stack bounce
+        // carries them, as a switch does.
+        let windows = self.strip_windows_at(&layout, display_bounds, !vertical);
+        if windows.is_empty() {
+            return;
+        }
+        let overshoot = crate::actor::workspace_animation::edge_bounce_overshoot(direction);
+        let duration =
+            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
+        tracing::debug!(?direction, windows = windows.len(), "edge bounce");
+        self.publish_animation_display_for(Some(space));
+        _ = tx.send(crate::actor::workspace_animation::Event::BounceStrip {
+            windows,
+            overshoot,
+            final_frames: layout,
+            focus: self.layout_manager.layout_engine.focused_window(),
+            duration,
+        });
     }
 
     /// Builds and starts a strip-surface animation for a workspace switch, if one is warranted.
@@ -5141,11 +5221,27 @@ impl Reactor {
                 RefocusState::None => None,
             };
         let layout::EventResponse {
-            changed: _,
+            changed,
             raise_windows,
             mut focus_window,
             boundary_hit,
+            edge_hit,
         } = response;
+
+        // The command ran into an end of the strip or of the workspace stack. The view bounces so
+        // the stop reads as an edge, not a dropped keypress. A blocked workspace step changed
+        // nothing and names no window, so it ends here: the switch-active focus fallbacks below
+        // would otherwise re-focus whatever sits under the cursor.
+        if let Some(direction) = edge_hit {
+            let space = workspace_switch_space.or_else(|| self.command_context_space());
+            if let Some(space) = space {
+                self.start_edge_bounce(space, direction);
+            }
+            if !changed && raise_windows.is_empty() && focus_window.is_none() {
+                self.workspace_switch_manager.mark_workspace_switch_inactive();
+                return;
+            }
+        }
 
         // The window the switch is FOR: it is parked until the layout lands, so the window server
         // may well report it off screen right now. The visibility filters below must not trade it

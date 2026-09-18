@@ -88,7 +88,14 @@ pub struct EventResponse {
     pub changed: bool,
     pub raise_windows: Vec<WindowId>,
     pub focus_window: Option<WindowId>,
+    /// A gesture overscrolled the strip past `workspace_switch_threshold`: the swipe continues
+    /// into a workspace switch (`propagate_to_workspace_swipe`).
     pub boundary_hit: Option<Direction>,
+    /// A command tried to go past an end: the strip's first/last column (`Left`/`Right`) or the
+    /// workspace stack's top/bottom (`Up`/`Down`). Nothing moved; the reactor bounces the view
+    /// so the stop reads as an edge rather than a dropped keypress.
+    #[serde(default)]
+    pub edge_hit: Option<Direction>,
 }
 
 #[must_use]
@@ -278,6 +285,7 @@ impl LayoutEngine {
                 raise_windows,
                 focus_window: None,
                 boundary_hit: None,
+                edge_hit: None,
             }
         }
     }
@@ -605,6 +613,7 @@ impl LayoutEngine {
             ),
             raise_windows: vec![],
             boundary_hit: None,
+            edge_hit: None,
         }
     }
 
@@ -729,6 +738,7 @@ impl LayoutEngine {
             focus_window,
             raise_windows: tiled_windows,
             boundary_hit: None,
+            edge_hit: None,
         };
         self.apply_focus_response(window_store, space, ws_id, layout, &response);
         response
@@ -781,6 +791,7 @@ impl LayoutEngine {
                 focus_window,
                 raise_windows,
                 boundary_hit: None,
+                edge_hit: None,
             };
             self.apply_focus_response(window_store, space, ws_id, layout, &response);
             response
@@ -836,6 +847,7 @@ impl LayoutEngine {
                         focus_window: Some(target_window),
                         raise_windows: windows_in_new_space,
                         boundary_hit: None,
+                        edge_hit: None,
                     };
                     self.apply_focus_response(
                         window_store,
@@ -869,11 +881,16 @@ impl LayoutEngine {
                 .filter_active_workspace_window(window_store, space, previous_selection)
                 .or_else(|| visible_windows.first().copied())
             {
+                // The strip stopped at its end. Up/down is not a strip axis (a stack's top is
+                // not an edge of anything the view can bounce), so only left/right report it.
+                let edge_hit =
+                    matches!(direction, Direction::Left | Direction::Right).then_some(direction);
                 let response = EventResponse {
                     changed: true,
                     focus_window: Some(fallback_focus),
                     raise_windows: vec![],
                     boundary_hit: None,
+                    edge_hit,
                 };
                 self.apply_focus_response(window_store, space, ws_id, layout, &response);
                 return response;
@@ -1910,6 +1927,7 @@ impl LayoutEngine {
                         raise_windows: vec![window],
                         focus_window: Some(window),
                         boundary_hit: None,
+                        edge_hit: None,
                     };
                 }
                 if app_rule_outcome.has_resizes() {
@@ -2125,6 +2143,7 @@ impl LayoutEngine {
                 raise_windows: vec![wid],
                 focus_window: Some(wid),
                 boundary_hit: None,
+                edge_hit: None,
             };
         }
 
@@ -2160,6 +2179,7 @@ impl LayoutEngine {
                     raise_windows,
                     focus_window,
                     boundary_hit: None,
+                    edge_hit: None,
                 };
                 self.apply_focus_response(window_store, space, workspace_id, layout, &response);
                 return response;
@@ -2177,6 +2197,7 @@ impl LayoutEngine {
                     raise_windows,
                     focus_window,
                     boundary_hit: None,
+                    edge_hit: None,
                 };
                 self.apply_focus_response(window_store, space, workspace_id, layout, &response);
                 return response;
@@ -2216,6 +2237,7 @@ impl LayoutEngine {
                         focus_window: Some(windows[next]),
                         raise_windows: vec![windows[next]],
                         boundary_hit: None,
+                        edge_hit: None,
                     };
                     self.apply_focus_response(window_store, space, workspace_id, layout, &response);
                     return response;
@@ -2231,6 +2253,7 @@ impl LayoutEngine {
                         focus_window,
                         raise_windows,
                         boundary_hit: None,
+                        edge_hit: None,
                     };
                     self.apply_focus_response(window_store, space, workspace_id, layout, &response);
                     return response;
@@ -2307,6 +2330,7 @@ impl LayoutEngine {
                         raise_windows,
                         focus_window: None,
                         boundary_hit: None,
+                        edge_hit: None,
                     }
                 }
             }
@@ -2325,6 +2349,7 @@ impl LayoutEngine {
                         raise_windows,
                         focus_window: None,
                         boundary_hit: None,
+                        edge_hit: None,
                     }
                 }
             }
@@ -2817,6 +2842,9 @@ impl LayoutEngine {
         command: &LayoutCommand,
     ) -> EventResponse {
         match command {
+            // Workspaces stack downward: the next one is below, the previous above. No step
+            // (the end with `prevent_wrapping`, or nothing left in that direction to skip to)
+            // reports the edge instead of silence.
             LayoutCommand::NextWorkspace(skip_empty) => {
                 if let Some(current_workspace) =
                     self.virtual_workspace_manager.active_workspace(space)
@@ -2830,7 +2858,7 @@ impl LayoutEngine {
                         return self.activate_workspace(window_store, space, next_workspace, None);
                     }
                 }
-                EventResponse::default()
+                EventResponse { edge_hit: Some(Direction::Down), ..EventResponse::default() }
             }
             LayoutCommand::PrevWorkspace(skip_empty) => {
                 if let Some(current_workspace) =
@@ -2845,7 +2873,7 @@ impl LayoutEngine {
                         return self.activate_workspace(window_store, space, prev_workspace, None);
                     }
                 }
-                EventResponse::default()
+                EventResponse { edge_hit: Some(Direction::Up), ..EventResponse::default() }
             }
             LayoutCommand::SwitchToWorkspace(workspace_index) => {
                 self.switch_to_workspace(window_store, space, *workspace_index, None)
@@ -2985,6 +3013,7 @@ impl LayoutEngine {
                         focus_window: Some(focused_window),
                         raise_windows: vec![],
                         boundary_hit: None,
+                        edge_hit: None,
                     };
                 } else if Some(current_workspace_id) == active_workspace {
                     self.focused_window = None;
@@ -3004,6 +3033,7 @@ impl LayoutEngine {
                             focus_window: Some(new_focus),
                             raise_windows: vec![],
                             boundary_hit: None,
+                            edge_hit: None,
                         };
                     }
                 }
@@ -3069,6 +3099,7 @@ impl LayoutEngine {
                         None
                     },
                     boundary_hit: None,
+                    edge_hit: None,
                 }
             }
             _ => EventResponse::default(),
@@ -3214,6 +3245,7 @@ impl LayoutEngine {
                 raise_windows: vec![window_id],
                 focus_window: Some(window_id),
                 boundary_hit: None,
+                edge_hit: None,
             };
         }
 
@@ -3339,6 +3371,7 @@ impl LayoutEngine {
             raise_windows: vec![window_id],
             focus_window: Some(window_id),
             boundary_hit: None,
+            edge_hit: None,
         }
     }
 
@@ -4165,13 +4198,29 @@ mod tests {
                     Some(on_right),
                     "isolate_displays = true must not move focus to the adjacent display"
                 );
+                assert_eq!(
+                    response.edge_hit,
+                    Some(Direction::Right),
+                    "the strip stopped at its end: the reactor bounces it"
+                );
             } else {
                 assert_eq!(
                     response.focus_window,
                     Some(on_right),
                     "isolate_displays = false should still cross to the adjacent display"
                 );
+                assert_eq!(response.edge_hit, None, "focus moved on: no edge");
             }
+            // Up at the top of a one-window column is not a strip edge.
+            engine.focused_window = Some(on_left);
+            let up = engine.handle_command(
+                &mut window_store,
+                Some(left),
+                &visible_spaces,
+                &centers,
+                LayoutCommand::MoveFocus(Direction::Up),
+            );
+            assert_eq!(up.edge_hit, None);
         }
     }
 
@@ -4295,6 +4344,7 @@ mod tests {
             &LayoutCommand::NextWorkspace(None),
         );
         assert!(!prevented_wrap.changed);
+        assert_eq!(prevented_wrap.edge_hit, Some(Direction::Down), "the bottom of the stack");
 
         assert!(
             engine
@@ -4307,6 +4357,34 @@ mod tests {
             &LayoutCommand::NextWorkspace(Some(true)),
         );
         assert!(!no_eligible_workspace.changed);
+        assert_eq!(no_eligible_workspace.edge_hit, Some(Direction::Down), "nothing further to skip to");
+        let top = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            space,
+            &LayoutCommand::PrevWorkspace(None),
+        );
+        assert!(!top.changed);
+        assert_eq!(top.edge_hit, Some(Direction::Up), "the top of the stack");
+
+        // With wrapping the step always lands somewhere: no edge.
+        let mut engine = LayoutEngine::new(
+            &VirtualWorkspaceSettings::default(),
+            &LayoutSettings::default(),
+            None,
+        );
+        let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
+        assert!(
+            engine
+                .virtual_workspace_manager_mut()
+                .set_active_workspace(space, workspaces.last().unwrap().0)
+        );
+        let wrapped = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            space,
+            &LayoutCommand::NextWorkspace(None),
+        );
+        assert!(wrapped.changed);
+        assert_eq!(wrapped.edge_hit, None);
     }
 
     #[test]

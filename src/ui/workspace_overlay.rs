@@ -18,9 +18,10 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
-use objc2_foundation::{NSString, NSValue};
+use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
-    CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction,
+    CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
+    CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
 };
 
 use crate::actor::app::WindowId;
@@ -365,6 +366,68 @@ fn position_animation(from: CGPoint, to: CGPoint, timing: Timing) -> Retained<CA
         animation.setToValue(Some(&NSValue::valueWithPoint(to)));
     }
     timing.apply(&animation);
+    animation
+}
+
+/// One key per container bounce, separate from the movement's so the two compose.
+const BOUNCE_ANIMATION_KEY: &str = "rini.group.bounce";
+
+/// Where the return leg of a bounce begins, as a fraction of its duration. Out fast, back at
+/// leisure: a rubber band snaps taut and eases home.
+pub const BOUNCE_TURN: f64 = 0.35;
+
+/// Whether the container `key` names takes part in a bounce by `overshoot`. Strip containers
+/// always; the floating container only when the bounce is vertical, the same rule a pan (floating
+/// pinned) and a switch (floating carried) follow.
+pub fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
+    match key {
+        GroupKey::Floating => overshoot.y != 0.0,
+        GroupKey::Strip(_) | GroupKey::StripLoose => true,
+    }
+}
+
+/// The displacement of a bounce at progress `t`, for a unit overshoot: out along an ease-out to
+/// the turn, back along an ease-in-out to rest. What `bounce_animation` asks Core Animation to
+/// draw, kept here so the shape can be checked on plain numbers.
+pub fn bounce_displacement(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t <= BOUNCE_TURN {
+        ease_out_cubic(t / BOUNCE_TURN)
+    } else {
+        let u = (t - BOUNCE_TURN) / (1.0 - BOUNCE_TURN);
+        // ease-in-out cubic, from 1 down to 0
+        let s = if u < 0.5 { 4.0 * u * u * u } else { 1.0 - (-2.0 * u + 2.0).powi(3) / 2.0 };
+        1.0 - s
+    }
+}
+
+/// An additive position animation that goes `overshoot` from wherever the layer is and comes
+/// back: keyframes `0, overshoot, 0` at `0, BOUNCE_TURN, 1`, ease-out then ease-in-out. Additive,
+/// so it rides a movement in flight and leaves the model position alone; removed on completion,
+/// so the layer is presented at its model position again.
+fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAnimation> {
+    let animation =
+        CAKeyframeAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
+    let rest = CGPoint::new(0.0, 0.0);
+    // SAFETY: NSValues holding CGPoints are the value type Core Animation expects for "position";
+    // the untyped array `setValues` takes is built from exactly those.
+    unsafe {
+        let values: Vec<Retained<objc2::runtime::AnyObject>> = [rest, overshoot, rest]
+            .into_iter()
+            .map(|p| Retained::into_super(Retained::into_super(NSValue::valueWithPoint(p))))
+            .collect();
+        animation.setValues(Some(&NSArray::from_retained_slice(&values)));
+    }
+    let key_times: Vec<Retained<NSNumber>> =
+        [0.0, BOUNCE_TURN, 1.0].into_iter().map(NSNumber::numberWithDouble).collect();
+    animation.setKeyTimes(Some(&NSArray::from_retained_slice(&key_times)));
+    animation.setTimingFunctions(Some(&NSArray::from_retained_slice(&[
+        ease_out_cubic_timing(),
+        CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseInEaseOut }),
+    ])));
+    animation.setAdditive(true);
+    animation.setDuration(timing.seconds);
+    animation.setBeginTime(timing.begin);
     animation
 }
 
@@ -927,6 +990,29 @@ impl WorkspaceOverlay {
                     }
                 }
             }
+        }
+        commit_now();
+    }
+
+    /// Nudges the surface by `overshoot` and brings it back over `duration`, on top of whatever
+    /// the containers are doing: one additive keyframe animation per container, so a movement in
+    /// flight is neither replaced nor disturbed and the model positions stay put. The floating
+    /// container rides only a vertical bounce: floating windows are pinned during a pan and carried
+    /// by a switch, and the bounce follows the movement it stands in for. See "Edge bounce" in
+    /// `docs/animation-smoothness.md`.
+    pub(crate) fn bounce(&mut self, overshoot: CGPoint, duration: Duration) {
+        if duration.is_zero() {
+            return;
+        }
+        let timing = Timing::starting_now(duration);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        for (key, layer) in &self.containers {
+            if !bounce_carries(*key, overshoot) {
+                continue;
+            }
+            let animation = bounce_animation(overshoot, timing);
+            layer.addAnimation_forKey(&animation, Some(&NSString::from_str(BOUNCE_ANIMATION_KEY)));
         }
         commit_now();
     }
@@ -1944,6 +2030,42 @@ mod tests {
         // reads as sluggish to start and abrupt to finish.
         assert!(ease_out_cubic(0.5) > 0.5);
         assert!(ease_out_cubic(0.25) > 0.25);
+    }
+
+    /// A bounce leaves rest, peaks at the turn, and is back at rest at the end, with no
+    /// second hump: out is monotone up to the turn, back is monotone down after it. The turn is
+    /// early, so the snap out is quicker than the settle home.
+    #[test]
+    fn a_bounce_goes_out_once_and_comes_home() {
+        assert_eq!(bounce_displacement(0.0), 0.0);
+        assert!((bounce_displacement(BOUNCE_TURN) - 1.0).abs() < 1e-12);
+        assert!(bounce_displacement(1.0).abs() < 1e-12);
+        let mut previous = 0.0;
+        for i in 1..=1000 {
+            let t = i as f64 / 1000.0;
+            let d = bounce_displacement(t);
+            if t <= BOUNCE_TURN {
+                assert!(d >= previous, "still going out at t={t}");
+            } else {
+                assert!(d <= previous + 1e-12, "coming back at t={t}");
+            }
+            previous = d;
+        }
+        assert!(BOUNCE_TURN < 0.5, "out fast, home at leisure");
+    }
+
+    /// Strip containers always bounce; the floating container only with the stack (vertical),
+    /// the way a pan pins floating windows and a switch carries them.
+    #[test]
+    fn the_floating_container_bounces_only_vertically() {
+        let sideways = CGPoint::new(-36.0, 0.0);
+        let upward = CGPoint::new(0.0, -36.0);
+        for key in [GroupKey::Strip(0), GroupKey::Strip(3), GroupKey::StripLoose] {
+            assert!(bounce_carries(key, sideways), "{key:?}");
+            assert!(bounce_carries(key, upward), "{key:?}");
+        }
+        assert!(!bounce_carries(GroupKey::Floating, sideways));
+        assert!(bounce_carries(GroupKey::Floating, upward));
     }
 
     #[test]
