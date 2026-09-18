@@ -1,5 +1,4 @@
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_protocol::StackInfo;
 use tracing::trace;
 
 use super::replay::Record;
@@ -16,7 +15,7 @@ use crate::actor::{
 use crate::common::collections::{HashMap, HashSet};
 use crate::common::config::{LayoutMode, WindowSnappingSettings};
 use crate::layout_engine::LayoutEngine;
-use crate::model::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
+use crate::model::broadcast::BroadcastSender;
 use crate::sys::screen::SpaceId;
 
 /// Manages application state and rules
@@ -342,78 +341,7 @@ impl LayoutManager {
             .or(reactor.drag_manager.drag_swap_manager.dragged());
         let mut any_frame_changed = false;
 
-        let active_space = reactor.workspace_command_space();
         for (space, layout) in layout_result {
-            if let Some(screen) = reactor.space_state.screen_by_space(space) {
-                let screen_frame = screen.frame;
-                let display_uuid = screen.display_uuid_owned();
-                let gaps = reactor
-                    .config
-                    .settings
-                    .layout
-                    .gaps
-                    .effective_for_display(display_uuid.as_deref());
-                let active_workspace_for_space_has_fullscreen = active_space == Some(space)
-                    && reactor
-                        .layout_manager
-                        .layout_engine
-                        .active_workspace_for_space_has_fullscreen(space);
-                let group_infos = reactor.layout_manager.layout_engine.collect_group_containers(
-                    space,
-                    screen_frame,
-                    &gaps,
-                );
-
-                if let Some(workspace_id) =
-                    reactor.layout_manager.layout_engine.active_workspace(space)
-                {
-                    let workspace_index =
-                        reactor.layout_manager.layout_engine.active_workspace_idx(space);
-                    let workspace_name = reactor
-                        .layout_manager
-                        .layout_engine
-                        .workspace_name(space, workspace_id)
-                        .unwrap_or_else(|| format!("Workspace {:?}", workspace_id));
-
-                    let stacks: Vec<StackInfo> = group_infos
-                        .iter()
-                        .map(|g| StackInfo {
-                            container_kind: match g.container_kind {
-                                crate::layout_engine::LayoutKind::Horizontal => {
-                                    rini_protocol::LayoutKind::Horizontal
-                                }
-                                crate::layout_engine::LayoutKind::Vertical => {
-                                    rini_protocol::LayoutKind::Vertical
-                                }
-                                crate::layout_engine::LayoutKind::HorizontalStack => {
-                                    rini_protocol::LayoutKind::HorizontalStack
-                                }
-                                crate::layout_engine::LayoutKind::VerticalStack => {
-                                    rini_protocol::LayoutKind::VerticalStack
-                                }
-                            },
-                            total_count: g.total_count,
-                            selected_index: g.selected_index,
-                            windows: g.window_ids.iter().map(WindowId::to_debug_string).collect(),
-                        })
-                        .collect();
-
-                    if stacks.len() > 0 {
-                        let event = BroadcastEvent::StacksChanged {
-                            workspace_id: protocol_workspace_id(workspace_id),
-                            workspace_index,
-                            workspace_name,
-                            stacks,
-                            active_workspace_has_fullscreen:
-                                active_workspace_for_space_has_fullscreen,
-                            space_id: space.get(),
-                            display_uuid,
-                        };
-                        let _ = reactor.communication_manager.event_broadcaster.send(event);
-                    }
-                }
-            }
-
             if is_workspace_switch {
                 any_frame_changed |=
                     AnimationManager::workspace_switch_layout(reactor, space, &layout, skip_wid);

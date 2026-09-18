@@ -29,16 +29,6 @@ use persistence::PersistenceState;
 pub use persistence::{RestoreReport, RestoreRequest, RestoreScope, RestoreSource, RestoreWarning};
 pub use rini_protocol::LayoutCommand;
 
-#[derive(Debug, Clone)]
-pub struct GroupContainerInfo {
-    pub node_id: crate::model::tree::NodeId,
-    pub container_kind: super::LayoutKind,
-    pub frame: CGRect,
-    pub total_count: usize,
-    pub selected_index: usize,
-    pub window_ids: Vec<crate::actor::app::WindowId>,
-}
-
 #[derive(Debug, Default)]
 struct WindowRemovalImpact {
     active_space: Option<SpaceId>,
@@ -327,25 +317,6 @@ impl LayoutEngine {
         Self::response_for_raised_windows(visible_windows)
     }
 
-    fn collect_group_containers_for_space(
-        &self,
-        space: SpaceId,
-        screen: CGRect,
-        gaps: &crate::common::config::GapSettings,
-        selection_path_only: bool,
-    ) -> Vec<GroupContainerInfo> {
-        // Group containers described the tree-based layouts' nested stacks. The scrolling
-        // layout has no such containers — it never implemented this — so with the tree
-        // layouts removed there is nothing to report. Kept as an empty seam because the
-        // stack-line UI still consumes the call.
-        let _ = (
-            space,
-            screen,
-            gaps,
-            selection_path_only,
-        );
-        Vec::new()
-    }
 }
 
 impl LayoutEngine {
@@ -2375,21 +2346,18 @@ impl LayoutEngine {
             }
             LayoutCommand::ScrollStrip { delta } => {
                 let mut resp = EventResponse::default();
-                if let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id) {
-                    resp.boundary_hit = system.scroll_by_delta(layout, delta);
-                }
+                let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id);
+                resp.boundary_hit = system.scroll_by_delta(layout, delta);
                 resp
             }
             LayoutCommand::SnapStrip => {
-                if let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id) {
-                    system.snap_to_nearest_column(layout);
-                }
+                let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id);
+                system.snap_to_nearest_column(layout);
                 EventResponse::default()
             }
             LayoutCommand::CenterSelection => {
-                if let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id) {
-                    system.center_selected_column(layout);
-                }
+                let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id);
+                system.center_selected_column(layout);
                 EventResponse::default()
             }
             LayoutCommand::CyclePresetColumnWidth => {
@@ -2628,41 +2596,6 @@ impl LayoutEngine {
         }
 
         positions.into_iter().collect()
-    }
-
-    pub fn collect_group_containers_in_selection_path(
-        &mut self,
-        space: SpaceId,
-        screen: CGRect,
-        gaps: &crate::common::config::GapSettings,
-    ) -> Vec<GroupContainerInfo> {
-        self.collect_group_containers_for_space(
-            space,
-            screen,
-            gaps,
-            true,
-        )
-    }
-
-    pub fn active_workspace_for_space_has_fullscreen(&mut self, space: SpaceId) -> bool {
-        let Some((ws_id, layout_id)) = self.workspace_and_layout(space) else {
-            return false;
-        };
-        self.workspace_tree(ws_id).has_any_fullscreen_node(layout_id)
-    }
-
-    pub fn collect_group_containers(
-        &mut self,
-        space: SpaceId,
-        screen: CGRect,
-        gaps: &crate::common::config::GapSettings,
-    ) -> Vec<GroupContainerInfo> {
-        self.collect_group_containers_for_space(
-            space,
-            screen,
-            gaps,
-            false,
-        )
     }
 
     pub fn calculate_layout_for_workspace(

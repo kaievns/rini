@@ -51,7 +51,7 @@ cargo run -p rini-client --example listen -- workspace_changed
 ```
 
 Supported event names are `workspace_changed`, `windows_changed`,
-`window_title_changed`, `focused_window_changed`, and `stacks_changed`. Use `*`
+`window_title_changed`, and `focused_window_changed`. Use `*`
 to listen for all events.
 
 For a more complete example, see the [dimmer example](examples/dimmer.rs),

@@ -234,10 +234,6 @@ impl MainWindowTracker {
         remembered
     }
 
-    #[cfg(test)]
-    pub(crate) fn remember_focus_for_test(&mut self, window: WindowId) {
-        self.last_focused_by_app.insert(window.pid, window);
-    }
 }
 
 #[cfg(test)]

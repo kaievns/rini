@@ -174,10 +174,6 @@ impl Reactor {
             .or_else(|| self.raw_command_space())
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_default_query_space(&self) -> Option<SpaceId> {
-        self.default_query_space()
-    }
 
     pub fn query_workspaces(&mut self, space_id: Option<SpaceId>) -> Vec<RuntimeWorkspaceData> {
         self.handle_workspace_query(space_id)

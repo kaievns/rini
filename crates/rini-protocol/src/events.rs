@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LayoutKind, WindowId};
+use crate::WindowId;
 
 /// Events available through the Mach subscription API.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -12,7 +12,6 @@ pub enum EventKind {
     WindowsChanged,
     WindowTitleChanged,
     FocusedWindowChanged,
-    StacksChanged,
     #[serde(rename = "*")]
     All,
 }
@@ -24,7 +23,6 @@ impl EventKind {
             Self::WindowsChanged => "windows_changed",
             Self::WindowTitleChanged => "window_title_changed",
             Self::FocusedWindowChanged => "focused_window_changed",
-            Self::StacksChanged => "stacks_changed",
             Self::All => "*",
         }
     }
@@ -74,15 +72,6 @@ pub enum RiniEvent {
         space_id: u64,
         display_uuid: Option<String>,
     },
-    StacksChanged {
-        workspace_id: WorkspaceId,
-        workspace_index: Option<u64>,
-        workspace_name: String,
-        stacks: Vec<StackInfo>,
-        active_workspace_has_fullscreen: bool,
-        space_id: u64,
-        display_uuid: Option<String>,
-    },
 }
 
 impl RiniEvent {
@@ -92,7 +81,6 @@ impl RiniEvent {
             Self::WindowsChanged { .. } => EventKind::WindowsChanged,
             Self::WindowTitleChanged { .. } => EventKind::WindowTitleChanged,
             Self::FocusedWindowChanged { .. } => EventKind::FocusedWindowChanged,
-            Self::StacksChanged { .. } => EventKind::StacksChanged,
         }
     }
 
@@ -101,8 +89,7 @@ impl RiniEvent {
             Self::WorkspaceChanged { space_id, .. }
             | Self::WindowsChanged { space_id, .. }
             | Self::WindowTitleChanged { space_id, .. }
-            | Self::FocusedWindowChanged { space_id, .. }
-            | Self::StacksChanged { space_id, .. } => *space_id,
+            | Self::FocusedWindowChanged { space_id, .. } => *space_id,
         }
     }
 
@@ -111,8 +98,7 @@ impl RiniEvent {
             Self::WorkspaceChanged { display_uuid, .. }
             | Self::WindowsChanged { display_uuid, .. }
             | Self::WindowTitleChanged { display_uuid, .. }
-            | Self::FocusedWindowChanged { display_uuid, .. }
-            | Self::StacksChanged { display_uuid, .. } => display_uuid.as_deref(),
+            | Self::FocusedWindowChanged { display_uuid, .. } => display_uuid.as_deref(),
         }
     }
 }
@@ -130,14 +116,6 @@ impl fmt::Display for WorkspaceId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct StackInfo {
-    pub container_kind: LayoutKind,
-    pub total_count: usize,
-    pub selected_index: usize,
-    pub windows: Vec<String>,
-}
 
 #[cfg(test)]
 mod tests {

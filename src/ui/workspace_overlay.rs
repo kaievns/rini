@@ -13,7 +13,7 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObject;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSPopUpMenuWindowLevel, NSView, NSWindow,
+    NSBackingStoreType, NSColor, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
@@ -451,7 +451,7 @@ pub const BOUNCE_TURN: f64 = 0.35;
 /// Whether the container `key` names takes part in a bounce by `overshoot`. Strip containers
 /// always; the floating container only when the bounce is vertical, the same rule a pan (floating
 /// pinned) and a switch (floating carried) follow.
-pub fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
+pub(crate) fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
     match key {
         GroupKey::Floating => overshoot.y != 0.0,
         GroupKey::Strip(_) | GroupKey::StripLoose => true,
@@ -1810,7 +1810,7 @@ fn set_layer_contents(layer: &CALayer, snapshot: &WindowSnapshot) {
 /// speaks CoreGraphics top-left coordinates. Flipping needs the primary display's bottom edge, which
 /// is its origin plus its height.
 fn primary_display_height() -> f64 {
-    let bounds = CGDisplayBounds(unsafe { CGMainDisplayID() });
+    let bounds = CGDisplayBounds(CGMainDisplayID());
     bounds.origin.y + bounds.size.height
 }
 

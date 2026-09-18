@@ -3448,7 +3448,7 @@ fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
 fn snapshot_rgb(snapshot: &WindowSnapshot) -> Option<(usize, usize, Vec<u8>)> {
     use crate::ui::window_snapshot::SnapshotImage;
     let step = 4usize;
-    let mut sample = |width: usize, height: usize, stride: usize, base: *const u8| {
+    let sample = |width: usize, height: usize, stride: usize, base: *const u8| {
         let (w, h) = (width / step, height / step);
         let mut rgb = Vec::with_capacity(w * h * 3);
         for y in 0..h {
@@ -6119,9 +6119,6 @@ mod tests {
             size: CGSize { width: W, height: 1081.0 },
         };
 
-        fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
-        }
 
         fn moved(frame: CGRect, dx: f64) -> CGRect {
             translated(frame, CGPoint::new(dx, 0.0))

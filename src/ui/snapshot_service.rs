@@ -92,7 +92,7 @@ fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<boo
         return None;
     }
     let stride = CVPixelBufferGetBytesPerRow(buffer);
-    let base = unsafe { CVPixelBufferGetBaseAddress(buffer) } as *const u8;
+    let base = CVPixelBufferGetBaseAddress(buffer) as *const u8;
     let painted = if base.is_null() || stride < width * 4 {
         None
     } else {
@@ -470,8 +470,8 @@ impl SnapshotService {
                     let Some(surface) = own_copy(&surface) else {
                         return;
                     };
-                    let width = unsafe { surface.width() } as f64 / scale;
-                    let height = unsafe { surface.height() } as f64 / scale;
+                    let width = surface.width() as f64 / scale;
+                    let height = surface.height() as f64 / scale;
                     state.desktop = Some(WindowSnapshot {
                         image: SnapshotImage::Surface(surface),
                         coverage: Coverage {
@@ -573,8 +573,8 @@ impl SnapshotService {
                 false
             } else if let Some(surface) = surface.as_deref().and_then(own_copy) {
                 // Our own copy, not the pool's surface (see `own_copy`).
-                let width = unsafe { surface.width() } as f64 / scale;
-                let height = unsafe { surface.height() } as f64 / scale;
+                let width = surface.width() as f64 / scale;
+                let height = surface.height() as f64 / scale;
                 state.ready.insert(
                     target.window,
                     WindowSnapshot {

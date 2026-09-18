@@ -14,7 +14,7 @@ mod transport;
 pub use commands::{
     ConfigCommand, LayoutCommand, MetricsCommand, ReactorCommand, RiniCommand,
 };
-pub use events::{EventKind, RiniEvent, StackInfo, WorkspaceId};
+pub use events::{EventKind, RiniEvent, WorkspaceId};
 pub use layout::{Direction, LayoutKind, LayoutMode, Orientation, ResizeOrientation};
 pub use queries::{
     ApplicationData, ContainerNodeType, ContainerTreeNode, DiagnosticCensusWindow,
