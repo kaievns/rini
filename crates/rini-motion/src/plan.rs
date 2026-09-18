@@ -713,3 +713,204 @@ pub fn surface_plan(windows: &[SurfaceWindow], from_offset: CGPoint, to_offset: 
     }
     plan
 }
+
+/// Whether the container `key` names takes part in a bounce by `overshoot`. Strip containers
+/// always; the floating container only when the bounce is vertical, the same rule a pan (floating
+/// pinned) and a switch (floating carried) follow.
+pub fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
+    match key {
+        GroupKey::Floating => overshoot.y != 0.0,
+        GroupKey::Rigid(_) | GroupKey::Loose => true,
+    }
+}
+
+/// One movement `fly` installs: a container's translation, or one loose tile's own animation.
+/// Pure output of [`animation_targets`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AnimationTarget {
+    Container { key: GroupKey, from: CGPoint, to: CGPoint },
+    Tile { window: WindowId, from: CGRect, to: CGRect },
+}
+
+/// What a flight animates, and nothing else: one `Container` per strip group with travel, the
+/// floating container when it travels, and a `Tile` per changing, entrance and moving floating
+/// member. Rigid members are never named. See "The overlay engine" in `docs/animation-smoothness.md`.
+pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
+    let mut out = Vec::new();
+    let position = |key: GroupKey, travel: CGPoint| {
+        plan.positions.get(&key).copied().unwrap_or(travel)
+    };
+    for group in plan.groups.iter().filter(|g| !g.is_still()) {
+        let to = position(group.key, group.travel);
+        let from = CGPoint::new(to.x - group.travel.x, to.y - group.travel.y);
+        out.push(AnimationTarget::Container { key: group.key, from, to });
+    }
+    let ft = plan.floating_travel;
+    if ft.x != 0.0 || ft.y != 0.0 {
+        let to = position(GroupKey::Floating, ft);
+        let from = CGPoint::new(to.x - ft.x, to.y - ft.y);
+        out.push(AnimationTarget::Container { key: GroupKey::Floating, from, to });
+    }
+    for &(window, from, to) in plan.changing.iter().chain(&plan.entrances) {
+        out.push(AnimationTarget::Tile { window, from, to });
+    }
+    for &(window, from, to) in &plan.floating {
+        if !from.same_as(to) {
+            out.push(AnimationTarget::Tile { window, from, to });
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::CGSize;
+
+    use super::*;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    /// `animation_targets`: what `fly` installs and nothing else (Requirement 11.4 of
+    /// `rigid-strip-groups`). Plans built with `reflow_plan` on a 1728x1117 display at the origin,
+    /// so overlay space equals display space.
+    mod targets {
+        use super::*;
+
+        const DISPLAY: CGRect = CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize { width: 1728.0, height: 1117.0 },
+        };
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+        }
+
+        fn column(i: f64) -> CGRect {
+            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
+        }
+
+        fn shifted(frame: CGRect, dx: f64) -> CGRect {
+            CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y), frame.size)
+        }
+
+        fn flight(requests: &[(WindowId, CGRect, CGRect, bool)]) -> FlightPlan {
+            FlightPlan::from(reflow_plan(requests, DISPLAY))
+        }
+
+        fn containers(targets: &[AnimationTarget]) -> Vec<GroupKey> {
+            targets
+                .iter()
+                .filter_map(|t| match t {
+                    AnimationTarget::Container { key, .. } => Some(*key),
+                    AnimationTarget::Tile { .. } => None,
+                })
+                .collect()
+        }
+
+        fn tiles(targets: &[AnimationTarget]) -> Vec<WindowId> {
+            targets
+                .iter()
+                .filter_map(|t| match t {
+                    AnimationTarget::Tile { window, .. } => Some(*window),
+                    AnimationTarget::Container { .. } => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn a_one_group_plan_is_exactly_one_container_target() {
+            let (a, b) = (column(0.0), column(1.0));
+            let plan = flight(&[
+                (wid(1), a, shifted(a, -859.0), false),
+                (wid(2), b, shifted(b, -859.0), false),
+            ]);
+            let targets = animation_targets(&plan);
+            assert_eq!(
+                targets,
+                vec![AnimationTarget::Container {
+                    key: GroupKey::Rigid(1),
+                    from: CGPoint::new(0.0, 0.0),
+                    to: CGPoint::new(-859.0, 0.0),
+                }]
+            );
+        }
+
+        #[test]
+        fn a_still_group_and_two_moving_groups_are_two_container_targets() {
+            let (a, b, c) = (column(0.0), column(1.0), column(2.0));
+            let plan = flight(&[
+                (wid(1), a, a, false),
+                (wid(2), b, shifted(b, 300.0), false),
+                (wid(3), c, shifted(c, -300.0), false),
+            ]);
+            let targets = animation_targets(&plan);
+            assert_eq!(containers(&targets), vec![GroupKey::Rigid(1), GroupKey::Rigid(2)]);
+            assert!(tiles(&targets).is_empty(), "no rigid member is a tile target");
+        }
+
+        #[test]
+        fn a_changing_member_is_a_tile_target_and_rigid_members_are_not() {
+            let (a, b) = (column(0.0), column(1.0));
+            let grown = rect(a.origin.x, a.origin.y, a.size.width + 400.0, a.size.height);
+            let plan = flight(&[
+                (wid(1), a, grown, false),
+                (wid(2), b, shifted(b, 400.0), false),
+            ]);
+            let targets = animation_targets(&plan);
+            assert_eq!(tiles(&targets), vec![wid(1)]);
+            assert_eq!(containers(&targets), vec![GroupKey::Rigid(1)]);
+            assert!(targets.contains(&AnimationTarget::Tile { window: wid(1), from: a, to: grown }));
+        }
+
+        #[test]
+        fn the_floating_container_is_a_target_iff_it_travels() {
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let mut plan = flight(&[(wid(1), settings, settings, true)]);
+            assert!(animation_targets(&plan).is_empty(), "a standing floating window: nothing flies");
+
+            plan.floating_travel = CGPoint::new(0.0, -1117.0);
+            plan.positions.insert(GroupKey::Floating, plan.floating_travel);
+            assert_eq!(
+                animation_targets(&plan),
+                vec![AnimationTarget::Container {
+                    key: GroupKey::Floating,
+                    from: CGPoint::new(0.0, 0.0),
+                    to: CGPoint::new(0.0, -1117.0),
+                }]
+            );
+
+            let moved = shifted(settings, -100.0);
+            let plan = flight(&[(wid(1), settings, moved, true)]);
+            assert_eq!(
+                animation_targets(&plan),
+                vec![AnimationTarget::Tile { window: wid(1), from: settings, to: moved }],
+                "a floating window moving on its own is a tile target, not a container"
+            );
+        }
+
+        #[test]
+        fn zero_travel_groups_are_never_targets() {
+            let (a, b) = (column(0.0), column(1.0));
+            let plan = flight(&[(wid(1), a, a, false), (wid(2), b, b, false)]);
+            assert!(animation_targets(&plan).is_empty());
+            assert_eq!(plan.groups.len(), 1, "everything standing is the still group");
+        }
+
+    }
+
+    /// Strip containers always bounce; the floating container only with the stack (vertical),
+    /// the way a pan pins floating windows and a switch carries them.
+    #[test]
+    fn the_floating_container_bounces_only_vertically() {
+        let sideways = CGPoint::new(-36.0, 0.0);
+        let upward = CGPoint::new(0.0, -36.0);
+        for key in [GroupKey::Rigid(0), GroupKey::Rigid(3), GroupKey::Loose] {
+            assert!(bounce_carries(key, sideways), "{key:?}");
+            assert!(bounce_carries(key, upward), "{key:?}");
+        }
+        assert!(!bounce_carries(GroupKey::Floating, sideways));
+        assert!(bounce_carries(GroupKey::Floating, upward));
+    }
+}
