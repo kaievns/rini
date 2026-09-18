@@ -16,7 +16,7 @@ rini-layout     scrolling strip, virtual workspaces, window records,
                 app rules, layout.ron persistence, display affinity      -> shared, config, macos (for now)
 rini-motion     animation plans, easing, strip geometry, z-groups (pure) -> shared
 rini-overlay    CA tile renderer, snapshot cache and capture, flights    -> shared, macos, motion
-rini-ipc        mach server, subscriptions, cli_exec                     -> protocol, macos
+rini-ipc        mach server, subscriptions, cli_exec; `Backend` trait     -> protocol, macos, config
 rini-client     client for the API (exists)                              -> protocol
 rini-wm         reactor and its state, input taps, wm_controller,
                 the overlay mode state machine                           -> all of the above
@@ -37,6 +37,7 @@ targets and hands them over.
 | `rini-macos` | done: the former `src/sys/`. Its `test-support` feature swaps the window-server reads for thread-local overrides (see `docs/testing.md`) |
 | `rini-config` | done: `Config` schema/parse/validate/save, the `ConfigActor` (takes an `OnChange` callback instead of the reactor's channel), the file watcher, and `commands` (`WmCommand`, `WmCmd`, `ExecCmd`, `Command`: everything a key can be bound to) |
 | `rini-layout` | done: the layout engine, `virtual_workspace`, `window_store` (the window record store the layout is projected from, incl. `WindowState`), `app_rules`, `display_affinity`, `launch_memory`, `floating_position_store`, `hidden_window_placement`, `broadcast`. Depends on `rini-macos` for `WindowInfo`/`AppInfo`/`ScreenInfo`; making it platform-free means moving those to a neutral home first. `test-support` feature exposes test-only accessors |
+| `rini-ipc` | done: the Mach server, subscriptions and CLI hooks. It sees the window manager through the `Backend` trait, which `rini-wm` implements for `ReactorHandle`; the protocol conversions live in that impl |
 | everything else | still modules inside the `rini-wm` crate |
 
 Inside `rini-wm`, `crate::layout_engine` and `crate::model` re-export `rini_layout`,

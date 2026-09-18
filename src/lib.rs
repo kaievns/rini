@@ -2,7 +2,7 @@
 #![allow(non_upper_case_globals)]
 
 pub mod actor;
-pub mod ipc;
+pub use rini_ipc as ipc;
 pub mod layout_engine;
 pub mod model;
 pub mod ui;

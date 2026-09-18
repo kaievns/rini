@@ -1,3 +1,6 @@
+//! The Mach IPC server: decodes `RiniRequest`s, answers them through a [`Backend`] the window
+//! manager implements, and fans `RiniEvent`s out to subscribed clients and CLI hooks.
+
 use std::ffi::c_char;
 use std::time::Duration;
 
@@ -11,10 +14,10 @@ pub mod subscriptions;
 
 use rini_protocol::{RiniRequest, RiniResponse};
 pub use rini_client::{ClientError as RiniMachClientError, RiniMachClient, RiniMachSubscription};
+use rini_shared::ids::{SpaceId, WindowId};
 
 use rini_config::actor as config_actor;
-use crate::actor::reactor::{self, Event};
-use crate::ipc::subscriptions::SharedServerState;
+use crate::subscriptions::SharedServerState;
 use rini_macos::dispatch::block_on;
 use rini_macos::mach::{
     is_mach_server_registered, mach_msg_header_t, mach_server_run, send_mach_reply,
@@ -22,8 +25,32 @@ use rini_macos::mach::{
 
 type ClientPort = u32;
 
-pub fn run_mach_server(
-    reactor: reactor::ReactorHandle,
+/// What the window manager answers over IPC. `rini-wm` implements it for its reactor handle;
+/// every method blocks the Mach server thread until the reactor replies.
+pub trait Backend: Send + 'static {
+    fn workspaces(&self, space: Option<SpaceId>) -> Vec<rini_protocol::WorkspaceData>;
+    fn windows(&self, space: Option<SpaceId>) -> Vec<rini_protocol::WindowData>;
+    fn window(&self, window: WindowId) -> Option<rini_protocol::WindowData>;
+    fn displays(&self) -> Vec<rini_protocol::DisplayData>;
+    fn layout_state(
+        &self,
+        space: Option<u64>,
+        workspace: Option<usize>,
+    ) -> Option<rini_protocol::LayoutStateData>;
+    fn workspace_layouts(
+        &self,
+        space: Option<SpaceId>,
+        workspace: Option<usize>,
+    ) -> Vec<rini_protocol::WorkspaceLayoutData>;
+    fn applications(&self) -> Vec<rini_protocol::ApplicationData>;
+    fn metrics(&self) -> serde_json::Value;
+    fn diagnostics(&self) -> rini_protocol::DiagnosticsData;
+    /// Queue a command; `Err` only when the reactor is gone.
+    fn execute(&self, command: rini_config::Command) -> Result<(), String>;
+}
+
+pub fn run_mach_server<B: Backend>(
+    reactor: B,
     config_tx: config_actor::Sender,
 ) -> Result<SharedServerState, String> {
     if is_mach_server_registered() {
@@ -34,32 +61,31 @@ pub fn run_mach_server(
     info!("Spawning background Mach server thread and returning SharedServerState");
 
     let shared_state: SharedServerState = std::sync::Arc::new(parking_lot::RwLock::new(
-        crate::ipc::subscriptions::ServerState::new(),
+        crate::subscriptions::ServerState::new(),
     ));
 
     let thread_state = shared_state.clone();
     std::thread::spawn(move || {
         let handler = MachHandler::new(reactor, config_tx, thread_state.clone());
         unsafe {
-            mach_server_run(Box::into_raw(Box::new(handler)) as *mut _, handle_mach_request_c);
+            mach_server_run(
+                Box::into_raw(Box::new(handler)) as *mut _,
+                handle_mach_request_c::<B>,
+            );
         }
     });
 
     Ok(shared_state)
 }
 
-struct MachHandler {
-    reactor: reactor::ReactorHandle,
+struct MachHandler<B: Backend> {
+    reactor: B,
     config_tx: config_actor::Sender,
     server_state: SharedServerState,
 }
 
-impl MachHandler {
-    fn new(
-        reactor: reactor::ReactorHandle,
-        config_tx: config_actor::Sender,
-        server_state: SharedServerState,
-    ) -> Self {
+impl<B: Backend> MachHandler<B> {
+    fn new(reactor: B, config_tx: config_actor::Sender, server_state: SharedServerState) -> Self {
         Self {
             reactor,
             config_tx,
@@ -140,61 +166,18 @@ impl MachHandler {
             }
 
             RiniRequest::GetWorkspaces { space_id } => {
-                let workspaces =
-                    self.reactor.query_workspaces(space_id.map(rini_macos::screen::SpaceId::new));
-                RiniResponse::Success {
-                    data: serde_json::to_value(
-                        workspaces
-                            .into_iter()
-                            .map(rini_protocol::WorkspaceData::from)
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap(),
-                }
+                success(self.reactor.workspaces(space_id.map(SpaceId::new)))
             }
-
-            RiniRequest::GetDisplays => {
-                let displays = self.reactor.query_displays();
-                RiniResponse::Success {
-                    data: serde_json::to_value(
-                        displays
-                            .into_iter()
-                            .map(rini_protocol::DisplayData::from)
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap(),
-                }
-            }
-
+            RiniRequest::GetDisplays => success(self.reactor.displays()),
             RiniRequest::GetWindows { space_id } => {
-                let space_id = space_id.map(|id| rini_macos::screen::SpaceId::new(id));
-
-                let windows = self.reactor.query_windows(space_id);
-                RiniResponse::Success {
-                    data: serde_json::to_value(
-                        windows
-                            .into_iter()
-                            .map(rini_protocol::WindowData::from)
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap(),
-                }
+                success(self.reactor.windows(space_id.map(SpaceId::new)))
             }
 
             RiniRequest::GetWindowInfo { window_id } => {
-                if window_id.idx == 0 {
-                    error!("Invalid window_id: {:?}", window_id);
-                    return RiniResponse::Error {
-                        error: serde_json::json!({ "message": "Invalid window_id" }),
-                    };
-                }
-                let window_id = crate::actor::app::WindowId::new(window_id.pid, window_id.idx);
+                let window_id = WindowId::new(window_id.pid, window_id.idx);
 
-                match self.reactor.query_window_info(window_id) {
-                    Some(window) => RiniResponse::Success {
-                        data: serde_json::to_value(rini_protocol::WindowData::from(window))
-                            .unwrap(),
-                    },
+                match self.reactor.window(window_id) {
+                    Some(window) => success(window),
                     None => RiniResponse::Error {
                         error: serde_json::json!({ "message": "Window not found" }),
                     },
@@ -202,61 +185,19 @@ impl MachHandler {
             }
 
             RiniRequest::GetLayoutState { space_id, workspace_id } => {
-                match self.reactor.query_layout_state(space_id, workspace_id) {
-                    Some(layout_state) => RiniResponse::Success {
-                        data: serde_json::to_value(rini_protocol::LayoutStateData::from(
-                            layout_state,
-                        ))
-                        .unwrap(),
-                    },
+                match self.reactor.layout_state(space_id, workspace_id) {
+                    Some(layout_state) => success(layout_state),
                     None => RiniResponse::Error {
                         error: serde_json::json!({ "message": "Space or workspace not found" }),
                     },
                 }
             }
-            RiniRequest::GetWorkspaceLayouts { space_id, workspace_id } => {
-                let workspace_layouts = self.reactor.query_workspace_layouts(
-                    space_id.map(rini_macos::screen::SpaceId::new),
-                    workspace_id,
-                );
-                RiniResponse::Success {
-                    data: serde_json::to_value(
-                        workspace_layouts
-                            .into_iter()
-                            .map(rini_protocol::WorkspaceLayoutData::from)
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap(),
-                }
-            }
-
-            RiniRequest::GetApplications => {
-                let applications = self.reactor.query_applications();
-                RiniResponse::Success {
-                    data: serde_json::to_value(
-                        applications
-                            .into_iter()
-                            .map(rini_protocol::ApplicationData::from)
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap(),
-                }
-            }
-
-            RiniRequest::GetMetrics => {
-                let metrics = self.reactor.query_metrics();
-                RiniResponse::Success { data: metrics }
-            }
-
-            RiniRequest::GetDiagnostics => {
-                let diagnostics = self.reactor.query_diagnostics();
-                match serde_json::to_value(&diagnostics) {
-                    Ok(value) => RiniResponse::Success { data: value },
-                    Err(e) => RiniResponse::Error {
-                        error: serde_json::json!({ "message": "Failed to serialize diagnostics", "details": format!("{}", e) }),
-                    },
-                }
-            }
+            RiniRequest::GetWorkspaceLayouts { space_id, workspace_id } => success(
+                self.reactor.workspace_layouts(space_id.map(SpaceId::new), workspace_id),
+            ),
+            RiniRequest::GetApplications => success(self.reactor.applications()),
+            RiniRequest::GetMetrics => RiniResponse::Success { data: self.reactor.metrics() },
+            RiniRequest::GetDiagnostics => success(self.reactor.diagnostics()),
 
             RiniRequest::GetConfig => {
                 match self.perform_config_query(|tx| config_actor::Event::QueryConfig(tx)) {
@@ -325,18 +266,25 @@ impl MachHandler {
                 };
             }
         };
-        let event = Event::Command(command);
-
-        if let Err(e) = self.reactor.try_send(event) {
+        if let Err(e) = self.reactor.execute(command) {
             error!("Failed to send command to reactor: {}", e);
             return RiniResponse::Error {
-                error: serde_json::json!({ "message": "Failed to execute command", "details": format!("{}", e) }),
+                error: serde_json::json!({ "message": "Failed to execute command", "details": e }),
             };
         }
 
         RiniResponse::Success {
             data: serde_json::json!("Command executed successfully"),
         }
+    }
+}
+
+fn success<T: Serialize>(data: T) -> RiniResponse {
+    match serde_json::to_value(data) {
+        Ok(data) => RiniResponse::Success { data },
+        Err(e) => RiniResponse::Error {
+            error: serde_json::json!({ "message": "Failed to serialize response", "details": e.to_string() }),
+        },
     }
 }
 
@@ -348,7 +296,7 @@ where
     serde_json::from_value(serde_json::to_value(value)?)
 }
 
-unsafe extern "C" fn handle_mach_request_c(
+unsafe extern "C" fn handle_mach_request_c<B: Backend>(
     context: *mut std::ffi::c_void,
     message: *mut c_char,
     len: u32,
@@ -362,7 +310,7 @@ unsafe extern "C" fn handle_mach_request_c(
         return;
     }
 
-    let handler = unsafe { &*(context as *const MachHandler) };
+    let handler = unsafe { &*(context as *const MachHandler<B>) };
     let message_slice = unsafe { std::slice::from_raw_parts(message as *const u8, len as usize) };
 
     let trimmed_slice = if let Some(pos) = message_slice.iter().position(|&b| b == 0) {
@@ -423,5 +371,130 @@ fn send_response(original_msg: *mut mach_msg_header_t, response: &RiniResponse) 
                 }
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use rini_protocol::{LayoutCommand, RiniCommand};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct Fake {
+        executed: Mutex<Vec<rini_config::Command>>,
+    }
+
+    impl Backend for std::sync::Arc<Fake> {
+        fn workspaces(&self, space: Option<SpaceId>) -> Vec<rini_protocol::WorkspaceData> {
+            vec![rini_protocol::WorkspaceData {
+                id: "ws".into(),
+                index: 0,
+                name: format!("space {:?}", space.map(|s| s.get())),
+                is_active: true,
+                window_count: 0,
+                windows: vec![],
+            }]
+        }
+        fn windows(&self, _: Option<SpaceId>) -> Vec<rini_protocol::WindowData> {
+            vec![]
+        }
+        fn window(&self, window: WindowId) -> Option<rini_protocol::WindowData> {
+            (window.pid == 1).then(|| rini_protocol::WindowData {
+                id: window.into(),
+                title: "t".into(),
+                frame: rini_protocol::Rect {
+                    origin: rini_protocol::Point { x: 0.0, y: 0.0 },
+                    size: rini_protocol::Size { width: 1.0, height: 1.0 },
+                },
+                is_floating: false,
+                is_focused: false,
+                bundle_id: None,
+                app_name: None,
+                window_server_id: None,
+            })
+        }
+        fn displays(&self) -> Vec<rini_protocol::DisplayData> {
+            vec![]
+        }
+        fn layout_state(&self, _: Option<u64>, _: Option<usize>) -> Option<rini_protocol::LayoutStateData> {
+            None
+        }
+        fn workspace_layouts(&self, _: Option<SpaceId>, _: Option<usize>) -> Vec<rini_protocol::WorkspaceLayoutData> {
+            vec![]
+        }
+        fn applications(&self) -> Vec<rini_protocol::ApplicationData> {
+            vec![]
+        }
+        fn metrics(&self) -> serde_json::Value {
+            serde_json::json!({ "m": 1 })
+        }
+        fn diagnostics(&self) -> rini_protocol::DiagnosticsData {
+            rini_protocol::DiagnosticsData { spaces: vec![], census: vec![], orphaned_workspaces: vec![], stale_homes: vec![], windows_managed: 0 }
+        }
+        fn execute(&self, command: rini_config::Command) -> Result<(), String> {
+            self.executed.lock().unwrap().push(command);
+            Ok(())
+        }
+    }
+
+    fn handler() -> (MachHandler<std::sync::Arc<Fake>>, std::sync::Arc<Fake>) {
+        let fake = std::sync::Arc::new(Fake::default());
+        let (config_tx, _config_rx) = rini_shared::channel::channel();
+        let state: SharedServerState =
+            std::sync::Arc::new(parking_lot::RwLock::new(subscriptions::ServerState::new()));
+        (MachHandler::new(fake.clone(), config_tx, state), fake)
+    }
+
+    #[test]
+    fn queries_are_answered_from_the_backend() {
+        let (handler, _) = handler();
+        let RiniResponse::Success { data } =
+            handler.handle_request(RiniRequest::GetWorkspaces { space_id: Some(4) }, 1)
+        else {
+            panic!("expected success")
+        };
+        assert_eq!(data[0]["name"], "space Some(4)");
+        let RiniResponse::Success { data } = handler.handle_request(RiniRequest::GetMetrics, 1)
+        else {
+            panic!("expected success")
+        };
+        assert_eq!(data["m"], 1);
+    }
+
+    #[test]
+    fn a_missing_window_is_an_error_and_a_zero_index_never_reaches_the_handler() {
+        let (handler, _) = handler();
+        let unknown = rini_protocol::WindowId::new(2, 5).unwrap();
+        assert!(matches!(
+            handler.handle_request(RiniRequest::GetWindowInfo { window_id: unknown }, 1),
+            RiniResponse::Error { .. }
+        ));
+        assert!(serde_json::from_str::<rini_protocol::WindowId>(r#"{"pid":1,"idx":0}"#).is_err());
+        assert!(matches!(
+            handler.handle_request(
+                RiniRequest::GetWindowInfo { window_id: rini_protocol::WindowId::new(1, 5).unwrap() },
+                1
+            ),
+            RiniResponse::Success { .. }
+        ));
+    }
+
+    #[test]
+    fn layout_commands_reach_the_backend_decoded() {
+        let (handler, fake) = handler();
+        let response = handler.handle_request(
+            RiniRequest::ExecuteCommand {
+                command: RiniCommand::Layout(LayoutCommand::SwitchToWorkspace(2)),
+            },
+            1,
+        );
+        assert!(matches!(response, RiniResponse::Success { .. }));
+        assert_eq!(
+            fake.executed.lock().unwrap().as_slice(),
+            [rini_config::Command::Layout(LayoutCommand::SwitchToWorkspace(2))]
+        );
     }
 }

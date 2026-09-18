@@ -11,7 +11,7 @@ use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
 use rini_shared::collections::{HashMap, HashSet};
-use crate::model::broadcast::BroadcastEvent;
+use rini_protocol::RiniEvent as BroadcastEvent;
 use rini_macos::mach::{mach_release_send_right, mach_retain_send_right, mach_try_send_message};
 
 pub type ClientPort = u32;
@@ -227,7 +227,6 @@ impl ServerState {
     fn forward_event_to_cli_subscribers(&self, event: BroadcastEvent) {
         let event_name = event.kind().as_str();
 
-        // Collect relevant subscriptions without full HashMap clone
         let mut relevant: Vec<CliSubscription> = Vec::new();
         {
             let guard = self.cli_subscriptions.lock();
@@ -240,7 +239,7 @@ impl ServerState {
         }
 
         for subscription in relevant {
-            crate::ipc::cli_exec::execute_cli_subscription(&event, &subscription);
+            crate::cli_exec::execute_cli_subscription(&event, &subscription);
         }
     }
 
@@ -313,5 +312,26 @@ impl ServerState {
             }
             let _ = unsafe { mach_release_send_right(client_port) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_subscriptions_dedupe_on_command_and_args_and_unsubscribe_by_event() {
+        let state = ServerState::new();
+        state.subscribe_cli("workspace_changed".into(), "sh".into(), vec!["-c".into(), "x".into()]);
+        state.subscribe_cli("workspace_changed".into(), "sh".into(), vec!["-c".into(), "x".into()]);
+        state.subscribe_cli("workspace_changed".into(), "sh".into(), vec!["-c".into(), "y".into()]);
+        state.subscribe_cli("*".into(), "log".into(), vec![]);
+        let listed = state.list_cli_subscriptions();
+        assert_eq!(listed["total_count"], 3);
+
+        state.unsubscribe_cli("workspace_changed".into());
+        let listed = state.list_cli_subscriptions();
+        assert_eq!(listed["total_count"], 1);
+        assert_eq!(listed["cli_subscriptions"][0]["event"], "*");
     }
 }

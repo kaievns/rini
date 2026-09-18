@@ -144,6 +144,57 @@ impl ReactorHandle {
     }
 }
 
+/// The IPC server sees the reactor only through this.
+impl rini_ipc::Backend for ReactorHandle {
+    fn workspaces(&self, space: Option<SpaceId>) -> Vec<rini_protocol::WorkspaceData> {
+        self.queries.query_workspaces(space).into_iter().map(Into::into).collect()
+    }
+
+    fn windows(&self, space: Option<SpaceId>) -> Vec<rini_protocol::WindowData> {
+        self.queries.query_windows(space).into_iter().map(Into::into).collect()
+    }
+
+    fn window(&self, window: WindowId) -> Option<rini_protocol::WindowData> {
+        self.queries.query_window_info(window).map(Into::into)
+    }
+
+    fn displays(&self) -> Vec<rini_protocol::DisplayData> {
+        self.queries.query_displays().into_iter().map(Into::into).collect()
+    }
+
+    fn layout_state(
+        &self,
+        space: Option<u64>,
+        workspace: Option<usize>,
+    ) -> Option<rini_protocol::LayoutStateData> {
+        self.queries.query_layout_state(space, workspace)
+    }
+
+    fn workspace_layouts(
+        &self,
+        space: Option<SpaceId>,
+        workspace: Option<usize>,
+    ) -> Vec<rini_protocol::WorkspaceLayoutData> {
+        self.queries.query_workspace_layouts(space, workspace)
+    }
+
+    fn applications(&self) -> Vec<rini_protocol::ApplicationData> {
+        self.queries.query_applications()
+    }
+
+    fn metrics(&self) -> serde_json::Value {
+        self.queries.query_metrics()
+    }
+
+    fn diagnostics(&self) -> rini_protocol::DiagnosticsData {
+        self.queries.query_diagnostics()
+    }
+
+    fn execute(&self, command: Command) -> Result<(), String> {
+        self.try_send(Event::Command(command)).map_err(|e| e.to_string())
+    }
+}
+
 impl std::ops::Deref for ReactorHandle {
     type Target = ReactorQueryHandle;
 

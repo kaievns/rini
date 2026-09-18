@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-layout", "crates/rini-macos", "crates/rini-protocol", "crates/rini-shared"]
+members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-ipc", "crates/rini-layout", "crates/rini-macos", "crates/rini-protocol", "crates/rini-shared"]
 resolver = "3"
 
 [[bin]]
@@ -47,6 +47,8 @@ strip = false
 doctest = false
 
 [workspace.dependencies]
+crossbeam-channel = "0.5"
+dashmap = "6.1.0"
 slotmap = { version = "1.0.7", features = ["serde"], default-features = false }
 enum_dispatch = "0.3.13"
 dirs = "6.0.0"
@@ -179,6 +181,7 @@ rini-shared = { path = "crates/rini-shared" }
 rini-macos = { path = "crates/rini-macos" }
 rini-config = { path = "crates/rini-config" }
 rini-layout = { path = "crates/rini-layout" }
+rini-ipc = { path = "crates/rini-ipc" }
 rini-protocol = { path = "crates/rini-protocol" }
 libc = "0.2"
 continue = { git = "https://github.com/drewcrawford/continue" }
@@ -274,13 +277,13 @@ continue = { workspace = true }
 futures-task = { workspace = true }
 regex = { workspace = true }
 enum_dispatch = { workspace = true }
-crossbeam-channel = "0.5"
+crossbeam-channel = { workspace = true }
 num_enum = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
-dashmap = "6.1.0"
+dashmap = { workspace = true }
 sigpipe = "0.1.3"
 embed_plist = "1.2.2"
 rustc-hash = { workspace = true }
@@ -289,6 +292,7 @@ rini-shared = { workspace = true }
 rini-macos = { workspace = true }
 rini-config = { workspace = true }
 rini-layout = { workspace = true }
+rini-ipc = { workspace = true }
 rini-protocol = { workspace = true }
 
 [dev-dependencies]

@@ -1422,6 +1422,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-ipc"
+version = "0.1.0"
+dependencies = [
+ "continue",
+ "crossbeam-channel",
+ "dashmap",
+ "nix 0.30.1",
+ "parking_lot",
+ "rini-client",
+ "rini-config",
+ "rini-macos",
+ "rini-protocol",
+ "rini-shared",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rini-layout"
 version = "0.1.0"
 dependencies = [
@@ -1539,6 +1559,7 @@ dependencies = [
  "regex",
  "rini-client",
  "rini-config",
+ "rini-ipc",
  "rini-layout",
  "rini-macos",
  "rini-protocol",
