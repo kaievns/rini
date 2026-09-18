@@ -6,12 +6,12 @@
 //! window arrives as a default-width column in whatever workspace happens to be active.
 //!
 //! This holds the same three facts keyed by bundle identifier and display topology instead. See
-//! `docs/launch-memory.md`.
+//! `docs/launch-memory.md` (in this crate).
 
 use serde::{Deserialize, Serialize};
 
 use rini_shared::collections::HashMap;
-use crate::model::display_affinity::ColumnWidth;
+use crate::display_affinity::ColumnWidth;
 
 /// The set of displays connected, as a name that can key a map.
 ///
@@ -88,7 +88,6 @@ impl LaunchMemory {
 /// Title first, because it is the only thing that identifies a particular window: a terminal's title is
 /// its working directory, an editor's is its project. Ordinal second, for applications whose titles are
 /// page titles and change every session. Nothing at all for a window beyond the remembered slots, which
-/// then gets the ordinary defaults.
 pub fn slot_for_window(
     slots: &[Slot],
     title: Option<&str>,
@@ -234,10 +233,8 @@ mod tests {
         assert_eq!(memory.slots("app", "one").len(), 1);
     }
 
-    /// The measured failure: the projection could not read the windows of an application whose windows
-    /// were all in workspaces nobody was looking at, produced nothing for it, and wiped the entry — which
-    /// is the one outcome that cannot be recovered, since holding the arrangement while the application
-    /// is not running is the entire point.
+    /// The projection of an application whose windows are all in unseen workspaces produced
+    /// nothing; wiping the entry on that is the one unrecoverable outcome.
     #[test]
     fn remembering_nothing_leaves_what_is_known_alone() {
         let mut memory = LaunchMemory::default();

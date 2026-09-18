@@ -12,8 +12,8 @@ rini-protocol   wire types for the Mach IPC API (exists)
 rini-shared     ids, collections, geometry, log, channel (see below)     -> protocol
 rini-macos      sys/: AX, SkyLight, event tap, run loop, executor, mach   -> shared
 rini-config     config file, validation, hot reload, bindable commands   -> shared, macos, protocol
-rini-layout     scrolling strip, virtual workspaces, floating, app
-                rules, layout.ron persistence, display affinity          -> shared, config
+rini-layout     scrolling strip, virtual workspaces, window records,
+                app rules, layout.ron persistence, display affinity      -> shared, config, macos (for now)
 rini-motion     animation plans, easing, strip geometry, z-groups (pure) -> shared
 rini-overlay    CA tile renderer, snapshot cache and capture, flights    -> shared, macos, motion
 rini-ipc        mach server, subscriptions, cli_exec                     -> protocol, macos
@@ -36,12 +36,15 @@ targets and hands them over.
 | `rini-shared` | done: `ids`, `collections`, `geometry`, `log`, `util`, `channel` |
 | `rini-macos` | done: the former `src/sys/`. Its `test-support` feature swaps the window-server reads for thread-local overrides (see `docs/testing.md`) |
 | `rini-config` | done: `Config` schema/parse/validate/save, the `ConfigActor` (takes an `OnChange` callback instead of the reactor's channel), the file watcher, and `commands` (`WmCommand`, `WmCmd`, `ExecCmd`, `Command`: everything a key can be bound to) |
+| `rini-layout` | done: the layout engine, `virtual_workspace`, `window_store` (the window record store the layout is projected from, incl. `WindowState`), `app_rules`, `display_affinity`, `launch_memory`, `floating_position_store`, `hidden_window_placement`, `broadcast`. Depends on `rini-macos` for `WindowInfo`/`AppInfo`/`ScreenInfo`; making it platform-free means moving those to a neutral home first. `test-support` feature exposes test-only accessors |
 | everything else | still modules inside the `rini-wm` crate |
 
-Inside `rini-wm`, `crate::actor::app::WindowId` and `crate::actor::{Sender, Receiver, channel}`
-re-export `rini_shared`; `rini_macos::window_server::WindowServerId` and
-`rini_macos::screen::SpaceId` re-export `rini_shared::ids`. They exist so brace imports
-keep compiling until each module is lifted, and go away with it.
+Inside `rini-wm`, `crate::layout_engine` and `crate::model` re-export `rini_layout`,
+`crate::actor::app::WindowId` and `crate::actor::{Sender, Receiver, channel}` re-export
+`rini_shared`, `model::reactor::Command` and `wm_controller::{WmCommand, WmCmd, ExecCmd}`
+re-export `rini_config`, and `rini_macos::window_server::WindowServerId` and
+`rini_macos::screen::SpaceId` re-export `rini_shared::ids`. They exist so brace imports keep
+compiling until each module is lifted, and go away with it.
 
 ## IPC is one context in three crates
 

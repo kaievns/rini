@@ -5,7 +5,9 @@
 `crates/rini-macos/src/window_server.rs` answers queries from fakes and thread-local
 overrides when built with `cfg(test)` or the `test-support` feature. `rini-wm` turns
 the feature on as a dev-dependency, so its tests get the fakes although `rini-macos`
-itself is compiled as a normal dependency. Four of the fakes used to fall through to
+itself is compiled as a normal dependency. `rini-layout` has a `test-support` feature of
+the same shape for its test-only accessors (`LayoutEngine::selected_window`,
+`WindowStore::debug_assert_invariants`). Four of the fakes used to fall through to
 the real window server when no override was set, which made reactor tests depend on
 the windows the developer happened to have open.
 

@@ -1,10 +1,10 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
-use crate::actor::app::WindowInfo;
-use crate::layout_engine::{LayoutEvent, LayoutSystemKind};
-use crate::model::VirtualWorkspace;
-use crate::model::reactor::WindowState;
+use rini_macos::app::WindowInfo;
+use crate::{LayoutEvent, LayoutSystemKind};
+use crate::VirtualWorkspace;
+use crate::window_store::WindowState;
 use rini_shared::ids::WindowServerId;
 
 fn test_engine() -> LayoutEngine {
@@ -1578,8 +1578,8 @@ fn pure_matcher_reports_duplicate_identities_without_mutating_candidates() {
     let preferred = WindowId::new(1, 2);
     let live = WindowId::new(2, 1);
     let space = SpaceId::new(500);
-    let stale_workspace = crate::model::VirtualWorkspaceId::default();
-    let preferred_workspace = crate::model::VirtualWorkspaceId::default();
+    let stale_workspace = crate::VirtualWorkspaceId::default();
+    let preferred_workspace = crate::VirtualWorkspaceId::default();
     let fingerprint = WindowFingerprint {
         window_server_id: Some(77),
         title: Some("Editor".into()),
@@ -1621,7 +1621,7 @@ fn reused_process_local_identity_defers_to_window_server_identity() {
     let live = WindowId::new(42, 7);
     let other = WindowId::new(42, 8);
     let space = SpaceId::new(501);
-    let workspace = crate::model::VirtualWorkspaceId::default();
+    let workspace = crate::VirtualWorkspaceId::default();
     let direct_fingerprint = WindowFingerprint {
         window_server_id: Some(10),
         title: Some("Direct".into()),
@@ -1670,7 +1670,7 @@ fn reused_direct_window_identity_cannot_cross_known_application_identity() {
     let live = WindowId::new(42, 7);
     let compatible = WindowId::new(41, 6);
     let space = SpaceId::new(502);
-    let workspace = crate::model::VirtualWorkspaceId::default();
+    let workspace = crate::VirtualWorkspaceId::default();
     let wrong_app = WindowFingerprint {
         window_server_id: Some(10),
         title: Some("Shared title".into()),
@@ -1728,7 +1728,7 @@ fn fuzzy_match_requires_window_specific_evidence() {
     let candidate = [RestoreCandidate {
         window: saved,
         fingerprint: &saved_fingerprint,
-        location: Some((space, crate::model::VirtualWorkspaceId::default())),
+        location: Some((space, crate::VirtualWorkspaceId::default())),
     }];
 
     assert!(choose_match(live, space, &unrelated_live, None, &candidate).is_none());
@@ -1764,7 +1764,7 @@ fn fuzzy_match_requires_window_specific_evidence() {
     let unknown_candidate = [RestoreCandidate {
         window: saved,
         fingerprint: &unknown_app_saved,
-        location: Some((space, crate::model::VirtualWorkspaceId::default())),
+        location: Some((space, crate::VirtualWorkspaceId::default())),
     }];
     assert!(
         choose_match(
@@ -2356,8 +2356,8 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
 /// window's own records are keyed by pid and are expected to be useless on the next boot; these are not.
 #[test]
 fn launch_memory_survives_a_save_and_load() {
-    use crate::model::display_affinity::ColumnWidth;
-    use crate::model::launch_memory::{Slot, topology_key};
+    use crate::display_affinity::ColumnWidth;
+    use crate::launch_memory::{Slot, topology_key};
 
     let mut engine = test_engine();
     let docked = topology_key(&["built-in".into(), "external".into()]);
@@ -2430,7 +2430,7 @@ fn a_file_without_launch_memory_still_loads() {
 /// workspace happens to be active at the time.
 #[test]
 fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
-    use crate::model::display_affinity::ColumnWidth;
+    use crate::display_affinity::ColumnWidth;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
@@ -2582,7 +2582,7 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
     let _ = engine.handle_virtual_workspace_command(
         &mut window_store,
         space,
-        &crate::layout_engine::LayoutCommand::MoveWindowToWorkspace {
+        &crate::LayoutCommand::MoveWindowToWorkspace {
             workspace: rini_config::WorkspaceSelector::Index(parked_index),
             follow: false,
             window_id: Some(window.idx.get()),
@@ -2599,7 +2599,7 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
 
     engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
 
-    let topology = crate::model::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    let topology = crate::launch_memory::topology_key(&[DISPLAY.to_owned()]);
     let slots = engine.launch_memory.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "a parked window still has a slot");
     assert_eq!(slots[0].workspace_index, parked_index, "and it names the workspace it is parked in");
@@ -2657,7 +2657,7 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
 
     engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
 
-    let topology = crate::model::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    let topology = crate::launch_memory::topology_key(&[DISPLAY.to_owned()]);
     let slots = engine.launch_memory.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "remembered even with no home of its own");
     assert_eq!(slots[0].display_uuid, DISPLAY, "against the display its space is on");
@@ -2672,8 +2672,8 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
 /// cannot pass.
 #[test]
 fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
-    use crate::model::display_affinity::ColumnWidth;
-    use crate::model::launch_memory::{Slot, topology_key};
+    use crate::display_affinity::ColumnWidth;
+    use crate::launch_memory::{Slot, topology_key};
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
@@ -2747,7 +2747,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
         .map(|(id, _)| id)
         .collect();
     match result {
-        crate::model::AppRuleResult::Managed(effects) => {
+        crate::AppRuleResult::Managed(effects) => {
             assert_eq!(effects.workspace_id, workspaces[1], "placed in the remembered workspace");
         }
         other => panic!("expected a managed placement, got {other:?}"),
@@ -2765,8 +2765,8 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
 /// relaunched window came back at the default no matter what it had been.
 #[test]
 fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
-    use crate::model::display_affinity::ColumnWidth;
-    use crate::model::launch_memory::topology_key;
+    use crate::display_affinity::ColumnWidth;
+    use crate::launch_memory::topology_key;
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();

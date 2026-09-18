@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct AxisConstraints {
+pub struct AxisConstraints {
     pub min: f64,
     pub fixed: Option<f64>,
     pub max: Option<f64>,
@@ -21,7 +21,7 @@ fn sanitize(v: f64) -> f64 {
 /// - growable nodes preserve their final weighted proportions whenever their bounds allow it
 /// - zero-weight growable nodes share equally when no positive weights are present
 /// - if nothing can grow, remainder becomes blank space
-pub(crate) fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
+pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
     if items.is_empty() {
         return Vec::new();
     }

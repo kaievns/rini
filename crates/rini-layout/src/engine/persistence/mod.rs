@@ -12,9 +12,9 @@ use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
 use rini_shared::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
 use rini_config::{LayoutSettings, VirtualWorkspaceSettings};
-use crate::layout_engine::LayoutSystem;
-use crate::model::broadcast::BroadcastSender;
-use crate::model::{
+use crate::LayoutSystem;
+use crate::broadcast::BroadcastSender;
+use crate::{
     AppRuleEngine, DisplayAffinity, FloatingPositionStore, VirtualWorkspaceId, WindowStore,
     WorkspaceStore,
 };

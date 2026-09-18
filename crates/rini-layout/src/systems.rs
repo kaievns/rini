@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use rini_shared::ids::{WindowId, pid_t};
 use rini_shared::collections::HashMap;
-use crate::layout_engine::{Direction, ResizeOrientation};
+use crate::{Direction, ResizeOrientation};
 
 slotmap::new_key_type! { pub struct LayoutId; }
 
@@ -195,7 +195,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     );
 }
 
-pub(crate) mod constraints;
+pub mod constraints;
 mod scrolling;
 pub use scrolling::ScrollingLayoutSystem;
 

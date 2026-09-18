@@ -1,26 +1,16 @@
-pub mod app_rules;
-pub mod display_affinity;
-pub mod floating_position_store;
-pub mod strip_stack;
-pub mod hidden_window_placement;
-pub mod launch_memory;
-pub mod server;
-pub mod tx_store;
-pub mod virtual_workspace;
-pub mod window_store;
-pub mod z_group;
-pub use app_rules::{
-    AppRuleDecision, AppRuleEffects, AppRuleEngine, AppRuleResult, WindowRuleContext,
-};
-pub use display_affinity::DisplayAffinity;
-pub use floating_position_store::FloatingPositionStore;
-pub use hidden_window_placement::{HiddenWindowPlacement, HideCorner};
-pub use virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStore};
-pub use window_store::{
-    PendingWindowOperation, WindowPlacement, WindowRecord, WindowStore, WindowVisibility,
-    WindowWorkspaceInfo,
-};
-pub mod broadcast;
 pub mod reactor;
+pub mod server;
 pub mod space_activation;
+pub mod strip_stack;
+pub mod tx_store;
+pub mod z_group;
+
 pub use reactor::RiniState;
+pub use rini_layout::{
+    AppRuleDecision, AppRuleEffects, AppRuleEngine, AppRuleResult, DisplayAffinity,
+    FloatingPositionStore, HiddenWindowPlacement, HideCorner, PendingWindowOperation,
+    VirtualWorkspace, VirtualWorkspaceId, WindowPlacement, WindowRecord, WindowRuleContext,
+    WindowStore, WindowVisibility, WindowWorkspaceInfo, WorkspaceStore, app_rules, broadcast,
+    display_affinity, floating_position_store, hidden_window_placement, launch_memory,
+    virtual_workspace, window_store,
+};

@@ -5,10 +5,10 @@ pub use rini_protocol::RiniEvent as BroadcastEvent;
 use slotmap::Key;
 
 use rini_shared::ids::WindowId;
-use crate::model::virtual_workspace::VirtualWorkspaceId;
+use crate::virtual_workspace::VirtualWorkspaceId;
 
-pub type BroadcastSender = crate::actor::Sender<BroadcastEvent>;
-pub type BroadcastReceiver = crate::actor::Receiver<BroadcastEvent>;
+pub type BroadcastSender = rini_shared::channel::Sender<BroadcastEvent>;
+pub type BroadcastReceiver = rini_shared::channel::Receiver<BroadcastEvent>;
 
 pub fn protocol_workspace_id(id: VirtualWorkspaceId) -> rini_protocol::WorkspaceId {
     let value = id.data().as_ffi();

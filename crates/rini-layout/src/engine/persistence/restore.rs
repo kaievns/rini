@@ -2,8 +2,8 @@ use objc2_core_foundation::CGRect;
 
 use super::reconcile::ReconcileOutcome;
 use super::*;
-use crate::layout_engine::workspaces::WorkspaceLayoutSnapshot;
-use crate::model::VirtualWorkspace;
+use crate::workspaces::WorkspaceLayoutSnapshot;
+use crate::VirtualWorkspace;
 
 #[derive(Clone, Copy)]
 struct WorkspaceMapping {
@@ -486,7 +486,7 @@ impl LayoutEngine {
     ) {
         for &(space, workspace) in targets {
             let expected_assignment =
-                crate::model::window_store::WindowWorkspaceInfo { space, workspace_id: workspace };
+                crate::window_store::WindowWorkspaceInfo { space, workspace_id: workspace };
             // Only this display's strips of the workspace. A workspace spans every display,
             // so its layout ids must be filtered to the target space before anything is
             // removed — and the removal itself must be layout-scoped, because
@@ -624,16 +624,8 @@ impl LayoutEngine {
             self.floating.remove_floating(window);
             self.persistence.forget_window(window);
         }
-        // Install the saved workspace WITHOUT discarding the other displays' strips.
-        //
-        // This used to overwrite the whole VirtualWorkspace. That was safe while a workspace
-        // belonged to exactly one display, but a workspace now owns one strip per display and
-        // its layout_system holds all of them, so replacing the object wiped every other
-        // display's strip whenever one display's layout was restored.
-        //
-        // Only the per-display facts are taken from the snapshot: this display's focused
-        // window, plus the strip installed by install_workspace_snapshot below. Name and
-        // layout mode are current-session metadata and are deliberately left alone.
+        // Only this display's focus and strip come from the snapshot. A workspace holds a strip per
+        // display, so replacing the whole object wiped the others (`docs/workspaces-and-displays.md`).
         {
             let target_space = state.target_space;
             let restored_focus = state.workspace.last_focused(target_space);

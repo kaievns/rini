@@ -1422,6 +1422,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-layout"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "enum_dispatch",
+ "objc2-core-foundation",
+ "regex",
+ "rini-config",
+ "rini-macos",
+ "rini-protocol",
+ "rini-shared",
+ "ron",
+ "serde",
+ "serde_with",
+ "slotmap",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "rini-macos"
 version = "0.1.0"
 dependencies = [
@@ -1519,6 +1539,7 @@ dependencies = [
  "regex",
  "rini-client",
  "rini-config",
+ "rini-layout",
  "rini-macos",
  "rini-protocol",
  "rini-shared",

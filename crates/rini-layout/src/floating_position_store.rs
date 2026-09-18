@@ -4,7 +4,7 @@ use serde_with::serde_as;
 
 use rini_shared::ids::WindowId;
 use rini_shared::collections::HashMap;
-use crate::model::{VirtualWorkspaceId, WorkspaceStore};
+use crate::{VirtualWorkspaceId, WorkspaceStore};
 use rini_shared::ids::pid_t;
 use rini_shared::geometry::CGRectDef;
 use rini_shared::ids::SpaceId;
@@ -20,7 +20,7 @@ pub struct FloatingPositionStore {
 }
 
 impl FloatingPositionStore {
-    pub(crate) fn validate_persisted(&self, workspaces: &WorkspaceStore) -> Result<(), String> {
+    pub fn validate_persisted(&self, workspaces: &WorkspaceStore) -> Result<(), String> {
         for (&(space, workspace, window), frame) in &self.positions {
             let Some(workspace_info) = workspaces.workspaces.get(workspace) else {
                 return Err(format!(
@@ -43,18 +43,18 @@ impl FloatingPositionStore {
         Ok(())
     }
 
-    pub(crate) fn persisted_windows(&self) -> Vec<WindowId> {
+    pub fn persisted_windows(&self) -> Vec<WindowId> {
         self.positions.keys().map(|(_, _, window)| *window).collect()
     }
 
-    pub(crate) fn positioned_windows(&self) -> Vec<WindowId> {
+    pub fn positioned_windows(&self) -> Vec<WindowId> {
         let mut windows = self.persisted_windows();
         windows.sort_unstable();
         windows.dedup();
         windows
     }
 
-    pub(crate) fn locations_for_window(
+    pub fn locations_for_window(
         &self,
         window: WindowId,
     ) -> Vec<(SpaceId, VirtualWorkspaceId)> {
@@ -139,7 +139,7 @@ impl FloatingPositionStore {
         self.positions.retain(|(_, _, stored_window), _| *stored_window != window);
     }
 
-    pub(crate) fn remove_workspace_window(
+    pub fn remove_workspace_window(
         &mut self,
         space: SpaceId,
         workspace: VirtualWorkspaceId,
@@ -182,7 +182,7 @@ impl FloatingPositionStore {
         }
     }
 
-    pub(crate) fn replace_workspace_positions(
+    pub fn replace_workspace_positions(
         &mut self,
         target_space: SpaceId,
         target_workspace: VirtualWorkspaceId,

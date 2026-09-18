@@ -39,7 +39,7 @@ impl LayoutEngine {
         Self::deserialize_from_str_with_schema_version(&buf)
     }
 
-    pub(crate) fn deserialize_from_str(buf: &str) -> anyhow::Result<Self> {
+    pub fn deserialize_from_str(buf: &str) -> anyhow::Result<Self> {
         Self::deserialize_from_str_with_schema_version(buf).map(|(engine, _)| engine)
     }
 
@@ -360,19 +360,9 @@ impl LayoutEngine {
         self.release_windows_saved_on_absent_displays(current_spaces);
     }
 
-    /// Give up the saved slots that belong to a display which is not attached, keeping only
-    /// the record of which display they belonged to.
-    ///
-    /// This is what makes restore safe to enable by default. A saved layout describes every
-    /// display the last session had. Restoring an entry whose display is now absent puts
-    /// those windows at that display's coordinates — measured at x=-1680, with no display
-    /// there — and nothing migrated them back, so a single dock/undock cycle produced a
-    /// layout only fixable by deleting the layout file.
-    ///
-    /// Releasing the candidate means those windows are laid out fresh on a live display, at
-    /// default width rather than their saved one. That is a real loss, and it is the
-    /// deliberate trade: their display affinity survives, so plugging the display back in
-    /// repatriates them, whereas a stranded window is not recoverable at all.
+    /// Release the saved slots of a display that is not attached, keeping only which display they
+    /// belonged to. Restoring them strands windows at a missing display's coordinates; see
+    /// "Restore must not strand windows" in `docs/workspaces-and-displays.md`.
     fn release_windows_saved_on_absent_displays(&mut self, current_spaces: &[(SpaceId, String)]) {
         let live_displays: HashSet<&str> =
             current_spaces.iter().map(|(_, display)| display.as_str()).collect();

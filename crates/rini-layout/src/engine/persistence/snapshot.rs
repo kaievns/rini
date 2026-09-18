@@ -21,7 +21,7 @@ pub(super) struct PersistedLayout {
     #[serde(default)]
     pub(super) display_affinity: DisplayAffinity,
     #[serde(default)]
-    pub(super) launch_memory: crate::model::launch_memory::LaunchMemory,
+    pub(super) launch_memory: crate::launch_memory::LaunchMemory,
     /// Schema v2 and earlier. Folded into `display_affinity` on load; never written.
     #[serde(default)]
     pub(super) space_display_map: HashMap<SpaceId, Option<String>>,
@@ -41,7 +41,7 @@ struct PersistedLayoutRef<'a> {
     floating_positions: &'a FloatingPositionStore,
     virtual_workspace_manager: &'a WorkspaceStore,
     display_affinity: &'a DisplayAffinity,
-    launch_memory: &'a crate::model::launch_memory::LaunchMemory,
+    launch_memory: &'a crate::launch_memory::LaunchMemory,
     #[serde(flatten)]
     persistence: &'a PersistenceState,
 }

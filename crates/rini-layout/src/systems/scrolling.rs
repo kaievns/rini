@@ -8,10 +8,10 @@ use rini_shared::collections::{HashMap, HashSet};
 use rini_config::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
-use crate::layout_engine::systems::constraints::{AxisConstraints, solve_axis_lengths};
-use crate::layout_engine::systems::{LayoutSystem, WindowLayoutConstraints};
-use crate::layout_engine::utils::compute_tiling_area;
-use crate::layout_engine::{Direction, LayoutId, ResizeOrientation};
+use crate::systems::constraints::{AxisConstraints, solve_axis_lengths};
+use crate::systems::{LayoutSystem, WindowLayoutConstraints};
+use crate::utils::compute_tiling_area;
+use crate::{Direction, LayoutId, ResizeOrientation};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 struct Column {
@@ -783,20 +783,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
             // out on top of the full-width one.
             let holds_full_width =
                 col.windows.iter().any(|wid| state.fullscreen_within_gaps.contains(wid));
-            // A LONE column used to be expanded to the full viewport here, whatever its
-            // width. Removed: it made a window's size depend on how many OTHER windows its
-            // workspace happened to hold, which is precisely what "a window size should be
-            // tied to a display not a workspace" rules out.
-            //
-            // Measured symptom: a full-size window moved from workspace 1 to 2 to 3 on one
-            // display went half-size on 2 (which held other windows) and full again on 3
-            // (which was empty). Nothing about the window changed between those two frames —
-            // only its neighbours did.
-            //
-            // niri behaves the same way: a single column keeps its preset width and simply
-            // leaves the rest of the strip empty. Full width is `maximize-column`'s job,
-            // which here is toggle_fullscreen_within_gaps (ctrl-f) — and that IS remembered
-            // per display, so it now survives a workspace change.
+            // A lone column keeps its width; expanding it tied a window's size to its neighbours.
+            // See "Column width" in `docs/strip.md`.
             let ratio = if holds_full_width {
                 1.0
             } else {
@@ -834,27 +822,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
             // oversized column.
             width = width.min(tiling.size.width.max(1.0));
 
-            // Absorb the inner gaps into the column width so that N columns of ratio
-            // 1/N actually FIT side by side.
-            //
-            // Without this, two columns at ratio 0.5 need 2*(0.5*W) + gap = W + gap,
-            // i.e. `gap` points more than the viewport has. The second column is then
-            // never fully visible, so reveal-on-demand nudges the strip on every focus
-            // change and the pair visibly shifts back and forth by the gap width.
-            // Measured on a 1720pt viewport with a 4pt gap: the columns alternated
-            // between x=[0, 864] and x=[4, 868] as focus moved between them.
-            //
-            // N columns have (N-1) gaps between them, so each gives up (N-1)/N of a
-            // gap. N is inferred from the ratio the user asked for — a ratio of 1/N is
-            // a request for N columns abreast — which keeps the correction local to
-            // this column and independent of how many windows happen to exist.
-            //
-            //   ratio 0.5     -> N=2, col 858.00, 2 cols + 1 gap = 1720.00  fits
-            //   ratio 0.33333 -> N=3, col 570.66, 3 cols + 2 gaps = 1719.98 fits
-            //   ratio 0.25    -> N=4, col 427.00, 4 cols + 3 gaps = 1720.00 fits
-            //
-            // Guarded so gapless configs, single columns and degenerate widths are
-            // untouched.
+            // Absorb inner gaps so N columns of ratio 1/N fit: each column gives up (N-1)/N of a gap,
+            // with N inferred from the requested ratio. Table in "Column width", `docs/strip.md`.
             if gap_x > 0.0 && ratio > 0.0 {
                 let columns_abreast = (1.0 / ratio).round().max(1.0);
                 let gap_share = gap_x * (columns_abreast - 1.0) / columns_abreast;
@@ -1083,20 +1052,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
                 if state.fullscreen.contains(wid) {
                     frame = screen;
                 } else if state.fullscreen_within_gaps.contains(wid) {
-                    // Full-WIDTH column, not a full-screen frame.
-                    //
-                    // Was `frame = tiling`, which assigned the whole tiling rect
-                    // including its origin.x. That lifted the window out of the
-                    // strip's coordinate space: it stopped scrolling, stayed pinned
-                    // at the viewport's left edge, and other columns slid over the
-                    // top of it. Reproduced by making Slack full-size and then
-                    // moving focus away — Slack stayed at x=4 while the strip moved
-                    // on without it.
-                    //
-                    // Keeping `x` (the strip-relative position computed above as
-                    // anchor_x + start - offset) means the column still travels
-                    // with the strip and simply occupies the full viewport width,
-                    // which is what niri's maximize-column does.
+                    // Full WIDTH, not the tiling rect: keeping the strip-relative x is what lets the
+                    // column keep scrolling with the strip (`docs/strip.md`).
                     frame = CGRect::new(
                         CGPoint::new(x.round(), tiling.origin.y.round()),
                         CGSize::new(tiling.size.width.round(), tiling.size.height.round()),
@@ -1607,17 +1564,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
             state.fullscreen_within_gaps.insert(selected);
         }
 
-        // Rescroll the strip so the resized column is actually visible.
-        //
-        // Previously this mutated the set and returned immediately. Changing a
-        // column's width moves every column start after it, so a window sitting at
-        // the RIGHT EDGE of the viewport grew off-screen and looked like the key
-        // had done nothing — pressing it and then nudging focus sideways (which
-        // does force a reveal) made it snap to full size. That was the reported
-        // symptom exactly.
-        //
-        // The resize path already does this after changing a width, so this brings
-        // the two into line rather than inventing new behaviour.
+        // Rescroll so the resized column stays visible, as the resize path does.
         if niri_navigation {
             state.reveal_selected_without_direction();
         } else {
@@ -1972,9 +1919,9 @@ mod tests {
     use rini_shared::ids::{WindowId, pid_t};
     use rini_shared::collections::HashMap;
     use rini_config::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
-    use crate::layout_engine::systems::{LayoutSystem, WindowLayoutConstraints};
-    use crate::layout_engine::utils::compute_tiling_area;
-    use crate::layout_engine::{Direction, LayoutId, ResizeOrientation};
+    use crate::systems::{LayoutSystem, WindowLayoutConstraints};
+    use crate::utils::compute_tiling_area;
+    use crate::{Direction, LayoutId, ResizeOrientation};
 
     fn wid(pid: pid_t, idx: u32) -> WindowId {
         WindowId {
@@ -3142,19 +3089,12 @@ mod tests {
         );
     }
 
-    /// Two columns at ratio 0.5 must FIT, so moving focus between them does not
-    /// scroll the strip.
-    ///
-    /// They used to need 2*(0.5*W) + gap, i.e. one gap more than the viewport, so
-    /// the second column was never fully visible and reveal-on-demand nudged the
-    /// strip on every focus change — the pair visibly shifted by the gap width.
+    /// Two columns at ratio 0.5 must fit, so moving focus between them does not scroll the strip.
     #[test]
     fn two_half_width_columns_do_not_shift_when_focus_alternates() {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
         let screen = screen(1728.0, 1117.0);
-        // Real gaps matter here: with GapSettings::default() (all zero) two 0.5
-        // columns fit exactly and the bug cannot appear. The shift only shows up
-        // once there is an inner gap to overflow by.
+        // With zero gaps two 0.5 columns fit exactly and the overflow cannot appear.
         let mut gaps = GapSettings::default();
         gaps.outer.left = 4.0;
         gaps.outer.right = 4.0;
@@ -3225,9 +3165,7 @@ mod tests {
 
     // ── stacking direction ──────────────────────────────────────────────────
 
-    /// ctrl-, moves the SELECTED window into the PREVIOUS column. It used to drag
-    /// the NEXT column's windows into the current one, which stacked a window the
-    /// user had not chosen and left the selection untouched.
+    /// ctrl-, moves the SELECTED window into the PREVIOUS column.
     #[test]
     fn stacking_moves_selected_window_into_previous_column() {
         let settings = niri_settings(0.33333);

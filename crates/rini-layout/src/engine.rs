@@ -7,17 +7,18 @@ use tracing::{debug, info, warn};
 use super::{
     Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
 };
-use crate::actor::app::{AppInfo, WindowId, pid_t};
+use rini_macos::app::AppInfo;
+use rini_shared::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
 use rini_config::{LayoutSettings, WorkspaceSelector};
-use crate::layout_engine::LayoutSystem;
-use crate::layout_engine::floating::FloatingFullscreenKind;
-use crate::layout_engine::systems::WindowLayoutConstraints;
-use crate::model::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus};
-use crate::model::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
-use crate::model::display_affinity::ColumnWidth;
-use crate::model::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
-use crate::model::{
+use crate::LayoutSystem;
+use crate::floating::FloatingFullscreenKind;
+use crate::systems::WindowLayoutConstraints;
+use crate::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus};
+use crate::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
+use crate::display_affinity::ColumnWidth;
+use crate::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
+use crate::{
     AppRuleEffects, AppRuleEngine, AppRuleResult, DisplayAffinity, FloatingPositionStore,
     WindowRuleContext, WindowStore,
 };
@@ -91,7 +92,7 @@ pub struct EventResponse {
 #[must_use]
 pub struct LayoutEventOutcome {
     pub response: EventResponse,
-    pub(crate) app_rules: AppRuleOutcome,
+    pub app_rules: AppRuleOutcome,
 }
 
 impl std::ops::Deref for LayoutEventOutcome {
@@ -117,8 +118,8 @@ pub struct LayoutEngine {
     /// `display_last_space` pair, which could disagree with each other.
     display_affinity: DisplayAffinity,
     /// Where each application's windows belong, under a key that survives the application. See
-    /// `docs/launch-memory.md`.
-    launch_memory: crate::model::launch_memory::LaunchMemory,
+    /// `docs/launch-memory.md` (in this crate).
+    launch_memory: crate::launch_memory::LaunchMemory,
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
     connected_displays: Vec<String>,
@@ -127,7 +128,7 @@ pub struct LayoutEngine {
     startup_restore_pending: bool,
 }
 
-pub(crate) struct WorkspaceLayoutQuerySnapshot {
+pub struct WorkspaceLayoutQuerySnapshot {
     pub workspace_id: VirtualWorkspaceId,
     pub workspace_index: usize,
     pub is_active: bool,
@@ -141,7 +142,7 @@ impl LayoutEngine {
     }
 
     /// Resolve an optional workspace index and snapshot its layout for read-only consumers.
-    pub(crate) fn query_workspace_layout(
+    pub fn query_workspace_layout(
         &self,
         space: SpaceId,
         workspace_index: Option<usize>,
@@ -352,16 +353,8 @@ impl LayoutEngine {
                 let _ = self.workspace_tree_mut(workspace_id).select_window(layout, wid);
             }
         } else {
-            // Do NOT clear the workspace's remembered focus here.
-            //
-            // This runs whenever the focused window is not a member of this workspace, which
-            // includes every ordinary focus change to another display or another workspace.
-            // Wiping the memory in that case is why switching back always landed on the
-            // FIRST column instead of where you were: preferred_focus_for_workspace consults
-            // last_focused_window first, and it had just been erased.
-            //
-            // The memory is per (workspace, display) and is cleaned up properly when a window
-            // is closed or forgotten, so leaving it alone here cannot leak a stale window.
+            // Focus memory is per (workspace, display) and is cleaned up on close; clearing it here
+            // runs on every ordinary focus change and lands the return on the first column.
             self.focused_window = None;
         }
     }
@@ -534,18 +527,8 @@ impl LayoutEngine {
         };
 
         if is_floating {
-            // A floating window is not a strip member, so strip navigation does not walk the
-            // floating set at all: it moves to the strip and resumes where the strip was.
-            //
-            // This used to cycle between floating windows for left/right, with an escape hatch
-            // at either end. With Zoom and System Settings floating, ctrl-J/L therefore cycled
-            // those two rather than the columns — and the escape landed on
-            // `tiled_windows.first()`, i.e. the FIRST column rather than the one that had been
-            // selected. Both were reported: strip navigation "cycling between the terminals,
-            // settings and zoom windows", and always ending up on the first window.
-            //
-            // Floating windows still belong to a workspace and are still reachable with
-            // cmd-tab and toggle_focus_floating; they are simply not part of the strip.
+            // Floating windows are not strip members: navigation moves to the strip and resumes at its
+            // own selection. See "Navigation" in `docs/strip.md`.
             return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
         }
 
@@ -632,16 +615,7 @@ impl LayoutEngine {
                 }
             }
 
-            // No falling into the floating layer at the end of the strip.
-            //
-            // This focused the first floating window whenever strip navigation ran out of
-            // columns. With System Settings floating, walking right therefore stepped off the
-            // last column onto Settings, and the next keypress came back — the two-window
-            // bounce that was reported. Floating windows belong to the workspace but are not
-            // strip members; cmd-tab and toggle_focus_floating reach them.
-            //
-            // Falling through leaves the selection where it was, so the strip simply stops at
-            // its edge.
+            // The strip stops at its edge; it does not fall into the floating layer (`docs/strip.md`).
 
             let visible_windows = self.filter_active_workspace_windows(
                 window_store,
@@ -805,7 +779,7 @@ impl LayoutEngine {
 
         // Where this application's windows were the last time this set of displays was attached. Only
         // consulted for a window with no workspace yet, so it cannot override an explicit rule or a
-        // window rini has already placed. See `docs/launch-memory.md`.
+        // window rini has already placed. See `docs/launch-memory.md` (in this crate).
         let remembered = self
             .virtual_workspace_manager
             .workspace_for_window(window_store, space, wid)
@@ -904,7 +878,7 @@ impl LayoutEngine {
     fn active_workspace_id_and_name(
         &self,
         space_id: SpaceId,
-    ) -> Option<(crate::model::VirtualWorkspaceId, String)> {
+    ) -> Option<(crate::VirtualWorkspaceId, String)> {
         let workspace_id = self.virtual_workspace_manager.active_workspace(space_id)?;
         let workspace_name = self
             .virtual_workspace_manager
@@ -930,8 +904,8 @@ impl LayoutEngine {
         window_store: &WindowStore,
         space: SpaceId,
         pid: pid_t,
-        tiled_by_workspace: &HashMap<crate::model::VirtualWorkspaceId, Vec<WindowId>>,
-    ) -> Vec<(crate::model::VirtualWorkspaceId, LayoutId)> {
+        tiled_by_workspace: &HashMap<crate::VirtualWorkspaceId, Vec<WindowId>>,
+    ) -> Vec<(crate::VirtualWorkspaceId, LayoutId)> {
         let total_tiled_count: usize = tiled_by_workspace.values().map(|v| v.len()).sum();
         let mut changed_layouts = Vec::new();
 
@@ -1063,12 +1037,12 @@ impl LayoutEngine {
     /// Projects live windows into the launch memory, so their next launch can find them.
     ///
     /// A projection computed before each save rather than hooks on every move and resize: one write
-    /// path, and no new work in the paths that place windows. See `docs/launch-memory.md`.
+    /// path, and no new work in the paths that place windows. See `docs/launch-memory.md` (in this crate).
     ///
     /// `connected` is the display UUIDs currently attached, which is the topology the answer is filed
     /// under. Nothing is recorded without it, since an answer with no topology cannot be looked up.
     pub fn remember_launch_slots(&mut self, window_store: &WindowStore, connected: &[String]) {
-        use crate::model::launch_memory::{Slot, topology_key};
+        use crate::launch_memory::{Slot, topology_key};
 
         if connected.is_empty() {
             return;
@@ -1097,10 +1071,8 @@ impl LayoutEngine {
                     let info = self
                         .virtual_workspace_manager
                         .workspace_info_for_window_any(window_store, window_id)?;
-                    // Its recorded home, or the display its space is on. A home is written once, on
-                    // first sighting, and only if the space's display was known by then — so a window
-                    // that appeared before that mapping existed has none, forever. Measured live on a
-                    // window that was tracked, assigned to a workspace, and had no home at all.
+                    // Its recorded home, or the display its space is on. A home is written once, only if
+                    // the space's display was known then, so a window may have none.
                     let display = self
                         .display_affinity
                         .window_home(window_id)
@@ -1111,11 +1083,8 @@ impl LayoutEngine {
                         .list_workspaces(info.space)
                         .iter()
                         .position(|(id, _)| *id == info.workspace_id)?;
-                    // The width the window actually has, taken from its own layout rather than from
-                    // the affinity map. That map is only written by explicit width COMMANDS, so a window
-                    // whose width came from the layout itself never appeared in it — measured live with
-                    // `window_width:{}` in the file and every slot recording no width at all, which is
-                    // why a relaunched window came back at the default.
+                    // The width the window actually has, from its layout. The affinity map alone missed
+                    // widths that came from the layout rather than a command.
                     let width = self
                         .workspace_layouts
                         .active(info.space, info.workspace_id)
@@ -1158,8 +1127,8 @@ impl LayoutEngine {
         window: WindowId,
         app_id: &str,
         title: Option<&str>,
-    ) -> Option<crate::model::launch_memory::Slot> {
-        use crate::model::launch_memory::{slot_for_window, topology_key};
+    ) -> Option<crate::launch_memory::Slot> {
+        use crate::launch_memory::{slot_for_window, topology_key};
 
         // Identity comes from the caller, not from the window store. The first sighting of a launching
         // application's window happens while the rules are being applied, and the window is not in the
@@ -1208,19 +1177,9 @@ impl LayoutEngine {
         }
     }
 
-    /// Re-observe where windows actually are, and in what order, for one attached display.
-    ///
-    /// Affinity used to be written once and never revised, so it went stale the moment the
-    /// user rearranged anything: a window that had been on the external months ago was
-    /// dragged to the built-in, kept its old home, and was hauled back on the next replug.
-    /// Reported as a Chrome and an editor window following the two terminals across.
-    ///
-    /// Call this only for a display that is currently attached, and only on a settled
-    /// topology. `live_windows` must be the display's strip in visual order.
-    ///
-    /// Windows whose recorded home is a DETACHED display keep it. That is the evacuation
-    /// case: they are sitting here only because their own display went away, and
-    /// overwriting the home is exactly the mistake that made replug useless.
+    /// Re-observe where windows are, and in what order, for one attached display on a settled
+    /// topology. `live_windows` is the display's strip in visual order. Windows homed to a
+    /// detached display keep that home (evacuation). See `docs/workspaces-and-displays.md`.
     pub fn sync_display_affinity(
         &mut self,
         display_uuid: &str,
@@ -1377,18 +1336,8 @@ impl LayoutEngine {
             .collect()
     }
 
-    /// Drop affinity for windows that no longer exist.
-    ///
-    /// Affinity was only cleared on the `WindowRemoved` path, not on
-    /// `WindowRemovedPreserveFloating` — and the display-change path uses the latter. A
-    /// window closed while its display was unplugged therefore kept its home forever.
-    ///
-    /// Measured on hardware: the external display's affinity list held three windows that
-    /// had all been closed (two Ghostty windows and a Chrome window), while all fourteen
-    /// live windows were homed to the built-in. Repatriation reported
-    /// `homed=[3 windows] to_move=[]` and the external came back empty every time.
-    ///
-    /// Called on every settled topology, which is cheap: it only walks the affinity map.
+    /// Drop affinity for windows that no longer exist. Called on every settled topology; the
+    /// removal paths alone missed windows closed while their display was unplugged.
     pub fn forget_affinity_for_dead_windows(&mut self, window_store: &WindowStore) {
         let stale: Vec<WindowId> = self
             .display_affinity
@@ -1438,7 +1387,7 @@ impl LayoutEngine {
             layout_settings: layout_settings.clone(),
             broadcast_tx,
             display_affinity: DisplayAffinity::default(),
-            launch_memory: crate::model::launch_memory::LaunchMemory::default(),
+            launch_memory: crate::launch_memory::LaunchMemory::default(),
             connected_displays: Vec::new(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
@@ -1486,7 +1435,7 @@ impl LayoutEngine {
         effects.focus.then_some((window, effects.workspace_id))
     }
 
-    pub(crate) fn apply_app_rule_resize(
+    pub fn apply_app_rule_resize(
         &mut self,
         resize: AppRuleResize,
         old_frame: CGRect,
@@ -1568,7 +1517,7 @@ impl LayoutEngine {
                 self.floating.clear_active_for_app(space, pid);
 
                 let mut windows_by_workspace: HashMap<
-                    crate::model::VirtualWorkspaceId,
+                    crate::VirtualWorkspaceId,
                     Vec<WindowId>,
                 > = HashMap::default();
 
@@ -1980,8 +1929,8 @@ impl LayoutEngine {
             LayoutCommand::ToggleFocusFloating => unreachable!(),
 
             LayoutCommand::SwapWindows(a, b) => {
-                let a = crate::actor::app::WindowId::new(a.pid, a.idx);
-                let b = crate::actor::app::WindowId::new(b.pid, b.idx);
+                let a = rini_shared::ids::WindowId::new(a.pid, a.idx);
+                let b = rini_shared::ids::WindowId::new(b.pid, b.idx);
                 let _ = self.workspace_tree_mut(workspace_id).swap_windows(layout, a, b);
 
                 EventResponse::default()
@@ -2242,7 +2191,7 @@ impl LayoutEngine {
     where
         F: Fn(WindowId) -> Option<CGRect>,
     {
-        use crate::model::HideCorner;
+        use crate::HideCorner;
 
         let mut positions = HashMap::default();
         let window_size = |wid| {
@@ -2260,7 +2209,7 @@ impl LayoutEngine {
             engine: &mut LayoutEngine,
             positions: &mut HashMap<WindowId, CGRect>,
             space: SpaceId,
-            workspace_id: crate::model::VirtualWorkspaceId,
+            workspace_id: crate::VirtualWorkspaceId,
             wid: WindowId,
             candidate: Option<CGRect>,
             store_if_absent: bool,
@@ -2304,7 +2253,7 @@ impl LayoutEngine {
                     // untouched — `calculate_layout_for_workspace` still answers with the real position,
                     // which is what the animation canvas is built from. See "macOS will not park a window
                     // further off the left edge than 40pt" in `docs/capture-overlay-research.md`.
-                    let placed = if crate::model::HiddenWindowPlacement::is_off_screen(screen, rect) {
+                    let placed = if crate::HiddenWindowPlacement::is_off_screen(screen, rect) {
                         // The corner records which side of the strip the column was on, so an animation
                         // can bring it back in from that edge instead of up from the bottom.
                         let corner = if rect.max().x <= screen.origin.x {
@@ -2441,7 +2390,7 @@ impl LayoutEngine {
         &self,
         window_store: &WindowStore,
         space: SpaceId,
-        workspace_id: crate::model::VirtualWorkspaceId,
+        workspace_id: crate::VirtualWorkspaceId,
         screen: CGRect,
         gaps: &rini_config::GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
@@ -2508,8 +2457,8 @@ impl LayoutEngine {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn selected_window(&mut self, space: SpaceId) -> Option<WindowId> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_window(&mut self, space: SpaceId) -> Option<WindowId> {
         let (ws_id, layout) = self.workspace_and_layout(space)?;
         self.workspace_tree(ws_id).selected_window(layout)
     }
@@ -2772,7 +2721,7 @@ impl LayoutEngine {
         &mut self.virtual_workspace_manager
     }
 
-    pub fn active_workspace(&self, space: SpaceId) -> Option<crate::model::VirtualWorkspaceId> {
+    pub fn active_workspace(&self, space: SpaceId) -> Option<crate::VirtualWorkspaceId> {
         self.virtual_workspace_manager.active_workspace(space)
     }
 
@@ -2787,7 +2736,7 @@ impl LayoutEngine {
         ax_role: Option<&str>,
         ax_subrole: Option<&str>,
         is_modal: bool,
-    ) -> Result<AppRuleResult, crate::model::virtual_workspace::WorkspaceError> {
+    ) -> Result<AppRuleResult, crate::virtual_workspace::WorkspaceError> {
         let decision = self.app_rules.evaluate(WindowRuleContext {
             app_bundle_id,
             app_name,
@@ -2800,7 +2749,7 @@ impl LayoutEngine {
         // Where this application's windows were, but only when the config had nothing to say and the
         // window has no assignment already. This is the first sighting of a launching application's
         // window, well before `WindowAdded`, so it is the only place the answer can still be changed.
-        if decision == crate::model::AppRuleDecision::NoMatch
+        if decision == crate::AppRuleDecision::NoMatch
             && self
                 .virtual_workspace_manager
                 .workspace_for_window(window_store, space, window_id)
@@ -2852,7 +2801,7 @@ impl LayoutEngine {
     pub fn ensure_active_workspace_info(
         &mut self,
         space: SpaceId,
-    ) -> Option<(crate::model::VirtualWorkspaceId, String)> {
+    ) -> Option<(crate::VirtualWorkspaceId, String)> {
         if let Some(workspace_id) = self.virtual_workspace_manager.active_workspace(space) {
             let workspace_name = self
                 .workspace_name(space, workspace_id)
@@ -3026,7 +2975,7 @@ impl LayoutEngine {
     pub fn workspace_name(
         &self,
         space: SpaceId,
-        workspace_id: crate::model::VirtualWorkspaceId,
+        workspace_id: crate::VirtualWorkspaceId,
     ) -> Option<String> {
         self.virtual_workspace_manager
             .workspace_info(space, workspace_id)
@@ -3044,7 +2993,7 @@ impl LayoutEngine {
     pub fn get_workspace_stats(
         &self,
         window_store: &WindowStore,
-    ) -> crate::model::virtual_workspace::WorkspaceStats {
+    ) -> crate::virtual_workspace::WorkspaceStats {
         self.virtual_workspace_manager.get_stats(window_store)
     }
 
@@ -3093,7 +3042,7 @@ impl LayoutEngine {
         self.transfer_persistent_window_identity(from, to);
     }
 
-    pub(crate) fn transfer_persistent_window_identity(&mut self, from: WindowId, to: WindowId) {
+    pub fn transfer_persistent_window_identity(&mut self, from: WindowId, to: WindowId) {
         if from == to {
             return;
         }
@@ -3706,13 +3655,8 @@ mod tests {
         );
     }
 
-    /// Horizontal focus must be able to LEAVE the floating layer.
-    ///
-    /// The floating branch used to advance with `(idx + 1) % len`, which is a
-    /// closed cycle: with two floating windows (e.g. Zoom and System Settings)
-    /// left/right ping-ponged between them forever and the tiled strip was
-    /// unreachable, because the modulo always produced a valid index and returned
-    /// before the fallback below could run.
+    /// Horizontal focus must be able to leave the floating layer; a modulo cycle over the floating
+    /// set never reached the strip.
     #[test]
     fn horizontal_focus_escapes_the_floating_layer_into_the_strip() {
         let mut window_store = WindowStore::default();

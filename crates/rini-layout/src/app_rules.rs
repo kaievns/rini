@@ -4,7 +4,7 @@ use tracing::warn;
 
 use rini_shared::ids::WindowId;
 use rini_config::{AppRulePosition, AppRuleSize, AppWorkspaceRule, WorkspaceSelector};
-use crate::model::VirtualWorkspaceId;
+use crate::VirtualWorkspaceId;
 use rini_shared::ids::SpaceId;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -46,11 +46,11 @@ pub struct AppRuleEffects {
 }
 
 impl AppRuleEffects {
-    pub(crate) fn should_float(self, was_floating: bool) -> bool {
+    pub fn should_float(self, was_floating: bool) -> bool {
         self.floating || (!self.prev_rule_decision && was_floating)
     }
 
-    pub(crate) fn floating_placement(
+    pub fn floating_placement(
         self,
         window: WindowId,
         space: SpaceId,
@@ -65,7 +65,7 @@ impl AppRuleEffects {
         )
     }
 
-    pub(crate) fn tiled_resize(
+    pub fn tiled_resize(
         self,
         window: WindowId,
         space: SpaceId,
@@ -92,30 +92,30 @@ pub enum AppRuleResult {
 /// Like the reactor's `EventOutcome`, this is returned to the owning layer and
 /// consumed explicitly rather than stored as transient engine state.
 #[derive(Debug, Default)]
-pub(crate) struct AppRuleOutcome {
+pub struct AppRuleOutcome {
     placements: Vec<AppRulePlacement>,
     resizes: Vec<AppRuleResize>,
     workspace_focus: Option<AppRuleWorkspaceFocus>,
 }
 
 impl AppRuleOutcome {
-    pub(crate) fn push_placement(&mut self, placement: AppRulePlacement) {
+    pub fn push_placement(&mut self, placement: AppRulePlacement) {
         self.placements.push(placement);
     }
 
-    pub(crate) fn push_resize(&mut self, resize: AppRuleResize) {
+    pub fn push_resize(&mut self, resize: AppRuleResize) {
         self.resizes.push(resize);
     }
 
-    pub(crate) fn has_resizes(&self) -> bool {
+    pub fn has_resizes(&self) -> bool {
         !self.resizes.is_empty()
     }
 
-    pub(crate) fn set_workspace_focus(&mut self, focus: AppRuleWorkspaceFocus) {
+    pub fn set_workspace_focus(&mut self, focus: AppRuleWorkspaceFocus) {
         self.workspace_focus = Some(focus);
     }
 
-    pub(crate) fn into_parts(
+    pub fn into_parts(
         self,
     ) -> (
         Vec<AppRulePlacement>,
@@ -128,15 +128,15 @@ impl AppRuleOutcome {
 
 /// One-shot frame request derived from a floating app rule.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct AppRulePlacement {
-    pub(crate) window: WindowId,
-    pub(crate) space: SpaceId,
-    pub(crate) position: Option<AppRulePosition>,
-    pub(crate) size: Option<AppRuleSize>,
+pub struct AppRulePlacement {
+    pub window: WindowId,
+    pub space: SpaceId,
+    pub position: Option<AppRulePosition>,
+    pub size: Option<AppRuleSize>,
 }
 
 impl AppRulePlacement {
-    pub(crate) fn resolve_frame(self, current: CGRect, screen: CGRect) -> CGRect {
+    pub fn resolve_frame(self, current: CGRect, screen: CGRect) -> CGRect {
         let mut frame = current;
         if let Some(size) = self.size {
             if let Some(width) = size.w {
@@ -160,20 +160,20 @@ impl AppRulePlacement {
 
 /// One-time tiled resize applied after the window has entered its layout tree.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct AppRuleResize {
-    pub(crate) window: WindowId,
-    pub(crate) space: SpaceId,
-    pub(crate) workspace_id: VirtualWorkspaceId,
-    pub(crate) size: AppRuleSize,
+pub struct AppRuleResize {
+    pub window: WindowId,
+    pub space: SpaceId,
+    pub workspace_id: VirtualWorkspaceId,
+    pub size: AppRuleSize,
 }
 
 /// Reactor-owned part of a focus rule: switching workspaces requires saving
 /// the currently visible floating frames before the engine activates the target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AppRuleWorkspaceFocus {
-    pub(crate) window: WindowId,
-    pub(crate) space: SpaceId,
-    pub(crate) workspace_index: usize,
+pub struct AppRuleWorkspaceFocus {
+    pub window: WindowId,
+    pub space: SpaceId,
+    pub workspace_index: usize,
 }
 
 #[derive(Debug, Clone)]

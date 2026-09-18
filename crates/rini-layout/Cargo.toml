@@ -1,0 +1,33 @@
+[package]
+name = "rini-layout"
+version = "0.1.0"
+edition = "2024"
+description = "rini's layout domain: scrolling strip, virtual workspaces, floating, app rules, persistence"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+doctest = false
+
+[features]
+# Exposes test-only accessors to another crate's tests (see docs/testing.md).
+test-support = []
+
+[dependencies]
+anyhow = { workspace = true }
+enum_dispatch = { workspace = true }
+objc2-core-foundation = { workspace = true }
+regex = { workspace = true }
+rini-config = { workspace = true }
+rini-macos = { workspace = true }
+rini-protocol = { workspace = true }
+rini-shared = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_with = { workspace = true }
+slotmap = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rini-macos = { workspace = true, features = ["test-support"] }
+tempfile = { workspace = true }

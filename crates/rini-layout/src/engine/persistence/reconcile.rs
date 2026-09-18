@@ -44,7 +44,7 @@ impl LayoutEngine {
         self.discard_unmatched_candidates_matching(|_| true)
     }
 
-    pub(crate) fn discard_unmatched_candidates_for_app(
+    pub fn discard_unmatched_candidates_for_app(
         &mut self,
         pid: pid_t,
         app_id: Option<&str>,
@@ -100,7 +100,7 @@ impl LayoutEngine {
         self.discard_candidates(discarded)
     }
 
-    pub(crate) fn refresh_window_fingerprints(&mut self, window_store: &WindowStore) {
+    pub fn refresh_window_fingerprints(&mut self, window_store: &WindowStore) {
         for (window_id, window) in window_store.iter_windows() {
             // WindowInfo is authoritative for the live app identity. Reusing only the old
             // fingerprint silently drops app_id for newly tracked windows, weakening restore

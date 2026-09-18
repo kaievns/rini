@@ -140,9 +140,7 @@ mod tests {
     #[test]
     fn a_corner_park_with_a_sliver_showing_is_off_screen() {
         let screen = rect(0.0, 0.0, 1728.0, 1117.0);
-        // The measured park positions. 1pt corner parks, and the live ones at y=1085 showing a
-        // 32pt band along the bottom: both must read as off screen or a parked window animated
-        // back in travels from the bottom corner instead of entering from the strip's edge.
+        // Corner parks and the live y=1085 parks must both read as off screen (`docs/strip.md`).
         assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1116.0, 859.0, 1081.0)));
         assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-858.0, 1116.0, 859.0, 1081.0)));
         assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1085.0, 1720.0, 1081.0)));

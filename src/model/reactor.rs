@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::actor::app::{AppInfo, AppThreadHandle, WindowId, pid_t};
 use crate::model::WindowStore;
-use rini_macos::app::WindowInfo;
 use rini_shared::ids::SpaceId;
 
 /// All mutable domain state is owned by the reactor thread.
@@ -89,47 +88,7 @@ pub(crate) struct AppState {
     pub(crate) handle: AppThreadHandle,
 }
 
-#[derive(Debug)]
-pub(crate) struct WindowState {
-    pub(crate) info: WindowInfo,
-    /// The last known frame of the window. Always includes the last write.
-    ///
-    /// This value only updates monotonically with respect to writes; in other
-    /// words, we only accept reads when we know they come after the last write.
-    pub(crate) frame_monotonic: CGRect,
-    pub(crate) is_manageable: bool,
-    pub(crate) ignore_app_rule: bool,
-}
-
-impl From<WindowInfo> for WindowState {
-    fn from(info: WindowInfo) -> WindowState {
-        WindowState {
-            frame_monotonic: info.frame,
-            info,
-            is_manageable: false,
-            ignore_app_rule: false,
-        }
-    }
-}
-
-impl WindowState {
-    pub(crate) fn is_effectively_manageable(&self) -> bool {
-        self.is_manageable && !self.ignore_app_rule
-    }
-
-    pub(crate) fn matches_filter(&self, filter: WindowFilter) -> bool {
-        match filter {
-            WindowFilter::Manageable => self.is_manageable,
-            WindowFilter::EffectivelyManageable => self.is_effectively_manageable(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum WindowFilter {
-    Manageable,
-    EffectivelyManageable,
-}
+pub use rini_layout::window_store::{WindowFilter, WindowState};
 
 use thiserror::Error;
 

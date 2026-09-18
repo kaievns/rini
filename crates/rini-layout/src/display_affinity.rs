@@ -34,20 +34,8 @@ pub struct DisplayAffinity {
     /// than repatriating in arbitrary id order.
     #[serde(default)]
     display_strip: HashMap<String, Vec<WindowId>>,
-    /// Column width each window last had on each display, keyed by display UUID.
-    ///
-    /// Width belongs to the DISPLAY, not the workspace: a window sized to fill the
-    /// built-in should stay that size across every workspace on the built-in, and adopt
-    /// whatever it last had on the external when it moves there. A half-width column is
-    /// a sensible default on a 2338pt-wide monitor and cramped on a 1728pt laptop panel,
-    /// so one remembered width per window cannot serve both.
-    ///
-    /// Storing it here rather than in the layout tree is deliberate. A tree is per
-    /// workspace, so a width living there is necessarily per workspace — which is the
-    /// bug this fixes: moving a full-size window from workspace 1 to 2 to 3 made it
-    /// half-size on 2 (which held other windows) and full again on 3 (which was empty),
-    /// because nothing was stored at all and the width was being inferred from how many
-    /// columns each workspace happened to contain.
+    /// Column width each window last had on each display, keyed by display UUID. Width belongs
+    /// to the display, not the workspace: see "Display affinity" in `docs/workspaces-and-displays.md`.
     #[serde(default)]
     window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
 }
@@ -67,12 +55,8 @@ pub enum ColumnWidth {
 }
 
 impl DisplayAffinity {
-    /// Record that `display` currently owns `space`.
-    ///
-    /// A native space belongs to exactly one display (Rini requires "Displays have
-    /// separate Spaces"), so any other display previously claiming `space` is stale and
-    /// is dropped. Without that eviction two displays can both appear to own one space
-    /// and the affinity pass moves windows between them forever.
+    /// Record that `display` currently owns `space`, evicting any other claimant: a native space
+    /// has one display, and two claimants make the affinity pass move windows forever.
     pub fn set_display_space(&mut self, display: &str, space: SpaceId) {
         self.display_space.retain(|uuid, owned| *owned != space || uuid == display);
         self.display_space.insert(display.to_owned(), space);

@@ -11,11 +11,11 @@ use rini_config::{
     LayoutSettings, MAX_WORKSPACES, VirtualWorkspaceSettings, WorkspaceSelector,
 };
 use rini_shared::log::trace_misc;
-use crate::layout_engine::Direction;
-use crate::layout_engine::systems::LayoutSystemKind;
-use crate::model::app_rules::{AppRuleDecision, AppRuleEffects, AppRuleResult};
-use crate::model::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
-use crate::model::{WindowStore, WindowWorkspaceInfo};
+use crate::Direction;
+use crate::systems::LayoutSystemKind;
+use crate::app_rules::{AppRuleDecision, AppRuleEffects, AppRuleResult};
+use crate::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
+use crate::{WindowStore, WindowWorkspaceInfo};
 use rini_shared::ids::pid_t;
 use rini_shared::ids::SpaceId;
 
@@ -53,11 +53,7 @@ pub enum WorkspaceError {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VirtualWorkspace {
     pub name: String,
-    /// Focused window per display.
-    ///
-    /// A workspace owns one strip per display, so "the last focused window" is a
-    /// per-display fact. It used to be a single field because a workspace belonged to
-    /// exactly one display.
+    /// Focused window per display: a workspace owns one strip per display.
     last_focused: HashMap<SpaceId, WindowId>,
     #[serde(default = "default_layout_system_kind")]
     pub layout_system: LayoutSystemKind,
@@ -87,7 +83,7 @@ impl VirtualWorkspace {
     pub fn create_layout_system(settings: &LayoutSettings) -> LayoutSystemKind {
         let mut scrolling = settings.scrolling.clone();
         scrolling.base = settings.resolved_base();
-        LayoutSystemKind::Scrolling(crate::layout_engine::systems::ScrollingLayoutSystem::new(
+        LayoutSystemKind::Scrolling(crate::systems::ScrollingLayoutSystem::new(
             &scrolling,
         ))
     }
@@ -144,26 +140,16 @@ impl VirtualWorkspace {
 /// duplicated membership from surviving topology churn or discovery refreshes.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkspaceStore {
-    pub(crate) workspaces: SlotMap<VirtualWorkspaceId, VirtualWorkspace>,
-    /// The workspace list, shared by every display.
-    ///
-    /// Was `HashMap<SpaceId, Vec<VirtualWorkspaceId>>`: four workspaces were created per
-    /// display, so "coding" on the built-in and "coding" on the external were unrelated
-    /// objects that merely shared a name and an index. Moving a window between displays
-    /// then had to guess a target by ordinal, and an unplug scattered windows into
-    /// whichever workspace happened to share an index — which is what made a display
-    /// appear to hold two strips at once.
-    ///
-    /// One list means "coding" is one workspace owning a strip per display. Which
-    /// workspace each display SHOWS stays per-display, in `active_workspace_per_space`,
-    /// so displays still switch independently.
+    pub workspaces: SlotMap<VirtualWorkspaceId, VirtualWorkspace>,
+    /// The workspace list, shared by every display; which one a display shows is
+    /// `active_workspace_per_space`. See "One workspace list" in `docs/workspaces-and-displays.md`.
     workspace_order: Vec<VirtualWorkspaceId>,
     pub active_workspace_per_space:
         HashMap<SpaceId, (Option<VirtualWorkspaceId>, VirtualWorkspaceId)>,
     workspace_counter: usize,
     #[cfg(test)]
     #[serde(skip)]
-    test_app_rules: crate::model::AppRuleEngine,
+    test_app_rules: crate::AppRuleEngine,
     #[serde(skip)]
     max_workspaces: usize,
     #[serde(skip)]
@@ -204,7 +190,7 @@ impl WorkspaceStore {
             active_workspace_per_space: HashMap::default(),
             workspace_counter: 1,
             #[cfg(test)]
-            test_app_rules: crate::model::AppRuleEngine::new(&config.app_rules, config.float_modal_windows),
+            test_app_rules: crate::AppRuleEngine::new(&config.app_rules, config.float_modal_windows),
             max_workspaces: MAX_WORKSPACES,
             default_workspace_count: config.default_workspace_count,
             default_workspace_names: config.workspace_names.clone(),
@@ -260,9 +246,6 @@ impl WorkspaceStore {
     }
 
     /// Make sure the global workspace list exists, and that this display is showing one.
-    ///
-    /// Creating workspaces per display is what this used to do, and it is the whole reason a
-    /// window could not keep its workspace when it moved between displays.
     fn ensure_space_initialized(&mut self, space: SpaceId) {
         if self.workspace_order.is_empty() {
             let count = self.default_workspace_count.max(1).min(self.max_workspaces);
@@ -298,7 +281,7 @@ impl WorkspaceStore {
     ///
     /// Persistence files are user-visible and may be old, truncated, or manually edited. Loading
     /// malformed topology must return a useful error instead of panicking later through indexing.
-    pub(crate) fn validate_persisted_topology(&self) -> Result<(), String> {
+    pub fn validate_persisted_topology(&self) -> Result<(), String> {
         if self.workspace_order.is_empty() && !self.workspaces.is_empty() {
             return Err("workspaces exist but none are ordered".to_string());
         }
@@ -338,13 +321,8 @@ impl WorkspaceStore {
         Ok(())
     }
 
-    /// Move a display's per-display state from one native space id to another.
-    ///
-    /// macOS mints a new space id whenever a display is reconnected. That used to mean
-    /// migrating a whole set of workspace OBJECTS, deleting any auto-created set already on
-    /// the target id and dropping the window assignments that referenced them. Now the
-    /// workspace list is global and only the "which workspace is this display showing"
-    /// entry is per-display, so a reconnect is a one-line rename.
+    /// Move a display's per-display state to the new native space id macOS mints on reconnect.
+    /// Only the "showing" entry and per-display focus move; nothing is deleted.
     pub fn remap_space(
         &mut self,
         window_store: &mut WindowStore,
@@ -761,13 +739,13 @@ impl WorkspaceStore {
         }
     }
 
-    pub(crate) fn forget_window_identity(&mut self, window: WindowId) {
+    pub fn forget_window_identity(&mut self, window: WindowId) {
         for workspace in self.workspaces.values_mut() {
             workspace.forget_focused_window(window);
         }
     }
 
-    pub(crate) fn persisted_focus_locations(&self) -> Vec<(SpaceId, VirtualWorkspaceId, WindowId)> {
+    pub fn persisted_focus_locations(&self) -> Vec<(SpaceId, VirtualWorkspaceId, WindowId)> {
         self.workspaces
             .iter()
             .flat_map(|(workspace, info)| {
@@ -778,7 +756,7 @@ impl WorkspaceStore {
             .collect()
     }
 
-    pub(crate) fn retain_window_focus_location(
+    pub fn retain_window_focus_location(
         &mut self,
         window: WindowId,
         keep: VirtualWorkspaceId,
@@ -797,7 +775,7 @@ impl WorkspaceStore {
 
     /// Read workspace topology without creating missing state. Validation and restore planning
     /// must use this accessor so a failed transaction cannot initialize part of the live engine.
-    pub(crate) fn existing_workspaces(&self, space: SpaceId) -> Vec<(VirtualWorkspaceId, String)> {
+    pub fn existing_workspaces(&self, space: SpaceId) -> Vec<(VirtualWorkspaceId, String)> {
         self.ordered_workspace_ids(space)
             .into_iter()
             .filter_map(|id| self.workspaces.get(id).map(|ws| (id, ws.name.clone())))
@@ -863,18 +841,8 @@ impl WorkspaceStore {
         }
     }
 
-    /// Keep a window in the workspace it is already in, moving only which display it is on.
-    ///
-    /// A window's workspace is its identity — "this terminal lives in coding" — and changing
-    /// displays must not change it. The workspace exists on every display, so the move is just
-    /// a change of space in the assignment.
-    ///
-    /// This used to translate the workspace by ORDINAL, because each display had its own
-    /// workspace objects and there was no other way to find the counterpart. It was also gated
-    /// on the target display having no assignments at all, so on a display that was already in
-    /// use it simply gave up and let the window fall to whatever workspace was active there.
-    /// That is what made a window dragged between displays, or a new window torn off a Chrome
-    /// tab, appear to vanish: it had silently changed workspace.
+    /// Keep a window in the workspace it is already in, moving only which display it is on. The
+    /// workspace is the window's identity; see `docs/workspaces-and-displays.md`.
     fn preserved_workspace_assignment(
         &self,
         window_store: &WindowStore,
@@ -909,7 +877,7 @@ impl WorkspaceStore {
         }
     }
 
-    pub(crate) fn apply_app_rule_decision(
+    pub fn apply_app_rule_decision(
         &mut self,
         window_store: &mut WindowStore,
         window_id: WindowId,
@@ -1072,7 +1040,7 @@ impl WorkspaceStore {
         ax_role: Option<&str>,
         ax_subrole: Option<&str>,
     ) -> Result<AppRuleResult, WorkspaceError> {
-        let decision = self.test_app_rules.evaluate(crate::model::WindowRuleContext {
+        let decision = self.test_app_rules.evaluate(crate::WindowRuleContext {
             app_bundle_id,
             app_name,
             window_title,
@@ -1331,15 +1299,7 @@ mod tests {
         );
     }
 
-    /// A display getting a new native space id must not cost anything.
-    ///
-    /// This test used to assert the OPPOSITE: that remap_space deleted the workspaces already
-    /// on the target id and dropped their window assignments. That was the old model, where
-    /// each display owned its own workspace objects and a reconnect had to migrate them —
-    /// and it is precisely why a dock/undock cycle lost windows.
-    ///
-    /// With one global workspace list, a reconnect only renames the per-display "currently
-    /// showing" entry. Nothing is deleted, so nothing can be lost.
+    /// A display getting a new native space id deletes nothing.
     #[test]
     fn remap_space_preserves_every_windows_workspace() {
         let mut window_store = WindowStore::default();
@@ -1423,21 +1383,7 @@ mod tests {
     }
 
     /// A window keeps its workspace when it moves to a display that is already in use.
-    ///
-    /// This test previously asserted the OPPOSITE: that moving to a display with existing
-    /// assignments dropped the window onto that display's workspace 0. That was the old
-    /// model's only option, because each display had its own workspace objects and the
-    /// ordinal translation was gated on the target display being empty.
-    ///
-    /// It is also the bug the user hit: tearing a Chrome tab into its own window, or dragging
-    /// a window to the other display, silently moved it to a different workspace, so it
-    /// "disappeared". Workspace membership is the window's identity; only an explicit
-    /// move-to-workspace command may change it.
     /// A new window lands on the workspace its own display is showing.
-    ///
-    /// Not the first workspace, and not another display's workspace: if the built-in is
-    /// showing "comms" while the external shows "coding", an app launched on the built-in
-    /// belongs in "comms".
     #[test]
     fn a_new_window_lands_on_its_own_displays_active_workspace() {
         let mut window_store = WindowStore::default();
@@ -1816,13 +1762,7 @@ mod tests {
 
     #[test]
     fn workspace_order_is_the_single_source_of_ordinals() {
-        // Previously this asserted that ordinals came from sorted slotmap KEYS, so that a
-        // scrambled persisted vector could not change navigation. That guard existed because
-        // each display had its own workspace vector and they could disagree.
-        //
-        // There is now one `workspace_order` shared by every display, and it IS the ordinal
-        // definition — index 2 is the same workspace everywhere. So the property worth
-        // holding is that navigation follows that order, including after it changes.
+        // Navigation follows `workspace_order`, including after it changes.
         let window_store = WindowStore::default();
         let settings = VirtualWorkspaceSettings {
             default_workspace_count: 3,

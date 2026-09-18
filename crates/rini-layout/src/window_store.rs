@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use rini_shared::ids::WindowId;
 use rini_shared::collections::{HashMap, HashSet};
-use crate::model::VirtualWorkspaceId;
-use crate::model::reactor::WindowState;
+use crate::VirtualWorkspaceId;
 use rini_shared::ids::SpaceId;
+use objc2_core_foundation::CGRect;
+use rini_macos::app::WindowInfo;
 use rini_macos::window_server::{WindowServerId, WindowServerInfo};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -240,15 +241,15 @@ impl WindowStore {
         self.workspace_windows.entry(assignment).or_default().insert(window_id);
     }
 
-    pub(crate) fn window(&self, window_id: WindowId) -> Option<&WindowState> {
+    pub fn window(&self, window_id: WindowId) -> Option<&WindowState> {
         self.windows.get(&window_id).and_then(|record| record.state.as_ref())
     }
 
-    pub(crate) fn window_mut(&mut self, window_id: WindowId) -> Option<&mut WindowState> {
+    pub fn window_mut(&mut self, window_id: WindowId) -> Option<&mut WindowState> {
         self.windows.get_mut(&window_id).and_then(|record| record.state.as_mut())
     }
 
-    pub(crate) fn insert_window(&mut self, window_id: WindowId, window: WindowState) {
+    pub fn insert_window(&mut self, window_id: WindowId, window: WindowState) {
         let wsid = window.info.sys_id;
         let retained_workspace = {
             let record = self.windows.entry(window_id).or_default();
@@ -276,7 +277,7 @@ impl WindowStore {
         self.windows.values().filter(|record| record.state.is_some()).count()
     }
 
-    pub(crate) fn iter_windows(&self) -> impl Iterator<Item = (WindowId, &WindowState)> + '_ {
+    pub fn iter_windows(&self) -> impl Iterator<Item = (WindowId, &WindowState)> + '_ {
         self.windows.iter().filter_map(|(&window_id, record)| {
             record.state.as_ref().map(|state| (window_id, state))
         })
@@ -965,11 +966,7 @@ impl WindowStore {
             .collect();
         for old_assignment in moved_assignments {
             if let Some(windows) = self.workspace_windows.remove(&old_assignment) {
-                // MERGE, do not replace. macOS can already have placed windows on the
-                // incoming space id — that is the normal case on a reconnect, since it moves
-                // windows to the display before rini sees the new id. `insert` overwrote
-                // that set, so those windows kept a stale assignment pointing at a key that
-                // no longer listed them and dropped out of their workspace.
+                // Merge: macOS has usually already placed windows on the incoming space id.
                 self.workspace_windows
                     .entry(WindowWorkspaceInfo {
                         space: new_space,
@@ -1084,7 +1081,7 @@ impl WindowStore {
         }
     }
 
-    #[cfg(any(test, debug_assertions))]
+    #[cfg(any(test, debug_assertions, feature = "test-support"))]
     pub fn debug_assert_invariants(&self) {
         for (&wid, record) in &self.windows {
             debug_assert!(self.app_windows.get(&wid.pid).is_some_and(|ids| ids.contains(&wid)));
@@ -1119,7 +1116,7 @@ impl WindowStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::virtual_workspace::WorkspaceStore;
+    use crate::virtual_workspace::WorkspaceStore;
 
     #[test]
     fn authoritative_space_only_record_is_not_pruned() {
@@ -1462,4 +1459,46 @@ mod tests {
         assert!(store.window_ids_for_pid(wid.pid).next().is_none());
         store.debug_assert_invariants();
     }
+}
+
+#[derive(Debug)]
+pub struct WindowState {
+    pub info: WindowInfo,
+    /// The last known frame of the window. Always includes the last write.
+    ///
+    /// This value only updates monotonically with respect to writes; in other
+    /// words, we only accept reads when we know they come after the last write.
+    pub frame_monotonic: CGRect,
+    pub is_manageable: bool,
+    pub ignore_app_rule: bool,
+}
+
+impl From<WindowInfo> for WindowState {
+    fn from(info: WindowInfo) -> WindowState {
+        WindowState {
+            frame_monotonic: info.frame,
+            info,
+            is_manageable: false,
+            ignore_app_rule: false,
+        }
+    }
+}
+
+impl WindowState {
+    pub fn is_effectively_manageable(&self) -> bool {
+        self.is_manageable && !self.ignore_app_rule
+    }
+
+    pub fn matches_filter(&self, filter: WindowFilter) -> bool {
+        match filter {
+            WindowFilter::Manageable => self.is_manageable,
+            WindowFilter::EffectivelyManageable => self.is_effectively_manageable(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WindowFilter {
+    Manageable,
+    EffectivelyManageable,
 }

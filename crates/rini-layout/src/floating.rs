@@ -5,13 +5,13 @@ use rini_shared::collections::{BTreeExt, BTreeSet, HashMap, HashSet};
 use rini_shared::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FloatingFullscreenKind {
+pub enum FloatingFullscreenKind {
     Full,
     WithinGaps,
 }
 
 #[derive(Serialize, Deserialize, Default)]
-pub(crate) struct FloatingManager {
+pub struct FloatingManager {
     floating_windows: BTreeSet<WindowId>,
     #[serde(skip)]
     active_floating_windows: HashMap<SpaceId, HashMap<pid_t, HashSet<WindowId>>>,
@@ -21,23 +21,23 @@ pub(crate) struct FloatingManager {
 }
 
 impl FloatingManager {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn is_floating(&self, window_id: WindowId) -> bool {
+    pub fn is_floating(&self, window_id: WindowId) -> bool {
         self.floating_windows.contains(&window_id)
     }
 
-    pub(crate) fn persisted_windows(&self) -> Vec<WindowId> {
+    pub fn persisted_windows(&self) -> Vec<WindowId> {
         self.floating_windows.iter().copied().collect()
     }
 
-    pub(crate) fn add_floating(&mut self, window_id: WindowId) {
+    pub fn add_floating(&mut self, window_id: WindowId) {
         self.floating_windows.insert(window_id);
     }
 
-    pub(crate) fn remove_floating(&mut self, window_id: WindowId) {
+    pub fn remove_floating(&mut self, window_id: WindowId) {
         self.floating_windows.remove(&window_id);
         self.fullscreen_windows.remove(&window_id);
         self.remove_active_entries(window_id);
@@ -46,7 +46,7 @@ impl FloatingManager {
         }
     }
 
-    pub(crate) fn set_fullscreen(
+    pub fn set_fullscreen(
         &mut self,
         window_id: WindowId,
         kind: Option<FloatingFullscreenKind>,
@@ -61,17 +61,17 @@ impl FloatingManager {
         }
     }
 
-    pub(crate) fn fullscreen_kind(&self, window_id: WindowId) -> Option<FloatingFullscreenKind> {
+    pub fn fullscreen_kind(&self, window_id: WindowId) -> Option<FloatingFullscreenKind> {
         self.fullscreen_windows.get(&window_id).copied()
     }
 
-    pub(crate) fn clear_active_for_app(&mut self, space: SpaceId, pid: pid_t) {
+    pub fn clear_active_for_app(&mut self, space: SpaceId, pid: pid_t) {
         if let Some(space_map) = self.active_floating_windows.get_mut(&space) {
             space_map.remove(&pid);
         }
     }
 
-    pub(crate) fn add_active(&mut self, space: SpaceId, pid: pid_t, wid: WindowId) {
+    pub fn add_active(&mut self, space: SpaceId, pid: pid_t, wid: WindowId) {
         self.active_floating_windows
             .entry(space)
             .or_default()
@@ -80,7 +80,7 @@ impl FloatingManager {
             .insert(wid);
     }
 
-    pub(crate) fn remove_active(&mut self, space: SpaceId, pid: pid_t, wid: WindowId) {
+    pub fn remove_active(&mut self, space: SpaceId, pid: pid_t, wid: WindowId) {
         if let Some(space_map) = self.active_floating_windows.get_mut(&space) {
             if let Some(app_set) = space_map.get_mut(&pid) {
                 app_set.remove(&wid);
@@ -91,11 +91,11 @@ impl FloatingManager {
         }
     }
 
-    pub(crate) fn remove_active_for_window(&mut self, window_id: WindowId) {
+    pub fn remove_active_for_window(&mut self, window_id: WindowId) {
         self.remove_active_entries(window_id);
     }
 
-    pub(crate) fn transfer_window_identity(&mut self, from: WindowId, to: WindowId) {
+    pub fn transfer_window_identity(&mut self, from: WindowId, to: WindowId) {
         if from == to {
             return;
         }
@@ -135,22 +135,22 @@ impl FloatingManager {
         }
     }
 
-    pub(crate) fn active_flat(&self, space: SpaceId) -> Vec<WindowId> {
+    pub fn active_flat(&self, space: SpaceId) -> Vec<WindowId> {
         self.active_floating_windows
             .get(&space)
             .map(|space_floating| space_floating.values().flatten().copied().collect())
             .unwrap_or_default()
     }
 
-    pub(crate) fn set_last_focus(&mut self, wid: Option<WindowId>) {
+    pub fn set_last_focus(&mut self, wid: Option<WindowId>) {
         self.last_floating_focus = wid;
     }
 
-    pub(crate) fn last_focus(&self) -> Option<WindowId> {
+    pub fn last_focus(&self) -> Option<WindowId> {
         self.last_floating_focus
     }
 
-    pub(crate) fn normalize_persisted_focus(&mut self) {
+    pub fn normalize_persisted_focus(&mut self) {
         if self
             .last_floating_focus
             .is_some_and(|window| !self.floating_windows.contains(&window))
@@ -159,7 +159,7 @@ impl FloatingManager {
         }
     }
 
-    pub(crate) fn remove_all_for_pid(&mut self, pid: pid_t) {
+    pub fn remove_all_for_pid(&mut self, pid: pid_t) {
         let _ = self.floating_windows.remove_all_for_pid(pid);
 
         self.fullscreen_windows.retain(|w, _| w.pid != pid);
@@ -175,7 +175,7 @@ impl FloatingManager {
         }
     }
 
-    pub(crate) fn rebuild_active_for_workspace(
+    pub fn rebuild_active_for_workspace(
         &mut self,
         space: SpaceId,
         windows_in_workspace: Vec<WindowId>,
@@ -188,7 +188,7 @@ impl FloatingManager {
         }
     }
 
-    pub(crate) fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
+    pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
         if old_space == new_space {
             return;
         }

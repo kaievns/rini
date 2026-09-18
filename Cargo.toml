@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-macos", "crates/rini-protocol", "crates/rini-shared"]
+members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-layout", "crates/rini-macos", "crates/rini-protocol", "crates/rini-shared"]
 resolver = "3"
 
 [[bin]]
@@ -47,6 +47,8 @@ strip = false
 doctest = false
 
 [workspace.dependencies]
+slotmap = { version = "1.0.7", features = ["serde"], default-features = false }
+enum_dispatch = "0.3.13"
 dirs = "6.0.0"
 toml = { version = "0.9.2", features = ["display", "parse", "serde"], default-features = false }
 notify = { version = "8.2.0", default-features = false }
@@ -176,6 +178,7 @@ rini-client = { path = "crates/rini-client" }
 rini-shared = { path = "crates/rini-shared" }
 rini-macos = { path = "crates/rini-macos" }
 rini-config = { path = "crates/rini-config" }
+rini-layout = { path = "crates/rini-layout" }
 rini-protocol = { path = "crates/rini-protocol" }
 libc = "0.2"
 continue = { git = "https://github.com/drewcrawford/continue" }
@@ -257,7 +260,7 @@ ron = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
-slotmap = { version = "1.0.7", features = ["serde"], default-features = false }
+slotmap = { workspace = true }
 static_assertions = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
@@ -270,7 +273,7 @@ tracing-tree = { workspace = true }
 continue = { workspace = true }
 futures-task = { workspace = true }
 regex = { workspace = true }
-enum_dispatch = "0.3.13"
+enum_dispatch = { workspace = true }
 crossbeam-channel = "0.5"
 num_enum = { workspace = true }
 strum = { workspace = true }
@@ -285,10 +288,12 @@ rini-client = { workspace = true }
 rini-shared = { workspace = true }
 rini-macos = { workspace = true }
 rini-config = { workspace = true }
+rini-layout = { workspace = true }
 rini-protocol = { workspace = true }
 
 [dev-dependencies]
 rini-macos = { workspace = true, features = ["test-support"] }
+rini-layout = { workspace = true, features = ["test-support"] }
 pretty_assertions = "1.4.0"
 tokio = { version = "1.35.1", features = ["sync", "tokio-macros"] }
 test-log = { version = "0.2.16", default-features = false }

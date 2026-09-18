@@ -5,9 +5,9 @@ use super::{LayoutId, LayoutSystem};
 use rini_shared::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub(crate) struct WorkspaceLayouts {
+pub struct WorkspaceLayouts {
     map: rini_shared::collections::HashMap<
-        (SpaceId, crate::model::VirtualWorkspaceId),
+        (SpaceId, crate::VirtualWorkspaceId),
         SpaceLayoutInfo,
     >,
 }
@@ -21,7 +21,7 @@ struct SpaceLayoutInfo {
 
 /// Opaque workspace-layout payload used by transactional restore code.
 /// Keeping `SpaceLayoutInfo` private prevents persistence from depending on its internal maps.
-pub(crate) struct WorkspaceLayoutSnapshot(SpaceLayoutInfo);
+pub struct WorkspaceLayoutSnapshot(SpaceLayoutInfo);
 
 impl SpaceLayoutInfo {
     fn active(&self) -> Option<LayoutId> {
@@ -30,7 +30,7 @@ impl SpaceLayoutInfo {
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd, Debug)]
-pub(crate) struct Size {
+pub struct Size {
     width: i32,
     height: i32,
 }
@@ -45,9 +45,9 @@ impl From<CGSize> for Size {
 }
 
 impl WorkspaceLayouts {
-    pub(crate) fn validate_persisted(
+    pub fn validate_persisted(
         &self,
-        workspaces: &crate::model::WorkspaceStore,
+        workspaces: &crate::WorkspaceStore,
     ) -> Result<(), String> {
         for (&(space, workspace), info) in &self.map {
             let Some(workspace_info) = workspaces.workspaces.get(workspace) else {
@@ -88,36 +88,36 @@ impl WorkspaceLayouts {
         Ok(())
     }
 
-    pub(crate) fn snapshot_workspace(
+    pub fn snapshot_workspace(
         &self,
         space: SpaceId,
-        workspace: crate::model::VirtualWorkspaceId,
+        workspace: crate::VirtualWorkspaceId,
     ) -> Option<WorkspaceLayoutSnapshot> {
         self.map.get(&(space, workspace)).cloned().map(WorkspaceLayoutSnapshot)
     }
 
-    pub(crate) fn install_workspace_snapshot(
+    pub fn install_workspace_snapshot(
         &mut self,
         space: SpaceId,
-        workspace: crate::model::VirtualWorkspaceId,
+        workspace: crate::VirtualWorkspaceId,
         snapshot: WorkspaceLayoutSnapshot,
     ) {
         self.map.insert((space, workspace), snapshot.0);
     }
 
-    pub(crate) fn contains_workspace(
+    pub fn contains_workspace(
         &self,
         space: SpaceId,
-        workspace: crate::model::VirtualWorkspaceId,
+        workspace: crate::VirtualWorkspaceId,
     ) -> bool {
         self.map.contains_key(&(space, workspace))
     }
 
-    pub(crate) fn ensure_active_for_space(
+    pub fn ensure_active_for_space(
         &mut self,
         space: SpaceId,
         size: CGSize,
-        workspaces: impl IntoIterator<Item = crate::model::VirtualWorkspaceId>,
+        workspaces: impl IntoIterator<Item = crate::VirtualWorkspaceId>,
         tree: &mut impl LayoutSystem,
     ) {
         let size = Size::from(size);
@@ -177,7 +177,7 @@ impl WorkspaceLayouts {
         }
     }
 
-    pub(crate) fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
+    pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
         if old_space == new_space {
             return;
         }
@@ -200,18 +200,18 @@ impl WorkspaceLayouts {
         }
     }
 
-    pub(crate) fn active(
+    pub fn active(
         &self,
         space: SpaceId,
-        workspace_id: crate::model::VirtualWorkspaceId,
+        workspace_id: crate::VirtualWorkspaceId,
     ) -> Option<LayoutId> {
         self.map.get(&(space, workspace_id)).and_then(|l| l.active())
     }
 
-    pub(crate) fn mark_last_saved(
+    pub fn mark_last_saved(
         &mut self,
         space: SpaceId,
-        workspace_id: crate::model::VirtualWorkspaceId,
+        workspace_id: crate::VirtualWorkspaceId,
         layout: LayoutId,
     ) {
         if let Some(info) = self.map.get_mut(&(space, workspace_id)) {
@@ -219,10 +219,10 @@ impl WorkspaceLayouts {
         }
     }
 
-    pub(crate) fn active_layouts_for_space(
+    pub fn active_layouts_for_space(
         &self,
         space: SpaceId,
-    ) -> Vec<(crate::model::VirtualWorkspaceId, LayoutId)> {
+    ) -> Vec<(crate::VirtualWorkspaceId, LayoutId)> {
         let mut layouts = self
             .map
             .iter()
@@ -240,7 +240,7 @@ impl WorkspaceLayouts {
 
     /// Enumerate every serialized layout configuration, not only the currently active display
     /// size. Old-size configurations are restored later and therefore must be sanitized too.
-    pub(crate) fn all_layouts(&self) -> Vec<(SpaceId, crate::model::VirtualWorkspaceId, LayoutId)> {
+    pub fn all_layouts(&self) -> Vec<(SpaceId, crate::VirtualWorkspaceId, LayoutId)> {
         let mut layouts = Vec::new();
         for (&(space, workspace), info) in &self.map {
             layouts.extend(info.configurations.values().map(|layout| (space, workspace, *layout)));
@@ -254,10 +254,10 @@ impl WorkspaceLayouts {
     }
 
     #[cfg(test)]
-    pub(crate) fn insert_layout_configuration_for_test(
+    pub fn insert_layout_configuration_for_test(
         &mut self,
         space: SpaceId,
-        workspace: crate::model::VirtualWorkspaceId,
+        workspace: crate::VirtualWorkspaceId,
         size: CGSize,
         layout: LayoutId,
     ) {
@@ -268,17 +268,74 @@ impl WorkspaceLayouts {
             .insert(Size::from(size), layout);
     }
 
-    pub(crate) fn ensure_active_for_workspace(
+    pub fn ensure_active_for_workspace(
         &mut self,
         space: SpaceId,
         size: CGSize,
-        workspace_id: crate::model::VirtualWorkspaceId,
+        workspace_id: crate::VirtualWorkspaceId,
         tree: &mut impl LayoutSystem,
     ) {
         self.ensure_active_for_space(space, size, std::iter::once(workspace_id), tree);
     }
 
-    pub(crate) fn spaces(&self) -> rini_shared::collections::BTreeSet<SpaceId> {
+    pub fn spaces(&self) -> rini_shared::collections::BTreeSet<SpaceId> {
         self.map.keys().map(|(sp, _)| *sp).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::CGSize;
+
+    use super::*;
+    use crate::{ScrollingLayoutSystem, VirtualWorkspaceId, WorkspaceStore};
+
+    fn workspace() -> VirtualWorkspaceId {
+        WorkspaceStore::new().list_workspaces(SpaceId::new(1))[0].0
+    }
+
+    #[test]
+    fn a_display_size_change_carries_the_strip_with_it() {
+        let mut layouts = WorkspaceLayouts::default();
+        let mut tree = ScrollingLayoutSystem::new(&Default::default());
+        let space = SpaceId::new(1);
+        let ws = workspace();
+        layouts.ensure_active_for_space(space, CGSize::new(1000.0, 800.0), [ws], &mut tree);
+        let strip = layouts.active(space, ws).unwrap();
+        layouts.ensure_active_for_space(space, CGSize::new(2000.0, 1200.0), [ws], &mut tree);
+        assert_eq!(layouts.active(space, ws), Some(strip), "a resize must not lose the windows");
+        layouts.ensure_active_for_space(space, CGSize::new(1000.0, 800.0), [ws], &mut tree);
+        assert_eq!(layouts.active(space, ws), Some(strip));
+        assert_eq!(layouts.all_layouts().len(), 1, "no orphaned layout per size");
+    }
+
+    #[test]
+    fn a_sub_point_size_change_is_the_same_size() {
+        let mut layouts = WorkspaceLayouts::default();
+        let mut tree = ScrollingLayoutSystem::new(&Default::default());
+        let space = SpaceId::new(1);
+        let ws = workspace();
+        layouts.ensure_active_for_space(space, CGSize::new(1000.0, 800.0), [ws], &mut tree);
+        let first = layouts.active(space, ws).unwrap();
+        layouts.ensure_active_for_space(space, CGSize::new(1000.4, 799.6), [ws], &mut tree);
+        assert_eq!(layouts.active(space, ws), Some(first));
+    }
+
+    #[test]
+    fn remap_space_moves_the_state_and_drops_what_the_new_id_already_had() {
+        let mut layouts = WorkspaceLayouts::default();
+        let mut tree = ScrollingLayoutSystem::new(&Default::default());
+        let old = SpaceId::new(1);
+        let new = SpaceId::new(2);
+        let ws = workspace();
+        layouts.ensure_active_for_space(old, CGSize::new(1000.0, 800.0), [ws], &mut tree);
+        let migrated = layouts.active(old, ws).unwrap();
+        layouts.ensure_active_for_space(new, CGSize::new(1000.0, 800.0), [ws], &mut tree);
+        assert_ne!(layouts.active(new, ws), Some(migrated));
+
+        layouts.remap_space(old, new);
+        assert_eq!(layouts.active(new, ws), Some(migrated));
+        assert_eq!(layouts.active(old, ws), None);
+        assert_eq!(layouts.spaces().into_iter().collect::<Vec<_>>(), vec![new]);
     }
 }
