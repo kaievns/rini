@@ -286,7 +286,6 @@ stays usable. Fix the config and restart. Error: {error}",
         restore_file: restore_file(),
         config: config.clone(),
     };
-    let (_mc_native_tx, mc_native_rx) = rini_wm::actor::channel();
     let (wm_controller, wm_controller_sender) = WmController::new(
         wm_config,
         config_tx.clone(),
@@ -358,12 +357,12 @@ stays usable. Fix the config and restart. Error: {error}",
     );
     workspace_animation.set_reactor(events_tx.clone());
 
-    let mission_control_native = NativeMissionControl::new(events_tx.clone(), mc_native_rx);
+    let mission_control_native = NativeMissionControl::new(events_tx.clone());
 
     if config.settings.default_disable {
         println!(
             "NOTICE: by default rini starts in a deactivated state.
-            you must activate it by using the toggle_spaces_activated command.
+            you must activate it by using the toggle_space_activated command.
             by default this is bound to Alt+Z but can be changed in the config file."
         );
     }

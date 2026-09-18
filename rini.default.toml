@@ -62,6 +62,8 @@ auto_focus_blacklist = []
 #   RINI_EVENT_TYPE            # "workspace_changed" | "windows_changed" | "window_title_changed" | "focused_window_changed"
 #   RINI_WORKSPACE_ID          # workspace id
 #   RINI_WORKSPACE_NAME        # workspace name
+#   RINI_SPACE_ID              # native macOS space id
+#   RINI_DISPLAY_UUID          # display UUID (absent when the display is unknown)
 #   RINI_WORKSPACE_INDEX       # workspace index (window_title_changed and focused_window_changed)
 #   RINI_WINDOW_COUNT          # number of windows (windows_changed only)
 #   RINI_WINDOWS               # comma-separated window ids (windows_changed only)

@@ -644,21 +644,6 @@ impl Apps {
                         }
                     }
                 }
-                Request::SetWindowPos(wid, pos, txid, _) => {
-                    let window = self.windows.entry(wid).or_default();
-                    window.last_seen_txid = txid;
-                    let old_frame = window.frame;
-                    window.frame.origin = pos;
-                    if !old_frame.same_as(window.frame) {
-                        events.push(Event::WindowFrameChanged(
-                            wid,
-                            window.frame,
-                            Some(txid),
-                            Requested(true),
-                            None,
-                        ));
-                    }
-                }
                 Request::Raise(..) => todo!(),
                 Request::CloseWindow(..) => todo!(),
             }

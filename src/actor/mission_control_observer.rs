@@ -26,16 +26,7 @@ const NOTIFICATIONS: &[&str] = &[
     K_AX_EXPOSE_SHOW_DESKTOP,
 ];
 
-#[derive(Debug)]
-pub enum Request {
-    Stop,
-}
-
-pub type Sender = crate::actor::Sender<Request>;
-pub type Receiver = crate::actor::Receiver<Request>;
-
 pub struct NativeMissionControl {
-    rx: Receiver,
     observer: Option<Observer>,
     app_elem: Option<AXUIElement>,
     active: Arc<AtomicBool>,
@@ -48,9 +39,8 @@ struct State {
 }
 
 impl NativeMissionControl {
-    pub fn new(events_tx: reactor::Sender, rx: Receiver) -> Self {
+    pub fn new(events_tx: reactor::Sender) -> Self {
         Self {
-            rx,
             observer: None,
             app_elem: None,
             active: Arc::new(AtomicBool::new(false)),
@@ -59,17 +49,11 @@ impl NativeMissionControl {
     }
 
     #[instrument(skip(self))]
+    /// Installs the Dock observer and keeps it alive for the life of the process.
     pub async fn run(mut self) {
         info!("Starting native mission-control monitor (must run on main thread)");
         self.observe();
-
-        while let Some((_span, req)) = self.rx.recv().await {
-            match req {
-                Request::Stop => break,
-            }
-        }
-
-        self.unobserve();
+        std::future::pending::<()>().await;
     }
 
     pub fn observe(&mut self) {
@@ -110,25 +94,6 @@ impl NativeMissionControl {
         self.app_elem = Some(elem);
     }
 
-    pub fn unobserve(&mut self) {
-        if self.observer.is_none() {
-            return;
-        }
-
-        if let (Some(observer), Some(elem)) = (self.observer.as_ref(), self.app_elem.as_ref()) {
-            for notification in NOTIFICATIONS {
-                let _ = observer.remove_notification(elem, notification);
-            }
-        }
-
-        self.observer = None;
-        self.app_elem = None;
-        self.active.store(false, Ordering::SeqCst);
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.active.load(Ordering::SeqCst)
-    }
 }
 
 impl State {

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use serde::de::Error as DeError;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -149,7 +148,7 @@ pub enum ConfigCommand {
     ReloadConfig,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RiniCommand {
     Layout(LayoutCommand),
@@ -158,77 +157,3 @@ pub enum RiniCommand {
     Config(ConfigCommand),
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum TypedRiniCommand {
-    Layout(LayoutCommand),
-    Metrics(MetricsCommand),
-    Reactor(ReactorCommand),
-    Config(ConfigCommand),
-}
-
-#[derive(Deserialize)]
-enum LegacyCommand {
-    #[serde(alias = "reactor")]
-    Reactor(LegacyReactorCommand),
-    #[serde(alias = "config")]
-    Config(ConfigCommand),
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LegacyReactorCommand {
-    Layout(LayoutCommand),
-    Metrics(MetricsCommand),
-    Reactor(ReactorCommand),
-}
-
-impl From<TypedRiniCommand> for RiniCommand {
-    fn from(command: TypedRiniCommand) -> Self {
-        match command {
-            TypedRiniCommand::Layout(command) => Self::Layout(command),
-            TypedRiniCommand::Metrics(command) => Self::Metrics(command),
-            TypedRiniCommand::Reactor(command) => Self::Reactor(command),
-            TypedRiniCommand::Config(command) => Self::Config(command),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for RiniCommand {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum CommandInput {
-            Typed(TypedRiniCommand),
-            LegacyJson(String),
-        }
-
-        match CommandInput::deserialize(deserializer)? {
-            CommandInput::Typed(command) => Ok(command.into()),
-            CommandInput::LegacyJson(command) => decode_legacy_command(&command),
-        }
-    }
-}
-
-fn decode_legacy_command<E>(command: &str) -> Result<RiniCommand, E>
-where
-    E: DeError,
-{
-    match serde_json::from_str::<LegacyCommand>(command)
-        .map_err(|error| E::custom(format!("invalid legacy command JSON: {error}")))?
-    {
-        LegacyCommand::Config(command) => Ok(RiniCommand::Config(command)),
-        LegacyCommand::Reactor(LegacyReactorCommand::Layout(command)) => {
-            Ok(RiniCommand::Layout(command))
-        }
-        LegacyCommand::Reactor(LegacyReactorCommand::Metrics(command)) => {
-            Ok(RiniCommand::Metrics(command))
-        }
-        LegacyCommand::Reactor(LegacyReactorCommand::Reactor(command)) => {
-            Ok(RiniCommand::Reactor(command))
-        }
-    }
-}

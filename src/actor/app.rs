@@ -324,7 +324,6 @@ pub enum Request {
     SetBatchWindowFrame(Vec<(WindowId, CGRect)>, TransactionId, bool),
     /// Position-only batch reserved for virtual workspace switches.
     SetWorkspaceSwitchPositions(Vec<(WindowId, CGPoint)>, TransactionId, bool),
-    SetWindowPos(WindowId, CGPoint, TransactionId, bool),
     /// Raise the windows within a single space, in the given order. All windows must be
     /// in the same space, or they will not be raised correctly.
     ///
@@ -340,8 +339,7 @@ impl Request {
         match self {
             Self::SetWindowFrame(_, _, _, enabled)
             | Self::SetBatchWindowFrame(_, _, enabled)
-            | Self::SetWorkspaceSwitchPositions(_, _, enabled)
-            | Self::SetWindowPos(_, _, _, enabled) => *enabled,
+            | Self::SetWorkspaceSwitchPositions(_, _, enabled) => *enabled,
             _ => false,
         }
     }
@@ -725,39 +723,6 @@ impl State {
                 if pid == self.pid {
                     self.on_global_activation()?;
                 }
-            }
-            Request::SetWindowPos(wid, pos, txid, _) => {
-                let elem = match self.window_mut(wid) {
-                    Ok(window) => {
-                        window.last_seen_txid = txid;
-                        window.elem.clone()
-                    }
-                    Err(err) => match err {
-                        AxError::Ax(code) => {
-                            if self.handle_ax_error(wid, &code) {
-                                return Ok(false);
-                            }
-                            return Err(AxError::Ax(code));
-                        }
-                        AxError::NotFound => return Ok(false),
-                    },
-                };
-
-                let _ = elem.set_position(pos);
-
-                let frame =
-                    match self.handle_ax_result(wid, trace("frame", &elem, || elem.frame()))? {
-                        Some(frame) => frame,
-                        None => return Ok(false),
-                    };
-
-                self.send_event(Event::WindowFrameChanged(
-                    wid,
-                    frame,
-                    Some(txid),
-                    Requested(true),
-                    None,
-                ));
             }
             Request::SetWindowFrame(wid, desired, txid, _) => {
                 let elem = match self.window_mut(wid) {

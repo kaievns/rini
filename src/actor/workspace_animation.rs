@@ -29,7 +29,7 @@ use crate::sys::run_loop::RepeatingTimer;
 use crate::sys::window_server::WindowServerId;
 use crate::ui::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::ui::window_snapshot::{
-    SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing, capture_via_skylight,
+    SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing,
 };
 use crate::ui::workspace_overlay::{OverlayTile, WorkspaceOverlay};
 
@@ -77,9 +77,6 @@ pub enum Event {
     /// Display geometry for the overlay. Must be the USABLE frame, excluding the menu bar strip,
     /// so the user's bar is not covered and made to flicker.
     SetDisplay { id: u32, frame: CGRect, scale: f64 },
-    /// Refresh the cached snapshot of one window, for windows that are off-strip and so cannot be
-    /// captured usefully at switch time.
-    RefreshSnapshot { window: WindowId, server_id: WindowServerId, size: CGSize },
     /// Drop snapshots for windows that no longer exist, so the cache cannot grow without bound.
     ForgetWindow(WindowId),
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
@@ -1394,9 +1391,6 @@ impl WorkspaceAnimation {
             Event::BounceStrip { windows, overshoot, final_frames, focus, duration } => {
                 self.start_bounce(windows, overshoot, final_frames, focus, duration)
             }
-            Event::RefreshSnapshot { window, server_id, size } => {
-                self.refresh_snapshot(window, server_id, size)
-            }
             Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
@@ -1876,12 +1870,6 @@ impl WorkspaceAnimation {
         true
     }
 
-    fn refresh_snapshot(&mut self, window: WindowId, server_id: WindowServerId, size: CGSize) {
-        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-        if let Some(snapshot) = capture_via_skylight(server_id, (size.width, size.height), scale) {
-            self.cache.insert(window, snapshot);
-        }
-    }
 
     /// The snapshot to draw for one window, from the cache only.
     ///
@@ -1894,13 +1882,6 @@ impl WorkspaceAnimation {
         self.cache.usable(request.window).cloned()
     }
 
-    /// Does this window appear on screen at ANY point during the animation?
-    ///
-    /// The whole path is sampled, not just its ends: a window that sweeps across mid-animation is
-    /// exactly what conveys how far the strip travelled, and testing endpoints alone excluded it.
-    fn is_worth_animating(&self, from: CGRect, to: CGRect, display: CGRect) -> bool {
-        worth_animating(from, to, display)
-    }
 
     /// Tiles for the border windows tracing the windows being animated (JankyBorders and kin).
     ///
@@ -2051,7 +2032,7 @@ impl WorkspaceAnimation {
             let end = resolve_end(start, request.to, display_frame, travel);
             // Parked slivers are excluded on the way in AND on the way out: a window arriving from
             // off-strip has no visible starting point, and one leaving has no visible destination.
-            if !self.is_worth_animating(start, end, display_frame) {
+            if !worth_animating(start, end, display_frame) {
                 offscreen += 1;
                 debug!(
                     wsid = request.server_id.as_u32(),
@@ -3175,36 +3156,9 @@ impl WorkspaceAnimation {
         }
     }
 
-    /// Writes every cached picture to `<temp dir>/rini-snapshots/<pid>-<idx>.ppm`, so a picture
-    /// can be checked against the window it is keyed to. Debug command only.
-    fn dump_cache_for_inspection(&self) {
-        let dir = std::env::temp_dir().join("rini-snapshots");
-        if let Err(error) = std::fs::create_dir_all(&dir) {
-            warn!(?error, ?dir, "cannot create the snapshot dump directory");
-            return;
-        }
-        let mut written = 0usize;
-        for (window, snapshot) in self.cache.iter() {
-            let Some((w, h, rgb)) = snapshot_rgb(snapshot) else { continue };
-            let path = dir.join(format!("{}-{}.ppm", window.pid, window.idx.get()));
-            let mut bytes = format!("P6\n{w} {h}\n255\n").into_bytes();
-            bytes.extend(rgb);
-            if std::fs::write(&path, bytes).is_ok() {
-                written += 1;
-            }
-        }
-        if let Some((w, h, rgb)) = self.pictures.shown.as_ref().and_then(snapshot_rgb) {
-            let mut bytes = format!("P6\n{w} {h}\n255\n").into_bytes();
-            bytes.extend(rgb);
-            let _ = std::fs::write(dir.join("desktop.ppm"), bytes);
-        }
-        debug!(written, ?dir, "cache dumped for inspection");
-    }
-
     /// Slides every window currently on screen in from an offset. For judging animation quality by
     /// eye without touching a single real window, so it can be run at any time without risk.
     fn debug_slide(&mut self, dx: f64, dy: f64, duration: Duration) {
-        self.dump_cache_for_inspection();
         let Some((display_frame, _)) = self.display else {
             warn!("no display geometry yet; cannot run the debug slide");
             return;
@@ -3445,52 +3399,6 @@ fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
 }
 
 /// A snapshot's pixels as packed RGB, downsampled by four in each axis, for the debug dump.
-fn snapshot_rgb(snapshot: &WindowSnapshot) -> Option<(usize, usize, Vec<u8>)> {
-    use crate::ui::window_snapshot::SnapshotImage;
-    let step = 4usize;
-    let sample = |width: usize, height: usize, stride: usize, base: *const u8| {
-        let (w, h) = (width / step, height / step);
-        let mut rgb = Vec::with_capacity(w * h * 3);
-        for y in 0..h {
-            for x in 0..w {
-                // BGRA, premultiplied: blue, green, red.
-                let px = unsafe { base.add(y * step * stride + x * step * 4) };
-                unsafe { rgb.extend_from_slice(&[*px.add(2), *px.add(1), *px]) };
-            }
-        }
-        (w, h, rgb)
-    };
-    match &snapshot.image {
-        SnapshotImage::Surface(surface) => {
-            use objc2_io_surface::IOSurfaceLockOptions;
-            if unsafe { surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) } != 0 {
-                return None;
-            }
-            let out = sample(
-                surface.width(),
-                surface.height(),
-                surface.bytes_per_row(),
-                surface.base_address().as_ptr() as *const u8,
-            );
-            unsafe { surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()) };
-            Some(out)
-        }
-        SnapshotImage::Bitmap(image) => {
-            use objc2_core_graphics::{CGDataProvider, CGImage};
-            let provider = CGImage::data_provider(Some(image))?;
-            let data = CGDataProvider::data(Some(&provider))?;
-            // SAFETY: the data is immutable and outlives this read.
-            let bytes = unsafe { data.as_bytes_unchecked() }.to_vec();
-            let (w, h) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
-            let stride = CGImage::bytes_per_row(Some(image));
-            if bytes.len() < stride * h {
-                return None;
-            }
-            Some(sample(w, h, stride, bytes.as_ptr()))
-        }
-    }
-}
-
 /// Converts a display-space rect into the overlay's own coordinate space.
 ///
 /// The overlay's layer tree has its origin at the overlay's top-left, not the display's, so a window
@@ -7043,17 +6951,6 @@ mod tests {
             assert_eq!(merged.next_key, current.next_key + 1);
         }
 
-        #[test]
-        fn group_travel_after_merge_is_none_only_when_nothing_changed() {
-            let presented = CGPoint::new(-200.0, 0.0);
-            let old = CGPoint::new(-574.0, 0.0);
-            assert_eq!(group_travel_after_merge(presented, old, old), None);
-            assert_eq!(group_travel_after_merge(presented, old, CGPoint::new(-574.05, 0.0)), None);
-            assert_eq!(
-                group_travel_after_merge(presented, old, CGPoint::new(-900.0, 0.0)),
-                Some((presented, CGPoint::new(-900.0, 0.0)))
-            );
-        }
 
         /// The 3:27:20 case: an open with 22 survivors and one entrance, then a 574pt pan 56ms
         /// later. Every survivor and the entrance end at the pan's frames.

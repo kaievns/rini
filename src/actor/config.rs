@@ -28,9 +28,6 @@ pub struct ConfigActor {
 }
 
 impl ConfigActor {
-    pub fn spawn(config: Config, reactor_tx: reactor::Sender) -> Sender {
-        Self::spawn_with_path(config, reactor_tx, crate::common::config::config_file())
-    }
 
     pub fn spawn_with_path(
         config: Config,
@@ -157,7 +154,9 @@ impl ConfigActor {
                     config_changed = true;
                     info!("Updated workspace names to: {:?}", names);
                 } else {
-                    errors.push("Too many workspace names provided. Maximum is 32".to_string());
+                    errors.push(format!(
+                        "Too many workspace names provided. Maximum is {MAX_WORKSPACES}"
+                    ));
                 }
             }
 
@@ -244,11 +243,6 @@ impl ConfigActor {
         }
 
         if config_changed {
-            let validation_issues = new_config.validate();
-            if !validation_issues.is_empty() {
-                return Err(validation_issues.join("; "));
-            }
-
             self.config = new_config;
 
             self.reactor_tx.send(reactor::Event::ConfigUpdated(self.config.clone()));

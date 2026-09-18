@@ -213,10 +213,10 @@ while every foreign attempt failed.
    every proxy's transform atomically, so yabai's windows cannot tear against
    each other by construction. rini's per-app batching reduced the tear but
    cannot eliminate it, because separate apps still answer separately.
-3. **`CVDisplayLink` for the tick.** This is item 39 in the backlog. Note that
-   `src/sys/display_link.rs` is currently dead code and its `Drop` is unsound,
-   because `CVDisplayLinkStop` does not wait for an in-flight callback before
-   the `Box` is freed.
+3. **`CVDisplayLink` for the tick.** This is item 39 in the backlog. The old
+   `src/sys/display_link.rs` binding was deleted unused; its `Drop` was unsound
+   (`CVDisplayLinkStop` does not wait for an in-flight callback before the `Box`
+   is freed), so a new binding must not copy it.
 
 ### Two places rini's situation differs
 
@@ -771,8 +771,7 @@ Two fixes, both needed:
 - The reactor now sends the windows a pass leaves alone as well, with `from == to`, so
   the overlay reproduces the whole screen. They are drawn, never placed: asking an
   application to move a window to where it already is costs an Accessibility round
-  trip and invites another layout pass. `strip_pan_delta` ignores them, since a window
-  that is not moving has no opinion about where the strip is going.
+  trip and invites another layout pass.
 - A pass where nothing travels 2pt or more is not animated at all. Animating a
   one-point move buys nothing and costs 350ms of frozen pictures over the whole
   display.
@@ -1082,8 +1081,10 @@ What stopped it was the test for "is this one movement": every window had to agr
 on a movement vector, and windows parked at the macOS clamp cannot. Their real
 frame is 40pt off the left edge while their layout frame is thousands of points
 away, so their apparent movement is nothing like the strip's, and one of them
-disqualified the whole strip. Only windows at least a quarter on screen vote now.
-They are never clamped, so they are the honest witnesses.
+disqualified the whole strip. The fix at the time was to let only windows at least a
+quarter on screen vote. That classifier was later replaced outright: the reactor
+reads the strip's own scroll offset (`take_strip_movement`), which says how far the
+strip travelled without consulting any window.
 
 Measured on three `MoveFocus(Right)` presses 120ms apart, which is faster than the
 350ms animation:

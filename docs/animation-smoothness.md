@@ -275,11 +275,11 @@ sit between it and the bar. During strip pans a floating window deliberately
 stands still (`pinned`); during switches it rides its workspace row in the
 floating container.
 
-Still open: the reactor-side pan classifier (`strip_pan_delta`,
-`take_strip_movement`) only exists to decide strip-vs-per-window routing,
-and both routes land in the same machinery. `take_strip_movement` also
-feeds the switch's claim on the destination's scroll offset, which needs
-care.
+Still open: `take_strip_movement` only exists to decide strip-vs-per-window
+routing, and both routes land in the same machinery. It also feeds the
+switch's claim on the destination's scroll offset, which needs care. The
+window-voting classifier (`strip_pan_delta`) is gone: it only ran when the
+space had no strip, which is when there is nothing to pan.
 
 **Edge bounce.** A command that pushes past an end of the strip (focus
 left/right at the first/last column) or of the workspace stack (next/prev at
@@ -625,9 +625,9 @@ ended in the overlay's favour.
    per-tile groups teleported on every merge, and containers carry the
    rigid pieces again (see the overlay section). The group event is
    `AnimateStrip`, the geometry module `strip_stack`.
-5. Pan classifier collapse (`strip_pan_delta`, routing in `animate_layout`),
-   once the strip visuals are validated; `take_strip_movement` also feeds
-   the switch's scroll-offset claim and needs care.
+5. Pan routing collapse (`take_strip_movement`, routing in `animate_layout`),
+   once the strip visuals are validated; it also feeds the switch's
+   scroll-offset claim and needs care. `strip_pan_delta` is already gone.
 6. ~~Shared `motion` module + wire or delete `animation_easing`~~ — the AX
    engine and `animation_easing` are gone; `MOTION_CURVE` is the one curve.
 7. Staleness: change-driven warming or a stream pool; measure the mid-flight

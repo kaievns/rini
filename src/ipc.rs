@@ -7,10 +7,9 @@ use serde::de::DeserializeOwned;
 use tracing::{error, info, trace};
 
 pub mod cli_exec;
-pub mod protocol;
 pub mod subscriptions;
 
-pub use protocol::{RiniCommand, RiniRequest, RiniResponse};
+use rini_protocol::{RiniRequest, RiniResponse};
 pub use rini_client::{ClientError as RiniMachClientError, RiniMachClient, RiniMachSubscription};
 
 use crate::actor::config as config_actor;

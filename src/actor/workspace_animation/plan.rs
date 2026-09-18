@@ -1,8 +1,6 @@
 //! A pass as rigid pieces: the pure half of the container model.
 //! See "The overlay engine" and "Layout changes" in `docs/animation-smoothness.md`.
 
-// Nothing composes or flies a plan yet: tasks 2 and 3 of `rigid-strip-groups` wire the overlay and `start`.
-#![allow(dead_code)]
 
 use std::collections::HashMap;
 
@@ -140,6 +138,7 @@ impl ReflowPlan {
     }
 
     /// The group `window` rides, if it is a rigid member.
+    #[cfg(test)]
     pub(crate) fn group_of(&self, window: WindowId) -> Option<&StripGroup> {
         self.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))
     }
@@ -150,6 +149,7 @@ impl ReflowPlan {
     }
 
     /// Every window the plan names, in plan order: groups, changing, entrances, floating.
+    #[cfg(test)]
     pub(crate) fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
@@ -184,6 +184,7 @@ fn member_in(
 }
 
 /// Every window in the lists, in plan order, companions left out.
+#[cfg(test)]
 fn windows_in(
     groups: &[StripGroup],
     changing: &[(WindowId, CGRect, CGRect)],
@@ -215,6 +216,7 @@ pub(crate) struct FlightPlan {
 
 impl FlightPlan {
     /// A flight with nothing in it: the still group only.
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         FlightPlan::from(ReflowPlan::empty())
     }
@@ -225,6 +227,7 @@ impl FlightPlan {
     }
 
     /// Every window the flight names, companions left out.
+    #[cfg(test)]
     pub(crate) fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
@@ -390,16 +393,6 @@ fn is_zero(p: CGPoint) -> bool {
     p.x == 0.0 && p.y == 0.0
 }
 
-/// The position animation a retargeted container gets: `None` when the destination did not
-/// change, else from where it is presented to the new destination. Every member's remaining
-/// displacement is `new_to - presented` at once, which is what keeps the group rigid.
-pub(crate) fn group_travel_after_merge(
-    presented: CGPoint,
-    old_to: CGPoint,
-    new_to: CGPoint,
-) -> Option<(CGPoint, CGPoint)> {
-    (!new_to.same_as(old_to)).then_some((presented, new_to))
-}
 
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at presented frames, a pan adds its travel to every group. `presented` is each

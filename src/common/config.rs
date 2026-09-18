@@ -1023,7 +1023,9 @@ impl Config {
         Self::parse(include_str!("../../rini.default.toml")).unwrap()
     }
 
-    /// Save the current config to a file
+    /// Writes the config back out. Bindings are written expanded: `modifier_combinations`
+    /// shorthands were resolved at parse time and the file keeps only the resolved keys, so
+    /// the saved table is empty. Comments are not preserved either.
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         let config_file = ConfigFile {
             settings: self.settings.clone(),

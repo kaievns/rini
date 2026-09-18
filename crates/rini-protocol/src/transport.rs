@@ -120,7 +120,6 @@ mod tests {
                 "id": "workspace-1",
                 "index": 0,
                 "name": "main",
-                "layout_mode": "bsp",
                 "is_active": true,
                 "window_count": 0,
                 "windows": []
@@ -130,23 +129,6 @@ mod tests {
         assert_eq!(response.into_result().unwrap()[0].name, "main");
     }
 
-    #[test]
-    fn legacy_stringified_reactor_commands_still_decode() {
-        let request: RiniRequest = serde_json::from_value(serde_json::json!({
-            "execute_command": {
-                "command": "{\"Reactor\":{\"switch_to_workspace\":5}}",
-                "args": []
-            }
-        }))
-        .unwrap();
-
-        assert_eq!(
-            request,
-            RiniRequest::ExecuteCommand {
-                command: RiniCommand::Layout(LayoutCommand::SwitchToWorkspace(5)),
-            }
-        );
-    }
 
     #[test]
     fn legacy_window_id_strings_still_decode() {

@@ -21,18 +21,6 @@ impl Direction {
 
 }
 
-impl From<String> for Direction {
-    fn from(value: String) -> Self {
-        match value.as_str() {
-            "left" => Self::Left,
-            "right" => Self::Right,
-            "up" => Self::Up,
-            "down" => Self::Down,
-            _ => panic!("Invalid direction string: {value}"),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResizeOrientation {

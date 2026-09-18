@@ -44,25 +44,6 @@ enum Commands {
         #[command(subcommand)]
         subscribe: SubscribeCommands,
     },
-    /// Manage the launchd service for rini
-    Service {
-        #[command(subcommand)]
-        service: ServiceCommands,
-    },
-}
-
-#[derive(Subcommand)]
-enum ServiceCommands {
-    /// Install the per-user launchd service
-    Install,
-    /// Uninstall the per-user launchd service
-    Uninstall,
-    /// Start (or bootstrap) the service
-    Start,
-    /// Stop (or bootout/kill) the service
-    Stop,
-    /// Restart the service (kickstart -k)
-    Restart,
 }
 
 #[derive(Subcommand)]
@@ -488,12 +469,6 @@ fn main() {
     let cli = Cli::parse();
 
     let request = match cli.command {
-        Commands::Service { .. } => {
-            println!(
-                "service commands have been moved to the `rini` binary. (ie `rini service install`)"
-            );
-            process::exit(0);
-        }
         Commands::Subscribe {
             subscribe: SubscribeCommands::Mach { event },
         } => {
@@ -558,10 +533,6 @@ fn build_request(command: Commands) -> Result<RiniRequest, String> {
         Commands::Query { query } => build_query_request(query),
         Commands::Execute { command } => build_execute_request(command),
         Commands::Subscribe { subscribe } => build_subscribe_request(subscribe),
-        Commands::Service { .. } => Err(
-            "Service commands are handled locally and should not be sent to the rini server."
-                .to_string(),
-        ),
     }
 }
 
@@ -741,7 +712,7 @@ fn map_window_command(cmd: WindowCommands) -> Result<CliCommand, String> {
             window_server_id,
         } => match (direction, window_id) {
             (Some(direction), None) => Ok(CliCommand::Reactor(reactor::Command::Layout(
-                LC::MoveFocus(parse_focus_direction(&direction)?),
+                LC::MoveFocus(parse_direction(&direction)?),
             ))),
             (None, Some(window_id)) => Ok(CliCommand::Reactor(reactor::Command::Reactor(
                 reactor::ReactorCommand::FocusWindow {
@@ -873,13 +844,13 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
     use layout::LayoutCommand as LC;
     match cmd {
         LayoutCommands::MoveNode { direction } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::MoveNode(direction.into())),
+            reactor::Command::Layout(LC::MoveNode(parse_direction(&direction)?)),
         )),
         LayoutCommands::JoinWindow { direction } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::JoinWindow(direction.into())),
+            reactor::Command::Layout(LC::JoinWindow(parse_direction(&direction)?)),
         )),
         LayoutCommands::ConsumeOrExpelWindow { direction } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::ConsumeOrExpelWindow(direction.into())),
+            reactor::Command::Layout(LC::ConsumeOrExpelWindow(parse_direction(&direction)?)),
         )),
         LayoutCommands::ToggleStack => {
             Ok(CliCommand::Reactor(reactor::Command::Layout(LC::ToggleStack)))
@@ -961,7 +932,7 @@ fn map_space_command(cmd: SpaceCommands) -> Result<CliCommand, String> {
     let command = match cmd {
         SpaceCommands::ToggleActivated => reactor::ReactorCommand::ToggleSpaceActivated,
         SpaceCommands::Switch { direction } => {
-            reactor::ReactorCommand::SwitchSpace(parse_focus_direction(&direction)?)
+            reactor::ReactorCommand::SwitchSpace(parse_direction(&direction)?)
         }
     };
 
@@ -1014,7 +985,7 @@ fn build_display_selector(
     }
 
     if let Some(direction) = direction {
-        let parsed_direction = parse_focus_direction(&direction)?;
+        let parsed_direction = parse_direction(&direction)?;
         Ok(DisplaySelector::Direction(parsed_direction))
     } else if let Some(index) = index {
         Ok(DisplaySelector::Index(index))
@@ -1025,14 +996,14 @@ fn build_display_selector(
     }
 }
 
-fn parse_focus_direction(value: &str) -> Result<layout::Direction, String> {
+fn parse_direction(value: &str) -> Result<layout::Direction, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "left" => Ok(layout::Direction::Left),
         "right" => Ok(layout::Direction::Right),
         "up" => Ok(layout::Direction::Up),
         "down" => Ok(layout::Direction::Down),
         other => Err(format!(
-            "Invalid focus direction '{}'; must be left, right, up, or down",
+            "Invalid direction '{}'; must be left, right, up, or down",
             other
         )),
     }
