@@ -1,6 +1,6 @@
 use tracing::debug;
 
-use crate::actor::app::WindowId;
+use rini_core::ids::WindowId;
 use crate::actor::raise_manager;
 use crate::actor::reactor::MenuState;
 use crate::actor::reactor::events::EventOutcome;

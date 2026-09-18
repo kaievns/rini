@@ -11,7 +11,7 @@ use nix::libc::{
 };
 use tracing::error;
 
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::collections::{HashMap, HashSet};
 use crate::ipc::subscriptions::CliSubscription;
 use crate::model::broadcast::BroadcastEvent;
 

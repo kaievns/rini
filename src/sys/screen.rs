@@ -22,34 +22,9 @@ use super::skylight::{
     SLSCopyActiveMenuBarDisplayIdentifier, SLSGetDisplayMenubarHeight, SLSGetDockRectWithReason,
     SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode, SLSMainConnectionID,
 };
-use crate::common::collections::HashMap;
-use crate::sys::geometry::CGRectDef;
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[repr(transparent)]
-pub struct SpaceId(u64);
-
-impl SpaceId {
-    pub fn new(id: u64) -> SpaceId {
-        SpaceId(id)
-    }
-
-    pub fn get(&self) -> u64 {
-        self.0
-    }
-}
-
-impl Into<u64> for SpaceId {
-    fn into(self) -> u64 {
-        self.get()
-    }
-}
-
-impl ToString for SpaceId {
-    fn to_string(&self) -> String {
-        self.get().to_string()
-    }
-}
+use rini_core::collections::HashMap;
+use rini_core::geometry::CGRectDef;
+pub use rini_core::ids::SpaceId;
 
 #[derive(Debug, Clone)]
 struct ScreenState {
@@ -143,7 +118,7 @@ impl<S: System> ScreenCache<S> {
                         CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
                     )
                 })
-                .map(|id| if id == 0 { None } else { Some(SpaceId(id)) })
+                .map(|id| if id == 0 { None } else { Some(SpaceId::new(id)) })
                 .collect();
 
             if let Some(state) = self.state.clone() {
@@ -234,7 +209,7 @@ impl<S: System> ScreenCache<S> {
                     CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
                 )
             })
-            .map(|id| if id == 0 { None } else { Some(SpaceId(id)) })
+            .map(|id| if id == 0 { None } else { Some(SpaceId::new(id)) })
             .collect();
 
         self.uuids = uuids;
@@ -637,7 +612,7 @@ pub mod diagnostic {
     use super::*;
 
     pub fn cur_space() -> SpaceId {
-        SpaceId(unsafe { CGSGetActiveSpace(SLSMainConnectionID()) })
+        SpaceId::new(unsafe { CGSGetActiveSpace(SLSMainConnectionID()) })
     }
 
     pub fn visible_spaces() -> CFRetained<CFArray<SpaceId>> {

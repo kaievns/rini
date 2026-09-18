@@ -647,7 +647,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
             ))
         }
         ExecuteCommands::ShowTiming => CliCommand::Reactor(reactor::Command::Metrics(
-            rini_wm::common::log::MetricsCommand::ShowTiming,
+            rini_protocol::MetricsCommand::ShowTiming,
         )),
         ExecuteCommands::Redistribute => CliCommand::Reactor(reactor::Command::Reactor(
             reactor::ReactorCommand::RedistributeWindows,

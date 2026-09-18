@@ -2,11 +2,11 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use crate::actor::app::WindowId;
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::ids::WindowId;
+use rini_core::collections::{HashMap, HashSet};
 use crate::model::VirtualWorkspaceId;
 use crate::model::reactor::WindowState;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::SpaceId;
 use crate::sys::window_server::{WindowServerId, WindowServerInfo};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

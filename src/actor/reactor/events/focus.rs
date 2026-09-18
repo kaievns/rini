@@ -1,5 +1,5 @@
-use crate::actor::app::WindowId;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::WindowId;
+use rini_core::ids::SpaceId;
 
 /// Resolves a workflow focus request without granting the focus service access
 /// to the reactor or to unrelated mutable state.

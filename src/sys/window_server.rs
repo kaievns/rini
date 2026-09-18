@@ -1,7 +1,6 @@
 #[cfg(test)]
 use std::cell::RefCell;
 use std::ffi::{CStr, c_int};
-use std::num::NonZeroU32;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,15 +19,15 @@ use objc2_core_graphics::{
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-use super::geometry::{CGRectDef, CGSizeDef};
-use crate::actor::app::WindowId;
+use rini_core::geometry::{CGRectDef, CGSizeDef};
+pub use rini_core::ids::{WindowId, WindowServerId};
 #[cfg(test)]
-use crate::common::collections::HashMap;
-use crate::sys::app::pid_t;
+use rini_core::collections::HashMap;
+use rini_core::ids::pid_t;
 use crate::sys::axuielement::{AXUIElement, Error as AxError};
 use crate::sys::cg_ok;
 #[cfg(not(test))]
-use crate::sys::geometry::CGRectExt;
+use rini_core::geometry::CGRectExt;
 use crate::sys::mach::mach_get_window_sub_level;
 use crate::sys::process::ProcessSerialNumber;
 use crate::sys::screen::{ScreenInfo, SpaceId};
@@ -49,33 +48,6 @@ pub const WINDOWSERVER_QUIET_US: u64 = 350_000;
 #[cfg_attr(test, allow(dead_code))]
 const EFFECTIVELY_INVISIBLE_WINDOW_ALPHA: f32 = 0.01;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct WindowServerId(pub CGWindowID);
-
-impl WindowServerId {
-    #[inline]
-    pub fn new(id: CGWindowID) -> Self {
-        Self(id)
-    }
-
-    #[inline]
-    pub fn as_u32(self) -> u32 {
-        self.0
-    }
-
-    #[inline]
-    pub fn as_nonzero(self) -> Option<NonZeroU32> {
-        NonZeroU32::new(self.0)
-    }
-}
-
-impl From<WindowServerId> for u32 {
-    #[inline]
-    fn from(id: WindowServerId) -> Self {
-        id.0
-    }
-}
-
 impl TryFrom<&AXUIElement> for WindowServerId {
     type Error = AxError;
 
@@ -92,11 +64,6 @@ impl TryFrom<&AXUIElement> for WindowServerId {
     }
 }
 
-impl From<WindowId> for WindowServerId {
-    fn from(id: WindowId) -> Self {
-        Self(id.idx.into())
-    }
-}
 
 #[inline]
 fn now_us() -> u64 {
@@ -1261,7 +1228,7 @@ pub fn allow_hide_mouse() -> Result<(), CGError> {
 // fast space switching with no animations
 // credit: https://gist.github.com/amaanq/6991c7054b6c9816fafa9e29814b1509
 #[allow(unsafe_op_in_unsafe_fn)]
-pub unsafe fn switch_space(direction: crate::layout_engine::Direction) {
+pub unsafe fn switch_space(direction: rini_core::Direction) {
     unsafe { crate::sys::space_switch::switch_space(direction) };
 }
 

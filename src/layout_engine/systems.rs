@@ -2,8 +2,8 @@ use enum_dispatch::enum_dispatch;
 use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 
-use crate::actor::app::{WindowId, pid_t};
-use crate::common::collections::HashMap;
+use rini_core::ids::{WindowId, pid_t};
+use rini_core::collections::HashMap;
 use crate::layout_engine::{Direction, ResizeOrientation};
 
 slotmap::new_key_type! { pub struct LayoutId; }
@@ -202,7 +202,7 @@ pub use scrolling::ScrollingLayoutSystem;
 #[cfg(test)]
 mod tests {
     use super::{LayoutSystem, ScrollingLayoutSystem, WindowLayoutConstraints};
-    use crate::actor::app::WindowId;
+    use rini_core::ids::WindowId;
     use crate::common::config::{ScrollingLayoutSettings, WindowInsertionPoint};
 
     fn w(idx: u32) -> WindowId {

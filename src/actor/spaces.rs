@@ -27,13 +27,13 @@ use objc2_foundation::MainThreadMarker;
 
 use crate::actor;
 use crate::actor::{reactor, wm_controller};
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::collections::{HashMap, HashSet};
 use crate::sys::dispatch::DispatchExt;
 #[cfg(not(test))]
 use crate::sys::screen::managed_display_space_ids;
 use crate::sys::screen::{CoordinateConverter, ScreenCache, ScreenInfo, SpaceId};
 use crate::sys::skylight::DisplayReconfigFlags;
-use crate::sys::window_server::WindowServerId;
+use rini_core::ids::WindowServerId;
 use crate::sys::{display_churn, window_server};
 
 const REFRESH_DEFAULT_DELAY_NS: i64 = 100_000_000;

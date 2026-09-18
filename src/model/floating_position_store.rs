@@ -2,12 +2,12 @@ use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use crate::actor::app::WindowId;
-use crate::common::collections::HashMap;
+use rini_core::ids::WindowId;
+use rini_core::collections::HashMap;
 use crate::model::{VirtualWorkspaceId, WorkspaceStore};
-use crate::sys::app::pid_t;
-use crate::sys::geometry::CGRectDef;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::pid_t;
+use rini_core::geometry::CGRectDef;
+use rini_core::ids::SpaceId;
 
 /// Saved floating frames. This is layout persistence, not workspace catalog
 /// state; callers must remove entries as part of the corresponding window

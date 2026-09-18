@@ -1399,6 +1399,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
+ "rini-protocol",
+ "ron",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-timing",
+ "tracing-tree",
+]
+
+[[package]]
 name = "rini-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1445,6 +1464,7 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "rini-client",
+ "rini-core",
  "rini-protocol",
  "ron",
  "rustc-hash",

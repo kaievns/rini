@@ -16,8 +16,8 @@ use super::skylight::{
     CGSEventType, SLSMainConnectionID, SLSRegisterConnectionNotifyProc,
     SLSRequestNotificationsForWindows, cid_t,
 };
-use crate::actor;
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::channel as actor;
+use rini_core::collections::{HashMap, HashSet};
 use crate::sys::skylight::KnownCGSEvent;
 
 type Wid = u32;

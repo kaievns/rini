@@ -154,3 +154,53 @@ impl<'de> DeserializeAs<'de, ic::CGRect> for CGRectDef {
         CGRectDef::deserialize(deserializer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> ic::CGRect {
+        ic::CGRect::new(ic::CGPoint::new(x, y), ic::CGSize::new(w, h))
+    }
+
+    #[test]
+    fn round_snaps_both_edges_so_the_size_absorbs_the_difference() {
+        let r = rect(0.4, 0.6, 10.2, 10.2).round();
+        assert_eq!((r.origin.x, r.origin.y), (0.0, 1.0));
+        assert_eq!((r.size.width, r.size.height), (11.0, 10.0));
+    }
+
+    #[test]
+    fn same_as_tolerates_a_tenth_of_a_point_and_not_more() {
+        assert!(rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.09, 0.0, 10.0, 10.0)));
+        assert!(!rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.1, 0.0, 10.0, 10.0)));
+        assert!(!rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.0, 0.0, 10.0, 10.2)));
+    }
+
+    #[test]
+    fn intersection_of_disjoint_rects_is_empty_not_negative() {
+        let a = rect(0.0, 0.0, 10.0, 10.0);
+        let b = rect(20.0, 20.0, 5.0, 5.0);
+        let i = a.intersection(&b);
+        assert_eq!((i.size.width, i.size.height), (0.0, 0.0));
+        assert_eq!(a.intersection(&rect(5.0, 5.0, 10.0, 10.0)).area(), 25.0);
+    }
+
+    #[test]
+    fn containment_includes_the_edges() {
+        let r = rect(0.0, 0.0, 10.0, 10.0);
+        assert!(r.contains(ic::CGPoint::new(10.0, 10.0)));
+        assert!(!r.contains(ic::CGPoint::new(10.1, 10.0)));
+        assert!(r.contains_rect(r));
+        assert!(!r.contains_rect(rect(0.0, 0.0, 10.0, 10.1)));
+    }
+
+    #[test]
+    fn cgrect_def_round_trips_through_serde() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct Wrapper(#[serde(with = "CGRectDef")] ic::CGRect);
+        let w = Wrapper(rect(1.5, 2.5, 3.5, 4.5));
+        let json = serde_json::to_string(&w).unwrap();
+        assert_eq!(serde_json::from_str::<Wrapper>(&json).unwrap(), w);
+    }
+}

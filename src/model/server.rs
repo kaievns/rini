@@ -4,11 +4,11 @@ use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use crate::actor::app::WindowId;
+use rini_core::ids::WindowId;
 use crate::sys::app::WindowInfo;
-use crate::sys::geometry::CGRectDef;
+use rini_core::geometry::CGRectDef;
 use crate::sys::screen::{ScreenId, ScreenInfo, SpaceId};
-use crate::sys::window_server::WindowServerId;
+use rini_core::ids::WindowServerId;
 
 /// Runtime-only workspace projection. Its windows retain the macOS
 /// accessibility metadata needed by the UI; IPC uses the protocol-owned
@@ -45,14 +45,6 @@ pub struct RuntimeDisplayData {
     pub inactive_space_ids: Vec<u64>,
 }
 
-impl From<WindowId> for protocol::WindowId {
-    fn from(value: WindowId) -> Self {
-        Self {
-            pid: value.pid,
-            idx: value.idx.get(),
-        }
-    }
-}
 
 /// Convert a CoreGraphics rect to the wire shape.
 pub fn to_protocol_rect(frame: objc2_core_foundation::CGRect) -> protocol::Rect {

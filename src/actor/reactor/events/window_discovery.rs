@@ -3,11 +3,11 @@ use tracing::{debug, trace, warn};
 use super::window;
 use crate::actor::app::{AppInfo, WindowId, WindowInfo, pid_t};
 use crate::actor::reactor::{LayoutEvent, WindowFilter, WindowState, utils};
-use crate::common::collections::{BTreeMap, HashMap, HashSet};
+use rini_core::collections::{BTreeMap, HashMap, HashSet};
 use crate::model::AppRuleResult;
 use crate::model::virtual_workspace::WorkspaceError;
-use crate::sys::screen::SpaceId;
-use crate::sys::window_server::WindowServerId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowServerId;
 
 /// Handler for window discovery events, responsible for processing newly discovered windows
 /// and managing the lifecycle of window state in the reactor.

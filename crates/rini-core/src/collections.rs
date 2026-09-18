@@ -5,8 +5,7 @@ pub use std::collections::{BTreeMap, BTreeSet, hash_map};
 // We also don't need cryptographic hashing, and these are faster.
 pub use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::actor::app::WindowId;
-use crate::sys::app::pid_t;
+use crate::ids::{WindowId, pid_t};
 
 pub trait BTreeExt {
     fn remove_all_for_pid(&mut self, pid: pid_t) -> Self;
@@ -44,5 +43,40 @@ impl Borrow<PidRange> for WindowId {
     fn borrow(&self) -> &PidRange {
         // Safety: PidRange is repr(transparent).
         unsafe { &*std::ptr::addr_of!(self.pid).cast() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ids() -> Vec<WindowId> {
+        vec![
+            WindowId::new(1, 1),
+            WindowId::new(2, 1),
+            WindowId::new(2, 2),
+            WindowId::new(2, u32::MAX),
+            WindowId::new(3, 1),
+        ]
+    }
+
+    #[test]
+    fn remove_all_for_pid_takes_exactly_that_pid_from_a_set() {
+        let mut set: BTreeSet<WindowId> = ids().into_iter().collect();
+        let removed = set.remove_all_for_pid(2);
+        assert_eq!(removed.len(), 3);
+        assert!(removed.iter().all(|w| w.pid == 2));
+        assert_eq!(set.len(), 2);
+        assert!(set.iter().all(|w| w.pid != 2));
+    }
+
+    #[test]
+    fn remove_all_for_pid_takes_exactly_that_pid_from_a_map() {
+        let mut map: BTreeMap<WindowId, u8> = ids().into_iter().map(|w| (w, 0)).collect();
+        let removed = map.remove_all_for_pid(2);
+        assert_eq!(removed.len(), 3);
+        assert_eq!(map.len(), 2);
+        assert!(map.remove_all_for_pid(9).is_empty());
+        assert_eq!(map.len(), 2);
     }
 }

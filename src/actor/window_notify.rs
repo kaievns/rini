@@ -6,11 +6,11 @@ use tracing::{debug, trace};
 
 use super::reactor::{self, Event};
 use super::spaces;
-use crate::actor::app::WindowId;
+use rini_core::ids::WindowId;
 use crate::actor::reactor::Requested;
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::collections::{HashMap, HashSet};
 use crate::model::tx_store::WindowTxStore;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::SpaceId;
 use crate::sys::skylight::{CGSEventType, KnownCGSEvent};
 use crate::sys::window_server::{self, WindowIterator, WindowServerId};
 use crate::sys::{event, window_notify};

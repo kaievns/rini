@@ -6,7 +6,7 @@ use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use nix::libc::pid_t;
+pub use rini_core::ids::pid_t;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, define_class, exception, msg_send};
@@ -17,7 +17,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use super::geometry::CGRectDef;
+use rini_core::geometry::CGRectDef;
 use super::window_server::{WindowServerId, WindowServerInfo};
 use crate::sys::axuielement::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,

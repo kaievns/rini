@@ -30,7 +30,7 @@ use super::reactor::{self, Event};
 use crate::actor;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::collections::{HashMap, HashSet};
 use crate::common::config::Config;
 use crate::sys::event::{self, Hotkey, KeyCode, MouseState, set_mouse_state};
 use crate::sys::hotkey::{
@@ -38,7 +38,7 @@ use crate::sys::hotkey::{
     modifiers_from_flags_with_keys,
 };
 use crate::sys::screen::CoordinateConverter;
-use crate::sys::window_server::WindowServerId;
+use rini_core::ids::WindowServerId;
 use crate::sys::{power, window_server};
 
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz

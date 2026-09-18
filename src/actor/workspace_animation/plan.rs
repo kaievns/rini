@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use objc2_core_foundation::{CGPoint, CGRect};
 
 use super::{StripWindow, strip_pan_travel, strip_travel, to_overlay_space};
-use crate::actor::app::WindowId;
-use crate::sys::geometry::SameAs;
+use rini_core::ids::WindowId;
+use rini_core::geometry::SameAs;
 use crate::ui::window_snapshot::is_a_resize;
 use crate::ui::workspace_overlay::OverlayTile;
 

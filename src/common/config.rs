@@ -5,9 +5,10 @@ use anyhow::bail;
 pub use rini_protocol::{ConfigCommand, WorkspaceSelector};
 use serde::{Deserialize, Serialize};
 
-use super::collections::HashMap;
+use rini_core::collections::HashMap;
 use crate::actor::wm_controller::WmCommand;
 use crate::sys::hotkey::{Hotkey, HotkeySpec};
+pub use crate::sys::haptics::HapticPattern;
 
 pub const MAX_WORKSPACES: usize = 128;
 
@@ -155,12 +156,12 @@ impl VirtualWorkspaceSettings {
         }
 
         // Validate rules and check duplicates in a single pass
-        let mut seen_app_ids = crate::common::collections::HashSet::default();
-        let mut seen_app_names = crate::common::collections::HashSet::default();
-        let mut seen_title_regexes = crate::common::collections::HashSet::default();
-        let mut seen_title_substrings = crate::common::collections::HashSet::default();
-        let mut seen_ax_roles = crate::common::collections::HashSet::default();
-        let mut seen_ax_subroles = crate::common::collections::HashSet::default();
+        let mut seen_app_ids = rini_core::collections::HashSet::default();
+        let mut seen_app_names = rini_core::collections::HashSet::default();
+        let mut seen_title_regexes = rini_core::collections::HashSet::default();
+        let mut seen_title_substrings = rini_core::collections::HashSet::default();
+        let mut seen_ax_roles = rini_core::collections::HashSet::default();
+        let mut seen_ax_subroles = rini_core::collections::HashSet::default();
 
         for (index, rule) in self.app_rules.iter().enumerate() {
             let app_id_empty = rule.app_id.as_ref().map_or(true, |id| id.is_empty());
@@ -1004,14 +1005,6 @@ fn default_swipe_fingers() -> usize { 3 }
 fn default_distance_pct() -> f64 { 0.08 }
 fn default_overscroll_threshold() -> f64 { 0.15 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum HapticPattern {
-    Generic,
-    Alignment,
-    #[default]
-    LevelChange,
-}
 
 impl Config {
     pub fn read(path: &Path) -> anyhow::Result<Config> {

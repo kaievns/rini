@@ -98,3 +98,29 @@ pub fn execute_startup_commands(commands: &[String]) {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_command;
+
+    #[test]
+    fn splits_on_unquoted_whitespace_only() {
+        assert_eq!(parse_command("a  b\tc"), ["a", "b", "c"]);
+        assert_eq!(parse_command("say 'hello world'"), ["say", "hello world"]);
+        assert_eq!(parse_command(r#"say "a b" c"#), ["say", "a b", "c"]);
+    }
+
+    #[test]
+    fn escapes_apply_inside_quotes_and_unknown_ones_are_kept() {
+        assert_eq!(parse_command(r#""x\ny""#), ["x\ny"]);
+        assert_eq!(parse_command(r#""a\"b""#), ["a\"b"]);
+        assert_eq!(parse_command(r#""a\qb""#), ["a\\qb"]);
+        assert_eq!(parse_command(r#""tail\"#), ["tail\\"]);
+    }
+
+    #[test]
+    fn empty_input_yields_no_parts() {
+        assert!(parse_command("").is_empty());
+        assert!(parse_command("   ").is_empty());
+    }
+}

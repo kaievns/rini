@@ -1756,28 +1756,6 @@ Reusing one context did not help, which is what proved the cost was
 rasterisation rather than allocation. A layer-backed `NSWindow` composites on
 the GPU for about 48MB.
 
-## The test suite runs single-threaded on purpose
-
-Several tests reach macOS frameworks that initialise lazily, and initialising
-them from more than one thread at once aborts the whole process:
-
-```
-objc[75992]: Cannot form weak reference to instance of class
-SLSWindowManagementFallbackBridge. It is possible that this object was
-over-released, or is in the process of deallocation.
-```
-
-Measured rates, 40 parallel runs each: none at all before the overlay work, and
-a few percent after it. Narrowing it was misleading, because skipping a test
-changes timing as well as coverage, so two different "confirmed" causes both
-turned out to be sampling noise. Single-threaded runs never reproduced it across
-88 runs.
-
-`RUST_TEST_THREADS = "1"` in `.cargo/config.toml` settles it. The suite goes
-from about 0.4s to 1.25s, which is not a trade worth thinking about. The tests
-that build capture fixtures also avoid `IOSurface` entirely for the same reason
-and use a CPU bitmap instead.
-
 ### A clipped destination needs ScreenCaptureKit, not SkyLight
 
 The recapture below cannot use SkyLight when the destination is mid-slide,

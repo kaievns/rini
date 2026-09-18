@@ -6,9 +6,9 @@ use rini_protocol::{
     WorkspaceLayoutData,
 };
 
-use crate::actor::app::WindowId;
+use rini_core::ids::WindowId;
 use crate::actor::reactor::{Event, Reactor, Sender};
-use crate::common::collections::HashSet;
+use rini_core::collections::HashSet;
 use crate::model::server::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
 use crate::model::virtual_workspace::VirtualWorkspaceId;
 use crate::sys::screen::{ScreenInfo, SpaceId};
@@ -726,7 +726,7 @@ impl Reactor {
             .virtual_workspace_manager()
             .get_stats(&self.state.windows);
 
-        let workspace_stats: crate::common::collections::HashMap<String, usize> = stats
+        let workspace_stats: rini_core::collections::HashMap<String, usize> = stats
             .workspace_window_counts
             .iter()
             .map(|(id, count)| (format!("{:?}", id), *count))

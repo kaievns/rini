@@ -15,9 +15,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::actor::app::{WindowId, pid_t};
-use crate::common::collections::HashMap;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::{WindowId, pid_t};
+use rini_core::collections::HashMap;
+use rini_core::ids::SpaceId;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DisplayAffinity {

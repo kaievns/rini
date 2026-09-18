@@ -4,8 +4,18 @@ use std::ffi::{CStr, c_char, c_void};
 use objc2_core_foundation::{CFNumber, CFNumberType, CFRetained, CFString, CFType};
 use once_cell::sync::OnceCell;
 
-use crate::common::config::HapticPattern;
+use serde::{Deserialize, Serialize};
+
 use crate::sys::skylight::CFRelease;
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HapticPattern {
+    Generic,
+    Alignment,
+    #[default]
+    LevelChange,
+}
 
 #[inline]
 fn pattern_index(pattern: HapticPattern) -> i32 {

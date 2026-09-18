@@ -13,7 +13,6 @@ pub mod enhanced_ui;
 pub mod event;
 pub mod event_tap;
 pub mod executor;
-pub mod geometry;
 pub mod haptics;
 pub mod hotkey;
 pub mod mach;

@@ -9,8 +9,8 @@ pub use rini_protocol::{RestoreScope, RestoreSource};
 use serde::{Deserialize, Serialize};
 
 use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
-use crate::actor::app::{WindowId, pid_t};
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::ids::{WindowId, pid_t};
+use rini_core::collections::{HashMap, HashSet};
 use crate::common::config::{LayoutSettings, VirtualWorkspaceSettings};
 use crate::layout_engine::LayoutSystem;
 use crate::model::broadcast::BroadcastSender;
@@ -18,7 +18,7 @@ use crate::model::{
     AppRuleEngine, DisplayAffinity, FloatingPositionStore, VirtualWorkspaceId, WindowStore,
     WorkspaceStore,
 };
-use crate::sys::screen::SpaceId;
+use rini_core::ids::SpaceId;
 
 static SAVE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

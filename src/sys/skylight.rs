@@ -16,7 +16,7 @@ use objc2_foundation::NSArray;
 use once_cell::sync::Lazy;
 
 use super::process::ProcessSerialNumber;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::SpaceId;
 
 pub static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 

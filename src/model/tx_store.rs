@@ -5,7 +5,7 @@ use dashmap::mapref::entry::Entry;
 use objc2_core_foundation::CGRect;
 
 use crate::actor::reactor::transaction_manager::TransactionId;
-use crate::sys::window_server::WindowServerId;
+use rini_core::ids::WindowServerId;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TxRecord {

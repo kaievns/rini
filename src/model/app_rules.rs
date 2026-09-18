@@ -2,10 +2,10 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use regex::{Regex, RegexBuilder};
 use tracing::warn;
 
-use crate::actor::app::WindowId;
+use rini_core::ids::WindowId;
 use crate::common::config::{AppRulePosition, AppRuleSize, AppWorkspaceRule, WorkspaceSelector};
 use crate::model::VirtualWorkspaceId;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::SpaceId;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WindowRuleContext<'a> {

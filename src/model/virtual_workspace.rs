@@ -3,21 +3,21 @@ use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
 
-use crate::actor::app::WindowId;
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::ids::WindowId;
+use rini_core::collections::{HashMap, HashSet};
 #[cfg(test)]
 use crate::common::config::AppWorkspaceRule;
 use crate::common::config::{
     LayoutSettings, MAX_WORKSPACES, VirtualWorkspaceSettings, WorkspaceSelector,
 };
-use crate::common::log::trace_misc;
+use rini_core::log::trace_misc;
 use crate::layout_engine::Direction;
 use crate::layout_engine::systems::LayoutSystemKind;
 use crate::model::app_rules::{AppRuleDecision, AppRuleEffects, AppRuleResult};
 use crate::model::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 use crate::model::{WindowStore, WindowWorkspaceInfo};
-use crate::sys::app::pid_t;
-use crate::sys::screen::SpaceId;
+use rini_core::ids::pid_t;
+use rini_core::ids::SpaceId;
 
 new_key_type! {
     pub struct VirtualWorkspaceId;
@@ -1123,7 +1123,7 @@ impl WorkspaceStore {
     pub fn workspaces_with_windows_outside(
         &self,
         window_store: &WindowStore,
-        live_spaces: &crate::common::collections::HashSet<SpaceId>,
+        live_spaces: &rini_core::collections::HashSet<SpaceId>,
     ) -> Vec<String> {
         // Workspaces are global now, so "stranded" is a property of the (display, workspace)
         // pair rather than of the workspace object: windows assigned to a native space that
@@ -1188,8 +1188,8 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
-    use crate::actor::app::WindowId;
-    use crate::sys::screen::SpaceId;
+    use rini_core::ids::WindowId;
+    use rini_core::ids::SpaceId;
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {
         match result {

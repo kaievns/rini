@@ -5,11 +5,11 @@ use super::TransactionId;
 use crate::ui::window_snapshot::is_a_resize;
 use crate::actor::app::{AppThreadHandle, Request, WindowId, pid_t};
 use crate::actor::reactor::Reactor;
-use crate::common::collections::HashMap;
-use crate::sys::geometry::{Round, SameAs};
+use rini_core::collections::HashMap;
+use rini_core::geometry::{Round, SameAs};
 use crate::sys::power;
-use crate::sys::screen::SpaceId;
-use crate::sys::window_server::WindowServerId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowServerId;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places
 /// the real windows when it does not. A namespace; it holds no state.

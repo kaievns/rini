@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU64, Ordering};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use serde::{Deserialize, Serialize};
 
-use crate::actor::app::{WindowId, pid_t};
-use crate::common::collections::{HashMap, HashSet};
+use rini_core::ids::{WindowId, pid_t};
+use rini_core::collections::{HashMap, HashSet};
 use crate::common::config::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
@@ -1969,8 +1969,8 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     use super::{Column, ScrollingLayoutSystem};
-    use crate::actor::app::{WindowId, pid_t};
-    use crate::common::collections::HashMap;
+    use rini_core::ids::{WindowId, pid_t};
+    use rini_core::collections::HashMap;
     use crate::common::config::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
     use crate::layout_engine::systems::{LayoutSystem, WindowLayoutConstraints};
     use crate::layout_engine::utils::compute_tiling_area;

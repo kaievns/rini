@@ -71,8 +71,8 @@ soliciting users, I make breaking changes without warning, and persisted layout 
 no migration guarantees. If you want a stable macOS tiling WM with a community behind it,
 use [rift](https://github.com/acsandmann/rift) — it is actively maintained and good.
 
-Known rough edges are tracked as I hit them. Two upstream tests fail on `main` and are
-not yet mine to fix.
+Known rough edges are tracked in `roadmap.md`. The code is being split into workspace
+crates by bounded context; `docs/architecture.md` has the map and the current state.
 
 ## Building
 
