@@ -4818,6 +4818,7 @@ impl Reactor {
                             window.info.title.clone(),
                             window.info.ax_role.clone(),
                             window.info.ax_subrole.clone(),
+                            window.info.is_modal,
                         )
                     });
                     self.layout_manager.layout_engine.assign_window_with_app_info(
@@ -4829,6 +4830,7 @@ impl Reactor {
                         window_metadata.as_ref().map(|metadata| metadata.0.as_str()),
                         window_metadata.as_ref().and_then(|metadata| metadata.1.as_deref()),
                         window_metadata.as_ref().and_then(|metadata| metadata.2.as_deref()),
+                        window_metadata.as_ref().is_some_and(|metadata| metadata.3),
                     )
                 };
 
@@ -4886,6 +4888,7 @@ impl Reactor {
                 Option<String>,
                 Option<String>,
                 bool,
+                bool,
                 CGSize,
                 Option<CGSize>,
                 Option<CGSize>,
@@ -4896,6 +4899,7 @@ impl Reactor {
                     let title_opt = window.map(|w| w.info.title.clone());
                     let ax_role = window.and_then(|w| w.info.ax_role.clone());
                     let ax_subrole = window.and_then(|w| w.info.ax_subrole.clone());
+                    let is_modal = window.is_some_and(|w| w.info.is_modal);
                     let is_resizable = window.map_or(true, |w| w.info.is_resizable);
                     let size_hint =
                         window.map_or(CGSize::new(0.0, 0.0), |w| w.frame_monotonic.size);
@@ -4906,6 +4910,7 @@ impl Reactor {
                         title_opt,
                         ax_role,
                         ax_subrole,
+                        is_modal,
                         is_resizable,
                         size_hint,
                         min_size,
@@ -5853,7 +5858,7 @@ impl Reactor {
                 self.request_refocus_if_hidden(*space, *wid);
             }
             LayoutEvent::WindowsOnScreenUpdated(space, _, windows, _) => {
-                let hidden_exists = windows.iter().any(|(wid, _, _, _, _, _, _, _)| {
+                let hidden_exists = windows.iter().any(|(wid, _, _, _, _, _, _, _, _)| {
                     self.window_in_non_active_workspace(*space, *wid)
                 });
                 if hidden_exists {

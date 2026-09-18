@@ -425,6 +425,7 @@ fn assign_discovered_window_to_space(
     let title = window.info.title.clone();
     let ax_role = window.info.ax_role.clone();
     let ax_subrole = window.info.ax_subrole.clone();
+    let is_modal = window.info.is_modal;
 
     layout.layout_engine.assign_window_with_app_info(
         &mut state.windows,
@@ -435,6 +436,7 @@ fn assign_discovered_window_to_space(
         Some(title.as_str()),
         ax_role.as_deref(),
         ax_subrole.as_deref(),
+        is_modal,
     )
 }
 
@@ -609,6 +611,7 @@ pub(crate) fn emit_layout_events(
             Option<String>,
             Option<String>,
             bool,
+            bool,
             objc2_core_foundation::CGSize,
             Option<objc2_core_foundation::CGSize>,
             Option<objc2_core_foundation::CGSize>,
@@ -624,6 +627,7 @@ pub(crate) fn emit_layout_events(
                     Some(window.info.title.clone()),
                     window.info.ax_role.clone(),
                     window.info.ax_subrole.clone(),
+                    window.info.is_modal,
                     window.info.is_resizable,
                     window.frame_monotonic.size,
                     window.info.min_size,

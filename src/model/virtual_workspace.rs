@@ -216,7 +216,7 @@ impl WorkspaceStore {
             active_workspace_per_space: HashMap::default(),
             workspace_counter: 1,
             #[cfg(test)]
-            test_app_rules: crate::model::AppRuleEngine::new(&config.app_rules),
+            test_app_rules: crate::model::AppRuleEngine::new(&config.app_rules, config.float_modal_windows),
             max_workspaces: MAX_WORKSPACES,
             default_workspace_count: config.default_workspace_count,
             default_workspace_names: config.workspace_names.clone(),
@@ -1148,6 +1148,7 @@ impl WorkspaceStore {
             window_title,
             ax_role,
             ax_subrole,
+            is_modal: false,
         });
         self.apply_app_rule_decision(window_store, window_id, space, decision)
     }
@@ -1579,6 +1580,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             }],
             ..VirtualWorkspaceSettings::default()
         };
@@ -1748,6 +1750,7 @@ mod tests {
             title_substring: None,
             ax_role: None,
             ax_subrole: None,
+            modal: None,
         }];
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let old_space = SpaceId::new(1);
@@ -2037,6 +2040,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             // Match by app_name -> workspace 1
             AppWorkspaceRule {
@@ -2052,6 +2056,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             // Title substring -> workspace 0
             AppWorkspaceRule {
@@ -2067,6 +2072,7 @@ mod tests {
                 title_substring: Some("Preferences".into()),
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             // Title regex -> workspace 2
             AppWorkspaceRule {
@@ -2082,6 +2088,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             // AX role + subrole floating
             AppWorkspaceRule {
@@ -2097,6 +2104,7 @@ mod tests {
                 title_substring: None,
                 ax_role: Some("AXWindow".into()),
                 ax_subrole: Some("AXDialog".into()),
+                modal: None,
             },
             // Workspace by name
             AppWorkspaceRule {
@@ -2112,6 +2120,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             // Specificity tie breaking generic vs substring (generic workspace 0, specific workspace 2)
             AppWorkspaceRule {
@@ -2127,6 +2136,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             AppWorkspaceRule {
                 app_id: Some("com.example.tie".into()),
@@ -2141,6 +2151,7 @@ mod tests {
                 title_substring: Some("Editor".into()),
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             // Reapplication: Bitwarden title becomes floating
             AppWorkspaceRule {
@@ -2156,6 +2167,7 @@ mod tests {
                 title_substring: Some("Bitwarden".into()),
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             AppWorkspaceRule {
                 app_id: Some("app.zen-browser.zen".into()),
@@ -2170,6 +2182,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             // Workspace override when specific rule matches different workspace + floating
             AppWorkspaceRule {
@@ -2185,6 +2198,7 @@ mod tests {
                 title_substring: None,
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
             AppWorkspaceRule {
                 app_id: Some("app.zen-browser.zen".into()),
@@ -2199,6 +2213,7 @@ mod tests {
                 title_substring: Some("bitwarden".into()),
                 ax_role: None,
                 ax_subrole: None,
+                modal: None,
             },
         ];
 

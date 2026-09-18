@@ -386,6 +386,10 @@ pub struct WindowInfo {
     pub path: Option<PathBuf>,
     pub ax_role: Option<String>,
     pub ax_subrole: Option<String>,
+    /// `AXModal`: the window blocks its app until dismissed. Electron and Zoom report such
+    /// dialogs as `AXStandardWindow`, so the subrole alone does not tell them from app windows.
+    #[serde(default)]
+    pub is_modal: bool,
 }
 
 impl WindowInfo {
@@ -408,6 +412,7 @@ impl WindowInfo {
             .or_else(|| WindowServerId::try_from(element).ok());
         let is_minimized = element.minimized().unwrap_or_default();
         let is_resizable = element.can_resize().unwrap_or(true);
+        let is_modal = element.modal().unwrap_or_default();
 
         let (bundle_id, path) = if !is_standard {
             (None, None)
@@ -436,6 +441,7 @@ impl WindowInfo {
             path,
             ax_role,
             ax_subrole,
+            is_modal,
         };
 
         Ok((info, server_info))

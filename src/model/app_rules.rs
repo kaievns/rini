@@ -14,6 +14,8 @@ pub struct WindowRuleContext<'a> {
     pub window_title: Option<&'a str>,
     pub ax_role: Option<&'a str>,
     pub ax_subrole: Option<&'a str>,
+    /// The window's `AXModal` attribute.
+    pub is_modal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -185,10 +187,12 @@ struct CompiledRule {
 #[derive(Debug, Clone, Default)]
 pub struct AppRuleEngine {
     rules: Vec<CompiledRule>,
+    /// `float_modal_windows`: a modal window floats unless the rule that matched it names `modal`.
+    float_modals: bool,
 }
 
 impl AppRuleEngine {
-    pub fn new(rules: &[AppWorkspaceRule]) -> Self {
+    pub fn new(rules: &[AppWorkspaceRule], float_modals: bool) -> Self {
         let rules = rules
             .iter()
             .cloned()
@@ -208,9 +212,12 @@ impl AppRuleEngine {
                 CompiledRule { rule, title_regex }
             })
             .collect();
-        Self { rules }
+        Self { rules, float_modals }
     }
 
+    /// The best matching rule's decision. A modal window floats by default: with no rule, or
+    /// with a rule that does not name `modal` (an `app_id` rule sending an app to a workspace
+    /// should not tile that app's dialogs). A rule naming `modal` decides for itself.
     pub fn evaluate(&self, context: WindowRuleContext<'_>) -> AppRuleDecision {
         let best = self
             .rules
@@ -218,15 +225,26 @@ impl AppRuleEngine {
             .enumerate()
             .filter(|(_, rule)| rule.matches(context))
             .max_by_key(|(index, rule)| (rule.specificity(), std::cmp::Reverse(*index)));
+        let modal_floats = self.float_modals && context.is_modal;
         let Some((_, matched)) = best else {
-            return AppRuleDecision::NoMatch;
+            return if modal_floats {
+                AppRuleDecision::Managed {
+                    workspace: None,
+                    floating: true,
+                    position: None,
+                    size: None,
+                    focus: false,
+                }
+            } else {
+                AppRuleDecision::NoMatch
+            };
         };
         if !matched.rule.manage {
             AppRuleDecision::Unmanaged
         } else {
             AppRuleDecision::Managed {
                 workspace: matched.rule.workspace.clone(),
-                floating: matched.rule.floating,
+                floating: matched.rule.floating || (modal_floats && matched.rule.modal.is_none()),
                 position: matched.rule.position,
                 size: matched.rule.size,
                 focus: matched.rule.focus,
@@ -247,6 +265,7 @@ impl CompiledRule {
             && optional_contains(self.rule.title_substring.as_deref(), context.window_title)
             && optional_exact(self.rule.ax_role.as_deref(), context.ax_role)
             && optional_exact(self.rule.ax_subrole.as_deref(), context.ax_subrole)
+            && self.rule.modal.is_none_or(|modal| modal == context.is_modal)
     }
 
     fn specificity(&self) -> usize {
@@ -262,6 +281,7 @@ impl CompiledRule {
         .flatten()
         .filter(|value| !value.is_empty())
         .count()
+            + usize::from(self.rule.modal.is_some())
     }
 }
 
@@ -311,8 +331,9 @@ mod tests {
             title_substring: None,
             ax_role: None,
             ax_subrole: None,
+            modal: None,
         };
-        let engine = AppRuleEngine::new(&[rule]);
+        let engine = AppRuleEngine::new(&[rule], true);
         assert_eq!(
             engine.evaluate(WindowRuleContext {
                 app_bundle_id: Some("COM.EXAMPLE.EDITOR"),
@@ -327,5 +348,76 @@ mod tests {
                 focus: true,
             }
         );
+    }
+
+    fn rule(app_id: Option<&str>, modal: Option<bool>, floating: bool) -> AppWorkspaceRule {
+        AppWorkspaceRule {
+            app_id: app_id.map(Into::into),
+            workspace: Some(WorkspaceSelector::Index(2)),
+            floating,
+            position: None,
+            size: None,
+            focus: false,
+            manage: true,
+            app_name: None,
+            title_regex: None,
+            title_substring: None,
+            ax_role: None,
+            ax_subrole: None,
+            modal,
+        }
+    }
+
+    fn floats(decision: &AppRuleDecision) -> Option<bool> {
+        match decision {
+            AppRuleDecision::Managed { floating, .. } => Some(*floating),
+            _ => None,
+        }
+    }
+
+    /// `float_modal_windows`: a modal floats with no rule, and under a rule that does not name
+    /// `modal` (the rule's other effects, such as the workspace, still apply). A rule naming
+    /// `modal` decides for itself; with the setting off a modal is any other window.
+    #[test]
+    fn a_modal_window_floats_unless_a_rule_naming_modal_says_otherwise() {
+        let modal = WindowRuleContext {
+            app_bundle_id: Some("com.example.Editor"),
+            is_modal: true,
+            ..Default::default()
+        };
+        let plain = WindowRuleContext { is_modal: false, ..modal };
+
+        let none = AppRuleEngine::new(&[], true);
+        assert_eq!(floats(&none.evaluate(modal)), Some(true));
+        assert_eq!(none.evaluate(plain), AppRuleDecision::NoMatch);
+
+        let by_app = AppRuleEngine::new(&[rule(Some("com.example.Editor"), None, false)], true);
+        let decision = by_app.evaluate(modal);
+        assert_eq!(floats(&decision), Some(true), "an app rule does not tile the app's dialogs");
+        assert!(matches!(decision, AppRuleDecision::Managed { workspace: Some(_), .. }), "{decision:?}");
+        assert_eq!(floats(&by_app.evaluate(plain)), Some(false));
+
+        let tiled_modals = AppRuleEngine::new(&[rule(Some("com.example.Editor"), Some(true), false)], true);
+        assert_eq!(floats(&tiled_modals.evaluate(modal)), Some(false), "a rule naming modal wins");
+        assert_eq!(tiled_modals.evaluate(plain), AppRuleDecision::NoMatch, "modal = true does not match a plain window");
+
+        let off = AppRuleEngine::new(&[], false);
+        assert_eq!(off.evaluate(modal), AppRuleDecision::NoMatch);
+    }
+
+    /// `modal` counts toward specificity like every other match field: a rule naming it beats a
+    /// bare `app_id` rule for the same app.
+    #[test]
+    fn a_rule_naming_modal_is_more_specific_than_one_that_does_not() {
+        let engine = AppRuleEngine::new(
+            &[rule(Some("com.example.Editor"), None, false), rule(Some("com.example.Editor"), Some(true), false)],
+            true,
+        );
+        let modal = WindowRuleContext {
+            app_bundle_id: Some("com.example.Editor"),
+            is_modal: true,
+            ..Default::default()
+        };
+        assert_eq!(floats(&engine.evaluate(modal)), Some(false));
     }
 }

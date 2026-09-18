@@ -49,6 +49,10 @@ pub struct VirtualWorkspaceSettings {
     pub default_workspace: usize,
     #[serde(default)]
     pub reapply_app_rules_on_title_change: bool,
+    /// Modal windows (`AXModal`) float instead of taking a column. A rule that names `modal`
+    /// overrides this for the windows it matches.
+    #[serde(default = "yes")]
+    pub float_modal_windows: bool,
     #[serde(default)]
     pub app_rules: Vec<AppWorkspaceRule>,
     #[serde(default)]
@@ -111,6 +115,10 @@ pub struct AppWorkspaceRule {
     /// non-empty string and will be compared against the accessibility subrole
     /// reported by the AX APIs for a window (exact string match).
     pub ax_subrole: Option<String>,
+
+    /// Optional: match on the window's `AXModal` attribute. `true` matches modal dialogs,
+    /// `false` matches everything else. A rule naming `modal` overrides `float_modal_windows`.
+    pub modal: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
@@ -139,6 +147,7 @@ impl Default for VirtualWorkspaceSettings {
             workspace_names: default_workspace_names(),
             default_workspace: 0,
             reapply_app_rules_on_title_change: false,
+            float_modal_windows: true,
             app_rules: Vec::new(),
             workspace_rules: Vec::new(),
         }
@@ -186,9 +195,10 @@ impl VirtualWorkspaceSettings {
                 && rule.title_substring.is_none()
                 && rule.ax_role.is_none()
                 && rule.ax_subrole.is_none()
+                && rule.modal.is_none()
             {
                 issues.push(format!(
-                    "App rule {} has no app_id, app_name, title_regex, or title_substring specified",
+                    "App rule {} has no app_id, app_name, title_regex, title_substring, ax_role, ax_subrole, or modal specified",
                     index
                 ));
             }
@@ -1827,6 +1837,7 @@ mod tests {
             title_substring: None,
             ax_role: None,
             ax_subrole: None,
+            modal: None,
         });
 
         let issues = settings.validate();

@@ -50,11 +50,13 @@ pub enum LayoutEvent {
     WindowsOnScreenUpdated(
         SpaceId,
         pid_t,
+        /// Per window: id, title, AX role, AX subrole, is_modal, is_resizable, size, min size, max size.
         Vec<(
             WindowId,
             Option<String>,
             Option<String>,
             Option<String>,
+            bool,
             bool,
             CGSize,
             Option<CGSize>,
@@ -367,7 +369,7 @@ impl LayoutEngine {
         window_store: &WindowStore,
         settings: &crate::common::config::VirtualWorkspaceSettings,
     ) {
-        self.app_rules = AppRuleEngine::new(&settings.app_rules);
+        self.app_rules = AppRuleEngine::new(&settings.app_rules, settings.float_modal_windows);
         self.virtual_workspace_manager.update_settings(settings, &self.layout_settings);
 
         // Re-apply workspace layout rules to already-existing workspaces on hot reload.
@@ -1640,7 +1642,7 @@ impl LayoutEngine {
             workspace_layouts: WorkspaceLayouts::default(),
             floating: FloatingManager::new(),
             floating_positions: FloatingPositionStore::default(),
-            app_rules: AppRuleEngine::new(&virtual_workspace_config.app_rules),
+            app_rules: AppRuleEngine::new(&virtual_workspace_config.app_rules, virtual_workspace_config.float_modal_windows),
             focused_window: None,
             window_layout_constraints: HashMap::default(),
             virtual_workspace_manager,
@@ -1793,6 +1795,7 @@ impl LayoutEngine {
                     title_opt,
                     ax_role_opt,
                     ax_subrole_opt,
+                    is_modal,
                     is_resizable,
                     size_hint,
                     min_size,
@@ -1836,6 +1839,7 @@ impl LayoutEngine {
                         title_ref,
                         ax_role_ref,
                         ax_subrole_ref,
+                        is_modal,
                     ) {
                         Ok(outcome) => outcome,
                         Err(_) => {
@@ -3103,6 +3107,7 @@ impl LayoutEngine {
         window_title: Option<&str>,
         ax_role: Option<&str>,
         ax_subrole: Option<&str>,
+        is_modal: bool,
     ) -> Result<AppRuleResult, crate::model::virtual_workspace::WorkspaceError> {
         let decision = self.app_rules.evaluate(WindowRuleContext {
             app_bundle_id,
@@ -3110,6 +3115,7 @@ impl LayoutEngine {
             window_title,
             ax_role,
             ax_subrole,
+            is_modal,
         });
 
         // Where this application's windows were, but only when the config had nothing to say and the
@@ -3624,6 +3630,48 @@ mod tests {
         );
     }
 
+    /// `float_modal_windows` (default on): a modal window reported alongside a plain one floats
+    /// with no app rule configured, and the plain one takes a column.
+    #[test]
+    fn a_modal_window_floats_by_default_and_a_plain_one_is_tiled() {
+        let settings = VirtualWorkspaceSettings::default();
+        assert!(settings.float_modal_windows);
+        let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default(), None);
+        let mut window_store = WindowStore::default();
+        let space = SpaceId::new(91);
+        let (plain, modal) = (WindowId::new(7, 1), WindowId::new(7, 2));
+        let _ = engine.handle_event(
+            &mut window_store,
+            LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+        );
+        let info = |wid, is_modal| (wid, None, None, None, is_modal, true, CGSize::new(300.0, 200.0), None, None);
+        let _ = engine.handle_event(
+            &mut window_store,
+            LayoutEvent::WindowsOnScreenUpdated(
+                space,
+                7,
+                vec![info(plain, false), info(modal, true)],
+                Some(AppInfo { bundle_id: Some("com.example.Tool".into()), localized_name: None }),
+            ),
+        );
+        assert!(engine.is_window_floating(modal), "the modal floats");
+        assert!(!engine.is_window_floating(plain), "the app window is tiled");
+
+        let mut off = VirtualWorkspaceSettings::default();
+        off.float_modal_windows = false;
+        let mut engine = LayoutEngine::new(&off, &LayoutSettings::default(), None);
+        let mut window_store = WindowStore::default();
+        let _ = engine.handle_event(
+            &mut window_store,
+            LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+        );
+        let _ = engine.handle_event(
+            &mut window_store,
+            LayoutEvent::WindowsOnScreenUpdated(space, 7, vec![info(modal, true)], None),
+        );
+        assert!(!engine.is_window_floating(modal), "with the setting off a modal is tiled");
+    }
+
     #[test]
     fn floating_app_rule_emits_one_shot_placement_and_switches_focus_workspace() {
         let mut settings = VirtualWorkspaceSettings::default();
@@ -3640,6 +3688,7 @@ mod tests {
             title_substring: None,
             ax_role: None,
             ax_subrole: None,
+            modal: None,
         }];
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default(), None);
         let mut window_store = WindowStore::default();
@@ -3658,6 +3707,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    false,
                     true,
                     CGSize::new(300.0, 200.0),
                     None,
@@ -3724,6 +3774,7 @@ mod tests {
             title_substring: None,
             ax_role: None,
             ax_subrole: None,
+            modal: None,
         }];
         let mut layout_settings = LayoutSettings::default();
         layout_settings.scrolling.min_column_width_ratio = 0.1;
@@ -3744,6 +3795,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    false,
                     true,
                     CGSize::new(500.0, 500.0),
                     None,
@@ -3811,7 +3863,7 @@ mod tests {
         let window_a = WindowId::new(1, 1);
         let window_b = WindowId::new(1, 2);
         let window_c = WindowId::new(2, 1);
-        let window_info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
+        let window_info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -3874,7 +3926,7 @@ mod tests {
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0));
         let pid: pid_t = 42;
         let wid = WindowId::new(pid, 1);
-        let window_info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
+        let window_info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
         let _ =
             engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
@@ -3923,7 +3975,7 @@ mod tests {
         let pid: pid_t = 43;
         let wid = WindowId::new(pid, 1);
         let source_position = CGRect::new(CGPoint::new(120.0, 140.0), CGSize::new(260.0, 220.0));
-        let window_info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
+        let window_info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -4009,7 +4061,7 @@ mod tests {
         let tiled = WindowId::new(pid, 1);
         let float_a = WindowId::new(pid, 2);
         let float_b = WindowId::new(pid, 3);
-        let info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
+        let info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
         let _ =
             engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
@@ -4079,7 +4131,7 @@ mod tests {
             let pid: pid_t = 73;
             let on_left = WindowId::new(pid, 1);
             let on_right = WindowId::new(pid, 2);
-            let info = |wid| (wid, None, None, None, true, CGSize::new(0.0, 0.0), None, None);
+            let info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
             for (space, wid) in [(left, on_left), (right, on_right)] {
                 let _ =
@@ -4272,6 +4324,7 @@ mod tests {
                 None,
                 None,
                 None,
+                false,
                 true,
                 CGSize::new(500.0, 500.0),
                 None,
@@ -4337,6 +4390,7 @@ mod tests {
                 None,
                 None,
                 None,
+                false,
                 true,
                 CGSize::new(500.0, 500.0),
                 None,
@@ -4413,6 +4467,7 @@ mod tests {
                 None,
                 None,
                 None,
+                false,
                 true,
                 CGSize::new(500.0, 500.0),
                 None,
@@ -4423,6 +4478,7 @@ mod tests {
                 None,
                 None,
                 None,
+                false,
                 true,
                 CGSize::new(500.0, 500.0),
                 None,
@@ -4433,6 +4489,7 @@ mod tests {
                 None,
                 None,
                 None,
+                false,
                 true,
                 CGSize::new(500.0, 500.0),
                 None,
@@ -4508,6 +4565,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    false,
                     true,
                     CGSize::new(500.0, 500.0),
                     None,
@@ -4563,6 +4621,7 @@ mod tests {
                         None,
                         None,
                         None,
+                        false,
                         true,
                         CGSize::new(500.0, 500.0),
                         None,
@@ -4573,6 +4632,7 @@ mod tests {
                         None,
                         None,
                         None,
+                        false,
                         true,
                         CGSize::new(500.0, 500.0),
                         None,
@@ -4642,6 +4702,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    false,
                     true,
                     CGSize::new(500.0, 500.0),
                     None,
@@ -4724,6 +4785,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    false,
                     true,
                     CGSize::new(500.0, 500.0),
                     None,

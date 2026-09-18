@@ -218,6 +218,12 @@ impl AXUIElement {
         self.bool_attribute("AXMinimized")
     }
 
+    /// `kAXModalAttribute`: whether the window is modal. Most windows do not expose the
+    /// attribute at all, which comes back as an error and is read as "not modal".
+    pub fn modal(&self) -> Result<bool> {
+        self.bool_attribute("AXModal")
+    }
+
     pub fn fullscreen(&self) -> Result<bool> {
         self.bool_attribute("AXFullscreen")
     }

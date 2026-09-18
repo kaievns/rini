@@ -282,6 +282,9 @@ drag_swap_fraction = 0.3
 # - prevent_wrapping: when true, next/previous workspace switching stops at the first/last
 #   workspace instead of wrapping around
 # - reapply_app_rules_on_title_change: if true, app rules are re-evaluated when a window's title changes
+# - float_modal_windows: modal dialogs (the window's AXModal attribute) float instead of taking
+#   a column, even under an app rule that sends the app to a workspace. An app rule that names
+#   `modal` decides for the windows it matches (see "App rules" below).
 enabled = true
 default_workspace_count = 4
 auto_assign_windows = true
@@ -289,6 +292,7 @@ preserve_focus_per_workspace = true
 workspace_auto_back_and_forth = false
 prevent_wrapping = false
 reapply_app_rules_on_title_change = false
+float_modal_windows = true
 
 # Workspace-specific rules
 # - workspace: target workspace by index (integer) or name (string)
@@ -322,6 +326,9 @@ workspace_names = [
 #   - title_regex    : regular expression matched against the window title
 #   - title_substring: literal substring (case-sensitive) matched against the title
 #   - ax_role / ax_subrole: exact match against macOS Accessibility (AX) role/subrole
+#   - modal (boolean): match on the window's AXModal attribute. `true` matches modal dialogs,
+#     `false` matches everything else. Electron and Zoom report their dialogs as
+#     AXStandardWindow, so this is the field that tells them from app windows.
 #
 # Rule options:
 #   - workspace (integer, 0-based): target workspace index. If omitted or invalid, uses the active workspace.
@@ -359,6 +366,13 @@ workspace_names = [
 #   - `ax_role` and `ax_subrole` match the exact AX values reported by macOS
 #     (e.g., "AXWindow", "AXDialog", "AXSystemDialog", "AXToolbar").
 #   - Useful for distinguishing dialogs, sheets, toolbars, etc., when bundle/name/title aren't enough.
+#
+# Modal windows:
+#   - With `float_modal_windows = true` (the default) a modal window floats whether or not a
+#     rule matches it, unless the matching rule names `modal`. To tile one app's modals:
+#       app_rules = [
+#         { app_id = "com.example.X", modal = true, floating = false },
+#       ]
 #
 # Validation:
 #   - `title_regex` must be a valid regular expression. Invalid regexes cause the rule

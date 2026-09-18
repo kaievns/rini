@@ -437,7 +437,7 @@ impl LayoutEngine {
     ) {
         self.broadcast_tx = broadcast_tx;
         self.set_layout_settings(layout_settings);
-        self.app_rules = AppRuleEngine::new(&virtual_workspace_config.app_rules);
+        self.app_rules = AppRuleEngine::new(&virtual_workspace_config.app_rules, virtual_workspace_config.float_modal_windows);
         self.virtual_workspace_manager
             .update_settings(virtual_workspace_config, layout_settings);
     }
