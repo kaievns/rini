@@ -72,9 +72,23 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{CGError, CGEvent};
 use tracing::{debug, info};
 
-use rini_config::StackedUpperSide;
+use serde::{Deserialize, Serialize};
 use rini_shared::geometry::CGRectExt;
-use rini_macos::screen::ScreenInfo;
+use rini_runloop::channel;
+
+use crate::screen::ScreenInfo;
+
+
+/// Which side of a side-by-side pair is the upper one when the pair is stacked. Settings vocabulary.
+/// Which side of the desk the logically-upper display sits on; macOS cannot tell us. Semantics in
+/// `rini.default.toml` under `stacked_display_upper_is`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StackedUpperSide {
+    #[default]
+    Left,
+    Right,
+}
 
 /// How close to an edge counts as pressing against it.
 ///
@@ -114,8 +128,8 @@ pub enum Request {
     Stop,
 }
 
-pub type Sender = crate::actor::Sender<Request>;
-pub type Receiver = crate::actor::Receiver<Request>;
+pub type Sender = channel::Sender<Request>;
+pub type Receiver = channel::Receiver<Request>;
 
 pub struct CursorWarp {
     rx: Receiver,

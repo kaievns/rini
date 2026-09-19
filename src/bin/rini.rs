@@ -13,7 +13,7 @@ use rini_wm::actor::mission_control_observer::NativeMissionControl;
 use rini_wm::actor::notification_center::NotificationCenter;
 use rini_windows::lifecycle::ProcessActor;
 use rini_wm::actor::reactor::{self, Reactor};
-use rini_wm::actor::spaces::SpacesActor;
+use rini_displays::spaces::SpacesActor;
 use rini_wm::actor::window_notify as window_notify_actor;
 use rini_wm::actor::wm_controller::{self, WmController};
 use rini_config::{Config, config_file, restore_file};
@@ -25,7 +25,7 @@ use rini_windows::transaction::WindowTxStore;
 use rini_macos::accessibility::ensure_accessibility_permission;
 use rini_runloop::executor::Executor;
 use rini_macos::mach::init_window_sub_level_server_port;
-use rini_macos::screen::displays_have_separate_spaces;
+use rini_displays::screen::displays_have_separate_spaces;
 use rini_macos::service::{ServiceCommands, handle_service_command};
 use rini_skylight_sys::{
     CGEnableEventStateCombining, CGSEventType, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
@@ -303,8 +303,7 @@ stays usable. Fix the config and restart. Error: {error}",
 
     let _ = events_tx.send(reactor::Event::RegisterWmSender(wm_controller_sender.clone()));
 
-    let (spaces_actor, spaces_tx) =
-        SpacesActor::new(events_tx.clone(), wm_controller_sender.clone());
+    let (spaces_actor, spaces_tx) = SpacesActor::new(Box::new(wm_controller_sender.clone()));
     let wn_actor = window_notify_actor::WindowNotify::new(
         events_tx.clone(),
         spaces_tx.clone(),
@@ -350,7 +349,7 @@ stays usable. Fix the config and restart. Error: {error}",
 
     // Warping needs no main-thread access and no permissions, so it is just another
     // actor. It stays parked until the reactor sends it geometry for two or more displays.
-    let cursor_warp = rini_wm::actor::cursor_warp::CursorWarp::new(
+    let cursor_warp = rini_displays::cursor_warp::CursorWarp::new(
         config.settings.warp_cursor_between_stacked_displays,
         config.settings.stacked_display_upper_is,
         config.settings.stacked_display_lower_top_at,

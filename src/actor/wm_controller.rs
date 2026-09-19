@@ -23,11 +23,9 @@ type Receiver = actor::Receiver<WmEvent>;
 
 use self::WmCmd::*;
 use rini_windows::app::AppInfo;
-use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::{self, event_tap, reactor};
 use rini_windows::transaction::WindowTxStore;
 use rini_runloop::dispatch::DispatchExt;
-use rini_macos::screen::CoordinateConverter;
 
 use crate::layout_engine as layout;
 
@@ -39,11 +37,19 @@ pub enum WmEvent {
     AppGloballyActivated(pid_t),
     AppGloballyDeactivated(pid_t),
     AppTerminated(pid_t),
-    SpaceStateUpdated(ForwardedSpaceState, CoordinateConverter),
+    /// Everything the displays context reports. The topology snapshot is also fanned out to the
+    /// event tap; the rest goes to the reactor as is.
+    Displays(rini_displays::event::Event),
     PowerStateChanged(bool),
     KeyboardLayoutChanged,
     ConfigUpdated(rini_config::Config),
     Command(WmCommand),
+}
+
+impl From<rini_displays::event::Event> for WmEvent {
+    fn from(event: rini_displays::event::Event) -> Self {
+        WmEvent::Displays(event)
+    }
 }
 
 impl From<rini_windows::lifecycle::AppLifecycle> for WmEvent {
@@ -119,13 +125,14 @@ impl WmController {
 
 
         match event {
-            SpaceStateUpdated(space_state, converter) => {
-                self.events_tx.send(Event::SpaceStateChanged(space_state.clone()));
+            Displays(rini_displays::event::Event::SpaceStateUpdated(space_state, converter)) => {
                 _ = self.event_tap_tx.send(event_tap::Request::SpaceStateUpdated(
                     space_state.clone(),
                     converter,
                 ));
+                self.events_tx.send(Event::SpaceStateChanged(space_state));
             }
+            Displays(event) => self.events_tx.send(Event::from(event)),
             AppEventsRegistered => {
                 _ = self.event_tap_tx.send(event_tap::Request::SetEventProcessing(false));
 

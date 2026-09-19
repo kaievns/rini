@@ -1,9 +1,8 @@
-//! Transitional: ids, collections and geometry that have not yet moved to their contexts.
-//! Dissolves as `rini-windows` and `rini-displays` land. See `docs/architecture.md`.
+//! Transitional: collections, geometry, log and util. Geometry becomes `rini-geometry`; the rest
+//! goes to its only users. See `docs/architecture.md`.
 
 pub mod collections;
 pub mod geometry;
-pub mod ids;
 pub mod log;
 pub mod util;
 

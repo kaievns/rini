@@ -7,7 +7,7 @@ use rini_shared::collections::HashMap;
 use crate::{VirtualWorkspaceId, WorkspaceStore};
 use rini_windows::ids::pid_t;
 use rini_shared::geometry::CGRectDef;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 
 /// Saved floating frames. This is layout persistence, not workspace catalog
 /// state; callers must remove entries as part of the corresponding window

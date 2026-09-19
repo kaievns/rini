@@ -20,7 +20,7 @@ use crate::display_affinity::ColumnWidth;
 use crate::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
 use crate::{AppRuleEffects, AppRuleResult, DisplayAffinity, FloatingPositionStore, WindowStore};
 use rini_windows::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 
 mod persistence;
 

@@ -6,6 +6,7 @@
 // https://github.com/koekeishiya/yabai/blob/d55a647913ab72d8d8b348bee2d3e59e52ce4a5d/src/misc/extern.h.
 
 use std::ffi::{c_int, c_uint, c_void};
+use std::num::NonZeroU32;
 use std::fmt;
 
 use bitflags::bitflags;
@@ -17,6 +18,7 @@ use objc2_core_foundation::{
 use objc2_core_graphics::{CGError, CGEventSourceStateID, CGImage, CGWindowID};
 use objc2_foundation::NSArray;
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 
 
 pub static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
@@ -494,4 +496,75 @@ unsafe extern "C" {
 
     pub fn SLSSetWindowLevel(cid: cid_t, wid: u32, level: c_int) -> CGError;
     pub fn SLSOrderWindow(cid: cid_t, wid: u32, order: c_int, relative_to: u32) -> CGError;
+}
+
+/// A CGSSpaceID: the window server's identity for a native space.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct SpaceId(u64);
+impl SpaceId {
+    pub fn new(id: u64) -> SpaceId {
+        SpaceId(id)
+    }
+
+    pub fn get(&self) -> u64 {
+        self.0
+    }
+}
+impl From<SpaceId> for u64 {
+    fn from(id: SpaceId) -> u64 {
+        id.get()
+    }
+}
+impl std::fmt::Display for SpaceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A CGWindowID: the window server's identity for a window.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct WindowServerId(pub u32);
+impl WindowServerId {
+    #[inline]
+    pub fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    #[inline]
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    #[inline]
+    pub fn as_nonzero(self) -> Option<NonZeroU32> {
+        NonZeroU32::new(self.0)
+    }
+}
+impl From<WindowServerId> for u32 {
+    #[inline]
+    fn from(id: WindowServerId) -> Self {
+        id.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn space_id_serializes_as_a_bare_number() {
+        let space = SpaceId::new(1234);
+        assert_eq!(serde_json::to_string(&space).unwrap(), "1234");
+        assert_eq!(serde_json::from_str::<SpaceId>("1234").unwrap(), space);
+        assert_eq!(space.to_string(), "1234");
+        assert_eq!(u64::from(space), 1234);
+    }
+
+    #[test]
+    fn window_server_id_zero_is_not_a_window() {
+        assert_eq!(WindowServerId::new(0).as_nonzero(), None);
+        assert_eq!(WindowServerId::new(7).as_nonzero().map(|n| n.get()), Some(7));
+        assert_eq!(u32::from(WindowServerId::new(7)), 7);
+    }
 }

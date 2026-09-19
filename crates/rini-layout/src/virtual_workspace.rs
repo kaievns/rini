@@ -18,7 +18,7 @@ use crate::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 use crate::{WindowStore, WindowWorkspaceInfo};
 use rini_windows::ids::pid_t;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 
 new_key_type! {
     pub struct VirtualWorkspaceId;
@@ -1158,7 +1158,7 @@ mod tests {
 
     use super::*;
     use rini_windows::ids::WindowId;
-    use rini_shared::ids::SpaceId;
+    use rini_displays::ids::SpaceId;
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {
         match result {

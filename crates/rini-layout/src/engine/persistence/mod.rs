@@ -19,7 +19,7 @@ use crate::{
     DisplayAffinity, FloatingPositionStore, VirtualWorkspaceId, WindowStore,
     WorkspaceStore,
 };
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 
 static SAVE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

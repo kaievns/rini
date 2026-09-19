@@ -8,7 +8,7 @@ use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::drag_swap::DragManager as DragSwapManager;
 use crate::actor::reactor::Reactor;
 use crate::actor::reactor::animation::AnimationManager;
-use crate::actor::spaces::ForwardedSpaceState;
+use rini_displays::topology::ForwardedSpaceState;
 use crate::actor::{
     event_tap, gesture_tap, raise_manager, window_notify, wm_controller,
 };
@@ -16,7 +16,7 @@ use rini_shared::collections::{HashMap, HashSet};
 use rini_config::WindowSnappingSettings;
 use crate::layout_engine::LayoutEngine;
 use crate::model::broadcast::BroadcastSender;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 
 /// Manages application state and rules
 pub struct AppManager {
@@ -149,7 +149,7 @@ impl RefreshQuarantineManager {
 pub struct CommunicationManager {
     pub event_tap_tx: Option<event_tap::Sender>,
     pub gesture_tap_tx: Option<gesture_tap::Sender>,
-    pub cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
+    pub cursor_warp_tx: Option<rini_displays::cursor_warp::Sender>,
     pub workspace_animation_tx: Option<rini_overlay::engine::Sender>,
     pub raise_manager_tx: raise_manager::Sender,
     pub event_broadcaster: BroadcastSender,

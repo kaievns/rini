@@ -17,7 +17,7 @@ use rini_windows::window_server::{
 
 use crate::cg_ok;
 use crate::mach::mach_get_window_sub_level;
-use crate::screen::ScreenInfo;
+use rini_displays::screen::ScreenInfo;
 
 fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
     Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())

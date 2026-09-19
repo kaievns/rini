@@ -28,7 +28,7 @@ use tracing::{debug, error, trace, warn};
 
 use super::reactor::{self, Event};
 use crate::actor;
-use crate::actor::spaces::ForwardedSpaceState;
+use rini_displays::topology::ForwardedSpaceState;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
 use rini_shared::collections::{HashMap, HashSet};
 use rini_config::Config;
@@ -38,7 +38,7 @@ use rini_macos::hotkey::{
     Modifiers, is_modifier_key, key_code_from_event, modifier_key_is_active,
     modifiers_from_flags_with_keys,
 };
-use rini_macos::screen::CoordinateConverter;
+use rini_displays::screen::CoordinateConverter;
 use rini_windows::ids::WindowServerId;
 use rini_macos::power;
 use rini_windows::window_server;

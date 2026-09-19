@@ -1,12 +1,27 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
-use crate::actor;
-use crate::actor::{reactor, wm_controller};
+use rini_runloop::channel;
+use crate::event::Event as OutEvent;
+
+/// Splits the actor's one event stream the way the application does: topology snapshots one way,
+/// everything else the other, each in the order the actor sent them.
+struct Split {
+    topology: channel::Sender<OutEvent>,
+    rest: channel::Sender<OutEvent>,
+}
+impl EventSink for Split {
+    fn send(&self, event: OutEvent) {
+        match event {
+            OutEvent::SpaceStateUpdated(..) => self.topology.send(event),
+            _ => self.rest.send(event),
+        }
+    }
+}
 
 fn make_screen(space: Option<SpaceId>) -> ScreenInfo {
     ScreenInfo {
-        id: rini_macos::screen::ScreenId::new(1),
+        id: crate::ids::ScreenId::new(1),
         frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)),
         display_uuid: "display-1".to_string(),
         name: Some("Display".to_string()),
@@ -22,7 +37,7 @@ fn make_screen_with(
     space: Option<SpaceId>,
 ) -> ScreenInfo {
     ScreenInfo {
-        id: rini_macos::screen::ScreenId::new(screen_id),
+        id: crate::ids::ScreenId::new(screen_id),
         frame: CGRect::new(CGPoint::new(origin_x, 0.0), CGSize::new(width, 800.0)),
         display_uuid: display_uuid.to_string(),
         name: Some(display_uuid.to_string()),
@@ -34,19 +49,19 @@ fn fullscreen_space_for(user_space: SpaceId) -> SpaceId {
     SpaceId::new(0x400000000 + user_space.get())
 }
 
-fn recv_wm(rx: &mut actor::Receiver<wm_controller::WmEvent>) -> wm_controller::WmEvent {
+fn recv_wm(rx: &mut channel::Receiver<OutEvent>) -> OutEvent {
     rx.try_recv().expect("expected wm event").1
 }
 
-fn recv_reactor(rx: &mut actor::Receiver<reactor::Event>) -> reactor::Event {
+fn recv_reactor(rx: &mut channel::Receiver<OutEvent>) -> OutEvent {
     rx.try_recv().expect("expected reactor event").1
 }
 
-fn assert_no_wm_event(rx: &mut actor::Receiver<wm_controller::WmEvent>) {
+fn assert_no_wm_event(rx: &mut channel::Receiver<OutEvent>) {
     assert!(rx.try_recv().is_err(), "expected no wm event");
 }
 
-fn assert_no_reactor_event(rx: &mut actor::Receiver<reactor::Event>) {
+fn assert_no_reactor_event(rx: &mut channel::Receiver<OutEvent>) {
     assert!(rx.try_recv().is_err(), "expected no reactor event");
 }
 
@@ -91,19 +106,19 @@ fn active_display_space_falls_back_to_active_space_then_screen_order() {
 
 fn build_actor() -> (
     SpacesActor,
-    actor::Receiver<wm_controller::WmEvent>,
-    actor::Receiver<reactor::Event>,
+    channel::Receiver<OutEvent>,
+    channel::Receiver<OutEvent>,
 ) {
-    let (wm_tx, wm_rx) = actor::channel();
-    let (reactor_tx, reactor_rx) = actor::channel();
-    let (actor, _) = SpacesActor::new_for_tests(reactor_tx, wm_tx);
+    let (wm_tx, wm_rx) = channel::channel();
+    let (reactor_tx, reactor_rx) = channel::channel();
+    let (actor, _) = SpacesActor::new_for_tests(Box::new(Split { topology: wm_tx, rest: reactor_tx }));
     (actor, wm_rx, reactor_rx)
 }
 
 #[test]
 fn active_display_changed_skips_refresh_when_display_is_already_active() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(SpaceId::new(1))),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(SpaceId::new(2))),
@@ -120,7 +135,7 @@ fn active_display_changed_skips_refresh_when_display_is_already_active() {
     assert_no_wm_event(&mut wm_rx);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::ActiveDisplayChanged {
+        OutEvent::ActiveDisplayChanged {
             menu_bar_space: Some(space),
             command_space: Some(command_space),
         } if space == SpaceId::new(2) && command_space == SpaceId::new(2)
@@ -132,18 +147,18 @@ fn forwards_stable_screen_and_space_updates_immediately() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(11);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(space))],
         CoordinateConverter::default(),
     ));
-    actor.handle_event(Event::SpaceChanged(vec![Some(space)]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
 
     assert!(matches!(
         recv_wm(&mut wm_rx),
-        wm_controller::WmEvent::SpaceStateUpdated(..)
+        OutEvent::SpaceStateUpdated(..)
     ));
 
-    actor.handle_event(Event::SpaceChanged(vec![Some(space)]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
     assert_no_wm_event(&mut wm_rx);
     assert_no_reactor_event(&mut reactor_rx);
 }
@@ -160,12 +175,12 @@ fn confirmed_window_move_forwards_membership_without_space_switch() {
     actor.state.visible_window_spaces.insert(wsid, origin);
     rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![destination.get()]));
 
-    actor.handle_event(Event::WindowServerDestroyed(wsid, origin));
+    actor.handle_event(Notification::WindowServerDestroyed(wsid, origin));
 
     rini_windows::window_server::set_window_spaces_override(wsid, None);
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert!(state.active_window_spaces.is_empty());
             assert_eq!(state.screens[0].space, Some(origin));
         }
@@ -179,7 +194,7 @@ fn active_space_changed_waits_for_confirmed_refresh() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     actor.state.last_sent_spaces = Some(vec![Some(SpaceId::new(11))]);
 
-    actor.handle_event(Event::ActiveSpaceChanged);
+    actor.handle_event(Notification::ActiveSpaceChanged);
 
     assert!(actor.state.awaiting_space_switch_confirmation);
     assert_no_wm_event(&mut wm_rx);
@@ -195,10 +210,10 @@ fn active_space_changed_forwards_immediately_when_space_snapshot_changes() {
     actor.state.screens = vec![make_screen(Some(new_space))];
     actor.state.last_sent_spaces = Some(vec![Some(old_space)]);
 
-    actor.handle_event(Event::ActiveSpaceChanged);
+    actor.handle_event(Notification::ActiveSpaceChanged);
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(new_space)]
@@ -218,11 +233,11 @@ fn quarantines_window_space_events_during_sleep_before_churn_begins() {
     let existing_space = SpaceId::new(4);
     actor.state.visible_window_spaces.insert(existing, existing_space);
 
-    actor.handle_event(Event::SystemWillSleep);
-    actor.handle_event(Event::WindowServerAppeared(appeared, SpaceId::new(3)));
-    actor.handle_event(Event::WindowServerDestroyed(existing, existing_space));
-    actor.handle_event(Event::SpaceCreated(SpaceId::new(5)));
-    actor.handle_event(Event::SpaceDestroyed(SpaceId::new(6)));
+    actor.handle_event(Notification::SystemWillSleep);
+    actor.handle_event(Notification::WindowServerAppeared(appeared, SpaceId::new(3)));
+    actor.handle_event(Notification::WindowServerDestroyed(existing, existing_space));
+    actor.handle_event(Notification::SpaceCreated(SpaceId::new(5)));
+    actor.handle_event(Notification::SpaceDestroyed(SpaceId::new(6)));
 
     assert_eq!(
         actor.state.quarantine_stats,
@@ -239,7 +254,7 @@ fn quarantines_window_space_events_during_sleep_before_churn_begins() {
     assert_no_wm_event(&mut wm_rx);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SystemWillSleep
+        OutEvent::SystemWillSleep
     ));
     assert_no_reactor_event(&mut reactor_rx);
 }
@@ -249,24 +264,24 @@ fn buffers_screen_and_space_updates_until_display_churn_ends() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(21);
 
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(space))],
         CoordinateConverter::default(),
     ));
-    actor.handle_event(Event::SpaceChanged(vec![Some(space)]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert_no_wm_event(&mut wm_rx);
 
-    actor.handle_event(Event::DisplayChurnEnd);
+    actor.handle_event(Notification::DisplayChurnEnd);
 
     assert!(matches!(
         recv_wm(&mut wm_rx),
-        wm_controller::WmEvent::SpaceStateUpdated(state, _)
+        OutEvent::SpaceStateUpdated(state, _)
             if state.screens.iter().map(|s| s.space).collect::<Vec<_>>() == vec![Some(space)]
                 && state.releases_display_churn_refresh_quarantine
     ));
@@ -280,20 +295,20 @@ fn flushes_pending_screen_and_space_updates_as_one_coherent_snapshot() {
     let stale_space = SpaceId::new(21);
     let current_space = SpaceId::new(22);
 
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(stale_space))],
         CoordinateConverter::default(),
     ));
-    actor.handle_event(Event::SpaceChanged(vec![Some(current_space)]));
-    actor.handle_event(Event::DisplayChurnEnd);
+    actor.handle_event(Notification::SpaceChanged(vec![Some(current_space)]));
+    actor.handle_event(Notification::DisplayChurnEnd);
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(state.screens[0].space, Some(current_space));
             assert!(state.releases_display_churn_refresh_quarantine);
         }
@@ -308,37 +323,37 @@ fn wake_does_not_flush_pending_updates_while_churn_is_still_active() {
     let space = SpaceId::new(31);
     let recovered = SpaceId::new(32);
 
-    actor.handle_event(Event::SystemWillSleep);
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::SystemWillSleep);
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(space))],
         CoordinateConverter::default(),
     ));
-    actor.handle_event(Event::SystemDidWake);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::SystemDidWake);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(recovered))],
         CoordinateConverter::default(),
     ));
-    actor.handle_event(Event::SpaceChanged(vec![Some(recovered)]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(recovered)]));
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SystemWillSleep
+        OutEvent::SystemWillSleep
     ));
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SystemWoke
+        OutEvent::SystemWoke
     ));
     assert_no_wm_event(&mut wm_rx);
 
-    actor.handle_event(Event::DisplayChurnEnd);
+    actor.handle_event(Notification::DisplayChurnEnd);
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(recovered)]
@@ -361,33 +376,33 @@ fn session_lock_buffers_space_updates_until_unlock_rescan() {
     let unlocked = SpaceId::new(35);
     let locked = SpaceId::new(99);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(unlocked))],
         CoordinateConverter::default(),
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::SessionDidResignActive);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::SessionDidResignActive);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(locked))],
         CoordinateConverter::default(),
     ));
-    actor.handle_event(Event::SpaceChanged(vec![Some(locked)]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(locked)]));
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SessionDidResignActive
+        OutEvent::SessionDidResignActive
     ));
     assert_no_wm_event(&mut wm_rx);
 
-    actor.handle_event(Event::SessionDidBecomeActive);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::SessionDidBecomeActive);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(unlocked))],
         CoordinateConverter::default(),
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(unlocked)]
@@ -402,7 +417,7 @@ fn session_lock_buffers_space_updates_until_unlock_rescan() {
     assert_no_wm_event(&mut wm_rx);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SessionDidBecomeActive
+        OutEvent::SessionDidBecomeActive
     ));
     assert_no_reactor_event(&mut reactor_rx);
 }
@@ -413,31 +428,31 @@ fn timed_refresh_does_not_forward_while_session_is_inactive() {
     let unlocked = SpaceId::new(41);
     let locked = SpaceId::new(141);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(unlocked))],
         CoordinateConverter::default(),
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::SessionDidResignActive);
+    actor.handle_event(Notification::SessionDidResignActive);
     actor.state.screens = vec![make_screen(Some(locked))];
-    actor.handle_event(Event::ProcessScreenRefresh { attempt: 0 });
+    actor.handle_event(Notification::ProcessScreenRefresh { attempt: 0 });
 
     assert!(actor.state.refresh_deferred_until_stable);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SessionDidResignActive
+        OutEvent::SessionDidResignActive
     ));
     assert_no_wm_event(&mut wm_rx);
 
-    actor.handle_event(Event::SessionDidBecomeActive);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::SessionDidBecomeActive);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(unlocked))],
         CoordinateConverter::default(),
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(unlocked)]
@@ -447,7 +462,7 @@ fn timed_refresh_does_not_forward_while_session_is_inactive() {
     }
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SessionDidBecomeActive
+        OutEvent::SessionDidBecomeActive
     ));
 }
 
@@ -456,21 +471,21 @@ fn drops_duplicate_space_snapshots_after_flush() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(41);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(space))],
         CoordinateConverter::default(),
     ));
     let _ = recv_wm(&mut wm_rx);
-    actor.handle_event(Event::SpaceChanged(vec![Some(space)]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
     assert_no_wm_event(&mut wm_rx);
 
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::SpaceChanged(vec![Some(space)]));
-    actor.handle_event(Event::DisplayChurnEnd);
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
+    actor.handle_event(Notification::DisplayChurnEnd);
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert_no_wm_event(&mut wm_rx);
     assert_no_reactor_event(&mut reactor_rx);
@@ -480,24 +495,24 @@ fn drops_duplicate_space_snapshots_after_flush() {
 fn retains_only_latest_pending_screen_snapshot_during_churn() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(SpaceId::new(51)))],
         CoordinateConverter::from_height(10.0),
     ));
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(SpaceId::new(52)))],
         CoordinateConverter::from_height(20.0),
     ));
-    actor.handle_event(Event::DisplayChurnEnd);
+    actor.handle_event(Notification::DisplayChurnEnd);
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     let forwarded = recv_wm(&mut wm_rx);
     match forwarded {
-        wm_controller::WmEvent::SpaceStateUpdated(state, converter) => {
+        OutEvent::SpaceStateUpdated(state, converter) => {
             assert_eq!(state.screens[0].space, Some(SpaceId::new(52)));
             assert_eq!(converter.screen_height(), Some(20.0));
             assert!(state.releases_display_churn_refresh_quarantine);
@@ -511,13 +526,13 @@ fn quarantines_space_lifecycle_events_during_churn_until_snapshot() {
     let (mut actor, _wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(61);
 
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::SpaceCreated(space));
-    actor.handle_event(Event::SpaceDestroyed(space));
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::SpaceCreated(space));
+    actor.handle_event(Notification::SpaceDestroyed(space));
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert_no_reactor_event(&mut reactor_rx);
 }
@@ -526,7 +541,7 @@ fn quarantines_space_lifecycle_events_during_churn_until_snapshot() {
 fn display_setting_reconfig_starts_churn() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
-    actor.handle_event(Event::DisplayReconfigured {
+    actor.handle_event(Notification::DisplayReconfigured {
         display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::BEGIN_CONFIGURATION
             | rini_skylight_sys::DisplayReconfigFlags::SET_MAIN
@@ -536,7 +551,7 @@ fn display_setting_reconfig_starts_churn() {
     assert!(actor.state.display_churn_active);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert_no_wm_event(&mut wm_rx);
 }
@@ -545,7 +560,7 @@ fn display_setting_reconfig_starts_churn() {
 fn benign_display_reconfig_does_not_start_churn() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
-    actor.handle_event(Event::DisplayReconfigured {
+    actor.handle_event(Notification::DisplayReconfigured {
         display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::BEGIN_CONFIGURATION,
     });
@@ -559,7 +574,7 @@ fn benign_display_reconfig_does_not_start_churn() {
 fn physical_display_reconfig_starts_churn() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
-    actor.handle_event(Event::DisplayReconfigured {
+    actor.handle_event(Notification::DisplayReconfigured {
         display_id: 1,
         flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
     });
@@ -567,7 +582,7 @@ fn physical_display_reconfig_starts_churn() {
     assert!(actor.state.display_churn_active);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert_no_wm_event(&mut wm_rx);
 }
@@ -576,7 +591,7 @@ fn physical_display_reconfig_starts_churn() {
 fn topology_delta_uses_last_forwarded_screens_as_diff_base() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(
             1,
             "display-1",
@@ -588,7 +603,7 @@ fn topology_delta_uses_last_forwarded_screens_as_diff_base() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-1", 0.0, 1000.0, Some(SpaceId::new(1))),
             make_screen_with(2, "display-2", 1000.0, 1200.0, Some(SpaceId::new(2))),
@@ -597,7 +612,7 @@ fn topology_delta_uses_last_forwarded_screens_as_diff_base() {
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert!(state.display_set_changed);
             assert!(state.topology_changed);
             assert!(state.allow_space_remap);
@@ -614,13 +629,13 @@ fn space_only_updates_retain_last_coordinate_converter() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(71);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(900.0),
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::SpaceChanged(vec![Some(space)]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
     assert_no_wm_event(&mut wm_rx);
     assert_no_reactor_event(&mut reactor_rx);
 }
@@ -630,17 +645,17 @@ fn space_inventory_changes_force_a_fresh_forwarded_snapshot() {
     let (mut actor, mut wm_rx, mut reactor_rx) = build_actor();
     let space = SpaceId::new(72);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(900.0),
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::SpaceInventoryChanged);
+    actor.handle_event(Notification::SpaceInventoryChanged);
 
     assert!(matches!(
         recv_wm(&mut wm_rx),
-        wm_controller::WmEvent::SpaceStateUpdated(state, _)
+        OutEvent::SpaceStateUpdated(state, _)
             if state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>() == vec![Some(space)]
     ));
     assert_no_reactor_event(&mut reactor_rx);
@@ -654,7 +669,7 @@ fn fullscreen_transition_is_normalized_before_forwarding() {
     let right_space_1 = SpaceId::new(21);
     let right_fullscreen = fullscreen_space_for(right_space_1);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space_2)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_space_1)),
@@ -663,7 +678,7 @@ fn fullscreen_transition_is_normalized_before_forwarding() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space_1)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_fullscreen)),
@@ -672,7 +687,7 @@ fn fullscreen_transition_is_normalized_before_forwarding() {
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             let spaces: Vec<Option<SpaceId>> =
                 state.screens.iter().map(|screen| screen.space).collect();
             assert_eq!(spaces, vec![Some(left_space_1), None]);
@@ -687,7 +702,7 @@ fn topology_change_emits_space_remap_from_display_history() {
     let original_space = SpaceId::new(31);
     let remapped_space = SpaceId::new(41);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(
             1,
             "display-1",
@@ -699,7 +714,7 @@ fn topology_change_emits_space_remap_from_display_history() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-1", 0.0, 1000.0, Some(remapped_space)),
             make_screen_with(2, "display-2", 1000.0, 1000.0, Some(SpaceId::new(51))),
@@ -708,7 +723,7 @@ fn topology_change_emits_space_remap_from_display_history() {
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(state.space_remaps, vec![(original_space, remapped_space)]);
             assert!(state.allow_space_remap);
         }
@@ -723,7 +738,7 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
     let external_space_before_sleep = SpaceId::new(506);
     let external_space_after_wake = SpaceId::new(517);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "builtin", 0.0, 1000.0, Some(builtin_space)),
             make_screen_with(2, "external", 1000.0, 1000.0, Some(external_space_before_sleep)),
@@ -734,7 +749,7 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
 
     // WindowServer can publish this transient while the built-in display is
     // absent. The external display must not adopt the built-in display's space.
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(
             2,
             "external",
@@ -745,7 +760,7 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
         CoordinateConverter::from_height(800.0),
     ));
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert!(state.space_remaps.is_empty());
             assert_eq!(
                 state.last_user_space_by_display.get("external"),
@@ -755,7 +770,7 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
         other => panic!("unexpected wm event: {other:?}"),
     }
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "builtin", 0.0, 1000.0, Some(builtin_space)),
             make_screen_with(2, "external", 1000.0, 1000.0, Some(external_space_after_wake)),
@@ -763,7 +778,7 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
         CoordinateConverter::from_height(800.0),
     ));
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.space_remaps,
                 vec![(external_space_before_sleep, external_space_after_wake)]
@@ -780,7 +795,7 @@ fn sleep_wake_display_reattach_flushes_latest_stable_spaces_only() {
     let left = SpaceId::new(201);
     let right = SpaceId::new(202);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
@@ -789,38 +804,38 @@ fn sleep_wake_display_reattach_flushes_latest_stable_spaces_only() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::SystemWillSleep);
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::SystemWillSleep);
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(1, "display-left", 0.0, 1000.0, Some(left))],
         CoordinateConverter::from_height(800.0),
     ));
-    actor.handle_event(Event::SpaceChanged(vec![Some(left)]));
-    actor.handle_event(Event::SystemDidWake);
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::SpaceChanged(vec![Some(left)]));
+    actor.handle_event(Notification::SystemDidWake);
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
         ],
         CoordinateConverter::from_height(800.0),
     ));
-    actor.handle_event(Event::SpaceChanged(vec![Some(left), Some(right)]));
-    actor.handle_event(Event::DisplayChurnEnd);
+    actor.handle_event(Notification::SpaceChanged(vec![Some(left), Some(right)]));
+    actor.handle_event(Notification::DisplayChurnEnd);
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SystemWillSleep
+        OutEvent::SystemWillSleep
     ));
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SystemWoke
+        OutEvent::SystemWoke
     ));
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(left), Some(right)]
@@ -860,7 +875,7 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
     );
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             let delta = state.topology_window_delta.expect("expected topology window delta");
             assert_eq!(delta.epoch, 9);
             assert!(delta.appeared.is_empty());
@@ -888,7 +903,7 @@ fn first_empty_post_wake_snapshot_preserves_known_visible_windows() {
 
     rini_windows::window_server::set_space_window_list_for_space_override(space.get(), None);
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(state.active_window_spaces.get(&wsid), Some(&space));
             assert!(state.releases_lifecycle_refresh_quarantine);
         }
@@ -940,7 +955,7 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
     );
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             let delta = state.topology_window_delta.expect("expected topology window delta");
             assert_eq!(delta.disappeared, vec![(wsid, old_space)]);
             assert_eq!(delta.appeared, vec![(wsid, new_space)]);
@@ -1013,7 +1028,7 @@ fn display_order_change_is_topology_change_without_display_set_change() {
     let left_space = SpaceId::new(401);
     let right_space = SpaceId::new(402);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_space)),
@@ -1022,7 +1037,7 @@ fn display_order_change_is_topology_change_without_display_set_change() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_space)),
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space)),
@@ -1031,7 +1046,7 @@ fn display_order_change_is_topology_change_without_display_set_change() {
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert!(!state.display_set_changed);
             assert!(state.topology_changed);
             assert!(state.should_force_refresh_layout);
@@ -1047,7 +1062,7 @@ fn duplicate_space_transient_during_wake_is_not_forwarded_when_stable_snapshot_r
     let left = SpaceId::new(501);
     let right = SpaceId::new(502);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right)),
@@ -1056,24 +1071,24 @@ fn duplicate_space_transient_during_wake_is_not_forwarded_when_stable_snapshot_r
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::SystemWillSleep);
-    actor.handle_event(Event::DisplayChurnBegin);
-    actor.handle_event(Event::SpaceChanged(vec![Some(left), Some(left)]));
-    actor.handle_event(Event::SystemDidWake);
-    actor.handle_event(Event::SpaceChanged(vec![Some(left), Some(right)]));
-    actor.handle_event(Event::DisplayChurnEnd);
+    actor.handle_event(Notification::SystemWillSleep);
+    actor.handle_event(Notification::DisplayChurnBegin);
+    actor.handle_event(Notification::SpaceChanged(vec![Some(left), Some(left)]));
+    actor.handle_event(Notification::SystemDidWake);
+    actor.handle_event(Notification::SpaceChanged(vec![Some(left), Some(right)]));
+    actor.handle_event(Notification::DisplayChurnEnd);
 
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SystemWillSleep
+        OutEvent::SystemWillSleep
     ));
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::SystemWoke
+        OutEvent::SystemWoke
     ));
     assert_no_wm_event(&mut wm_rx);
 }
@@ -1105,7 +1120,7 @@ fn normal_refresh_retries_duplicate_user_space_snapshot_until_valid() {
     actor.process_screen_refresh(1, true);
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(left), Some(right)]
@@ -1145,7 +1160,7 @@ fn fullscreen_transition_tracks_display_identity_across_reordered_screens() {
     let right_space_1 = SpaceId::new(21);
     let right_fullscreen = fullscreen_space_for(right_space_1);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space_2)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_space_1)),
@@ -1154,7 +1169,7 @@ fn fullscreen_transition_tracks_display_identity_across_reordered_screens() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_fullscreen)),
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space_1)),
@@ -1163,7 +1178,7 @@ fn fullscreen_transition_tracks_display_identity_across_reordered_screens() {
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(state.screens[0].display_uuid, "display-right");
             assert_eq!(state.screens[0].space, None);
             assert_eq!(state.screens[1].display_uuid, "display-left");
@@ -1180,7 +1195,7 @@ fn fullscreen_transition_rewrites_cross_display_space_contamination_only() {
     let right_space = SpaceId::new(221);
     let right_fullscreen = fullscreen_space_for(right_space);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(left_space)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_space)),
@@ -1189,7 +1204,7 @@ fn fullscreen_transition_rewrites_cross_display_space_contamination_only() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(right_space)),
             make_screen_with(2, "display-right", 1000.0, 1000.0, Some(right_fullscreen)),
@@ -1198,7 +1213,7 @@ fn fullscreen_transition_rewrites_cross_display_space_contamination_only() {
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             let spaces: Vec<Option<SpaceId>> =
                 state.screens.iter().map(|screen| screen.space).collect();
             assert_eq!(spaces, vec![Some(left_space), None]);
@@ -1213,10 +1228,10 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
     let left = SpaceId::new(601);
     let right = SpaceId::new(602);
 
-    actor.handle_event(Event::DisplayChurnBegin);
+    actor.handle_event(Notification::DisplayChurnBegin);
     assert!(matches!(
         recv_reactor(&mut reactor_rx),
-        reactor::Event::DisplayChurnBegin
+        OutEvent::DisplayChurnBegin
     ));
 
     let epoch = actor.state.display_churn_epoch;
@@ -1238,7 +1253,7 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
     actor.attempt_finish_display_churn(epoch, 3);
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(left), Some(right)]
@@ -1254,7 +1269,7 @@ fn display_churn_stabilization_rejects_duplicate_space_snapshot_until_valid() {
 fn mismatched_space_snapshot_count_falls_back_to_authoritative_screen_state() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-1", 0.0, 1000.0, Some(SpaceId::new(81))),
             make_screen_with(2, "display-2", 1000.0, 1000.0, Some(SpaceId::new(82))),
@@ -1263,10 +1278,10 @@ fn mismatched_space_snapshot_count_falls_back_to_authoritative_screen_state() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::SpaceChanged(vec![Some(SpaceId::new(99))]));
+    actor.handle_event(Notification::SpaceChanged(vec![Some(SpaceId::new(99))]));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
                 state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
                 vec![Some(SpaceId::new(81)), Some(SpaceId::new(82))]
@@ -1280,7 +1295,7 @@ fn mismatched_space_snapshot_count_falls_back_to_authoritative_screen_state() {
 fn duplicate_visible_spaces_disable_remaps_and_layout_forcing() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(
             1,
             "display-1",
@@ -1292,7 +1307,7 @@ fn duplicate_visible_spaces_disable_remaps_and_layout_forcing() {
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![
             make_screen_with(1, "display-1", 0.0, 1000.0, Some(SpaceId::new(92))),
             make_screen_with(2, "display-2", 1000.0, 1000.0, Some(SpaceId::new(92))),
@@ -1301,7 +1316,7 @@ fn duplicate_visible_spaces_disable_remaps_and_layout_forcing() {
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert!(state.display_set_changed);
             assert!(state.topology_changed);
             assert!(!state.allow_space_remap);
@@ -1316,19 +1331,19 @@ fn resize_updates_are_treated_as_topology_changes_and_report_resized_spaces() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
     let space = SpaceId::new(101);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(1, "display-1", 0.0, 1000.0, Some(space))],
         CoordinateConverter::from_height(800.0),
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(1, "display-1", 0.0, 1200.0, Some(space))],
         CoordinateConverter::from_height(800.0),
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert!(!state.display_set_changed);
             assert!(state.topology_changed);
             assert!(state.should_force_refresh_layout);
@@ -1343,19 +1358,19 @@ fn display_origin_change_is_treated_as_topology_change() {
     let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
     let space = SpaceId::new(111);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(1, "display-1", 0.0, 1000.0, Some(space))],
         CoordinateConverter::from_height(800.0),
     ));
     let _ = recv_wm(&mut wm_rx);
 
-    actor.handle_event(Event::ScreenParametersChanged(
+    actor.handle_event(Notification::ScreenParametersChanged(
         vec![make_screen_with(1, "display-1", 200.0, 1000.0, Some(space))],
         CoordinateConverter::from_height(800.0),
     ));
 
     match recv_wm(&mut wm_rx) {
-        wm_controller::WmEvent::SpaceStateUpdated(state, _) => {
+        OutEvent::SpaceStateUpdated(state, _) => {
             assert!(!state.display_set_changed);
             assert!(state.topology_changed);
             assert!(state.should_force_refresh_layout);

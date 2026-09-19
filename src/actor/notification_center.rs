@@ -16,7 +16,7 @@ use objc2_foundation::{
 };
 use tracing::{debug, info_span, trace, warn};
 
-use super::spaces;
+use rini_displays::spaces;
 use super::wm_controller::{self, WmEvent};
 use rini_windows::app::NSRunningApplicationExt;
 use rini_runloop::dispatch::DispatchExt;
@@ -65,13 +65,13 @@ define_class! {
         #[unsafe(method(recvWakeEvent:))]
         fn recv_wake_event(&self, notif: &NSNotification) {
             trace!("{notif:#?}");
-            self.send_space_event(spaces::Event::SystemDidWake);
+            self.send_space_event(spaces::Notification::SystemDidWake);
         }
 
         #[unsafe(method(recvSleepEvent:))]
         fn recv_sleep_event(&self, notif: &NSNotification) {
             trace!("{notif:#?}");
-            self.send_space_event(spaces::Event::SystemWillSleep);
+            self.send_space_event(spaces::Notification::SystemWillSleep);
         }
 
         #[unsafe(method(recvSessionEvent:))]
@@ -125,13 +125,13 @@ impl NotificationCenterInner {
 
     fn enter_session_inactive(&self) {
         if !self.ivars().session_inactive_hint.replace(true) {
-            self.send_space_event(spaces::Event::SessionDidResignActive);
+            self.send_space_event(spaces::Notification::SessionDidResignActive);
         }
     }
 
     fn leave_session_inactive(&self) {
         if self.ivars().session_inactive_hint.replace(false) {
-            self.send_space_event(spaces::Event::SessionDidBecomeActive);
+            self.send_space_event(spaces::Notification::SessionDidBecomeActive);
         }
     }
 
@@ -141,11 +141,11 @@ impl NotificationCenterInner {
         let span = info_span!("notification_center::handle_screen_changed_event", ?name);
         let _s = span.enter();
         if name.to_string() == "NSWorkspaceActiveDisplayDidChangeNotification" {
-            self.send_space_event(spaces::Event::ActiveDisplayChanged);
+            self.send_space_event(spaces::Notification::ActiveDisplayChanged);
         } else if unsafe { NSWorkspaceActiveSpaceDidChangeNotification } == name {
-            self.send_space_event(spaces::Event::ActiveSpaceChanged);
+            self.send_space_event(spaces::Notification::ActiveSpaceChanged);
         } else if unsafe { NSApplicationDidChangeScreenParametersNotification } == name {
-            self.send_space_event(spaces::Event::ScreenRefreshRequested);
+            self.send_space_event(spaces::Notification::ScreenRefreshRequested);
         } else {
             warn!("Unexpected screen changed event: {notif:?}");
         }
@@ -243,7 +243,7 @@ impl NotificationCenterInner {
         _ = self.ivars().events_tx.send(event);
     }
 
-    fn send_space_event(&self, event: spaces::Event) {
+    fn send_space_event(&self, event: spaces::Notification) {
         self.ivars().spaces_tx.send(event);
     }
 
@@ -268,12 +268,12 @@ impl NotificationCenterInner {
 
     fn handle_dock_pref_changed(&self) {
         trace!("Dock preferences changed; scheduling refresh");
-        self.send_space_event(spaces::Event::ScreenRefreshRequested);
+        self.send_space_event(spaces::Notification::ScreenRefreshRequested);
     }
 
     fn handle_menu_bar_pref_changed(&self) {
         trace!("Menu bar autohide changed; scheduling refresh");
-        self.send_space_event(spaces::Event::ScreenRefreshRequested);
+        self.send_space_event(spaces::Notification::ScreenRefreshRequested);
     }
 
     unsafe extern "C" fn display_reconfig_callback(
@@ -291,7 +291,7 @@ impl NotificationCenterInner {
             (handler_ptr, display_id, parsed),
             |(handler_ptr, display_id, flags)| unsafe {
                 let handler = &*handler_ptr;
-                handler.send_space_event(spaces::Event::DisplayReconfigured { display_id, flags });
+                handler.send_space_event(spaces::Notification::DisplayReconfigured { display_id, flags });
             },
         );
     }
@@ -446,7 +446,7 @@ impl NotificationCenter {
     pub async fn watch_for_notifications(self) {
         let workspace = &NSWorkspace::sharedWorkspace();
 
-        self.inner.send_space_event(spaces::Event::ScreenRefreshRequested);
+        self.inner.send_space_event(spaces::Notification::ScreenRefreshRequested);
         self.inner.send_event(WmEvent::AppEventsRegistered);
         if let Some(app) = workspace.frontmostApplication() {
             if app.bundle_id().as_deref().map(ToString::to_string).as_deref()

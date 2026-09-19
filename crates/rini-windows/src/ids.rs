@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
 
 pub use libc::pid_t;
-use serde::{Deserialize, Serialize};
+
+pub use rini_skylight_sys::WindowServerId;
 
 /// An identifier representing a window.
 ///
@@ -147,32 +148,8 @@ impl From<WindowId> for rini_protocol::WindowId {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct WindowServerId(pub u32);
 
-impl WindowServerId {
-    #[inline]
-    pub fn new(id: u32) -> Self {
-        Self(id)
-    }
 
-    #[inline]
-    pub fn as_u32(self) -> u32 {
-        self.0
-    }
-
-    #[inline]
-    pub fn as_nonzero(self) -> Option<NonZeroU32> {
-        NonZeroU32::new(self.0)
-    }
-}
-
-impl From<WindowServerId> for u32 {
-    #[inline]
-    fn from(id: WindowServerId) -> Self {
-        id.0
-    }
-}
 
 impl From<WindowId> for WindowServerId {
     fn from(id: WindowId) -> Self {

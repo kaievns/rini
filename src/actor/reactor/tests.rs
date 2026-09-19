@@ -3232,7 +3232,7 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
         vec![Some(active_space)],
         |state| {
             state.has_seen_display_set = true;
-            state.topology_window_delta = Some(crate::actor::spaces::TopologyWindowDelta {
+            state.topology_window_delta = Some(rini_displays::topology::TopologyWindowDelta {
                 epoch: 11,
                 flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
                 appeared: Vec::new(),
@@ -3272,7 +3272,7 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
         vec![Some(space1), Some(space2)],
         |state| {
             state.has_seen_display_set = true;
-            state.topology_window_delta = Some(crate::actor::spaces::TopologyWindowDelta {
+            state.topology_window_delta = Some(rini_displays::topology::TopologyWindowDelta {
                 epoch: 12,
                 flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
                 appeared: vec![(wsid, space2)],
@@ -3373,7 +3373,7 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     let reactor = test_reactor();
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
-    let _ = rini_macos::display_churn::begin(rini_skylight_sys::DisplayReconfigFlags::ADD);
+    let _ = rini_displays::display_churn::begin(rini_skylight_sys::DisplayReconfigFlags::ADD);
 
     let frame_changed = reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged(
         WindowId::new(99, 1),
@@ -3398,7 +3398,7 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     let space_destroyed =
         reactor.should_quarantine_during_display_churn(&Event::SpaceDestroyed(space));
 
-    let _ = rini_macos::display_churn::end();
+    let _ = rini_displays::display_churn::end();
     assert!(
         frame_changed,
         "WindowFrameChanged should be quarantined during churn"
@@ -3469,7 +3469,7 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
     let display_uuid = "11111111-1111-1111-1111-111111111111".to_string();
     let screens_for = |space: SpaceId| -> Vec<ScreenInfo> {
         vec![ScreenInfo {
-            id: rini_macos::screen::ScreenId::new(0),
+            id: rini_displays::ids::ScreenId::new(0),
             frame,
             space: Some(space),
             display_uuid: display_uuid.clone(),
@@ -3590,7 +3590,7 @@ fn fullscreen_screen_params_preserves_window_layout() {
     // with the fullscreen space id.
     reactor.space_state.fullscreen_spaces.insert(fullscreen_space);
     reactor.handle_event(space_state_event_from_screens(vec![ScreenInfo {
-        id: rini_macos::screen::ScreenId::new(0),
+        id: rini_displays::ids::ScreenId::new(0),
         frame: full_screen,
         space: None,
         display_uuid: "test-display-0".to_string(),

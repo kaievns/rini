@@ -16,6 +16,7 @@ doctest = false
 test-support = []
 
 [dependencies]
+rini-displays = { workspace = true }
 rini-windows = { workspace = true }
 rini-skylight-sys = { workspace = true }
 rini-runloop = { workspace = true }

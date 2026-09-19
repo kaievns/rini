@@ -7,7 +7,7 @@ use crate::actor::raise_manager;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::Config;
 use crate::layout_engine::{Direction, EventResponse, LayoutEvent};
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 use rini_windows::window_server::WindowServerInfo;
 

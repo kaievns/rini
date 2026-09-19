@@ -1,6 +1,8 @@
 use std::cmp::Ordering;
 use std::f64;
 use std::mem::MaybeUninit;
+
+type CGDirectDisplayID = u32;
 use std::ptr::NonNull;
 
 use objc2::rc::Retained;
@@ -24,7 +26,7 @@ use rini_skylight_sys::{
 };
 use rini_shared::collections::HashMap;
 use rini_shared::geometry::CGRectDef;
-pub use rini_shared::ids::SpaceId;
+use crate::ids::{ScreenId, SpaceId};
 
 #[derive(Debug, Clone)]
 struct ScreenState {
@@ -162,7 +164,7 @@ impl<S: System> ScreenCache<S> {
         });
 
         let main_id = CGMainDisplayID();
-        if let Some(main_screen_idx) = cg_screens.iter().position(|s| s.cg_id.0 == main_id) {
+        if let Some(main_screen_idx) = cg_screens.iter().position(|s| s.cg_id.as_u32() == main_id) {
             cg_screens.swap(0, main_screen_idx);
         } else {
             warn!("Could not find main screen. cg_screens={cg_screens:?}");
@@ -454,7 +456,7 @@ impl System for Actual {
         Ok(ids
             .iter()
             .map(|&cg_id| CGScreenInfo {
-                cg_id: ScreenId(cg_id),
+                cg_id: ScreenId::new(cg_id),
                 bounds: CGDisplayBounds(cg_id),
             })
             .collect())
@@ -462,7 +464,7 @@ impl System for Actual {
 
     fn display_uuid(&self, screen: &CGScreenInfo) -> CFRetained<CFString> {
         unsafe {
-            if let Some(uuid) = NonNull::new(CGDisplayCreateUUIDFromDisplayID(screen.cg_id.0)) {
+            if let Some(uuid) = NonNull::new(CGDisplayCreateUUIDFromDisplayID(screen.cg_id.as_u32())) {
                 let uuid_str = CFUUIDCreateString(std::ptr::null_mut(), uuid.as_ptr());
                 CFRelease(uuid.as_ptr());
                 if let Some(uuid_str) = NonNull::new(uuid_str) {
@@ -527,20 +529,8 @@ impl System for Actual {
     }
 }
 
-type CGDirectDisplayID = u32;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct ScreenId(CGDirectDisplayID);
 
-impl ScreenId {
-    pub fn new(id: u32) -> Self {
-        ScreenId(id)
-    }
-
-    pub fn as_u32(&self) -> u32 {
-        self.0
-    }
-}
 
 pub trait NSScreenExt {
     fn get_number(&self) -> Result<ScreenId, ()>;
@@ -551,7 +541,7 @@ impl NSScreenExt for NSScreen {
         match desc.objectForKey(ns_string!("NSScreenNumber")) {
             Some(val) if unsafe { msg_send![&*val, isKindOfClass:NSNumber::class() ] } => {
                 let number: &NSNumber = unsafe { std::mem::transmute(val) };
-                Ok(ScreenId(number.as_u32()))
+                Ok(ScreenId::new(number.as_u32()))
             }
             val => {
                 warn!(
@@ -816,17 +806,17 @@ mod test {
         let stub = Stub {
             cg_screens: vec![
                 CGScreenInfo {
-                    cg_id: ScreenId(1),
+                    cg_id: ScreenId::new(1),
                     bounds: CGRect::new(CGPoint::new(3840.0, 1080.0), CGSize::new(1512.0, 982.0)),
                 },
                 CGScreenInfo {
-                    cg_id: ScreenId(3),
+                    cg_id: ScreenId::new(3),
                     bounds: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
                 },
             ],
             ns_screens: vec![
                 NSScreenInfo {
-                    cg_id: ScreenId(3),
+                    cg_id: ScreenId::new(3),
                     frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
                     visible_frame: CGRect::new(
                         CGPoint::new(0.0, 76.0),
@@ -835,7 +825,7 @@ mod test {
                     name: None,
                 },
                 NSScreenInfo {
-                    cg_id: ScreenId(1),
+                    cg_id: ScreenId::new(1),
                     frame: CGRect::new(CGPoint::new(3840.0, 98.0), CGSize::new(1512.0, 982.0)),
                     visible_frame: CGRect::new(
                         CGPoint::new(3840.0, 98.0),
@@ -848,7 +838,7 @@ mod test {
         let mut sc = ScreenCache::new_with(stub);
         let (screens, _) = sc.refresh().unwrap();
 
-        let secondary = screens.iter().find(|screen| screen.id == ScreenId(1)).unwrap();
+        let secondary = screens.iter().find(|screen| screen.id == ScreenId::new(1)).unwrap();
         assert_eq!(
             secondary.frame,
             super::constrain_display_bounds(
@@ -858,7 +848,7 @@ mod test {
             )
         );
 
-        let primary = screens.iter().find(|screen| screen.id == ScreenId(3)).unwrap();
+        let primary = screens.iter().find(|screen| screen.id == ScreenId::new(3)).unwrap();
         assert_eq!(
             primary.frame,
             super::constrain_display_bounds(
@@ -875,10 +865,10 @@ mod test {
         let visible_frame = CGRect::new(CGPoint::new(0.0, 22.0), CGSize::new(1440.0, 878.0));
 
         let system = SequenceSystem::new(
-            vec![vec![CGScreenInfo { cg_id: ScreenId(1), bounds }], vec![]],
+            vec![vec![CGScreenInfo { cg_id: ScreenId::new(1), bounds }], vec![]],
             vec![
                 vec![NSScreenInfo {
-                    cg_id: ScreenId(1),
+                    cg_id: ScreenId::new(1),
                     frame: bounds,
                     visible_frame,
                     name: None,

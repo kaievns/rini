@@ -8,7 +8,7 @@ use rini_windows::state::{WindowFilter, WindowState};
 use rini_shared::collections::{BTreeMap, HashMap, HashSet};
 use crate::model::AppRuleResult;
 use crate::model::virtual_workspace::WorkspaceError;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 
 /// Handler for window discovery events, responsible for processing newly discovered windows

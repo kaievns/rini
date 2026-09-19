@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 use tracing::{debug, trace};
 
 use super::reactor::{self, Event};
-use super::spaces;
+use rini_displays::spaces;
 use rini_windows::ids::WindowId;
 use rini_windows::transaction::Requested;
 use rini_shared::collections::{HashMap, HashSet};
 use rini_windows::transaction::WindowTxStore;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rini_windows::window_server::{self, WindowIterator};
 use rini_windows::ids::WindowServerId;
@@ -212,22 +212,22 @@ impl WindowNotify {
                 match event {
                     CGSEventType::Known(KnownCGSEvent::SpaceDestroyed) => {
                         if let Some(space_id) = evt.space_id {
-                            spaces_tx.send(spaces::Event::SpaceDestroyed(SpaceId::new(space_id)));
+                            spaces_tx.send(spaces::Notification::SpaceDestroyed(SpaceId::new(space_id)));
                         }
                     }
                     CGSEventType::Known(KnownCGSEvent::SpaceCreated) => {
                         if let Some(space_id) = evt.space_id {
-                            spaces_tx.send(spaces::Event::SpaceCreated(SpaceId::new(space_id)));
+                            spaces_tx.send(spaces::Notification::SpaceCreated(SpaceId::new(space_id)));
                         }
                     }
                     CGSEventType::Known(KnownCGSEvent::SpaceCurrentChanged) => {
-                        spaces_tx.send(spaces::Event::ActiveSpaceChanged);
+                        spaces_tx.send(spaces::Notification::ActiveSpaceChanged);
                     }
                     CGSEventType::Known(KnownCGSEvent::ManagedSpaceMembershipUpdated)
                     | CGSEventType::Known(
                         KnownCGSEvent::SpaceWindowManagementCapabilitiesChanged,
                     ) => {
-                        spaces_tx.send(spaces::Event::SpaceInventoryChanged);
+                        spaces_tx.send(spaces::Notification::SpaceInventoryChanged);
                     }
                     CGSEventType::Known(KnownCGSEvent::SpaceWindowDestroyed) => {
                         focus_wake.notify();
@@ -238,7 +238,7 @@ impl WindowNotify {
                         // This is not just "window left the current active-space snapshot".
                         // CGS emits SpaceWindowDestroyed when the window's connection drops
                         // out of the WindowServer membership for that space.
-                        spaces_tx.send(spaces::Event::WindowServerDestroyed(
+                        spaces_tx.send(spaces::Notification::WindowServerDestroyed(
                             WindowServerId::new(window_id),
                             SpaceId::new(space_id),
                         ))
@@ -249,7 +249,7 @@ impl WindowNotify {
                         else {
                             continue;
                         };
-                        spaces_tx.send(spaces::Event::WindowServerAppeared(
+                        spaces_tx.send(spaces::Notification::WindowServerAppeared(
                             WindowServerId::new(window_id),
                             SpaceId::new(space_id),
                         ));
@@ -315,7 +315,7 @@ impl WindowNotify {
                         }
 
                         let query_started = Instant::now();
-                        let space = window_server::active_space();
+                        let space = rini_displays::space_query::active_space();
                         let window = window_server::key_focused_window(space);
                         let query_elapsed = query_started.elapsed();
 

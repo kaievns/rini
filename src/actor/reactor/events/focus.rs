@@ -1,5 +1,5 @@
 use rini_windows::ids::WindowId;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 
 /// Resolves a workflow focus request without granting the focus service access
 /// to the reactor or to unrelated mutable state.

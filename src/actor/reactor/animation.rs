@@ -9,7 +9,7 @@ use crate::actor::reactor::Reactor;
 use rini_shared::collections::HashMap;
 use rini_shared::geometry::{Round, SameAs};
 use rini_macos::power;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places

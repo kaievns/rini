@@ -7,6 +7,7 @@ use std::str::FromStr;
 use anyhow::bail;
 pub use rini_protocol::{ConfigCommand, WorkspaceSelector};
 pub use rini_windows::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
+pub use rini_displays::cursor_warp::StackedUpperSide;
 use serde::{Deserialize, Serialize};
 
 use rini_shared::collections::HashMap;
@@ -324,15 +325,6 @@ impl<'de> Deserialize<'de> for Config {
 unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
-/// Which side of the desk the logically-upper display sits on; macOS cannot tell us. Semantics in
-/// `rini.default.toml` under `stacked_display_upper_is`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum StackedUpperSide {
-    #[default]
-    Left,
-    Right,
-}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]

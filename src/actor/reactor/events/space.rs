@@ -4,15 +4,16 @@ use rini_windows::app_actor::Request;
 use rini_windows::ids::WindowId;
 use crate::actor::reactor::events::{EventOutcome, window};
 use crate::actor::reactor::managers::{DragManager, MissionControlManager};
-use crate::actor::reactor::{DragState, LayoutEvent, MissionControlState, SpaceEventKind};
-use crate::actor::spaces::ForwardedSpaceState;
+use crate::actor::reactor::{DragState, LayoutEvent, MissionControlState};
+use rini_displays::topology::SpaceEventKind;
+use rini_displays::topology::ForwardedSpaceState;
 use crate::actor::wm_controller::WmEvent;
 use rini_shared::collections::HashSet;
 use crate::model::RiniState;
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::model::window_store::NativeFullscreenTransition;
 use rini_windows::app::AppInfo;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 
 #[derive(Debug)]

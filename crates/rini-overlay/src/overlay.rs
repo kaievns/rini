@@ -33,7 +33,7 @@ use rini_motion::plan::{
 };
 use rini_motion::z_group::{StackGroup, container_z};
 use rini_shared::geometry::{Round, SameAs};
-use rini_macos::screen::CoordinateConverter;
+use rini_displays::screen::CoordinateConverter;
 use crate::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::window_snapshot::{SnapshotImage, WindowSnapshot};
 

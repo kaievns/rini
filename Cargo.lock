@@ -1397,6 +1397,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "once_cell",
+ "rini-displays",
  "rini-macos",
  "rini-protocol",
  "rini-runloop",
@@ -1413,6 +1414,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-displays"
+version = "0.1.0"
+dependencies = [
+ "dispatchr",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "once_cell",
+ "rini-runloop",
+ "rini-shared",
+ "rini-skylight-sys",
+ "rini-windows",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rini-ipc"
 version = "0.1.0"
 dependencies = [
@@ -1423,6 +1444,7 @@ dependencies = [
  "parking_lot",
  "rini-client",
  "rini-config",
+ "rini-displays",
  "rini-macos",
  "rini-protocol",
  "rini-runloop",
@@ -1443,6 +1465,7 @@ dependencies = [
  "objc2-core-foundation",
  "regex",
  "rini-config",
+ "rini-displays",
  "rini-macos",
  "rini-protocol",
  "rini-runloop",
@@ -1477,6 +1500,7 @@ dependencies = [
  "objc2-foundation",
  "once_cell",
  "parking_lot",
+ "rini-displays",
  "rini-runloop",
  "rini-shared",
  "rini-skylight-sys",
@@ -1514,6 +1538,7 @@ dependencies = [
  "objc2-io-surface",
  "objc2-quartz-core",
  "objc2-screen-capture-kit",
+ "rini-displays",
  "rini-macos",
  "rini-motion",
  "rini-runloop",
@@ -1579,6 +1604,8 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "once_cell",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1644,6 +1671,7 @@ dependencies = [
  "regex",
  "rini-client",
  "rini-config",
+ "rini-displays",
  "rini-ipc",
  "rini-layout",
  "rini-macos",

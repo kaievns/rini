@@ -8,7 +8,7 @@ use crate::actor::reactor::{DragState, LayoutEvent};
 use rini_shared::collections::HashMap;
 use crate::layout_engine::LayoutCommand;
 use crate::model::RiniState;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 
 #[derive(Debug, Clone)]
 pub struct MouseUpPayload {

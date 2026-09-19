@@ -10,7 +10,7 @@ makes it itself, behind its own API.
 
 | crate | domain language | owns |
 |---|---|---|
-| `rini-displays` | screens, native spaces, coordinates | `ScreenId`, `SpaceId`, `ScreenInfo`, coordinate conversion, display affinity and multi-display focus rules; CGDisplay/NSScreen/SLS-space adapters, space switching, display and session notifications, the Mission Control observer; affinity persistence |
+| `rini-displays` | screens, native spaces, coordinates, which windows sit on which space | `ScreenId`, `SpaceId`, `ScreenInfo`, coordinate conversion, the topology snapshot (`ForwardedSpaceState`); CGDisplay/NSScreen/SLS-space adapters, space switching, display churn; the spaces actor and the cursor-warp actor. Emits `displays::Event` |
 | `rini-windows` | windows and the apps that own them | `WindowId`, `WindowServerId`, `pid_t`, `AppInfo`, `WindowInfo`, the window catalogue (`WindowStore`), app rules and what counts as manageable; the per-app AX actor (observe, move, resize, raise, close), window-server reads (ids, order, levels), the Carbon front-app listener; app-rule and snapping settings. Emits `windows::Event` |
 | `rini-tiling` | strips, columns, the scrolling layout | the layout tree and its operations, gaps, insertion; pure, no adapters; tiling settings |
 | `rini-workspaces` | virtual workspaces | assignment of windows to workspaces, activation, stacked-workspace geometry; `layout.ron` save/restore, launch memory, floating positions; workspace settings |
@@ -25,15 +25,18 @@ Technical libraries, each doing one thing and containing no domain:
 | crate | contents |
 |---|---|
 | `rini-runloop` | the CFRunLoop executor, timers, and the span-carrying channel every actor uses |
-| `rini-skylight-sys` | raw declarations for the private SkyLight/CGS API. No policy |
+| `rini-skylight-sys` | raw declarations for the private SkyLight/CGS API, and the two identities it mints: `WindowServerId` (CGWindowID) and `SpaceId` (CGSSpaceID). No policy |
 | `rini-geometry` | rect arithmetic, rounding, tolerance comparison, serde adapters for CoreFoundation geometry |
 
 ## Dependency rules
 
 1. A context depends on technical libraries and on the published language of
-   the contexts upstream of it: `displays` ← `windows` ← `tiling` ←
-   `workspaces`; `input` and `animation` beside them, depending on `windows`
-   and `displays` only for ids and frames.
+   the contexts upstream of it. `windows` is the most upstream context: it
+   knows nothing about screens. `displays` depends on it, because "which
+   windows are on this space" is a window-server query over window ids and the
+   windows context owns those reads. `tiling` and `workspaces` sit above both;
+   `input` and `animation` beside them, depending on `windows` and `displays`
+   only for ids and frames.
 2. `config` and `wm` depend downward on everything. Nothing depends on them.
 3. No crate is both widely depended on and widely dependent. A crate that
    every context reads and that knows every context's vocabulary is a hub,
@@ -43,9 +46,11 @@ Technical libraries, each doing one thing and containing no domain:
 4. A context talks upward by emitting its own event type. The reactor
    converts (`From<windows::Event> for reactor::Event`). A context never
    imports the reactor.
-5. Identity lives with its aggregate: `WindowId` in `rini-windows`, `SpaceId`
-   in `rini-displays`, `WindowServerId` in `rini-windows` (it identifies a
-   window to the window server). `rini-ipc` has wire twins and `From` impls.
+5. Identity lives with whoever mints it: `WindowId` is rini's own and lives in
+   `rini-windows`; `WindowServerId` and `SpaceId` are the window server's and
+   are declared in `rini-skylight-sys`, re-exported by the context that speaks
+   them (`rini_windows::ids`, `rini_displays::ids`). `rini-ipc` has wire twins
+   and `From` impls.
 6. No re-export shims. When a type moves, its importers change.
 
 The compiler enforces the direction: a cycle between crates does not build.
@@ -65,7 +70,7 @@ slice, importers repoint, the old crate shrinks, tests move with the code.
 |---|---|
 | `rini-runloop`, `rini-skylight-sys` | done: lifted out of `rini-macos` (and `channel` out of `rini-shared`) so `rini-windows` depends on libraries, not a layer |
 | `rini-windows` | done, first cut: `ids`, `state`, `rules` (matching; the settings types `AppWorkspaceRule`/`AppRulePosition`/`AppRuleSize` moved here from config, the first piece of the config inversion), `transaction`, `event` (`Event` + `EventSink`), the AX adapters (`ax`, `app`), `process`/`carbon`, `mouse`, `window_server`, the per-app `app_actor` and the Carbon `lifecycle` actor. Still to come here: the window catalogue (`WindowStore` stays in `rini-layout` until `rini-workspaces` takes the assignment index out of it), the SkyLight notification actor (`src/actor/window_notify.rs`, straddles windows and displays), `raise_manager`, and the window sub-level Mach query (`rini_macos::mach`). `MouseState` lives here because the app actor stamps its events with it; the event tap writes it |
-| `rini-displays` | next; takes `SpaceId` and the residual `rini_macos::window_server` reads; dissolves `rini-shared::ids` |
+| `rini-displays` | done: `ids`, `screen` (cache, `ScreenInfo`, `CoordinateConverter`, SLS display/space queries), `topology` (`ForwardedSpaceState`, `TopologyWindowDelta`, `SpaceEventKind`), `space_query`, `space_switch`, `display_churn`, the spaces actor (inbound `Notification`, outbound `Event` through an `EventSink`; the application routes the topology snapshot to the event tap as well) and `cursor_warp` (owns `StackedUpperSide`, which config re-exports). `rini-shared::ids` is gone. Still in `rini-wm`: `notification_center` (also feeds app lifecycle and power events) and `mission_control_observer` (an AX observer on the Dock); in `rini-macos`: `focus_desktop_window`, `mission_control_dock_overlay_visible` |
 | `rini-tiling`, `rini-workspaces` | dissolve `rini-layout` |
 | `rini-input` | dissolves the rest of `rini-macos` with `displays` |
 | `rini-animation` | merges `rini-motion` and `rini-overlay` |

@@ -1,58 +1,36 @@
-//! Authoritative native display/space state for Rini.
-//!
-//! This actor is the only place that should translate macOS display, space, and
-//! session lifecycle signals into the snapshot consumed by the reactor. The
-//! reactor owns Rini's virtual workspace model, but it must only do so on top of
-//! a stable native-space picture. The rules here are therefore intentionally
-//! conservative:
-//!
-//! - Sleep, display churn, and lock/login transitions buffer snapshots instead of
-//!   forwarding them immediately.
-//! - Only user spaces are allowed to become the reactor's workspace/display
-//!   context. Fullscreen and system/login spaces are treated as transient native
-//!   state and nulled out before they can rewrite workspace mappings.
-//! - When the system finally stabilizes, this actor forwards a single coherent
-//!   snapshot plus any synthesized window enter/leave deltas needed to reconcile
-//!   the reactor with the post-churn WindowServer state.
-//!
-//! The core failure mode this prevents is treating unstable lock/wake/login
-//! snapshots as authoritative user-space state. That can cause Rini to
-//! initialize fresh default workspaces for transient spaces and later remap them
-//! onto the real desktop, which looks like "all windows reset to workspace 1".
-
+//! The authority on native displays and spaces: buffers lifecycle churn and forwards one coherent
+//! `ForwardedSpaceState` at a time. Why it buffers, and what it nulls out, is in `docs/topology.md`.
 use dispatchr::queue;
 use dispatchr::time::Time;
-use objc2_core_foundation::CGSize;
 use objc2_foundation::MainThreadMarker;
 
-use crate::actor;
-use crate::actor::{reactor, wm_controller};
-use rini_shared::collections::{HashMap, HashSet};
+use rini_runloop::channel;
 use rini_runloop::dispatch::DispatchExt;
-#[cfg(not(test))]
-use rini_macos::screen::managed_display_space_ids;
-use rini_macos::screen::{CoordinateConverter, ScreenCache, ScreenInfo, SpaceId};
-use rini_skylight_sys::DisplayReconfigFlags;
-use rini_windows::ids::WindowServerId;
-use rini_macos::display_churn;
+use rini_shared::collections::{HashMap, HashSet};
+use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 use rini_windows::window_server;
+
+use crate::display_churn;
+use crate::event::{Event as OutEvent, EventSink};
+use crate::ids::SpaceId;
+#[cfg(not(test))]
+use crate::screen::managed_display_space_ids;
+use crate::screen::{CoordinateConverter, ScreenCache, ScreenInfo};
+use crate::topology::{ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta};
 
 const REFRESH_DEFAULT_DELAY_NS: i64 = 100_000_000;
 const REFRESH_SPACE_SWITCH_DELAY_NS: i64 = 50_000_000;
 const REFRESH_RETRY_DELAY_NS: i64 = 100_000_000;
 const REFRESH_MAX_RETRIES: u8 = 10;
 
-// OmniWM debounces display changes at 100 ms and then rescans immediately.
-// Rini still requires two identical topology samples plus a quiet WindowServer,
-// but it should converge on the same order of magnitude rather than waiting
-// multiple seconds before even attempting stabilization.
+// Two identical samples and a quiet window server; see `docs/topology.md`.
 const DISPLAY_CHURN_QUIET_NS: i64 = 100_000_000;
 const DISPLAY_STABILIZE_RETRY_NS: i64 = 100_000_000;
 const DISPLAY_STABILIZE_MAX_ATTEMPTS: u8 = 10;
 const DISPLAY_STABLE_REQUIRED_HITS: u8 = 2;
 
 #[derive(Debug, Clone)]
-pub enum Event {
+pub enum Notification {
     SystemWillSleep,
     SystemDidWake,
     SessionDidResignActive,
@@ -82,14 +60,9 @@ pub enum Event {
     },
 }
 
-pub type Sender = actor::Sender<Event>;
-type Receiver = actor::Receiver<Event>;
+pub type Sender = channel::Sender<Notification>;
+type Receiver = channel::Receiver<Notification>;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct QuarantineStats {
-    pub appeared_dropped: u64,
-    pub destroyed_dropped: u64,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DisplayTopologyFingerprint(Vec<(String, u64, u64, u64, u64, Option<u64>)>);
@@ -100,44 +73,7 @@ struct DisplayTopologyState {
     hits: u8,
 }
 
-/// Forwarded read-only space/display snapshot consumed by the reactor.
-#[derive(Debug, Default, Clone)]
-pub struct ForwardedSpaceState {
-    pub screens: Vec<ScreenInfo>,
-    pub fullscreen_spaces: HashSet<SpaceId>,
-    pub has_seen_display_set: bool,
-    pub active_spaces: HashSet<SpaceId>,
-    pub menu_bar_space: Option<SpaceId>,
-    pub command_space: Option<SpaceId>,
-    pub display_space_ids: HashMap<String, Vec<SpaceId>>,
-    pub last_user_space_by_display: HashMap<String, SpaceId>,
-    pub space_remaps: Vec<(SpaceId, SpaceId)>,
-    pub display_set_changed: bool,
-    pub topology_changed: bool,
-    pub allow_space_remap: bool,
-    pub should_force_refresh_layout: bool,
-    pub releases_lifecycle_refresh_quarantine: bool,
-    /// Releases the reactor's display-churn gate only after this authoritative
-    /// snapshot has been incorporated into its workspace model.
-    pub releases_display_churn_refresh_quarantine: bool,
-    pub resized_spaces: Vec<(SpaceId, CGSize)>,
-    pub topology_window_delta: Option<TopologyWindowDelta>,
-    pub active_window_spaces: HashMap<WindowServerId, SpaceId>,
-}
 
-impl ForwardedSpaceState {
-    pub fn screen_by_space(&self, space: SpaceId) -> Option<&ScreenInfo> {
-        self.screens.iter().find(|screen| screen.space == Some(space))
-    }
-
-    pub fn iter_known_spaces(&self) -> impl Iterator<Item = SpaceId> + '_ {
-        self.screens.iter().filter_map(|screen| screen.space)
-    }
-
-    pub fn first_known_space(&self) -> Option<SpaceId> {
-        self.iter_known_spaces().next()
-    }
-}
 
 #[derive(Debug, Clone)]
 struct PendingScreenParameters {
@@ -145,24 +81,7 @@ struct PendingScreenParameters {
     converter: CoordinateConverter,
 }
 
-#[derive(Debug, Clone)]
-pub struct TopologyWindowDelta {
-    pub epoch: u64,
-    pub flags: DisplayReconfigFlags,
-    pub appeared: Vec<(WindowServerId, SpaceId)>,
-    pub disappeared: Vec<(WindowServerId, SpaceId)>,
-}
 
-impl Default for TopologyWindowDelta {
-    fn default() -> Self {
-        Self {
-            epoch: 0,
-            flags: DisplayReconfigFlags::empty(),
-            appeared: Vec::new(),
-            disappeared: Vec::new(),
-        }
-    }
-}
 
 pub struct AuthorityState {
     pub sleeping: bool,
@@ -235,42 +154,25 @@ impl AuthorityState {
 pub struct SpacesActor {
     sender: Sender,
     receiver: Receiver,
-    reactor_tx: reactor::Sender,
-    wm_tx: wm_controller::Sender,
+    events: Box<dyn EventSink>,
     state: AuthorityState,
 }
 
 impl SpacesActor {
-    pub fn new(reactor_tx: reactor::Sender, wm_tx: wm_controller::Sender) -> (Self, Sender) {
-        Self::new_with_state(reactor_tx, wm_tx, AuthorityState::runtime())
+    pub fn new(events: Box<dyn EventSink>) -> (Self, Sender) {
+        Self::new_with_state(events, AuthorityState::runtime())
     }
 
-    fn new_with_state(
-        reactor_tx: reactor::Sender,
-        wm_tx: wm_controller::Sender,
-        state: AuthorityState,
-    ) -> (Self, Sender) {
-        let (sender, receiver) = actor::channel();
-        (
-            Self {
-                sender: sender.clone(),
-                receiver,
-                reactor_tx,
-                wm_tx,
-                state,
-            },
-            sender,
-        )
+    fn new_with_state(events: Box<dyn EventSink>, state: AuthorityState) -> (Self, Sender) {
+        let (sender, receiver) = channel::channel();
+        (Self { sender: sender.clone(), receiver, events, state }, sender)
     }
 
     #[cfg(test)]
-    pub fn new_for_tests(
-        reactor_tx: reactor::Sender,
-        wm_tx: wm_controller::Sender,
-    ) -> (Self, Sender) {
+    pub fn new_for_tests(events: Box<dyn EventSink>) -> (Self, Sender) {
         let mut state = AuthorityState::default();
         state.timers_enabled = false;
-        Self::new_with_state(reactor_tx, wm_tx, state)
+        Self::new_with_state(events, state)
     }
 
     pub async fn run(mut self) {
@@ -280,19 +182,19 @@ impl SpacesActor {
         }
     }
 
-    fn handle_event(&mut self, event: Event) {
+    fn handle_event(&mut self, event: Notification) {
         match event {
-            Event::SystemWillSleep => {
+            Notification::SystemWillSleep => {
                 self.state.sleeping = true;
                 self.state.release_reactor_quarantine_on_next_forward = false;
-                self.reactor_tx.send(reactor::Event::SystemWillSleep);
+                self.events.send(OutEvent::SystemWillSleep);
                 if let Some(screen_cache) = self.state.screen_cache.as_mut() {
                     screen_cache.mark_sleeping(true);
                 }
             }
-            Event::SystemDidWake => {
+            Notification::SystemDidWake => {
                 self.state.sleeping = false;
-                self.reactor_tx.send(reactor::Event::SystemWoke);
+                self.events.send(OutEvent::SystemWoke);
                 if let Some(screen_cache) = self.state.screen_cache.as_mut() {
                     screen_cache.mark_sleeping(false);
                     screen_cache.mark_dirty();
@@ -308,14 +210,14 @@ impl SpacesActor {
                 self.state.release_reactor_quarantine_on_next_forward = true;
                 self.schedule_screen_refresh();
             }
-            Event::SessionDidResignActive => {
+            Notification::SessionDidResignActive => {
                 self.state.session_inactive = true;
                 self.state.release_reactor_quarantine_on_next_forward = false;
-                self.reactor_tx.send(reactor::Event::SessionDidResignActive);
+                self.events.send(OutEvent::SessionDidResignActive);
             }
-            Event::SessionDidBecomeActive => {
+            Notification::SessionDidBecomeActive => {
                 self.state.session_inactive = false;
-                self.reactor_tx.send(reactor::Event::SessionDidBecomeActive);
+                self.events.send(OutEvent::SessionDidBecomeActive);
                 if let Some(screen_cache) = self.state.screen_cache.as_mut() {
                     screen_cache.mark_dirty();
                 }
@@ -332,13 +234,13 @@ impl SpacesActor {
                 self.state.release_reactor_quarantine_on_next_forward = true;
                 self.schedule_screen_refresh();
             }
-            Event::ActiveDisplayChanged => {
+            Notification::ActiveDisplayChanged => {
                 self.handle_active_display_changed();
             }
-            Event::ActiveSpaceChanged => {
+            Notification::ActiveSpaceChanged => {
                 self.handle_active_space_changed();
             }
-            Event::ScreenRefreshRequested => {
+            Notification::ScreenRefreshRequested => {
                 // Preference/system-driven screen changes can transiently report stale
                 // geometry; keep using the default delayed refresh path.
                 if let Some(screen_cache) = self.state.screen_cache.as_mut() {
@@ -346,19 +248,19 @@ impl SpacesActor {
                 }
                 self.schedule_screen_refresh();
             }
-            Event::DisplayReconfigured { display_id, flags } => {
+            Notification::DisplayReconfigured { display_id, flags } => {
                 self.handle_display_reconfig_event(display_id, flags);
             }
-            Event::DisplayChurnBegin => {
+            Notification::DisplayChurnBegin => {
                 self.state.display_churn_active = true;
-                self.reactor_tx.send(reactor::Event::DisplayChurnBegin);
+                self.events.send(OutEvent::DisplayChurnBegin);
             }
-            Event::DisplayChurnEnd => {
+            Notification::DisplayChurnEnd => {
                 self.state.display_churn_active = false;
                 self.flush_pending_if_stable();
                 self.schedule_screen_refresh();
             }
-            Event::ScreenParametersChanged(screens, converter) => {
+            Notification::ScreenParametersChanged(screens, converter) => {
                 if self.should_buffer_topology_updates() {
                     self.state.pending_screen_parameters =
                         Some(PendingScreenParameters { screens, converter });
@@ -366,46 +268,46 @@ impl SpacesActor {
                     self.forward_screen_parameters(screens, converter);
                 }
             }
-            Event::SpaceChanged(spaces) => {
+            Notification::SpaceChanged(spaces) => {
                 if self.should_buffer_topology_updates() {
                     self.state.pending_spaces = Some(spaces);
                 } else {
                     self.forward_space_snapshot(spaces);
                 }
             }
-            Event::SpaceInventoryChanged => {
+            Notification::SpaceInventoryChanged => {
                 self.handle_space_inventory_changed();
             }
-            Event::SpaceCreated(space) => {
+            Notification::SpaceCreated(space) => {
                 if !self.should_buffer_topology_updates() && self.classify_space(space).is_some() {
-                    self.reactor_tx.send(reactor::Event::SpaceCreated(space));
+                    self.events.send(OutEvent::SpaceCreated(space));
                 }
                 self.handle_space_inventory_changed();
             }
-            Event::SpaceDestroyed(space) => {
+            Notification::SpaceDestroyed(space) => {
                 if !self.should_buffer_topology_updates() && self.classify_space(space).is_some() {
-                    self.reactor_tx.send(reactor::Event::SpaceDestroyed(space));
+                    self.events.send(OutEvent::SpaceDestroyed(space));
                 }
                 self.handle_space_inventory_changed();
             }
-            Event::WindowServerAppeared(wsid, sid) => {
+            Notification::WindowServerAppeared(wsid, sid) => {
                 if self.should_quarantine_window_space_event() {
                     self.state.quarantine_stats.appeared_dropped += 1;
                 } else {
                     self.state.visible_window_spaces.insert(wsid, sid);
                     if let Some(kind) = self.classify_space(sid) {
-                        self.reactor_tx.send(reactor::Event::WindowServerAppeared(wsid, sid, kind));
+                        self.events.send(OutEvent::WindowServerAppeared(wsid, sid, kind));
                     }
                 }
             }
-            Event::WindowServerDestroyed(wsid, sid) => {
+            Notification::WindowServerDestroyed(wsid, sid) => {
                 if self.should_quarantine_window_space_event() {
                     self.state.quarantine_stats.destroyed_dropped += 1;
                 } else {
                     self.state.visible_window_spaces.remove(&wsid);
                     let current_space = window_server::window_space(wsid);
                     if let Some(kind) = self.classify_space(sid) {
-                        if matches!(kind, reactor::SpaceEventKind::User)
+                        if matches!(kind, SpaceEventKind::User)
                             && let Some(current_space) = current_space
                             && current_space != sid
                         {
@@ -415,15 +317,15 @@ impl SpacesActor {
                             self.handle_space_inventory_changed();
                             return;
                         }
-                        self.reactor_tx
-                            .send(reactor::Event::WindowServerDestroyed(wsid, sid, kind));
+                        self.events
+                            .send(OutEvent::WindowServerDestroyed(wsid, sid, kind));
                     }
                 }
             }
-            Event::ProcessScreenRefresh { attempt } => {
+            Notification::ProcessScreenRefresh { attempt } => {
                 self.process_screen_refresh(attempt, true);
             }
-            Event::CheckDisplayStabilization { expected_epoch, attempt } => {
+            Notification::CheckDisplayStabilization { expected_epoch, attempt } => {
                 self.attempt_finish_display_churn(expected_epoch, attempt);
             }
         }
@@ -431,7 +333,7 @@ impl SpacesActor {
 
     fn handle_active_display_changed(&mut self) {
         #[cfg(not(test))]
-        let active_display_uuid = rini_macos::screen::active_menu_bar_display_uuid();
+        let active_display_uuid = crate::screen::active_menu_bar_display_uuid();
         #[cfg(test)]
         let active_display_uuid: Option<String> = None;
 
@@ -457,7 +359,7 @@ impl SpacesActor {
                 .and_then(|screen| screen.space)
         {
             self.state.active_display_uuid = Some(active_display_uuid.to_string());
-            self.reactor_tx.send(reactor::Event::ActiveDisplayChanged {
+            self.events.send(OutEvent::ActiveDisplayChanged {
                 menu_bar_space: Some(active_space),
                 command_space: Some(active_space),
             });
@@ -534,10 +436,7 @@ impl SpacesActor {
         let forwarded = self.build_forwarded_state(screens);
         self.state.last_sent_spaces = Some(Self::screen_spaces(&forwarded.screens));
         self.state.awaiting_space_switch_confirmation = false;
-        self.wm_tx.send(wm_controller::WmEvent::SpaceStateUpdated(
-            forwarded,
-            self.state.last_converter,
-        ));
+        self.events.send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
     }
 
     fn forward_space_snapshot(&mut self, spaces: Vec<Option<SpaceId>>) {
@@ -557,10 +456,7 @@ impl SpacesActor {
         self.state.last_sent_spaces = Some(spaces.clone());
         let forwarded = self.build_forwarded_state(screens);
         self.state.awaiting_space_switch_confirmation = false;
-        self.wm_tx.send(wm_controller::WmEvent::SpaceStateUpdated(
-            forwarded,
-            self.state.last_converter,
-        ));
+        self.events.send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
     }
 
     fn build_forwarded_state(&mut self, screens: Vec<ScreenInfo>) -> ForwardedSpaceState {
@@ -634,7 +530,7 @@ impl SpacesActor {
         let space_remaps = self.compute_space_remaps(&screens, allow_space_remap);
         let menu_bar_space = self.resolve_menu_bar_space(&screens);
         #[cfg(not(test))]
-        let active_display_uuid = rini_macos::screen::active_menu_bar_display_uuid();
+        let active_display_uuid = crate::screen::active_menu_bar_display_uuid();
         #[cfg(test)]
         let active_display_uuid: Option<String> = None;
         let command_space = self.resolve_command_space(&screens, active_display_uuid.as_deref());
@@ -852,7 +748,7 @@ impl SpacesActor {
         }
         #[cfg(not(test))]
         {
-            let active_space = rini_macos::screen::get_active_space_number();
+            let active_space = crate::screen::get_active_space_number();
             if let Some(space) =
                 Self::resolve_active_display_space(screens, active_display_uuid, active_space)
             {
@@ -892,7 +788,7 @@ impl SpacesActor {
         }
         #[cfg(not(test))]
         {
-            if let Some(active_space) = rini_macos::screen::get_active_space_number()
+            if let Some(active_space) = crate::screen::get_active_space_number()
                 && screens.iter().any(|screen| screen.space == Some(active_space))
             {
                 return Some(active_space);
@@ -909,7 +805,7 @@ impl SpacesActor {
         }
         #[cfg(not(test))]
         {
-            window_server::space_is_fullscreen(space.get())
+            crate::space_query::space_is_fullscreen(space.get())
         }
     }
 
@@ -921,15 +817,15 @@ impl SpacesActor {
         }
         #[cfg(not(test))]
         {
-            window_server::space_is_user(space.get())
+            crate::space_query::space_is_user(space.get())
         }
     }
 
-    fn classify_space(&self, space: SpaceId) -> Option<reactor::SpaceEventKind> {
+    fn classify_space(&self, space: SpaceId) -> Option<SpaceEventKind> {
         if Self::is_fullscreen_space(space) {
-            Some(reactor::SpaceEventKind::Fullscreen)
+            Some(SpaceEventKind::Fullscreen)
         } else {
-            Self::is_user_space(space).then_some(reactor::SpaceEventKind::User)
+            Self::is_user_space(space).then_some(SpaceEventKind::User)
         }
     }
 
@@ -1226,7 +1122,7 @@ impl SpacesActor {
         queue::main().after_f_s(
             Time::new_after(Time::NOW, delay_ns),
             (sender, attempt),
-            |(sender, attempt)| sender.send(Event::ProcessScreenRefresh { attempt }),
+            |(sender, attempt)| sender.send(Notification::ProcessScreenRefresh { attempt }),
         );
     }
 
@@ -1274,7 +1170,7 @@ impl SpacesActor {
         }
         if !was_active {
             let _ = display_churn::begin(flags);
-            self.reactor_tx.send(reactor::Event::DisplayChurnBegin);
+            self.events.send(OutEvent::DisplayChurnBegin);
         } else {
             let _ = display_churn::begin(flags);
         }
@@ -1299,7 +1195,7 @@ impl SpacesActor {
             Time::new_after(Time::NOW, delay_ns),
             (sender, expected_epoch, attempt),
             |(sender, expected_epoch, attempt)| {
-                sender.send(Event::CheckDisplayStabilization { expected_epoch, attempt })
+                sender.send(Notification::CheckDisplayStabilization { expected_epoch, attempt })
             },
         );
     }

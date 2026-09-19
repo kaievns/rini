@@ -9,7 +9,7 @@ use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::{
     AppManager, DragManager, LayoutManager, WorkspaceSwitchManager,
 };
-use crate::actor::spaces::ForwardedSpaceState;
+use rini_displays::topology::ForwardedSpaceState;
 use rini_shared::collections::HashMap;
 use rini_config::{self as config, Config};
 use rini_shared::log::{MetricsCommand, handle_command as handle_metrics_command};
@@ -18,7 +18,7 @@ use crate::model::RiniState;
 use crate::model::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 
 #[derive(Debug, Clone)]

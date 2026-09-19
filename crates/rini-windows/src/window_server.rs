@@ -27,7 +27,7 @@ use crate::ax::element::{AXUIElement, Error as AxError};
 use crate::cg_ok;
 #[cfg(not(any(test, feature = "test-support")))]
 use crate::process::ProcessSerialNumber;
-use rini_shared::ids::SpaceId;
+use rini_skylight_sys::SpaceId;
 use rini_skylight_sys::*;
 
 static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
@@ -420,7 +420,7 @@ pub fn window_space(id: WindowServerId) -> Option<SpaceId> {
     spaces
         .iter()
         .copied()
-        .find(|s| space_is_user(s.get()))
+        .find(|s| unsafe { SLSSpaceGetType(*G_CONNECTION, s.get()) } == 0)
         .or_else(|| spaces.into_iter().next())
 }
 
@@ -865,10 +865,6 @@ pub fn key_focused_window(space: SpaceId) -> Option<WindowId> {
     })
 }
 
-/// The space on the display currently holding WindowServer focus.
-pub fn active_space() -> SpaceId {
-    SpaceId::new(unsafe { CGSGetActiveSpace(*G_CONNECTION) })
-}
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn set_space_window_list_for_connection_override(ids: Option<Vec<u32>>) {
@@ -935,8 +931,6 @@ pub fn app_window_suitable(id: WindowServerId) -> bool {
     app_window_suitability(id).unwrap_or(false)
 }
 
-pub fn space_is_user(sid: u64) -> bool { unsafe { SLSSpaceGetType(*G_CONNECTION, sid) == 0 } }
-pub fn space_is_fullscreen(sid: u64) -> bool { unsafe { SLSSpaceGetType(*G_CONNECTION, sid) == 4 } }
 
 // credit: https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468
 pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> {

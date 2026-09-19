@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use rini_windows::ids::WindowId;
 use rini_shared::collections::{HashMap, HashSet};
 use crate::VirtualWorkspaceId;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_windows::state::WindowState;
 use rini_windows::ids::WindowServerId;
 use rini_windows::window_server::WindowServerInfo;

@@ -54,8 +54,8 @@ mod SpaceEventHandler {
     pub fn handle_window_server_appeared(
         reactor: &mut super::Reactor,
         window_server_id: rini_windows::ids::WindowServerId,
-        space: rini_macos::screen::SpaceId,
-        kind: super::SpaceEventKind,
+        space: rini_displays::ids::SpaceId,
+        kind: rini_displays::topology::SpaceEventKind,
     ) {
         reactor.handle_event(super::Event::WindowServerAppeared(window_server_id, space, kind));
     }
@@ -87,7 +87,7 @@ use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
 use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::raise_manager::{self, RaiseManager, RaiseRequest};
 use crate::actor::reactor::events::window_discovery;
-use crate::actor::spaces::{ForwardedSpaceState, TopologyWindowDelta};
+use rini_displays::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta};
 use crate::actor;
 use rini_shared::collections::{BTreeMap, HashMap, HashSet};
 use rini_config::Config;
@@ -101,8 +101,9 @@ use crate::model::{AppRuleResult, RiniState};
 use rini_windows::mouse::MouseState;
 use rini_runloop::executor::Executor;
 use rini_shared::geometry::{CGRectDef, CGRectExt};
-pub use rini_macos::screen::ScreenInfo;
-use rini_macos::screen::{SpaceId, order_visible_spaces_by_position};
+pub use rini_displays::screen::ScreenInfo;
+use rini_displays::ids::SpaceId;
+use rini_displays::screen::order_visible_spaces_by_position;
 use rini_macos::window_server::window_sub_level;
 use rini_windows::window_server;
 use rini_windows::ids::WindowServerId;
@@ -206,11 +207,6 @@ impl std::ops::Deref for ReactorHandle {
 
 use crate::model::server::RuntimeWindowData;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpaceEventKind {
-    User,
-    Fullscreen,
-}
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Debug)]
@@ -362,6 +358,30 @@ pub enum Event {
     ConfigUpdated(Config),
 }
 
+/// The displays context's events, one for one; the topology snapshot arrives as `SpaceStateChanged`.
+impl From<rini_displays::event::Event> for Event {
+    fn from(event: rini_displays::event::Event) -> Self {
+        use rini_displays::event::Event as D;
+        match event {
+            D::SpaceStateUpdated(state, _converter) => Event::SpaceStateChanged(state),
+            D::ActiveDisplayChanged { menu_bar_space, command_space } => {
+                Event::ActiveDisplayChanged { menu_bar_space, command_space }
+            }
+            D::SpaceCreated(space) => Event::SpaceCreated(space),
+            D::SpaceDestroyed(space) => Event::SpaceDestroyed(space),
+            D::WindowServerAppeared(wsid, space, kind) => Event::WindowServerAppeared(wsid, space, kind),
+            D::WindowServerDestroyed(wsid, space, kind) => {
+                Event::WindowServerDestroyed(wsid, space, kind)
+            }
+            D::SystemWillSleep => Event::SystemWillSleep,
+            D::SystemWoke => Event::SystemWoke,
+            D::SessionDidResignActive => Event::SessionDidResignActive,
+            D::SessionDidBecomeActive => Event::SessionDidBecomeActive,
+            D::DisplayChurnBegin => Event::DisplayChurnBegin,
+        }
+    }
+}
+
 /// The windows context's events, one for one. The per-app actor sends
 /// `rini_windows::event::Event` into the reactor's channel through this.
 impl From<rini_windows::event::Event> for Event {
@@ -475,7 +495,7 @@ impl Reactor {
         record: Record,
         event_tap_tx: event_tap::Sender,
         broadcast_tx: BroadcastSender,
-        cursor_warp_tx: Option<crate::actor::cursor_warp::Sender>,
+        cursor_warp_tx: Option<rini_displays::cursor_warp::Sender>,
         workspace_animation_tx: Option<rini_overlay::engine::Sender>,
         window_notify: Option<(crate::actor::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
@@ -853,7 +873,7 @@ impl Reactor {
                     }
                     #[cfg(not(test))]
                     {
-                        window_server::space_is_user(current_space.get())
+                        rini_displays::space_query::space_is_user(current_space.get())
                     }
                 })
                 .filter(|current_space| !self.is_space_active(*current_space));
@@ -1063,7 +1083,7 @@ impl Reactor {
     }
 
     fn should_quarantine_during_display_churn(&self, event: &Event) -> bool {
-        if !rini_macos::display_churn::is_active() {
+        if !rini_displays::display_churn::is_active() {
             return false;
         }
 
@@ -2260,7 +2280,7 @@ impl Reactor {
         }
 
         if let Some(direction) = outcome.switch_native_space {
-            unsafe { rini_macos::space_switch::switch_space(direction) };
+            unsafe { rini_displays::space_switch::switch_space(direction) };
         }
 
         for (pid, window) in outcome.make_key_windows {
@@ -3311,7 +3331,7 @@ impl Reactor {
     /// Cheap enough to run on every settled layout because it only walks the active
     /// workspace of each screen, which is what the layout pass just computed anyway.
     fn sync_display_affinity_from_live_layout(&mut self) {
-        if rini_macos::display_churn::is_active() {
+        if rini_displays::display_churn::is_active() {
             return;
         }
         // Closed windows keep their affinity otherwise, because the display-change path
@@ -3911,17 +3931,17 @@ impl Reactor {
         let Some(tx) = &self.communication_manager.cursor_warp_tx else {
             return;
         };
-        _ = tx.send(crate::actor::cursor_warp::Request::SetEnabled(
+        _ = tx.send(rini_displays::cursor_warp::Request::SetEnabled(
             self.config.settings.warp_cursor_between_stacked_displays,
         ));
-        _ = tx.send(crate::actor::cursor_warp::Request::SetUpperSide(
+        _ = tx.send(rini_displays::cursor_warp::Request::SetUpperSide(
             self.config.settings.stacked_display_upper_is,
         ));
-        _ = tx.send(crate::actor::cursor_warp::Request::SetLowerTopAt(
+        _ = tx.send(rini_displays::cursor_warp::Request::SetLowerTopAt(
             self.config.settings.stacked_display_lower_top_at,
         ));
-        _ = tx.send(crate::actor::cursor_warp::Request::ScreensChanged(
-            crate::actor::cursor_warp::screens_of(&self.space_state.screens),
+        _ = tx.send(rini_displays::cursor_warp::Request::ScreensChanged(
+            rini_displays::cursor_warp::screens_of(&self.space_state.screens),
         ));
     }
 

@@ -13,7 +13,7 @@ use rini_windows::state::WindowFilter;
 use rini_windows::app::WindowInfo as Window;
 use rini_windows::mouse::MouseState;
 use rini_shared::geometry::SameAs;
-use rini_shared::ids::SpaceId;
+use rini_displays::ids::SpaceId;
 use rini_windows::window_server::WindowServerInfo;
 
 #[derive(Debug)]
