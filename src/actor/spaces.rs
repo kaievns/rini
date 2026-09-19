@@ -28,11 +28,11 @@ use objc2_foundation::MainThreadMarker;
 use crate::actor;
 use crate::actor::{reactor, wm_controller};
 use rini_shared::collections::{HashMap, HashSet};
-use rini_macos::dispatch::DispatchExt;
+use rini_runloop::dispatch::DispatchExt;
 #[cfg(not(test))]
 use rini_macos::screen::managed_display_space_ids;
 use rini_macos::screen::{CoordinateConverter, ScreenCache, ScreenInfo, SpaceId};
-use rini_macos::skylight::DisplayReconfigFlags;
+use rini_skylight_sys::DisplayReconfigFlags;
 use rini_shared::ids::WindowServerId;
 use rini_macos::{display_churn, window_server};
 

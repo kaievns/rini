@@ -969,7 +969,7 @@ fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
     let Some(layout_data) = layout_data else {
         tracing::warn!("Could not get keyboard layout data");
         unsafe {
-            super::skylight::CFRelease(keyboard.cast());
+            rini_skylight_sys::CFRelease(keyboard.cast());
         }
         return keymap;
     };
@@ -1019,7 +1019,7 @@ fn generate_virtual_keymap() -> StdHashMap<String, KeyCode> {
     }
 
     unsafe {
-        super::skylight::CFRelease(keyboard.cast());
+        rini_skylight_sys::CFRelease(keyboard.cast());
     }
 
     keymap

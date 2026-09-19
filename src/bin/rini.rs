@@ -23,11 +23,11 @@ use rini_wm::ipc;
 use rini_wm::layout_engine::LayoutEngine;
 use rini_wm::model::tx_store::WindowTxStore;
 use rini_macos::accessibility::ensure_accessibility_permission;
-use rini_macos::executor::Executor;
+use rini_runloop::executor::Executor;
 use rini_macos::mach::init_window_sub_level_server_port;
 use rini_macos::screen::displays_have_separate_spaces;
 use rini_macos::service::{ServiceCommands, handle_service_command};
-use rini_macos::skylight::{
+use rini_skylight_sys::{
     CGEnableEventStateCombining, CGSEventType, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
     SLSWindowManagementBridgeSetDelegate,
 };
@@ -386,7 +386,7 @@ stays usable. Fix the config and restart. Error: {error}",
     std::thread::Builder::new()
         .name("input".into())
         .spawn(move || {
-            rini_macos::executor::Executor::run(event_tap.run());
+            rini_runloop::executor::Executor::run(event_tap.run());
             panic!("input thread exited");
         })
         .expect("failed to spawn input thread");

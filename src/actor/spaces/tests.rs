@@ -528,9 +528,9 @@ fn display_setting_reconfig_starts_churn() {
 
     actor.handle_event(Event::DisplayReconfigured {
         display_id: 1,
-        flags: rini_macos::skylight::DisplayReconfigFlags::BEGIN_CONFIGURATION
-            | rini_macos::skylight::DisplayReconfigFlags::SET_MAIN
-            | rini_macos::skylight::DisplayReconfigFlags::DESKTOP_SHAPE_CHANGED,
+        flags: rini_skylight_sys::DisplayReconfigFlags::BEGIN_CONFIGURATION
+            | rini_skylight_sys::DisplayReconfigFlags::SET_MAIN
+            | rini_skylight_sys::DisplayReconfigFlags::DESKTOP_SHAPE_CHANGED,
     });
 
     assert!(actor.state.display_churn_active);
@@ -547,7 +547,7 @@ fn benign_display_reconfig_does_not_start_churn() {
 
     actor.handle_event(Event::DisplayReconfigured {
         display_id: 1,
-        flags: rini_macos::skylight::DisplayReconfigFlags::BEGIN_CONFIGURATION,
+        flags: rini_skylight_sys::DisplayReconfigFlags::BEGIN_CONFIGURATION,
     });
 
     assert!(!actor.state.display_churn_active);
@@ -561,7 +561,7 @@ fn physical_display_reconfig_starts_churn() {
 
     actor.handle_event(Event::DisplayReconfigured {
         display_id: 1,
-        flags: rini_macos::skylight::DisplayReconfigFlags::MOVED,
+        flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
     });
 
     assert!(actor.state.display_churn_active);
@@ -839,7 +839,7 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
 
     actor.state.visible_window_spaces.insert(wsid, space);
     actor.state.pre_churn_visible_window_spaces.insert(wsid, space);
-    actor.state.display_churn_flags = rini_macos::skylight::DisplayReconfigFlags::MOVED;
+    actor.state.display_churn_flags = rini_skylight_sys::DisplayReconfigFlags::MOVED;
 
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
@@ -905,7 +905,7 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
 
     actor.state.visible_window_spaces.insert(wsid, old_space);
     actor.state.pre_churn_visible_window_spaces.insert(wsid, old_space);
-    actor.state.display_churn_flags = rini_macos::skylight::DisplayReconfigFlags::MOVED;
+    actor.state.display_churn_flags = rini_skylight_sys::DisplayReconfigFlags::MOVED;
 
     actor.forward_screen_parameters(
         vec![

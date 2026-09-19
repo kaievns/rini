@@ -20,7 +20,7 @@ use nix::unistd::Pid;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
-use rini_shared::collections::HashMap;
+use std::collections::HashMap;
 
 const DISPATCH_PROC_EXIT: usize = 0x8000_0000;
 
@@ -70,7 +70,7 @@ fn reaper_queue() -> &'static queue::Unmanaged {
 
 static SOURCES: OnceCell<Mutex<HashMap<pid_t, DSource>>> = OnceCell::new();
 fn sources_map() -> &'static Mutex<HashMap<pid_t, DSource>> {
-    SOURCES.get_or_init(|| Mutex::new(HashMap::default()))
+    SOURCES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 unsafe extern "C" {

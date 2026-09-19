@@ -9,7 +9,7 @@ pub struct ProcessInfo {
 
 impl ProcessInfo {
     pub fn for_pid(pid: pid_t) -> Result<Self, CGError> {
-        let psn = ProcessSerialNumber::for_pid(pid)?;
+        let psn = psn_for_pid(pid)?;
 
         let mut info = ProcessInfoRec::default();
         info.processInfoLength = size_of::<ProcessInfoRec>() as _;
@@ -47,19 +47,11 @@ const _: () = if size_of::<ProcessInfoRec>() != 72 {
     panic!("unexpected size")
 };
 
-#[repr(C)]
-#[derive(Default)]
-pub struct ProcessSerialNumber {
-    high: u32,
-    low: u32,
-}
-
-impl ProcessSerialNumber {
-    pub(super) fn for_pid(pid: pid_t) -> Result<Self, CGError> {
-        let mut psn = ProcessSerialNumber::default();
-        cg_ok(unsafe { GetProcessForPID(pid, &mut psn) })?;
-        Ok(psn)
-    }
+pub use rini_skylight_sys::ProcessSerialNumber;
+pub fn psn_for_pid(pid: pid_t) -> Result<ProcessSerialNumber, CGError> {
+    let mut psn = ProcessSerialNumber::default();
+    cg_ok(unsafe { GetProcessForPID(pid, &mut psn) })?;
+    Ok(psn)
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]

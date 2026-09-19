@@ -14,7 +14,7 @@ use objc2_core_foundation::{
 
 use rini_shared::ids::pid_t;
 use crate::axuielement::{AXUIElement, Error as AxError};
-use crate::dispatch::DispatchExt;
+use rini_runloop::dispatch::DispatchExt;
 
 /// An observer for accessibility events.
 pub struct Observer {

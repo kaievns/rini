@@ -12,7 +12,7 @@ use objc2::MainThreadMarker;
 use objc2_app_kit::NSApp;
 use objc2_core_foundation::CFRunLoop;
 
-use super::run_loop::{RepeatingTimer, WakeupHandle};
+use crate::run_loop::{RepeatingTimer, WakeupHandle};
 
 thread_local! {
     static HANDLE: Handle = Handle::new();

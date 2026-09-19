@@ -14,7 +14,7 @@ use objc2_foundation::{MainThreadMarker, NSArray, NSNumber, ns_string};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
-use super::skylight::{
+use rini_skylight_sys::{
     CFRelease, CFUUIDCreateFromString, CFUUIDCreateString, CGDisplayCreateUUIDFromDisplayID,
     CGDisplayGetDisplayIDFromUUID, CGSCopyBestManagedDisplayForRect, CGSCopyManagedDisplaySpaces,
     CGSCopyManagedDisplays, CGSCopySpaces, CGSGetActiveSpace, CGSManagedDisplayGetCurrentSpace,
@@ -509,7 +509,7 @@ impl System for Actual {
 
     fn notch_height(&self, did: u32) -> f64 {
         let screens = NSScreen::screens(self.mtm);
-        let builtin = unsafe { super::skylight::CGDisplayIsBuiltin(did) };
+        let builtin = unsafe { rini_skylight_sys::CGDisplayIsBuiltin(did) };
         if !builtin {
             return 0.0;
         }
@@ -618,14 +618,14 @@ pub mod diagnostic {
     pub fn visible_spaces() -> CFRetained<CFArray<SpaceId>> {
         unsafe {
             let arr = CGSCopySpaces(SLSMainConnectionID(), CGSSpaceMask::ALL_VISIBLE_SPACES);
-            CFRetained::from_raw(NonNull::new_unchecked(arr))
+            CFRetained::from_raw(NonNull::new_unchecked(arr.cast::<CFArray<SpaceId>>()))
         }
     }
 
     pub fn all_spaces() -> CFRetained<CFArray<SpaceId>> {
         unsafe {
             let arr = CGSCopySpaces(SLSMainConnectionID(), CGSSpaceMask::ALL_SPACES);
-            CFRetained::from_raw(NonNull::new_unchecked(arr))
+            CFRetained::from_raw(NonNull::new_unchecked(arr.cast::<CFArray<SpaceId>>()))
         }
     }
 

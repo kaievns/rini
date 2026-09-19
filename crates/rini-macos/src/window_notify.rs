@@ -12,13 +12,13 @@ use once_cell::sync::Lazy;
 use parking_lot::{Mutex, RwLock};
 use tracing::{debug, trace, warn};
 
-use super::skylight::{
+use rini_skylight_sys::{
     CGSEventType, SLSMainConnectionID, SLSRegisterConnectionNotifyProc,
     SLSRequestNotificationsForWindows, cid_t,
 };
-use rini_shared::channel as actor;
+use rini_runloop::channel as actor;
 use rini_shared::collections::{HashMap, HashSet};
-use crate::skylight::KnownCGSEvent;
+use rini_skylight_sys::KnownCGSEvent;
 
 type Wid = u32;
 type Sid = u64;

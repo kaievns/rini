@@ -97,7 +97,7 @@ use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolic
 use crate::model::tx_store::WindowTxStore;
 use crate::model::{AppRuleResult, RiniState};
 use rini_macos::event::MouseState;
-use rini_macos::executor::Executor;
+use rini_runloop::executor::Executor;
 use rini_shared::geometry::{CGRectDef, CGRectExt};
 pub use rini_macos::screen::ScreenInfo;
 use rini_macos::screen::{SpaceId, order_visible_spaces_by_position};

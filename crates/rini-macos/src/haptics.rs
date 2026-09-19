@@ -6,7 +6,7 @@ use once_cell::sync::OnceCell;
 
 use serde::{Deserialize, Serialize};
 
-use crate::skylight::CFRelease;
+use rini_skylight_sys::CFRelease;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]

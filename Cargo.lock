@@ -1399,6 +1399,7 @@ dependencies = [
  "once_cell",
  "rini-macos",
  "rini-protocol",
+ "rini-runloop",
  "rini-shared",
  "serde",
  "serde_json",
@@ -1423,6 +1424,7 @@ dependencies = [
  "rini-config",
  "rini-macos",
  "rini-protocol",
+ "rini-runloop",
  "rini-shared",
  "serde",
  "serde_json",
@@ -1441,6 +1443,7 @@ dependencies = [
  "rini-config",
  "rini-macos",
  "rini-protocol",
+ "rini-runloop",
  "rini-shared",
  "ron",
  "serde",
@@ -1471,7 +1474,9 @@ dependencies = [
  "objc2-foundation",
  "once_cell",
  "parking_lot",
+ "rini-runloop",
  "rini-shared",
+ "rini-skylight-sys",
  "serde",
  "serde_json",
  "static_assertions",
@@ -1506,7 +1511,9 @@ dependencies = [
  "objc2-screen-capture-kit",
  "rini-macos",
  "rini-motion",
+ "rini-runloop",
  "rini-shared",
+ "rini-skylight-sys",
  "tracing",
 ]
 
@@ -1516,6 +1523,24 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "rini-runloop"
+version = "0.1.0"
+dependencies = [
+ "continue",
+ "dispatchr",
+ "futures-task",
+ "nix 0.30.1",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "once_cell",
+ "parking_lot",
+ "tokio",
+ "tokio-stream",
+ "tracing",
 ]
 
 [[package]]
@@ -1535,6 +1560,19 @@ dependencies = [
  "tracing-subscriber",
  "tracing-timing",
  "tracing-tree",
+]
+
+[[package]]
+name = "rini-skylight-sys"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.0",
+ "num_enum",
+ "objc2-application-services",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "once_cell",
 ]
 
 [[package]]
@@ -1576,7 +1614,9 @@ dependencies = [
  "rini-motion",
  "rini-overlay",
  "rini-protocol",
+ "rini-runloop",
  "rini-shared",
+ "rini-skylight-sys",
  "ron",
  "rustc-hash",
  "serde",

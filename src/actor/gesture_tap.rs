@@ -220,7 +220,7 @@ impl GestureTap {
         // Same re-arm policy as the input tap: only a healthy thread re-enables, and a burst of
         // disables stands the tap down so macOS keeps delivering events without it.
         let mut governor = rini_macos::event_tap::ReEnableGovernor::new();
-        let mut _cooldown: Option<rini_macos::run_loop::RepeatingTimer> = None;
+        let mut _cooldown: Option<rini_runloop::run_loop::RepeatingTimer> = None;
 
         loop {
             tokio::select! {
@@ -241,7 +241,7 @@ impl GestureTap {
                                         "Gesture tap is being disabled repeatedly; standing down"
                                     );
                                     let tx = recovery_tx.clone();
-                                    _cooldown = rini_macos::run_loop::RepeatingTimer::every(wait, move || {
+                                    _cooldown = rini_runloop::run_loop::RepeatingTimer::every(wait, move || {
                                         _ = tx.send(Recovery::CooldownElapsed(generation));
                                     });
                                     if _cooldown.is_none() {

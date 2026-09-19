@@ -19,9 +19,9 @@ use tracing::{debug, info_span, trace, warn};
 use super::spaces;
 use super::wm_controller::{self, WmEvent};
 use rini_macos::app::NSRunningApplicationExt;
-use rini_macos::dispatch::DispatchExt;
+use rini_runloop::dispatch::DispatchExt;
 use rini_macos::power::{init_power_state, set_low_power_mode_state};
-use rini_macos::skylight::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
+use rini_skylight_sys::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
 
 #[repr(C)]
 struct Instance {

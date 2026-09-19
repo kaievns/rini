@@ -36,7 +36,7 @@ actor thread release its channel senders.
 
 ## Message channels
 
-`rini_shared::channel` is an unbounded tokio mpsc carrying the sender's tracing
+`rini_runloop::channel` is an unbounded tokio mpsc carrying the sender's tracing
 span with each message, so a handler's spans nest under the sender's. Unbounded
 is deliberate: a bounded channel between threads that also service run loops
 would deadlock the main thread on backpressure.

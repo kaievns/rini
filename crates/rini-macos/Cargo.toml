@@ -16,6 +16,8 @@ doctest = false
 test-support = []
 
 [dependencies]
+rini-skylight-sys = { workspace = true }
+rini-runloop = { workspace = true }
 anyhow = { workspace = true }
 bitflags = { workspace = true }
 clap = { workspace = true }

@@ -18,7 +18,7 @@ use rini_shared::ids::{SpaceId, WindowId};
 
 use rini_config::actor as config_actor;
 use crate::subscriptions::SharedServerState;
-use rini_macos::dispatch::block_on;
+use rini_runloop::dispatch::block_on;
 use rini_macos::mach::{
     is_mach_server_registered, mach_msg_header_t, mach_server_run, send_mach_reply,
 };
@@ -442,7 +442,7 @@ mod tests {
 
     fn handler() -> (MachHandler<std::sync::Arc<Fake>>, std::sync::Arc<Fake>) {
         let fake = std::sync::Arc::new(Fake::default());
-        let (config_tx, _config_rx) = rini_shared::channel::channel();
+        let (config_tx, _config_rx) = rini_runloop::channel::channel();
         let state: SharedServerState =
             std::sync::Arc::new(parking_lot::RwLock::new(subscriptions::ServerState::new()));
         (MachHandler::new(fake.clone(), config_tx, state), fake)

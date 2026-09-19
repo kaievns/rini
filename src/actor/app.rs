@@ -34,10 +34,10 @@ use rini_macos::axuielement::{
 };
 use rini_macos::enhanced_ui::EnhancedUi;
 use rini_macos::event;
-use rini_macos::executor::Executor;
+use rini_runloop::executor::Executor;
 use rini_macos::observer::Observer;
 use rini_macos::process::ProcessInfo;
-use rini_macos::timer::Timer;
+use rini_runloop::timer::Timer;
 use rini_macos::window_server::{self, WindowServerId, WindowServerInfo};
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";

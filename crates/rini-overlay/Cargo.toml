@@ -10,6 +10,8 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-skylight-sys = { workspace = true }
+rini-runloop = { workspace = true }
 block2 = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }

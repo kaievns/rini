@@ -3233,7 +3233,7 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
             state.has_seen_display_set = true;
             state.topology_window_delta = Some(crate::actor::spaces::TopologyWindowDelta {
                 epoch: 11,
-                flags: rini_macos::skylight::DisplayReconfigFlags::MOVED,
+                flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
                 appeared: Vec::new(),
                 disappeared: vec![(moved_wsid, active_space)],
             });
@@ -3273,7 +3273,7 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
             state.has_seen_display_set = true;
             state.topology_window_delta = Some(crate::actor::spaces::TopologyWindowDelta {
                 epoch: 12,
-                flags: rini_macos::skylight::DisplayReconfigFlags::MOVED,
+                flags: rini_skylight_sys::DisplayReconfigFlags::MOVED,
                 appeared: vec![(wsid, space2)],
                 disappeared: vec![(wsid, space1)],
             });
@@ -3372,7 +3372,7 @@ fn display_churn_quarantines_window_frame_and_membership_events() {
     let reactor = test_reactor();
     let space = SpaceId::new(7);
     let wsid = WindowServerId::new(77);
-    let _ = rini_macos::display_churn::begin(rini_macos::skylight::DisplayReconfigFlags::ADD);
+    let _ = rini_macos::display_churn::begin(rini_skylight_sys::DisplayReconfigFlags::ADD);
 
     let frame_changed = reactor.should_quarantine_during_display_churn(&Event::WindowFrameChanged(
         WindowId::new(99, 1),

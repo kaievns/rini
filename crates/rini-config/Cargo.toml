@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-runloop = { workspace = true }
 anyhow = { workspace = true }
 continue = { workspace = true }
 dirs = { workspace = true }

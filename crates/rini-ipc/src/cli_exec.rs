@@ -229,7 +229,7 @@ impl CliExecutor for DefaultCliExecutor {
             return Err(std::io::Error::from_raw_os_error(rc));
         }
 
-        rini_macos::dispatch::reap_on_exit_proc(child_pid);
+        rini_runloop::dispatch::reap_on_exit_proc(child_pid);
 
         Ok(child_pid)
     }

@@ -31,7 +31,7 @@ use rini_shared::geometry::CGRectExt;
 use crate::mach::mach_get_window_sub_level;
 use crate::process::ProcessSerialNumber;
 use crate::screen::{ScreenInfo, SpaceId};
-use crate::skylight::*;
+use rini_skylight_sys::*;
 
 static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 static LAST_WINDOWSERVER_ACTIVITY_US: AtomicU64 = AtomicU64::new(0);
@@ -1150,7 +1150,7 @@ pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> 
     let mut event2 = event1;
     event2[0x08] = 0x02;
 
-    let psn = ProcessSerialNumber::for_pid(pid)?;
+    let psn = crate::process::psn_for_pid(pid)?;
 
     unsafe {
         cg_ok(_SLPSSetFrontProcessWithOptions(&psn, wsid.0, kCPSUserGenerated))?;

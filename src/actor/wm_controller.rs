@@ -25,7 +25,7 @@ use crate::actor::app::AppInfo;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::{self, event_tap, reactor};
 use crate::model::tx_store::WindowTxStore;
-use rini_macos::dispatch::DispatchExt;
+use rini_runloop::dispatch::DispatchExt;
 use rini_macos::screen::CoordinateConverter;
 use rini_macos as sys;
 

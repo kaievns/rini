@@ -10,10 +10,10 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
-use rini_shared::channel;
+use rini_runloop::channel;
 use rini_shared::ids::WindowId;
 use rini_shared::geometry::SameAs;
-use rini_macos::run_loop::RepeatingTimer;
+use rini_runloop::run_loop::RepeatingTimer;
 use rini_shared::ids::WindowServerId;
 use crate::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::window_snapshot::{

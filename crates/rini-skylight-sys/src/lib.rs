@@ -1,3 +1,6 @@
+#![allow(non_upper_case_globals, non_snake_case)]
+//! Raw declarations for the private SkyLight / CoreGraphics Services API. Declarations only; every
+//! caller owns its own safety argument.
 // credits
 // https://github.com/asmagill/hs._asm.undocumented.spaces/blob/master/CGSSpace.h.
 // https://github.com/koekeishiya/yabai/blob/d55a647913ab72d8d8b348bee2d3e59e52ce4a5d/src/misc/extern.h.
@@ -15,13 +18,19 @@ use objc2_core_graphics::{CGError, CGEventSourceStateID, CGImage, CGWindowID};
 use objc2_foundation::NSArray;
 use once_cell::sync::Lazy;
 
-use super::process::ProcessSerialNumber;
-use rini_shared::ids::SpaceId;
 
 pub static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 
 #[allow(non_camel_case_types)]
 pub type cid_t = i32;
+
+/// Carbon's process identity, still what SkyLight's `SLPS*` calls take.
+#[repr(C)]
+#[derive(Default, Debug, Clone, Copy)]
+pub struct ProcessSerialNumber {
+    pub high: u32,
+    pub low: u32,
+}
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -350,7 +359,7 @@ unsafe extern "C" {
     ) -> CGError;
     // this does not work and we should not rely on it
     pub fn CGSGetActiveSpace(cid: c_int) -> u64;
-    pub fn CGSCopySpaces(cid: c_int, mask: CGSSpaceMask) -> *mut CFArray<SpaceId>;
+    pub fn CGSCopySpaces(cid: c_int, mask: CGSSpaceMask) -> *mut CFArray;
     pub fn CGSCopyManagedDisplays(cid: c_int) -> *mut CFArray;
     pub fn CGSCopyManagedDisplaySpaces(cid: c_int) -> *mut NSArray;
     pub fn SLSGetSpaceManagementMode(cid: cid_t) -> c_int;

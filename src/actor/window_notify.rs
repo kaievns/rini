@@ -11,7 +11,7 @@ use crate::actor::reactor::Requested;
 use rini_shared::collections::{HashMap, HashSet};
 use crate::model::tx_store::WindowTxStore;
 use rini_shared::ids::SpaceId;
-use rini_macos::skylight::{CGSEventType, KnownCGSEvent};
+use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rini_macos::window_server::{self, WindowIterator, WindowServerId};
 use rini_macos::{event, window_notify};
 

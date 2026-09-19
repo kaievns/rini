@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub use super::window_server::current_cursor_location;
 use crate::cg_ok;
 pub use crate::hotkey::{Hotkey, HotkeySpec, KeyCode, Modifiers};
-use crate::skylight::{
+use rini_skylight_sys::{
     CFRelease, CGEventSourceCreate, CGEventSourceSetLocalEventsSuppressionInterval,
     CGWarpMouseCursorPosition,
 };

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use rini_shared::channel as actor;
+use rini_runloop::channel as actor;
 
 use crate::{Config, ConfigCommand, MAX_WORKSPACES};
 
@@ -43,7 +43,7 @@ impl ConfigActor {
                     on_change,
                     config_path,
                 };
-                rini_macos::executor::Executor::run(actor.run(rx));
+                rini_runloop::executor::Executor::run(actor.run(rx));
             })
             .unwrap();
         tx

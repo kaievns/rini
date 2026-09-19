@@ -11,7 +11,7 @@ use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
 use rini_shared::ids::WindowId;
-use rini_macos::skylight::{SLSHWCaptureWindowList, SLSMainConnectionID};
+use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 use crate::edge_dressing::dressing_after_insert;
 use rini_shared::ids::WindowServerId;
 

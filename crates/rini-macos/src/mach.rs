@@ -534,7 +534,7 @@ unsafe fn create_connection_server_port() -> mach_port_t {
         MACH_MSGH_BITS_REMOTE_MASK | MACH_MSGH_BITS_COMPLEX,
     );
     msg.0.header.msgh_local_port = mig_get_special_reply_port();
-    msg.0.header.msgh_remote_port = crate::skylight::SLSServerPort(core::ptr::null_mut());
+    msg.0.header.msgh_remote_port = rini_skylight_sys::SLSServerPort(core::ptr::null_mut());
     msg.0.header.msgh_size = size_of::<create_connection_server_port_message_t>() as u32;
     msg.0.header.msgh_id = CONNECTION_SERVER_PORT_MSG_ID;
 

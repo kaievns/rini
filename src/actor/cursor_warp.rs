@@ -158,7 +158,7 @@ impl CursorWarp {
                             None => return,
                         }
                     }
-                    _ = rini_macos::executor::sleep(POLL) => self.tick(),
+                    _ = rini_runloop::executor::sleep(POLL) => self.tick(),
                 }
             } else {
                 match self.rx.recv().await {
@@ -218,12 +218,12 @@ impl CursorWarp {
 
         // Both calls are FFI into CoreGraphics with plain-value arguments; there are no
         // pointers or lifetimes involved, so the unsafety is purely that they are extern.
-        let result = unsafe { rini_macos::skylight::CGWarpMouseCursorPosition(target) };
+        let result = unsafe { rini_skylight_sys::CGWarpMouseCursorPosition(target) };
         if result == CGError::Success {
             // Re-associate the cursor with the mouse. Without this the pointer keeps the
             // velocity it had at the edge and can slide straight back out of the display
             // it just entered.
-            unsafe { rini_macos::skylight::CGAssociateMouseAndMouseCursorPosition(1) };
+            unsafe { rini_skylight_sys::CGAssociateMouseAndMouseCursorPosition(1) };
             self.last_warp = Some(Instant::now());
             debug!(?cursor, ?target, "warped cursor across stacked displays");
         } else {
@@ -442,7 +442,7 @@ pub fn screens_of(screens: &[ScreenInfo]) -> Vec<WarpScreen> {
 /// Physical height of a display in millimetres, or 0.0 when the display does not report it.
 fn physical_height_mm(screen: &ScreenInfo) -> f64 {
     // SAFETY: plain-value FFI into CoreGraphics with a display id.
-    let size = unsafe { rini_macos::skylight::CGDisplayScreenSize(screen.id.as_u32()) };
+    let size = unsafe { rini_skylight_sys::CGDisplayScreenSize(screen.id.as_u32()) };
     if size.height.is_finite() && size.height > 0.0 { size.height } else { 0.0 }
 }
 

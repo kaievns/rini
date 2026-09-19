@@ -1,0 +1,19 @@
+[package]
+name = "rini-skylight-sys"
+version = "0.1.0"
+edition = "2024"
+description = "Raw declarations for the private SkyLight / CGS API."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+bitflags = { workspace = true }
+num_enum = { workspace = true }
+objc2-application-services = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }
+objc2-foundation = { workspace = true }
+once_cell = { workspace = true }

@@ -1,5 +1,5 @@
 //! One unbounded channel per thread-owning loop. The current tracing span rides along with each
-//! message so a handler's spans nest under the sender's. See `docs/architecture.md`.
+//! message so a handler's spans nest under the sender's. See `docs/run-loop-executor.md`.
 
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -33,7 +33,7 @@ impl<Event> Clone for Sender<Event> {
 
 impl<Event> std::fmt::Debug for Sender<Event> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("actor::Sender(...)")
+        f.write_str("channel::Sender(...)")
     }
 }
 
