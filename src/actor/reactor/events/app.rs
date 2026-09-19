@@ -6,7 +6,7 @@ use rini_windows::ids::WindowId;
 use crate::actor::reactor::AppState;
 use crate::actor::reactor::events::{EventOutcome, WindowDiscoveryRequest};
 use crate::actor::reactor::managers::AppManager;
-use crate::layout_engine::LayoutEvent;
+use rini_workspaces::LayoutEvent;
 use rini_windows::app::WindowInfo;
 use rini_windows::window_server::WindowServerInfo;
 

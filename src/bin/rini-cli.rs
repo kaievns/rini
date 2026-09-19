@@ -8,7 +8,7 @@ use rini_windows::ids::WindowId as InternalWindowId;
 use rini_wm::actor::reactor::{self, DisplaySelector};
 use rini_config::WorkspaceSelector;
 use rini_wm::ipc::RiniMachClient;
-use rini_wm::layout_engine as layout;
+use rini_workspaces as layout;
 use rini_windows::ids::WindowServerId;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -250,7 +250,7 @@ enum CliResizeOrientation {
     Smart,
 }
 
-impl From<CliResizeOrientation> for rini_wm::layout_engine::ResizeOrientation {
+impl From<CliResizeOrientation> for rini_workspaces::ResizeOrientation {
     fn from(value: CliResizeOrientation) -> Self {
         match value {
             CliResizeOrientation::Horizontal => Self::Horizontal,

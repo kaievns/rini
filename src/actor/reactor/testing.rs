@@ -9,7 +9,7 @@ use rini_windows::ids::WindowId;
 use rini_displays::topology::ForwardedSpaceState;
 use rini_shared::collections::BTreeMap;
 use rini_config::Config;
-use crate::layout_engine::{LayoutCommand, LayoutEngine};
+use rini_workspaces::{LayoutCommand, LayoutEngine};
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::ids::pid_t;
 use rini_shared::geometry::SameAs;
@@ -36,7 +36,7 @@ impl Reactor {
     pub fn test_workspace_ids(
         &mut self,
         space: rini_displays::ids::SpaceId,
-    ) -> Vec<crate::model::virtual_workspace::VirtualWorkspaceId> {
+    ) -> Vec<rini_workspaces::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager
             .layout_engine
             .virtual_workspace_manager_mut()
@@ -50,7 +50,7 @@ impl Reactor {
         &mut self,
         space: rini_displays::ids::SpaceId,
         index: usize,
-    ) -> crate::model::virtual_workspace::VirtualWorkspaceId {
+    ) -> rini_workspaces::virtual_workspace::VirtualWorkspaceId {
         self.test_workspace_ids(space)[index]
     }
 
@@ -67,7 +67,7 @@ impl Reactor {
     pub fn test_active_workspace(
         &self,
         space: rini_displays::ids::SpaceId,
-    ) -> Option<crate::model::virtual_workspace::VirtualWorkspaceId> {
+    ) -> Option<rini_workspaces::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager.layout_engine.active_workspace(space)
     }
 
@@ -75,7 +75,7 @@ impl Reactor {
         &self,
         space: rini_displays::ids::SpaceId,
         wid: WindowId,
-    ) -> Option<crate::model::virtual_workspace::VirtualWorkspaceId> {
+    ) -> Option<rini_workspaces::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager
             .layout_engine
             .virtual_workspace_manager()
@@ -99,7 +99,7 @@ impl Reactor {
     pub fn test_workspace_windows(
         &self,
         space: SpaceId,
-        workspace: crate::model::virtual_workspace::VirtualWorkspaceId,
+        workspace: rini_workspaces::virtual_workspace::VirtualWorkspaceId,
     ) -> Vec<WindowId> {
         self.layout_manager.layout_engine.virtual_workspace_manager().workspace_windows(
             &self.state.windows,
@@ -112,7 +112,7 @@ impl Reactor {
         &mut self,
         space: SpaceId,
         wid: WindowId,
-        workspace: crate::model::virtual_workspace::VirtualWorkspaceId,
+        workspace: rini_workspaces::virtual_workspace::VirtualWorkspaceId,
     ) -> bool {
         self.layout_manager
             .layout_engine
@@ -123,7 +123,7 @@ impl Reactor {
     pub fn set_test_active_workspace(
         &mut self,
         space: SpaceId,
-        workspace: crate::model::virtual_workspace::VirtualWorkspaceId,
+        workspace: rini_workspaces::virtual_workspace::VirtualWorkspaceId,
     ) -> bool {
         self.layout_manager
             .layout_engine

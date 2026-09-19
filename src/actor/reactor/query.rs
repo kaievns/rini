@@ -10,7 +10,7 @@ use rini_windows::ids::WindowId;
 use crate::actor::reactor::{Event, Reactor, Sender};
 use rini_shared::collections::HashSet;
 use crate::model::server::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
-use crate::model::virtual_workspace::VirtualWorkspaceId;
+use rini_workspaces::virtual_workspace::VirtualWorkspaceId;
 use rini_displays::screen::ScreenInfo;
 use rini_displays::ids::SpaceId;
 
@@ -227,7 +227,7 @@ impl Reactor {
         let mut workspaces = Vec::new();
 
         let space_id = space_id_param.or_else(|| self.default_query_space());
-        let workspace_list: Vec<(crate::model::VirtualWorkspaceId, String)> =
+        let workspace_list: Vec<(rini_workspaces::VirtualWorkspaceId, String)> =
             if let Some(space) = space_id {
                 self.layout_manager
                     .layout_engine
@@ -757,7 +757,7 @@ impl Reactor {
         let mut spaces_intermediate: Vec<(
             u64,
             Vec<(
-                crate::model::VirtualWorkspaceId,
+                rini_workspaces::VirtualWorkspaceId,
                 String,
                 bool,
                 Vec<rini_windows::ids::WindowId>,
@@ -808,7 +808,7 @@ impl Reactor {
         let mut mapping_intermediate: Vec<(
             u64,
             rini_windows::ids::WindowId,
-            crate::model::VirtualWorkspaceId,
+            rini_workspaces::VirtualWorkspaceId,
         )> = Vec::new();
         for (window_id, assignment) in self.state.windows.iter_workspace_assignments() {
             mapping_intermediate.push((assignment.space.get(), window_id, assignment.workspace_id));

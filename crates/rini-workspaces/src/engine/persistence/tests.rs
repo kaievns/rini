@@ -2583,7 +2583,7 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
         &mut window_store,
         space,
         &crate::LayoutCommand::MoveWindowToWorkspace {
-            workspace: rini_config::WorkspaceSelector::Index(parked_index),
+            workspace: rini_protocol::WorkspaceSelector::Index(parked_index),
             follow: false,
             window_id: Some(window.idx.get()),
         },

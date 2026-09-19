@@ -7,9 +7,9 @@ use rini_windows::ids::WindowId;
 use rini_shared::collections::{HashMap, HashSet};
 #[cfg(test)]
 use rini_windows::rules::AppWorkspaceRule;
-use rini_config::{
-    LayoutSettings, MAX_WORKSPACES, VirtualWorkspaceSettings, WorkspaceSelector,
-};
+use rini_tiling::settings::LayoutSettings;
+use crate::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
+use rini_protocol::WorkspaceSelector;
 use rini_shared::log::trace_misc;
 use crate::Direction;
 use rini_tiling::LayoutSystemKind;

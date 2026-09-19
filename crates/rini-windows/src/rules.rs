@@ -1,5 +1,5 @@
 //! App rules: which windows rini manages, and what a rule asks for a matching window. Matching
-//! only; resolving a rule against workspaces is `rini_layout::app_rules`.
+//! only; resolving a rule against workspaces is `rini_workspaces::app_rules`.
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::warn;

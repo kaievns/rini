@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-displays", "crates/rini-ipc", "crates/rini-layout", "crates/rini-macos", "crates/rini-motion", "crates/rini-overlay", "crates/rini-protocol", "crates/rini-runloop", "crates/rini-shared", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows"]
+members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-displays", "crates/rini-ipc", "crates/rini-macos", "crates/rini-motion", "crates/rini-overlay", "crates/rini-protocol", "crates/rini-runloop", "crates/rini-shared", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-workspaces"]
 resolver = "3"
 
 [[bin]]
@@ -181,7 +181,6 @@ rini-shared = { path = "crates/rini-shared" }
 rini-macos = { path = "crates/rini-macos" }
 rini-config = { path = "crates/rini-config" }
 rini-displays = { path = "crates/rini-displays" }
-rini-layout = { path = "crates/rini-layout" }
 rini-ipc = { path = "crates/rini-ipc" }
 rini-motion = { path = "crates/rini-motion" }
 rini-overlay = { path = "crates/rini-overlay" }
@@ -190,6 +189,7 @@ rini-runloop = { path = "crates/rini-runloop" }
 rini-skylight-sys = { path = "crates/rini-skylight-sys" }
 rini-tiling = { path = "crates/rini-tiling" }
 rini-windows = { path = "crates/rini-windows" }
+rini-workspaces = { path = "crates/rini-workspaces" }
 libc = "0.2"
 continue = { git = "https://github.com/drewcrawford/continue" }
 block2 = { version = "0.6.2", default-features = false, features = ["alloc"] }
@@ -295,7 +295,6 @@ rini-shared = { workspace = true }
 rini-macos = { workspace = true }
 rini-config = { workspace = true }
 rini-displays = { workspace = true }
-rini-layout = { workspace = true }
 rini-ipc = { workspace = true }
 rini-motion = { workspace = true }
 rini-overlay = { workspace = true }
@@ -304,12 +303,13 @@ rini-runloop = { workspace = true }
 rini-skylight-sys = { workspace = true }
 rini-tiling = { workspace = true }
 rini-windows = { workspace = true }
+rini-workspaces = { workspace = true }
 
 [dev-dependencies]
 rini-macos = { workspace = true, features = ["test-support"] }
 rini-windows = { workspace = true, features = ["test-support"] }
 rini-displays = { workspace = true, features = ["test-support"] }
-rini-layout = { workspace = true, features = ["test-support"] }
+rini-workspaces = { workspace = true, features = ["test-support"] }
 pretty_assertions = "1.4.0"
 tokio = { version = "1.35.1", features = ["sync", "tokio-macros"] }
 test-log = { version = "0.2.16", default-features = false }

@@ -6,8 +6,8 @@ use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::reactor::{LayoutEvent, utils};
 use rini_windows::state::{WindowFilter, WindowState};
 use rini_shared::collections::{BTreeMap, HashMap, HashSet};
-use crate::model::AppRuleResult;
-use crate::model::virtual_workspace::WorkspaceError;
+use rini_workspaces::AppRuleResult;
+use rini_workspaces::virtual_workspace::WorkspaceError;
 use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 

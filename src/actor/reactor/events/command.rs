@@ -13,7 +13,7 @@ use rini_displays::topology::ForwardedSpaceState;
 use rini_shared::collections::HashMap;
 use rini_config::{self as config, Config};
 use rini_shared::log::{MetricsCommand, handle_command as handle_metrics_command};
-use crate::layout_engine::{EventResponse, LayoutCommand, LayoutEvent};
+use rini_workspaces::{EventResponse, LayoutCommand, LayoutEvent};
 use crate::model::RiniState;
 use crate::model::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
@@ -172,7 +172,7 @@ pub fn handle_command_metrics(cmd: MetricsCommand) -> anyhow::Result<EventOutcom
 }
 
 pub fn handle_switch_native_space(
-    direction: crate::layout_engine::Direction,
+    direction: rini_workspaces::Direction,
 ) -> anyhow::Result<EventOutcome> {
     Ok(EventOutcome::no_change().with_native_space_switch(direction))
 }

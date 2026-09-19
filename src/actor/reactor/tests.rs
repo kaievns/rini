@@ -7,8 +7,8 @@ use rini_windows::app_actor::{AppThreadHandle, Request};
 use rini_windows::ids::pid_t;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::{OuterGaps, WorkspaceSelector};
-use crate::layout_engine::{Direction, LayoutCommand, LayoutEvent};
-use crate::model::window_store::NativeFullscreenTransition;
+use rini_workspaces::{Direction, LayoutCommand, LayoutEvent};
+use rini_workspaces::window_store::NativeFullscreenTransition;
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_shared::geometry::SameAs;
 use rini_windows::ids::WindowServerId;
@@ -3622,8 +3622,8 @@ fn fullscreen_startup_fixture(
     Reactor,
     WindowId,
     SpaceId,
-    crate::model::virtual_workspace::VirtualWorkspaceId,
-    crate::model::virtual_workspace::VirtualWorkspaceId,
+    rini_workspaces::virtual_workspace::VirtualWorkspaceId,
+    rini_workspaces::virtual_workspace::VirtualWorkspaceId,
 ) {
     let mut workspace_cfg = rini_config::VirtualWorkspaceSettings {
         default_workspace_count: 2,

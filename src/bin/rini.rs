@@ -20,7 +20,7 @@ use rini_config::{Config, config_file, restore_file};
 use rini_shared::log;
 use rini_shared::util::execute_startup_commands;
 use rini_wm::ipc;
-use rini_wm::layout_engine::LayoutEngine;
+use rini_workspaces::LayoutEngine;
 use rini_windows::transaction::WindowTxStore;
 use rini_macos::accessibility::ensure_accessibility_permission;
 use rini_runloop::executor::Executor;

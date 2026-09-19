@@ -91,13 +91,12 @@ use rini_displays::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindo
 use crate::actor;
 use rini_shared::collections::{BTreeMap, HashMap, HashSet};
 use rini_config::Config;
-use crate::layout_engine::{self as layout, Direction, LayoutEngine, LayoutEvent};
-use crate::model::broadcast::{
-    BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id,
-};
+use rini_workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
+use rini_workspaces::broadcast::{BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id};
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use rini_windows::transaction::WindowTxStore;
-use crate::model::{AppRuleResult, RiniState};
+use rini_workspaces::AppRuleResult;
+use crate::model::RiniState;
 use rini_windows::mouse::MouseState;
 use rini_runloop::executor::Executor;
 use rini_shared::geometry::{CGRectDef, CGRectExt};
@@ -450,7 +449,7 @@ pub struct Reactor {
     /// Keyed by workspace, not by space, because every workspace has its own strip. Keyed by space alone,
     /// the first pass after a workspace switch compared the new workspace's offset against the old one's
     /// and animated the difference as a horizontal pan that no window had made.
-    last_strip_offset: HashMap<(SpaceId, crate::model::VirtualWorkspaceId), f64>,
+    last_strip_offset: HashMap<(SpaceId, rini_workspaces::VirtualWorkspaceId), f64>,
     space_activation_policy: SpaceActivationPolicy,
     main_window_tracker: MainWindowTracker,
     /// The focus reports rini's own raises are about to produce, so they are not mistaken for the user
@@ -3407,7 +3406,7 @@ impl Reactor {
         };
         let pid = current.pid;
 
-        let mut windows: Vec<(SpaceId, crate::model::VirtualWorkspaceId, WindowId)> = self
+        let mut windows: Vec<(SpaceId, rini_workspaces::VirtualWorkspaceId, WindowId)> = self
             .state
             .windows
             .iter_windows()
@@ -4086,7 +4085,7 @@ impl Reactor {
     fn start_strip_pan(
         &mut self,
         space: SpaceId,
-        workspace_id: crate::model::VirtualWorkspaceId,
+        workspace_id: rini_workspaces::VirtualWorkspaceId,
         layout: &[(WindowId, CGRect)],
         skip_wid: Option<WindowId>,
         delta: CGPoint,
@@ -4665,7 +4664,7 @@ impl Reactor {
 
     fn apply_app_rule_placements(
         &mut self,
-        placements: Vec<crate::model::app_rules::AppRulePlacement>,
+        placements: Vec<rini_workspaces::app_rules::AppRulePlacement>,
     ) {
         for placement in placements {
             let Some(window) = self.state.windows.window(placement.window) else {
@@ -4706,7 +4705,7 @@ impl Reactor {
         }
     }
 
-    fn apply_app_rule_resizes(&mut self, resizes: Vec<crate::model::app_rules::AppRuleResize>) {
+    fn apply_app_rule_resizes(&mut self, resizes: Vec<rini_workspaces::app_rules::AppRuleResize>) {
         for resize in resizes {
             let Some(window) = self.state.windows.window(resize.window) else {
                 continue;

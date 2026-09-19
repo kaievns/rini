@@ -1,8 +1,10 @@
-//! The layout domain: the scrolling strip, virtual workspaces, floating windows, app rules, the
-//! window record store the layout is projected from, and `layout.ron` persistence.
-//! See `docs/architecture.md`.
+//! The workspaces context: virtual workspaces and what they own. Windows are assigned to a
+//! workspace and arranged on its strips (`rini_tiling`) by `LayoutEngine`; the arrangement is
+//! persisted to `layout.ron`, remembered per app across launches, and homed per display.
+//! Still here until its own step: `WindowStore`, the window catalogue (see `docs/architecture.md`).
 
 pub mod app_rules;
+pub mod settings;
 pub mod broadcast;
 pub mod display_affinity;
 pub mod engine;

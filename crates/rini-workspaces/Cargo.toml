@@ -1,8 +1,8 @@
 [package]
-name = "rini-layout"
+name = "rini-workspaces"
 version = "0.1.0"
 edition = "2024"
-description = "rini's layout domain: scrolling strip, virtual workspaces, floating, app rules, persistence"
+description = "rini's workspaces context: virtual workspaces, window assignment and activation, the layout engine over strips, layout.ron persistence, launch memory, floating positions, display affinity."
 license = "Apache-2.0"
 publish = false
 
@@ -22,7 +22,6 @@ anyhow = { workspace = true }
 enum_dispatch = { workspace = true }
 objc2-core-foundation = { workspace = true }
 regex = { workspace = true }
-rini-config = { workspace = true }
 rini-macos = { workspace = true }
 rini-protocol = { workspace = true }
 rini-shared = { workspace = true }

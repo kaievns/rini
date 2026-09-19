@@ -11,7 +11,7 @@ use crate::actor::wm_controller::WmEvent;
 use rini_shared::collections::HashSet;
 use crate::model::RiniState;
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
-use crate::model::window_store::NativeFullscreenTransition;
+use rini_workspaces::window_store::NativeFullscreenTransition;
 use rini_windows::app::AppInfo;
 use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;

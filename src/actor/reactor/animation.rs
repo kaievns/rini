@@ -580,7 +580,7 @@ mod tests {
         };
         let display = display();
         let is_park =
-            |frame: &CGRect| crate::model::HiddenWindowPlacement::is_off_screen(display, *frame);
+            |frame: &CGRect| rini_workspaces::HiddenWindowPlacement::is_off_screen(display, *frame);
         let mut mixed_runs = 0usize;
         for _ in 0..200 {
             let count = next(8) as usize;
@@ -654,7 +654,7 @@ mod tests {
     /// strip left, the next workspace at the bottom pulls the row up.
     #[test]
     fn an_edge_bounce_moves_the_content_the_way_it_would_have_gone() {
-        use rini_layout::Direction;
+        use rini_workspaces::Direction;
         let o = EDGE_BOUNCE_OVERSHOOT;
         assert_eq!(edge_bounce_overshoot(Direction::Right), CGPoint::new(-o, 0.0));
         assert_eq!(edge_bounce_overshoot(Direction::Left), CGPoint::new(o, 0.0));
@@ -674,7 +674,7 @@ pub(super) fn frame_send_order(
     display: CGRect,
 ) -> Vec<(WindowId, CGRect)> {
     let (mut on_screen, parked): (Vec<_>, Vec<_>) = frames.into_iter().partition(|(_, frame)| {
-        !crate::model::HiddenWindowPlacement::is_off_screen(display, *frame)
+        !rini_workspaces::HiddenWindowPlacement::is_off_screen(display, *frame)
     });
     on_screen.extend(parked);
     on_screen
@@ -691,7 +691,7 @@ pub(super) fn frame_send_order(
 /// the bottom edge, and the pass that follows is what moves that band into the corner. Skipping
 /// that write left the band on screen and let the windows drift into the active workspace.
 pub(super) fn is_park_to_park(current: CGRect, target: CGRect, display: CGRect) -> bool {
-    use crate::model::HiddenWindowPlacement;
+    use rini_workspaces::HiddenWindowPlacement;
     let is_park = |frame: CGRect| {
         HiddenWindowPlacement::is_off_screen(display, frame)
             && HiddenWindowPlacement::intersection_area(frame, display) > 0.0
@@ -737,8 +737,8 @@ pub const EDGE_BOUNCE_OVERSHOOT: f64 = 36.0;
 /// moves the opposite way, as it would have had there been anything further. Focus right at the
 /// last column pulls the strip left; the next workspace at the bottom of the stack pulls the
 /// row up.
-pub fn edge_bounce_overshoot(direction: rini_layout::Direction) -> objc2_core_foundation::CGPoint {
-    use rini_layout::Direction;
+pub fn edge_bounce_overshoot(direction: rini_workspaces::Direction) -> objc2_core_foundation::CGPoint {
+    use rini_workspaces::Direction;
     match direction {
         Direction::Left => objc2_core_foundation::CGPoint::new(EDGE_BOUNCE_OVERSHOOT, 0.0),
         Direction::Right => objc2_core_foundation::CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),

@@ -10,7 +10,8 @@ use super::{
 use rini_windows::app::AppInfo;
 use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
-use rini_config::{LayoutSettings, WorkspaceSelector};
+use rini_tiling::settings::LayoutSettings;
+use rini_protocol::WorkspaceSelector;
 use crate::LayoutSystem;
 use crate::floating::FloatingFullscreenKind;
 use rini_tiling::WindowLayoutConstraints;
@@ -238,7 +239,7 @@ impl LayoutEngine {
 
     pub fn update_virtual_workspace_settings(
         &mut self,
-        settings: &rini_config::VirtualWorkspaceSettings,
+        settings: &crate::settings::VirtualWorkspaceSettings,
     ) {
         self.app_rules = AppRuleEngine::new(&settings.app_rules, settings.float_modal_windows);
         self.virtual_workspace_manager.update_settings(settings, &self.layout_settings);
@@ -1367,7 +1368,7 @@ impl LayoutEngine {
     }
 
     pub fn new(
-        virtual_workspace_config: &rini_config::VirtualWorkspaceSettings,
+        virtual_workspace_config: &crate::settings::VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
         broadcast_tx: Option<BroadcastSender>,
     ) -> Self {
@@ -2164,7 +2165,7 @@ impl LayoutEngine {
         &mut self,
         space: SpaceId,
         screen: CGRect,
-        gaps: &rini_config::GapSettings,
+        gaps: &rini_tiling::settings::GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
         let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
             return Vec::new();
@@ -2182,7 +2183,7 @@ impl LayoutEngine {
         window_store: &WindowStore,
         space: SpaceId,
         screen: CGRect,
-        gaps: &rini_config::GapSettings,
+        gaps: &rini_tiling::settings::GapSettings,
         get_window_frame: F,
         all_screens: &[CGRect],
     ) -> Vec<(WindowId, CGRect)>
@@ -2390,7 +2391,7 @@ impl LayoutEngine {
         space: SpaceId,
         workspace_id: crate::VirtualWorkspaceId,
         screen: CGRect,
-        gaps: &rini_config::GapSettings,
+        gaps: &rini_tiling::settings::GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
         let mut positions = HashMap::default();
 
@@ -3184,7 +3185,9 @@ mod tests {
     use super::*;
     use rini_shared::collections::HashMap;
     use rini_windows::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
-    use rini_config::{LayoutSettings, VirtualWorkspaceSettings, WorkspaceSelector};
+    use rini_tiling::settings::LayoutSettings;
+    use crate::settings::VirtualWorkspaceSettings;
+    use rini_protocol::WorkspaceSelector;
 
     fn test_engine() -> LayoutEngine {
         LayoutEngine::new(

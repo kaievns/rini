@@ -4,7 +4,7 @@ pub use rini_protocol::{DisplaySelector, ReactorCommand};
 use rini_windows::app::AppInfo;
 use rini_windows::app_actor::AppThreadHandle;
 use rini_windows::ids::{WindowId, pid_t};
-use crate::model::WindowStore;
+use rini_workspaces::WindowStore;
 use rini_displays::ids::SpaceId;
 
 /// All mutable domain state is owned by the reactor thread.

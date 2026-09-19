@@ -11,7 +11,7 @@ use super::{Event, Reactor};
 use rini_windows::app_actor::{AppThreadHandle, Request};
 use crate::actor::{self};
 use rini_config::Config;
-use crate::layout_engine::LayoutEngine;
+use rini_workspaces::LayoutEngine;
 
 thread_local! {
     static DESERIALIZE_THREAD_HANDLE: RefCell<Option<AppThreadHandle>> = RefCell::new(None);

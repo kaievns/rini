@@ -1404,6 +1404,7 @@ dependencies = [
  "rini-shared",
  "rini-tiling",
  "rini-windows",
+ "rini-workspaces",
  "serde",
  "serde_json",
  "strum",
@@ -1454,30 +1455,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rini-layout"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "enum_dispatch",
- "objc2-core-foundation",
- "regex",
- "rini-config",
- "rini-displays",
- "rini-macos",
- "rini-protocol",
- "rini-runloop",
- "rini-shared",
- "rini-tiling",
- "rini-windows",
- "ron",
- "serde",
- "serde_with",
- "slotmap",
- "tempfile",
  "tracing",
 ]
 
@@ -1689,7 +1666,6 @@ dependencies = [
  "rini-config",
  "rini-displays",
  "rini-ipc",
- "rini-layout",
  "rini-macos",
  "rini-motion",
  "rini-overlay",
@@ -1699,6 +1675,7 @@ dependencies = [
  "rini-skylight-sys",
  "rini-tiling",
  "rini-windows",
+ "rini-workspaces",
  "ron",
  "rustc-hash",
  "serde",
@@ -1721,6 +1698,29 @@ dependencies = [
  "tracing-subscriber",
  "tracing-timing",
  "tracing-tree",
+]
+
+[[package]]
+name = "rini-workspaces"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "enum_dispatch",
+ "objc2-core-foundation",
+ "regex",
+ "rini-displays",
+ "rini-macos",
+ "rini-protocol",
+ "rini-runloop",
+ "rini-shared",
+ "rini-tiling",
+ "rini-windows",
+ "ron",
+ "serde",
+ "serde_with",
+ "slotmap",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

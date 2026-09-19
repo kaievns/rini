@@ -19,7 +19,7 @@ use crate::actor;
 use crate::actor::reactor;
 use crate::actor::wm_controller::{self, WmCommand, WmEvent};
 use rini_config::{Config, HapticPattern};
-use crate::layout_engine::LayoutCommand as LC;
+use rini_workspaces::LayoutCommand as LC;
 use rini_macos::haptics;
 
 const K_CGS_EVENT_TYPE_FIELD: CGEventField = CGEventField(55);

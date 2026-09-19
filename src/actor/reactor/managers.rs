@@ -14,8 +14,8 @@ use crate::actor::{
 };
 use rini_shared::collections::{HashMap, HashSet};
 use rini_config::WindowSnappingSettings;
-use crate::layout_engine::LayoutEngine;
-use crate::model::broadcast::BroadcastSender;
+use rini_workspaces::LayoutEngine;
+use rini_workspaces::broadcast::BroadcastSender;
 use rini_displays::ids::SpaceId;
 
 /// Manages application state and rules

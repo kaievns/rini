@@ -245,7 +245,7 @@ mod tests {
     use super::super::testing::{Apps, make_windows, space_state_event};
     use super::super::{Event, Quiet, Reactor, SpaceId, WindowId};
     use super::{AppState, MainWindowTracker, RaiseEcho, activation_focus_target};
-    use crate::layout_engine::LayoutEngine;
+    use rini_workspaces::LayoutEngine;
 
     mod raise_echo {
         use std::time::{Duration, Instant};

@@ -27,7 +27,7 @@ use crate::actor::{self, event_tap, reactor};
 use rini_windows::transaction::WindowTxStore;
 use rini_runloop::dispatch::DispatchExt;
 
-use crate::layout_engine as layout;
+use rini_workspaces as layout;
 
 #[derive(Debug)]
 pub enum WmEvent {
