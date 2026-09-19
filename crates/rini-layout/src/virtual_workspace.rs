@@ -12,7 +12,7 @@ use rini_config::{
 };
 use rini_shared::log::trace_misc;
 use crate::Direction;
-use crate::systems::LayoutSystemKind;
+use rini_tiling::LayoutSystemKind;
 use rini_windows::rules::AppRuleDecision;
 use crate::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
@@ -84,7 +84,7 @@ impl VirtualWorkspace {
     pub fn create_layout_system(settings: &LayoutSettings) -> LayoutSystemKind {
         let mut scrolling = settings.scrolling.clone();
         scrolling.base = settings.resolved_base();
-        LayoutSystemKind::Scrolling(crate::systems::ScrollingLayoutSystem::new(
+        LayoutSystemKind::Scrolling(rini_tiling::ScrollingLayoutSystem::new(
             &scrolling,
         ))
     }

@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-displays", "crates/rini-ipc", "crates/rini-layout", "crates/rini-macos", "crates/rini-motion", "crates/rini-overlay", "crates/rini-protocol", "crates/rini-runloop", "crates/rini-shared", "crates/rini-skylight-sys", "crates/rini-windows"]
+members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-displays", "crates/rini-ipc", "crates/rini-layout", "crates/rini-macos", "crates/rini-motion", "crates/rini-overlay", "crates/rini-protocol", "crates/rini-runloop", "crates/rini-shared", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows"]
 resolver = "3"
 
 [[bin]]
@@ -188,6 +188,7 @@ rini-overlay = { path = "crates/rini-overlay" }
 rini-protocol = { path = "crates/rini-protocol" }
 rini-runloop = { path = "crates/rini-runloop" }
 rini-skylight-sys = { path = "crates/rini-skylight-sys" }
+rini-tiling = { path = "crates/rini-tiling" }
 rini-windows = { path = "crates/rini-windows" }
 libc = "0.2"
 continue = { git = "https://github.com/drewcrawford/continue" }
@@ -301,6 +302,7 @@ rini-overlay = { workspace = true }
 rini-protocol = { workspace = true }
 rini-runloop = { workspace = true }
 rini-skylight-sys = { workspace = true }
+rini-tiling = { workspace = true }
 rini-windows = { workspace = true }
 
 [dev-dependencies]

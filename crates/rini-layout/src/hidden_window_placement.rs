@@ -58,7 +58,7 @@ impl HiddenWindowPlacement {
         }
     }
 
-    /// `rini_shared::geometry::is_off_screen`; see `docs/strip.md` "Parking".
+    /// `rini_shared::geometry::is_off_screen`; see `crates/rini-tiling/docs/strip.md` "Parking".
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
         rini_shared::geometry::is_off_screen(screen, window)
     }

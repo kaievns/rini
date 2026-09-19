@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 
 use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
-use rini_config::{
+use crate::settings::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
-use crate::systems::constraints::{AxisConstraints, solve_axis_lengths};
-use crate::systems::{LayoutSystem, WindowLayoutConstraints};
-use crate::utils::compute_tiling_area;
+use crate::constraints::{AxisConstraints, solve_axis_lengths};
+use crate::{LayoutSystem, WindowLayoutConstraints};
+use crate::area::compute_tiling_area;
 use crate::{Direction, LayoutId, ResizeOrientation};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -762,7 +762,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         layout: LayoutId,
         screen: CGRect,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
-        gaps: &rini_config::GapSettings,
+        gaps: &crate::settings::GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
         let Some(state) = self.layouts.get(layout) else {
             return Vec::new();
@@ -867,7 +867,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
             tiling.origin.x
         } else {
             match self.settings.alignment {
-                rini_config::ScrollingAlignment::Left => {
+                crate::settings::ScrollingAlignment::Left => {
                     if !niri_navigation
                         && state.center_override_window.is_none()
                         && state.columns.len() > 1
@@ -878,7 +878,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         tiling.origin.x
                     }
                 }
-                rini_config::ScrollingAlignment::Center => {
+                crate::settings::ScrollingAlignment::Center => {
                     if !niri_navigation
                         && state.center_override_window.is_none()
                         && state.columns.len() > 1
@@ -894,7 +894,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         tiling.origin.x + (tiling.size.width - selected_width) / 2.0
                     }
                 }
-                rini_config::ScrollingAlignment::Right => {
+                crate::settings::ScrollingAlignment::Right => {
                     if !niri_navigation
                         && state.center_override_window.is_none()
                         && state.columns.len() > 1
@@ -1385,7 +1385,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         _old_frame: CGRect,
         new_frame: CGRect,
         screen: CGRect,
-        gaps: &rini_config::GapSettings,
+        gaps: &crate::settings::GapSettings,
     ) {
         let min_ratio = self.settings.min_column_width_ratio;
         let max_ratio = self.settings.max_column_width_ratio;
@@ -1918,9 +1918,9 @@ mod tests {
     use super::{Column, ScrollingLayoutSystem};
     use rini_windows::ids::{WindowId, pid_t};
     use rini_shared::collections::HashMap;
-    use rini_config::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
-    use crate::systems::{LayoutSystem, WindowLayoutConstraints};
-    use crate::utils::compute_tiling_area;
+    use crate::settings::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
+    use crate::{LayoutSystem, WindowLayoutConstraints};
+    use crate::area::compute_tiling_area;
     use crate::{Direction, LayoutId, ResizeOrientation};
 
     fn wid(pid: pid_t, idx: u32) -> WindowId {
@@ -2243,7 +2243,7 @@ mod tests {
     #[test]
     fn centers_selected_column_without_changing_alignment() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Left;
+        settings.alignment = crate::settings::ScrollingAlignment::Left;
         let (mut system, layout, _, w2) = setup_two_windows(settings);
         system.center_selected_column(layout);
 
@@ -2268,7 +2268,7 @@ mod tests {
     #[test]
     fn center_selection_clears_when_focus_moves() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Left;
+        settings.alignment = crate::settings::ScrollingAlignment::Left;
         let (mut system, layout, _, _) = setup_two_windows(settings);
         system.center_selected_column(layout);
         let _ = system.move_focus(layout, Direction::Left);
@@ -2280,7 +2280,7 @@ mod tests {
     #[test]
     fn center_selection_toggles_back_to_layout_alignment() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Left;
+        settings.alignment = crate::settings::ScrollingAlignment::Left;
         let (mut system, layout, _, w2) = setup_two_windows(settings);
 
         // First call centers the current selection.
@@ -2304,9 +2304,9 @@ mod tests {
     #[test]
     fn horizontal_focus_keeps_side_by_side_columns_visible_without_anchor_snapping() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Left;
+        settings.alignment = crate::settings::ScrollingAlignment::Left;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Niri;
+            crate::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
@@ -2346,9 +2346,9 @@ mod tests {
     #[test]
     fn horizontal_focus_anchored_snaps_to_alignment() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Left;
+        settings.alignment = crate::settings::ScrollingAlignment::Left;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Anchored;
+            crate::settings::ScrollingFocusNavigationStyle::Anchored;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
@@ -2377,9 +2377,9 @@ mod tests {
     #[test]
     fn resized_columns_remain_contiguous_without_horizontal_holes() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Left;
+        settings.alignment = crate::settings::ScrollingAlignment::Left;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Anchored;
+            crate::settings::ScrollingFocusNavigationStyle::Anchored;
         let (mut system, layout, w1, w2) = setup_two_windows(settings);
         let _ = system.move_focus(layout, Direction::Left);
         system.resize_selection_by(layout, 0.12, ResizeOrientation::Horizontal);
@@ -2402,9 +2402,9 @@ mod tests {
     #[test]
     fn selecting_column_in_niri_mode_reveals_without_centering() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Center;
+        settings.alignment = crate::settings::ScrollingAlignment::Center;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Niri;
+            crate::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
@@ -2429,9 +2429,9 @@ mod tests {
     #[test]
     fn niri_focus_between_different_width_columns_keeps_strip_stable() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Center;
+        settings.alignment = crate::settings::ScrollingAlignment::Center;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Niri;
+            crate::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.42;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
@@ -2518,9 +2518,9 @@ mod tests {
     #[test]
     fn niri_rightmost_resize_grow_increases_visible_width() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Center;
+        settings.alignment = crate::settings::ScrollingAlignment::Center;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Niri;
+            crate::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.95;
@@ -2556,9 +2556,9 @@ mod tests {
     #[test]
     fn center_override_persists_on_refocus_of_same_window_in_niri_mode() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Left;
+        settings.alignment = crate::settings::ScrollingAlignment::Left;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Niri;
+            crate::settings::ScrollingFocusNavigationStyle::Niri;
         let (mut system, layout, _, w2) = setup_two_windows(settings);
 
         system.center_selected_column(layout);
@@ -2669,9 +2669,9 @@ mod tests {
     #[test]
     fn niri_new_window_reveal_does_not_unnecessarily_push_offscreen() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = rini_config::ScrollingAlignment::Center;
+        settings.alignment = crate::settings::ScrollingAlignment::Center;
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Niri;
+            crate::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.4;
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
@@ -2711,9 +2711,9 @@ mod tests {
         // Test Left Alignment: last column is anchored to the right.
         {
             let mut settings = ScrollingLayoutSettings::default();
-            settings.alignment = rini_config::ScrollingAlignment::Left;
+            settings.alignment = crate::settings::ScrollingAlignment::Left;
             settings.focus_navigation_style =
-                rini_config::ScrollingFocusNavigationStyle::Anchored;
+                crate::settings::ScrollingFocusNavigationStyle::Anchored;
             settings.column_width_ratio = 0.4;
             let mut system = ScrollingLayoutSystem::new(&settings);
             let layout = system.create_layout();
@@ -2740,9 +2740,9 @@ mod tests {
         // Test Right Alignment: first column is anchored to the left.
         {
             let mut settings = ScrollingLayoutSettings::default();
-            settings.alignment = rini_config::ScrollingAlignment::Right;
+            settings.alignment = crate::settings::ScrollingAlignment::Right;
             settings.focus_navigation_style =
-                rini_config::ScrollingFocusNavigationStyle::Anchored;
+                crate::settings::ScrollingFocusNavigationStyle::Anchored;
             settings.column_width_ratio = 0.4;
             let mut system = ScrollingLayoutSystem::new(&settings);
             let layout = system.create_layout();
@@ -2769,9 +2769,9 @@ mod tests {
         // Test Center Alignment: first column is left-anchored, last is right-anchored, middle is centered.
         {
             let mut settings = ScrollingLayoutSettings::default();
-            settings.alignment = rini_config::ScrollingAlignment::Center;
+            settings.alignment = crate::settings::ScrollingAlignment::Center;
             settings.focus_navigation_style =
-                rini_config::ScrollingFocusNavigationStyle::Anchored;
+                crate::settings::ScrollingFocusNavigationStyle::Anchored;
             settings.column_width_ratio = 0.4;
             let mut system = ScrollingLayoutSystem::new(&settings);
             let layout = system.create_layout();
@@ -2916,7 +2916,7 @@ mod tests {
     fn niri_settings(ratio: f64) -> ScrollingLayoutSettings {
         let mut settings = ScrollingLayoutSettings::default();
         settings.focus_navigation_style =
-            rini_config::ScrollingFocusNavigationStyle::Niri;
+            crate::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = ratio;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 1.0;

@@ -13,7 +13,7 @@ use rini_shared::collections::{HashMap, HashSet};
 use rini_config::{LayoutSettings, WorkspaceSelector};
 use crate::LayoutSystem;
 use crate::floating::FloatingFullscreenKind;
-use crate::systems::WindowLayoutConstraints;
+use rini_tiling::WindowLayoutConstraints;
 use crate::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus};
 use crate::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
 use crate::display_affinity::ColumnWidth;
@@ -526,7 +526,7 @@ impl LayoutEngine {
 
         if is_floating {
             // Floating windows are not strip members: navigation moves to the strip and resumes at its
-            // own selection. See "Navigation" in `docs/strip.md`.
+            // own selection. See "Navigation" in `crates/rini-tiling/docs/strip.md`.
             return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
         }
 
@@ -613,7 +613,7 @@ impl LayoutEngine {
                 }
             }
 
-            // The strip stops at its edge; it does not fall into the floating layer (`docs/strip.md`).
+            // The strip stops at its edge; it does not fall into the floating layer (`crates/rini-tiling/docs/strip.md`).
 
             let visible_windows = self.filter_active_workspace_windows(
                 window_store,

@@ -1,6 +1,6 @@
 # The scrolling strip
 
-Rules `systems/scrolling.rs` and the engine's focus paths enforce, with the
+Rules `src/scrolling.rs` and the workspaces engine's focus paths enforce, with the
 failure each one answers. niri is the reference where behaviour is borrowed.
 
 ## Column width

@@ -1,10 +1,19 @@
+//! The tiling context: a strip of columns of windows and the operations on it. Pure geometry
+//! over window ids and frames; knows nothing about workspaces or spaces. See `docs/strip.md`.
 use enum_dispatch::enum_dispatch;
 use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 
-use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::HashMap;
-use crate::{Direction, ResizeOrientation};
+use rini_windows::ids::{WindowId, pid_t};
+
+pub use rini_protocol::{Direction, ResizeOrientation};
+
+pub mod area;
+pub mod constraints;
+mod scrolling;
+pub mod settings;
+pub use scrolling::ScrollingLayoutSystem;
 
 slotmap::new_key_type! { pub struct LayoutId; }
 
@@ -103,7 +112,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
         layout: LayoutId,
         screen: CGRect,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
-        gaps: &rini_config::GapSettings,
+        gaps: &settings::GapSettings,
     ) -> Vec<(WindowId, CGRect)>;
 
     fn selected_window(&self, layout: LayoutId) -> Option<WindowId>;
@@ -166,7 +175,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
         old_frame: CGRect,
         new_frame: CGRect,
         screen: CGRect,
-        gaps: &rini_config::GapSettings,
+        gaps: &settings::GapSettings,
     );
 
     fn swap_windows(&mut self, layout: LayoutId, a: WindowId, b: WindowId) -> bool;
@@ -195,15 +204,11 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     );
 }
 
-pub mod constraints;
-mod scrolling;
-pub use scrolling::ScrollingLayoutSystem;
-
 #[cfg(test)]
 mod tests {
     use super::{LayoutSystem, ScrollingLayoutSystem, WindowLayoutConstraints};
     use rini_windows::ids::WindowId;
-    use rini_config::{ScrollingLayoutSettings, WindowInsertionPoint};
+    use crate::settings::{ScrollingLayoutSettings, WindowInsertionPoint};
 
     fn w(idx: u32) -> WindowId {
         WindowId::new(1, idx)

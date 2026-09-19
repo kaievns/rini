@@ -10,8 +10,6 @@ mod floating;
 pub mod floating_position_store;
 pub mod hidden_window_placement;
 pub mod launch_memory;
-pub mod systems;
-pub mod utils;
 pub mod virtual_workspace;
 pub mod window_store;
 mod workspaces;
@@ -26,7 +24,7 @@ pub use floating::FloatingManager;
 pub use floating_position_store::FloatingPositionStore;
 pub use hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 pub use rini_protocol::{Direction, ResizeOrientation};
-pub use systems::{LayoutId, LayoutSystem, LayoutSystemKind, ScrollingLayoutSystem};
+pub use rini_tiling::{LayoutId, LayoutSystem, LayoutSystemKind, ScrollingLayoutSystem};
 pub use virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStats, WorkspaceStore};
 pub use window_store::{
     PendingWindowOperation, WindowPlacement, WindowRecord, WindowStore, WindowVisibility,

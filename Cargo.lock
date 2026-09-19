@@ -1402,6 +1402,7 @@ dependencies = [
  "rini-protocol",
  "rini-runloop",
  "rini-shared",
+ "rini-tiling",
  "rini-windows",
  "serde",
  "serde_json",
@@ -1470,6 +1471,7 @@ dependencies = [
  "rini-protocol",
  "rini-runloop",
  "rini-shared",
+ "rini-tiling",
  "rini-windows",
  "ron",
  "serde",
@@ -1609,6 +1611,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-tiling"
+version = "0.1.0"
+dependencies = [
+ "enum_dispatch",
+ "objc2-core-foundation",
+ "rini-protocol",
+ "rini-shared",
+ "rini-windows",
+ "serde",
+ "slotmap",
+ "tracing",
+]
+
+[[package]]
 name = "rini-windows"
 version = "0.1.0"
 dependencies = [
@@ -1681,6 +1697,7 @@ dependencies = [
  "rini-runloop",
  "rini-shared",
  "rini-skylight-sys",
+ "rini-tiling",
  "rini-windows",
  "ron",
  "rustc-hash",
