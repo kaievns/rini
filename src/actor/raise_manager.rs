@@ -340,7 +340,7 @@ mod tests {
     fn create_test_app_handles() -> (HashMap<i32, AppThreadHandle>, actor::Receiver<Request>) {
         let mut app_handles = HashMap::default();
         let (app_tx, app_rx) = actor::channel();
-        let app_handle = AppThreadHandle::new_for_test(app_tx);
+        let app_handle = AppThreadHandle::from_sender(app_tx);
         app_handles.insert(1, app_handle);
         (app_handles, app_rx)
     }

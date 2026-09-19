@@ -180,7 +180,7 @@ impl Reactor {
                     bundle_id: Some(bundle_id.to_string()),
                     localized_name: Some(name.to_string()),
                 },
-                handle: AppThreadHandle::new_for_test(app_tx),
+                handle: AppThreadHandle::from_sender(app_tx),
             },
         );
     }
@@ -497,7 +497,7 @@ impl Apps {
                 },
             );
         }
-        let handle = AppThreadHandle::new_for_test(self.tx.clone());
+        let handle = AppThreadHandle::from_sender(self.tx.clone());
         vec![Event::ApplicationLaunched {
             pid,
             info: AppInfo {

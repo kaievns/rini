@@ -77,7 +77,7 @@ pub fn replay(
 ) -> anyhow::Result<()> {
     let file = BufReader::new(File::open(path)?);
     let (tx, mut rx) = actor::channel();
-    let handle = AppThreadHandle::new_for_test(tx);
+    let handle = AppThreadHandle::from_sender(tx);
     DESERIALIZE_THREAD_HANDLE.with(|h| h.borrow_mut().replace(handle));
     let mut lines = file.lines();
     let config = ron::de::from_str(&lines.next().expect("Empty restore file")?)?;

@@ -162,10 +162,9 @@ pub struct AppThreadHandle {
 }
 
 impl AppThreadHandle {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn new_for_test(requests_tx: actor::Sender<Request>) -> Self {
-        let this = AppThreadHandle { requests_tx };
-        this
+    /// A handle over any request channel: what tests and event replay stand in for a live app thread.
+    pub fn from_sender(requests_tx: actor::Sender<Request>) -> Self {
+        AppThreadHandle { requests_tx }
     }
 
     pub fn send(&self, req: Request) -> anyhow::Result<()> {

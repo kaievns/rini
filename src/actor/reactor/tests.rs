@@ -1635,7 +1635,7 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
                 bundle_id: Some("com.test.pending-fullscreen".to_string()),
                 localized_name: Some("Pending Fullscreen".to_string()),
             },
-            handle: AppThreadHandle::new_for_test(app_tx),
+            handle: AppThreadHandle::from_sender(app_tx),
         },
     );
 
