@@ -1,9 +1,10 @@
 //! The workspaces context: virtual workspaces and what they own. Windows are assigned to a
 //! workspace and arranged on its strips (`rini_tiling`) by `LayoutEngine`; the arrangement is
 //! persisted to `layout.ron`, remembered per app across launches, and homed per display.
-//! Still here until its own step: `WindowStore`, the window catalogue (see `docs/architecture.md`).
+//! `WindowStore` is the catalogue from `rini_windows` plus each window's assignment.
 
 pub mod app_rules;
+pub mod assignment;
 pub mod settings;
 pub mod broadcast;
 pub mod display_affinity;

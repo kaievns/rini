@@ -2488,7 +2488,7 @@ impl Reactor {
                 .iter_native_fullscreen_records()
                 .filter(|record| {
                     record.last_known_user_space == Some(space)
-                        || record.workspace.is_some_and(|workspace| workspace.space == space)
+                        || record.assigned_space == Some(space)
                 })
                 .collect();
 
@@ -2521,10 +2521,7 @@ impl Reactor {
                             .then_some(record.current_window_id)
                     });
 
-                let target_space = record
-                    .workspace
-                    .map(|workspace| workspace.space)
-                    .or(record.last_known_user_space);
+                let target_space = record.assigned_space.or(record.last_known_user_space);
 
                 if let (Some(window_id), Some(target_space)) = (live_window_id, target_space)
                     && let Some(source_space) =

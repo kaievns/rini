@@ -4,6 +4,7 @@
 //! layouts. See `docs/architecture.md`.
 
 // Model
+pub mod catalogue;
 pub mod ids;
 pub mod rules;
 pub mod state;

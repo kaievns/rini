@@ -132,10 +132,7 @@ fn sync_window_server_id_mapping(
             state.windows.native_fullscreen_record_for_window(wid),
             current_native_space,
         ) {
-            let target_user_space = record
-                .workspace
-                .map(|workspace| workspace.space)
-                .or(record.last_known_user_space);
+            let target_user_space = record.assigned_space.or(record.last_known_user_space);
             if current_space != record.fullscreen_space && Some(current_space) == target_user_space
             {
                 let _ = state.windows.restore_window_from_native_fullscreen(wid);

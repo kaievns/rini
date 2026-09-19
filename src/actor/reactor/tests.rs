@@ -8,7 +8,7 @@ use rini_windows::ids::pid_t;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::{OuterGaps, WorkspaceSelector};
 use rini_workspaces::{Direction, LayoutCommand, LayoutEvent};
-use rini_workspaces::window_store::NativeFullscreenTransition;
+use rini_windows::catalogue::NativeFullscreenTransition;
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_shared::geometry::SameAs;
 use rini_windows::ids::WindowServerId;

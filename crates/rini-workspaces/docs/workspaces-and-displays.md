@@ -31,9 +31,17 @@ Consequences that follow from this and are tested in `virtual_workspace.rs`:
   reconnect. This used to migrate workspace objects, deleting whatever had been
   auto-created on the new id and dropping the assignments that referenced it;
   that is why a dock/undock cycle lost windows. Now only the per-display
-  "showing" entry and per-display focus move. The `WindowStore` side merges
-  rather than replaces: macOS has usually already placed windows on the new id
-  before rini sees it, and `insert` dropped them out of their workspace.
+  "showing" entry and per-display focus move. `WorkspaceAssignments::remap_space`
+  merges rather than replaces: macOS has usually already placed windows on the
+  new id before rini sees it, and `insert` dropped them out of their workspace.
+- **Assignment is one index, kept both ways** (`assignment.rs`): window →
+  workspace and workspace → windows are one lookup each and cannot disagree.
+  Before, each `VirtualWorkspace` owned a set of member windows, and a window
+  could sit in two sets after sleep/wake or a same-space workspace move, which
+  leaked into queries and layout recovery. The index lives beside the window
+  catalogue (`rini_windows::catalogue`) in `WindowStore`; the operations that
+  touch both, such as removing a window or rekeying its identity, go through
+  that facade so neither half is updated without the other.
 - **Last focus is per (workspace, display)** (`VirtualWorkspace.last_focused`),
   because a workspace has a strip per display.
 - **Focus memory is not cleared when focus leaves the workspace.** That runs on
