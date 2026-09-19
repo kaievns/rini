@@ -1,4 +1,4 @@
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use rini_shared::ids::SpaceId;
 
 /// Resolves a workflow focus request without granting the focus service access

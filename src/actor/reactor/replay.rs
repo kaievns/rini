@@ -8,7 +8,7 @@ use tempfile::NamedTempFile;
 use tracing::Span;
 
 use super::{Event, Reactor};
-use crate::actor::app::{AppThreadHandle, Request};
+use rini_windows::app_actor::{AppThreadHandle, Request};
 use crate::actor::{self};
 use rini_config::Config;
 use crate::layout_engine::LayoutEngine;

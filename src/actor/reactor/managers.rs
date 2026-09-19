@@ -4,7 +4,7 @@ use tracing::trace;
 use super::replay::Record;
 use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::actor;
-use rini_shared::ids::{WindowId, pid_t};
+use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::drag_swap::DragManager as DragSwapManager;
 use crate::actor::reactor::Reactor;
 use crate::actor::reactor::animation::AnimationManager;

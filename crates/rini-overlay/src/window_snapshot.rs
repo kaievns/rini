@@ -10,10 +10,10 @@ use objc2_core_foundation::{CFArray, CFRetained, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 use crate::edge_dressing::dressing_after_insert;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 
 pub use rini_motion::fit::{
     Coverage, fits_frame, is_a_resize, is_backdrop_worth_drawing, needs_capture, outgrows,
@@ -105,7 +105,7 @@ pub fn capture_via_skylight(
 /// Captures one window through `CGWindowListCreateImage`, which only renders a composited window.
 /// See "The hairline is composited outside every capture" in `docs/capture-overlay-research.md`.
 pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSnapshot> {
-    let frame = rini_macos::window_server::get_window(window)?.frame;
+    let frame = rini_windows::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }
@@ -140,7 +140,7 @@ pub fn capture_via_framed_with_dressing(
     use crate::edge_dressing::{
         capture_ring_expanded, harvest_from_capture, picture_within_ring,
     };
-    let frame = rini_macos::window_server::get_window(window)?.frame;
+    let frame = rini_windows::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }

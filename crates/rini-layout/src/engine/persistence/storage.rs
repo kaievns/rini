@@ -13,12 +13,12 @@ impl LayoutEngine {
         engine.startup_restore_pending = true;
         let unavailable_windows = engine.discard_unmatchable_startup_candidates(
             |window, id| {
-                rini_macos::window_server::get_window(
-                    rini_macos::window_server::WindowServerId::new(id),
+                rini_windows::window_server::get_window(
+                    rini_windows::ids::WindowServerId::new(id),
                 )
                 .is_some_and(|info| info.pid == window.pid)
             },
-            rini_macos::app::is_bundle_running,
+            rini_windows::app::is_bundle_running,
         );
         tracing::info!(
             path = %path.display(),

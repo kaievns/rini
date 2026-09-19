@@ -1,7 +1,7 @@
 use objc2_core_foundation::CGPoint;
 use tracing::{trace, warn};
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::{DragManager, LayoutManager};
 use crate::actor::reactor::{DragState, LayoutEvent};

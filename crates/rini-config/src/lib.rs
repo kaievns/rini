@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 use anyhow::bail;
 pub use rini_protocol::{ConfigCommand, WorkspaceSelector};
+pub use rini_windows::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
 use serde::{Deserialize, Serialize};
 
 use rini_shared::collections::HashMap;
@@ -53,56 +54,6 @@ pub struct VirtualWorkspaceSettings {
     pub float_modal_windows: bool,
     #[serde(default)]
     pub app_rules: Vec<AppWorkspaceRule>,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct AppWorkspaceRule {
-    pub app_id: Option<String>,
-    /// Target workspace index (0 based) OR workspace name. If None, window goes to active workspace.
-    pub workspace: Option<WorkspaceSelector>,
-    #[serde(default)]
-    pub floating: bool,
-    /// Initial normalized position for a floating window. `(0, 0)` is the top-left
-    /// and `(1, 1)` is the bottom-right of the available screen area.
-    pub position: Option<AppRulePosition>,
-    /// Preferred window size in logical pixels.
-    pub size: Option<AppRuleSize>,
-    /// Focus the window after applying this rule, switching virtual workspaces if needed.
-    #[serde(default)]
-    pub focus: bool,
-    /// Whether Rini should manage matching windows (defaults to true). `false` makes the
-    /// window invisible to Rini (no tiling, floating, or assignments).
-    #[serde(default = "yes")]
-    pub manage: bool,
-    pub app_name: Option<String>,
-    pub title_regex: Option<String>,
-    /// Matched as a literal substring of the title; `title_regex` for anything else.
-    pub title_substring: Option<String>,
-
-    /// Exact match on `AXRole`.
-    pub ax_role: Option<String>,
-
-    /// Exact match on `AXSubrole`.
-    pub ax_subrole: Option<String>,
-
-    /// Optional: match on the window's `AXModal` attribute. `true` matches modal dialogs,
-    /// `false` matches everything else. A rule naming `modal` overrides `float_modal_windows`.
-    pub modal: Option<bool>,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
-#[serde(deny_unknown_fields)]
-pub struct AppRulePosition {
-    pub x: f64,
-    pub y: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
-#[serde(deny_unknown_fields)]
-pub struct AppRuleSize {
-    pub w: Option<f64>,
-    pub h: Option<f64>,
 }
 
 impl Default for VirtualWorkspaceSettings {

@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-windows = { workspace = true }
 rini-runloop = { workspace = true }
 continue = { workspace = true }
 crossbeam-channel = { workspace = true }

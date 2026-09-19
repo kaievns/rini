@@ -2,10 +2,10 @@ use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use rini_shared::collections::HashMap;
 use crate::{VirtualWorkspaceId, WorkspaceStore};
-use rini_shared::ids::pid_t;
+use rini_windows::ids::pid_t;
 use rini_shared::geometry::CGRectDef;
 use rini_shared::ids::SpaceId;
 

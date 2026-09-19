@@ -1,33 +1,22 @@
 [package]
-name = "rini-macos"
+name = "rini-windows"
 version = "0.1.0"
 edition = "2024"
-description = "macOS platform layer for rini: Accessibility, SkyLight, event taps, run loop, Mach"
+description = "rini's windows context: window and app identity, the window catalogue's records, app rules, and the Accessibility and window-server adapters that observe and drive windows."
 license = "Apache-2.0"
 publish = false
-build = "build.rs"
 
 [lib]
 doctest = false
 
 [features]
-# Replaces the window-server reads with thread-local overrides so another crate's tests never
-# touch the live window server. See docs/testing.md.
 test-support = []
 
 [dependencies]
-rini-windows = { workspace = true }
-rini-skylight-sys = { workspace = true }
-rini-runloop = { workspace = true }
 anyhow = { workspace = true }
-bitflags = { workspace = true }
-clap = { workspace = true }
-continue = { workspace = true }
+dashmap = { workspace = true }
 dispatchr = { workspace = true }
-futures-task = { workspace = true }
 libc = { workspace = true }
-nix = { workspace = true }
-num_enum = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }
 objc2-application-services = { workspace = true }
@@ -36,13 +25,17 @@ objc2-core-graphics = { workspace = true }
 objc2-foundation = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
+regex = { workspace = true }
+rini-protocol = { workspace = true }
+rini-runloop = { workspace = true }
 rini-shared = { workspace = true }
+rini-skylight-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 static_assertions = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
-tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+ron = { workspace = true }
 serde_json = { workspace = true }
-tempfile = { version = "3.17.1", default-features = false }

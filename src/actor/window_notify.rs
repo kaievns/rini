@@ -6,14 +6,15 @@ use tracing::{debug, trace};
 
 use super::reactor::{self, Event};
 use super::spaces;
-use rini_shared::ids::WindowId;
-use crate::actor::reactor::Requested;
+use rini_windows::ids::WindowId;
+use rini_windows::transaction::Requested;
 use rini_shared::collections::{HashMap, HashSet};
-use crate::model::tx_store::WindowTxStore;
+use rini_windows::transaction::WindowTxStore;
 use rini_shared::ids::SpaceId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
-use rini_macos::window_server::{self, WindowIterator, WindowServerId};
-use rini_macos::{event, window_notify};
+use rini_windows::window_server::{self, WindowIterator};
+use rini_windows::ids::WindowServerId;
+use rini_macos::window_notify;
 
 #[derive(Default)]
 pub struct Ignored {
@@ -265,7 +266,7 @@ impl WindowNotify {
                     CGSEventType::Known(KnownCGSEvent::WindowMoved)
                     | CGSEventType::Known(KnownCGSEvent::WindowResized) => {
                         // TODO: suppress move/resize while Mission Control is active
-                        let mouse_state = event::get_mouse_state();
+                        let mouse_state = rini_windows::mouse::get_mouse_state();
                         let Some(window_id) = evt.window_id else {
                             continue;
                         };

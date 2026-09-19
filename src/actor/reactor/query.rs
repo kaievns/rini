@@ -6,7 +6,7 @@ use rini_protocol::{
     WorkspaceLayoutData,
 };
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use crate::actor::reactor::{Event, Reactor, Sender};
 use rini_shared::collections::HashSet;
 use crate::model::server::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
@@ -243,7 +243,7 @@ impl Reactor {
                 false
             };
 
-            let workspace_windows_ids: Vec<crate::actor::app::WindowId> =
+            let workspace_windows_ids: Vec<rini_windows::ids::WindowId> =
                 if let Some(space) = space_id {
                     self.layout_manager.layout_engine.virtual_workspace_manager().workspace_windows(
                         &self.state.windows,
@@ -759,9 +759,9 @@ impl Reactor {
                 crate::model::VirtualWorkspaceId,
                 String,
                 bool,
-                Vec<crate::actor::app::WindowId>,
-                Option<crate::actor::app::WindowId>,
-                Vec<(crate::actor::app::WindowId, objc2_core_foundation::CGRect)>,
+                Vec<rini_windows::ids::WindowId>,
+                Option<rini_windows::ids::WindowId>,
+                Vec<(rini_windows::ids::WindowId, objc2_core_foundation::CGRect)>,
             )>,
         )> = Vec::new();
 
@@ -776,7 +776,7 @@ impl Reactor {
 
                 let mut ws_entries = Vec::new();
                 for (workspace_id, workspace_name) in workspaces {
-                    let window_ids: Vec<crate::actor::app::WindowId> =
+                    let window_ids: Vec<rini_windows::ids::WindowId> =
                         self.state.windows.workspace_windows(space, workspace_id);
 
                     let last_focused = self
@@ -806,14 +806,14 @@ impl Reactor {
 
         let mut mapping_intermediate: Vec<(
             u64,
-            crate::actor::app::WindowId,
+            rini_windows::ids::WindowId,
             crate::model::VirtualWorkspaceId,
         )> = Vec::new();
         for (window_id, assignment) in self.state.windows.iter_workspace_assignments() {
             mapping_intermediate.push((assignment.space.get(), window_id, assignment.workspace_id));
         }
 
-        let mut included_windows: HashSet<crate::actor::app::WindowId> = HashSet::default();
+        let mut included_windows: HashSet<rini_windows::ids::WindowId> = HashSet::default();
 
         let mut spaces_json = Vec::new();
         for (space_num, ws_entries) in spaces_intermediate {

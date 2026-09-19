@@ -33,7 +33,7 @@ mod SpaceEventHandler {
             resolved_space: reactor.resolve_native_space(wsid, None),
             active_spaces: reactor.active_spaces.clone(),
             mission_control_active: reactor.is_mission_control_active(),
-            ordered_in: rini_macos::window_server::window_ordered_in(wsid),
+            ordered_in: rini_windows::window_server::window_ordered_in(wsid),
             assigned_space,
             last_known_user_space: super::events::space::resolve_last_known_user_space(
                 tracked_window.and_then(|window| reactor.best_space_for_window_id(window)),
@@ -53,7 +53,7 @@ mod SpaceEventHandler {
 
     pub fn handle_window_server_appeared(
         reactor: &mut super::Reactor,
-        window_server_id: rini_macos::window_server::WindowServerId,
+        window_server_id: rini_windows::ids::WindowServerId,
         space: rini_macos::screen::SpaceId,
         kind: super::SpaceEventKind,
     ) {
@@ -82,7 +82,9 @@ use tracing::{debug, info, instrument, trace, warn};
 use transaction_manager::TransactionId;
 
 use super::{event_tap, gesture_tap};
-use crate::actor::app::{AppInfo, AppThreadHandle, Quiet, Request, WindowId, WindowInfo, pid_t};
+use rini_windows::app::{AppInfo, WindowInfo};
+use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
+use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::raise_manager::{self, RaiseManager, RaiseRequest};
 use crate::actor::reactor::events::window_discovery;
 use crate::actor::spaces::{ForwardedSpaceState, TopologyWindowDelta};
@@ -94,28 +96,27 @@ use crate::model::broadcast::{
     BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id,
 };
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
-use crate::model::tx_store::WindowTxStore;
+use rini_windows::transaction::WindowTxStore;
 use crate::model::{AppRuleResult, RiniState};
-use rini_macos::event::MouseState;
+use rini_windows::mouse::MouseState;
 use rini_runloop::executor::Executor;
 use rini_shared::geometry::{CGRectDef, CGRectExt};
 pub use rini_macos::screen::ScreenInfo;
 use rini_macos::screen::{SpaceId, order_visible_spaces_by_position};
-use rini_macos::window_server::{
-    self, WindowServerId, WindowServerInfo, window_level, window_sub_level,
-};
+use rini_macos::window_server::window_sub_level;
+use rini_windows::window_server;
+use rini_windows::ids::WindowServerId;
+use rini_windows::window_server::{WindowServerInfo, window_level};
 
 pub type Sender = actor::Sender<Event>;
 type Receiver = actor::Receiver<Event>;
 use managers::RefreshQuarantineState;
 pub use query::ReactorQueryHandle;
 
-pub(crate) use crate::model::reactor::{AppState, WindowFilter, WindowState};
-pub use crate::model::reactor::{
-    Command, DisplaySelector, DragSession, DragState, MenuState, MissionControlState,
-    ReactorCommand, RefocusState, Requested, StaleCleanupState, WorkspaceSwitchOrigin,
-    WorkspaceSwitchState,
-};
+pub(crate) use crate::model::reactor::AppState;
+pub(crate) use rini_windows::state::{WindowFilter, WindowState};
+pub use crate::model::reactor::{Command, DisplaySelector, DragSession, DragState, MenuState, MissionControlState, ReactorCommand, RefocusState, StaleCleanupState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
+pub use rini_windows::transaction::Requested;
 
 #[derive(Clone)]
 pub struct ReactorHandle {
@@ -272,13 +273,13 @@ pub enum Event {
     WindowDestroyed(WindowId),
     #[serde(skip)]
     WindowServerDestroyed(
-        rini_macos::window_server::WindowServerId,
+        rini_windows::ids::WindowServerId,
         SpaceId,
         SpaceEventKind,
     ),
     #[serde(skip)]
     WindowServerAppeared(
-        rini_macos::window_server::WindowServerId,
+        rini_windows::ids::WindowServerId,
         SpaceId,
         SpaceEventKind,
     ),
@@ -359,6 +360,57 @@ pub enum Event {
 
     #[serde(skip)]
     ConfigUpdated(Config),
+}
+
+/// The windows context's events, one for one. The per-app actor sends
+/// `rini_windows::event::Event` into the reactor's channel through this.
+impl From<rini_windows::event::Event> for Event {
+    fn from(event: rini_windows::event::Event) -> Self {
+        use rini_windows::event::Event as W;
+        match event {
+            W::ApplicationLaunched {
+                pid,
+                info,
+                handle,
+                is_frontmost,
+                main_window,
+                visible_windows,
+                window_server_info,
+            } => Event::ApplicationLaunched {
+                pid,
+                info,
+                handle,
+                is_frontmost,
+                main_window,
+                visible_windows,
+                window_server_info,
+            },
+            W::ApplicationThreadTerminated(pid) => Event::ApplicationThreadTerminated(pid),
+            W::ApplicationActivated(pid, quiet) => Event::ApplicationActivated(pid, quiet),
+            W::ApplicationDeactivated(pid) => Event::ApplicationDeactivated(pid),
+            W::ApplicationMainWindowChanged(pid, window, quiet) => {
+                Event::ApplicationMainWindowChanged(pid, window, quiet)
+            }
+            W::WindowsDiscovered { pid, new, known_visible } => {
+                Event::WindowsDiscovered { pid, new, known_visible }
+            }
+            W::WindowCreated(wid, info, server_info, mouse) => {
+                Event::WindowCreated(wid, info, server_info, mouse)
+            }
+            W::WindowDestroyed(wid) => Event::WindowDestroyed(wid),
+            W::WindowMinimized(wid) => Event::WindowMinimized(wid),
+            W::WindowDeminiaturized(wid) => Event::WindowDeminiaturized(wid),
+            W::WindowFrameChanged(wid, frame, txid, requested, mouse) => {
+                Event::WindowFrameChanged(wid, frame, txid, requested, mouse)
+            }
+            W::WindowTitleChanged(wid, title) => Event::WindowTitleChanged(wid, title),
+            W::MenuOpened(pid) => Event::MenuOpened(pid),
+            W::MenuClosed(pid) => Event::MenuClosed(pid),
+            W::RaiseCompleted { window_id, sequence_id } => {
+                Event::RaiseCompleted { window_id, sequence_id }
+            }
+        }
+    }
 }
 
 pub struct Reactor {
@@ -1483,7 +1535,7 @@ impl Reactor {
                 ) {
                     let mut outcome = EventOutcome::no_change();
                     outcome.dispatch_mouse_up = effective_mouse_state
-                        == Some(rini_macos::event::MouseState::Up)
+                        == Some(rini_windows::mouse::MouseState::Up)
                         && matches!(
                             self.drag_manager.drag_state,
                             DragState::Active { .. } | DragState::PendingSwap { .. }
@@ -1548,7 +1600,7 @@ impl Reactor {
                 // Frame acknowledgements and no-op geometry changes can return
                 // early from the reducer. Mouse release still has to terminate
                 // an existing drag session in those cases.
-                if effective_mouse_state == Some(rini_macos::event::MouseState::Up)
+                if effective_mouse_state == Some(rini_windows::mouse::MouseState::Up)
                     && matches!(
                         self.drag_manager.drag_state,
                         DragState::Active { .. } | DragState::PendingSwap { .. }
@@ -2208,7 +2260,7 @@ impl Reactor {
         }
 
         if let Some(direction) = outcome.switch_native_space {
-            unsafe { window_server::switch_space(direction) };
+            unsafe { rini_macos::space_switch::switch_space(direction) };
         }
 
         for (pid, window) in outcome.make_key_windows {
@@ -3915,7 +3967,7 @@ impl Reactor {
                 self.transaction_manager.update_txid_entries([(wsid, txid, frame)]);
             }
             if let Some(app) = self.app_manager.apps.get(&wid.pid) {
-                _ = app.handle.send(crate::actor::app::Request::SetWindowFrame(
+                _ = app.handle.send(rini_windows::app_actor::Request::SetWindowFrame(
                     wid, frame, txid, true,
                 ));
             }
@@ -4707,7 +4759,7 @@ impl Reactor {
 
         let order = {
             let space_id = space.get();
-            rini_macos::window_server::space_window_list_for_connection(&[space_id], 0, false)
+            rini_windows::window_server::space_window_list_for_connection(&[space_id], 0, false)
         };
         let candidate_u32 = candidate_wsid.as_u32();
         let candidate_level = window_level(candidate_u32);
@@ -5429,7 +5481,7 @@ impl Reactor {
     /// column's place cannot be seen; it is judged again by `regroup_after_layout` once a layout pass
     /// brings it on screen, since nothing else raises a column that scrolls back into view.
     fn strip_group_to_lift(&mut self, space: SpaceId, focused: WindowId) -> Vec<WindowId> {
-        let depths = rini_macos::window_server::front_to_back_depths();
+        let depths = rini_windows::window_server::front_to_back_depths();
         let mut order: Vec<StackedWindow> = self
             .layout_manager
             .layout_engine
@@ -5760,7 +5812,7 @@ impl Reactor {
         let Some(screen) = self.space_state.screen_by_space(space) else {
             return false;
         };
-        if !window_server::focus_desktop_window(screen) {
+        if !rini_macos::window_server::focus_desktop_window(screen) {
             return false;
         }
 

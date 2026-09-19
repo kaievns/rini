@@ -3,20 +3,21 @@ use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use rini_shared::collections::{HashMap, HashSet};
 #[cfg(test)]
-use rini_config::AppWorkspaceRule;
+use rini_windows::rules::AppWorkspaceRule;
 use rini_config::{
     LayoutSettings, MAX_WORKSPACES, VirtualWorkspaceSettings, WorkspaceSelector,
 };
 use rini_shared::log::trace_misc;
 use crate::Direction;
 use crate::systems::LayoutSystemKind;
-use crate::app_rules::{AppRuleDecision, AppRuleEffects, AppRuleResult};
+use rini_windows::rules::AppRuleDecision;
+use crate::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 use crate::{WindowStore, WindowWorkspaceInfo};
-use rini_shared::ids::pid_t;
+use rini_windows::ids::pid_t;
 use rini_shared::ids::SpaceId;
 
 new_key_type! {
@@ -149,7 +150,7 @@ pub struct WorkspaceStore {
     workspace_counter: usize,
     #[cfg(test)]
     #[serde(skip)]
-    test_app_rules: crate::AppRuleEngine,
+    test_app_rules: rini_windows::rules::AppRuleEngine,
     #[serde(skip)]
     max_workspaces: usize,
     #[serde(skip)]
@@ -190,7 +191,7 @@ impl WorkspaceStore {
             active_workspace_per_space: HashMap::default(),
             workspace_counter: 1,
             #[cfg(test)]
-            test_app_rules: crate::AppRuleEngine::new(&config.app_rules, config.float_modal_windows),
+            test_app_rules: rini_windows::rules::AppRuleEngine::new(&config.app_rules, config.float_modal_windows),
             max_workspaces: MAX_WORKSPACES,
             default_workspace_count: config.default_workspace_count,
             default_workspace_names: config.workspace_names.clone(),
@@ -1040,7 +1041,7 @@ impl WorkspaceStore {
         ax_role: Option<&str>,
         ax_subrole: Option<&str>,
     ) -> Result<AppRuleResult, WorkspaceError> {
-        let decision = self.test_app_rules.evaluate(crate::WindowRuleContext {
+        let decision = self.test_app_rules.evaluate(rini_windows::rules::WindowRuleContext {
             app_bundle_id,
             app_name,
             window_title,
@@ -1156,7 +1157,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
-    use rini_shared::ids::WindowId;
+    use rini_windows::ids::WindowId;
     use rini_shared::ids::SpaceId;
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {

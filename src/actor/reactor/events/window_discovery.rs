@@ -1,13 +1,15 @@
 use tracing::{debug, trace, warn};
 
 use super::window;
-use crate::actor::app::{AppInfo, WindowId, WindowInfo, pid_t};
-use crate::actor::reactor::{LayoutEvent, WindowFilter, WindowState, utils};
+use rini_windows::app::{AppInfo, WindowInfo};
+use rini_windows::ids::{WindowId, pid_t};
+use crate::actor::reactor::{LayoutEvent, utils};
+use rini_windows::state::{WindowFilter, WindowState};
 use rini_shared::collections::{BTreeMap, HashMap, HashSet};
 use crate::model::AppRuleResult;
 use crate::model::virtual_workspace::WorkspaceError;
 use rini_shared::ids::SpaceId;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 
 /// Handler for window discovery events, responsible for processing newly discovered windows
 /// and managing the lifecycle of window state in the reactor.
@@ -156,7 +158,7 @@ pub(crate) struct StaleCleanupSnapshot {
 
 #[derive(Debug)]
 pub(crate) struct StaleWindowObservation {
-    pub(crate) info: Option<rini_macos::window_server::WindowServerInfo>,
+    pub(crate) info: Option<rini_windows::window_server::WindowServerInfo>,
     pub(crate) suitable: Option<bool>,
     pub(crate) ordered_in: Option<bool>,
 }

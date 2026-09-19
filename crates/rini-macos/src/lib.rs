@@ -1,23 +1,18 @@
 #![allow(non_upper_case_globals)]
-//! macOS platform layer. Nothing here knows about workspaces or layouts; see `docs/architecture.md`.
+//! Transitional: the macOS adapters not yet moved into their contexts (displays, input) and the
+//! Mach IPC server. See `docs/architecture.md`.
 
 use objc2_core_graphics::CGError;
 
 pub mod accessibility;
-pub mod app;
-pub mod axuielement;
-pub mod carbon;
 
 pub mod display_churn;
-pub mod enhanced_ui;
 pub mod event;
 pub mod event_tap;
 pub mod haptics;
 pub mod hotkey;
 pub mod mach;
-pub mod observer;
 pub mod power;
-pub mod process;
 pub mod screen;
 pub mod service;
 pub mod space_switch;

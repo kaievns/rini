@@ -16,9 +16,7 @@ pub mod virtual_workspace;
 pub mod window_store;
 mod workspaces;
 
-pub use app_rules::{
-    AppRuleDecision, AppRuleEffects, AppRuleEngine, AppRuleResult, WindowRuleContext,
-};
+pub use app_rules::{AppRuleEffects, AppRuleResult};
 pub use display_affinity::DisplayAffinity;
 pub use engine::{
     EventResponse, LayoutCommand, LayoutEngine, LayoutEvent, LayoutEventOutcome, RestoreReport,
@@ -31,7 +29,7 @@ pub use rini_protocol::{Direction, ResizeOrientation};
 pub use systems::{LayoutId, LayoutSystem, LayoutSystemKind, ScrollingLayoutSystem};
 pub use virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStats, WorkspaceStore};
 pub use window_store::{
-    PendingWindowOperation, WindowFilter, WindowPlacement, WindowRecord, WindowState, WindowStore,
-    WindowVisibility, WindowWorkspaceInfo,
+    PendingWindowOperation, WindowPlacement, WindowRecord, WindowStore, WindowVisibility,
+    WindowWorkspaceInfo,
 };
 pub use workspaces::WorkspaceLayouts;

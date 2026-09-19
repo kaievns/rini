@@ -14,20 +14,20 @@ use crate::actor::gesture_tap;
 use rini_config::actor as config;
 pub use rini_config::{ExecCmd, WmCmd, WmCommand};
 use rini_config::WorkspaceSelector;
-use rini_macos::app::{NSRunningApplicationExt, pid_t};
+use rini_windows::app::NSRunningApplicationExt;
+use rini_windows::ids::pid_t;
 
 pub type Sender = actor::Sender<WmEvent>;
 
 type Receiver = actor::Receiver<WmEvent>;
 
 use self::WmCmd::*;
-use crate::actor::app::AppInfo;
+use rini_windows::app::AppInfo;
 use crate::actor::spaces::ForwardedSpaceState;
 use crate::actor::{self, event_tap, reactor};
-use crate::model::tx_store::WindowTxStore;
+use rini_windows::transaction::WindowTxStore;
 use rini_runloop::dispatch::DispatchExt;
 use rini_macos::screen::CoordinateConverter;
-use rini_macos as sys;
 
 use crate::layout_engine as layout;
 
@@ -44,6 +44,17 @@ pub enum WmEvent {
     KeyboardLayoutChanged,
     ConfigUpdated(rini_config::Config),
     Command(WmCommand),
+}
+
+impl From<rini_windows::lifecycle::AppLifecycle> for WmEvent {
+    fn from(event: rini_windows::lifecycle::AppLifecycle) -> Self {
+        use rini_windows::lifecycle::AppLifecycle as L;
+        match event {
+            L::Launched(pid, info) => WmEvent::AppLaunch(pid, info),
+            L::FrontSwitched(pid) => WmEvent::AppGloballyActivated(pid),
+            L::Terminated(pid) => WmEvent::AppTerminated(pid),
+        }
+    }
 }
 
 pub struct Config {
@@ -73,7 +84,7 @@ impl WmController {
         window_tx_store: Option<WindowTxStore>,
     ) -> (Self, actor::Sender<WmEvent>) {
         let (sender, receiver) = actor::channel();
-        sys::app::set_application_callback({
+        rini_windows::app::set_application_callback({
             let sender = sender.clone();
             move |pid, info| sender.send(WmEvent::AppLaunch(pid, info))
         });
@@ -138,7 +149,7 @@ impl WmController {
                 );
             }
             DiscoverRunningApps => {
-                for (pid, info) in sys::app::running_apps(None) {
+                for (pid, info) in rini_windows::app::running_apps(None) {
                     self.new_app(pid, info);
                 }
             }
@@ -153,7 +164,7 @@ impl WmController {
                 self.events_tx.send(Event::ApplicationGloballyDeactivated(pid));
             }
             AppTerminated(pid) => {
-                sys::app::remove_application_observer(pid);
+                rini_windows::app::remove_application_observer(pid);
                 self.events_tx.send(Event::ApplicationTerminated(pid));
             }
             ConfigUpdated(new_cfg) => {
@@ -289,7 +300,7 @@ impl WmController {
         if running_app.activationPolicy() != NSApplicationActivationPolicy::Regular
             && info.bundle_id.as_deref() != Some("com.apple.loginwindow")
         {
-            sys::app::ensure_activation_policy_observer(pid, info.clone());
+            rini_windows::app::ensure_activation_policy_observer(pid, info.clone());
             debug!(
                 pid = ?pid,
                 bundle = ?info.bundle_id,
@@ -297,14 +308,14 @@ impl WmController {
             );
 
             if running_app.activationPolicy() == NSApplicationActivationPolicy::Regular {
-                sys::app::remove_activation_policy_observer(pid);
+                rini_windows::app::remove_activation_policy_observer(pid);
             } else {
                 return;
             }
         }
 
         if !running_app.isFinishedLaunching() {
-            sys::app::ensure_finished_launching_observer(pid, info.clone());
+            rini_windows::app::ensure_finished_launching_observer(pid, info.clone());
             debug!(
                 pid = ?pid,
                 bundle = ?info.bundle_id,
@@ -312,16 +323,16 @@ impl WmController {
             );
 
             if running_app.isFinishedLaunching() {
-                sys::app::remove_finished_launching_observer(pid);
+                rini_windows::app::remove_finished_launching_observer(pid);
             } else {
                 return;
             }
         }
 
-        actor::app::spawn_app_thread(
+        rini_windows::app_actor::spawn_app_thread(
             pid,
             info,
-            self.events_tx.clone(),
+            Box::new(self.events_tx.clone()),
             self.window_tx_store.clone(),
         );
     }

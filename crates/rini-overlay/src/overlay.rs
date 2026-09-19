@@ -21,7 +21,7 @@ use objc2_quartz_core::{
     CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
 };
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 pub use rini_motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE, bounce_displacement, ease};
 pub use rini_motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,

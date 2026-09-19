@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use rini_shared::ids::{WindowId, pid_t};
+use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::HashMap;
 use rini_shared::ids::SpaceId;
 

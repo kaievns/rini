@@ -1,19 +1,20 @@
 use objc2_core_foundation::CGRect;
 use tracing::{debug, trace};
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::DragManager;
 use crate::actor::reactor::transaction_manager::TransactionManager;
-use crate::actor::reactor::{DragState, Quiet, TransactionId, WindowState, utils};
+use crate::actor::reactor::{DragState, Quiet, TransactionId, utils};
+use rini_windows::state::WindowState;
 use crate::layout_engine::LayoutEvent;
 use crate::model::WindowVisibility;
-use crate::model::reactor::WindowFilter;
-use rini_macos::app::WindowInfo as Window;
-use rini_macos::event::MouseState;
+use rini_windows::state::WindowFilter;
+use rini_windows::app::WindowInfo as Window;
+use rini_windows::mouse::MouseState;
 use rini_shared::geometry::SameAs;
 use rini_shared::ids::SpaceId;
-use rini_macos::window_server::WindowServerInfo;
+use rini_windows::window_server::WindowServerInfo;
 
 #[derive(Debug)]
 pub struct WindowCreatedPayload {
@@ -243,7 +244,7 @@ pub fn classify_window_frame_change(
             return FrameChangeDisposition::Handled;
         }
         if mouse_state.is_none() {
-            *mouse_state = rini_macos::event::get_mouse_state();
+            *mouse_state = rini_windows::mouse::get_mouse_state();
         }
         if *mouse_state == Some(MouseState::Down) {
             transactions.clear_target_for_window(server);
@@ -269,7 +270,7 @@ pub fn classify_window_frame_change(
     }
 
     if mouse_state.is_none() {
-        *mouse_state = rini_macos::event::get_mouse_state();
+        *mouse_state = rini_windows::mouse::get_mouse_state();
     }
     FrameChangeDisposition::NeedsGeometryAnalysis
 }
@@ -281,7 +282,7 @@ fn query_mouse_for_active_drag(drag: &DragManager, mouse_state: &mut Option<Mous
             DragState::Active { .. } | DragState::PendingSwap { .. }
         )
     {
-        *mouse_state = rini_macos::event::get_mouse_state();
+        *mouse_state = rini_windows::mouse::get_mouse_state();
     }
 }
 

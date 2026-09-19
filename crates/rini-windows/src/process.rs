@@ -1,6 +1,6 @@
 use objc2_core_graphics::CGError;
 
-use super::app::pid_t;
+use crate::ids::pid_t;
 use crate::cg_ok;
 
 pub struct ProcessInfo {

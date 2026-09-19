@@ -33,8 +33,9 @@ use rini_runloop::dispatch::DispatchExt;
 use rini_macos::screen::managed_display_space_ids;
 use rini_macos::screen::{CoordinateConverter, ScreenCache, ScreenInfo, SpaceId};
 use rini_skylight_sys::DisplayReconfigFlags;
-use rini_shared::ids::WindowServerId;
-use rini_macos::{display_churn, window_server};
+use rini_windows::ids::WindowServerId;
+use rini_macos::display_churn;
+use rini_windows::window_server;
 
 const REFRESH_DEFAULT_DELAY_NS: i64 = 100_000_000;
 const REFRESH_SPACE_SWITCH_DELAY_NS: i64 = 50_000_000;

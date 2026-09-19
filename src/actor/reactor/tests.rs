@@ -3,14 +3,15 @@ use test_log::test;
 
 use super::testing::*;
 use super::*;
-use crate::actor::app::{AppThreadHandle, Request, pid_t};
+use rini_windows::app_actor::{AppThreadHandle, Request};
+use rini_windows::ids::pid_t;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::{OuterGaps, WorkspaceSelector};
 use crate::layout_engine::{Direction, LayoutCommand, LayoutEvent};
 use crate::model::window_store::NativeFullscreenTransition;
-use rini_macos::app::{AppInfo, WindowInfo};
+use rini_windows::app::{AppInfo, WindowInfo};
 use rini_shared::geometry::SameAs;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
@@ -742,9 +743,9 @@ fn user_space_window_server_events_preserve_hidden_window_state() {
     reactor.handle_event(space_state_event(vec![frame], vec![Some(space1)]));
     reactor.insert_test_window(wid, wsid, Some(space1), frame, true);
 
-    rini_macos::window_server::set_window_ordered_in_override(wsid, Some(true));
+    rini_windows::window_server::set_window_ordered_in_override(wsid, Some(true));
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
-    rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.contains_window(wid));
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space1));
@@ -763,9 +764,9 @@ fn user_space_window_server_destroyed_removes_window_when_window_server_is_gone(
     reactor.insert_test_window(wid, wsid, Some(space1), frame, true);
     reactor.state.windows.mark_window_visible(wsid);
 
-    rini_macos::window_server::set_window_ordered_in_override(wsid, Some(false));
+    rini_windows::window_server::set_window_ordered_in_override(wsid, Some(false));
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
-    rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(!reactor.state.windows.contains_window(wid));
     assert_eq!(reactor.state.windows.tracked_window_id(wsid), None);
@@ -1412,11 +1413,11 @@ fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pend
 #[test]
 fn stale_user_space_appearance_is_ignored_when_authoritative_window_space_differs() {
     let (mut reactor, wid, wsid, space1, space2, _frame) = reactor_with_window_moved_to_space2();
-    rini_macos::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
+    rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
 
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
 
-    rini_macos::window_server::set_window_spaces_override(wsid, None);
+    rini_windows::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
     assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
@@ -1476,9 +1477,9 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
     assert!(reactor.assign_test_window_to_workspace(space1, wid, hidden_workspace));
     assert_eq!(reactor.hidden_assigned_space_for_window_id(wid), Some(space1));
 
-    rini_macos::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
+    rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
     window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
-    rini_macos::window_server::set_window_spaces_override(wsid, None);
+    rini_windows::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
     assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
@@ -1708,7 +1709,7 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
     reactor.handle_event(Event::WindowCreated(
         second_wid,
         make_window_info(frame, Some(second_wsid), "Second Window", None),
-        Some(rini_macos::window_server::WindowServerInfo {
+        Some(rini_windows::window_server::WindowServerInfo {
             id: second_wsid,
             pid: original_wid.pid,
             layer: 0,
@@ -3155,7 +3156,7 @@ fn authoritative_active_window_snapshot_reassigns_missing_window_to_inactive_spa
 
     reactor.mark_test_window_visible_in_space(moved_wsid, active_space);
     reactor.mark_test_window_visible_in_space(retained_wsid, active_space);
-    rini_macos::window_server::set_window_spaces_override(
+    rini_windows::window_server::set_window_spaces_override(
         moved_wsid,
         Some(vec![inactive_space.get()]),
     );
@@ -3165,7 +3166,7 @@ fn authoritative_active_window_snapshot_reassigns_missing_window_to_inactive_spa
         false,
     );
 
-    rini_macos::window_server::set_window_spaces_override(moved_wsid, None);
+    rini_windows::window_server::set_window_spaces_override(moved_wsid, None);
 
     assert_eq!(
         reactor.assigned_space_for_window_id(moved),
@@ -3217,11 +3218,11 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
 
     reactor.mark_test_window_visible_in_space(moved_wsid, active_space);
     reactor.mark_test_window_visible_in_space(retained_wsid, active_space);
-    rini_macos::window_server::set_window_spaces_override(
+    rini_windows::window_server::set_window_spaces_override(
         moved_wsid,
         Some(vec![inactive_space.get()]),
     );
-    rini_macos::window_server::set_space_window_list_for_space_override(
+    rini_windows::window_server::set_space_window_list_for_space_override(
         active_space.get(),
         Some(vec![retained_wsid.as_u32()]),
     );
@@ -3240,8 +3241,8 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
         },
     ));
 
-    rini_macos::window_server::set_window_spaces_override(moved_wsid, None);
-    rini_macos::window_server::set_space_window_list_for_space_override(active_space.get(), None);
+    rini_windows::window_server::set_window_spaces_override(moved_wsid, None);
+    rini_windows::window_server::set_space_window_list_for_space_override(active_space.get(), None);
 
     assert_eq!(reactor.assigned_space_for_window_id(moved), Some(inactive_space));
     assert!(reactor.test_workspace_for_window(active_space, moved).is_none());
@@ -3259,9 +3260,9 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
         reactor_with_window_on_space1_two_displays();
     let screen1 = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
 
-    rini_macos::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
-    rini_macos::window_server::set_space_window_list_for_space_override(space1.get(), Some(vec![]));
-    rini_macos::window_server::set_space_window_list_for_space_override(
+    rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
+    rini_windows::window_server::set_space_window_list_for_space_override(space1.get(), Some(vec![]));
+    rini_windows::window_server::set_space_window_list_for_space_override(
         space2.get(),
         Some(vec![wsid.as_u32()]),
     );
@@ -3280,9 +3281,9 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
         },
     ));
 
-    rini_macos::window_server::set_window_spaces_override(wsid, None);
-    rini_macos::window_server::set_space_window_list_for_space_override(space1.get(), None);
-    rini_macos::window_server::set_space_window_list_for_space_override(space2.get(), None);
+    rini_windows::window_server::set_window_spaces_override(wsid, None);
+    rini_windows::window_server::set_space_window_list_for_space_override(space1.get(), None);
+    rini_windows::window_server::set_space_window_list_for_space_override(space2.get(), None);
 
     assert_eq!(
         reactor.assigned_space_for_window_id(wid),
@@ -4237,9 +4238,9 @@ fn current_ax_destruction_after_quarantine_release_removes_window() {
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
     let wsid = reactor.test_window_server_id(wid);
 
-    rini_macos::window_server::set_window_ordered_in_override(wsid, Some(false));
+    rini_windows::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
@@ -4255,9 +4256,9 @@ fn ax_destruction_removes_window_on_known_inactive_space_outside_churn() {
     reactor.state.windows.mark_window_hidden(wsid);
     assert!(reactor.is_window_on_known_inactive_space(wid));
 
-    rini_macos::window_server::set_window_ordered_in_override(wsid, Some(false));
+    rini_windows::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert_eq!(reactor.test_workspace_for_window(inactive_space, wid), None);
@@ -4276,9 +4277,9 @@ fn ax_destruction_removes_already_minimized_window_outside_churn() {
     reactor.handle_event(Event::WindowMinimized(wid));
     assert!(reactor.state.windows.window(wid).unwrap().info.is_minimized);
 
-    rini_macos::window_server::set_window_ordered_in_override(wsid, Some(false));
+    rini_windows::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
@@ -4298,9 +4299,9 @@ fn repeated_ordered_out_ax_replacement_does_not_accumulate_layout_ghosts() {
     assert_eq!(test_layout(&mut reactor, space, screen).len(), 3);
 
     for _ in 0..2 {
-        rini_macos::window_server::set_window_ordered_in_override(wsid, Some(false));
+        rini_windows::window_server::set_window_ordered_in_override(wsid, Some(false));
         reactor.handle_event(Event::WindowDestroyed(middle));
-        rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+        rini_windows::window_server::set_window_ordered_in_override(wsid, None);
 
         assert!(reactor.state.windows.record(middle).is_none());
         assert_eq!(
@@ -4336,9 +4337,9 @@ fn ax_destruction_removes_ordered_in_window_outside_churn() {
     assert!(!reactor.refreshes_blocked());
     assert!(has_window_in_layout(&mut reactor, space, screen, wid));
 
-    rini_macos::window_server::set_window_ordered_in_override(wsid, Some(true));
+    rini_windows::window_server::set_window_ordered_in_override(wsid, Some(true));
     reactor.handle_event(Event::WindowDestroyed(wid));
-    rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(wsid, None);
 
     assert!(reactor.state.windows.record(wid).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, wid));
@@ -4599,10 +4600,10 @@ fn genuine_close_during_sleep_recovery_does_not_leave_layout_ghost() {
         .active_window_spaces
         .insert(WindowServerId::new(survivor.idx.get()), space);
 
-    rini_macos::window_server::set_window_ordered_in_override(closed_wsid, Some(false));
+    rini_windows::window_server::set_window_ordered_in_override(closed_wsid, Some(false));
     reactor.handle_event(Event::SpaceStateChanged(recovered));
     reactor.discover_test_windows(1, vec![], vec![survivor]);
-    rini_macos::window_server::set_window_ordered_in_override(closed_wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(closed_wsid, None);
 
     assert!(reactor.state.windows.record(closed).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, closed));
@@ -4639,10 +4640,10 @@ fn last_window_close_during_sleep_recovery_does_not_leave_layout_ghost() {
         forwarded_space_state(make_screen_snapshots(vec![screen], vec![Some(space)]));
     recovered.releases_lifecycle_refresh_quarantine = true;
 
-    rini_macos::window_server::set_window_ordered_in_override(closed_wsid, Some(false));
+    rini_windows::window_server::set_window_ordered_in_override(closed_wsid, Some(false));
     reactor.handle_event(Event::SpaceStateChanged(recovered));
     reactor.discover_test_windows(1, vec![], vec![]);
-    rini_macos::window_server::set_window_ordered_in_override(closed_wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(closed_wsid, None);
 
     assert!(reactor.state.windows.record(closed).is_none());
     assert!(!has_window_in_layout(&mut reactor, space, screen, closed));
@@ -4681,7 +4682,7 @@ fn authoritative_active_space_membership_comes_from_space_window_ids_directly() 
     let wsid_a = WindowServerId::new(41);
     let wsid_b = WindowServerId::new(42);
 
-    rini_macos::window_server::set_space_window_list_for_connection_override(Some(vec![
+    rini_windows::window_server::set_space_window_list_for_connection_override(Some(vec![
         wsid_a.as_u32(),
         wsid_b.as_u32(),
     ]));
@@ -4689,7 +4690,7 @@ fn authoritative_active_space_membership_comes_from_space_window_ids_directly() 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     let snapshot = reactor.authoritative_active_space_windows();
 
-    rini_macos::window_server::set_space_window_list_for_connection_override(None);
+    rini_windows::window_server::set_space_window_list_for_connection_override(None);
 
     let ids: Vec<_> = snapshot.into_iter().map(|(wsid, _)| wsid).collect();
     assert_eq!(
@@ -4709,16 +4710,16 @@ fn authoritative_active_space_membership_queries_each_active_space_independently
     let wsid_left = WindowServerId::new(41);
     let wsid_right = WindowServerId::new(42);
 
-    rini_macos::window_server::set_space_window_list_for_space_override(
+    rini_windows::window_server::set_space_window_list_for_space_override(
         space1.get(),
         Some(vec![wsid_left.as_u32()]),
     );
-    rini_macos::window_server::set_space_window_list_for_space_override(
+    rini_windows::window_server::set_space_window_list_for_space_override(
         space2.get(),
         Some(vec![wsid_right.as_u32()]),
     );
-    rini_macos::window_server::set_window_spaces_override(wsid_left, Some(vec![space1.get()]));
-    rini_macos::window_server::set_window_spaces_override(wsid_right, Some(vec![space2.get()]));
+    rini_windows::window_server::set_window_spaces_override(wsid_left, Some(vec![space1.get()]));
+    rini_windows::window_server::set_window_spaces_override(wsid_right, Some(vec![space2.get()]));
 
     reactor.handle_event(space_state_event(
         vec![left, right],
@@ -4726,10 +4727,10 @@ fn authoritative_active_space_membership_queries_each_active_space_independently
     ));
     let mut snapshot = reactor.authoritative_active_space_windows();
 
-    rini_macos::window_server::set_space_window_list_for_space_override(space1.get(), None);
-    rini_macos::window_server::set_space_window_list_for_space_override(space2.get(), None);
-    rini_macos::window_server::set_window_spaces_override(wsid_left, None);
-    rini_macos::window_server::set_window_spaces_override(wsid_right, None);
+    rini_windows::window_server::set_space_window_list_for_space_override(space1.get(), None);
+    rini_windows::window_server::set_space_window_list_for_space_override(space2.get(), None);
+    rini_windows::window_server::set_window_spaces_override(wsid_left, None);
+    rini_windows::window_server::set_window_spaces_override(wsid_right, None);
 
     snapshot.sort_unstable_by_key(|(wsid, _)| wsid.as_u32());
     assert_eq!(
@@ -4751,9 +4752,9 @@ fn empty_active_space_membership_during_wake_race_does_not_blank_known_active_wi
 
     reactor.mark_test_window_visible_in_space(wsid, space);
 
-    rini_macos::window_server::set_space_window_list_for_connection_override(Some(vec![]));
+    rini_windows::window_server::set_space_window_list_for_connection_override(Some(vec![]));
     reactor.refresh_window_server_snapshot_for_active_spaces();
-    rini_macos::window_server::set_space_window_list_for_connection_override(None);
+    rini_windows::window_server::set_space_window_list_for_connection_override(None);
 
     assert!(
         reactor.state.windows.is_window_visible(wsid),
@@ -4875,9 +4876,9 @@ fn native_space_resolution_policy_table() {
     // With no pending Rini move, a live WindowServer observation is an external move.
     {
         let (reactor, _wid, wsid, _space1, space2, _) = reactor_with_window_on_space1();
-        rini_macos::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
+        rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
         let resolved = reactor.resolve_native_space(wsid, Some(space2));
-        rini_macos::window_server::set_window_spaces_override(wsid, None);
+        rini_windows::window_server::set_window_spaces_override(wsid, None);
         cases.push(("newer external move", resolved, Some(space2)));
     }
 
@@ -5112,7 +5113,7 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 /// display-change test measure that instead of what it meant to.
 fn set_space_membership(entries: &[(SpaceId, &[u32])]) {
     for (space, wsids) in entries {
-        rini_macos::window_server::set_space_window_list_for_space_override(
+        rini_windows::window_server::set_space_window_list_for_space_override(
             space.get(),
             Some(wsids.to_vec()),
         );
@@ -5787,9 +5788,9 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     // WindowServer announces it on the external, as it does for a parked window whose frame
     // overlaps that display. Its space MEMBERSHIP still says built-in, which is what
     // distinguishes this from a real move.
-    rini_macos::window_server::set_window_spaces_override(wsid, Some(vec![builtin_space.get()]));
+    rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![builtin_space.get()]));
     window_server_appeared(&mut reactor, wsid, external_space, SpaceEventKind::User);
-    rini_macos::window_server::set_window_spaces_override(wsid, None);
+    rini_windows::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(
         reactor.assigned_space_for_window_id(parked),
@@ -5997,7 +5998,7 @@ mod strip_regroup {
     fn a_focus_response_onto_the_strip_raises_the_on_screen_strip_over_the_floating_window() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
         // Front to back: right column, Settings, left column, parked column.
-        rini_macos::window_server::set_front_to_back_override(Some(vec![902, 904, 901, 903]));
+        rini_windows::window_server::set_front_to_back_override(Some(vec![902, 904, 901, 903]));
 
         reactor.handle_layout_response(
             layout::EventResponse {
@@ -6009,7 +6010,7 @@ mod strip_regroup {
             },
             None,
         );
-        rini_macos::window_server::set_front_to_back_override(None);
+        rini_windows::window_server::set_front_to_back_override(None);
 
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(
@@ -6024,7 +6025,7 @@ mod strip_regroup {
     #[test]
     fn a_focus_response_onto_the_floating_window_lifts_nothing_extra() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
-        rini_macos::window_server::set_front_to_back_override(Some(vec![902, 904, 901, 903]));
+        rini_windows::window_server::set_front_to_back_override(Some(vec![902, 904, 901, 903]));
         reactor.handle_layout_response(
             layout::EventResponse {
                 changed: true,
@@ -6035,7 +6036,7 @@ mod strip_regroup {
             },
             None,
         );
-        rini_macos::window_server::set_front_to_back_override(None);
+        rini_windows::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 4)]]);
     }
@@ -6044,7 +6045,7 @@ mod strip_regroup {
     #[test]
     fn a_grouped_order_is_left_alone_by_the_focus_response() {
         let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
-        rini_macos::window_server::set_front_to_back_override(Some(vec![902, 901, 903, 904]));
+        rini_windows::window_server::set_front_to_back_override(Some(vec![902, 901, 903, 904]));
         reactor.handle_layout_response(
             layout::EventResponse {
                 changed: true,
@@ -6055,7 +6056,7 @@ mod strip_regroup {
             },
             None,
         );
-        rini_macos::window_server::set_front_to_back_override(None);
+        rini_windows::window_server::set_front_to_back_override(None);
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 1)]]);
     }
@@ -6068,10 +6069,10 @@ mod strip_regroup {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
         while raise_rx.try_recv().is_ok() {}
         // Left column in front, Settings, then the right column and the parked one.
-        rini_macos::window_server::set_front_to_back_override(Some(vec![901, 904, 902, 903]));
+        rini_windows::window_server::set_front_to_back_override(Some(vec![901, 904, 902, 903]));
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
-        rini_macos::window_server::set_front_to_back_override(None);
+        rini_windows::window_server::set_front_to_back_override(None);
 
         assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(WindowId::new(1, 2)));
         let request = raise_request(&mut raise_rx).expect("a raise request");
@@ -6105,10 +6106,10 @@ mod strip_regroup {
         assert!(reactor.is_window_parked_offscreen(WindowId::new(1, 3)));
         while raise_rx.try_recv().is_ok() {}
         // The visible pair is grouped in front of Settings; the parked column is behind it.
-        rini_macos::window_server::set_front_to_back_override(Some(vec![902, 901, 904, 903]));
+        rini_windows::window_server::set_front_to_back_override(Some(vec![902, 901, 904, 903]));
 
         reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
-        rini_macos::window_server::set_front_to_back_override(None);
+        rini_windows::window_server::set_front_to_back_override(None);
 
         assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(WindowId::new(1, 3)));
         assert!(
@@ -6143,10 +6144,10 @@ mod strip_regroup {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 4)));
         while raise_rx.try_recv().is_ok() {}
         // macOS raised the clicked left column over Settings; the right column stayed behind.
-        rini_macos::window_server::set_front_to_back_override(Some(vec![901, 904, 902, 903]));
+        rini_windows::window_server::set_front_to_back_override(Some(vec![901, 904, 902, 903]));
 
         reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(1, 1), space));
-        rini_macos::window_server::set_front_to_back_override(None);
+        rini_windows::window_server::set_front_to_back_override(None);
 
         let request = raise_request(&mut raise_rx).expect("a raise request");
         assert_eq!(request.raise_windows, vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]]);
@@ -6175,10 +6176,10 @@ mod strip_regroup {
         reactor.handle_event(Event::ApplicationGloballyActivated(zoom));
         while raise_rx.try_recv().is_ok() {}
         // Zoom in front, then Settings (floating) over the strip: a sandwich if the strip were focused.
-        rini_macos::window_server::set_front_to_back_override(Some(vec![905, 904, 901, 902, 903]));
+        rini_windows::window_server::set_front_to_back_override(Some(vec![905, 904, 901, 902, 903]));
 
         reactor.handle_event(Event::WindowServerFocusChanged(toolbar, space));
-        rini_macos::window_server::set_front_to_back_override(None);
+        rini_windows::window_server::set_front_to_back_override(None);
 
         assert_eq!(reactor.main_window(), Some(toolbar), "setup: the toolbar has focus");
         assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(WindowId::new(1, 1)));
@@ -6849,9 +6850,9 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     let wid = WindowId::new(1, 1);
     let wsid = reactor.test_window_server_id(wid);
 
-    rini_macos::window_server::set_window_ordered_in_override(wsid, Some(false));
+    rini_windows::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.handle_event(Event::WindowServerDestroyed(wsid, space, SpaceEventKind::User));
-    rini_macos::window_server::set_window_ordered_in_override(wsid, None);
+    rini_windows::window_server::set_window_ordered_in_override(wsid, None);
     assert!(reactor.state.windows.window(wid).is_none(), "the promotion removes the window");
 
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -7016,4 +7017,18 @@ fn a_workspace_switch_is_not_a_strip_movement() {
         Some(CGPoint::new(0., 0.)),
         "arriving on another workspace is a vertical switch, not a horizontal pan"
     );
+}
+
+#[test]
+fn a_windows_context_event_becomes_the_reactor_event_with_its_payload_intact() {
+    use rini_windows::event::Event as W;
+    let wid = WindowId::new(7, 3);
+    let frame = CGRect::new(CGPoint::new(1., 2.), CGSize::new(30., 40.));
+    let Event::WindowFrameChanged(got_wid, got_frame, txid, requested, mouse) =
+        Event::from(W::WindowFrameChanged(wid, frame, None, Requested(true), None))
+    else {
+        panic!("wrong variant");
+    };
+    assert_eq!((got_wid, got_frame, txid, requested.0, mouse), (wid, frame, None, true, None));
+    assert!(matches!(Event::from(W::MenuClosed(7)), Event::MenuClosed(7)));
 }

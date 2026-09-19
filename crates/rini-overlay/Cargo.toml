@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-windows = { workspace = true }
 rini-skylight-sys = { workspace = true }
 rini-runloop = { workspace = true }
 block2 = { workspace = true }

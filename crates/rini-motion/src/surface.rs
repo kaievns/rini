@@ -2,7 +2,7 @@
 //! strip pan or a workspace switch. Nothing here knows what the surface holds.
 
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_shared::ids::{WindowId, WindowServerId};
+use rini_windows::ids::{WindowId, WindowServerId};
 
 /// One window's fixed place on a surface. `frame` is never interpolated; the viewport moves.
 #[derive(Debug, Clone, Copy, PartialEq)]

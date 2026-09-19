@@ -10,5 +10,6 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-windows = { workspace = true }
 objc2-core-foundation = { workspace = true }
 rini-shared = { workspace = true }

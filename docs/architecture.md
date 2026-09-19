@@ -64,8 +64,8 @@ slice, importers repoint, the old crate shrinks, tests move with the code.
 | step | status |
 |---|---|
 | `rini-runloop`, `rini-skylight-sys` | done: lifted out of `rini-macos` (and `channel` out of `rini-shared`) so `rini-windows` depends on libraries, not a layer |
-| `rini-windows` | next |
-| `rini-displays` | after windows; dissolves `rini-shared::ids` |
+| `rini-windows` | done, first cut: `ids`, `state`, `rules` (matching; the settings types `AppWorkspaceRule`/`AppRulePosition`/`AppRuleSize` moved here from config, the first piece of the config inversion), `transaction`, `event` (`Event` + `EventSink`), the AX adapters (`ax`, `app`), `process`/`carbon`, `mouse`, `window_server`, the per-app `app_actor` and the Carbon `lifecycle` actor. Still to come here: the window catalogue (`WindowStore` stays in `rini-layout` until `rini-workspaces` takes the assignment index out of it), the SkyLight notification actor (`src/actor/window_notify.rs`, straddles windows and displays), `raise_manager`, and the window sub-level Mach query (`rini_macos::mach`). `MouseState` lives here because the app actor stamps its events with it; the event tap writes it |
+| `rini-displays` | next; takes `SpaceId` and the residual `rini_macos::window_server` reads; dissolves `rini-shared::ids` |
 | `rini-tiling`, `rini-workspaces` | dissolve `rini-layout` |
 | `rini-input` | dissolves the rest of `rini-macos` with `displays` |
 | `rini-animation` | merges `rini-motion` and `rini-overlay` |

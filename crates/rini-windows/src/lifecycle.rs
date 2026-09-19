@@ -3,9 +3,9 @@ use std::future;
 use objc2_app_kit::NSRunningApplication;
 use tracing::{debug, warn};
 
-use crate::actor::wm_controller::{self, WmEvent};
-use rini_macos::app::{AppInfo, NSRunningApplicationExt, pid_t};
-use rini_macos::carbon::{CarbonListener, Event, event_type};
+use crate::app::{AppInfo, NSRunningApplicationExt};
+use crate::carbon::{CarbonListener, Event, event_type};
+use crate::ids::pid_t;
 
 const NO_ERR: i32 = 0;
 
@@ -52,20 +52,27 @@ unsafe fn pid_for_psn(psn: &ProcessSerialNumber) -> Option<pid_t> {
     }
 }
 
+/// An app came, went, or came to the front, per Carbon's process events.
+#[derive(Debug, Clone)]
+pub enum AppLifecycle {
+    Launched(pid_t, AppInfo),
+    FrontSwitched(pid_t),
+    Terminated(pid_t),
+}
+
+/// Listens to Carbon's application events and forwards them as [`AppLifecycle`].
 pub struct ProcessActor {
     _listener: CarbonListener,
-    _sender: wm_controller::Sender,
 }
 
 impl ProcessActor {
-    pub fn new(sender: wm_controller::Sender) -> Self {
+    pub fn new(sink: impl Fn(AppLifecycle) + Send + Sync + 'static) -> Self {
         let types = [
             event_type(K_EVENT_CLASS_APPLICATION, K_EVENT_APP_LAUNCHED),
             event_type(K_EVENT_CLASS_APPLICATION, K_EVENT_APP_TERMINATED),
             event_type(K_EVENT_CLASS_APPLICATION, K_EVENT_APP_FRONT_SWITCHED),
         ];
 
-        let wm_sender = sender.clone();
         let listener = CarbonListener::application(&types, move |ev: Event| {
             let psn = match unsafe {
                 ev.parameter::<ProcessSerialNumber>(
@@ -86,15 +93,15 @@ impl ProcessActor {
                 K_EVENT_APP_LAUNCHED => {
                     debug!("Carbon: App launched ({pid})");
                     let info = app_info_for_pid(pid);
-                    wm_sender.send(WmEvent::AppLaunch(pid, info));
+                    sink(AppLifecycle::Launched(pid, info));
                 }
                 K_EVENT_APP_FRONT_SWITCHED => {
                     debug!("Carbon: App front switched ({pid})");
-                    wm_sender.send(WmEvent::AppGloballyActivated(pid));
+                    sink(AppLifecycle::FrontSwitched(pid));
                 }
                 K_EVENT_APP_TERMINATED => {
                     debug!("Carbon: App terminated ({pid})");
-                    wm_sender.send(WmEvent::AppTerminated(pid));
+                    sink(AppLifecycle::Terminated(pid));
                 }
                 _ => {}
             }
@@ -104,10 +111,7 @@ impl ProcessActor {
         .expect("Failed to create Carbon application event listener");
 
         debug!("ProcessActor: Carbon listener installed");
-        Self {
-            _listener: listener,
-            _sender: sender,
-        }
+        Self { _listener: listener }
     }
 
     pub async fn run(self) {

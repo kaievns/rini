@@ -1,7 +1,5 @@
-//! The app actor manages messaging to an application using the system
-//! accessibility APIs.
-//!
-//! These APIs support reading and writing window states like position and size.
+//! One actor per running app, on its own thread: observes the app through Accessibility and
+//! carries out the reactor's `Request`s (frames, raises, close). Emits `crate::event::Event`.
 
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -20,25 +18,25 @@ use tokio::{join, select};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Span, debug, info, instrument, trace, warn};
 
-use crate::actor;
-use crate::actor::reactor::transaction_manager::TransactionId;
-use crate::actor::reactor::{self, Event, Requested};
+use rini_runloop::channel as actor;
+use crate::transaction::{Requested, TransactionId, WindowTxStore};
+use crate::event::{Event, EventSink};
 use rini_shared::collections::HashMap;
-use crate::model::tx_store::WindowTxStore;
-use rini_macos::app::NSRunningApplicationExt;
-pub use rini_shared::ids::{WindowId, pid_t};
+use crate::app::NSRunningApplicationExt;
+use crate::ids::{WindowId, pid_t};
 
-pub use rini_macos::app::{AppInfo, WindowInfo};
-use rini_macos::axuielement::{
+use crate::app::{AppInfo, WindowInfo};
+use crate::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
-use rini_macos::enhanced_ui::EnhancedUi;
-use rini_macos::event;
+use crate::ax::enhanced_ui::EnhancedUi;
+use crate::mouse;
 use rini_runloop::executor::Executor;
-use rini_macos::observer::Observer;
-use rini_macos::process::ProcessInfo;
+use crate::ax::observer::Observer;
+use crate::process::ProcessInfo;
 use rini_runloop::timer::Timer;
-use rini_macos::window_server::{self, WindowServerId, WindowServerInfo};
+use crate::ids::WindowServerId;
+use crate::window_server::{self, WindowServerInfo};
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";
 const kAXApplicationDeactivatedNotification: &str = "AXApplicationDeactivated";
@@ -164,7 +162,8 @@ pub struct AppThreadHandle {
 }
 
 impl AppThreadHandle {
-    pub(crate) fn new_for_test(requests_tx: actor::Sender<Request>) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_for_test(requests_tx: actor::Sender<Request>) -> Self {
         let this = AppThreadHandle { requests_tx };
         this
     }
@@ -229,7 +228,7 @@ pub enum Quiet {
 pub fn spawn_app_thread(
     pid: pid_t,
     info: AppInfo,
-    events_tx: reactor::Sender,
+    events_tx: Box<dyn EventSink>,
     tx_store: Option<WindowTxStore>,
 ) {
     thread::Builder::new()
@@ -244,7 +243,7 @@ struct State {
     running_app: Retained<NSRunningApplication>,
     app: AXUIElement,
     observer: Observer,
-    events_tx: reactor::Sender,
+    events_tx: Box<dyn EventSink>,
     windows: HashMap<WindowId, AppWindowState>,
     elem_to_wid: HashMap<AXUIElement, WindowId>,
     last_window_idx: u32,
@@ -584,7 +583,7 @@ impl State {
                     warn!(pid = self.pid, ?wsid, ?err, "Failed to focus close target");
                     return Ok(false);
                 }
-                if !event::post_command_w(self.pid) {
+                if !mouse::post_command_w(self.pid) {
                     warn!(pid = self.pid, ?window_server_id, "Failed to post Command-W");
                 }
             }
@@ -748,7 +747,7 @@ impl State {
                     wid,
                     window,
                     window_server_info,
-                    event::get_mouse_state(),
+                    mouse::get_mouse_state(),
                 ));
             }
             AxNotificationKind::MenuOpened => self.send_event(Event::MenuOpened(self.pid)),
@@ -781,7 +780,7 @@ impl State {
                     return;
                 }
 
-                let mouse_state = event::get_mouse_state();
+                let mouse_state = mouse::get_mouse_state();
                 let txid = match self.window(wid) {
                     Ok(window) => {
                         self.txid_for_window_state(window)
@@ -1072,7 +1071,7 @@ impl State {
                     wid,
                     info,
                     window_server_info,
-                    event::get_mouse_state(),
+                    mouse::get_mouse_state(),
                 ));
                 wid
             }
@@ -1554,7 +1553,7 @@ impl Drop for State {
 fn app_thread_main(
     pid: pid_t,
     info: AppInfo,
-    events_tx: reactor::Sender,
+    events_tx: Box<dyn EventSink>,
     tx_store: Option<WindowTxStore>,
 ) {
     let app = AXUIElement::application(pid);

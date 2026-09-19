@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use objc2_core_foundation::{CGPoint, CGRect};
 
 use crate::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use rini_shared::geometry::SameAs;
 use crate::fit::is_a_resize;
 

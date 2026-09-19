@@ -4,7 +4,7 @@
 pub use rini_protocol::RiniEvent as BroadcastEvent;
 use slotmap::Key;
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use crate::virtual_workspace::VirtualWorkspaceId;
 
 pub type BroadcastSender = rini_runloop::channel::Sender<BroadcastEvent>;

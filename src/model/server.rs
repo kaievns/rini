@@ -4,11 +4,11 @@ use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use rini_shared::ids::WindowId;
-use rini_macos::app::WindowInfo;
+use rini_windows::ids::WindowId;
+use rini_windows::app::WindowInfo;
 use rini_shared::geometry::CGRectDef;
 use rini_macos::screen::{ScreenId, ScreenInfo, SpaceId};
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 
 /// Runtime-only workspace projection. Its windows retain the macOS
 /// accessibility metadata needed by the UI; IPC uses the protocol-owned

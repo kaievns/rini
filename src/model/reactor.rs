@@ -1,8 +1,9 @@
 use objc2_core_foundation::CGRect;
 pub use rini_protocol::{DisplaySelector, ReactorCommand};
-use serde::{Deserialize, Serialize};
 
-use crate::actor::app::{AppInfo, AppThreadHandle, WindowId, pid_t};
+use rini_windows::app::AppInfo;
+use rini_windows::app_actor::AppThreadHandle;
+use rini_windows::ids::{WindowId, pid_t};
 use crate::model::WindowStore;
 use rini_shared::ids::SpaceId;
 
@@ -17,8 +18,6 @@ pub struct RiniState {
     pub windows: WindowStore,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Requested(pub bool);
 
 pub use rini_config::commands::Command;
 
@@ -88,14 +87,14 @@ pub(crate) struct AppState {
     pub(crate) handle: AppThreadHandle,
 }
 
-pub use rini_layout::window_store::{WindowFilter, WindowState};
+pub use rini_windows::state::{WindowFilter, WindowState};
 
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ReactorError {
     #[error("App communication failed: {0}")]
-    AppCommunicationFailed(#[from] tokio::sync::mpsc::error::SendError<crate::actor::app::Request>),
+    AppCommunicationFailed(#[from] tokio::sync::mpsc::error::SendError<rini_windows::app_actor::Request>),
     #[error("Raise manager communication failed: {0}")]
     RaiseManagerCommunicationFailed(
         #[from] tokio::sync::mpsc::error::SendError<crate::actor::raise_manager::Event>,

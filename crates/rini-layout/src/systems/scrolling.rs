@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU64, Ordering};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use serde::{Deserialize, Serialize};
 
-use rini_shared::ids::{WindowId, pid_t};
+use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
 use rini_config::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
@@ -1916,7 +1916,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     use super::{Column, ScrollingLayoutSystem};
-    use rini_shared::ids::{WindowId, pid_t};
+    use rini_windows::ids::{WindowId, pid_t};
     use rini_shared::collections::HashMap;
     use rini_config::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
     use crate::systems::{LayoutSystem, WindowLayoutConstraints};

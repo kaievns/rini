@@ -11,7 +11,7 @@ use rini_wm::actor::event_tap::EventTap;
 use rini_wm::actor::gesture_tap::GestureTap;
 use rini_wm::actor::mission_control_observer::NativeMissionControl;
 use rini_wm::actor::notification_center::NotificationCenter;
-use rini_wm::actor::process::ProcessActor;
+use rini_windows::lifecycle::ProcessActor;
 use rini_wm::actor::reactor::{self, Reactor};
 use rini_wm::actor::spaces::SpacesActor;
 use rini_wm::actor::window_notify as window_notify_actor;
@@ -21,7 +21,7 @@ use rini_shared::log;
 use rini_shared::util::execute_startup_commands;
 use rini_wm::ipc;
 use rini_wm::layout_engine::LayoutEngine;
-use rini_wm::model::tx_store::WindowTxStore;
+use rini_windows::transaction::WindowTxStore;
 use rini_macos::accessibility::ensure_accessibility_permission;
 use rini_runloop::executor::Executor;
 use rini_macos::mach::init_window_sub_level_server_port;
@@ -335,7 +335,10 @@ stays usable. Fix the config and restart. Error: {error}",
 
     let notification_center = NotificationCenter::new(wm_controller_sender.clone(), spaces_tx);
 
-    let process_actor = ProcessActor::new(wm_controller_sender.clone());
+    let process_actor = ProcessActor::new({
+        let sender = wm_controller_sender.clone();
+        move |event| sender.send(event.into())
+    });
 
     let event_tap = EventTap::new(
         config.clone(),

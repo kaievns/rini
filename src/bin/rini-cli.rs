@@ -4,12 +4,12 @@ use std::process::{self};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rini_protocol::{EventKind, RiniRequest, RiniResponse};
-use rini_wm::actor::app::WindowId as InternalWindowId;
+use rini_windows::ids::WindowId as InternalWindowId;
 use rini_wm::actor::reactor::{self, DisplaySelector};
 use rini_config::WorkspaceSelector;
 use rini_wm::ipc::RiniMachClient;
 use rini_wm::layout_engine as layout;
-use rini_macos::window_server::WindowServerId;
+use rini_windows::ids::WindowServerId;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;

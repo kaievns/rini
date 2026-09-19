@@ -1,7 +1,8 @@
 use tracing::{error, info, warn};
 
 use super::super::ScreenInfo;
-use crate::actor::app::{AppThreadHandle, Quiet, WindowId};
+use rini_windows::app_actor::{AppThreadHandle, Quiet};
+use rini_windows::ids::WindowId;
 use crate::actor::raise_manager;
 use crate::actor::reactor::WorkspaceSwitchOrigin;
 use crate::actor::reactor::events::EventOutcome;
@@ -18,7 +19,7 @@ use crate::model::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
 use rini_shared::ids::SpaceId;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 
 #[derive(Debug, Clone)]
 pub struct LayoutCommandPayload {

@@ -1,17 +1,21 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use tracing::debug;
 
-use super::{Event, EventOutcome, Reactor, Record, Requested, ScreenInfo, TransactionId};
+use super::{Event, EventOutcome, Reactor, Record, ScreenInfo, TransactionId};
+use rini_windows::transaction::Requested;
 use crate::actor;
-use crate::actor::app::{AppThreadHandle, Quiet, Request, WindowId};
+use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
+use rini_windows::ids::WindowId;
 use crate::actor::spaces::ForwardedSpaceState;
 use rini_shared::collections::BTreeMap;
 use rini_config::Config;
 use crate::layout_engine::{LayoutCommand, LayoutEngine};
-use rini_macos::app::{AppInfo, WindowInfo, pid_t};
+use rini_windows::app::{AppInfo, WindowInfo};
+use rini_windows::ids::pid_t;
 use rini_shared::geometry::SameAs;
 use rini_shared::ids::SpaceId;
-use rini_macos::window_server::{WindowServerId, WindowServerInfo};
+use rini_windows::ids::WindowServerId;
+use rini_windows::window_server::WindowServerInfo;
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {

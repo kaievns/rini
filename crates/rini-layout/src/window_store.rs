@@ -2,13 +2,13 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use rini_shared::collections::{HashMap, HashSet};
 use crate::VirtualWorkspaceId;
 use rini_shared::ids::SpaceId;
-use objc2_core_foundation::CGRect;
-use rini_macos::app::WindowInfo;
-use rini_macos::window_server::{WindowServerId, WindowServerInfo};
+use rini_windows::state::WindowState;
+use rini_windows::ids::WindowServerId;
+use rini_windows::window_server::WindowServerInfo;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WindowVisibility {
@@ -1269,7 +1269,7 @@ mod tests {
         );
         window_store.insert_window(
             wid,
-            WindowState::from(rini_macos::app::WindowInfo {
+            WindowState::from(rini_windows::app::WindowInfo {
                 is_standard: true,
                 is_root: true,
                 is_minimized: false,
@@ -1461,44 +1461,3 @@ mod tests {
     }
 }
 
-#[derive(Debug)]
-pub struct WindowState {
-    pub info: WindowInfo,
-    /// The last known frame of the window. Always includes the last write.
-    ///
-    /// This value only updates monotonically with respect to writes; in other
-    /// words, we only accept reads when we know they come after the last write.
-    pub frame_monotonic: CGRect,
-    pub is_manageable: bool,
-    pub ignore_app_rule: bool,
-}
-
-impl From<WindowInfo> for WindowState {
-    fn from(info: WindowInfo) -> WindowState {
-        WindowState {
-            frame_monotonic: info.frame,
-            info,
-            is_manageable: false,
-            ignore_app_rule: false,
-        }
-    }
-}
-
-impl WindowState {
-    pub fn is_effectively_manageable(&self) -> bool {
-        self.is_manageable && !self.ignore_app_rule
-    }
-
-    pub fn matches_filter(&self, filter: WindowFilter) -> bool {
-        match filter {
-            WindowFilter::Manageable => self.is_manageable,
-            WindowFilter::EffectivelyManageable => self.is_effectively_manageable(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum WindowFilter {
-    Manageable,
-    EffectivelyManageable,
-}

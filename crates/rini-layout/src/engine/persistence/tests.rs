@@ -1,11 +1,11 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
-use rini_macos::app::WindowInfo;
+use rini_windows::app::WindowInfo;
 use crate::{LayoutEvent, LayoutSystemKind};
 use crate::VirtualWorkspace;
-use crate::window_store::WindowState;
-use rini_shared::ids::WindowServerId;
+use rini_windows::state::WindowState;
+use rini_windows::ids::WindowServerId;
 
 fn test_engine() -> LayoutEngine {
     LayoutEngine::new(

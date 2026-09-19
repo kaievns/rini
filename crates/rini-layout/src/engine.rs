@@ -7,8 +7,8 @@ use tracing::{debug, info, warn};
 use super::{
     Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
 };
-use rini_macos::app::AppInfo;
-use rini_shared::ids::{WindowId, pid_t};
+use rini_windows::app::AppInfo;
+use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
 use rini_config::{LayoutSettings, WorkspaceSelector};
 use crate::LayoutSystem;
@@ -18,10 +18,8 @@ use crate::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus};
 use crate::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
 use crate::display_affinity::ColumnWidth;
 use crate::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
-use crate::{
-    AppRuleEffects, AppRuleEngine, AppRuleResult, DisplayAffinity, FloatingPositionStore,
-    WindowRuleContext, WindowStore,
-};
+use crate::{AppRuleEffects, AppRuleResult, DisplayAffinity, FloatingPositionStore, WindowStore};
+use rini_windows::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
 use rini_shared::ids::SpaceId;
 
 mod persistence;
@@ -1929,8 +1927,8 @@ impl LayoutEngine {
             LayoutCommand::ToggleFocusFloating => unreachable!(),
 
             LayoutCommand::SwapWindows(a, b) => {
-                let a = rini_shared::ids::WindowId::new(a.pid, a.idx);
-                let b = rini_shared::ids::WindowId::new(b.pid, b.idx);
+                let a = rini_windows::ids::WindowId::new(a.pid, a.idx);
+                let b = rini_windows::ids::WindowId::new(b.pid, b.idx);
                 let _ = self.workspace_tree_mut(workspace_id).swap_windows(layout, a, b);
 
                 EventResponse::default()
@@ -2749,7 +2747,7 @@ impl LayoutEngine {
         // Where this application's windows were, but only when the config had nothing to say and the
         // window has no assignment already. This is the first sighting of a launching application's
         // window, well before `WindowAdded`, so it is the only place the answer can still be changed.
-        if decision == crate::AppRuleDecision::NoMatch
+        if decision == AppRuleDecision::NoMatch
             && self
                 .virtual_workspace_manager
                 .workspace_for_window(window_store, space, window_id)
@@ -3185,10 +3183,8 @@ mod tests {
 
     use super::*;
     use rini_shared::collections::HashMap;
-    use rini_config::{
-        AppRulePosition, AppRuleSize, AppWorkspaceRule, LayoutSettings, VirtualWorkspaceSettings,
-        WorkspaceSelector,
-    };
+    use rini_windows::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
+    use rini_config::{LayoutSettings, VirtualWorkspaceSettings, WorkspaceSelector};
 
     fn test_engine() -> LayoutEngine {
         LayoutEngine::new(

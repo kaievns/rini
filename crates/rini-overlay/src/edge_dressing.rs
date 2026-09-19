@@ -10,7 +10,8 @@ use objc2_core_graphics::{
     CGColorSpace, CGContext, CGImage, CGImageAlphaInfo, CGWindowListOption,
 };
 
-use rini_macos::window_server::{self, WindowServerId};
+use rini_windows::window_server;
+use rini_windows::ids::WindowServerId;
 
 /// Corner radius of a macOS window, measured. See "The hairline is composited outside every
 /// capture" in `docs/capture-overlay-research.md`.

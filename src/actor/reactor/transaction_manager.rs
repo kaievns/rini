@@ -1,21 +1,11 @@
 use objc2_core_foundation::CGRect;
-use serde::{Deserialize, Serialize};
 
-use crate::model::tx_store::WindowTxStore;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
+pub use rini_windows::transaction::TransactionId;
+use rini_windows::transaction::WindowTxStore;
 
 /// A per-window counter that tracks the last time the reactor sent a request to
 /// change the window frame.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TransactionId(u32);
-
-impl TransactionId {
-    pub fn next(self) -> Self {
-        Self(self.0.wrapping_add(1))
-    }
-}
-
-/// Manages window transaction IDs and their associated target frames.
 #[derive(Debug)]
 pub struct TransactionManager {
     pub store: WindowTxStore,

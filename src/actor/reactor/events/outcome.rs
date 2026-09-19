@@ -1,12 +1,15 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use crate::actor::app::{AppInfo, Request, WindowId, WindowInfo, pid_t};
+use rini_windows::app::{AppInfo, WindowInfo};
+use rini_windows::app_actor::Request;
+use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::raise_manager;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::Config;
 use crate::layout_engine::{Direction, EventResponse, LayoutEvent};
 use rini_shared::ids::SpaceId;
-use rini_macos::window_server::{WindowServerId, WindowServerInfo};
+use rini_windows::ids::WindowServerId;
+use rini_windows::window_server::WindowServerInfo;
 
 #[derive(Debug)]
 pub(crate) struct WindowDiscoveryRequest {

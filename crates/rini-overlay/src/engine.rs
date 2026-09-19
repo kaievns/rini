@@ -11,10 +11,10 @@ use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
 use rini_runloop::channel;
-use rini_shared::ids::WindowId;
+use rini_windows::ids::WindowId;
 use rini_shared::geometry::SameAs;
 use rini_runloop::run_loop::RepeatingTimer;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 use crate::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::window_snapshot::{
     SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing,
@@ -1324,7 +1324,7 @@ impl FlightEngine {
             warn!("no display geometry yet; cannot warm the snapshot cache");
             return;
         };
-        let windows = rini_macos::window_server::visible_windows_on_display(display_frame);
+        let windows = rini_windows::window_server::visible_windows_on_display(display_frame);
         let targets: Vec<SnapshotTarget> = windows
             .into_iter()
             .map(|(server_id, frame)| SnapshotTarget {
@@ -1496,7 +1496,7 @@ impl FlightEngine {
                     let mut last_print: Option<Vec<u8>> = None;
                     for _ in 0..REVEAL_CHASE_ATTEMPTS {
                         std::thread::sleep(REVEAL_CHASE_INTERVAL);
-                        let Some(info) = rini_macos::window_server::get_window(server_id) else {
+                        let Some(info) = rini_windows::window_server::get_window(server_id) else {
                             continue;
                         };
                         let frame_fits = crate::window_snapshot::fits_frame(
@@ -1611,7 +1611,7 @@ impl FlightEngine {
             self.deferred_warm.iter().chain(self.after_flight.iter().flat_map(|a| a.targets.iter())).map(|t| t.window),
         );
         let candidates: Vec<(WindowServerId, CGRect)> =
-            rini_macos::window_server::visible_windows_on_display(display)
+            rini_windows::window_server::visible_windows_on_display(display)
                 .into_iter()
                 .filter(|(id, _)| !managed.contains(&id.as_u32()))
                 .collect();
@@ -1679,7 +1679,7 @@ impl FlightEngine {
             .map(|request| (request.window, request.to))
             .collect();
 
-        let depths = rini_macos::window_server::front_to_back_depths();
+        let depths = rini_windows::window_server::front_to_back_depths();
 
         let any_resize = windows.iter().any(|request| {
             crate::window_snapshot::is_a_resize(request.from.size, request.to.size)
@@ -1786,7 +1786,7 @@ impl FlightEngine {
                 // travels from its spawn frame" in `docs/animation-smoothness.md`.
                 None => {
                     // Only a frame on this display counts as a spawn; capturing off screen is slow.
-                    let spawn = rini_macos::window_server::get_window(request.server_id)
+                    let spawn = rini_windows::window_server::get_window(request.server_id)
                         .map(|info| info.frame)
                         .filter(|f| !rini_shared::geometry::is_off_screen(display_frame, *f));
                     let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
@@ -2213,7 +2213,7 @@ impl FlightEngine {
             })
             .collect();
 
-        let depths = rini_macos::window_server::front_to_back_depths();
+        let depths = rini_windows::window_server::front_to_back_depths();
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
@@ -2228,7 +2228,7 @@ impl FlightEngine {
                     if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
-                    if let Some(info) = rini_macos::window_server::get_window(window.server_id) {
+                    if let Some(info) = rini_windows::window_server::get_window(window.server_id) {
                         starts.push((window.window, info.frame));
                     }
                     tiles.push(OverlayTile {
@@ -2471,8 +2471,8 @@ impl FlightEngine {
             .iter()
             .filter(|(window, _)| tiled.contains(window))
             .filter_map(|(window, _)| {
-                let info = rini_macos::window_server::get_window(
-                    rini_macos::window_server::WindowServerId::new(window.idx.get()),
+                let info = rini_windows::window_server::get_window(
+                    rini_windows::ids::WindowServerId::new(window.idx.get()),
                 )?;
                 Some((*window, info.frame))
             })
@@ -2722,7 +2722,7 @@ impl FlightEngine {
             warn!("no display geometry yet; cannot run the debug slide");
             return;
         };
-        let windows = rini_macos::window_server::visible_windows_on_display(display_frame);
+        let windows = rini_windows::window_server::visible_windows_on_display(display_frame);
         if windows.is_empty() {
             warn!("no visible windows found for the debug slide");
             return;
@@ -2750,7 +2750,7 @@ impl FlightEngine {
 /// Where a window really is right now, from the window server: the reactor's `from` can be the
 /// previous pass's destination rather than where the window sits.
 fn actual_start(request: &AnimationRequest, display: CGRect, travel: Option<CGPoint>) -> CGRect {
-    let real = match rini_macos::window_server::get_window(request.server_id) {
+    let real = match rini_windows::window_server::get_window(request.server_id) {
         Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => {
             Some(info.frame)
         }

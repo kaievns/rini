@@ -3,13 +3,14 @@ use tracing::{debug, trace};
 
 use super::TransactionId;
 use rini_overlay::window_snapshot::is_a_resize;
-use crate::actor::app::{AppThreadHandle, Request, WindowId, pid_t};
+use rini_windows::app_actor::{AppThreadHandle, Request};
+use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::reactor::Reactor;
 use rini_shared::collections::HashMap;
 use rini_shared::geometry::{Round, SameAs};
 use rini_macos::power;
 use rini_shared::ids::SpaceId;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places
 /// the real windows when it does not. A namespace; it holds no state.
@@ -481,7 +482,7 @@ mod tests {
     fn moving(from_x: f64, to_x: f64) -> rini_overlay::engine::AnimationRequest {
         rini_overlay::engine::AnimationRequest {
             window: WindowId::new(1, (from_x.abs() as u32).max(1)),
-            server_id: rini_macos::window_server::WindowServerId::new(1),
+            server_id: rini_windows::ids::WindowServerId::new(1),
             from: CGRect::new(CGPoint::new(from_x, 32.0), CGSize::new(859.0, 1081.0)),
             to: CGRect::new(CGPoint::new(to_x, 32.0), CGSize::new(859.0, 1081.0)),
             floating: false,

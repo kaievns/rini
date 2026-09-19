@@ -14,7 +14,8 @@ pub mod subscriptions;
 
 use rini_protocol::{RiniRequest, RiniResponse};
 pub use rini_client::{ClientError as RiniMachClientError, RiniMachClient, RiniMachSubscription};
-use rini_shared::ids::{SpaceId, WindowId};
+use rini_shared::ids::SpaceId;
+use rini_windows::ids::WindowId;
 
 use rini_config::actor as config_actor;
 use crate::subscriptions::SharedServerState;

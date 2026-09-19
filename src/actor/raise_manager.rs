@@ -5,10 +5,11 @@ use objc2_core_foundation::CGPoint;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use crate::actor::app::{AppThreadHandle, Quiet, Request, WindowId};
+use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
+use rini_windows::ids::WindowId;
 use crate::actor::{self, event_tap, reactor};
 use rini_shared::collections::{HashMap, HashSet};
-use rini_shared::ids::pid_t;
+use rini_windows::ids::pid_t;
 use rini_runloop::timer::Timer;
 
 /// Messages that can be sent to the raise manager
@@ -332,7 +333,8 @@ mod tests {
 
     use super::*;
     use crate::actor;
-    use crate::actor::app::{AppThreadHandle, WindowId};
+    use rini_windows::app_actor::AppThreadHandle;
+    use rini_windows::ids::WindowId;
     use rini_runloop::executor::Executor;
 
     fn create_test_app_handles() -> (HashMap<i32, AppThreadHandle>, actor::Receiver<Request>) {

@@ -2,7 +2,7 @@ use enum_dispatch::enum_dispatch;
 use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 
-use rini_shared::ids::{WindowId, pid_t};
+use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::HashMap;
 use crate::{Direction, ResizeOrientation};
 
@@ -202,7 +202,7 @@ pub use scrolling::ScrollingLayoutSystem;
 #[cfg(test)]
 mod tests {
     use super::{LayoutSystem, ScrollingLayoutSystem, WindowLayoutConstraints};
-    use rini_shared::ids::WindowId;
+    use rini_windows::ids::WindowId;
     use rini_config::{ScrollingLayoutSettings, WindowInsertionPoint};
 
     fn w(idx: u32) -> WindowId {

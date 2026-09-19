@@ -1,6 +1,7 @@
 use tracing::{debug, trace};
 
-use crate::actor::app::{Request, WindowId};
+use rini_windows::app_actor::Request;
+use rini_windows::ids::WindowId;
 use crate::actor::reactor::events::{EventOutcome, window};
 use crate::actor::reactor::managers::{DragManager, MissionControlManager};
 use crate::actor::reactor::{DragState, LayoutEvent, MissionControlState, SpaceEventKind};
@@ -10,9 +11,9 @@ use rini_shared::collections::HashSet;
 use crate::model::RiniState;
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use crate::model::window_store::NativeFullscreenTransition;
-use rini_macos::app::AppInfo;
+use rini_windows::app::AppInfo;
 use rini_shared::ids::SpaceId;
-use rini_shared::ids::WindowServerId;
+use rini_windows::ids::WindowServerId;
 
 #[derive(Debug)]
 pub(crate) struct SpaceSnapshotAnalysis {
@@ -98,7 +99,7 @@ pub struct WindowServerAppearedObservations {
     pub mission_control_active: bool,
     pub assigned_space: Option<SpaceId>,
     pub last_known_user_space: Option<SpaceId>,
-    pub window_server_info: Option<rini_macos::window_server::WindowServerInfo>,
+    pub window_server_info: Option<rini_windows::window_server::WindowServerInfo>,
     pub app_known: bool,
     pub running_app_info: Option<AppInfo>,
 }
