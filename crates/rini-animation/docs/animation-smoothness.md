@@ -13,8 +13,10 @@ bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "The apply point"). Layout passes, strip pans, workspace
 switches, resizes, entrances and the edge bounce are all flights of it.
 `AnimationManager` (`src/actor/reactor/animation.rs` in `rini-wm`) is the layout side: it
-decides per pass whether the overlay flies (`config.settings.animate`, not low
-power, not a drag, something visibly travels) and places the real windows
+gathers a `PassWindow` per window from the stores, sorts the pass with
+`rini_animation::pass::plan` (moves, unmoved windows the overlay must still
+draw, warm targets), decides whether the overlay flies (`config.settings.animate`,
+not low power, not a drag, something visibly travels) and places the real windows
 directly when it does not.
 
 The per-frame Accessibility engine that preceded it (`AXPosition`/`AXSize`
@@ -624,13 +626,12 @@ Options, in order of expected value:
 
 ## Structural findings
 
-1. **`animate_layout` is the real strategy point, and it is a god function.**
-   It computes eligibility, builds the overlay's requests, decides skip
-   conditions, detects pans, and dispatches, as a static method reaching
-   into `&mut Reactor`. The decomposition: a pure pass-analysis step producing
-   a `LayoutMotion` value (moved/unmoved windows, warm targets, pan delta,
-   all-translations flag, skip reasons), independently testable, then
-   dispatch through a narrow `present(motion)` boundary.
+1. **`animate_layout` is the real strategy point.** The per-window half is
+   now `rini_animation::pass::plan`, a pure step over `PassWindow`s producing
+   a `PassPlan` (moves, unmoved windows, warm targets), tested on its own.
+   What is left in `animate_layout` is the flight decision (skip reasons, pan
+   detection) and dispatch, still a static method over `&mut Reactor`; a
+   narrow `present(motion)` boundary would finish it.
 2. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,
    `start_strip_pan`, `start_edge_bounce` and `warm_all_workspaces` each
    repeat the screen-lookup / gaps / `calculate_layout_for_workspace` loop,
@@ -663,5 +664,5 @@ ended in the overlay's favour.
    engine and `animation_easing` are gone; `MOTION_CURVE` is the one curve.
 7. Staleness: change-driven warming or a stream pool; measure the mid-flight
    refresh cap first since it is nearly free.
-8. `animate_layout` decomposition, next time selection logic changes anyway.
+8. `animate_layout` decomposition: the pass analysis is out (`pass::plan`); the flight decision and dispatch remain, next time selection logic changes anyway.
 9. ~~The resize question again~~ — resizes ride the overlay; AX removed.

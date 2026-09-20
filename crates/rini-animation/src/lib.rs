@@ -5,6 +5,7 @@
 
 // Model
 pub mod motion;
+pub mod pass;
 
 // Adapters
 pub mod backdrop;
