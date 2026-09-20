@@ -1,4 +1,8 @@
+//! Keys as the user names them and as the hardware reports them: modifiers, key codes, hotkeys,
+//! specs parsed from the config, and the CGEvent/TIS reads that turn a keystroke into a `Hotkey`.
 use std::collections::HashMap as StdHashMap;
+
+use rini_shared::collections::HashMap;
 use std::ffi::c_void;
 use std::fmt;
 use std::ptr::NonNull;
@@ -1213,4 +1217,78 @@ mod tests {
         assert!(serde_json::from_str::<HotkeySpec>(r#""""#).is_err());
     }
 
+    #[test]
+    fn arrow_words_and_single_letters_are_canonicalised() {
+        assert_eq!(
+            normalize_spec("Alt + Shift + Down"),
+            "Alt + Shift + ArrowDown"
+        );
+        assert_eq!(normalize_spec("Ctrl + Up"), "Ctrl + ArrowUp");
+        assert_eq!(
+            normalize_spec("Shift + Left"),
+            "Shift + ArrowLeft"
+        );
+        assert_eq!(
+            normalize_spec("Meta + Right"),
+            "Meta + ArrowRight"
+        );
+    }
+
+}/// Canonicalises a key spec as written in `rini.toml`: single letters upper-cased, arrow words
+/// to `ArrowUp` and kin.
+pub fn normalize_spec(key: &str) -> String {
+    let mut out = String::with_capacity(key.len());
+    let mut word = String::new();
+
+    for ch in key.chars() {
+        if ch.is_alphabetic() {
+            word.push(ch);
+        } else {
+            if !word.is_empty() {
+                let token = if word.len() == 1 {
+                    word.to_ascii_uppercase()
+                } else {
+                    match word.to_lowercase().as_str() {
+                        "up" => "ArrowUp".to_string(),
+                        "down" => "ArrowDown".to_string(),
+                        "left" => "ArrowLeft".to_string(),
+                        "right" => "ArrowRight".to_string(),
+                        _ => word.clone(),
+                    }
+                };
+                out.push_str(&token);
+                word.clear();
+            }
+            out.push(ch);
+        }
+    }
+
+    if !word.is_empty() {
+        let token = if word.len() == 1 {
+            word.to_ascii_uppercase()
+        } else {
+            match word.to_lowercase().as_str() {
+                "up" => "ArrowUp".to_string(),
+                "down" => "ArrowDown".to_string(),
+                "left" => "ArrowLeft".to_string(),
+                "right" => "ArrowRight".to_string(),
+                _ => word.clone(),
+            }
+        };
+        out.push_str(&token);
+    }
+
+    out
+}
+
+/// Replaces a leading `[modifier_combinations]` alias (`comb1 + C`) with its definition.
+pub fn expand_modifier_combination(key: &str, combinations: &HashMap<String, String>) -> String {
+    if let Some(plus_pos) = key.find(" + ") {
+        let potential_combo = &key[..plus_pos];
+        if let Some(combo_value) = combinations.get(potential_combo) {
+            let rest = &key[plus_pos + 3..];
+            return format!("{} + {}", combo_value, rest);
+        }
+    }
+    key.to_string()
 }

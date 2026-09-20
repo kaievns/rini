@@ -1,20 +1,14 @@
-//! Everything a key binding or an IPC request can name. Plain data: the reactor and the
-//! wm controller interpret it, this crate only parses and validates it.
+//! What a key binding can name: a wire command, or the few things only a key can ask for
+//! (`exec`, `reload_config`, a workspace by name). Plain data; the application interprets it.
 
 use std::borrow::Cow;
 
 use once_cell::sync::Lazy;
-use rini_protocol::{LayoutCommand, MetricsCommand, ReactorCommand, WorkspaceSelector};
+pub use rini_protocol::Command;
+use rini_protocol::WorkspaceSelector;
 use serde::{Deserialize, Serialize};
 use strum::VariantNames;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum Command {
-    Layout(LayoutCommand),
-    Metrics(MetricsCommand),
-    Reactor(ReactorCommand),
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -106,6 +100,7 @@ impl ExecCmd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rini_protocol::LayoutCommand;
 
     #[test]
     fn every_builtin_candidate_is_the_name_the_config_accepts() {

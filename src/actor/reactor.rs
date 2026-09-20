@@ -81,7 +81,8 @@ use serde_with::serde_as;
 use tracing::{debug, info, instrument, trace, warn};
 use transaction_manager::TransactionId;
 
-use super::{event_tap, gesture_tap};
+use rini_input::gesture_tap;
+use rini_input::input_tap as event_tap;
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
 use rini_windows::ids::{WindowId, pid_t};
@@ -115,7 +116,8 @@ pub use query::ReactorQueryHandle;
 
 pub(crate) use crate::model::reactor::AppState;
 pub(crate) use rini_windows::state::{WindowFilter, WindowState};
-pub use crate::model::reactor::{Command, DisplaySelector, DragSession, DragState, MenuState, MissionControlState, ReactorCommand, RefocusState, StaleCleanupState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
+pub use rini_protocol::Command;
+pub use crate::model::reactor::{DisplaySelector, DragSession, DragState, MenuState, MissionControlState, ReactorCommand, RefocusState, StaleCleanupState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 pub use rini_windows::transaction::Requested;
 
 #[derive(Clone)]
@@ -554,7 +556,7 @@ impl Reactor {
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
-                drag_swap_manager: crate::actor::drag_swap::DragManager::new(
+                drag_swap_manager: rini_input::drag_swap::DragManager::new(
                     config.settings.window_snapping,
                 ),
                 skip_layout_for_window: None,
@@ -1304,7 +1306,7 @@ impl Reactor {
             Event::WindowServerFocusChanged(window, reported_space) => {
                 if self.layout_manager.layout_engine.focused_window() == Some(window) {
                     if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
-                        _ = event_tap_tx.send(crate::actor::event_tap::Request::EnforceHidden);
+                        _ = event_tap_tx.send(rini_input::input_tap::Request::EnforceHidden);
                     }
                     return Ok(EventOutcome::default());
                 }
@@ -4510,7 +4512,7 @@ impl Reactor {
         let Some(event_tap_tx) = self.communication_manager.event_tap_tx.clone() else {
             return;
         };
-        _ = event_tap_tx.send(crate::actor::event_tap::Request::Warp(point));
+        _ = event_tap_tx.send(rini_input::input_tap::Request::Warp(point));
     }
 
     fn warp_mouse_to_space_center(&mut self, space: SpaceId) -> bool {
@@ -4634,7 +4636,7 @@ impl Reactor {
             );
         }
         if focus_changed && let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
-            _ = event_tap_tx.send(crate::actor::event_tap::Request::HideOnFocus);
+            _ = event_tap_tx.send(rini_input::input_tap::Request::HideOnFocus);
         }
         let geometry_changed = response.changed;
         self.prepare_refocus_after_layout_event(&event_clone);
@@ -5262,7 +5264,7 @@ impl Reactor {
                     );
 
                     if self.config.settings.gestures.haptics_enabled {
-                        let _ = rini_macos::haptics::perform_haptic(
+                        let _ = rini_input::haptics::perform_haptic(
                             self.config.settings.gestures.haptic_pattern,
                         );
                     }

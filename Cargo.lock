@@ -1398,6 +1398,7 @@ dependencies = [
  "notify-debouncer-mini",
  "once_cell",
  "rini-displays",
+ "rini-input",
  "rini-macos",
  "rini-protocol",
  "rini-runloop",
@@ -1431,6 +1432,31 @@ dependencies = [
  "rini-skylight-sys",
  "rini-windows",
  "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "rini-input"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "once_cell",
+ "parking_lot",
+ "rini-protocol",
+ "rini-runloop",
+ "rini-shared",
+ "rini-skylight-sys",
+ "rini-windows",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
  "tokio",
  "tracing",
 ]
@@ -1665,6 +1691,7 @@ dependencies = [
  "rini-client",
  "rini-config",
  "rini-displays",
+ "rini-input",
  "rini-ipc",
  "rini-macos",
  "rini-motion",

@@ -5,15 +5,17 @@ use super::replay::Record;
 use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::actor;
 use rini_windows::ids::{WindowId, pid_t};
-use crate::actor::drag_swap::DragManager as DragSwapManager;
+use rini_input::drag_swap::DragManager as DragSwapManager;
 use crate::actor::reactor::Reactor;
 use crate::actor::reactor::animation::AnimationManager;
 use rini_displays::topology::ForwardedSpaceState;
+use rini_input::gesture_tap;
+use rini_input::input_tap as event_tap;
 use crate::actor::{
-    event_tap, gesture_tap, raise_manager, window_notify, wm_controller,
+    raise_manager, window_notify, wm_controller,
 };
 use rini_shared::collections::{HashMap, HashSet};
-use rini_config::WindowSnappingSettings;
+use rini_input::settings::WindowSnappingSettings;
 use rini_workspaces::LayoutEngine;
 use rini_workspaces::broadcast::BroadcastSender;
 use rini_displays::ids::SpaceId;

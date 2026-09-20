@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-input = { workspace = true }
 rini-workspaces = { workspace = true }
 rini-tiling = { workspace = true }
 rini-displays = { workspace = true }

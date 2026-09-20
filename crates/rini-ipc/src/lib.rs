@@ -47,7 +47,7 @@ pub trait Backend: Send + 'static {
     fn metrics(&self) -> serde_json::Value;
     fn diagnostics(&self) -> rini_protocol::DiagnosticsData;
     /// Queue a command; `Err` only when the reactor is gone.
-    fn execute(&self, command: rini_config::Command) -> Result<(), String>;
+    fn execute(&self, command: rini_protocol::Command) -> Result<(), String>;
 }
 
 pub fn run_mach_server<B: Backend>(
@@ -385,7 +385,7 @@ mod tests {
 
     #[derive(Default)]
     struct Fake {
-        executed: Mutex<Vec<rini_config::Command>>,
+        executed: Mutex<Vec<rini_protocol::Command>>,
     }
 
     impl Backend for std::sync::Arc<Fake> {
@@ -435,7 +435,7 @@ mod tests {
         fn diagnostics(&self) -> rini_protocol::DiagnosticsData {
             rini_protocol::DiagnosticsData { spaces: vec![], census: vec![], orphaned_workspaces: vec![], stale_homes: vec![], windows_managed: 0 }
         }
-        fn execute(&self, command: rini_config::Command) -> Result<(), String> {
+        fn execute(&self, command: rini_protocol::Command) -> Result<(), String> {
             self.executed.lock().unwrap().push(command);
             Ok(())
         }
@@ -495,7 +495,7 @@ mod tests {
         assert!(matches!(response, RiniResponse::Success { .. }));
         assert_eq!(
             fake.executed.lock().unwrap().as_slice(),
-            [rini_config::Command::Layout(LayoutCommand::SwitchToWorkspace(2))]
+            [rini_protocol::Command::Layout(LayoutCommand::SwitchToWorkspace(2))]
         );
     }
 }

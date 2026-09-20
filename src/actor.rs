@@ -1,6 +1,3 @@
-pub mod drag_swap;
-pub mod event_tap;
-pub mod gesture_tap;
 pub mod mission_control_observer;
 pub mod notification_center;
 pub mod raise_manager;

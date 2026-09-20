@@ -2834,7 +2834,7 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
     let disable = event_tap_rx.try_recv().expect("menu-open should update event tap").1;
     assert!(matches!(
         disable,
-        crate::actor::event_tap::Request::SetFocusFollowsMouseEnabled(false)
+        rini_input::input_tap::Request::SetFocusFollowsMouseEnabled(false)
     ));
     assert_eq!(reactor.menu_manager.menu_state, MenuState::Open(1));
 
@@ -2845,7 +2845,7 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
         .1;
     assert!(matches!(
         enable,
-        crate::actor::event_tap::Request::SetFocusFollowsMouseEnabled(true)
+        rini_input::input_tap::Request::SetFocusFollowsMouseEnabled(true)
     ));
     assert_eq!(reactor.menu_manager.menu_state, MenuState::Closed);
 }
@@ -2867,7 +2867,7 @@ fn stale_menu_open_state_is_cleared_when_other_app_activates() {
         .1;
     assert!(matches!(
         enable,
-        crate::actor::event_tap::Request::SetFocusFollowsMouseEnabled(true)
+        rini_input::input_tap::Request::SetFocusFollowsMouseEnabled(true)
     ));
     assert_eq!(reactor.menu_manager.menu_state, MenuState::Closed);
 }
@@ -2891,7 +2891,7 @@ fn same_app_focus_change_hides_mouse_and_window_server_confirmation_reasserts_it
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, second));
 
     let request = event_tap_rx.try_recv().expect("same-app focus change should hide mouse").1;
-    assert!(matches!(request, crate::actor::event_tap::Request::HideOnFocus));
+    assert!(matches!(request, rini_input::input_tap::Request::HideOnFocus));
 
     reactor.handle_event(Event::WindowServerFocusChanged(second, space));
 
@@ -2901,7 +2901,7 @@ fn same_app_focus_change_hides_mouse_and_window_server_confirmation_reasserts_it
         .1;
     assert!(matches!(
         request,
-        crate::actor::event_tap::Request::EnforceHidden
+        rini_input::input_tap::Request::EnforceHidden
     ));
 }
 

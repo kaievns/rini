@@ -19,30 +19,28 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_core_foundation::CGPoint;
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventMask, CGEventSource, CGEventSourceStateID,
     CGEventTapOptions as CGTapOpt, CGEventTapProxy, CGEventType,
 };
 use tracing::{debug, error, trace, warn};
 
-use super::reactor::{self, Event};
-use crate::actor;
-use rini_displays::topology::ForwardedSpaceState;
-use crate::actor::wm_controller::{self, WmCommand, WmEvent};
+use rini_runloop::channel;
 use rini_shared::collections::{HashMap, HashSet};
-use rini_config::Config;
-use rini_macos::event::{self, Hotkey, KeyCode};
-use rini_windows::mouse::{MouseState, set_mouse_state};
-use rini_macos::hotkey::{
-    Modifiers, is_modifier_key, key_code_from_event, modifier_key_is_active,
-    modifiers_from_flags_with_keys,
-};
-use rini_displays::screen::CoordinateConverter;
 use rini_windows::ids::WindowServerId;
-use rini_macos::power;
+use rini_windows::mouse::{MouseState, set_mouse_state};
 use rini_windows::window_server;
 
+use crate::binding::WmCommand;
+use crate::cursor;
+use crate::event::{Event, EventSink};
+use crate::key::{
+    Hotkey, KeyCode, Modifiers, is_modifier_key, key_code_from_event, modifier_key_is_active,
+    modifiers_from_flags_with_keys,
+};
+use crate::settings::InputSettings;
+use crate::tap;
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
 const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
 
@@ -51,43 +49,39 @@ pub enum Request {
     Warp(CGPoint),
     HideOnFocus,
     EnforceHidden,
-    SpaceStateUpdated(ForwardedSpaceState, CoordinateConverter),
     SetEventProcessing(bool),
     SetFocusFollowsMouseEnabled(bool),
     SetHotkeys(Vec<(String, WmCommand)>),
     KeyboardLayoutChanged,
-    ConfigUpdated(Config),
+    SettingsUpdated(InputSettings),
     SetLowPowerMode(bool),
 }
 
-pub struct EventTap {
-    events_tx: reactor::Sender,
+pub struct InputTap {
+    events: Box<dyn EventSink>,
     requests_rx: Option<Receiver>,
     state: RefCell<State>,
     event_mask: Cell<CGEventMask>,
     mouse_move_last_timestamp: Cell<Option<u64>>,
     mouse_move_min_interval_ns: Cell<u64>,
     mouse_window: Cell<MouseWindow>,
-    tap: RefCell<Option<rini_macos::event_tap::EventTap>>,
+    tap: RefCell<Option<tap::EventTap>>,
     tap_generation: Cell<u64>,
     disable_hotkey: RefCell<Option<Hotkey>>,
     hotkey_specs: RefCell<Vec<(String, WmCommand)>>,
     hotkeys: SharedHotkeyTable,
-    wm_sender: wm_controller::Sender,
 }
 
-// SAFETY: EventTap is constructed on the input thread and all access occurs on
+// SAFETY: InputTap is constructed on the input thread and all access occurs on
 // that same thread (CFRunLoop callback + channel recv both run on the input
 // thread's run loop). The Send impl is required only to move the struct across
 // the thread::spawn boundary.
-unsafe impl Send for EventTap {}
+unsafe impl Send for InputTap {}
 
 struct State {
     hide_count: u32,
     mouse_hides_on_focus: bool,
     focus_follows_mouse_config_enabled: bool,
-    converter: CoordinateConverter,
-    screens: Vec<CGRect>,
     event_processing_enabled: bool,
     focus_follows_mouse_enabled: bool,
     disable_hotkey_active: bool,
@@ -109,25 +103,23 @@ impl Default for State {
             hide_count: 0,
             mouse_hides_on_focus: false,
             focus_follows_mouse_config_enabled: false,
-            converter: CoordinateConverter::default(),
-            screens: Vec::new(),
             event_processing_enabled: false,
             focus_follows_mouse_enabled: true,
             disable_hotkey_active: false,
-            low_power_mode: power::is_low_power_mode_enabled(),
+            low_power_mode: false,
             pressed_keys: HashSet::default(),
             current_flags: CGEventFlags::empty(),
         }
     }
 }
 
-pub type Sender = actor::Sender<Request>;
-pub type Receiver = actor::Receiver<Request>;
+pub type Sender = channel::Sender<Request>;
+pub type Receiver = channel::Receiver<Request>;
 
 pub type SharedHotkeyTable = Arc<ArcSwap<HashMap<Hotkey, Vec<WmCommand>>>>;
 
 struct CallbackCtx {
-    this: Arc<EventTap>,
+    this: Arc<InputTap>,
     recovery_tx: tokio::sync::mpsc::UnboundedSender<Recovery>,
     tap_generation: u64,
 }
@@ -145,7 +137,7 @@ unsafe fn drop_mouse_ctx(ptr: *mut std::ffi::c_void) {
     unsafe { drop(Box::from_raw(ptr as *mut CallbackCtx)) };
 }
 
-impl EventTap {
+impl InputTap {
     #[inline]
     fn focus_follows_mouse_handler_enabled(state: &State) -> bool {
         state.focus_follows_mouse_config_enabled && state.focus_follows_mouse_enabled
@@ -171,7 +163,7 @@ impl EventTap {
         self: &Arc<Self>,
         mask: CGEventMask,
         recovery_tx: tokio::sync::mpsc::UnboundedSender<Recovery>,
-    ) -> Option<rini_macos::event_tap::EventTap> {
+    ) -> Option<tap::EventTap> {
         let tap_generation = self.tap_generation.get().wrapping_add(1);
         let ctx = Box::new(CallbackCtx {
             this: Arc::clone(self),
@@ -181,7 +173,7 @@ impl EventTap {
         let ctx_ptr = Box::into_raw(ctx) as *mut std::ffi::c_void;
 
         let tap = unsafe {
-            rini_macos::event_tap::EventTap::new_with_options_and_recovery_callbacks(
+            tap::EventTap::new_with_options_and_recovery_callbacks(
                 CGTapOpt::Default,
                 mask,
                 Some(mouse_callback),
@@ -243,20 +235,20 @@ impl EventTap {
         warn!(generation, "Recreated invalidated event tap");
     }
 
+    /// `low_power_mode` is the machine's state at start; later changes arrive as
+    /// [`Request::SetLowPowerMode`].
     pub fn new(
-        config: Config,
-        events_tx: reactor::Sender,
+        settings: &InputSettings,
+        low_power_mode: bool,
+        events: Box<dyn EventSink>,
         requests_rx: Receiver,
-        wm_sender: wm_controller::Sender,
     ) -> Self {
-        let disable_hotkey = config
-            .settings
-            .focus_follows_mouse_disable_hotkey
-            .clone()
-            .and_then(|spec| spec.to_hotkey());
+        let disable_hotkey =
+            settings.focus_follows_mouse_disable_hotkey.clone().and_then(|spec| spec.to_hotkey());
         let mut state = State::default();
-        state.mouse_hides_on_focus = config.settings.mouse_hides_on_focus;
-        state.focus_follows_mouse_config_enabled = config.settings.focus_follows_mouse;
+        state.low_power_mode = low_power_mode;
+        state.mouse_hides_on_focus = settings.mouse_hides_on_focus;
+        state.focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
         state.disable_hotkey_active = disable_hotkey
             .as_ref()
             .map(|target| state.compute_disable_hotkey_active(target))
@@ -266,8 +258,8 @@ impl EventTap {
             state.event_processing_enabled && Self::focus_follows_mouse_handler_enabled(&state),
         );
         let mouse_move_min_interval_ns = mouse_move_sampling_profile(state.low_power_mode);
-        EventTap {
-            events_tx,
+        InputTap {
+            events,
             requests_rx: Some(requests_rx),
             state: RefCell::new(state),
             event_mask: Cell::new(event_mask),
@@ -279,7 +271,6 @@ impl EventTap {
             disable_hotkey: RefCell::new(disable_hotkey),
             hotkey_specs: RefCell::new(Vec::new()),
             hotkeys: Arc::new(ArcSwap::from_pointee(HashMap::default())),
-            wm_sender,
         }
     }
 
@@ -299,7 +290,7 @@ impl EventTap {
         }
 
         if this.state.borrow().mouse_hides_on_focus {
-            if let Err(e) = rini_macos::window_server::allow_hide_mouse() {
+            if let Err(e) = cursor::allow_hide_mouse() {
                 error!(
                     "Could not enable mouse hiding: {e:?}. \
                     mouse_hides_on_focus will have no effect."
@@ -310,7 +301,7 @@ impl EventTap {
         // Local to the input thread on purpose: the cooldown timer is a CFRunLoop timer for THIS
         // thread's run loop, and the governor's whole point is that only a healthy input thread
         // gets to re-arm the tap.
-        let mut governor = rini_macos::event_tap::ReEnableGovernor::new();
+        let mut governor = tap::ReEnableGovernor::new();
         let mut _cooldown: Option<rini_runloop::run_loop::RepeatingTimer> = None;
 
         loop {
@@ -323,10 +314,10 @@ impl EventTap {
                                 continue;
                             }
                             match governor.on_disabled(std::time::Instant::now()) {
-                                rini_macos::event_tap::ReEnableDecision::Now => {
+                                tap::ReEnableDecision::Now => {
                                     this.re_enable_tap(generation, &recovery_tx);
                                 }
-                                rini_macos::event_tap::ReEnableDecision::After(wait) => {
+                                tap::ReEnableDecision::After(wait) => {
                                     warn!(
                                         ?wait,
                                         "Event tap is being disabled repeatedly; standing down \
@@ -389,7 +380,7 @@ impl EventTap {
         match request {
             Request::Warp(point) => {
                 self.reset_mouse_window();
-                if let Err(e) = event::warp_mouse(point) {
+                if let Err(e) = cursor::warp_mouse(point) {
                     warn!("Failed to warp mouse: {e:?}");
                 }
                 if state.mouse_hides_on_focus && state.hide_count == 0 {
@@ -407,10 +398,6 @@ impl EventTap {
                 if state.hide_count > 0 {
                     state.hide_mouse();
                 }
-            }
-            Request::SpaceStateUpdated(space_state, converter) => {
-                state.screens = space_state.screens.iter().map(|screen| screen.frame).collect();
-                state.converter = converter;
             }
             Request::SetEventProcessing(enabled) => {
                 state.event_processing_enabled = enabled;
@@ -443,14 +430,11 @@ impl EventTap {
                 self.rebuild_hotkeys_for_current_layout();
                 should_rebuild_mask = true;
             }
-            Request::ConfigUpdated(new_config) => {
-                let mouse_hides_on_focus = new_config.settings.mouse_hides_on_focus;
-                let focus_follows_mouse_config_enabled = new_config.settings.focus_follows_mouse;
-                let disable_hotkey = new_config
-                    .settings
-                    .focus_follows_mouse_disable_hotkey
-                    .clone()
-                    .and_then(|spec| spec.to_hotkey());
+            Request::SettingsUpdated(settings) => {
+                let mouse_hides_on_focus = settings.mouse_hides_on_focus;
+                let focus_follows_mouse_config_enabled = settings.focus_follows_mouse;
+                let disable_hotkey =
+                    settings.focus_follows_mouse_disable_hotkey.and_then(|spec| spec.to_hotkey());
                 *self.disable_hotkey.borrow_mut() = disable_hotkey;
                 {
                     let prev_mouse_hides_on_focus = state.mouse_hides_on_focus;
@@ -596,7 +580,7 @@ impl EventTap {
         }
         match event_type {
             CGEventType::RightMouseUp | CGEventType::LeftMouseUp => {
-                _ = self.events_tx.send(Event::MouseUp);
+                self.events.send(Event::MouseUp);
             }
             _ => (),
         }
@@ -635,7 +619,7 @@ impl EventTap {
         }
 
 
-        // Resolve and deduplicate the window on the input thread. The reactor
+        // Resolve and deduplicate the window on the input thread. The application
         // only needs to see transitions; it must not receive a message for
         // every sampled point while the cursor remains in one window.
         if state.focus_follows_mouse_config_enabled
@@ -663,7 +647,7 @@ impl EventTap {
             });
             if let Some(window) = window {
                 window_server::note_windowserver_activity(window.as_u32());
-                _ = self.events_tx.send(Event::MouseMoved(window));
+                self.events.send(Event::PointerEnteredWindow(window));
             }
         }
 
@@ -748,7 +732,7 @@ impl EventTap {
                         return false;
                     }
                     for cmd in commands {
-                        self.wm_sender.send(WmEvent::Command(cmd.clone()));
+                        self.events.send(Event::Command(cmd.clone()));
                     }
                     return false;
                 }
@@ -839,7 +823,7 @@ unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_vo
 
 impl State {
     fn hide_mouse(&mut self) {
-        if let Err(e) = event::hide_mouse() {
+        if let Err(e) = cursor::hide_mouse() {
             warn!("Failed to hide mouse: {e:?}");
         }
         self.hide_count += 1;
@@ -847,7 +831,7 @@ impl State {
 
     fn show_mouse(&mut self) {
         while self.hide_count > 0 {
-            if let Err(e) = event::show_mouse() {
+            if let Err(e) = cursor::show_mouse() {
                 warn!("Failed to show mouse: {e:?}");
             }
             self.hide_count -= 1;

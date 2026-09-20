@@ -10,9 +10,9 @@ use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
 use serde_json;
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::actor::gesture_tap;
+use rini_input::gesture_tap;
 use rini_config::actor as config;
-pub use rini_config::{ExecCmd, WmCmd, WmCommand};
+pub use rini_input::binding::{ExecCmd, WmCmd, WmCommand};
 use rini_config::WorkspaceSelector;
 use rini_windows::app::NSRunningApplicationExt;
 use rini_windows::ids::pid_t;
@@ -23,7 +23,8 @@ type Receiver = actor::Receiver<WmEvent>;
 
 use self::WmCmd::*;
 use rini_windows::app::AppInfo;
-use crate::actor::{self, event_tap, reactor};
+use crate::actor::{self, reactor};
+use rini_input::input_tap as event_tap;
 use rini_windows::transaction::WindowTxStore;
 use rini_runloop::dispatch::DispatchExt;
 
@@ -37,13 +38,21 @@ pub enum WmEvent {
     AppGloballyActivated(pid_t),
     AppGloballyDeactivated(pid_t),
     AppTerminated(pid_t),
-    /// Everything the displays context reports. The topology snapshot is also fanned out to the
-    /// event tap; the rest goes to the reactor as is.
+    /// Everything the displays context reports; forwarded to the reactor as is.
     Displays(rini_displays::event::Event),
+    /// Everything the input context reports: bindings become `Command`, pointer events go to the
+    /// reactor.
+    Input(rini_input::event::Event),
     PowerStateChanged(bool),
     KeyboardLayoutChanged,
     ConfigUpdated(rini_config::Config),
     Command(WmCommand),
+}
+
+impl From<rini_input::event::Event> for WmEvent {
+    fn from(event: rini_input::event::Event) -> Self {
+        WmEvent::Input(event)
+    }
 }
 
 impl From<rini_displays::event::Event> for WmEvent {
@@ -125,14 +134,12 @@ impl WmController {
 
 
         match event {
-            Displays(rini_displays::event::Event::SpaceStateUpdated(space_state, converter)) => {
-                _ = self.event_tap_tx.send(event_tap::Request::SpaceStateUpdated(
-                    space_state.clone(),
-                    converter,
-                ));
-                self.events_tx.send(Event::SpaceStateChanged(space_state));
-            }
             Displays(event) => self.events_tx.send(Event::from(event)),
+            Input(rini_input::event::Event::Command(cmd)) => self.handle_event(Command(cmd)),
+            Input(rini_input::event::Event::MouseUp) => self.events_tx.send(Event::MouseUp),
+            Input(rini_input::event::Event::PointerEnteredWindow(window)) => {
+                self.events_tx.send(Event::MouseMoved(window))
+            }
             AppEventsRegistered => {
                 _ = self.event_tap_tx.send(event_tap::Request::SetEventProcessing(false));
 
@@ -179,13 +186,12 @@ impl WmController {
 
                 self.config.config = new_cfg;
 
+                let input_settings = rini_input::settings::InputSettings::from(&self.config.config);
                 _ = self
                     .event_tap_tx
-                    .send(event_tap::Request::ConfigUpdated(self.config.config.clone()));
+                    .send(event_tap::Request::SettingsUpdated(input_settings.clone()));
                 if let Some(tx) = &self.gesture_tap_tx {
-                    tx.send(gesture_tap::GestureRequest::ConfigUpdated(
-                        self.config.config.clone(),
-                    ));
+                    tx.send(gesture_tap::GestureRequest::SettingsUpdated(input_settings));
                 }
 
                 if !self.hotkeys_installed {
@@ -217,7 +223,7 @@ impl WmController {
                 _ = self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
             }
             Command(Wm(ReloadConfig)) => self.reload_config(),
-            Command(Wm(crate::actor::wm_controller::WmCmd::ToggleSpaceActivated)) => {
+            Command(Wm(rini_input::binding::WmCmd::ToggleSpaceActivated)) => {
                 self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
                     reactor::ReactorCommand::ToggleSpaceActivated,
                 )));

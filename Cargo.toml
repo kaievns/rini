@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-displays", "crates/rini-ipc", "crates/rini-macos", "crates/rini-motion", "crates/rini-overlay", "crates/rini-protocol", "crates/rini-runloop", "crates/rini-shared", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-workspaces"]
+members = [".", "crates/rini-client", "crates/rini-config", "crates/rini-displays", "crates/rini-input", "crates/rini-ipc", "crates/rini-macos", "crates/rini-motion", "crates/rini-overlay", "crates/rini-protocol", "crates/rini-runloop", "crates/rini-shared", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-workspaces"]
 resolver = "3"
 
 [[bin]]
@@ -181,6 +181,7 @@ rini-shared = { path = "crates/rini-shared" }
 rini-macos = { path = "crates/rini-macos" }
 rini-config = { path = "crates/rini-config" }
 rini-displays = { path = "crates/rini-displays" }
+rini-input = { path = "crates/rini-input" }
 rini-ipc = { path = "crates/rini-ipc" }
 rini-motion = { path = "crates/rini-motion" }
 rini-overlay = { path = "crates/rini-overlay" }
@@ -295,6 +296,7 @@ rini-shared = { workspace = true }
 rini-macos = { workspace = true }
 rini-config = { workspace = true }
 rini-displays = { workspace = true }
+rini-input = { workspace = true }
 rini-ipc = { workspace = true }
 rini-motion = { workspace = true }
 rini-overlay = { workspace = true }

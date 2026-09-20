@@ -2,20 +2,16 @@
 //! those crates. The windows context's reads are `rini_windows::window_server`.
 use std::ffi::c_int;
 
-use objc2_core_foundation::{
-    CFBoolean, CFDictionary, CFRetained, CFString, CFType, CGRect, Type, kCFBooleanTrue,
-};
+use objc2_core_foundation::{CFDictionary, CFString, CFType, CGRect};
 use objc2_core_graphics::{
-    CGError, CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName,
+    CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName,
     kCGWindowNumber, kCGWindowOwnerName,
 };
-use rini_skylight_sys::*;
 use rini_windows::ids::WindowServerId;
 use rini_windows::window_server::{
     bounds_from_dict, get_num, get_visible_windows_raw, get_windows_raw, overlaps,
 };
 
-use crate::cg_ok;
 use crate::mach::mach_get_window_sub_level;
 use rini_displays::screen::ScreenInfo;
 
@@ -172,8 +168,9 @@ fn union_rect(a: CGRect, b: CGRect) -> CGRect {
 }
 #[cfg(not(any(test, feature = "test-support")))]
 pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
-    use objc2_core_foundation::CFArray;
+    use objc2_core_foundation::{CFArray, CFRetained};
     use rini_shared::geometry::CGRectExt;
+    use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
     use rini_windows::window_server::{get_window, make_key_window};
     use std::ptr::NonNull;
     let Some(display_uuid) = screen.display_uuid_opt() else {
@@ -206,20 +203,6 @@ pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool {
 }
 pub fn window_sub_level(wid: u32) -> c_int {
     unsafe { mach_get_window_sub_level(wid) }
-}
-pub fn allow_hide_mouse() -> Result<(), CGError> {
-    let cid = unsafe { SLSMainConnectionID() };
-    let property = CFString::from_str("SetsCursorInBackground");
-    let value = CFBoolean::retain(unsafe { kCFBooleanTrue.unwrap_unchecked() });
-
-    cg_ok(unsafe {
-        CGSSetConnectionProperty(
-            cid,
-            cid,
-            CFRetained::<CFString>::as_ptr(&property).as_ptr(),
-            CFRetained::<CFBoolean>::as_ptr(&value).as_ptr() as *mut CFType,
-        )
-    })
 }
 #[cfg(test)]
 mod tests {

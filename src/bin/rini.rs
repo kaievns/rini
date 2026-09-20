@@ -7,8 +7,8 @@ use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
 use rini_config::actor::ConfigActor;
 use rini_config::watcher::ConfigWatcher;
-use rini_wm::actor::event_tap::EventTap;
-use rini_wm::actor::gesture_tap::GestureTap;
+use rini_input::input_tap::InputTap;
+use rini_input::gesture_tap::GestureTap;
 use rini_wm::actor::mission_control_observer::NativeMissionControl;
 use rini_wm::actor::notification_center::NotificationCenter;
 use rini_windows::lifecycle::ProcessActor;
@@ -339,13 +339,15 @@ stays usable. Fix the config and restart. Error: {error}",
         move |event| sender.send(event.into())
     });
 
-    let event_tap = EventTap::new(
-        config.clone(),
-        events_tx.clone(),
+    let input_settings = rini_input::settings::InputSettings::from(&config);
+    let event_tap = InputTap::new(
+        &input_settings,
+        rini_macos::power::is_low_power_mode_enabled(),
+        Box::new(wm_controller_sender.clone()),
         event_tap_rx,
-        wm_controller_sender.clone(),
     );
-    let gesture_tap = GestureTap::new(config.clone(), wm_controller_sender.clone(), gesture_tap_rx);
+    let gesture_tap =
+        GestureTap::new(input_settings, Box::new(wm_controller_sender.clone()), gesture_tap_rx);
 
     // Warping needs no main-thread access and no permissions, so it is just another
     // actor. It stays parked until the reactor sends it geometry for two or more displays.

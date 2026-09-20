@@ -19,7 +19,7 @@ pub struct RiniState {
 }
 
 
-pub use rini_config::commands::Command;
+pub use rini_protocol::Command;
 
 #[derive(Debug, Clone)]
 pub struct DragSession {

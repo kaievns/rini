@@ -15,13 +15,14 @@ use objc2_core_graphics::{
 };
 use tracing::{trace, warn};
 
-use crate::actor;
-use crate::actor::reactor;
-use crate::actor::wm_controller::{self, WmCommand, WmEvent};
-use rini_config::{Config, HapticPattern};
-use rini_workspaces::LayoutCommand as LC;
-use rini_macos::haptics;
+use rini_protocol::{Command, LayoutCommand as LC};
+use rini_runloop::channel;
 
+use crate::binding::WmCommand;
+use crate::event::{Event, EventSink};
+use crate::haptics::{self, HapticPattern};
+use crate::settings::InputSettings;
+use crate::tap;
 const K_CGS_EVENT_TYPE_FIELD: CGEventField = CGEventField(55);
 const K_CGS_EVENT_DOCK_CONTROL: i64 = 30;
 const K_GESTURE_HID_TYPE_FIELD: CGEventField = CGEventField(110);
@@ -31,18 +32,18 @@ const K_CG_GESTURE_MOTION_HORIZONTAL: i64 = 1;
 
 #[derive(Debug)]
 pub enum GestureRequest {
-    ConfigUpdated(Config),
+    SettingsUpdated(InputSettings),
 }
 
-pub type Sender = actor::Sender<GestureRequest>;
-pub type Receiver = actor::Receiver<GestureRequest>;
+pub type Sender = channel::Sender<GestureRequest>;
+pub type Receiver = channel::Receiver<GestureRequest>;
 
 pub struct GestureTap {
-    config: RefCell<Config>,
-    wm_sender: wm_controller::Sender,
+    settings: RefCell<InputSettings>,
+    events: Box<dyn EventSink>,
     swipe: RefCell<Option<SwipeHandler>>,
     scroll: RefCell<Option<ScrollHandler>>,
-    tap: RefCell<Option<rini_macos::event_tap::EventTap>>,
+    tap: RefCell<Option<tap::EventTap>>,
     tap_generation: Cell<u64>,
     requests_rx: Option<Receiver>,
 }
@@ -61,8 +62,8 @@ struct SwipeConfig {
 }
 
 impl SwipeConfig {
-    fn from_config(config: &Config) -> Self {
-        let g = &config.settings.gestures;
+    fn from_settings(settings: &InputSettings) -> Self {
+        let g = &settings.gestures;
         let vt_norm = if g.swipe_vertical_tolerance > 1.0 && g.swipe_vertical_tolerance <= 100.0 {
             (g.swipe_vertical_tolerance / 100.0).clamp(0.0, 1.0)
         } else if g.swipe_vertical_tolerance > 100.0 {
@@ -125,8 +126,8 @@ struct ScrollConfig {
 }
 
 impl ScrollConfig {
-    fn from_config(config: &Config) -> Self {
-        let g = &config.settings.layout.scrolling.gestures;
+    fn from_settings(settings: &InputSettings) -> Self {
+        let g = &settings.strip_scroll;
         let vt_norm = if g.vertical_tolerance > 1.0 && g.vertical_tolerance <= 100.0 {
             (g.vertical_tolerance / 100.0).clamp(0.0, 1.0)
         } else if g.vertical_tolerance > 100.0 {
@@ -136,7 +137,7 @@ impl ScrollConfig {
         };
         ScrollConfig {
             enabled: g.enabled,
-            consume_dock_swipe: config.settings.gestures.consume_dock_swipe,
+            consume_dock_swipe: settings.gestures.consume_dock_swipe,
             invert_horizontal: g.invert_horizontal,
             vertical_tolerance: vt_norm,
             fingers: g.fingers.max(1),
@@ -194,11 +195,11 @@ unsafe fn drop_gesture_ctx(ptr: *mut std::ffi::c_void) {
 }
 
 impl GestureTap {
-    pub fn new(config: Config, wm_sender: wm_controller::Sender, requests_rx: Receiver) -> Self {
-        let (swipe, scroll) = Self::build_gesture_handlers(&config);
+    pub fn new(settings: InputSettings, events: Box<dyn EventSink>, requests_rx: Receiver) -> Self {
+        let (swipe, scroll) = Self::build_gesture_handlers(&settings);
         GestureTap {
-            config: RefCell::new(config),
-            wm_sender,
+            settings: RefCell::new(settings),
+            events,
             swipe: RefCell::new(swipe),
             scroll: RefCell::new(scroll),
             tap: RefCell::new(None),
@@ -219,7 +220,7 @@ impl GestureTap {
 
         // Same re-arm policy as the input tap: only a healthy thread re-enables, and a burst of
         // disables stands the tap down so macOS keeps delivering events without it.
-        let mut governor = rini_macos::event_tap::ReEnableGovernor::new();
+        let mut governor = tap::ReEnableGovernor::new();
         let mut _cooldown: Option<rini_runloop::run_loop::RepeatingTimer> = None;
 
         loop {
@@ -232,10 +233,10 @@ impl GestureTap {
                                 continue;
                             }
                             match governor.on_disabled(std::time::Instant::now()) {
-                                rini_macos::event_tap::ReEnableDecision::Now => {
+                                tap::ReEnableDecision::Now => {
                                     this.re_enable_tap(generation, &recovery_tx);
                                 }
-                                rini_macos::event_tap::ReEnableDecision::After(wait) => {
+                                tap::ReEnableDecision::After(wait) => {
                                     warn!(
                                         ?wait,
                                         "Gesture tap is being disabled repeatedly; standing down"
@@ -293,15 +294,15 @@ impl GestureTap {
         recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
     ) {
         match request {
-            GestureRequest::ConfigUpdated(new_config) => {
-                *self.config.borrow_mut() = new_config;
+            GestureRequest::SettingsUpdated(settings) => {
+                *self.settings.borrow_mut() = settings;
                 self.update_gesture_handlers(recovery_tx);
             }
         }
     }
 
-    fn build_gesture_handlers(config: &Config) -> (Option<SwipeHandler>, Option<ScrollHandler>) {
-        let swipe_cfg = SwipeConfig::from_config(config);
+    fn build_gesture_handlers(settings: &InputSettings) -> (Option<SwipeHandler>, Option<ScrollHandler>) {
+        let swipe_cfg = SwipeConfig::from_settings(settings);
         let swipe = if swipe_cfg.enabled {
             Some(SwipeHandler {
                 cfg: swipe_cfg,
@@ -311,7 +312,7 @@ impl GestureTap {
             None
         };
 
-        let scroll_cfg = ScrollConfig::from_config(config);
+        let scroll_cfg = ScrollConfig::from_settings(settings);
         let scroll = if scroll_cfg.enabled {
             Some(ScrollHandler {
                 cfg: scroll_cfg,
@@ -328,8 +329,8 @@ impl GestureTap {
         self: &Rc<Self>,
         recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
     ) {
-        let config = self.config.borrow();
-        let (swipe, scroll) = Self::build_gesture_handlers(&config);
+        let settings = self.settings.borrow();
+        let (swipe, scroll) = Self::build_gesture_handlers(&settings);
         let was_enabled = self.gesture_handlers_enabled();
         *self.swipe.borrow_mut() = swipe;
         *self.scroll.borrow_mut() = scroll;
@@ -360,7 +361,7 @@ impl GestureTap {
                 recovery_tx: recovery_tx.clone(),
                 tap_generation,
             })) as *mut std::ffi::c_void;
-            match rini_macos::event_tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
+            match tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
                 tap_location,
                 CGTapOpt::Default,
                 mask,
@@ -379,7 +380,7 @@ impl GestureTap {
                         recovery_tx: recovery_tx.clone(),
                         tap_generation,
                     })) as *mut std::ffi::c_void;
-                    match rini_macos::event_tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
+                    match tap::EventTap::new_at_location_with_options_and_recovery_callbacks(
                         tap_location,
                         CGTapOpt::ListenOnly,
                         mask,
@@ -551,9 +552,7 @@ impl GestureTap {
                     if cfg.haptics_enabled {
                         let _ = haptics::perform_haptic(cfg.haptic_pattern);
                     }
-                    self.wm_sender.send(WmEvent::Command(WmCommand::ReactorCommand(
-                        reactor::Command::Layout(cmd),
-                    )));
+                    self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
                     st.phase = GesturePhase::Committed;
                 }
             }
@@ -673,9 +672,7 @@ impl GestureTap {
                     };
                     let cmd = LC::ScrollStrip { delta };
 
-                    self.wm_sender.send(WmEvent::Command(WmCommand::ReactorCommand(
-                        reactor::Command::Layout(cmd),
-                    )));
+                    self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
 
                     st.accum_dx = 0.0;
                     st.phase = GesturePhase::Committed;
@@ -707,9 +704,7 @@ impl GestureTap {
                         };
                         let cmd = LC::ScrollStrip { delta };
 
-                        self.wm_sender.send(WmEvent::Command(WmCommand::ReactorCommand(
-                            reactor::Command::Layout(cmd),
-                        )));
+                        self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
 
                         st.accum_dx = 0.0;
                     }

@@ -157,3 +157,12 @@ pub enum RiniCommand {
     Config(ConfigCommand),
 }
 
+/// The part of [`RiniCommand`] the window manager itself executes; `Config` goes to the config
+/// actor instead. Untagged, so a bare command name parses whichever arm accepts it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum Command {
+    Layout(LayoutCommand),
+    Metrics(MetricsCommand),
+    Reactor(ReactorCommand),
+}

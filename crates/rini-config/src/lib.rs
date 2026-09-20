@@ -14,20 +14,17 @@ pub use rini_tiling::settings::{
     ScrollingAlignment, ScrollingFocusNavigationStyle, ScrollingGestureSettings,
     ScrollingLayoutSettings, WindowInsertionPoint,
 };
-use rini_tiling::settings::{
-    default_distance_pct, default_swipe_fingers, default_swipe_vertical_tolerance,
-};
 use serde::{Deserialize, Serialize};
 
 use rini_shared::collections::HashMap;
-use rini_macos::hotkey::{Hotkey, HotkeySpec};
+use rini_input::key::{Hotkey, HotkeySpec};
 
 pub mod actor;
-pub mod commands;
 pub mod watcher;
 
-pub use commands::{Command, ExecCmd, WmCmd, WmCommand};
-pub use rini_macos::haptics::HapticPattern;
+pub use rini_input::binding::{Command, ExecCmd, WmCmd, WmCommand};
+pub use rini_input::haptics::HapticPattern;
+pub use rini_input::settings::{GestureSettings, InputSettings, ScrollGestureSettings, WindowSnappingSettings};
 
 
 pub fn data_dir() -> PathBuf {
@@ -182,60 +179,9 @@ pub struct Settings {
     pub hot_reload: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct GestureSettings {
-    #[serde(default = "no")]
-    pub enabled: bool,
-    /// If true, consume horizontal swipe events owned by Rini so macOS and the
-    /// foreground app do not also handle them.
-    #[serde(default = "yes")]
-    pub consume_dock_swipe: bool,
-    #[serde(default)]
-    pub invert_horizontal_swipe: bool,
-    /// Maximum absolute Y delta allowed for the gesture to count as horizontal
-    #[serde(default = "default_swipe_vertical_tolerance")]
-    pub swipe_vertical_tolerance: f64,
-    /// If true, attempt to skip empty workspaces on swipe (if supported)
-    #[serde(default)]
-    pub skip_empty: bool,
-    #[serde(default = "default_swipe_fingers")]
-    pub fingers: usize,
-    /// Normalized horizontal distance (0..1) required to fire a swipe
-    #[serde(default = "default_distance_pct")]
-    pub distance_pct: f64,
-    #[serde(default = "yes")]
-    pub haptics_enabled: bool,
-    #[serde(default)]
-    pub haptic_pattern: HapticPattern,
-}
 
-impl Default for GestureSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            consume_dock_swipe: true,
-            invert_horizontal_swipe: false,
-            swipe_vertical_tolerance: default_swipe_vertical_tolerance(),
-            skip_empty: true,
-            fingers: default_swipe_fingers(),
-            distance_pct: default_distance_pct(),
-            haptics_enabled: true,
-            haptic_pattern: HapticPattern::LevelChange,
-        }
-    }
-}
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default, Copy)]
-#[serde(deny_unknown_fields)]
-pub struct WindowSnappingSettings {
-    #[serde(default = "default_drag_swap_fraction")]
-    pub drag_swap_fraction: f64,
-}
 
-fn default_drag_swap_fraction() -> f64 {
-    0.3
-}
 
 
 
@@ -268,12 +214,7 @@ impl Settings {
 
         issues.extend(self.layout.validate());
 
-        if self.gestures.swipe_vertical_tolerance < 0.0 {
-            issues.push(format!(
-                "gestures.swipe_vertical_tolerance must be non-negative, got {}",
-                self.gestures.swipe_vertical_tolerance
-            ));
-        }
+        issues.extend(self.gestures.validate());
 
         issues
     }
@@ -357,61 +298,7 @@ impl Config {
         issues
     }
 
-    fn normalize_hotkey_string(key: &str) -> String {
-        let mut out = String::with_capacity(key.len());
-        let mut word = String::new();
 
-        for ch in key.chars() {
-            if ch.is_alphabetic() {
-                word.push(ch);
-            } else {
-                if !word.is_empty() {
-                    let token = if word.len() == 1 {
-                        word.to_ascii_uppercase()
-                    } else {
-                        match word.to_lowercase().as_str() {
-                            "up" => "ArrowUp".to_string(),
-                            "down" => "ArrowDown".to_string(),
-                            "left" => "ArrowLeft".to_string(),
-                            "right" => "ArrowRight".to_string(),
-                            _ => word.clone(),
-                        }
-                    };
-                    out.push_str(&token);
-                    word.clear();
-                }
-                out.push(ch);
-            }
-        }
-
-        if !word.is_empty() {
-            let token = if word.len() == 1 {
-                word.to_ascii_uppercase()
-            } else {
-                match word.to_lowercase().as_str() {
-                    "up" => "ArrowUp".to_string(),
-                    "down" => "ArrowDown".to_string(),
-                    "left" => "ArrowLeft".to_string(),
-                    "right" => "ArrowRight".to_string(),
-                    _ => word.clone(),
-                }
-            };
-            out.push_str(&token);
-        }
-
-        out
-    }
-
-    fn expand_modifier_combinations(key: &str, combinations: &HashMap<String, String>) -> String {
-        if let Some(plus_pos) = key.find(" + ") {
-            let potential_combo = &key[..plus_pos];
-            if let Some(combo_value) = combinations.get(potential_combo) {
-                let rest = &key[plus_pos + 3..];
-                return format!("{} + {}", combo_value, rest);
-            }
-        }
-        key.to_string()
-    }
 
     /// no need to pull in a dep for just this
     fn levenshtein(a: &str, b: &str) -> usize {
@@ -563,8 +450,8 @@ impl Config {
                 let mut key_specs = Vec::new();
                 for (key, cmd) in c.keys {
                     let expanded_key =
-                        Self::expand_modifier_combinations(&key, &c.modifier_combinations);
-                    let normalized_key = Self::normalize_hotkey_string(&expanded_key);
+                        rini_input::key::expand_modifier_combination(&key, &c.modifier_combinations);
+                    let normalized_key = rini_input::key::normalize_spec(&expanded_key);
                     let Ok(hotkey) = Hotkey::from_str(&normalized_key) else {
                         bail!("Could not parse hotkey: {key}");
                     };
@@ -599,6 +486,27 @@ impl Config {
             .filter_map(toml::Value::as_str)
             .find(|command| serde_json::from_value::<WmCommand>(serde_json::Value::String(command.to_string())).is_err())
             .map(str::to_owned)
+    }
+}
+
+
+impl From<&Config> for InputSettings {
+    fn from(config: &Config) -> Self {
+        let s = &config.settings;
+        let g = &s.layout.scrolling.gestures;
+        InputSettings {
+            mouse_hides_on_focus: s.mouse_hides_on_focus,
+            focus_follows_mouse: s.focus_follows_mouse,
+            focus_follows_mouse_disable_hotkey: s.focus_follows_mouse_disable_hotkey.clone(),
+            gestures: s.gestures.clone(),
+            strip_scroll: ScrollGestureSettings {
+                enabled: g.enabled,
+                invert_horizontal: g.invert_horizontal,
+                vertical_tolerance: g.vertical_tolerance,
+                fingers: g.fingers,
+                distance_pct: g.distance_pct,
+            },
+        }
     }
 }
 
@@ -750,23 +658,6 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_hotkey_string() {
-        assert_eq!(
-            Config::normalize_hotkey_string("Alt + Shift + Down"),
-            "Alt + Shift + ArrowDown"
-        );
-        assert_eq!(Config::normalize_hotkey_string("Ctrl + Up"), "Ctrl + ArrowUp");
-        assert_eq!(
-            Config::normalize_hotkey_string("Shift + Left"),
-            "Shift + ArrowLeft"
-        );
-        assert_eq!(
-            Config::normalize_hotkey_string("Meta + Right"),
-            "Meta + ArrowRight"
-        );
-    }
-
-    #[test]
     fn test_modifier_combinations_in_config() {
         let toml = r#"
             [settings]
@@ -888,4 +779,32 @@ mod tests {
         assert!(err.contains("Did you mean `toggle_space_activated`"), "{err}");
     }
 
+
+    #[test]
+    fn input_settings_are_assembled_from_both_the_input_and_the_tiling_tables() {
+        let config: Config = Config::parse(
+            r#"
+                [settings]
+                focus_follows_mouse = false
+                mouse_hides_on_focus = false
+                [settings.gestures]
+                enabled = true
+                fingers = 4
+                [settings.layout.scrolling.gestures]
+                enabled = true
+                fingers = 2
+                distance_pct = 0.2
+                [keys]
+            "#,
+        )
+        .unwrap();
+        let input = InputSettings::from(&config);
+        assert!(!input.focus_follows_mouse);
+        assert!(!input.mouse_hides_on_focus);
+        assert!(input.gestures.enabled);
+        assert_eq!(input.gestures.fingers, 4);
+        assert!(input.strip_scroll.enabled);
+        assert_eq!(input.strip_scroll.fingers, 2);
+        assert_eq!(input.strip_scroll.distance_pct, 0.2);
+    }
 }
