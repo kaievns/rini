@@ -23,7 +23,7 @@ notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 once_cell = { workspace = true }
 rini-macos = { workspace = true }
-rini-protocol = { workspace = true }
+rini-ipc = { workspace = true }
 rini-shared = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

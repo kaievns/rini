@@ -104,7 +104,7 @@ use rini_shared::geometry::{CGRectDef, CGRectExt};
 pub use rini_displays::screen::ScreenInfo;
 use rini_displays::ids::SpaceId;
 use rini_displays::screen::order_visible_spaces_by_position;
-use rini_macos::window_server::window_sub_level;
+use rini_windows::sub_level::window_sub_level;
 use rini_windows::window_server;
 use rini_windows::ids::WindowServerId;
 use rini_windows::window_server::{WindowServerInfo, window_level};
@@ -116,7 +116,7 @@ pub use query::ReactorQueryHandle;
 
 pub(crate) use crate::model::reactor::AppState;
 pub(crate) use rini_windows::state::{WindowFilter, WindowState};
-pub use rini_protocol::Command;
+pub use rini_ipc::protocol::Command;
 pub use crate::model::reactor::{DisplaySelector, DragSession, DragState, MenuState, MissionControlState, ReactorCommand, RefocusState, StaleCleanupState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 pub use rini_windows::transaction::Requested;
 
@@ -147,56 +147,6 @@ impl ReactorHandle {
     }
 }
 
-/// The IPC server sees the reactor only through this.
-impl rini_ipc::Backend for ReactorHandle {
-    fn workspaces(&self, space: Option<SpaceId>) -> Vec<rini_protocol::WorkspaceData> {
-        self.queries.query_workspaces(space).into_iter().map(Into::into).collect()
-    }
-
-    fn windows(&self, space: Option<SpaceId>) -> Vec<rini_protocol::WindowData> {
-        self.queries.query_windows(space).into_iter().map(Into::into).collect()
-    }
-
-    fn window(&self, window: WindowId) -> Option<rini_protocol::WindowData> {
-        self.queries.query_window_info(window).map(Into::into)
-    }
-
-    fn displays(&self) -> Vec<rini_protocol::DisplayData> {
-        self.queries.query_displays().into_iter().map(Into::into).collect()
-    }
-
-    fn layout_state(
-        &self,
-        space: Option<u64>,
-        workspace: Option<usize>,
-    ) -> Option<rini_protocol::LayoutStateData> {
-        self.queries.query_layout_state(space, workspace)
-    }
-
-    fn workspace_layouts(
-        &self,
-        space: Option<SpaceId>,
-        workspace: Option<usize>,
-    ) -> Vec<rini_protocol::WorkspaceLayoutData> {
-        self.queries.query_workspace_layouts(space, workspace)
-    }
-
-    fn applications(&self) -> Vec<rini_protocol::ApplicationData> {
-        self.queries.query_applications()
-    }
-
-    fn metrics(&self) -> serde_json::Value {
-        self.queries.query_metrics()
-    }
-
-    fn diagnostics(&self) -> rini_protocol::DiagnosticsData {
-        self.queries.query_diagnostics()
-    }
-
-    fn execute(&self, command: Command) -> Result<(), String> {
-        self.try_send(Event::Command(command)).map_err(|e| e.to_string())
-    }
-}
 
 impl std::ops::Deref for ReactorHandle {
     type Target = ReactorQueryHandle;

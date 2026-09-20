@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 libc = "0.2"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes"] }
-rini-protocol = { path = "../rini-protocol" }
+rini-ipc = { workspace = true }
 rustc-hash = "2.1.1"
 serde = { version = "1.0.201", default-features = false, features = ["derive"] }
 serde_with = "3.9.0"

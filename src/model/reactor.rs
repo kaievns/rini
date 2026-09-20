@@ -1,5 +1,5 @@
 use objc2_core_foundation::CGRect;
-pub use rini_protocol::{DisplaySelector, ReactorCommand};
+pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
 use rini_windows::app::AppInfo;
 use rini_windows::app_actor::AppThreadHandle;
@@ -19,7 +19,7 @@ pub struct RiniState {
 }
 
 
-pub use rini_protocol::Command;
+pub use rini_ipc::protocol::Command;
 
 #[derive(Debug, Clone)]
 pub struct DragSession {
@@ -103,7 +103,7 @@ pub enum ReactorError {
 
 #[cfg(test)]
 mod tests {
-    use rini_protocol::{RestoreScope, RestoreSource};
+    use rini_ipc::protocol::{RestoreScope, RestoreSource};
 
     use super::*;
 

@@ -1400,17 +1400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rini-client"
-version = "0.1.0"
-dependencies = [
- "ctrlc",
- "rini-protocol",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "rini-config"
 version = "0.1.0"
 dependencies = [
@@ -1422,8 +1411,8 @@ dependencies = [
  "once_cell",
  "rini-displays",
  "rini-input",
+ "rini-ipc",
  "rini-macos",
- "rini-protocol",
  "rini-runloop",
  "rini-shared",
  "rini-tiling",
@@ -1471,7 +1460,7 @@ dependencies = [
  "objc2-core-graphics",
  "once_cell",
  "parking_lot",
- "rini-protocol",
+ "rini-ipc",
  "rini-runloop",
  "rini-shared",
  "rini-skylight-sys",
@@ -1490,20 +1479,23 @@ version = "0.1.0"
 dependencies = [
  "continue",
  "crossbeam-channel",
+ "ctrlc",
  "dashmap",
  "nix 0.30.1",
  "parking_lot",
- "rini-client",
- "rini-config",
- "rini-displays",
- "rini-macos",
- "rini-protocol",
+ "rini-mach-sys",
  "rini-runloop",
- "rini-shared",
- "rini-windows",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "rini-mach-sys"
+version = "0.1.0"
+dependencies = [
  "tracing",
 ]
 
@@ -1543,14 +1535,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rini-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "rini-runloop"
 version = "0.1.0"
 dependencies = [
@@ -1574,7 +1558,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "objc2-core-foundation",
- "rini-protocol",
+ "rini-ipc",
  "ron",
  "rustc-hash",
  "serde",
@@ -1608,7 +1592,7 @@ version = "0.1.0"
 dependencies = [
  "enum_dispatch",
  "objc2-core-foundation",
- "rini-protocol",
+ "rini-ipc",
  "rini-shared",
  "rini-windows",
  "serde",
@@ -1633,7 +1617,8 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "regex",
- "rini-protocol",
+ "rini-ipc",
+ "rini-mach-sys",
  "rini-runloop",
  "rini-shared",
  "rini-skylight-sys",
@@ -1678,13 +1663,12 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "rini-animation",
- "rini-client",
  "rini-config",
  "rini-displays",
  "rini-input",
  "rini-ipc",
+ "rini-mach-sys",
  "rini-macos",
- "rini-protocol",
  "rini-runloop",
  "rini-shared",
  "rini-skylight-sys",
@@ -1724,8 +1708,8 @@ dependencies = [
  "objc2-core-foundation",
  "regex",
  "rini-displays",
+ "rini-ipc",
  "rini-macos",
- "rini-protocol",
  "rini-runloop",
  "rini-shared",
  "rini-tiling",

@@ -11,9 +11,9 @@ use nix::libc::{
 };
 use tracing::error;
 
-use rini_shared::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use crate::subscriptions::CliSubscription;
-use rini_protocol::RiniEvent as BroadcastEvent;
+use crate::protocol::RiniEvent as BroadcastEvent;
 
 pub trait CliExecutor: Send + Sync + 'static {
     fn execute(
@@ -242,7 +242,7 @@ pub fn execute_cli_subscription(event: &BroadcastEvent, subscription: &CliSubscr
 
 #[cfg(test)]
 mod tests {
-    use rini_protocol::{WindowId, WorkspaceId};
+    use crate::protocol::{WindowId, WorkspaceId};
 
     use super::*;
 

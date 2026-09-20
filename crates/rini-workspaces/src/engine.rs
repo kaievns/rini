@@ -11,7 +11,7 @@ use rini_windows::app::AppInfo;
 use rini_windows::ids::{WindowId, pid_t};
 use rini_shared::collections::{HashMap, HashSet};
 use rini_tiling::settings::LayoutSettings;
-use rini_protocol::WorkspaceSelector;
+use rini_ipc::protocol::WorkspaceSelector;
 use crate::LayoutSystem;
 use crate::floating::FloatingFullscreenKind;
 use rini_tiling::WindowLayoutConstraints;
@@ -27,7 +27,7 @@ mod persistence;
 
 use persistence::PersistenceState;
 pub use persistence::{RestoreReport, RestoreRequest, RestoreScope, RestoreSource, RestoreWarning};
-pub use rini_protocol::LayoutCommand;
+pub use rini_ipc::protocol::LayoutCommand;
 
 #[derive(Debug, Default)]
 struct WindowRemovalImpact {
@@ -132,7 +132,7 @@ pub struct WorkspaceLayoutQuerySnapshot {
     pub workspace_index: usize,
     pub is_active: bool,
     pub selected_window: Option<WindowId>,
-    pub container_tree: rini_protocol::ContainerTreeNode,
+    pub container_tree: rini_ipc::protocol::ContainerTreeNode,
 }
 
 impl LayoutEngine {
@@ -3187,7 +3187,7 @@ mod tests {
     use rini_windows::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
     use rini_tiling::settings::LayoutSettings;
     use crate::settings::VirtualWorkspaceSettings;
-    use rini_protocol::WorkspaceSelector;
+    use rini_ipc::protocol::WorkspaceSelector;
 
     fn test_engine() -> LayoutEngine {
         LayoutEngine::new(

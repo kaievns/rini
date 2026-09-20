@@ -28,7 +28,7 @@ fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
     assert!(state.is_active_workspace);
     assert_eq!(
         state.container_tree.node_type,
-        rini_protocol::ContainerNodeType::Container
+        rini_ipc::protocol::ContainerNodeType::Container
     );
     assert_eq!(state.container_tree.children.len(), 2);
 
@@ -40,7 +40,7 @@ fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
     // are columns (`window_id: None`, `role: "column"`) and the windows sit inside them. The
     // old assertions compared `selected_window` against a column's absent id and read
     // `None`, which is the structure being correct rather than a defect.
-    let windows: Vec<&rini_protocol::ContainerTreeNode> = state
+    let windows: Vec<&rini_ipc::protocol::ContainerTreeNode> = state
         .container_tree
         .children
         .iter()
@@ -6418,7 +6418,7 @@ fn moving_a_window_between_workspaces_keeps_its_column_width() {
     );
 
     reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
-        workspace: rini_protocol::WorkspaceSelector::Index(1),
+        workspace: rini_ipc::protocol::WorkspaceSelector::Index(1),
         follow: true,
         window_id: None,
     });
@@ -6479,7 +6479,7 @@ fn a_full_width_window_stays_full_width_across_workspaces() {
 
     for target in [1usize, 2] {
         reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
-            workspace: rini_protocol::WorkspaceSelector::Index(target),
+            workspace: rini_ipc::protocol::WorkspaceSelector::Index(target),
             follow: true,
             window_id: None,
         });

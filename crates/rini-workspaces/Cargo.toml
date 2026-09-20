@@ -23,7 +23,7 @@ enum_dispatch = { workspace = true }
 objc2-core-foundation = { workspace = true }
 regex = { workspace = true }
 rini-macos = { workspace = true }
-rini-protocol = { workspace = true }
+rini-ipc = { workspace = true }
 rini-shared = { workspace = true }
 ron = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

@@ -18,7 +18,7 @@ objc2-core-foundation = { workspace = true }
 objc2-core-graphics = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
-rini-protocol = { workspace = true }
+rini-ipc = { workspace = true }
 rini-runloop = { workspace = true }
 rini-shared = { workspace = true }
 rini-skylight-sys = { workspace = true }

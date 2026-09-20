@@ -15,7 +15,7 @@ use objc2_core_graphics::{
 };
 use tracing::{trace, warn};
 
-use rini_protocol::{Command, LayoutCommand as LC};
+use rini_ipc::protocol::{Command, LayoutCommand as LC};
 use rini_runloop::channel;
 
 use crate::binding::WmCommand;

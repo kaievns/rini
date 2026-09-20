@@ -3,10 +3,7 @@
 //! The client talks to the same bootstrap service as `rini-cli` and includes
 //! the public request and response wire types.
 
-#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
-#[cfg(not(target_os = "macos"))]
-compile_error!("rini-client only supports macOS");
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::mem::{size_of, zeroed};
@@ -14,7 +11,7 @@ use std::ptr::copy_nonoverlapping;
 use std::thread;
 use std::time::Duration;
 
-pub use rini_protocol::*;
+pub use crate::protocol::*;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
@@ -67,8 +64,6 @@ pub enum ClientError {
     SubscriptionRejected(Value),
     #[error("Rini returned an error: {0}")]
     Server(Value),
-    #[error("Rini returned an unknown response shape")]
-    UnknownResponse,
 }
 
 /// A handle for issuing synchronous requests to the running Rini process.
@@ -163,8 +158,7 @@ impl RiniMachClient {
         self.request(RiniRequest::GetMetrics)
     }
 
-    /// Returns the current configuration as JSON until the config model is
-    /// moved into `rini-protocol`.
+    /// The live configuration as JSON.
     pub fn get_config(&self) -> Result<Value, ClientError> {
         self.request(RiniRequest::GetConfig)
     }
@@ -189,9 +183,6 @@ impl RiniMachClient {
         match parse_json_payload::<RiniResponse>(&response, "response")? {
             RiniResponse::Success { .. } => Ok(RiniMachSubscription { reply_port }),
             RiniResponse::Error { error } => Err(ClientError::SubscriptionRejected(error)),
-            _ => Err(ClientError::SubscriptionRejected(Value::String(
-                "Rini returned an unknown response shape".to_owned(),
-            ))),
         }
     }
 
@@ -199,7 +190,6 @@ impl RiniMachClient {
         match self.send_typed_request(&request)? {
             RiniResponse::Success { data } => Ok(data),
             RiniResponse::Error { error } => Err(ClientError::Server(error)),
-            _ => Err(ClientError::UnknownResponse),
         }
     }
 }

@@ -4,8 +4,8 @@
 use std::borrow::Cow;
 
 use once_cell::sync::Lazy;
-pub use rini_protocol::Command;
-use rini_protocol::WorkspaceSelector;
+pub use rini_ipc::protocol::Command;
+use rini_ipc::protocol::WorkspaceSelector;
 use serde::{Deserialize, Serialize};
 use strum::VariantNames;
 
@@ -100,7 +100,7 @@ impl ExecCmd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rini_protocol::LayoutCommand;
+    use rini_ipc::protocol::LayoutCommand;
 
     #[test]
     fn every_builtin_candidate_is_the_name_the_config_accepts() {

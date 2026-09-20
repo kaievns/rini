@@ -1,4 +1,4 @@
-use rini_protocol as protocol;
+use rini_ipc::protocol;
 use serde::de::Deserializer;
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use rini_windows::ids::WindowServerId;
 
 /// Runtime-only workspace projection. Its windows retain the macOS
 /// accessibility metadata needed by the UI; IPC uses the protocol-owned
-/// `rini_protocol::WorkspaceData` representation.
+/// `rini_ipc::protocol::WorkspaceData` representation.
 #[derive(Debug, Clone)]
 pub struct RuntimeWorkspaceData {
     pub id: String,

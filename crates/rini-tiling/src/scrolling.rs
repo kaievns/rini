@@ -705,7 +705,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         out
     }
 
-    fn container_tree(&self, layout: LayoutId) -> rini_protocol::ContainerTreeNode {
+    fn container_tree(&self, layout: LayoutId) -> rini_ipc::protocol::ContainerTreeNode {
         let state = self.layouts.get(layout).expect("unknown scrolling layout");
         let children = state
             .columns
@@ -715,8 +715,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     .windows
                     .iter()
                     .enumerate()
-                    .map(|(index, &window)| rini_protocol::ContainerTreeNode {
-                        node_type: rini_protocol::ContainerNodeType::Window,
+                    .map(|(index, &window)| rini_ipc::protocol::ContainerTreeNode {
+                        node_type: rini_ipc::protocol::ContainerNodeType::Window,
                         layout_kind: None,
                         weight: Some(column.height_weights.get(index).copied().unwrap_or(1.0)),
                         window_id: Some(window.into()),
@@ -728,9 +728,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         children: Vec::new(),
                     })
                     .collect();
-                rini_protocol::ContainerTreeNode {
-                    node_type: rini_protocol::ContainerNodeType::Container,
-                    layout_kind: Some(rini_protocol::LayoutKind::Vertical),
+                rini_ipc::protocol::ContainerTreeNode {
+                    node_type: rini_ipc::protocol::ContainerNodeType::Container,
+                    layout_kind: Some(rini_ipc::protocol::LayoutKind::Vertical),
                     weight: Some((state.column_width_ratio + column.width_offset).max(0.0)),
                     window_id: None,
                     is_selected: false,
@@ -743,9 +743,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
             })
             .collect();
 
-        rini_protocol::ContainerTreeNode {
-            node_type: rini_protocol::ContainerNodeType::Container,
-            layout_kind: Some(rini_protocol::LayoutKind::Horizontal),
+        rini_ipc::protocol::ContainerTreeNode {
+            node_type: rini_ipc::protocol::ContainerNodeType::Container,
+            layout_kind: Some(rini_ipc::protocol::LayoutKind::Horizontal),
             weight: None,
             window_id: None,
             is_selected: false,

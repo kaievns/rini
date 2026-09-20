@@ -4,7 +4,7 @@ use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-pub use rini_protocol::WorkspaceSelector;
+pub use rini_ipc::protocol::WorkspaceSelector;
 
 fn yes() -> bool {
     true

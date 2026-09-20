@@ -32,7 +32,7 @@ fn timing_layer() -> TimingLayer {
         .layer(|| Histogram::new_with_max(100_000_000, 2).unwrap())
 }
 
-pub use rini_protocol::MetricsCommand;
+pub use rini_ipc::protocol::MetricsCommand;
 
 pub fn handle_command(command: MetricsCommand) {
     match command {

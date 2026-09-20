@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use rini_shared::collections::HashMap;
 use rini_windows::ids::{WindowId, pid_t};
 
-pub use rini_protocol::{Direction, ResizeOrientation};
+pub use rini_ipc::protocol::{Direction, ResizeOrientation};
 
 pub mod area;
 pub mod constraints;
@@ -105,7 +105,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
 
     fn draw_tree(&self, layout: LayoutId) -> String;
     /// Return a stable, platform-neutral view of the layout topology for IPC consumers.
-    fn container_tree(&self, layout: LayoutId) -> rini_protocol::ContainerTreeNode;
+    fn container_tree(&self, layout: LayoutId) -> rini_ipc::protocol::ContainerTreeNode;
 
     fn calculate_layout(
         &self,
@@ -313,10 +313,10 @@ mod tests {
     }
 
     fn window_nodes(
-        tree: &rini_protocol::ContainerTreeNode,
-    ) -> Vec<&rini_protocol::ContainerTreeNode> {
+        tree: &rini_ipc::protocol::ContainerTreeNode,
+    ) -> Vec<&rini_ipc::protocol::ContainerTreeNode> {
         let mut windows = Vec::new();
-        if tree.node_type == rini_protocol::ContainerNodeType::Window {
+        if tree.node_type == rini_ipc::protocol::ContainerNodeType::Window {
             windows.push(tree);
         }
         for child in &tree.children {
@@ -339,7 +339,7 @@ mod tests {
         scrolling.add_window_after_selection(layout, w(1));
         scrolling.add_window_after_selection(layout, w(2));
         let tree = scrolling.container_tree(layout);
-        assert_eq!(tree.node_type, rini_protocol::ContainerNodeType::Container);
+        assert_eq!(tree.node_type, rini_ipc::protocol::ContainerNodeType::Container);
         assert!(tree.children.iter().all(|node| node.role.as_deref() == Some("column")));
         assert_eq!(window_nodes(&tree).len(), 2);
         assert_eq!(

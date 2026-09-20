@@ -139,7 +139,7 @@ impl WindowId {
     }
 }
 
-impl From<WindowId> for rini_protocol::WindowId {
+impl From<WindowId> for rini_ipc::protocol::WindowId {
     fn from(value: WindowId) -> Self {
         Self {
             pid: value.pid,
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn window_id_maps_onto_the_protocol_id_and_the_server_id() {
-        let protocol: rini_protocol::WindowId = wid().into();
+        let protocol: rini_ipc::protocol::WindowId = wid().into();
         assert_eq!((protocol.pid, protocol.idx), (42, 7));
         assert_eq!(WindowServerId::from(wid()).as_u32(), 7);
     }

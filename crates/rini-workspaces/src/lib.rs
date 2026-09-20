@@ -26,7 +26,7 @@ pub use engine::{
 pub use floating::FloatingManager;
 pub use floating_position_store::FloatingPositionStore;
 pub use hidden_window_placement::{HiddenWindowPlacement, HideCorner};
-pub use rini_protocol::{Direction, ResizeOrientation};
+pub use rini_ipc::protocol::{Direction, ResizeOrientation};
 pub use rini_tiling::{LayoutId, LayoutSystem, LayoutSystemKind, ScrollingLayoutSystem};
 pub use virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStats, WorkspaceStore};
 pub use window_store::{

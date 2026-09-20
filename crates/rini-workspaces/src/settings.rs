@@ -8,7 +8,7 @@ fn yes() -> bool {
 fn no() -> bool {
     false
 }
-use rini_protocol::WorkspaceSelector;
+use rini_ipc::protocol::WorkspaceSelector;
 use rini_windows::rules::AppWorkspaceRule;
 
 pub const MAX_WORKSPACES: usize = 128;

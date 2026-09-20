@@ -6,4 +6,4 @@ pub mod geometry;
 pub mod log;
 pub mod util;
 
-pub use rini_protocol::{Direction, ResizeOrientation};
+pub use rini_ipc::protocol::{Direction, ResizeOrientation};

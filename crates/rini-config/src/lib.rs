@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::bail;
-pub use rini_protocol::{ConfigCommand, WorkspaceSelector};
+pub use rini_ipc::protocol::{ConfigCommand, WorkspaceSelector};
 pub use rini_windows::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
 pub use rini_displays::cursor_warp::StackedUpperSide;
 pub use rini_workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
@@ -513,7 +513,7 @@ impl From<&Config> for InputSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rini_protocol::{LayoutCommand, ResizeOrientation};
+    use rini_ipc::protocol::{LayoutCommand, ResizeOrientation};
 
     #[test]
     fn scrolling_insertion_point_falls_back_to_the_global_default() {

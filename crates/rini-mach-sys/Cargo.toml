@@ -1,0 +1,13 @@
+[package]
+name = "rini-mach-sys"
+version = "0.1.0"
+edition = "2024"
+description = "Raw Mach messaging for rini: mach_msg, ports, bootstrap lookup, and message helpers."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+tracing = { workspace = true }

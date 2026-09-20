@@ -1,13 +1,11 @@
-//! Window-server reads the application still makes directly: the Dock's Mission Control overlay,
-//! the desktop window of a display, a window's sub-level. The contexts' own reads live with them.
-use std::ffi::c_int;
+//! Window-server reads the application still makes directly: the Dock's Mission Control overlay
+//! and the desktop window of a display. The contexts' own reads live with them.
 
 use objc2_core_foundation::{CFDictionary, CFString, CFType};
 use objc2_core_graphics::{kCGWindowLayer, kCGWindowName, kCGWindowOwnerName};
 use rini_displays::screen::ScreenInfo;
 use rini_windows::window_server::{get_num, get_visible_windows_raw};
 
-use crate::mach::mach_get_window_sub_level;
 
 fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
     Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
@@ -79,7 +77,4 @@ pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
 #[cfg(any(test, feature = "test-support"))]
 pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool {
     false
-}
-pub fn window_sub_level(wid: u32) -> c_int {
-    unsafe { mach_get_window_sub_level(wid) }
 }

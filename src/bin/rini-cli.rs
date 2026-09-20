@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::{self};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use rini_protocol::{EventKind, RiniRequest, RiniResponse};
+use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse};
 use rini_windows::ids::WindowId as InternalWindowId;
 use rini_wm::actor::reactor::{self, DisplaySelector};
 use rini_config::WorkspaceSelector;
@@ -647,7 +647,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
             ))
         }
         ExecuteCommands::ShowTiming => CliCommand::Reactor(reactor::Command::Metrics(
-            rini_protocol::MetricsCommand::ShowTiming,
+            rini_ipc::protocol::MetricsCommand::ShowTiming,
         )),
         ExecuteCommands::Redistribute => CliCommand::Reactor(reactor::Command::Reactor(
             reactor::ReactorCommand::RedistributeWindows,
@@ -665,19 +665,19 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
     Ok(RiniRequest::ExecuteCommand { command })
 }
 
-fn into_protocol_command(command: CliCommand) -> Result<rini_protocol::RiniCommand, String> {
+fn into_protocol_command(command: CliCommand) -> Result<rini_ipc::protocol::RiniCommand, String> {
     match command {
         CliCommand::Config(command) => {
-            Ok(rini_protocol::RiniCommand::Config(decode_protocol(command)?))
+            Ok(rini_ipc::protocol::RiniCommand::Config(decode_protocol(command)?))
         }
         CliCommand::Reactor(reactor::Command::Layout(command)) => {
-            Ok(rini_protocol::RiniCommand::Layout(decode_protocol(command)?))
+            Ok(rini_ipc::protocol::RiniCommand::Layout(decode_protocol(command)?))
         }
         CliCommand::Reactor(reactor::Command::Metrics(command)) => {
-            Ok(rini_protocol::RiniCommand::Metrics(decode_protocol(command)?))
+            Ok(rini_ipc::protocol::RiniCommand::Metrics(decode_protocol(command)?))
         }
         CliCommand::Reactor(reactor::Command::Reactor(command)) => {
-            Ok(rini_protocol::RiniCommand::Reactor(decode_protocol(command)?))
+            Ok(rini_ipc::protocol::RiniCommand::Reactor(decode_protocol(command)?))
         }
     }
 }
@@ -788,8 +788,8 @@ fn parse_window_id(input: &str) -> Result<InternalWindowId, String> {
     ))
 }
 
-fn protocol_window_id(window_id: &InternalWindowId) -> Result<rini_protocol::WindowId, String> {
-    rini_protocol::WindowId::new(window_id.pid, window_id.idx.get())
+fn protocol_window_id(window_id: &InternalWindowId) -> Result<rini_ipc::protocol::WindowId, String> {
+    rini_ipc::protocol::WindowId::new(window_id.pid, window_id.idx.get())
         .ok_or_else(|| "window id index must be non-zero".to_string())
 }
 

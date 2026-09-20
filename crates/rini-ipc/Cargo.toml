@@ -2,7 +2,7 @@
 name = "rini-ipc"
 version = "0.1.0"
 edition = "2024"
-description = "rini's Mach IPC server: request dispatch, event subscriptions, CLI hooks"
+description = "rini's IPC context: the command, query and event language, the Mach server, subscriptions, CLI hooks, and the client."
 license = "Apache-2.0"
 publish = false
 
@@ -10,20 +10,18 @@ publish = false
 doctest = false
 
 [dependencies]
-rini-displays = { workspace = true }
-rini-windows = { workspace = true }
+rini-mach-sys = { workspace = true }
+thiserror = { workspace = true }
 rini-runloop = { workspace = true }
 continue = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
 nix = { workspace = true }
 parking_lot = { workspace = true }
-rini-client = { workspace = true }
-rini-config = { workspace = true }
-rini-macos = { workspace = true }
-rini-protocol = { workspace = true }
-rini-shared = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tracing = { workspace = true }
+
+[dev-dependencies]
+ctrlc = "3.5.2"

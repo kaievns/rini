@@ -24,7 +24,7 @@ use rini_workspaces::LayoutEngine;
 use rini_windows::transaction::WindowTxStore;
 use rini_macos::accessibility::ensure_accessibility_permission;
 use rini_runloop::executor::Executor;
-use rini_macos::mach::init_window_sub_level_server_port;
+use rini_windows::sub_level::init_window_sub_level_server_port;
 use rini_displays::screen::displays_have_separate_spaces;
 use rini_macos::service::{ServiceCommands, handle_service_command};
 use rini_skylight_sys::{
@@ -261,7 +261,7 @@ stays usable. Fix the config and restart. Error: {error}",
 
     ConfigWatcher::spawn(config_tx.clone(), config.clone(), config_path.clone());
 
-    let server_state = match ipc::run_mach_server(reactor.clone(), config_tx.clone()) {
+    let server_state = match ipc::run_mach_server(rini_wm::ipc_backend::IpcBackend::new(reactor.clone(), config_tx.clone())) {
         Ok(state) => state,
         Err(err) => {
             eprintln!("{}", err);

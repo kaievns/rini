@@ -12,7 +12,7 @@ doctest = false
 [dependencies]
 enum_dispatch = { workspace = true }
 objc2-core-foundation = { workspace = true }
-rini-protocol = { workspace = true }
+rini-ipc = { workspace = true }
 rini-shared = { workspace = true }
 rini-windows = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

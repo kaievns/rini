@@ -13,6 +13,7 @@ doctest = false
 test-support = []
 
 [dependencies]
+rini-mach-sys = { workspace = true }
 anyhow = { workspace = true }
 dashmap = { workspace = true }
 dispatchr = { workspace = true }
@@ -26,7 +27,7 @@ objc2-foundation = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
-rini-protocol = { workspace = true }
+rini-ipc = { workspace = true }
 rini-runloop = { workspace = true }
 rini-shared = { workspace = true }
 rini-skylight-sys = { workspace = true }

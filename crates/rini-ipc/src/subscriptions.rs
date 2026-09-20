@@ -10,9 +10,9 @@ use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
-use rini_shared::collections::{HashMap, HashSet};
-use rini_protocol::RiniEvent as BroadcastEvent;
-use rini_macos::mach::{mach_release_send_right, mach_retain_send_right, mach_try_send_message};
+use std::collections::{HashMap, HashSet};
+use crate::protocol::RiniEvent as BroadcastEvent;
+use rini_mach_sys::{mach_release_send_right, mach_retain_send_right, mach_try_send_message};
 
 pub type ClientPort = u32;
 

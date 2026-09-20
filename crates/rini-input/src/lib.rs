@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals)]
 //! The input context: what the user asked for. Keys, bindings, trackpad gestures and drags come in
-//! through CGEventTaps; commands in the `rini_protocol` language go out, so the application cannot
+//! through CGEventTaps; commands in the `rini_ipc::protocol` language go out, so the application cannot
 //! tell a hotkey from a CLI call. See `docs/architecture.md`.
 
 // Model
