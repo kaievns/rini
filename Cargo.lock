@@ -1377,6 +1377,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
+name = "rini-animation"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-media",
+ "objc2-core-video",
+ "objc2-foundation",
+ "objc2-io-surface",
+ "objc2-quartz-core",
+ "objc2-screen-capture-kit",
+ "rini-displays",
+ "rini-runloop",
+ "rini-shared",
+ "rini-skylight-sys",
+ "rini-windows",
+ "tracing",
+]
+
+[[package]]
 name = "rini-client"
 version = "0.1.0"
 dependencies = [
@@ -1520,40 +1543,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rini-motion"
-version = "0.1.0"
-dependencies = [
- "objc2-core-foundation",
- "rini-shared",
- "rini-windows",
-]
-
-[[package]]
-name = "rini-overlay"
-version = "0.1.0"
-dependencies = [
- "block2",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-core-media",
- "objc2-core-video",
- "objc2-foundation",
- "objc2-io-surface",
- "objc2-quartz-core",
- "objc2-screen-capture-kit",
- "rini-displays",
- "rini-macos",
- "rini-motion",
- "rini-runloop",
- "rini-shared",
- "rini-skylight-sys",
- "rini-windows",
- "tracing",
-]
-
-[[package]]
 name = "rini-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1688,14 +1677,13 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "regex",
+ "rini-animation",
  "rini-client",
  "rini-config",
  "rini-displays",
  "rini-input",
  "rini-ipc",
  "rini-macos",
- "rini-motion",
- "rini-overlay",
  "rini-protocol",
  "rini-runloop",
  "rini-shared",

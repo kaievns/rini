@@ -1,5 +1,5 @@
 //! When a picture fits the frame it is drawn into. Sizes only, so every rule here is testable
-//! without an image. Measurements behind the tolerances are in `crates/rini-overlay/docs/capture-overlay-research.md`.
+//! without an image. Measurements behind the tolerances are in `docs/capture-overlay-research.md`.
 
 use std::time::Duration;
 
@@ -66,7 +66,7 @@ const MIN_STRETCH: f64 = 0.995;
 /// Distinct from [`Coverage::is_usable`], which compares a capture against the window it was taken
 /// FROM. This compares it against the frame it is drawn INTO, which a cached picture routinely no
 /// longer matches. See "A capture can be usable and still be the wrong shape" in
-/// `crates/rini-overlay/docs/capture-overlay-research.md`.
+/// `docs/capture-overlay-research.md`.
 pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
     if frame.0 <= 0.0 || frame.1 <= 0.0 {
         return false;
@@ -81,7 +81,7 @@ pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
 /// The threshold is `fits_frame`'s, so "this move is a resize" and "this picture no longer fits"
 /// agree by construction. Rounding is not a resize; treating a one-point re-fit as one measurably
 /// tore the strip apart. See "A one-point size change sent the whole strip to the Accessibility
-/// engine" in `crates/rini-overlay/docs/capture-overlay-research.md`.
+/// engine" in `docs/capture-overlay-research.md`.
 pub fn is_a_resize(from: CGSize, to: CGSize) -> bool {
     !fits_frame((from.width, from.height), (to.width, to.height))
 }
@@ -92,7 +92,7 @@ pub fn is_a_resize(from: CGSize, to: CGSize) -> bool {
 /// The grow-vs-shrink asymmetry of the crop-drawn resize: a shrink crops the picture it has,
 /// which is truthful; a grow needs content that does not exist until the app renders at the new
 /// size, so it holds for a fresh capture (see "Resizes through the overlay" in
-/// `crates/rini-overlay/docs/animation-smoothness.md`).
+/// `docs/animation-smoothness.md`).
 pub fn outgrows(covered: (f64, f64), size: CGSize) -> bool {
     size.width > covered.0 * MAX_STRETCH || size.height > covered.1 * MAX_STRETCH
 }
@@ -114,7 +114,7 @@ pub fn needs_capture(cached: Option<Coverage>, size: (f64, f64)) -> bool {
 /// Rejects a composite whose wallpaper window was missing, and one that does not span the display,
 /// since either draws as a black screen for the length of an animation. Rejecting means keeping
 /// whatever is already drawn, so a wallpaperless capture is still accepted when there is nothing to
-/// keep. See "The wallpaper is not reliably a window" in `crates/rini-overlay/docs/capture-overlay-research.md`.
+/// keep. See "The wallpaper is not reliably a window" in `docs/capture-overlay-research.md`.
 pub fn is_backdrop_worth_drawing(
     have_one_already: bool,
     has_wallpaper: bool,

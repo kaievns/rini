@@ -1,15 +1,15 @@
 //! A pass as rigid pieces: the pure half of the container model.
-//! See "The overlay engine" and "Layout changes" in `crates/rini-overlay/docs/animation-smoothness.md`.
+//! See "The overlay engine" and "Layout changes" in `docs/animation-smoothness.md`.
 
 
 use std::collections::HashMap;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use crate::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
+use crate::motion::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
 use rini_windows::ids::WindowId;
 use rini_shared::geometry::SameAs;
-use crate::fit::is_a_resize;
+use crate::motion::fit::is_a_resize;
 
 /// Two translation vectors this close on both axes ride one container.
 pub const GROUP_TOLERANCE: f64 = 2.0;
@@ -392,7 +392,7 @@ fn is_zero(p: CGPoint) -> bool {
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at presented frames, a pan adds its travel to every group. `presented` is each
 /// container's presented position, read by the overlay just before. See "Mid-flight passes" in
-/// `crates/rini-overlay/docs/animation-smoothness.md`.
+/// `docs/animation-smoothness.md`.
 pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,
@@ -734,7 +734,7 @@ pub enum AnimationTarget {
 
 /// What a flight animates, and nothing else: one `Container` per strip group with travel, the
 /// floating container when it travels, and a `Tile` per changing, entrance and moving floating
-/// member. Rigid members are never named. See "The overlay engine" in `crates/rini-overlay/docs/animation-smoothness.md`.
+/// member. Rigid members are never named. See "The overlay engine" in `docs/animation-smoothness.md`.
 pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
     let mut out = Vec::new();
     let position = |key: GroupKey, travel: CGPoint| {

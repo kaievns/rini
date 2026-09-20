@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-use crate::fit::{fits_frame, is_a_resize, outgrows};
+use crate::motion::fit::{fits_frame, is_a_resize, outgrows};
 
 /// How a tile's picture is fitted to the frame it is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,7 +16,7 @@ pub enum ContentMode {
     /// by a seam a band in from the trailing edges — content never stretches, the moving edge
     /// swallows or reveals it, which is how a real resize reads. The trailing band, carrying the
     /// window's rounded corners and border, rides the moving edge intact. See "Resizes through the
-    /// overlay" in `crates/rini-overlay/docs/animation-smoothness.md`.
+    /// overlay" in `docs/animation-smoothness.md`.
     Crop,
 }
 
@@ -36,7 +36,7 @@ pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMod
 /// stretched when it cannot. The stretch is the placeholder of a grow whose reveal has not landed;
 /// every mode fills the whole frame, so a placeholder never shows the backdrop. A top-left crop
 /// that left the growth undrawn was tried and read as a hole (see "A grow holds, then reveals"
-/// in `crates/rini-overlay/docs/animation-smoothness.md`).
+/// in `docs/animation-smoothness.md`).
 pub fn placeholder_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
     if outgrows(covered, to) {
         ContentMode::Stretch
@@ -57,7 +57,7 @@ pub enum DressingAction {
 }
 
 /// Whether a harvest may rebuild a tile's ring now. See "A fresh picture or hairline swaps in
-/// place" in `crates/rini-overlay/docs/animation-smoothness.md`.
+/// place" in `docs/animation-smoothness.md`.
 pub fn dressing_rebuild_allowed(resize_in_flight: bool, worn_matches: bool) -> DressingAction {
     if worn_matches {
         DressingAction::SwapInPlace

@@ -1,8 +1,8 @@
 [package]
-name = "rini-overlay"
+name = "rini-animation"
 version = "0.1.0"
 edition = "2024"
-description = "rini's capture-based animation overlay: window snapshots, Core Animation tiles, and the flight engine. Knows windows, not workspaces."
+description = "rini's animation context: flight geometry, window snapshots, the Core Animation tile overlay and the engine that flies it."
 license = "Apache-2.0"
 publish = false
 
@@ -10,10 +10,6 @@ publish = false
 doctest = false
 
 [dependencies]
-rini-displays = { workspace = true }
-rini-windows = { workspace = true }
-rini-skylight-sys = { workspace = true }
-rini-runloop = { workspace = true }
 block2 = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }
@@ -25,7 +21,9 @@ objc2-foundation = { workspace = true }
 objc2-io-surface = { workspace = true }
 objc2-quartz-core = { workspace = true }
 objc2-screen-capture-kit = { workspace = true }
-rini-macos = { workspace = true }
-rini-motion = { workspace = true }
+rini-displays = { workspace = true }
+rini-runloop = { workspace = true }
 rini-shared = { workspace = true }
+rini-skylight-sys = { workspace = true }
+rini-windows = { workspace = true }
 tracing = { workspace = true }

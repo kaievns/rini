@@ -7,7 +7,7 @@
 /// motion reads as finished well inside `animation_duration` and the tail is a settle, not a crawl.
 /// Ease-out cubic (`(1/3, 1, 2/3, 1)`) was tried first and felt sluggish at the same duration:
 /// it spends the whole second half of the flight on the last 12.5% of the distance. Derivation and
-/// the numbers in "The curve" in `crates/rini-overlay/docs/animation-smoothness.md`.
+/// the numbers in "The curve" in `docs/animation-smoothness.md`.
 pub const MOTION_CURVE: CubicBezier = CubicBezier { x1: 0.16, y1: 1.0, x2: 0.3, y2: 1.0 };
 
 /// A CSS-style cubic Bezier timing curve from `(0,0)` to `(1,1)`, evaluated as progress in terms

@@ -8,7 +8,7 @@ the capture measurements this builds on.
 ## One engine
 
 Every animated movement runs through the overlay engine
-(`crates/rini-overlay`: `engine.rs` + `overlay.rs`, geometry in `crates/rini-motion`): window
+(`crates/rini-animation`: `engine.rs` + `overlay.rs`, geometry in `src/motion/`): window
 bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "The apply point"). Layout passes, strip pans, workspace
 switches, resizes, entrances and the edge bounce are all flights of it.
@@ -28,7 +28,7 @@ engine that is left.
 
 ## The overlay engine: containers carry the rigid pieces
 
-Every overlay flight is a `FlightPlan` (`rini_motion::plan`): a
+Every overlay flight is a `FlightPlan` (`rini_animation::motion::plan`): a
 set of rigid groups (`RigidGroup`, keyed `GroupKey::Rigid`), a loose set (resizes and entrances), and the
 floating windows. Each group is one `CALayer` container under the overlay's
 root (`TileOverlay::install` in `overlay.rs`). A container's `position` is the
@@ -317,7 +317,7 @@ A resize rides the per-window overlay path, ported
 from the parked `resize-rounds-1-2` branch onto the per-tile Core Animation
 machinery. The tile travels between its two rects like any other tile; what
 changes is how the picture maps onto it (`content_mode` in
-`rini_motion::tile`):
+`rini_animation::motion::tile`):
 
 - **A movement with a matching picture stretches.** Picture and frame are the
   same shape, so `kCAGravityResize` is exact. Strip movements always stretch,

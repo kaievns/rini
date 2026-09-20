@@ -36,7 +36,7 @@ pub const MAX_TILE_DEPTH: usize = 2 * GROUP_STRIDE - 1;
 /// A container's zPosition among its siblings in the overlay: the focused group's containers at
 /// zero, the other group's one stride behind. With each tile at `-within` inside its container,
 /// `container_z - within` is `-tile_depth`, so containers band the way tiles did. See "The
-/// overlay engine" in `crates/rini-overlay/docs/animation-smoothness.md`.
+/// overlay engine" in `docs/animation-smoothness.md`.
 pub fn container_z(group: StackGroup, focused_group: StackGroup) -> f64 {
     if group == focused_group { 0.0 } else { -(GROUP_STRIDE as f64) }
 }

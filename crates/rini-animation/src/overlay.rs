@@ -22,16 +22,16 @@ use objc2_quartz_core::{
 };
 
 use rini_windows::ids::WindowId;
-pub use rini_motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE, bounce_displacement, ease};
-pub use rini_motion::tile::{
+pub use crate::motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE, bounce_displacement, ease};
+pub use crate::motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
     lerp_rect, placeholder_mode, resize_in_flight,
 };
-pub(crate) use rini_motion::plan::{AnimationTarget, animation_targets, bounce_carries};
-use rini_motion::plan::{
+pub(crate) use crate::motion::plan::{AnimationTarget, animation_targets, bounce_carries};
+use crate::motion::plan::{
     Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
 };
-use rini_motion::z_group::{StackGroup, container_z};
+use crate::motion::z_group::{StackGroup, container_z};
 use rini_shared::geometry::{Round, SameAs};
 use rini_displays::screen::CoordinateConverter;
 use crate::edge_dressing::{boundary_layout, tile_corner_radius};
@@ -67,7 +67,7 @@ pub struct OverlayTile {
     /// Where the window ends up, in the overlay's coordinate space.
     pub to: CGRect,
     pub snapshot: WindowSnapshot,
-    /// In the other z-order band from the tiled windows. See `rini_motion::z_group`.
+    /// In the other z-order band from the tiled windows. See `crate::motion::z_group`.
     pub floating: bool,
     /// The window server's front-to-back position, 0 frontmost; `None` when unreported.
     pub server_order: Option<usize>,
@@ -79,7 +79,7 @@ pub struct OverlayTile {
     pub focused: bool,
 }
 
-impl rini_motion::surface::TileGeometry for OverlayTile {
+impl crate::motion::surface::TileGeometry for OverlayTile {
     fn window(&self) -> WindowId {
         self.window
     }
@@ -142,7 +142,7 @@ const BAR_Z: f64 = 10_000.0;
 
 /// Below the deepest tile the depth model can produce. See "The overlay engine" in
 /// `docs/animation-smoothness.md`.
-const BACKDROP_Z: f64 = -((rini_motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
+const BACKDROP_Z: f64 = -((crate::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
 
 
 
@@ -1422,7 +1422,7 @@ mod tests {
 
     #[test]
     fn every_possible_tile_draws_between_the_backdrop_and_the_bar() {
-        use rini_motion::z_group::{StackGroup, tile_depth};
+        use crate::motion::z_group::{StackGroup, tile_depth};
         let deepest = tile_depth(None, false, StackGroup::Floating, StackGroup::Tiled);
         let shallowest = tile_depth(Some(0), true, StackGroup::Tiled, StackGroup::Tiled);
         assert!(-(deepest as f64) > BACKDROP_Z, "the deepest tile clears the backdrop");

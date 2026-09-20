@@ -21,12 +21,12 @@ use crate::window_snapshot::{
 };
 use crate::overlay::{OverlayTile, TileOverlay};
 
-pub(crate) use rini_motion::plan;
-use rini_motion::travel::{
+pub(crate) use crate::motion::plan;
+use crate::motion::travel::{
     is_moving, neighbour_travel, resolve_end, resolve_start, travel_subject, worth_animating,
 };
-pub use rini_motion::surface::SurfaceWindow;
-pub(crate) use rini_motion::surface::{pan_travel, surface_travel, to_overlay_space};
+pub use crate::motion::surface::SurfaceWindow;
+pub(crate) use crate::motion::surface::{pan_travel, surface_travel, to_overlay_space};
 
 
 /// One window's part in an animation, as the caller describes it.
@@ -750,7 +750,7 @@ fn worth_flying(moving_drawable: bool, running: bool) -> bool {
 fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
     let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
     for tile in tiles.iter_mut().filter(|t| !t.companion) {
-        tile.depth = rini_motion::z_group::tile_depth(
+        tile.depth = crate::motion::z_group::tile_depth(
             tile.server_order,
             focus == Some(tile.window),
             group_of(tile.floating),
@@ -766,7 +766,7 @@ fn band_plan(
     tiles: &[OverlayTile],
     focus: Option<WindowId>,
 ) -> plan::Banding {
-    use rini_motion::z_group::{GROUP_STRIDE, StackGroup, tile_depth};
+    use crate::motion::z_group::{GROUP_STRIDE, StackGroup, tile_depth};
     let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
     let within: HashMap<WindowId, usize> = tiles
         .iter()
@@ -816,11 +816,11 @@ fn managed_server_ids(
 }
 
 /// Which group a window belongs to.
-fn group_of(floating: bool) -> rini_motion::z_group::StackGroup {
+fn group_of(floating: bool) -> crate::motion::z_group::StackGroup {
     if floating {
-        rini_motion::z_group::StackGroup::Floating
+        crate::motion::z_group::StackGroup::Floating
     } else {
-        rini_motion::z_group::StackGroup::Tiled
+        crate::motion::z_group::StackGroup::Tiled
     }
 }
 
@@ -828,12 +828,12 @@ fn group_of(floating: bool) -> rini_motion::z_group::StackGroup {
 fn focus_group(
     focus: Option<WindowId>,
     mut windows: impl Iterator<Item = (WindowId, bool)>,
-) -> rini_motion::z_group::StackGroup {
-    let Some(focus) = focus else { return rini_motion::z_group::StackGroup::Tiled };
+) -> crate::motion::z_group::StackGroup {
+    let Some(focus) = focus else { return crate::motion::z_group::StackGroup::Tiled };
     windows
         .find(|(window, _)| *window == focus)
         .map(|(_, floating)| group_of(floating))
-        .unwrap_or(rini_motion::z_group::StackGroup::Tiled)
+        .unwrap_or(crate::motion::z_group::StackGroup::Tiled)
 }
 
 impl RunningAnimation {
@@ -2519,7 +2519,7 @@ impl FlightEngine {
         }
 
         // No render yet: the synchronous composite covers the gap rather than leaving the overlay black.
-        let desktop = rini_macos::window_server::desktop_backdrop_windows(display_frame);
+        let desktop = crate::backdrop::desktop_backdrop_windows(display_frame);
         let composite = crate::window_snapshot::capture_composite_via_skylight(
             &desktop.windows,
             display_size,
@@ -2581,7 +2581,7 @@ impl FlightEngine {
     /// captures inline; [`Self::refresh_bar`] pays for the rest after an animation.
     fn bar_picture(&mut self) -> (Option<WindowSnapshot>, Option<CGRect>) {
         let Some((display_frame, _)) = self.display else { return (None, None) };
-        let strip = rini_macos::window_server::bar_strip(display_frame);
+        let strip = crate::backdrop::bar_strip(display_frame);
         let Some(bounds) = strip.bounds else { return (None, None) };
         if self.pictures.bar.is_none() {
             self.refresh_bar();
@@ -2612,7 +2612,7 @@ impl FlightEngine {
         if self.overlay.as_ref().is_some_and(TileOverlay::is_visible) {
             return;
         }
-        let strip = rini_macos::window_server::bar_strip(display_frame);
+        let strip = crate::backdrop::bar_strip(display_frame);
         let Some(bounds) = strip.bounds else { return };
         let fresh = crate::window_snapshot::capture_composite_via_skylight(
             &strip.windows,
@@ -4353,7 +4353,7 @@ mod tests {
     /// with no open or close.
     mod preservation {
         use super::*;
-                use rini_motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+                use crate::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
         use crate::window_snapshot::{SnapshotCache, test_snapshot};
 
         pub(super) const DISPLAY: CGRect = CGRect {
@@ -4706,7 +4706,7 @@ mod tests {
     mod flight_restack {
         use super::preservation::{Gen, RUNS, stacked};
         use super::*;
-        use rini_motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+        use crate::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
 
         fn wid(idx: u32) -> WindowId {
             WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
@@ -5833,7 +5833,7 @@ mod tests {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
         use crate::engine::plan::*;
-                use rini_motion::z_group::StackGroup;
+                use crate::motion::z_group::StackGroup;
         use crate::window_snapshot::is_a_resize;
 
         fn wid(idx: u32) -> WindowId {
@@ -6459,7 +6459,7 @@ mod tests {
         /// The 50/50 pair with Settings over them (`model/z_group.rs`).
         #[test]
         fn band_plan_puts_the_floating_container_behind_the_strip_unless_it_holds_focus() {
-            use rini_motion::z_group::{GROUP_STRIDE, tile_depth};
+            use crate::motion::z_group::{GROUP_STRIDE, tile_depth};
             let (left, right) = (rect(4.0, 32.0, 860.0, 1081.0), rect(868.0, 32.0, 856.0, 1081.0));
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let far = column(2.0);
@@ -6498,7 +6498,7 @@ mod tests {
         /// Property P3 (seed 163, 200 runs): `container_z - within` is `-tile_depth` exactly.
         #[test]
         fn container_bands_plus_within_depths_reproduce_tile_depth() {
-            use rini_motion::z_group::{container_z, tile_depth};
+            use crate::motion::z_group::{container_z, tile_depth};
             let mut rng = Gen(163);
             for run in 0..RUNS {
                 let count = 1 + rng.below(8) as usize;

@@ -36,7 +36,7 @@ pub fn resolve_start(
     travel: Option<CGPoint>,
 ) -> CGRect {
         // A park is judged from both frames, before the synthetic test: apps clamp the real frame past
-    // the park threshold, and the server may already report the slot. See crates/rini-overlay/docs/animation-smoothness.md.
+    // the park threshold, and the server may already report the slot. See docs/animation-smoothness.md.
     let parked_real = real.is_some_and(|real| is_off_screen(display, real));
     let parked_from = is_off_screen(display, from);
     if parked_real || parked_from {
@@ -58,7 +58,7 @@ pub fn resolve_start(
 /// The tile's visual destination: a window leaving for a corner park travels with the strip,
 /// `start` translated by `travel` (`neighbour_travel`), the mirror of `resolve_start`. With no
 /// moving neighbour it exits past the display edge on the park's side. See "Layout changes" in
-/// `crates/rini-overlay/docs/animation-smoothness.md`.
+/// `docs/animation-smoothness.md`.
 pub fn resolve_end(start: CGRect, to: CGRect, display: CGRect, travel: Option<CGPoint>) -> CGRect {
         if is_off_screen(display, to) && !is_off_screen(display, start) {
         return match travel {
@@ -159,7 +159,7 @@ pub fn worth_animating(from: CGRect, to: CGRect, display: CGRect) -> bool {
     let moving = is_moving(from, to);
     (0..SAMPLES).any(|step| {
         let t = step as f64 / (SAMPLES - 1) as f64;
-        let at = crate::tile::lerp_rect(from, to, t);
+        let at = crate::motion::tile::lerp_rect(from, to, t);
         shows_enough(at, display, moving)
     })
 }
@@ -254,7 +254,7 @@ mod tests {
             rect(4.0, 1149.0, 1720.0, 1081.0), // the row below, mid-jump
         ];
         for frame in frames {
-            let (from, to) = crate::surface::surface_travel(frame, from_offset, to_offset, false);
+            let (from, to) = crate::motion::surface::surface_travel(frame, from_offset, to_offset, false);
             assert_eq!(from, frame, "at rest the viewport offset is zero");
             assert_eq!(to.origin.x - from.origin.x, 861.0);
             assert_eq!(to.origin.y - from.origin.y, -1117.0);
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn a_pinned_window_stands_still() {
         let frame = rect(224.0, 95.0, 1280.0, 960.0);
-        let (from, to) = crate::surface::surface_travel(frame, CGPoint::new(100.0, 0.0), CGPoint::new(-4000.0, 0.0), true);
+        let (from, to) = crate::motion::surface::surface_travel(frame, CGPoint::new(100.0, 0.0), CGPoint::new(-4000.0, 0.0), true);
         assert_eq!(from, frame);
         assert_eq!(to, frame);
     }

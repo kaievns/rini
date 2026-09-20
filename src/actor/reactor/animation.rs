@@ -2,7 +2,7 @@ use objc2_core_foundation::CGRect;
 use tracing::{debug, trace};
 
 use super::TransactionId;
-use rini_overlay::window_snapshot::is_a_resize;
+use rini_animation::window_snapshot::is_a_resize;
 use rini_windows::app_actor::{AppThreadHandle, Request};
 use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::reactor::Reactor;
@@ -35,15 +35,15 @@ impl AnimationManager {
         let mut any_frame_changed = false;
         // Collected alongside the Accessibility animation so the two engines can be compared without
         // duplicating the eligibility rules, which decide what counts as a visible window.
-        let mut overlay_requests: Vec<rini_overlay::engine::AnimationRequest> =
+        let mut overlay_requests: Vec<rini_animation::engine::AnimationRequest> =
             Vec::new();
         // Every window in this layout, visible or not, so the cache can be warmed for the ones that
         // will slide in on a later switch. Real WindowIds, which is the whole point: ids derived from
         // the window server never match what an animation looks up.
-        let mut warm_targets: Vec<rini_overlay::snapshot_service::SnapshotTarget> = Vec::new();
+        let mut warm_targets: Vec<rini_animation::snapshot_service::SnapshotTarget> = Vec::new();
         // The windows this pass leaves where they are. They still have to be DRAWN: the overlay is opaque
         // and covers the display, so anything it omits vanishes for the length of the animation. See "The
-        // overlay has to draw everything it covers" in `crates/rini-overlay/docs/capture-overlay-research.md`.
+        // overlay has to draw everything it covers" in `crates/rini-animation/docs/capture-overlay-research.md`.
         let mut unmoved: Vec<(WindowId, CGRect, WindowServerId)> = Vec::new();
 
         for &(wid, target_frame) in layout {
@@ -100,7 +100,7 @@ impl AnimationManager {
             };
 
             if let Some(wsid) = window_server_id {
-                warm_targets.push(rini_overlay::snapshot_service::SnapshotTarget {
+                warm_targets.push(rini_animation::snapshot_service::SnapshotTarget {
                     window: wid,
                     server_id: wsid,
                     size: target_frame.size,
@@ -119,7 +119,7 @@ impl AnimationManager {
                 placements.push((app_state.handle.clone(), wid, target_frame, txid));
                 animated_count += 1;
                 if let Some(wsid) = window_server_id {
-                    overlay_requests.push(rini_overlay::engine::AnimationRequest {
+                    overlay_requests.push(rini_animation::engine::AnimationRequest {
                         window: wid,
                         server_id: wsid,
                         from: current_frame,
@@ -195,7 +195,7 @@ impl AnimationManager {
                 if !in_active_workspace {
                     continue;
                 }
-                overlay_requests.push(rini_overlay::engine::AnimationRequest {
+                overlay_requests.push(rini_animation::engine::AnimationRequest {
                     window: wid,
                     server_id: wsid,
                     from: frame,
@@ -212,7 +212,7 @@ impl AnimationManager {
             // overlay is visible the picture stays continuous.
             //
             // Resizes ride the overlay too: the tile is anchored and cropped rather than stretched.
-            // See "Resizes through the overlay" in `crates/rini-overlay/docs/animation-smoothness.md`.
+            // See "Resizes through the overlay" in `crates/rini-animation/docs/animation-smoothness.md`.
             let any_resize = overlay_requests
                 .iter()
                 .any(|request| is_a_resize(request.from.size, request.to.size));
@@ -247,7 +247,7 @@ impl AnimationManager {
                         reactor.config.settings.animation_duration.max(0.0),
                     );
                     let count = overlay_requests.len();
-                    _ = tx.send(rini_overlay::engine::Event::Animate {
+                    _ = tx.send(rini_animation::engine::Event::Animate {
                         windows: overlay_requests,
                         focus: reactor.layout_manager.layout_engine.focused_window(),
                         duration,
@@ -260,7 +260,7 @@ impl AnimationManager {
             // the ones sitting off-strip now, and they are only capturable ahead of time.
             if !warm_targets.is_empty() {
                 if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
-                    _ = tx.send(rini_overlay::engine::Event::WarmWindows(
+                    _ = tx.send(rini_animation::engine::Event::WarmWindows(
                         std::mem::take(&mut warm_targets),
                     ));
                 }
@@ -479,8 +479,8 @@ mod tests {
     }
 
     /// A strip column, as the animation path describes one: where it is now, where the layout wants it.
-    fn moving(from_x: f64, to_x: f64) -> rini_overlay::engine::AnimationRequest {
-        rini_overlay::engine::AnimationRequest {
+    fn moving(from_x: f64, to_x: f64) -> rini_animation::engine::AnimationRequest {
+        rini_animation::engine::AnimationRequest {
             window: WindowId::new(1, (from_x.abs() as u32).max(1)),
             server_id: rini_windows::ids::WindowServerId::new(1),
             from: CGRect::new(CGPoint::new(from_x, 32.0), CGSize::new(859.0, 1081.0)),
@@ -668,7 +668,7 @@ mod tests {
 
 /// The order the overlay's final frames go out to the apps: on-screen destinations first, parks
 /// last, each class in the order given. See "Real windows land before lift" in
-/// `crates/rini-overlay/docs/animation-smoothness.md`.
+/// `crates/rini-animation/docs/animation-smoothness.md`.
 pub(super) fn frame_send_order(
     frames: Vec<(WindowId, CGRect)>,
     display: CGRect,
@@ -684,7 +684,7 @@ pub(super) fn frame_send_order(
 /// every such write is an Accessibility round trip that makes the app repaint while the overlay is
 /// flying. A pan sent 20 frames of which 13 were park-to-park; the app repaints stalled the
 /// compositor for 50-130ms at the start of the flight. See "Real windows land before lift" in
-/// `crates/rini-overlay/docs/animation-smoothness.md`.
+/// `crates/rini-animation/docs/animation-smoothness.md`.
 ///
 /// A park is a sliver still touching the display, never a frame wholly off it: a workspace switch
 /// leaves its departing row a full display height below, which macOS clamps to a 41pt band along
@@ -713,7 +713,7 @@ pub(super) fn frame_write_needed(real: Option<CGRect>, target: CGRect, display: 
 ///
 /// Diagonal moves are rare in a tiling layout, so the larger of the two axes is the honest measure and
 /// avoids paying for a square root on every window of every layout pass.
-fn travel(request: &rini_overlay::engine::AnimationRequest) -> f64 {
+fn travel(request: &rini_animation::engine::AnimationRequest) -> f64 {
     let dx = request.to.origin.x - request.from.origin.x;
     let dy = request.to.origin.y - request.from.origin.y;
     dx.abs().max(dy.abs())
@@ -724,7 +724,7 @@ fn travel(request: &rini_overlay::engine::AnimationRequest) -> f64 {
 /// The threshold is about cost, not precision: an animation covers the display for its duration, so a
 /// one-point move buys nothing and freezes everything. Two points, because the layout rounds to whole
 /// points and a column boundary can land either side of where it was without anything having moved.
-fn travels_visibly(requests: &[rini_overlay::engine::AnimationRequest]) -> bool {
+fn travels_visibly(requests: &[rini_animation::engine::AnimationRequest]) -> bool {
     const MIN_VISIBLE_TRAVEL: f64 = 2.0;
     requests.iter().any(|request| travel(request) >= MIN_VISIBLE_TRAVEL)
 }

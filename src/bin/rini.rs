@@ -360,7 +360,7 @@ stays usable. Fix the config and restart. Error: {error}",
 
     // The animation overlay lives on the main thread because Core Animation requires it. It stays
     // idle until the reactor sends it display geometry and something to animate.
-    let mut flight_engine = rini_overlay::engine::FlightEngine::new(
+    let mut flight_engine = rini_animation::engine::FlightEngine::new(
         workspace_animation_rx,
         workspace_animation_tx.clone(),
         mtm,
