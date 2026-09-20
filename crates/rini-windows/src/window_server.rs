@@ -1087,6 +1087,16 @@ pub fn compute_window_manageability(
     is_ax_standard && is_ax_root
 }
 
+/// Whether the window server's picture of a window the app no longer lists says it is gone:
+/// not a suitable window, off layer 0, too small to be real, or ordered out. A failed query
+/// (`None`) is not evidence; only an explicit negative observation retires a window.
+pub fn looks_gone(info: &WindowServerInfo, suitable: Option<bool>, ordered_in: Option<bool>) -> bool {
+    const MIN_REAL_WINDOW_DIMENSION: f64 = 2.0;
+    let too_small = info.frame.size.width.abs() < MIN_REAL_WINDOW_DIMENSION
+        || info.frame.size.height.abs() < MIN_REAL_WINDOW_DIMENSION;
+    suitable == Some(false) || info.layer != 0 || too_small || ordered_in == Some(false)
+}
+
 /// A window's place in the window server's stack: its frame, level and sub-level.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StackPlace {
@@ -1136,6 +1146,28 @@ mod stack_tests {
         assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, Some(0), 1)]));
         assert!(!covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), 0)]), "overhangs the edge");
         assert!(!covered_by_peer_above(candidate, []));
+    }
+
+    fn info(layer: i32, w: f64, h: f64) -> WindowServerInfo {
+        WindowServerInfo {
+            id: WindowServerId::new(1),
+            pid: 1,
+            layer,
+            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(w, h)),
+            min_frame: CGSize::new(0.0, 0.0),
+            max_frame: CGSize::new(0.0, 0.0),
+        }
+    }
+
+    #[test]
+    fn a_window_is_gone_only_on_an_explicit_negative_observation() {
+        let real = info(0, 800.0, 600.0);
+        assert!(!looks_gone(&real, None, None), "unknown suitability and order are not evidence");
+        assert!(!looks_gone(&real, Some(true), Some(true)));
+        assert!(looks_gone(&real, Some(false), None));
+        assert!(looks_gone(&real, None, Some(false)));
+        assert!(looks_gone(&info(1, 800.0, 600.0), None, None), "off layer 0");
+        assert!(looks_gone(&info(0, 1.0, 600.0), None, None), "a sliver is not a window");
     }
 
     #[test]

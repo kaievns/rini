@@ -5,7 +5,7 @@ use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::reactor::LayoutEvent;
 use rini_windows::transaction::TransactionManager;
-use rini_windows::window_server::compute_window_manageability;
+use rini_windows::window_server::{compute_window_manageability, looks_gone};
 use rini_windows::state::{WindowFilter, WindowState};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
@@ -169,7 +169,6 @@ pub(crate) fn identify_stale_windows(
     known_visible: &[WindowId],
     snapshot: &StaleCleanupSnapshot,
 ) -> (Vec<WindowId>, bool) {
-    const MIN_REAL_WINDOW_DIMENSION: f64 = 2.0;
 
     let known_visible_set: HashSet<WindowId> = known_visible.iter().cloned().collect();
     let pending_refresh = snapshot.pending_refresh;
@@ -230,22 +229,7 @@ pub(crate) fn identify_stale_windows(
                 }
             };
 
-            let width = info.frame.size.width.abs();
-            let height = info.frame.size.height.abs();
-
-            // A failed private WindowServer query is not evidence that a window died.
-            // Only explicit negative observations may retire an AX-omitted window. This also
-            // applies to the first tracked recovery refresh: blanket suppression there leaves
-            // genuine closes that occurred during sleep/display churn as layout ghosts.
-            let unsuitable = matches!(observation.suitable, Some(false));
-            let invalid_layer = info.layer != 0;
-            let too_small = width < MIN_REAL_WINDOW_DIMENSION || height < MIN_REAL_WINDOW_DIMENSION;
-            let ordered_out = matches!(observation.ordered_in, Some(false));
-            if unsuitable || invalid_layer || too_small || ordered_out {
-                Some(wid)
-            } else {
-                None
-            }
+            looks_gone(info, observation.suitable, observation.ordered_in).then_some(wid)
         })
         .collect();
 

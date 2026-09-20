@@ -8,6 +8,7 @@ use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 
 use crate::ids::SpaceId;
 use crate::screen::ScreenInfo;
+use crate::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaceEventKind {
@@ -159,6 +160,61 @@ impl ForwardedSpaceState {
         screens
     }
 }
+/// What an incoming topology snapshot changes relative to the one in force. `spaces` and
+/// `authoritative_spaces` are per screen; a command-space-only update moves nothing on screen.
+#[derive(Debug)]
+pub struct SpaceSnapshotAnalysis {
+    pub spaces: Vec<Option<SpaceId>>,
+    pub authoritative_spaces: Vec<Option<SpaceId>>,
+    pub command_space_only_update: bool,
+    pub invalidates_pending_targets: bool,
+}
+
+pub fn analyze_space_snapshot(
+    current: &ForwardedSpaceState,
+    current_effective_active_spaces: &HashSet<SpaceId>,
+    activation_policy: &SpaceActivationPolicy,
+    activation_config: SpaceActivationConfig,
+    incoming: &ForwardedSpaceState,
+) -> SpaceSnapshotAnalysis {
+    let active_window_membership_changed =
+        current.active_window_spaces != incoming.active_window_spaces;
+    let spaces = incoming.screens.iter().map(|screen| screen.space).collect();
+    let display_uuids: Vec<Option<String>> =
+        incoming.screens.iter().map(|screen| screen.display_uuid_owned()).collect();
+    let authoritative_spaces: Vec<Option<SpaceId>> = incoming
+        .screens
+        .iter()
+        .map(|screen| screen.space.filter(|space| incoming.active_spaces.contains(space)))
+        .collect();
+    let effective_active_spaces = activation_policy
+        .compute_active_spaces(activation_config, &authoritative_spaces, &display_uuids)
+        .into_iter()
+        .flatten()
+        .collect();
+    let command_space_only_update = !incoming.display_set_changed
+        && !incoming.should_force_refresh_layout
+        && incoming.space_remaps.is_empty()
+        && incoming.resized_spaces.is_empty()
+        && incoming.topology_window_delta.is_none()
+        && current.screens == incoming.screens
+        && current.fullscreen_spaces == incoming.fullscreen_spaces
+        && current_effective_active_spaces == &effective_active_spaces
+        && current.display_space_ids == incoming.display_space_ids
+        && current.last_user_space_by_display == incoming.last_user_space_by_display
+        && !active_window_membership_changed;
+    let invalidates_pending_targets = incoming.display_set_changed
+        || incoming.should_force_refresh_layout
+        || !incoming.space_remaps.is_empty()
+        || !incoming.resized_spaces.is_empty()
+        || incoming.topology_window_delta.is_some();
+    SpaceSnapshotAnalysis {
+        spaces,
+        authoritative_spaces,
+        command_space_only_update,
+        invalidates_pending_targets,
+    }
+}
 #[derive(Debug, Clone)]
 pub struct TopologyWindowDelta {
     pub epoch: u64,
@@ -236,5 +292,64 @@ mod tests {
         );
         assert_eq!(s.screen_for_point(CGPoint::new(1500., 10.)).map(|sc| sc.id), Some(ScreenId::new(2)));
         assert!(s.screen_for_point(CGPoint::new(5000., 10.)).is_none());
+    }
+
+    fn snapshot(frames: &[CGRect]) -> ForwardedSpaceState {
+        let mut s = state(frames);
+        s.active_spaces = s.iter_known_spaces().collect();
+        s
+    }
+
+    #[test]
+    fn an_identical_snapshot_is_a_command_space_only_update() {
+        let current = snapshot(&[rect(0., 0.)]);
+        let mut incoming = current.clone();
+        incoming.command_space = Some(SpaceId::new(1));
+        let active: HashSet<SpaceId> = current.active_spaces.clone();
+        let a = analyze_space_snapshot(
+            &current,
+            &active,
+            &SpaceActivationPolicy::new(),
+            SpaceActivationConfig { default_disable: false, one_space: false },
+            &incoming,
+        );
+        assert!(a.command_space_only_update);
+        assert!(!a.invalidates_pending_targets);
+        assert_eq!(a.spaces, vec![Some(SpaceId::new(1))]);
+        assert_eq!(a.authoritative_spaces, vec![Some(SpaceId::new(1))]);
+    }
+
+    #[test]
+    fn a_display_set_change_invalidates_pending_targets_and_is_not_command_only() {
+        let current = snapshot(&[rect(0., 0.)]);
+        let mut incoming = current.clone();
+        incoming.display_set_changed = true;
+        let active: HashSet<SpaceId> = current.active_spaces.clone();
+        let a = analyze_space_snapshot(
+            &current,
+            &active,
+            &SpaceActivationPolicy::new(),
+            SpaceActivationConfig { default_disable: false, one_space: false },
+            &incoming,
+        );
+        assert!(!a.command_space_only_update);
+        assert!(a.invalidates_pending_targets);
+    }
+
+    #[test]
+    fn an_inactive_screen_space_is_not_authoritative() {
+        let current = snapshot(&[rect(0., 0.), rect(1000., 0.)]);
+        let mut incoming = current.clone();
+        incoming.active_spaces.remove(&SpaceId::new(2));
+        let active: HashSet<SpaceId> = current.active_spaces.clone();
+        let a = analyze_space_snapshot(
+            &current,
+            &active,
+            &SpaceActivationPolicy::new(),
+            SpaceActivationConfig { default_disable: false, one_space: false },
+            &incoming,
+        );
+        assert_eq!(a.authoritative_spaces, vec![Some(SpaceId::new(1)), None]);
+        assert!(!a.command_space_only_update, "the effective active set changed");
     }
 }

@@ -2667,7 +2667,7 @@ impl Reactor {
         space_state: ForwardedSpaceState,
     ) -> anyhow::Result<EventOutcome> {
         let mut outcome = EventOutcome::window_membership_changed(false, true);
-        let analysis = topology_workflow::analyze_space_snapshot(
+        let analysis = rini_displays::topology::analyze_space_snapshot(
             &self.space_state,
             &self.active_spaces,
             &self.space_activation_policy,
@@ -2695,7 +2695,7 @@ impl Reactor {
         } = space_state;
         self.space_state.active_window_spaces = active_window_spaces;
         let activation_config = self.activation_cfg();
-        let topology_workflow::SpaceSnapshotAnalysis {
+        let rini_displays::topology::SpaceSnapshotAnalysis {
             spaces,
             authoritative_spaces,
             command_space_only_update,
