@@ -328,6 +328,9 @@ impl From<rini_displays::event::Event> for Event {
             D::SessionDidResignActive => Event::SessionDidResignActive,
             D::SessionDidBecomeActive => Event::SessionDidBecomeActive,
             D::DisplayChurnBegin => Event::DisplayChurnBegin,
+            D::MissionControlEntered => Event::MissionControlNativeEntered,
+            D::MissionControlExited => Event::MissionControlNativeExited,
+            D::WindowServerFocusChanged(window, space) => Event::WindowServerFocusChanged(window, space),
         }
     }
 }
@@ -471,7 +474,7 @@ impl Reactor {
         broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<rini_displays::cursor_warp::Sender>,
         workspace_animation_tx: Option<rini_animation::engine::Sender>,
-        window_notify: Option<(crate::actor::window_notify::Sender, WindowTxStore)>,
+        window_notify: Option<(rini_displays::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
     ) -> ReactorHandle {
@@ -505,7 +508,7 @@ impl Reactor {
         layout_engine: LayoutEngine,
         mut record: Record,
         broadcast_tx: BroadcastSender,
-        window_notify: Option<(crate::actor::window_notify::Sender, WindowTxStore)>,
+        window_notify: Option<(rini_displays::window_notify::Sender, WindowTxStore)>,
         one_space: bool,
     ) -> Reactor {
         // FIXME: Remove apps that are no longer running from restored state.
@@ -2332,7 +2335,7 @@ impl Reactor {
             ids.sort_unstable();
 
             if ids != self.notification_manager.last_sls_notification_ids {
-                crate::platform::window_notify::update_window_notifications(&ids);
+                rini_displays::cgs_notify::update_window_notifications(&ids);
 
                 self.notification_manager.last_sls_notification_ids = ids;
             }
@@ -3952,7 +3955,7 @@ impl Reactor {
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. See "Edge bounce" in `crates/rini-animation/docs/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
-        if !self.config.settings.animate || crate::platform::power::is_low_power_mode_enabled() {
+        if !self.config.settings.animate || rini_animation::power::is_low_power_mode_enabled() {
             return;
         }
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
@@ -5452,7 +5455,7 @@ impl Reactor {
         let Some(screen) = self.space_state.screen_by_space(space) else {
             return false;
         };
-        if !crate::platform::window_server::focus_desktop_window(screen) {
+        if !rini_displays::screen::focus_desktop_window(screen) {
             return false;
         }
 

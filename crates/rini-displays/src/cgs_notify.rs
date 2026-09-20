@@ -1,4 +1,6 @@
 #![allow(non_camel_case_types)]
+//! The SkyLight connection-notification port: one registration per CGS event type, fanned out to
+//! a channel per type, plus the per-window filter SkyLight needs for window-level events.
 
 // based on https://github.com/koekeishiya/yabai/commit/6f9006dd957100ec13096d187a8865e85a164a9b#r148091577
 // seems like macOS Sequoia does not send destroyed events from windows that are before the process is created

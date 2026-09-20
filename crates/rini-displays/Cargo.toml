@@ -23,6 +23,7 @@ objc2-core-foundation = { workspace = true }
 objc2-core-graphics = { workspace = true }
 objc2-foundation = { workspace = true }
 once_cell = { workspace = true }
+parking_lot = { workspace = true }
 rini-runloop = { workspace = true }
 rini-skylight-sys = { workspace = true }
 rini-windows = { workspace = true }

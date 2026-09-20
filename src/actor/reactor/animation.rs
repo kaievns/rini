@@ -8,7 +8,7 @@ use rini_windows::app_actor::Request;
 use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::reactor::Reactor;
 use rustc_hash::FxHashMap as HashMap;
-use crate::platform::power;
+use rini_animation::power;
 use rini_displays::ids::SpaceId;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places

@@ -3,6 +3,7 @@
 use rini_skylight_sys::WindowServerId;
 
 use crate::ids::SpaceId;
+use rini_windows::ids::WindowId;
 use crate::screen::CoordinateConverter;
 use crate::topology::{ForwardedSpaceState, SpaceEventKind};
 
@@ -20,6 +21,12 @@ pub enum Event {
     SessionDidResignActive,
     SessionDidBecomeActive,
     DisplayChurnBegin,
+    /// The Dock reported Mission Control (or App Exposé / Show Desktop) opening.
+    MissionControlEntered,
+    MissionControlExited,
+    /// The window WindowServer reports as key on the active space, after the burst of reorder
+    /// notifications one focus change produces has been coalesced.
+    WindowServerFocusChanged(WindowId, SpaceId),
 }
 
 /// Where the spaces actor delivers its events. Implemented for any channel whose message type

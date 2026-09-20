@@ -3,3 +3,4 @@
 pub mod element;
 pub mod enhanced_ui;
 pub mod observer;
+pub mod permission;

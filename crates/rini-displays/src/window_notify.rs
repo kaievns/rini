@@ -1,75 +1,23 @@
+//! The actor behind the SkyLight notification port. Space events go to the spaces actor; a
+//! window moved or resized by something other than rini is reported as a windows-context frame
+//! change; window-server focus edges are coalesced and resolved into `WindowServerFocusChanged`.
 use std::num::NonZeroU32;
-use std::sync::{Arc, mpsc};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tracing::{debug, trace};
 
-use super::reactor::{self, Event};
-use rini_displays::spaces;
-use rini_windows::ids::WindowId;
-use rini_windows::transaction::Requested;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use rini_windows::transaction::WindowTxStore;
-use rini_displays::ids::SpaceId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
+use rini_windows::event::{Event as WindowsEvent, EventSink as WindowsSink};
+use rini_windows::ids::{WindowId, WindowServerId};
+use rini_windows::transaction::{Requested, WindowTxStore};
 use rini_windows::window_server::{self, WindowIterator};
-use rini_windows::ids::WindowServerId;
-use crate::platform::window_notify;
+use rustc_hash::FxHashSet as HashSet;
 
-#[derive(Default)]
-pub struct Ignored {
-    by_event: HashMap<u32, Arc<HashSet<u32>>>,
-}
-
-impl Ignored {
-    pub fn empty() -> Self {
-        Self { by_event: HashMap::default() }
-    }
-
-    #[inline]
-    pub fn is_ignored(&self, event: CGSEventType, wsid: u32) -> bool {
-        self.by_event.get(&event.into()).map_or(false, |set| set.contains(&wsid))
-    }
-
-    pub fn with_added(&self, event: CGSEventType, wsid: u32) -> Arc<Ignored> {
-        let code = event.into();
-        if self.is_ignored(event, wsid) {
-            return Arc::new(self.clone());
-        }
-        let mut next_map = self.by_event.clone();
-        let mut next_set = next_map.get(&code).map(|s| (**s).clone()).unwrap_or_default();
-        next_set.insert(wsid);
-        next_map.insert(code, Arc::new(next_set));
-        Arc::new(Ignored { by_event: next_map })
-    }
-
-    pub fn with_removed(&self, event: CGSEventType, wsid: u32) -> Arc<Ignored> {
-        let code = event.into();
-        let Some(set_arc) = self.by_event.get(&code) else {
-            return Arc::new(self.clone());
-        };
-        if !set_arc.contains(&wsid) {
-            return Arc::new(self.clone());
-        }
-        let mut next_map = self.by_event.clone();
-        let mut next_set = (**set_arc).clone();
-        next_set.remove(&wsid);
-        if next_set.is_empty() {
-            next_map.remove(&code);
-        } else {
-            next_map.insert(code, Arc::new(next_set));
-        }
-        Arc::new(Ignored { by_event: next_map })
-    }
-}
-
-impl Clone for Ignored {
-    fn clone(&self) -> Self {
-        Self {
-            by_event: self.by_event.clone(),
-        }
-    }
-}
+use crate::cgs_notify;
+use crate::event::{Event, EventSink};
+use crate::ids::SpaceId;
+use crate::spaces;
 
 #[derive(Debug)]
 pub enum Request {
@@ -78,8 +26,8 @@ pub enum Request {
     Stop,
 }
 
-pub type Sender = crate::actor::Sender<Request>;
-pub type Receiver = crate::actor::Receiver<Request>;
+pub type Sender = rini_runloop::channel::Sender<Request>;
+pub type Receiver = rini_runloop::channel::Receiver<Request>;
 
 const FOCUS_WAKE_DEBOUNCE: Duration = Duration::from_millis(1);
 
@@ -94,8 +42,8 @@ impl FocusWakeSender {
     }
 }
 
-pub struct WindowNotify {
-    events_tx: reactor::Sender,
+pub struct WindowNotify<W: WindowsSink + Clone + 'static> {
+    windows_tx: W,
     spaces_tx: spaces::Sender,
     requests_rx: Option<Receiver>,
     subscribed: HashSet<CGSEventType>,
@@ -104,18 +52,19 @@ pub struct WindowNotify {
     focus_wake: FocusWakeSender,
 }
 
-impl WindowNotify {
+impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
     pub fn new(
-        events_tx: reactor::Sender,
+        windows_tx: W,
+        displays_tx: impl EventSink + 'static,
         spaces_tx: spaces::Sender,
         requests_rx: Receiver,
         initial_events: &[CGSEventType],
         tx_store: Option<WindowTxStore>,
     ) -> Self {
         let (focus_wake_tx, focus_wake_rx) = mpsc::sync_channel(1);
-        Self::spawn_focus_resolver(events_tx.clone(), focus_wake_rx);
+        Self::spawn_focus_resolver(displays_tx, focus_wake_rx);
         Self {
-            events_tx,
+            windows_tx,
             spaces_tx,
             requests_rx: Some(requests_rx),
             subscribed: HashSet::default(),
@@ -133,7 +82,7 @@ impl WindowNotify {
         for event in self.initial_events.drain(..) {
             match Self::subscribe(
                 event,
-                self.events_tx.clone(),
+                self.windows_tx.clone(),
                 self.spaces_tx.clone(),
                 self.tx_store.clone(),
                 self.focus_wake.clone(),
@@ -169,7 +118,7 @@ impl WindowNotify {
                 }
                 match Self::subscribe(
                     event,
-                    self.events_tx.clone(),
+                    self.windows_tx.clone(),
                     self.spaces_tx.clone(),
                     self.tx_store.clone(),
                     self.focus_wake.clone(),
@@ -184,7 +133,7 @@ impl WindowNotify {
                 }
             }
             Request::UpdateWindowNotifications(window_ids) => {
-                window_notify::update_window_notifications(&window_ids);
+                cgs_notify::update_window_notifications(&window_ids);
             }
 
             Request::Stop => {}
@@ -193,17 +142,17 @@ impl WindowNotify {
 
     fn subscribe(
         event: CGSEventType,
-        events_tx: reactor::Sender,
+        windows_tx: W,
         spaces_tx: spaces::Sender,
         tx_store: Option<WindowTxStore>,
         focus_wake: FocusWakeSender,
     ) -> Result<(), i32> {
-        let res = window_notify::init(event);
+        let res = cgs_notify::init(event);
         if res != 0 {
             return Err(res);
         }
 
-        let mut rx = window_notify::take_receiver(event);
+        let mut rx = cgs_notify::take_receiver(event);
 
         std::thread::spawn(move || {
             while let Some((_span, evt)) = rx.blocking_recv() {
@@ -282,7 +231,7 @@ impl WindowNotify {
                                     .as_ref()
                                     .and_then(|store| store.get(&wsid))
                                     .map(|record| record.txid);
-                                events_tx.send(Event::WindowFrameChanged(
+                                windows_tx.send(WindowsEvent::WindowFrameChanged(
                                     WindowId { idx, pid },
                                     bounds,
                                     last_seen,
@@ -300,7 +249,7 @@ impl WindowNotify {
         Ok(())
     }
 
-    fn spawn_focus_resolver(events_tx: reactor::Sender, focus_wake_rx: mpsc::Receiver<()>) {
+    fn spawn_focus_resolver(displays_tx: impl EventSink + 'static, focus_wake_rx: mpsc::Receiver<()>) {
         std::thread::Builder::new()
             .name("window-focus-resolver".to_string())
             .spawn(move || {
@@ -315,7 +264,7 @@ impl WindowNotify {
                         }
 
                         let query_started = Instant::now();
-                        let space = rini_displays::space_query::active_space();
+                        let space = crate::space_query::active_space();
                         let window = window_server::key_focused_window(space);
                         let query_elapsed = query_started.elapsed();
 
@@ -334,7 +283,7 @@ impl WindowNotify {
                             "resolved coalesced WindowServer focus"
                         );
                         if let Some(window) = window {
-                            events_tx.send(Event::WindowServerFocusChanged(window, space));
+                            displays_tx.send(Event::WindowServerFocusChanged(window, space));
                         }
                         break;
                     }

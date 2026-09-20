@@ -1,18 +1,20 @@
+//! Mission Control, observed through the Dock's Accessibility notifications. The application
+//! stops trusting window positions while it is up.
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use nix::libc::pid_t;
 use objc2_app_kit::NSRunningApplication;
 use objc2_foundation::ns_string;
 use tracing::{error, info, instrument, warn};
 
-use crate::actor::reactor;
-use crate::actor::reactor::Event;
 use rini_windows::app::NSRunningApplicationExt;
 use rini_windows::ax::element::AXUIElement;
 use rini_windows::ax::observer::Observer;
+use rini_windows::ids::pid_t;
+
+use crate::event::{Event, EventSink};
 
 const K_AX_EXPOSE_SHOW_ALL_WINDOWS: &str = "AXExposeShowAllWindows";
 const K_AX_EXPOSE_SHOW_FRONT_WINDOWS: &str = "AXExposeShowFrontWindows";
@@ -30,21 +32,21 @@ pub struct NativeMissionControl {
     observer: Option<Observer>,
     app_elem: Option<AXUIElement>,
     active: Arc<AtomicBool>,
-    events_tx: reactor::Sender,
+    events_tx: Arc<dyn EventSink>,
 }
 
 struct State {
-    events_tx: reactor::Sender,
+    events_tx: Arc<dyn EventSink>,
     active: Arc<AtomicBool>,
 }
 
 impl NativeMissionControl {
-    pub fn new(events_tx: reactor::Sender) -> Self {
+    pub fn new(events_tx: impl EventSink + 'static) -> Self {
         Self {
             observer: None,
             app_elem: None,
             active: Arc::new(AtomicBool::new(false)),
-            events_tx,
+            events_tx: Arc::new(events_tx),
         }
     }
 
@@ -104,11 +106,11 @@ impl State {
             | K_AX_EXPOSE_SHOW_FRONT_WINDOWS
             | K_AX_EXPOSE_SHOW_DESKTOP => {
                 self.active.store(true, Ordering::SeqCst);
-                self.events_tx.send(Event::MissionControlNativeEntered);
+                self.events_tx.send(Event::MissionControlEntered);
             }
             K_AX_EXPOSE_EXIT => {
                 self.active.store(false, Ordering::SeqCst);
-                self.events_tx.send(Event::MissionControlNativeExited);
+                self.events_tx.send(Event::MissionControlExited);
             }
             _ => error!(?notification, "Unhandled notification from Dock"),
         }

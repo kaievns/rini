@@ -1,3 +1,4 @@
+//! The Accessibility permission: prompt for it, wait for it, and say when it is granted.
 use std::ffi::c_void;
 use std::thread;
 use std::time::{Duration, Instant};

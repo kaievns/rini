@@ -9,12 +9,12 @@ use rini_config::actor::ConfigActor;
 use rini_config::watcher::ConfigWatcher;
 use rini_input::input_tap::InputTap;
 use rini_input::gesture_tap::GestureTap;
-use rini_wm::actor::mission_control_observer::NativeMissionControl;
+use rini_displays::mission_control::NativeMissionControl;
 use rini_wm::actor::notification_center::NotificationCenter;
 use rini_windows::lifecycle::ProcessActor;
 use rini_wm::actor::reactor::{self, Reactor};
 use rini_displays::spaces::SpacesActor;
-use rini_wm::actor::window_notify as window_notify_actor;
+use rini_displays::window_notify as window_notify_actor;
 use rini_wm::actor::wm_controller::{self, WmController};
 use rini_config::{Config, config_file, restore_file};
 use rini_wm::log;
@@ -22,7 +22,7 @@ use rini_wm::startup::execute_startup_commands;
 use rini_wm::ipc;
 use rini_workspaces::LayoutEngine;
 use rini_windows::transaction::WindowTxStore;
-use rini_wm::platform::accessibility::ensure_accessibility_permission;
+use rini_windows::ax::permission::ensure_accessibility_permission;
 use rini_runloop::executor::Executor;
 use rini_windows::sub_level::init_window_sub_level_server_port;
 use rini_displays::screen::displays_have_separate_spaces;
@@ -306,6 +306,7 @@ stays usable. Fix the config and restart. Error: {error}",
     let (spaces_actor, spaces_tx) = SpacesActor::new(Box::new(wm_controller_sender.clone()));
     let wn_actor = window_notify_actor::WindowNotify::new(
         events_tx.clone(),
+        events_tx.clone(),
         spaces_tx.clone(),
         wnd_rx,
         &[
@@ -342,7 +343,7 @@ stays usable. Fix the config and restart. Error: {error}",
     let input_settings = rini_input::settings::InputSettings::from(&config);
     let event_tap = InputTap::new(
         &input_settings,
-        rini_wm::platform::power::is_low_power_mode_enabled(),
+        rini_animation::power::is_low_power_mode_enabled(),
         Box::new(wm_controller_sender.clone()),
         event_tap_rx,
     );

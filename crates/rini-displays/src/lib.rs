@@ -12,10 +12,13 @@ pub mod topology;
 pub mod event;
 
 // Adapters
+pub mod cgs_notify;
 pub mod display_churn;
 pub mod space_query;
 pub mod space_switch;
 
 // Actors
 pub mod cursor_warp;
+pub mod mission_control;
+pub mod window_notify;
 pub mod spaces;

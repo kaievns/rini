@@ -11,6 +11,7 @@ pub mod pass;
 pub mod backdrop;
 pub mod edge_dressing;
 pub mod overlay;
+pub mod power;
 pub mod snapshot_service;
 pub mod window_snapshot;
 
