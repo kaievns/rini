@@ -1770,7 +1770,7 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
         duplicate_wid
     ));
     assert!(
-        reactor.create_window_data(duplicate_wid).is_none(),
+        reactor.view().create_window_data(duplicate_wid).is_none(),
         "duplicate is absent from query windows because it is not manageable"
     );
 
@@ -7231,6 +7231,29 @@ mod main_window_tracking {
         assert_eq!(
             reactor.layout_manager.layout_engine.selected_window(space),
             Some(WindowId::new(3, 1))
+        );
+    }
+}
+
+mod query_view {
+    use super::*;
+    use test_log::test;
+
+    /// A query is a read. Asking about a space the engine has never seen must not create its
+    /// default workspaces as a side effect, which `list_workspaces` used to do.
+    #[test]
+    fn querying_an_unknown_space_creates_nothing() {
+        let reactor = test_reactor();
+        let never_seen = SpaceId::new(4242);
+        assert!(reactor.query_workspaces(Some(never_seen)).is_empty());
+        assert!(reactor.query_workspace_layouts(Some(never_seen), None).is_empty());
+        assert!(
+            reactor
+                .layout_manager
+                .layout_engine
+                .virtual_workspace_manager()
+                .existing_workspaces(never_seen)
+                .is_empty()
         );
     }
 }

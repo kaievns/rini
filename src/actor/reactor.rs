@@ -156,7 +156,6 @@ impl std::ops::Deref for ReactorHandle {
     }
 }
 
-use crate::model::server::RuntimeWindowData;
 
 
 #[serde_as]
@@ -621,9 +620,6 @@ impl Reactor {
         self.active_spaces.iter().copied()
     }
 
-    fn active_space_ids(&self) -> Vec<u64> {
-        self.active_spaces.iter().map(|space| space.get()).collect()
-    }
 
     fn is_window_on_active_space(&self, wid: WindowId) -> bool {
         self.affinity().best_space_for_window_id(wid)
@@ -2365,29 +2361,6 @@ impl Reactor {
         }
     }
 
-    fn create_window_data(&self, window_id: WindowId) -> Option<RuntimeWindowData> {
-        let window_state = self.state.windows.window(window_id)?;
-        if !window_state.matches_filter(WindowFilter::EffectivelyManageable) {
-            return None;
-        }
-        let app = self.app_manager.apps.get(&window_id.pid)?;
-
-        let app_name = app.info.localized_name.clone();
-        let bundle_id = app.info.bundle_id.clone();
-
-        Some(RuntimeWindowData {
-            id: window_id,
-            is_floating: self.layout_manager.layout_engine.is_window_floating(window_id),
-            is_focused: self.main_window() == Some(window_id),
-            app_name,
-            info: WindowInfo {
-                title: window_state.info.title.clone(),
-                frame: window_state.frame_monotonic,
-                bundle_id,
-                ..window_state.info.clone()
-            },
-        })
-    }
 
     fn update_complete_window_server_info(&mut self, ws_info: Vec<WindowServerInfo>) {
         self.state.windows.clear_visible_windows();
