@@ -1,50 +1,6 @@
-[package]
-name = "rini-wm"
-version = "0.1.0"
-edition = "2024"
-build = "build.rs"
-
 [workspace]
-members = [".", "crates/rini-animation", "crates/rini-cli", "crates/rini-config", "crates/rini-displays", "crates/rini-geometry", "crates/rini-input", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-workspaces"]
+members = ["crates/rini-animation", "crates/rini-cli", "crates/rini-config", "crates/rini-displays", "crates/rini-geometry", "crates/rini-input", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-wm", "crates/rini-workspaces"]
 resolver = "3"
-
-[[bin]]
-name = "rini"
-test = false
-
-[profile.dev]
-opt-level = 0
-debug = 1
-incremental = true
-codegen-units = 16
-debug-assertions = true
-overflow-checks = true
-split-debuginfo = "packed"
-panic = "unwind"
-
-[profile.release]
-opt-level = 3
-debug = 1
-codegen-units = 1
-panic = "unwind"
-incremental = false
-lto = "thin"
-strip = true
-
-[profile.release-fast]
-inherits = "release"
-opt-level = 2
-codegen-units = 16
-incremental = true
-lto = "off"
-strip = false
-
-[profile.profiling]
-inherits = "release"
-strip = false
-
-[lib]
-doctest = false
 
 [workspace.dependencies]
 crossbeam-channel = "0.5"
@@ -243,71 +199,33 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
 	"objc2-metal"
 ]}
 
-[dependencies]
-anyhow = { workspace = true }
-arc-swap = "1"
-ascii_tree = "0.1.1"
-thiserror = { workspace = true }
-bitflags = { workspace = true }
-clap = { workspace = true }
-dirs = { workspace = true }
-dispatchr = { workspace = true }
-nix = { workspace = true }
-objc2 = { workspace = true }
-objc2-app-kit = { workspace = true }
-objc2-application-services = { workspace = true }
-objc2-core-foundation = { workspace = true }
-objc2-core-graphics = { workspace = true }
-objc2-foundation = { workspace = true }
-once_cell = { workspace = true }
-parking_lot = { workspace = true }
-ron = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde_with = { workspace = true }
-slotmap = { workspace = true }
-static_assertions = { workspace = true }
-tokio = { workspace = true }
-tokio-stream = { workspace = true }
-tokio-util = { workspace = true }
-toml = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-timing = { workspace = true }
-tracing-tree = { workspace = true }
-continue = { workspace = true }
-futures-task = { workspace = true }
-regex = { workspace = true }
-enum_dispatch = { workspace = true }
-crossbeam-channel = { workspace = true }
-num_enum = { workspace = true }
-strum = { workspace = true }
-strum_macros = { workspace = true }
-notify = { workspace = true }
-notify-debouncer-mini = { workspace = true }
-dashmap = { workspace = true }
-sigpipe = { workspace = true }
-embed_plist = "1.2.2"
-rustc-hash = { workspace = true }
-rini-geometry = { workspace = true }
-rini-config = { workspace = true }
-rini-displays = { workspace = true }
-rini-input = { workspace = true }
-rini-ipc = { workspace = true }
-rini-animation = { workspace = true }
-rini-mach-sys = { workspace = true }
-rini-runloop = { workspace = true }
-rini-skylight-sys = { workspace = true }
-rini-tiling = { workspace = true }
-rini-windows = { workspace = true }
-rini-workspaces = { workspace = true }
+[profile.dev]
+opt-level = 0
+debug = 1
+incremental = true
+codegen-units = 16
+debug-assertions = true
+overflow-checks = true
+split-debuginfo = "packed"
+panic = "unwind"
 
-[dev-dependencies]
-rini-windows = { workspace = true, features = ["test-support"] }
-rini-displays = { workspace = true, features = ["test-support"] }
-rini-workspaces = { workspace = true, features = ["test-support"] }
-pretty_assertions = "1.4.0"
-tokio = { version = "1.35.1", features = ["sync", "tokio-macros"] }
-test-log = { version = "0.2.16", default-features = false }
-test_bin = "0.5.0"
-tempfile = { workspace = true }
+[profile.release]
+opt-level = 3
+debug = 1
+codegen-units = 1
+panic = "unwind"
+incremental = false
+lto = "thin"
+strip = true
+
+[profile.release-fast]
+inherits = "release"
+opt-level = 2
+codegen-units = 16
+incremental = true
+lto = "off"
+strip = false
+
+[profile.profiling]
+inherits = "release"
+strip = false

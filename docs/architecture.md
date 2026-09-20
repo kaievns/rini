@@ -69,7 +69,8 @@ what moved where and the inversions that made it possible (`Event` enums with
 an `EventSink`, `From<&Config>` for a context's settings, `Backend` speaking
 wire types).
 
-`src/` is the application: the reactor and its reducers, tests and query view
+There is no root package: every crate lives under `crates/`. `rini-wm` is the
+application: the reactor and its reducers, tests and query view
 (`actor/reactor/`, 16.5k lines of which 7.9k are tests), the NSWorkspace
 demultiplexer (`notification_center`), the hotkey controller (`wm_controller`),
 the query DTOs (`model/server`), the launch agent (`platform/service`), the IPC

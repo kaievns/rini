@@ -12,7 +12,7 @@ Every animated movement runs through the overlay engine
 bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "The apply point"). Layout passes, strip pans, workspace
 switches, resizes, entrances and the edge bounce are all flights of it.
-`AnimationManager` (`src/actor/reactor/animation.rs` in `rini-wm`) is the layout side: it
+`AnimationManager` (`crates/rini-wm/src/actor/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
 `rini_animation::pass::plan` (moves, unmoved windows the overlay must still
 draw, warm targets), decides whether the overlay flies (`config.settings.animate`,

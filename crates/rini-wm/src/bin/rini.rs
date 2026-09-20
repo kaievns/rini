@@ -33,7 +33,7 @@ use rini_skylight_sys::{
 };
 use tokio::join;
 
-embed_plist::embed_info_plist!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Info.plist"));
+embed_plist::embed_info_plist!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/Info.plist"));
 
 #[derive(Parser)]
 struct Cli {
