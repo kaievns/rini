@@ -1,0 +1,21 @@
+[package]
+name = "rini-cli"
+version = "0.1.0"
+edition = "2024"
+description = "The command-line client for rini: commands, queries and event subscriptions over the Mach IPC"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "rini-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+rini-config = { workspace = true }
+rini-ipc = { workspace = true }
+rini-windows = { workspace = true }
+rini-workspaces = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sigpipe = { workspace = true }

@@ -18,7 +18,8 @@ makes it itself, behind its own API.
 | `rini-animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`pass`: what moves, what stays, what warms), which final frame writes go out; window snapshots and capture (ScreenCaptureKit, SkyLight), the Core Animation tile overlay, the flight engine; animation settings |
 | `rini-ipc` | the command, query and event language | the wire types, the Mach server, subscriptions, CLI exec, and the client library |
 | `rini-config` | the `rini.toml` file | parsing into each context's settings type, validation that spans contexts, watching and reload. Depends on every context; nothing depends on it |
-| `rini-wm` | the application | the reactor as orchestrator over the contexts, wiring, the `rini` and `rini-cli` binaries. Depends on everything; nothing depends on it |
+| `rini-wm` | the application | the reactor as orchestrator over the contexts, the macOS notification demultiplexers, the launch agent, wiring, and the `rini` binary. Depends on everything; nothing depends on it |
+| `rini-cli` | the command-line client | a `clap` front end over `rini-ipc`'s client; depends on the wire language and on `rini-config` for file locations, never on `rini-wm` |
 
 Technical libraries, each doing one thing and containing no domain:
 
@@ -68,6 +69,13 @@ what moved where and the inversions that made it possible (`Event` enums with
 an `EventSink`, `From<&Config>` for a context's settings, `Backend` speaking
 wire types).
 
+`src/` is the application: the reactor and its reducers, tests and query view
+(`actor/reactor/`, 16.5k lines of which 7.9k are tests), the NSWorkspace
+demultiplexer (`notification_center`), the hotkey controller (`wm_controller`),
+the query DTOs (`model/server`), the launch agent (`platform/service`), the IPC
+backend, startup, logging, and `bin/rini.rs`. No context adapter or model
+lives there any more.
+
 What is still not where the map says:
 
 | where | what | why it waits |
@@ -76,7 +84,7 @@ What is still not where the map says:
 | `rini-workspaces` | `broadcast`: `LayoutEngine` sends IPC events itself | belongs to the application, driven by `EventResponse`; needs the reactor to own the broadcast channel |
 | `rini-workspaces` | `LayoutEngine`, 4.4k lines orchestrating workspaces, floating, persistence and display affinity | the seam to tiling is clean (`LayoutSystem`); the seams inside are not yet |
 | `rini-wm` | `wm_controller` lowers `WmCmd` aliases to `Command` | lowering them at parse time in `rini-input` changes what a binding parses to |
-| `rini-wm` | `notification_center` and `window_notify` feed two contexts each | they are the application's demultiplexers of macOS notification streams; splitting them by context is possible but doubles the subscriptions |
+| `rini-wm` | `notification_center` feeds two contexts | it is the application's demultiplexer of NSWorkspace notifications; splitting it by context is possible but doubles the subscriptions. (`window_notify` moved to `rini-displays` with a windows sink and a displays sink.) |
 | `rini-wm` | the reactor: 5.9k lines plus `events/` (2.9k), still owning every context's store | the decomposition so far moved what did not need the reactor: pure context logic to its crate (transactions, manageability, space activation, screen selection, focus rules, strip stack, frame writes, the layout-pass sort `rini_animation::pass`, app-rule follow-up `AfterRules`, the topology diff `analyze_space_snapshot`, the stale-window verdict `looks_gone`); the two focus actors (`RaiseManager`, `MainWindowTracker`) run in `rini-windows` against `EventSink`/`FocusEvent`; cross-context reads became borrowed views inside `rini-wm` (`space_affinity::SpaceAffinity`, `query::StateView`). What remains is orchestration: `dispatch_workflow`, `apply_event_outcome`, the layout-response and space-snapshot handlers, the strip-movement builders, and the `events/` reducers, which read and write several stores per event and so belong to the application. The next cut, if one is wanted, is the stores themselves: each context's store owned by its own actor with the reactor holding handles, which changes the event model rather than moving code |
 
 ## The costs of crates
