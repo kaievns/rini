@@ -6,7 +6,6 @@
 
 mod animation;
 mod events;
-mod main_window;
 mod managers;
 mod query;
 mod replay;
@@ -70,7 +69,7 @@ use events::{
     drag as interaction_workflow, focus as focus_service, space as topology_workflow,
     system as system_workflow, window as window_workflow,
 };
-use main_window::MainWindowTracker;
+use rini_windows::focus::{FocusEvent, MainWindowTracker};
 use managers::LayoutManager;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 pub use replay::{Record, replay};
@@ -84,7 +83,7 @@ use rini_input::input_tap as event_tap;
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
 use rini_windows::ids::{WindowId, pid_t};
-use crate::actor::raise_manager::{self, RaiseManager, RaiseRequest};
+use rini_windows::raise::{self as raise_manager, RaiseManager, RaiseRequest};
 use crate::actor::reactor::events::window_discovery;
 use rini_displays::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta};
 use crate::actor;
@@ -379,10 +378,34 @@ impl From<rini_windows::event::Event> for Event {
             W::RaiseCompleted { window_id, sequence_id } => {
                 Event::RaiseCompleted { window_id, sequence_id }
             }
+            W::RaiseTimeout { sequence_id } => Event::RaiseTimeout { sequence_id },
         }
     }
 }
 
+impl Event {
+    /// The focus edge this event carries, if any. See [`FocusEvent`].
+    fn focus_event(&self) -> Option<FocusEvent> {
+        Some(match self {
+            &Event::ApplicationLaunched { pid, is_frontmost, main_window, .. } => {
+                FocusEvent::ApplicationLaunched { pid, is_frontmost, main_window }
+            }
+            &Event::ApplicationThreadTerminated(pid) => FocusEvent::ApplicationThreadTerminated(pid),
+            &Event::WindowDestroyed(wid) => FocusEvent::WindowDestroyed(wid),
+            &Event::ApplicationActivated(pid, quiet) => FocusEvent::ApplicationActivated(pid, quiet),
+            &Event::ApplicationDeactivated(pid) => FocusEvent::ApplicationDeactivated(pid),
+            &Event::ApplicationGloballyActivated(pid) => FocusEvent::ApplicationGloballyActivated(pid),
+            &Event::ApplicationGloballyDeactivated(pid) => {
+                FocusEvent::ApplicationGloballyDeactivated(pid)
+            }
+            &Event::ApplicationMainWindowChanged(pid, wid, quiet) => {
+                FocusEvent::ApplicationMainWindowChanged(pid, wid, quiet)
+            }
+            &Event::WindowServerFocusChanged(wid, _) => FocusEvent::WindowServerFocusChanged(wid),
+            _ => return None,
+        })
+    }
+}
 pub struct Reactor {
     pub config: Config,
     pub one_space: bool,
@@ -950,8 +973,13 @@ impl Reactor {
         let (raise_manager_tx, raise_manager_rx) = actor::channel();
         reactor.communication_manager.raise_manager_tx = raise_manager_tx.clone();
         let event_tap_tx = reactor.communication_manager.event_tap_tx.clone();
+        let warp = move |point| {
+            if let Some(event_tap_tx) = &event_tap_tx {
+                _ = event_tap_tx.send(rini_input::input_tap::Request::Warp(point));
+            }
+        };
         let reactor_task = Self::run_reactor_loop(reactor, events);
-        let raise_manager_task = RaiseManager::run(raise_manager_rx, events_tx, event_tap_tx);
+        let raise_manager_task = RaiseManager::run(raise_manager_rx, events_tx, warp);
         let _ = tokio::join!(reactor_task, raise_manager_task);
     }
 
@@ -1182,7 +1210,7 @@ impl Reactor {
                 if self.main_window_tracker.is_globally_frontmost(*pid)
         );
 
-        let raised_window = self.main_window_tracker.handle_event(&event);
+        let raised_window = event.focus_event().and_then(|focus| self.main_window_tracker.handle_event(focus));
         match event {
             Event::ApplicationLaunched {
                 pid,
@@ -5032,8 +5060,8 @@ impl Reactor {
         }
         let space = self.best_space_for_window_id(target);
         let mut outcome =
-            EventOutcome::default().with_raise_request(crate::actor::raise_manager::Event::RaiseRequest(
-                crate::actor::raise_manager::RaiseRequest {
+            EventOutcome::default().with_raise_request(raise_manager::Event::RaiseRequest(
+                raise_manager::RaiseRequest {
                     raise_windows: vec![vec![target]],
                     focus_window: Some((target, None)),
                     app_handles,

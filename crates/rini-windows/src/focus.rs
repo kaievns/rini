@@ -1,8 +1,11 @@
-//! Telling the user's focus changes from the ones rini's own raises and macOS's activation picks
-//! produce.
+//! Which window is focused, and telling the user's focus changes from the ones rini's own raises
+//! and macOS's activation picks produce.
 use std::time::{Duration, Instant};
 
-use crate::ids::WindowId;
+use rustc_hash::FxHashMap as HashMap;
+
+use crate::app_actor::Quiet;
+use crate::ids::{WindowId, pid_t};
 
 /// The focus reports rini's own raises are about to produce.
 ///
@@ -58,6 +61,198 @@ pub fn activation_focus_target(
         return None;
     }
     Some(remembered)
+}
+
+/// The slice of the application's event stream focus tracking reads. The application builds one
+/// from each of its events; anything else is not a focus edge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FocusEvent {
+    ApplicationLaunched { pid: pid_t, is_frontmost: bool, main_window: Option<WindowId> },
+    ApplicationThreadTerminated(pid_t),
+    WindowDestroyed(WindowId),
+    ApplicationActivated(pid_t, Quiet),
+    ApplicationDeactivated(pid_t),
+    /// The Carbon front-app edge, the one macOS reports for cmd-tab.
+    ApplicationGloballyActivated(pid_t),
+    ApplicationGloballyDeactivated(pid_t),
+    ApplicationMainWindowChanged(pid_t, Option<WindowId>, Quiet),
+    /// WindowServer's key window: authoritative once seen, AX reports are metadata after it.
+    WindowServerFocusChanged(WindowId),
+}
+
+#[derive(Default)]
+pub struct MainWindowTracker {
+    apps: HashMap<pid_t, AppState>,
+    global_frontmost: Option<pid_t>,
+    window_server_focus: Option<WindowId>,
+    window_server_focus_authoritative: bool,
+    /// Which window of each app rini last saw focused. macOS picks a window of its own on activation,
+    /// and that pick is not always this one.
+    last_focused_by_app: HashMap<pid_t, WindowId>,
+    /// The app that has just been activated, with whatever it had focused BEFORE the activation.
+    ///
+    /// Snapshotted because the activation immediately overwrites the live record: macOS reports its own
+    /// choice of main window a few milliseconds later, and the pre-activation window is what tells rini
+    /// whether that choice matches where the user actually was.
+    pending_activation: Option<(pid_t, Option<WindowId>)>,
+}
+
+struct AppState {
+    is_frontmost: bool,
+    frontmost_is_quiet: Quiet,
+    main_window: Option<WindowId>,
+}
+
+impl MainWindowTracker {
+    /// Make `window` the focused window, as WindowServer focus would.
+    ///
+    /// Tests that exercise commands operating on "the focused window" otherwise have to
+    /// replay a launch/activate sequence just to populate this, and `add_test_app` does not
+    /// set it — so such a command silently no-ops and the test passes for the wrong reason.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_focus_for_test(&mut self, window: WindowId) {
+        // main_window() requires the owning app to be globally frontmost before it will
+        // consult window_server_focus, so both have to be set.
+        self.global_frontmost = Some(window.pid);
+        self.window_server_focus_authoritative = true;
+        self.window_server_focus = Some(window);
+    }
+    #[must_use]
+    pub fn handle_event(&mut self, event: FocusEvent) -> Option<WindowId> {
+        let (event_pid, quiet_edge) = match event {
+            FocusEvent::ApplicationLaunched { pid, is_frontmost, main_window } => {
+                self.apps.insert(
+                    pid,
+                    AppState {
+                        is_frontmost,
+                        frontmost_is_quiet: Quiet::No,
+                        main_window,
+                    },
+                );
+                (pid, Quiet::No)
+            }
+            FocusEvent::ApplicationThreadTerminated(pid) => {
+                self.apps.remove(&pid);
+                if self.window_server_focus.is_some_and(|wid| wid.pid == pid) {
+                    self.window_server_focus = None;
+                }
+                return None;
+            }
+            FocusEvent::WindowDestroyed(wid) => {
+                if self.window_server_focus == Some(wid) {
+                    self.window_server_focus = None;
+                }
+                return None;
+            }
+            FocusEvent::ApplicationActivated(pid, quiet) => {
+                // A quiet activation is rini's own raise. Redirecting the focus change that follows would
+                // undo whatever rini just asked for.
+                if quiet == Quiet::Yes && self.pending_activation.is_some_and(|(p, _)| p == pid) {
+                    self.pending_activation = None;
+                }
+                let app = self.apps.get_mut(&pid)?;
+                app.is_frontmost = true;
+                app.frontmost_is_quiet = quiet;
+                (pid, quiet)
+            }
+            FocusEvent::ApplicationDeactivated(pid) => {
+                let app = self.apps.get_mut(&pid)?;
+                app.is_frontmost = false;
+                return None;
+            }
+            FocusEvent::ApplicationGloballyActivated(pid) => {
+                // Only a real activation edge snapshots. A duplicate arrives while the app is already
+                // frontmost, and re-snapshotting there would capture the window this activation just
+                // focused rather than the one before it.
+                if self.global_frontmost != Some(pid) {
+                    self.pending_activation =
+                        Some((pid, self.last_focused_by_app.get(&pid).copied()));
+                }
+                self.global_frontmost = Some(pid);
+                let Some(app) = self.apps.get_mut(&pid) else {
+                    return None;
+                };
+                app.is_frontmost = true;
+                (pid, app.frontmost_is_quiet)
+            }
+            FocusEvent::ApplicationGloballyDeactivated(pid) => {
+                if self.global_frontmost == Some(pid) {
+                    self.global_frontmost = None;
+                }
+                if let Some(app) = self.apps.get_mut(&pid) {
+                    app.is_frontmost = false;
+                }
+                return None;
+            }
+            FocusEvent::ApplicationMainWindowChanged(pid, wid, quiet) => {
+                let app = self.apps.get_mut(&pid)?;
+                app.main_window = wid;
+                (pid, quiet)
+            }
+            FocusEvent::WindowServerFocusChanged(wid) => {
+                self.window_server_focus_authoritative = true;
+                self.window_server_focus = Some(wid);
+                self.last_focused_by_app.insert(wid.pid, wid);
+                return None;
+            }
+        };
+        // Once WindowServer focus has produced a result, AX activation/main-window
+        // events remain useful as metadata and cold-start fallback only. Letting
+        // them emit focus here can replay the previous native focus while the new
+        // 808/815 resolution is still in flight.
+        if self.window_server_focus_authoritative {
+            return None;
+        }
+        if Some(event_pid) == self.global_frontmost && quiet_edge == Quiet::No {
+            if let Some(wid) = self.main_window() {
+                return Some(wid);
+            }
+        }
+        None
+    }
+
+    pub fn main_window(&self) -> Option<WindowId> {
+        let Some(pid) = self.global_frontmost else {
+            return None;
+        };
+        if let Some(window) = self.window_server_focus.filter(|window| window.pid == pid) {
+            return Some(window);
+        }
+        match self.apps.get(&pid) {
+            Some(&AppState {
+                is_frontmost: true,
+                main_window: Some(window),
+                ..
+            }) => Some(window),
+            _ => None,
+        }
+    }
+
+    pub fn is_globally_frontmost(&self, pid: pid_t) -> bool {
+        self.global_frontmost == Some(pid)
+    }
+
+    /// The window `pid` had focused before it was just activated, once per activation.
+    ///
+    /// `None` when this focus change is not the one macOS produced for an activation, which is how cmd-`
+    /// window cycling stays untouched: rini raises those itself and no activation edge is involved.
+    pub fn take_activation_target(&mut self, pid: pid_t) -> Option<WindowId> {
+        let remembered = self.peek_activation_target(pid);
+        if self.pending_activation.is_some_and(|(p, _)| p == pid) {
+            self.pending_activation = None;
+        }
+        remembered
+    }
+
+    /// `take_activation_target` without consuming it, for a caller that may not act on it.
+    pub fn peek_activation_target(&self, pid: pid_t) -> Option<WindowId> {
+        let (pending_pid, remembered) = self.pending_activation?;
+        if pending_pid != pid {
+            return None;
+        }
+        remembered
+    }
+
 }
 
 #[cfg(test)]
@@ -166,5 +361,111 @@ mod tests {
         let parked = WindowId::new(954, 11333);
         assert_eq!(activation_focus_target(parked, false, None, false), None);
         assert_eq!(activation_focus_target(parked, false, Some(parked), true), None);
+    }
+
+    #[test]
+    fn an_activation_target_is_offered_once_and_only_to_its_own_app() {
+        let mut tracker = MainWindowTracker::default();
+        let window = WindowId::new(954, 9607);
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
+        let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
+        let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
+        assert_eq!(tracker.take_activation_target(1073), None, "another app's focus change");
+        assert_eq!(tracker.take_activation_target(954), Some(window));
+        assert_eq!(tracker.take_activation_target(954), None, "consumed");
+    }
+
+    /// cmd-` cycles windows inside the app rini has already activated, so there is no activation edge and
+    /// the switch that reveals a parked window still happens.
+    #[test]
+    fn a_focus_change_without_an_activation_offers_nothing() {
+        let mut tracker = MainWindowTracker::default();
+        let window = WindowId::new(954, 9607);
+        let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
+        assert_eq!(tracker.take_activation_target(954), None);
+    }
+
+    /// A raise rini asked for arrives as a quiet activation. Redirecting the focus change behind it would
+    /// undo the raise.
+    #[test]
+    fn a_quiet_activation_drops_the_pending_target() {
+        let mut tracker = MainWindowTracker::default();
+        let window = WindowId::new(954, 9607);
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
+        let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
+        let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
+        let _ = tracker.handle_event(FocusEvent::ApplicationActivated(954, Quiet::Yes));
+        assert_eq!(tracker.take_activation_target(954), None);
+    }
+
+    /// A duplicate global activation must not re-snapshot: by then the window the activation focused is
+    /// the live record, and the pre-activation window would be lost.
+    #[test]
+    fn a_duplicate_activation_keeps_the_original_target() {
+        let mut tracker = MainWindowTracker::default();
+        let was_in = WindowId::new(954, 9607);
+        let picked = WindowId::new(954, 11333);
+        tracker.apps.insert(954, AppState {
+            is_frontmost: false,
+            frontmost_is_quiet: Quiet::No,
+            main_window: None,
+        });
+        let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(was_in));
+        let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
+        let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(picked));
+        let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
+        assert_eq!(tracker.take_activation_target(954), Some(was_in));
+    }
+
+    #[test]
+    fn window_server_focus_supersedes_ax_focus_events() {
+        let ax_window = WindowId::new(7, 1);
+        let server_window = WindowId::new(7, 2);
+        let stale_window = WindowId::new(7, 3);
+        let mut tracker = MainWindowTracker::default();
+        tracker.global_frontmost = Some(7);
+        tracker.apps.insert(
+            7,
+            AppState {
+                is_frontmost: true,
+                frontmost_is_quiet: Quiet::No,
+                main_window: Some(ax_window),
+            },
+        );
+
+        assert_eq!(tracker.main_window(), Some(ax_window));
+        assert_eq!(
+            tracker.handle_event(FocusEvent::WindowServerFocusChanged(server_window)),
+            None
+        );
+        assert_eq!(tracker.main_window(), Some(server_window));
+
+        assert_eq!(
+            tracker.handle_event(FocusEvent::ApplicationMainWindowChanged(
+                7,
+                Some(stale_window),
+                Quiet::No,
+            )),
+            None,
+            "AX must not drive focus after native authority is initialized"
+        );
+        assert_eq!(tracker.main_window(), Some(server_window));
+
+        let _ = tracker.handle_event(FocusEvent::ApplicationMainWindowChanged(
+            7,
+            Some(ax_window),
+            Quiet::No,
+        ));
+
+        let _ = tracker.handle_event(FocusEvent::WindowDestroyed(server_window));
+        assert_eq!(tracker.main_window(), Some(ax_window));
     }
 }

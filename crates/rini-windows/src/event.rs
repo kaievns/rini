@@ -41,6 +41,8 @@ pub enum Event {
     MenuOpened(pid_t),
     MenuClosed(pid_t),
     RaiseCompleted { window_id: WindowId, sequence_id: u64 },
+    /// A raise sequence ran past the raise manager's deadline; its pending raises are dropped.
+    RaiseTimeout { sequence_id: u64 },
 }
 
 /// Where the per-app actor delivers its events. Implemented for any channel whose message type

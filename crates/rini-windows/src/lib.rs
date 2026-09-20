@@ -26,6 +26,7 @@ pub mod window_server;
 // Actors
 pub mod app_actor;
 pub mod lifecycle;
+pub mod raise;
 
 #[inline(always)]
 pub(crate) fn cg_ok(err: objc2_core_graphics::CGError) -> Result<(), objc2_core_graphics::CGError> {

@@ -11,9 +11,8 @@ use crate::actor::reactor::animation::AnimationManager;
 use rini_displays::topology::ForwardedSpaceState;
 use rini_input::gesture_tap;
 use rini_input::input_tap as event_tap;
-use crate::actor::{
-    raise_manager, window_notify, wm_controller,
-};
+use crate::actor::{window_notify, wm_controller};
+use rini_windows::raise as raise_manager;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_input::settings::WindowSnappingSettings;
 use rini_workspaces::LayoutEngine;

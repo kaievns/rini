@@ -470,8 +470,8 @@ pub fn handle_mouse_moved_over_window(
         if let Some(app) = apps.apps.get(&window.pid) {
             app_handles.insert(window.pid, app.handle.clone());
         }
-        outcome = outcome.with_raise_request(crate::actor::raise_manager::Event::RaiseRequest(
-            crate::actor::raise_manager::RaiseRequest {
+        outcome = outcome.with_raise_request(rini_windows::raise::Event::RaiseRequest(
+            rini_windows::raise::RaiseRequest {
                 raise_windows: vec![vec![window]],
                 focus_window: Some((window, None)),
                 app_handles,

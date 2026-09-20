@@ -50,7 +50,7 @@ activation only. No timer is involved:
   times per press" in `crates/rini-animation/docs/capture-overlay-research.md`.
 
 The pure decision is `activation_focus_target` in
-`src/actor/reactor/main_window.rs`, so the four cases are tested without replaying
+`crates/rini-windows/src/focus.rs`, so the four cases are tested without replaying
 an activation sequence.
 
 ## Related

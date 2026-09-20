@@ -3,7 +3,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::app_actor::Request;
 use rini_windows::ids::{WindowId, pid_t};
-use crate::actor::raise_manager;
+use rini_windows::raise as raise_manager;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::Config;
 use rini_workspaces::{Direction, EventResponse, LayoutEvent};

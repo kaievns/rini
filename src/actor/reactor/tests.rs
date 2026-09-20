@@ -5894,7 +5894,7 @@ mod switch_focus {
 mod strip_regroup {
     use super::*;
     use test_log::test;
-    use crate::actor::raise_manager::{self, RaiseRequest};
+    use rini_windows::raise::{self as raise_manager, RaiseRequest};
     use crate::actor::reactor::{StackedWindow, strip_group_to_lift_for};
     use rini_animation::motion::z_group::StackGroup::{Floating, Tiled};
 
@@ -6354,7 +6354,7 @@ fn cycling_app_windows_reaches_every_workspace() {
     for _ in 0..3 {
         let outcome = reactor.probe_cycle_app_windows(false);
         let target = outcome.raise_requests.iter().find_map(|request| match request {
-            crate::actor::raise_manager::Event::RaiseRequest(request) => {
+            rini_windows::raise::Event::RaiseRequest(request) => {
                 request.focus_window.map(|(window, _)| window)
             }
             _ => None,
@@ -7031,4 +7031,206 @@ fn a_windows_context_event_becomes_the_reactor_event_with_its_payload_intact() {
     };
     assert_eq!((got_wid, got_frame, txid, requested.0, mouse), (wid, frame, None, true, None));
     assert!(matches!(Event::from(W::MenuClosed(7)), Event::MenuClosed(7)));
+}
+
+mod main_window_tracking {
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use test_log::test;
+
+    use super::super::testing::{Apps, make_windows, space_state_event};
+    use super::super::{Event, Quiet, Reactor, SpaceId, WindowId};
+    use rini_workspaces::LayoutEngine;
+
+    #[test]
+    fn it_tracks_frontmost_app_and_main_window_correctly() {
+        use Event::*;
+        let mut apps = Apps::new();
+        let mut reactor = Reactor::new_for_test(LayoutEngine::new(
+            &rini_config::VirtualWorkspaceSettings::default(),
+            &rini_config::LayoutSettings::default(),
+            None,
+        ));
+        let space = SpaceId::new(1);
+        let screen_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1920., 1080.));
+        reactor.handle_event(space_state_event(vec![screen_frame], vec![Some(space)]));
+        assert_eq!(None, reactor.main_window());
+
+        reactor.handle_event(ApplicationGloballyActivated(1));
+        reactor.handle_events(apps.make_app_with_opts(
+            1,
+            make_windows(2),
+            Some(WindowId::new(1, 1)),
+            true,
+            true,
+        ));
+        reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
+        assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(1, 1))
+        );
+
+        reactor.handle_event(ApplicationGloballyDeactivated(1));
+        assert_eq!(None, reactor.main_window());
+        reactor.handle_event(ApplicationActivated(2, Quiet::No));
+        reactor.handle_event(ApplicationGloballyActivated(2));
+        assert_eq!(None, reactor.main_window());
+        reactor.handle_event(ApplicationMainWindowChanged(
+            2,
+            Some(WindowId::new(2, 2)),
+            Quiet::No,
+        ));
+        assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(2, 2))
+        );
+        reactor.handle_event(ApplicationMainWindowChanged(
+            1,
+            Some(WindowId::new(1, 2)),
+            Quiet::No,
+        ));
+        assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
+        reactor.handle_event(ApplicationDeactivated(1));
+        assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
+        reactor.handle_event(ApplicationDeactivated(2));
+        assert_eq!(None, reactor.main_window());
+
+        reactor.handle_event(ApplicationGloballyActivated(3));
+        assert_eq!(None, reactor.main_window());
+
+        reactor.handle_events(apps.make_app_with_opts(
+            3,
+            make_windows(2),
+            Some(WindowId::new(3, 1)),
+            true,
+            true,
+        ));
+        assert_eq!(Some(WindowId::new(3, 1)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(3, 1))
+        );
+    }
+
+    #[test]
+    fn it_does_not_update_layout_for_quiet_raises() {
+        use Event::*;
+        let mut apps = Apps::new();
+        let mut reactor = Reactor::new_for_test(LayoutEngine::new(
+            &rini_config::VirtualWorkspaceSettings::default(),
+            &rini_config::LayoutSettings::default(),
+            None,
+        ));
+        let space = SpaceId::new(1);
+        let screen_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1920., 1080.));
+        reactor.handle_event(space_state_event(vec![screen_frame], vec![Some(space)]));
+
+        reactor.handle_event(ApplicationGloballyActivated(1));
+        reactor.handle_events(apps.make_app_with_opts(
+            1,
+            make_windows(2),
+            Some(WindowId::new(1, 1)),
+            true,
+            true,
+        ));
+        reactor.handle_events(apps.make_app_with_opts(2, make_windows(2), None, false, true));
+        assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(1, 1))
+        );
+
+        reactor.handle_event(ApplicationGloballyDeactivated(1));
+        assert_eq!(None, reactor.main_window());
+        reactor.handle_event(ApplicationGloballyActivated(2));
+        reactor.handle_event(ApplicationActivated(2, Quiet::Yes));
+        assert_eq!(None, reactor.main_window());
+        reactor.handle_event(ApplicationMainWindowChanged(
+            2,
+            Some(WindowId::new(2, 2)),
+            Quiet::Yes,
+        ));
+        assert_eq!(Some(WindowId::new(2, 2)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(1, 1))
+        );
+
+        reactor.handle_event(ApplicationActivated(2, Quiet::No));
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(2, 2))
+        );
+
+        reactor.handle_event(ApplicationMainWindowChanged(
+            2,
+            Some(WindowId::new(2, 1)),
+            Quiet::Yes,
+        ));
+        assert_eq!(Some(WindowId::new(2, 1)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(2, 2))
+        );
+
+        reactor.handle_event(ApplicationActivated(1, Quiet::Yes));
+        reactor.handle_event(ApplicationGloballyActivated(1));
+        assert_eq!(Some(WindowId::new(1, 1)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(2, 2))
+        );
+
+        reactor.handle_event(ApplicationMainWindowChanged(
+            1,
+            Some(WindowId::new(1, 2)),
+            Quiet::No,
+        ));
+        assert_eq!(Some(WindowId::new(1, 2)), reactor.main_window());
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(1, 2))
+        );
+    }
+
+    #[test]
+    fn it_selects_main_window_when_space_is_enabled() {
+        use Event::*;
+        let mut apps = Apps::new();
+        let mut reactor = Reactor::new_for_test(LayoutEngine::new(
+            &rini_config::VirtualWorkspaceSettings::default(),
+            &rini_config::LayoutSettings::default(),
+            None,
+        ));
+        let pid = 3;
+        let windows = make_windows(2);
+        let space = SpaceId::new(1);
+        let screen_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1920., 1080.));
+        reactor.handle_event(space_state_event(vec![screen_frame], vec![Some(space)]));
+
+        reactor.handle_events(apps.make_app_with_opts(
+            pid,
+            windows,
+            Some(WindowId::new(3, 1)),
+            false,
+            true,
+        ));
+
+        reactor.handle_event(space_state_event(vec![screen_frame], vec![None]));
+        reactor.handle_event(ApplicationActivated(3, Quiet::No));
+        reactor.handle_event(ApplicationGloballyActivated(3));
+        reactor.handle_event(WindowsDiscovered {
+            pid,
+            new: vec![],
+            known_visible: vec![WindowId::new(3, 1), WindowId::new(3, 2)],
+        });
+        assert_eq!(Some(WindowId::new(3, 1)), reactor.main_window());
+
+        reactor.handle_event(space_state_event(vec![screen_frame], vec![Some(space)]));
+        assert_eq!(
+            reactor.layout_manager.layout_engine.selected_window(space),
+            Some(WindowId::new(3, 1))
+        );
+    }
 }

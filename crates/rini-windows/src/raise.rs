@@ -1,3 +1,7 @@
+//! Raising windows in order. A raise walks every window of a workspace and ends on the one to
+//! focus; the manager serialises those sequences, waits for each app's completion report, and
+//! times out the ones that hang. Timeouts go out as `Event::RaiseTimeout` so the application
+//! can record and replay them; the cursor warp that follows a focus raise is the caller's.
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -5,13 +9,13 @@ use objc2_core_foundation::CGPoint;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
-use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
-use rini_windows::ids::WindowId;
-use crate::actor::{self, reactor};
-use rini_input::input_tap as event_tap;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use rini_windows::ids::pid_t;
+use rini_runloop::channel;
 use rini_runloop::timer::Timer;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+
+use crate::app_actor::{AppThreadHandle, Quiet, Request};
+use crate::event::{Event as WindowsEvent, EventSink};
+use crate::ids::{WindowId, pid_t};
 
 /// Messages that can be sent to the raise manager
 #[derive(Debug)]
@@ -44,7 +48,7 @@ pub struct RaiseManager {
     /// Queued sequences waiting to be processed
     queued_sequences: VecDeque<RaiseRequest>,
     next_sequence_id: u64,
-    event_tap_tx: Option<event_tap::Sender>,
+    warp: Box<dyn Fn(CGPoint)>,
 }
 
 /// Tracks an executing sequence of raises.
@@ -59,20 +63,15 @@ struct ActiveSequence {
     timed_out: bool,
 }
 
-pub type Sender = actor::Sender<Event>;
-type Receiver = actor::Receiver<Event>;
+pub type Sender = channel::Sender<Event>;
+pub type Receiver = channel::Receiver<Event>;
 
 const TIMEOUT_DURATION: Duration = Duration::from_millis(250);
 
 impl RaiseManager {
     /// Run the raise manager task.
-    pub async fn run(
-        mut rx: Receiver,
-        events_tx: reactor::Sender,
-        event_tap_tx: Option<event_tap::Sender>,
-    ) {
-        let mut raise_manager = RaiseManager::new();
-        raise_manager.event_tap_tx = event_tap_tx;
+    pub async fn run(mut rx: Receiver, events: impl EventSink, warp: impl Fn(CGPoint) + 'static) {
+        let mut raise_manager = RaiseManager::new(warp);
         let mut timeout_timer = Timer::manual();
 
         let sequence_timeout = |sequence: &ActiveSequence| {
@@ -109,7 +108,7 @@ impl RaiseManager {
                             // relayed back to us. We send these events through
                             // the reactor so that we can record/replay them.
                             sequence.timed_out = true;
-                            events_tx.send(reactor::Event::RaiseTimeout { sequence_id: sequence.sequence_id });
+                            events.send(WindowsEvent::RaiseTimeout { sequence_id: sequence.sequence_id });
                         }
                     }
                 }
@@ -117,12 +116,12 @@ impl RaiseManager {
         }
     }
 
-    fn new() -> Self {
+    fn new(warp: impl Fn(CGPoint) + 'static) -> Self {
         Self {
             active_sequence: None,
             queued_sequences: VecDeque::new(),
             next_sequence_id: 1,
-            event_tap_tx: None,
+            warp: Box::new(warp),
         }
     }
 
@@ -305,12 +304,10 @@ impl RaiseManager {
                     warn!("Failed to send focus window request");
                 }
 
-                if let Some(warp) = warp
-                    && let Some(event_tap_tx) = &self.event_tap_tx
-                {
+                if let Some(warp) = warp {
                     // For now we don't wait for the last window to be raised;
                     // send the warp as soon as we send the raise request.
-                    _ = event_tap_tx.send(event_tap::Request::Warp(warp));
+                    (self.warp)(warp);
                 }
             }
         }
@@ -332,15 +329,16 @@ impl RaiseManager {
 #[cfg(test)]
 mod tests {
 
-    use super::*;
-    use crate::actor;
-    use rini_windows::app_actor::AppThreadHandle;
-    use rini_windows::ids::WindowId;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use rini_runloop::executor::Executor;
 
-    fn create_test_app_handles() -> (HashMap<i32, AppThreadHandle>, actor::Receiver<Request>) {
+    use super::*;
+
+    fn create_test_app_handles() -> (HashMap<i32, AppThreadHandle>, channel::Receiver<Request>) {
         let mut app_handles = HashMap::default();
-        let (app_tx, app_rx) = actor::channel();
+        let (app_tx, app_rx) = channel::channel();
         let app_handle = AppThreadHandle::from_sender(app_tx);
         app_handles.insert(1, app_handle);
         (app_handles, app_rx)
@@ -360,7 +358,7 @@ mod tests {
         })
     }
 
-    fn collect_requests(app_rx: &mut actor::Receiver<Request>) -> Vec<Request> {
+    fn collect_requests(app_rx: &mut channel::Receiver<Request>) -> Vec<Request> {
         let mut requests = Vec::new();
         while let Ok((_, request)) = app_rx.try_recv() {
             requests.push(request);
@@ -397,7 +395,7 @@ mod tests {
     #[test]
     fn test_raise_manager_handles_layout_response() {
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
+            let mut raise_manager = RaiseManager::new(|_| {});
             let (app_handles, _app_rx) = create_test_app_handles();
 
             let msg = create_layout_response(
@@ -421,7 +419,7 @@ mod tests {
     #[test]
     fn test_raise_completion_removes_pending_window() {
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
+            let mut raise_manager = RaiseManager::new(|_| {});
             let (app_handles, _app_rx) = create_test_app_handles();
 
             let layout_msg = create_layout_response(
@@ -460,7 +458,7 @@ mod tests {
     #[test]
     fn test_timeout_clears_pending_raises() {
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
+            let mut raise_manager = RaiseManager::new(|_| {});
             let (app_handles, _app_rx) = create_test_app_handles();
 
             let layout_msg =
@@ -486,9 +484,11 @@ mod tests {
     #[test]
     fn test_all_raises_complete_triggers_focus() {
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
-            let (event_tap_tx, mut event_tap_rx) = actor::channel();
-            raise_manager.event_tap_tx = Some(event_tap_tx);
+            let warped = Rc::new(RefCell::new(None));
+            let mut raise_manager = RaiseManager::new({
+                let warped = warped.clone();
+                move |point| *warped.borrow_mut() = Some(point)
+            });
 
             let (app_handles, mut app_rx) = create_test_app_handles();
 
@@ -527,10 +527,7 @@ mod tests {
             );
 
             // Check that warp request was sent
-            let warp_request = event_tap_rx.try_recv().expect("Warp request should have been sent");
-            let event_tap::Request::Warp(warp) = warp_request.1 else {
-                panic!("Unexpected mouse request sent: {:?}", warp_request.1)
-            };
+            let warp = warped.borrow().expect("Warp request should have been sent");
             assert_eq!(warp, CGPoint::new(100.0, 200.0));
 
             // Complete the focus window raise
@@ -547,7 +544,7 @@ mod tests {
     #[test]
     fn test_timeout_clears_pending_and_triggers_focus() {
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
+            let mut raise_manager = RaiseManager::new(|_| {});
             let (app_handles, mut app_rx) = create_test_app_handles();
 
             let layout_msg = create_layout_response(
@@ -590,7 +587,7 @@ mod tests {
     #[test]
     fn test_multiple_layout_responses_wait_for_focus_completion() {
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
+            let mut raise_manager = RaiseManager::new(|_| {});
             let (app_handles, mut app_rx) = create_test_app_handles();
 
             // Send two layout responses - second should be queued
@@ -677,7 +674,7 @@ mod tests {
     #[test]
     fn test_multiple_iterations_required_for_chained_completions() {
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
+            let mut raise_manager = RaiseManager::new(|_| {});
             let (app_handles, mut app_rx) = create_test_app_handles();
 
             // Send three layout responses:
@@ -780,7 +777,7 @@ mod tests {
         // Test that the raise manager correctly handles batched windows
         // by sending multiple windows from the same app/screen as a single request
         Executor::run(async {
-            let mut raise_manager = RaiseManager::new();
+            let mut raise_manager = RaiseManager::new(|_| {});
             let (app_handles, mut app_rx) = create_test_app_handles();
 
             // Create a raise request with batched windows from the same app

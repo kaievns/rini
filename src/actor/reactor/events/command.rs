@@ -3,7 +3,7 @@ use tracing::{error, info, warn};
 use super::super::ScreenInfo;
 use rini_windows::app_actor::{AppThreadHandle, Quiet};
 use rini_windows::ids::WindowId;
-use crate::actor::raise_manager;
+use rini_windows::raise as raise_manager;
 use crate::actor::reactor::WorkspaceSwitchOrigin;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::{

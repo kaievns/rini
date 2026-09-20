@@ -97,7 +97,7 @@ pub enum ReactorError {
     AppCommunicationFailed(#[from] tokio::sync::mpsc::error::SendError<rini_windows::app_actor::Request>),
     #[error("Raise manager communication failed: {0}")]
     RaiseManagerCommunicationFailed(
-        #[from] tokio::sync::mpsc::error::SendError<crate::actor::raise_manager::Event>,
+        #[from] tokio::sync::mpsc::error::SendError<rini_windows::raise::Event>,
     ),
 }
 
