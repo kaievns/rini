@@ -1,4 +1,4 @@
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use super::window;
 use rini_windows::app::{AppInfo, WindowInfo};
@@ -9,8 +9,8 @@ use rini_windows::window_server::compute_window_manageability;
 use rini_windows::state::{WindowFilter, WindowState};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
-use rini_workspaces::AppRuleResult;
-use rini_workspaces::virtual_workspace::WorkspaceError;
+use rini_workspaces::app_rules::AfterRules;
+use rini_workspaces::engine::{OnScreenEntry, on_screen_entry};
 use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 
@@ -414,69 +414,6 @@ pub(crate) fn update_window_states(
 }
 
 /// Send layout events for discovered windows.
-fn assign_discovered_window_to_space(
-    state: &mut crate::model::RiniState,
-    layout: &mut crate::actor::reactor::managers::LayoutManager,
-    wid: WindowId,
-    space: SpaceId,
-    app_info: &Option<AppInfo>,
-) -> Result<AppRuleResult, WorkspaceError> {
-    let Some(window) = state.windows.window(wid) else {
-        return Err(WorkspaceError::AssignmentFailed);
-    };
-    let title = window.info.title.clone();
-    let ax_role = window.info.ax_role.clone();
-    let ax_subrole = window.info.ax_subrole.clone();
-    let is_modal = window.info.is_modal;
-
-    layout.layout_engine.assign_window_with_app_info(
-        &mut state.windows,
-        wid,
-        space,
-        app_info.as_ref().and_then(|a| a.bundle_id.as_deref()),
-        app_info.as_ref().and_then(|a| a.localized_name.as_deref()),
-        Some(title.as_str()),
-        ax_role.as_deref(),
-        ax_subrole.as_deref(),
-        is_modal,
-    )
-}
-
-fn apply_assignment_result(
-    state: &mut crate::model::RiniState,
-    layout: &crate::actor::reactor::managers::LayoutManager,
-    wid: WindowId,
-    space: SpaceId,
-    assign_result: Result<AppRuleResult, WorkspaceError>,
-) -> crate::actor::reactor::events::EventOutcome {
-    let mut outcome = crate::actor::reactor::events::EventOutcome::default();
-    match assign_result {
-        Ok(AppRuleResult::Managed(_)) => {
-            if let Some(window) = state.windows.window_mut(wid) {
-                window.ignore_app_rule = false;
-            }
-        }
-        Ok(AppRuleResult::Unmanaged) => {
-            if let Some(window) = state.windows.window_mut(wid) {
-                window.ignore_app_rule = true;
-            }
-            let needs_removal = {
-                let engine = &layout.layout_engine;
-                engine
-                    .virtual_workspace_manager()
-                    .workspace_for_window(&state.windows, space, wid)
-                    .is_some()
-                    || engine.is_window_floating(wid)
-            };
-            if needs_removal {
-                outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(wid));
-            }
-        }
-        Err(e) => warn!("Failed to assign window {:?} to workspace: {:?}", wid, e),
-    }
-    outcome
-}
-
 pub(crate) struct EmitLayoutPayload<'a> {
     pub(crate) pid: pid_t,
     pub(crate) known_visible: &'a [WindowId],
@@ -587,7 +524,7 @@ pub(crate) fn emit_layout_events(
         for &wid in windows_for_space {
             assignment_results.insert(
                 (space, wid),
-                assign_discovered_window_to_space(state, layout, wid, space, app_info),
+                layout.layout_engine.assign_window_by_rules(&mut state.windows, wid, space, app_info.as_ref()),
             );
         }
     }
@@ -599,49 +536,32 @@ pub(crate) fn emit_layout_events(
         if !windows_for_space.is_empty() {
             for &wid in &windows_for_space {
                 let assign_result = assignment_results.remove(&(space, wid)).unwrap_or_else(|| {
-                    assign_discovered_window_to_space(state, layout, wid, space, app_info)
+                    layout.layout_engine.assign_window_by_rules(&mut state.windows, wid, space, app_info.as_ref())
                 });
-                let apply_outcome =
-                    apply_assignment_result(state, layout, wid, space, assign_result);
-                outcome.absorb(apply_outcome);
+                // Discovery re-lists every window below, so only the removal matters here.
+                let before = layout.layout_engine.before_rules(&state.windows, space, wid);
+                if layout.layout_engine.settle_app_rule(&mut state.windows, wid, space, before, &assign_result)
+                    == AfterRules::RemoveFromLayout
+                {
+                    outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(wid));
+                }
             }
         }
 
-        let windows_with_titles: Vec<(
-            WindowId,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            bool,
-            bool,
-            objc2_core_foundation::CGSize,
-            Option<objc2_core_foundation::CGSize>,
-            Option<objc2_core_foundation::CGSize>,
-        )> = windows_for_space
+        let windows_with_titles: Vec<OnScreenEntry> = windows_for_space
             .iter()
             .filter_map(|&wid| {
                 let window = state.windows.window(wid)?;
-                if !window.matches_filter(WindowFilter::EffectivelyManageable) {
-                    return None;
-                }
-                Some((
-                    wid,
-                    Some(window.info.title.clone()),
-                    window.info.ax_role.clone(),
-                    window.info.ax_subrole.clone(),
-                    window.info.is_modal,
-                    window.info.is_resizable,
-                    window.frame_monotonic.size,
-                    window.info.min_size,
-                    window.info.max_size,
-                ))
+                window
+                    .matches_filter(WindowFilter::EffectivelyManageable)
+                    .then(|| on_screen_entry(wid, Some(window)))
             })
             .collect();
 
         outcome = outcome.with_layout_event(LayoutEvent::WindowsOnScreenUpdated(
             space,
             pid,
-            windows_with_titles.clone(),
+            windows_with_titles,
             app_info.clone(),
         ));
     }

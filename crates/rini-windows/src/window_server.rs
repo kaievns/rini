@@ -18,7 +18,7 @@ use objc2_core_graphics::{
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-use rini_geometry::{CGRectDef, CGSizeDef};
+use rini_geometry::{CGRectDef, CGRectExt, CGSizeDef};
 use crate::ids::{WindowId, WindowServerId};
 #[cfg(any(test, feature = "test-support"))]
 use rustc_hash::FxHashMap as HashMap;
@@ -27,6 +27,7 @@ use crate::ax::element::{AXUIElement, Error as AxError};
 use crate::cg_ok;
 #[cfg(not(any(test, feature = "test-support")))]
 use crate::process::ProcessSerialNumber;
+use crate::sub_level::window_sub_level;
 use rini_skylight_sys::SpaceId;
 use rini_skylight_sys::*;
 
@@ -1084,4 +1085,62 @@ pub fn compute_window_manageability(
         }
     }
     is_ax_standard && is_ax_root
+}
+
+/// A window's place in the window server's stack: its frame, level and sub-level.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StackPlace {
+    pub frame: CGRect,
+    pub level: Option<NSWindowLevel>,
+    pub sub_level: c_int,
+}
+
+impl StackPlace {
+    pub fn of(wsid: WindowServerId, frame: CGRect) -> Self {
+        let id = wsid.as_u32();
+        Self { frame, level: window_level(id), sub_level: window_sub_level(id) }
+    }
+}
+
+/// Whether one of the windows stacked above `candidate` sits wholly inside its frame at the same
+/// level and sub-level. Raising the candidate would put it over that window, which the user has
+/// deliberately on top; `above` is the stack from the top down to the candidate, exclusive.
+pub fn covered_by_peer_above(candidate: StackPlace, above: impl IntoIterator<Item = StackPlace>) -> bool {
+    above.into_iter().any(|peer| {
+        candidate.frame.contains_rect(peer.frame)
+            && candidate.level.zip(peer.level).is_some_and(|(c, p)| c == p)
+            && candidate.sub_level == peer.sub_level
+    })
+}
+
+#[cfg(test)]
+mod stack_tests {
+    use objc2_core_foundation::{CGPoint, CGSize};
+
+    use super::*;
+
+    fn place(x: f64, w: f64, level: Option<NSWindowLevel>, sub_level: c_int) -> StackPlace {
+        StackPlace { frame: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 100.0)), level, sub_level }
+    }
+
+    #[test]
+    fn a_peer_wholly_inside_at_the_same_level_covers() {
+        let candidate = place(0.0, 1000.0, Some(0), 0);
+        assert!(covered_by_peer_above(candidate, [place(100.0, 200.0, Some(0), 0)]));
+    }
+
+    #[test]
+    fn a_peer_at_another_level_or_sub_level_or_overhanging_does_not() {
+        let candidate = place(0.0, 1000.0, Some(0), 0);
+        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, Some(3), 0)]));
+        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, Some(0), 1)]));
+        assert!(!covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), 0)]), "overhangs the edge");
+        assert!(!covered_by_peer_above(candidate, []));
+    }
+
+    #[test]
+    fn an_unknown_level_never_covers() {
+        let candidate = place(0.0, 1000.0, None, 0);
+        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, None, 0)]));
+    }
 }

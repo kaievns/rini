@@ -141,6 +141,65 @@ pub struct AppRuleResize {
     pub size: AppRuleSize,
 }
 
+impl AppRuleResize {
+    /// `current` with whichever dimensions the rule names replaced.
+    pub fn resized_frame(&self, current: CGRect) -> CGRect {
+        let mut frame = current;
+        if let Some(width) = self.size.w {
+            frame.size.width = width;
+        }
+        if let Some(height) = self.size.h {
+            frame.size.height = height;
+        }
+        frame
+    }
+}
+
+/// What the layout knew about a window before its app rules were re-evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BeforeRules {
+    pub assigned: bool,
+    pub floating: bool,
+    pub ignored: bool,
+}
+
+/// What the layout has to do once a window's rules have been re-evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterRules {
+    /// Its place in the layout changed (newly assigned, float flipped, or no longer ignored).
+    RefreshLayout,
+    /// The rules now leave it unmanaged while the layout still holds it.
+    RemoveFromLayout,
+    Settled,
+}
+
+impl AfterRules {
+    /// The follow-up for a rule result. `in_layout_now` is whether the layout still holds the
+    /// window after the evaluation; it only matters for an unmanaged verdict.
+    pub fn for_result(
+        before: BeforeRules,
+        result: Result<&AppRuleResult, ()>,
+        in_layout_now: bool,
+    ) -> Self {
+        match result {
+            Ok(AppRuleResult::Managed(effects)) => {
+                let floating = effects.should_float(before.floating);
+                if !before.assigned || before.floating != floating || before.ignored {
+                    Self::RefreshLayout
+                } else {
+                    Self::Settled
+                }
+            }
+            Ok(AppRuleResult::Unmanaged) => {
+                if in_layout_now { Self::RemoveFromLayout } else { Self::Settled }
+            }
+            Err(()) => {
+                if !before.assigned || before.ignored { Self::RefreshLayout } else { Self::Settled }
+            }
+        }
+    }
+}
+
 /// Reactor-owned part of a focus rule: switching workspaces requires saving
 /// the currently visible floating frames before the engine activates the target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,3 +209,67 @@ pub struct AppRuleWorkspaceFocus {
     pub workspace_index: usize,
 }
 
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::CGSize;
+
+    use super::*;
+
+    fn effects(floating: bool, prev_rule_decision: bool) -> AppRuleResult {
+        AppRuleResult::Managed(AppRuleEffects {
+            workspace_id: VirtualWorkspaceId::default(),
+            floating,
+            position: None,
+            size: None,
+            focus: false,
+            prev_rule_decision,
+        })
+    }
+
+    #[test]
+    fn a_resize_replaces_only_the_dimensions_the_rule_names() {
+        let resize = AppRuleResize {
+            window: WindowId::new(1, 1),
+            space: SpaceId::new(1),
+            workspace_id: VirtualWorkspaceId::default(),
+            size: AppRuleSize { w: Some(500.0), h: None },
+        };
+        let current = CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 400.0));
+        let frame = resize.resized_frame(current);
+        assert_eq!(frame.origin, current.origin);
+        assert_eq!(frame.size, CGSize::new(500.0, 400.0));
+    }
+
+    #[test]
+    fn a_managed_verdict_refreshes_when_the_windows_place_changes() {
+        let settled = BeforeRules { assigned: true, floating: false, ignored: false };
+        assert_eq!(AfterRules::for_result(settled, Ok(&effects(false, true)), true), AfterRules::Settled);
+        assert_eq!(AfterRules::for_result(settled, Ok(&effects(true, true)), true), AfterRules::RefreshLayout);
+        let unassigned = BeforeRules { assigned: false, ..settled };
+        assert_eq!(AfterRules::for_result(unassigned, Ok(&effects(false, true)), true), AfterRules::RefreshLayout);
+        let ignored = BeforeRules { ignored: true, ..settled };
+        assert_eq!(AfterRules::for_result(ignored, Ok(&effects(false, true)), true), AfterRules::RefreshLayout);
+    }
+
+    #[test]
+    fn a_rule_that_says_nothing_about_floating_keeps_the_windows_current_state() {
+        let floating = BeforeRules { assigned: true, floating: true, ignored: false };
+        assert_eq!(AfterRules::for_result(floating, Ok(&effects(false, false)), true), AfterRules::Settled);
+        assert_eq!(AfterRules::for_result(floating, Ok(&effects(false, true)), true), AfterRules::RefreshLayout);
+    }
+
+    #[test]
+    fn an_unmanaged_verdict_removes_only_what_the_layout_still_holds() {
+        let before = BeforeRules { assigned: true, floating: false, ignored: false };
+        assert_eq!(AfterRules::for_result(before, Ok(&AppRuleResult::Unmanaged), true), AfterRules::RemoveFromLayout);
+        assert_eq!(AfterRules::for_result(before, Ok(&AppRuleResult::Unmanaged), false), AfterRules::Settled);
+    }
+
+    #[test]
+    fn a_failed_evaluation_refreshes_a_window_the_layout_did_not_have() {
+        let held = BeforeRules { assigned: true, floating: false, ignored: false };
+        assert_eq!(AfterRules::for_result(held, Err(()), true), AfterRules::Settled);
+        assert_eq!(AfterRules::for_result(BeforeRules { assigned: false, ..held }, Err(()), true), AfterRules::RefreshLayout);
+        assert_eq!(AfterRules::for_result(BeforeRules { ignored: true, ..held }, Err(()), true), AfterRules::RefreshLayout);
+    }
+}

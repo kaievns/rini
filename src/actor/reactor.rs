@@ -90,11 +90,12 @@ use crate::actor;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
 use rini_config::Config;
+use rini_workspaces::app_rules::AfterRules;
+use rini_workspaces::engine::{OnScreenEntry, on_screen_entry};
 use rini_workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
 use rini_workspaces::broadcast::{BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id};
 use rini_displays::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use rini_windows::transaction::WindowTxStore;
-use rini_workspaces::AppRuleResult;
 use crate::model::RiniState;
 use rini_windows::mouse::MouseState;
 use rini_runloop::executor::Executor;
@@ -102,10 +103,9 @@ use rini_geometry::{CGRectDef, CGRectExt};
 pub use rini_displays::screen::ScreenInfo;
 use rini_displays::ids::SpaceId;
 use rini_displays::screen::order_visible_spaces_by_position;
-use rini_windows::sub_level::window_sub_level;
 use rini_windows::window_server;
 use rini_windows::ids::WindowServerId;
-use rini_windows::window_server::{WindowServerInfo, window_level};
+use rini_windows::window_server::{StackPlace, WindowServerInfo, covered_by_peer_above};
 
 pub type Sender = actor::Sender<Event>;
 type Receiver = actor::Receiver<Event>;
@@ -4695,13 +4695,7 @@ impl Reactor {
                 continue;
             };
             let old_frame = window.frame_monotonic;
-            let mut new_frame = old_frame;
-            if let Some(width) = resize.size.w {
-                new_frame.size.width = width;
-            }
-            if let Some(height) = resize.size.h {
-                new_frame.size.height = height;
-            }
+            let new_frame = resize.resized_frame(old_frame);
             self.layout_manager.layout_engine.apply_app_rule_resize(
                 resize,
                 old_frame,
@@ -4752,48 +4746,19 @@ impl Reactor {
             return true;
         };
 
-        let order = {
-            let space_id = space.get();
-            rini_windows::window_server::space_window_list_for_connection(&[space_id], 0, false)
-        };
+        // The stack from the top down to the candidate; only floating windows rini tracks count.
+        let order = rini_windows::window_server::space_window_list_for_connection(&[space.get()], 0, false);
         let candidate_u32 = candidate_wsid.as_u32();
-        let candidate_level = window_level(candidate_u32);
-        let candidate_sub_level = window_sub_level(candidate_u32);
-
-        for above_u32 in order {
-            if above_u32 == candidate_u32 {
-                break;
+        let above = order.into_iter().take_while(|&id| id != candidate_u32).filter_map(|id| {
+            let wsid = WindowServerId::new(id);
+            let wid = self.state.windows.tracked_window_id(wsid)?;
+            if !self.layout_manager.layout_engine.is_window_floating(wid) {
+                return None;
             }
-
-            let above_wsid = WindowServerId::new(above_u32);
-            let Some(above_wid) = self.state.windows.tracked_window_id(above_wsid) else {
-                continue;
-            };
-
-            if !self.layout_manager.layout_engine.is_window_floating(above_wid) {
-                continue;
-            }
-
-            let Some(above_state) = self.state.windows.window(above_wid) else {
-                continue;
-            };
-            let above_frame = above_state.frame_monotonic;
-            if !candidate_frame.contains_rect(above_frame) {
-                continue;
-            }
-
-            let above_level = window_level(above_u32);
-            let above_sub_level = window_sub_level(above_u32);
-            if candidate_level
-                .zip(above_level)
-                .is_some_and(|(candidate, above)| candidate == above)
-                && candidate_sub_level == above_sub_level
-            {
-                return false;
-            }
-        }
-
-        true
+            let frame = self.state.windows.window(wid)?.frame_monotonic;
+            Some(StackPlace::of(wsid, frame))
+        });
+        !covered_by_peer_above(StackPlace::of(candidate_wsid, candidate_frame), above)
     }
 
     fn process_windows_for_app_rules(
@@ -4826,85 +4791,21 @@ impl Reactor {
             }
             let mut windows_needing_layout_refresh: Vec<WindowId> = Vec::new();
 
-            for wid in &wids {
-                let (was_assigned, was_floating, was_ignored) = {
-                    let engine = &self.layout_manager.layout_engine;
-                    (
-                        engine
-                            .virtual_workspace_manager()
-                            .workspace_for_window(&self.state.windows, space, *wid)
-                            .is_some(),
-                        engine.is_window_floating(*wid),
-                        self.state
-                            .windows
-                            .window(*wid)
-                            .map(|window| window.ignore_app_rule)
-                            .unwrap_or(false),
-                    )
-                };
-                let assign_result = {
-                    let window_metadata = self.state.windows.window(*wid).map(|window| {
-                        (
-                            window.info.title.clone(),
-                            window.info.ax_role.clone(),
-                            window.info.ax_subrole.clone(),
-                            window.info.is_modal,
-                        )
-                    });
-                    self.layout_manager.layout_engine.assign_window_with_app_info(
-                        &mut self.state.windows,
-                        *wid,
-                        space,
-                        app_info.bundle_id.as_deref(),
-                        app_info.localized_name.as_deref(),
-                        window_metadata.as_ref().map(|metadata| metadata.0.as_str()),
-                        window_metadata.as_ref().and_then(|metadata| metadata.1.as_deref()),
-                        window_metadata.as_ref().and_then(|metadata| metadata.2.as_deref()),
-                        window_metadata.as_ref().is_some_and(|metadata| metadata.3),
-                    )
-                };
-
-                match assign_result {
-                    Ok(AppRuleResult::Managed(assignment)) => {
-                        if let Some(window) = self.state.windows.window_mut(*wid) {
-                            window.ignore_app_rule = false;
-                        }
-
-                        let effective_floating =
-                            assignment.floating || (!assignment.prev_rule_decision && was_floating);
-                        let needs_layout_refresh =
-                            !was_assigned || was_floating != effective_floating || was_ignored;
-                        if needs_layout_refresh {
-                            windows_needing_layout_refresh.push(*wid);
-                        }
+            for &wid in &wids {
+                let engine = &mut self.layout_manager.layout_engine;
+                let before = engine.before_rules(&self.state.windows, space, wid);
+                let result = engine.assign_window_by_rules(
+                    &mut self.state.windows,
+                    wid,
+                    space,
+                    Some(&app_info),
+                );
+                match engine.settle_app_rule(&mut self.state.windows, wid, space, before, &result) {
+                    AfterRules::RefreshLayout => windows_needing_layout_refresh.push(wid),
+                    AfterRules::RemoveFromLayout => {
+                        self.send_layout_event(LayoutEvent::WindowRemoved(wid));
                     }
-                    Ok(AppRuleResult::Unmanaged) => {
-                        if let Some(window) = self.state.windows.window_mut(*wid) {
-                            window.ignore_app_rule = true;
-                        }
-
-                        let needs_removal = {
-                            let engine = &self.layout_manager.layout_engine;
-                            engine
-                                .virtual_workspace_manager()
-                                .workspace_for_window(&self.state.windows, space, *wid)
-                                .is_some()
-                                || engine.is_window_floating(*wid)
-                        };
-                        if needs_removal {
-                            self.send_layout_event(LayoutEvent::WindowRemoved(*wid));
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to assign window {:?} to workspace: {:?}", wid, e);
-                        if let Some(window) = self.state.windows.window_mut(*wid) {
-                            window.ignore_app_rule = false;
-                        }
-
-                        if !was_assigned || was_ignored {
-                            windows_needing_layout_refresh.push(*wid);
-                        }
-                    }
+                    AfterRules::Settled => {}
                 }
             }
 
@@ -4912,41 +4813,9 @@ impl Reactor {
                 continue;
             }
 
-            let windows_with_titles: Vec<(
-                WindowId,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                bool,
-                bool,
-                CGSize,
-                Option<CGSize>,
-                Option<CGSize>,
-            )> = windows_needing_layout_refresh
+            let windows_with_titles: Vec<OnScreenEntry> = windows_needing_layout_refresh
                 .iter()
-                .map(|&wid| {
-                    let window = self.state.windows.window(wid);
-                    let title_opt = window.map(|w| w.info.title.clone());
-                    let ax_role = window.and_then(|w| w.info.ax_role.clone());
-                    let ax_subrole = window.and_then(|w| w.info.ax_subrole.clone());
-                    let is_modal = window.is_some_and(|w| w.info.is_modal);
-                    let is_resizable = window.map_or(true, |w| w.info.is_resizable);
-                    let size_hint =
-                        window.map_or(CGSize::new(0.0, 0.0), |w| w.frame_monotonic.size);
-                    let min_size = window.and_then(|w| w.info.min_size);
-                    let max_size = window.and_then(|w| w.info.max_size);
-                    (
-                        wid,
-                        title_opt,
-                        ax_role,
-                        ax_subrole,
-                        is_modal,
-                        is_resizable,
-                        size_hint,
-                        min_size,
-                        max_size,
-                    )
-                })
+                .map(|&wid| on_screen_entry(wid, self.state.windows.window(wid)))
                 .collect();
 
             self.send_layout_event(LayoutEvent::WindowsOnScreenUpdated(

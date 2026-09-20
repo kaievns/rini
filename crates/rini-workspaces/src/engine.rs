@@ -15,7 +15,8 @@ use rini_ipc::protocol::WorkspaceSelector;
 use crate::LayoutSystem;
 use crate::floating::FloatingFullscreenKind;
 use rini_tiling::WindowLayoutConstraints;
-use crate::app_rules::{AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus};
+use crate::app_rules::{AfterRules, AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus, BeforeRules};
+use rini_windows::state::WindowState;
 use crate::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
 use crate::display_affinity::ColumnWidth;
 use crate::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
@@ -34,26 +35,39 @@ struct WindowRemovalImpact {
     active_space: Option<SpaceId>,
 }
 
+/// One window as `WindowsOnScreenUpdated` describes it: id, title, AX role, AX subrole,
+/// is_modal, is_resizable, size, min size, max size.
+pub type OnScreenEntry = (
+    WindowId,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    bool,
+    bool,
+    CGSize,
+    Option<CGSize>,
+    Option<CGSize>,
+);
+
+/// The entry for `wid`. A window the store no longer has is resizable, sized zero, untitled.
+pub fn on_screen_entry(wid: WindowId, window: Option<&WindowState>) -> OnScreenEntry {
+    (
+        wid,
+        window.map(|w| w.info.title.clone()),
+        window.and_then(|w| w.info.ax_role.clone()),
+        window.and_then(|w| w.info.ax_subrole.clone()),
+        window.is_some_and(|w| w.info.is_modal),
+        window.map_or(true, |w| w.info.is_resizable),
+        window.map_or(CGSize::new(0.0, 0.0), |w| w.frame_monotonic.size),
+        window.and_then(|w| w.info.min_size),
+        window.and_then(|w| w.info.max_size),
+    )
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum LayoutEvent {
-    WindowsOnScreenUpdated(
-        SpaceId,
-        pid_t,
-        /// Per window: id, title, AX role, AX subrole, is_modal, is_resizable, size, min size, max size.
-        Vec<(
-            WindowId,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            bool,
-            bool,
-            CGSize,
-            Option<CGSize>,
-            Option<CGSize>,
-        )>,
-        Option<AppInfo>,
-    ),
+    WindowsOnScreenUpdated(SpaceId, pid_t, Vec<OnScreenEntry>, Option<AppInfo>),
     /// The complete cross-space discovery batch for one application has been applied.
     WindowDiscoveryCompleted(pid_t, Option<String>, Vec<SpaceId>),
     AppClosed(pid_t),
@@ -2722,6 +2736,71 @@ impl LayoutEngine {
 
     pub fn active_workspace(&self, space: SpaceId) -> Option<crate::VirtualWorkspaceId> {
         self.virtual_workspace_manager.active_workspace(space)
+    }
+
+    /// `assign_window_with_app_info` with the window's own title, role, subrole and modality read
+    /// from the store. `Err(AssignmentFailed)` when the store no longer has the window.
+    pub fn assign_window_by_rules(
+        &mut self,
+        window_store: &mut WindowStore,
+        window_id: WindowId,
+        space: SpaceId,
+        app_info: Option<&AppInfo>,
+    ) -> Result<AppRuleResult, crate::virtual_workspace::WorkspaceError> {
+        let Some(window) = window_store.window(window_id) else {
+            return Err(crate::virtual_workspace::WorkspaceError::AssignmentFailed);
+        };
+        let title = window.info.title.clone();
+        let ax_role = window.info.ax_role.clone();
+        let ax_subrole = window.info.ax_subrole.clone();
+        let is_modal = window.info.is_modal;
+        self.assign_window_with_app_info(
+            window_store,
+            window_id,
+            space,
+            app_info.and_then(|a| a.bundle_id.as_deref()),
+            app_info.and_then(|a| a.localized_name.as_deref()),
+            Some(title.as_str()),
+            ax_role.as_deref(),
+            ax_subrole.as_deref(),
+            is_modal,
+        )
+    }
+
+    /// What the layout holds for `window_id` on `space`, taken before its rules are re-evaluated.
+    pub fn before_rules(&self, window_store: &WindowStore, space: SpaceId, window_id: WindowId) -> BeforeRules {
+        BeforeRules {
+            assigned: self
+                .virtual_workspace_manager
+                .workspace_for_window(window_store, space, window_id)
+                .is_some(),
+            floating: self.floating.is_floating(window_id),
+            ignored: window_store.window(window_id).is_some_and(|w| w.ignore_app_rule),
+        }
+    }
+
+    /// Records a rule verdict on the window (`ignore_app_rule`) and says what the layout must do
+    /// next. A failed evaluation is logged and treated as "managed, rules unknown".
+    pub fn settle_app_rule(
+        &self,
+        window_store: &mut WindowStore,
+        window_id: WindowId,
+        space: SpaceId,
+        before: BeforeRules,
+        result: &Result<AppRuleResult, crate::virtual_workspace::WorkspaceError>,
+    ) -> AfterRules {
+        if let Err(e) = result {
+            warn!("Failed to assign window {:?} to workspace: {:?}", window_id, e);
+        }
+        if let Some(window) = window_store.window_mut(window_id) {
+            window.ignore_app_rule = matches!(result, Ok(AppRuleResult::Unmanaged));
+        }
+        let in_layout_now = self
+            .virtual_workspace_manager
+            .workspace_for_window(window_store, space, window_id)
+            .is_some()
+            || self.floating.is_floating(window_id);
+        AfterRules::for_result(before, result.as_ref().map_err(|_| ()), in_layout_now)
     }
 
     pub fn assign_window_with_app_info(
