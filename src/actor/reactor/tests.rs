@@ -10,7 +10,7 @@ use rini_config::{OuterGaps, WorkspaceSelector};
 use rini_workspaces::{Direction, LayoutCommand, LayoutEvent};
 use rini_windows::catalogue::NativeFullscreenTransition;
 use rini_windows::app::{AppInfo, WindowInfo};
-use rini_geometry::SameAs;
+use rini_geometry::{CGRectExt, SameAs};
 use rini_windows::ids::WindowServerId;
 
 #[test]
@@ -729,7 +729,7 @@ fn best_space_prefers_authoritative_window_server_space_over_geometry() {
     reactor.handle_event(space_state_event(vec![frame], vec![Some(space2)]));
     reactor.insert_test_window(wid, wsid, Some(space1), frame, true);
 
-    assert_eq!(reactor.best_space_for_window_id(wid), Some(space1));
+    assert_eq!(reactor.affinity().best_space_for_window_id(wid), Some(space1));
 }
 
 #[test]
@@ -770,7 +770,7 @@ fn user_space_window_server_destroyed_removes_window_when_window_server_is_gone(
 
     assert!(!reactor.state.windows.contains_window(wid));
     assert_eq!(reactor.state.windows.tracked_window_id(wsid), None);
-    assert_eq!(reactor.assigned_space_for_window_id(wid), None);
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), None);
 }
 
 /// Builds a reactor with `space1` active on a screen and a single tiled window
@@ -796,7 +796,7 @@ fn reactor_with_window_on_space1() -> (Reactor, WindowId, WindowServerId, SpaceI
     reactor.add_test_window(wid, wsid, Some(space1), frame);
 
     assert!(reactor.assign_test_window_to_workspace(space1, wid, space1_workspace));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space1));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space1));
 
     (reactor, wid, wsid, space1, space2, frame)
 }
@@ -829,7 +829,7 @@ fn reactor_with_window_moved_to_space2()
     assert!(reactor.assign_test_window_to_workspace(space2, wid, space2_workspace));
     let txid = reactor.transaction_manager.generate_next_txid(wsid);
     reactor.transaction_manager.store_txid(wsid, txid, moved_frame);
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
 
     (reactor, wid, wsid, space1, space2, moved_frame)
 }
@@ -928,12 +928,12 @@ fn appeared_reassigns_window_without_pending_rini_move() {
 
     // No pending transaction: this is a genuine external space change, so Rini should
     // follow it and reassign the window to the reported space.
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space1));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space1));
 
     window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(wid),
+        reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2),
         "window without an in-flight Rini move must follow a genuine external space change"
     );
@@ -1192,7 +1192,7 @@ fn a_tiled_scrolling_window_keeps_its_space_when_its_frame_lands_on_another_disp
         .unwrap();
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(wid),
+        reactor.affinity().assigned_space_for_window_id(wid),
         Some(space1),
         "a parked column's frame is not evidence that it changed display"
     );
@@ -1333,7 +1333,7 @@ fn cross_display_drag_clears_source_floating_position() {
     assert!(outcome.arrange.requested);
     assert!(matches!(reactor.drag_manager.drag_state, DragState::Inactive));
 
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
     assert_eq!(
         reactor
             .layout_manager
@@ -1358,13 +1358,13 @@ fn stale_user_space_disappearance_does_not_restore_old_display_assignment() {
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
     assert!(reactor.state.windows.is_window_visible(wsid));
 
     let _ = reactor.reconcile_windows_with_authoritative_spaces();
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(wid),
+        reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2),
         "late disappearance from the old display must not drag a moved window back"
     );
@@ -1377,12 +1377,12 @@ fn stale_user_space_appearance_does_not_restore_old_display_assignment() {
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
 
     let _ = reactor.reconcile_windows_with_authoritative_spaces();
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(wid),
+        reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2),
         "late appearance on the old display must not overwrite the newer target assignment"
     );
@@ -1402,9 +1402,9 @@ fn stale_user_space_appearance_is_ignored_when_server_state_already_matches_pend
     window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space1));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space1));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space1));
     assert_eq!(
-        reactor.authoritative_space_for_window_id(wid),
+        reactor.affinity().authoritative_space_for_window_id(wid),
         Some(space1),
         "late appearance from the old display should be ignored once Rini has already committed the new server-space target"
     );
@@ -1420,8 +1420,8 @@ fn stale_user_space_appearance_is_ignored_when_authoritative_window_space_differ
     rini_windows::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
-    assert_eq!(reactor.authoritative_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().authoritative_space_for_window_id(wid), Some(space2));
 }
 
 #[test]
@@ -1431,8 +1431,8 @@ fn multi_active_visible_window_appearance_keeps_display_assignment_and_visibilit
     window_server_appeared(&mut reactor, wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
-    assert_eq!(reactor.authoritative_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().authoritative_space_for_window_id(wid), Some(space2));
     assert!(reactor.state.windows.is_window_visible(wsid));
 }
 
@@ -1443,7 +1443,7 @@ fn multi_active_visible_window_disappearance_does_not_reassign_between_display_s
     window_server_destroyed(&mut reactor, wsid, space1, SpaceEventKind::User);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
     assert!(reactor.state.windows.is_window_visible(wsid));
 }
 
@@ -1475,15 +1475,15 @@ fn hidden_window_can_move_to_another_native_space_without_staying_pinned_to_old_
 
     assert!(reactor.set_test_active_workspace(space1, visible_workspace));
     assert!(reactor.assign_test_window_to_workspace(space1, wid, hidden_workspace));
-    assert_eq!(reactor.hidden_assigned_space_for_window_id(wid), Some(space1));
+    assert_eq!(reactor.affinity().hidden_assigned_space_for_window_id(wid), Some(space1));
 
     rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
     window_server_appeared(&mut reactor, wsid, space2, SpaceEventKind::User);
     rini_windows::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
-    assert_eq!(reactor.authoritative_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().authoritative_space_for_window_id(wid), Some(space2));
 }
 
 #[test]
@@ -1501,12 +1501,12 @@ fn discovery_prefers_authoritative_space_over_geometry_when_displays_overlap_wor
     reactor.track_test_window_server_info(wsid, wid.pid, conflicting_frame);
 
     assert_eq!(
-        reactor.discovery_space_for_window_id(wid),
+        reactor.affinity().discovery_space_for_window_id(wid),
         Some(space2),
         "discovery should stay in the authoritative native space instead of hopping to another display's geometry"
     );
     assert_ne!(
-        reactor.discovery_space_for_window_id(wid),
+        reactor.affinity().discovery_space_for_window_id(wid),
         Some(space1),
         "same-index workspaces on other displays must stay isolated"
     );
@@ -1525,7 +1525,7 @@ fn recent_cross_display_move_ignores_conflicting_geometry_space_change() {
         Some(MouseState::Up),
     ));
 
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space2));
 }
 
@@ -1536,9 +1536,9 @@ fn central_space_resolution_prefers_recent_move_target_over_stale_server_space()
 
     reactor.state.windows.set_window_server_space(wsid, Some(space1));
 
-    assert_eq!(reactor.authoritative_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().authoritative_space_for_window_id(wid), Some(space2));
     assert_eq!(
-        reactor.best_space_for_window(&moved_frame, Some(wsid)),
+        reactor.affinity().best_space_for_window(&moved_frame, Some(wsid)),
         Some(space2),
         "core space resolution should prefer the recent move target when geometry and assignment agree"
     );
@@ -1550,7 +1550,7 @@ fn active_space_membership_refresh_does_not_overwrite_recent_move_target() {
 
     reactor.refresh_active_space_window_membership(vec![(wsid, Some(space1))]);
 
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
     assert_eq!(
         reactor.state.windows.window_server_space(wsid),
         Some(space2),
@@ -1688,7 +1688,7 @@ fn fullscreen_tracking_survives_until_ax_window_id_arrives() {
         reactor.state.windows.native_fullscreen_record_for_window(wid).is_none(),
         "once the window is back on its user space, the fullscreen lifecycle should retire"
     );
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(user_space));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(user_space));
 }
 
 #[test]
@@ -1721,7 +1721,7 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
     ));
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(second_wid),
+        reactor.affinity().assigned_space_for_window_id(second_wid),
         Some(user_space)
     );
 }
@@ -1781,12 +1781,12 @@ fn fullscreen_exit_removes_non_queryable_duplicate_from_layout() {
         !has_window_in_layout(&mut reactor, user_space, frame, duplicate_wid),
         "fullscreen restore must evict non-queryable duplicate layout ghosts"
     );
-    assert_eq!(reactor.assigned_space_for_window_id(duplicate_wid), None);
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(duplicate_wid), None);
 
     reactor.handle_event(space_state_event(vec![frame], vec![Some(other_space)]));
-    assert_eq!(reactor.assigned_space_for_window_id(duplicate_wid), None);
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(duplicate_wid), None);
     reactor.handle_event(space_state_event(vec![frame], vec![Some(user_space)]));
-    assert_eq!(reactor.assigned_space_for_window_id(duplicate_wid), None);
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(duplicate_wid), None);
     assert!(
         !has_window_in_layout(&mut reactor, user_space, frame, duplicate_wid),
         "ghost must not reappear when switching back to the original space"
@@ -1824,7 +1824,7 @@ fn known_window_server_appearance_restores_layout_membership_without_reassignmen
 
     reactor.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
 
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(user_space));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(user_space));
     assert!(
         !has_window_in_layout(&mut reactor, user_space, frame, wid),
         "temporary removal should clear active layout membership before the appearance event"
@@ -3090,7 +3090,7 @@ fn authoritative_active_window_snapshot_reassigns_window_across_active_displays(
     let (mut reactor, wid, wsid, space1, space2, _initial_frame, _screen2) =
         reactor_with_window_on_space1_two_displays();
 
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(space1));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space1));
     assert_eq!(reactor.state.windows.window_server_space(wsid), Some(space1));
 
     reactor.reconcile_authoritative_active_window_snapshot(vec![(wsid, Some(space2))], false);
@@ -3101,7 +3101,7 @@ fn authoritative_active_window_snapshot_reassigns_window_across_active_displays(
         "authoritative active-space membership should update the tracked native space"
     );
     assert_eq!(
-        reactor.assigned_space_for_window_id(wid),
+        reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2),
         "authoritative active-space membership should reassign the window to the new display"
     );
@@ -3169,7 +3169,7 @@ fn authoritative_active_window_snapshot_reassigns_missing_window_to_inactive_spa
     rini_windows::window_server::set_window_spaces_override(moved_wsid, None);
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(moved),
+        reactor.affinity().assigned_space_for_window_id(moved),
         Some(inactive_space),
         "missing active-space windows should migrate to their actual inactive native space"
     );
@@ -3187,7 +3187,7 @@ fn authoritative_active_window_snapshot_reassigns_missing_window_to_inactive_spa
     );
     assert!(has_window_in_layout(&mut reactor, active_space, frame, retained));
     assert_eq!(
-        reactor.assigned_space_for_window_id(retained),
+        reactor.affinity().assigned_space_for_window_id(retained),
         Some(active_space),
         "other visible windows on the active space must remain untouched"
     );
@@ -3244,7 +3244,7 @@ fn topology_window_delta_reassigns_missing_window_to_inactive_space() {
     rini_windows::window_server::set_window_spaces_override(moved_wsid, None);
     rini_windows::window_server::set_space_window_list_for_space_override(active_space.get(), None);
 
-    assert_eq!(reactor.assigned_space_for_window_id(moved), Some(inactive_space));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(moved), Some(inactive_space));
     assert!(reactor.test_workspace_for_window(active_space, moved).is_none());
     assert_eq!(
         reactor.test_workspace_for_window(inactive_space, moved),
@@ -3286,7 +3286,7 @@ fn topology_window_delta_is_not_ignored_by_command_space_only_short_circuit() {
     rini_windows::window_server::set_space_window_list_for_space_override(space2.get(), None);
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(wid),
+        reactor.affinity().assigned_space_for_window_id(wid),
         Some(space2),
         "topology delta should still be processed even when the forwarded screens snapshot is unchanged"
     );
@@ -3354,12 +3354,12 @@ fn non_active_workspace_windows_remain_hidden_even_if_frame_no_longer_matches_co
     }
 
     assert_eq!(
-        reactor.hidden_assigned_space_for_window_id(wid),
+        reactor.affinity().hidden_assigned_space_for_window_id(wid),
         Some(space),
         "workspace-hidden status should follow Rini's workspace assignment, not stale corner geometry"
     );
     assert_eq!(
-        reactor.geometry_space_for_window(
+        reactor.affinity().geometry_space_for_window(
             &CGRect::new(CGPoint::new(200.0, 200.0), CGSize::new(400.0, 400.0)),
             Some(wsid),
         ),
@@ -3710,7 +3710,7 @@ fn fullscreen_startup_applies_app_rules_to_hidden_user_space_windows() {
     let (reactor, wid, user_space, _default_workspace, target_workspace) =
         fullscreen_startup_fixture(true, false);
 
-    assert_eq!(reactor.assigned_space_for_window_id(wid), Some(user_space));
+    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(user_space));
     assert_eq!(
         reactor.test_workspace_for_window(user_space, wid),
         Some(target_workspace),
@@ -4254,7 +4254,7 @@ fn ax_destruction_removes_window_on_known_inactive_space_outside_churn() {
     assert!(reactor.assign_test_window_to_workspace(inactive_space, wid, inactive_workspace));
     reactor.state.windows.set_window_server_space(wsid, Some(inactive_space));
     reactor.state.windows.mark_window_hidden(wsid);
-    assert!(reactor.is_window_on_known_inactive_space(wid));
+    assert!(reactor.affinity().is_window_on_known_inactive_space(wid));
 
     rini_windows::window_server::set_window_ordered_in_override(wsid, Some(false));
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -4860,7 +4860,7 @@ fn native_space_resolution_policy_table() {
         let (reactor, _wid, wsid, space1, space2, _) = reactor_with_window_moved_to_space2();
         cases.push((
             "stale origin",
-            reactor.resolve_native_space(wsid, Some(space1)),
+            reactor.affinity().resolve_native_space(wsid, Some(space1)),
             Some(space2),
         ));
     }
@@ -4868,7 +4868,7 @@ fn native_space_resolution_policy_table() {
     // A direct observation of the target confirms the pending move.
     {
         let (reactor, _wid, wsid, _space1, space2, _) = reactor_with_window_moved_to_space2();
-        let resolved = reactor.resolve_native_space(wsid, Some(space2));
+        let resolved = reactor.affinity().resolve_native_space(wsid, Some(space2));
         reactor.clear_pending_target_if_confirmed_space(wsid, space2);
         cases.push(("confirmed target", resolved, Some(space2)));
     }
@@ -4877,7 +4877,7 @@ fn native_space_resolution_policy_table() {
     {
         let (reactor, _wid, wsid, _space1, space2, _) = reactor_with_window_on_space1();
         rini_windows::window_server::set_window_spaces_override(wsid, Some(vec![space2.get()]));
-        let resolved = reactor.resolve_native_space(wsid, Some(space2));
+        let resolved = reactor.affinity().resolve_native_space(wsid, Some(space2));
         rini_windows::window_server::set_window_spaces_override(wsid, None);
         cases.push(("newer external move", resolved, Some(space2)));
     }
@@ -4887,7 +4887,7 @@ fn native_space_resolution_policy_table() {
         let (reactor, _wid, wsid, space1, _space2, _) = reactor_with_window_on_space1();
         cases.push((
             "partial observation",
-            reactor.resolve_native_space(wsid, None),
+            reactor.affinity().resolve_native_space(wsid, None),
             Some(space1),
         ));
     }
@@ -4905,7 +4905,7 @@ fn native_space_resolution_policy_table() {
         let frame = CGRect::new(CGPoint::new(1200., 100.), CGSize::new(400., 400.));
         cases.push((
             "geometry fallback",
-            reactor.best_space_for_window(&frame, Some(WindowServerId::new(9999))),
+            reactor.affinity().best_space_for_window(&frame, Some(WindowServerId::new(9999))),
             Some(space2),
         ));
     }
@@ -5793,7 +5793,7 @@ fn a_parked_window_is_not_claimed_by_the_display_it_is_parked_over() {
     rini_windows::window_server::set_window_spaces_override(wsid, None);
 
     assert_eq!(
-        reactor.assigned_space_for_window_id(parked),
+        reactor.affinity().assigned_space_for_window_id(parked),
         Some(builtin_space),
         "a parked window's position is not evidence of a display change"
     );
@@ -5940,9 +5940,9 @@ mod strip_regroup {
             }
         }
         for idx in [1, 2] {
-            assert!(!reactor.is_window_parked_offscreen(WindowId::new(1, idx)), "setup: {idx} on screen");
+            assert!(!reactor.affinity().is_window_parked_offscreen(WindowId::new(1, idx)), "setup: {idx} on screen");
         }
-        assert!(reactor.is_window_parked_offscreen(WindowId::new(1, 3)), "setup: 3 parked");
+        assert!(reactor.affinity().is_window_parked_offscreen(WindowId::new(1, 3)), "setup: 3 parked");
         while raise_rx.try_recv().is_ok() {}
         (reactor, raise_rx, space)
     }
@@ -6103,7 +6103,7 @@ mod strip_regroup {
                 w.frame_monotonic = frame;
             }
         }
-        assert!(reactor.is_window_parked_offscreen(WindowId::new(1, 3)));
+        assert!(reactor.affinity().is_window_parked_offscreen(WindowId::new(1, 3)));
         while raise_rx.try_recv().is_ok() {}
         // The visible pair is grouped in front of Settings; the parked column is behind it.
         rini_windows::window_server::set_front_to_back_override(Some(vec![902, 901, 904, 903]));
@@ -6113,7 +6113,7 @@ mod strip_regroup {
 
         assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(WindowId::new(1, 3)));
         assert!(
-            !reactor.is_window_parked_offscreen(WindowId::new(1, 3)),
+            !reactor.affinity().is_window_parked_offscreen(WindowId::new(1, 3)),
             "the layout pass brought the target on screen: {:?}",
             reactor.state.windows.window(WindowId::new(1, 3)).map(|w| w.frame_monotonic)
         );
@@ -6125,7 +6125,7 @@ mod strip_regroup {
         let mut expected: Vec<WindowId> = [2u32, 1]
             .into_iter()
             .map(|idx| WindowId::new(1, idx))
-            .filter(|wid| !reactor.is_window_parked_offscreen(*wid))
+            .filter(|wid| !reactor.affinity().is_window_parked_offscreen(*wid))
             .rev()
             .collect();
         expected.push(WindowId::new(1, 3));

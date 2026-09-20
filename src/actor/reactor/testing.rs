@@ -246,7 +246,7 @@ impl Reactor {
     ) {
         self.state.windows.insert_window(
             wid,
-            super::WindowState {
+            rini_windows::state::WindowState {
                 info: WindowInfo {
                     is_standard: true,
                     is_root: true,
