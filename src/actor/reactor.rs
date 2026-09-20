@@ -10,8 +10,6 @@ mod main_window;
 mod managers;
 mod query;
 mod replay;
-pub mod transaction_manager;
-mod utils;
 
 #[cfg(test)]
 mod testing;
@@ -79,7 +77,7 @@ pub use replay::{Record, replay};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use tracing::{debug, info, instrument, trace, warn};
-use transaction_manager::TransactionId;
+use rini_windows::transaction::{TransactionId, TransactionManager};
 
 use rini_input::gesture_tap;
 use rini_input::input_tap as event_tap;
@@ -95,7 +93,7 @@ use std::collections::BTreeMap;
 use rini_config::Config;
 use rini_workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
 use rini_workspaces::broadcast::{BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id};
-use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
+use rini_displays::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use rini_windows::transaction::WindowTxStore;
 use rini_workspaces::AppRuleResult;
 use crate::model::RiniState;
@@ -406,8 +404,8 @@ pub struct Reactor {
     space_activation_policy: SpaceActivationPolicy,
     main_window_tracker: MainWindowTracker,
     /// The focus reports rini's own raises are about to produce, so they are not mistaken for the user
-    /// moving. See [`main_window::RaiseEcho`].
-    raise_echo: main_window::RaiseEcho,
+    /// moving. See [`rini_windows::focus::RaiseEcho`].
+    raise_echo: rini_windows::focus::RaiseEcho,
     /// The strip windows the current event's regroup already raised, so the post-layout judgment does
     /// not raise them a second time. See `regroup_after_layout`.
     regroup_raised: Vec<WindowId>,
@@ -419,7 +417,7 @@ pub struct Reactor {
     /// command that caused it.
     last_active_workspace: HashMap<SpaceId, usize>,
     notification_manager: managers::NotificationManager,
-    transaction_manager: transaction_manager::TransactionManager,
+    transaction_manager: TransactionManager,
     menu_manager: managers::MenuManager,
     mission_control_manager: managers::MissionControlManager,
     refocus_manager: managers::RefocusManager,
@@ -503,7 +501,7 @@ impl Reactor {
             last_strip_offset: HashMap::default(),
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
-            raise_echo: main_window::RaiseEcho::default(),
+            raise_echo: rini_windows::focus::RaiseEcho::default(),
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
@@ -535,7 +533,7 @@ impl Reactor {
                 last_sls_notification_ids: Vec::new(),
                 _window_notify_tx: window_notify_tx,
             },
-            transaction_manager: transaction_manager::TransactionManager::new(window_tx_store),
+            transaction_manager: TransactionManager::new(window_tx_store),
             menu_manager: managers::MenuManager {
                 menu_state: MenuState::Closed,
             },
@@ -2380,7 +2378,7 @@ impl Reactor {
                     } else {
                         continue;
                     };
-                let manageable = utils::compute_window_manageability(
+                let manageable = rini_windows::window_server::compute_window_manageability(
                     server_id,
                     is_minimized,
                     is_ax_standard,
@@ -3086,7 +3084,7 @@ impl Reactor {
 
     fn best_space_for_frame(&self, frame: &CGRect) -> Option<SpaceId> {
         let center = frame.mid();
-        self.screen_for_point(center).and_then(|screen| screen.space).or_else(|| {
+        self.space_state.screen_for_point(center).and_then(|screen| screen.space).or_else(|| {
             self.space_state
                 .screens
                 .iter()
@@ -3851,7 +3849,7 @@ impl Reactor {
         };
         let frame = window.frame_monotonic;
         let Some(screen) =
-            self.screen_for_point(frame.mid()).map(|screen| screen.frame).or_else(|| {
+            self.space_state.screen_for_point(frame.mid()).map(|screen| screen.frame).or_else(|| {
                 // A fully parked window's midpoint is outside every display, so fall
                 // back to whichever screen its own space belongs to.
                 self.best_space_for_window_id(wid).and_then(|space| {
@@ -3869,7 +3867,7 @@ impl Reactor {
 
     fn window_center_on_known_screen(&self, wid: WindowId) -> Option<CGPoint> {
         let window_center = self.state.windows.window(wid)?.frame_monotonic.mid();
-        self.screen_for_point(window_center).map(|_| window_center)
+        self.space_state.screen_for_point(window_center).map(|_| window_center)
     }
 
     /// Send the current display geometry to the cursor-warp actor.
@@ -3914,7 +3912,7 @@ impl Reactor {
             .or_else(|| self.space_state.screens.first())
             .map_or(CGRect::ZERO, |screen| screen.frame);
         let mut skipped = 0usize;
-        for (wid, frame) in animation::frame_send_order(frames, display) {
+        for (wid, frame) in rini_animation::motion::frame_writes::frame_send_order(frames, display) {
             let Some(window) = self.state.windows.window_mut(wid) else {
                 continue;
             };
@@ -3924,7 +3922,7 @@ impl Reactor {
             // "parked" while the window sits on screen, and skipping on the model kept it there.
             let wsid = window.info.sys_id;
             let real = wsid.and_then(|wsid| window_server::get_window(wsid)).map(|info| info.frame);
-            if !animation::frame_write_needed(real, frame, display) {
+            if !rini_animation::motion::frame_writes::frame_write_needed(real, frame, display) {
                 skipped += 1;
                 continue;
             }
@@ -4190,7 +4188,7 @@ impl Reactor {
         if windows.is_empty() {
             return;
         }
-        let overshoot = super::reactor::animation::edge_bounce_overshoot(direction);
+        let overshoot = rini_animation::motion::plan::edge_bounce_overshoot(direction);
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         tracing::debug!(?direction, windows = windows.len(), "edge bounce");
@@ -4284,14 +4282,14 @@ impl Reactor {
             );
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
-            let row = crate::model::strip_stack::row_of(index, from_index, to_index);
+            let row = rini_animation::motion::strip_stack::row_of(index, from_index, to_index);
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };
                 windows.push(rini_animation::engine::SurfaceWindow {
                     window: wid,
                     server_id,
-                    frame: crate::model::strip_stack::strip_frame(
+                    frame: rini_animation::motion::strip_stack::strip_frame(
                         frame,
                         display_bounds.origin,
                         row,
@@ -4330,7 +4328,7 @@ impl Reactor {
             return false;
         }
 
-        let travel = crate::model::strip_stack::travel(from_index, to_index, height);
+        let travel = rini_animation::motion::strip_stack::travel(from_index, to_index, height);
         let (from_offset, to_offset) = (travel.from, travel.to);
         let duration = std::time::Duration::from_secs_f64(
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
@@ -4351,7 +4349,7 @@ impl Reactor {
         // than an animation one, and it is silent, so say so.
         if let Some(target) = self.layout_manager.layout_engine.focused_window()
             && let Some(placed) = windows.iter().find(|window| window.window == target)
-            && !crate::model::strip_stack::lands_in_view(placed.frame, display_bounds.size.width)
+            && !rini_animation::motion::strip_stack::lands_in_view(placed.frame, display_bounds.size.width)
         {
             tracing::debug!(
                 idx = target.idx.get(),
@@ -5015,7 +5013,7 @@ impl Reactor {
         // Peeked, not taken: when this does not redirect, the workspace switch below may still
         // use the remembered window (`maybe_auto_switch_to_window_workspace`).
         let remembered = self.main_window_tracker.peek_activation_target(picked.pid)?;
-        let target = main_window::activation_focus_target(
+        let target = rini_windows::focus::activation_focus_target(
             picked,
             self.window_is_in_active_workspace(picked, Some(picked_space)),
             Some(remembered),
@@ -5550,7 +5548,7 @@ impl Reactor {
     /// Sends a raise request, remembering the focus reports it is about to provoke.
     ///
     /// The single place raises leave the reactor, so nothing can issue one without its echo being recorded.
-    /// See [`main_window::RaiseEcho`].
+    /// See [`rini_windows::focus::RaiseEcho`].
     fn dispatch_raise(&mut self, request: raise_manager::Event) {
         if let raise_manager::Event::RaiseRequest(details) = &request {
             let touched: Vec<WindowId> = details.raise_windows.iter().flatten().copied().collect();
@@ -6036,10 +6034,6 @@ impl Reactor {
         })
     }
 
-    fn screen_for_point(&self, point: CGPoint) -> Option<&ScreenInfo> {
-        self.space_state.screens.iter().find(|screen| screen.frame.contains(point))
-    }
-
     fn current_screen_center(&self) -> Option<CGPoint> {
         if let Some(space) = self.raw_command_space() {
             if let Some(screen) = self.space_state.screen_by_space(space) {
@@ -6050,102 +6044,13 @@ impl Reactor {
         self.space_state.screens.first().map(|screen| screen.frame.mid())
     }
 
-    fn screen_for_direction_from_point(
-        &self,
-        origin: CGPoint,
-        direction: Direction,
-    ) -> Option<&ScreenInfo> {
-        fn interval_gap(a_min: f64, a_max: f64, b_min: f64, b_max: f64) -> f64 {
-            if a_max < b_min {
-                b_min - a_max
-            } else if b_max < a_min {
-                a_min - b_max
-            } else {
-                0.0
-            }
-        }
-
-        let mut best: Option<(f64, f64, &ScreenInfo)> = None;
-
-        for screen in &self.space_state.screens {
-            let frame = screen.frame;
-
-            if frame.contains(origin) {
-                continue;
-            }
-
-            let min = frame.min();
-            let max = frame.max();
-
-            let (primary_dist, orth_gap) = match direction {
-                Direction::Left => {
-                    if max.x > origin.x {
-                        continue;
-                    }
-                    (origin.x - max.x, interval_gap(min.y, max.y, origin.y, origin.y))
-                }
-                Direction::Right => {
-                    if min.x < origin.x {
-                        continue;
-                    }
-                    (min.x - origin.x, interval_gap(min.y, max.y, origin.y, origin.y))
-                }
-                Direction::Up => {
-                    // Smaller y means visually "up".
-                    if max.y > origin.y {
-                        continue;
-                    }
-                    (origin.y - max.y, interval_gap(min.x, max.x, origin.x, origin.x))
-                }
-                Direction::Down => {
-                    if min.y < origin.y {
-                        continue;
-                    }
-                    (min.y - origin.y, interval_gap(min.x, max.x, origin.x, origin.x))
-                }
-            };
-
-            let should_replace = best.as_ref().map_or(true, |(best_primary, best_orth, _)| {
-                primary_dist < *best_primary
-                    || (primary_dist == *best_primary && orth_gap < *best_orth)
-            });
-
-            if should_replace {
-                best = Some((primary_dist, orth_gap, screen));
-            }
-        }
-
-        best.map(|(_, _, screen)| screen)
-    }
-
     fn screen_for_selector(
         &self,
         selector: &DisplaySelector,
         origin_override: Option<CGPoint>,
     ) -> Option<&ScreenInfo> {
-        match selector {
-            DisplaySelector::Direction(direction) => {
-                let origin = origin_override.or_else(|| self.current_screen_center())?;
-                self.screen_for_direction_from_point(origin, *direction)
-            }
-            DisplaySelector::Index(index) => self.screens_in_physical_order().get(*index).copied(),
-            DisplaySelector::Uuid(uuid) => {
-                self.space_state.screens.iter().find(|screen| screen.display_uuid == *uuid)
-            }
-        }
-    }
-
-    fn screens_in_physical_order(&self) -> Vec<&ScreenInfo> {
-        let mut screens: Vec<&ScreenInfo> = self.space_state.screens.iter().collect();
-        screens.sort_by(|a, b| {
-            let x_order = a.frame.origin.x.total_cmp(&b.frame.origin.x);
-            if x_order == std::cmp::Ordering::Equal {
-                a.frame.origin.y.total_cmp(&b.frame.origin.y)
-            } else {
-                x_order
-            }
-        });
-        screens
+        let origin = origin_override.or_else(|| self.current_screen_center());
+        self.space_state.screen_for_selector(selector, origin)
     }
 
     fn store_current_floating_positions(&mut self, space: SpaceId) {

@@ -4,8 +4,9 @@ use tracing::{debug, trace};
 use rini_windows::ids::WindowId;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::DragManager;
-use crate::actor::reactor::transaction_manager::TransactionManager;
-use crate::actor::reactor::{DragState, Quiet, TransactionId, utils};
+use crate::actor::reactor::{DragState, Quiet};
+use rini_windows::transaction::{TransactionId, TransactionManager};
+use rini_windows::window_server::compute_window_manageability;
 use rini_windows::state::WindowState;
 use rini_workspaces::LayoutEvent;
 use rini_workspaces::WindowVisibility;
@@ -43,7 +44,7 @@ pub fn handle_window_created(
     }
 
     let mut window_state: WindowState = window.into();
-    let is_manageable = utils::compute_window_manageability(
+    let is_manageable = compute_window_manageability(
         window_state.info.sys_id,
         window_state.info.is_minimized,
         window_state.info.is_standard,
@@ -173,7 +174,7 @@ pub fn handle_window_deminiaturized(
         }
     };
     let is_manageable =
-        utils::compute_window_manageability(server_id, false, is_ax_standard, is_ax_root, |wsid| {
+        compute_window_manageability(server_id, false, is_ax_standard, is_ax_root, |wsid| {
             state.windows.get_window_server_info(wsid)
         });
     if let Some(window) = state.windows.window_mut(wid) {

@@ -10,7 +10,7 @@ use rini_displays::topology::ForwardedSpaceState;
 use crate::actor::wm_controller::WmEvent;
 use rustc_hash::FxHashSet as HashSet;
 use crate::model::RiniState;
-use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
+use rini_displays::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use rini_windows::catalogue::NativeFullscreenTransition;
 use rini_windows::app::AppInfo;
 use rini_displays::ids::SpaceId;
@@ -107,7 +107,7 @@ pub struct WindowServerAppearedObservations {
 
 pub fn handle_window_server_destroyed(
     state: &mut RiniState,
-    transactions: &crate::actor::reactor::transaction_manager::TransactionManager,
+    transactions: &rini_windows::transaction::TransactionManager,
     drag: &mut DragManager,
     payload: WindowServerLifecyclePayload,
     observations: WindowServerDestroyedObservations,

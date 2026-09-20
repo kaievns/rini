@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use libc::{RTLD_DEFAULT, dlsym};
-use objc2_app_kit::NSWindowLevel;
+use objc2_app_kit::{NSNormalWindowLevel, NSWindowLevel};
 use objc2_application_services::AXError;
 use objc2_core_foundation::{
     CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, Type,
@@ -1045,4 +1045,43 @@ mod tests {
         assert!(WindowServerId::new(0).as_nonzero().is_none());
         assert_eq!(WindowServerId::new(42).as_nonzero().map(|id| id.get()), Some(42));
     }
+}
+
+
+/// Computes whether a window is manageable based on its properties and window server information.
+///
+/// A window is manageable if:
+/// - It is not minimized
+/// - Its layer is 0 (if info available)
+/// - It is not sticky
+/// - Its level is normal (if available)
+/// - It is AX standard and AX root
+pub fn compute_window_manageability(
+    window_server_id: Option<WindowServerId>,
+    is_minimized: bool,
+    is_ax_standard: bool,
+    is_ax_root: bool,
+    mut window_server_info: impl FnMut(WindowServerId) -> Option<WindowServerInfo>,
+) -> bool {
+    if is_minimized {
+        return false;
+    }
+
+    if let Some(wsid) = window_server_id {
+        if let Some(info) = window_server_info(wsid) {
+            if info.layer != 0 {
+                return false;
+            }
+        }
+        if window_is_sticky(wsid) {
+            return false;
+        }
+
+        if let Some(level) = window_level(wsid.0) {
+            if level != NSNormalWindowLevel {
+                return false;
+            }
+        }
+    }
+    is_ax_standard && is_ax_root
 }

@@ -3,7 +3,9 @@ use tracing::{debug, trace, warn};
 use super::window;
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::ids::{WindowId, pid_t};
-use crate::actor::reactor::{LayoutEvent, utils};
+use crate::actor::reactor::LayoutEvent;
+use rini_windows::transaction::TransactionManager;
+use rini_windows::window_server::compute_window_manageability;
 use rini_windows::state::{WindowFilter, WindowState};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
@@ -52,7 +54,7 @@ fn sync_existing_window_state(
             window::WindowDeminiaturizedPayload { window: wid, active_space },
         )?,
         _ => {
-            let manageable = utils::compute_window_manageability(
+            let manageable = compute_window_manageability(
                 info.sys_id,
                 info.is_minimized,
                 info.is_standard,
@@ -253,7 +255,7 @@ pub(crate) fn identify_stale_windows(
 /// Remove stale windows and send events.
 pub(crate) fn cleanup_stale_windows(
     state: &mut crate::model::RiniState,
-    transactions: &crate::actor::reactor::transaction_manager::TransactionManager,
+    transactions: &TransactionManager,
     drag: &mut crate::actor::reactor::managers::DragManager,
     mission_control: &mut crate::actor::reactor::managers::MissionControlManager,
     pid: pid_t,
@@ -330,7 +332,7 @@ pub(crate) fn process_window_list(
                 }
             } else {
                 let mut window_state: WindowState = WindowState::from((*info).clone());
-                let manageable = utils::compute_window_manageability(
+                let manageable = compute_window_manageability(
                     window_state.info.sys_id,
                     window_state.info.is_minimized,
                     window_state.info.is_standard,
@@ -399,7 +401,7 @@ pub(crate) fn update_window_states(
     // Update or insert window states
     for (wid, info) in new_windows {
         let mut state: WindowState = info.into();
-        let manageable = utils::compute_window_manageability(
+        let manageable = compute_window_manageability(
             state.info.sys_id,
             state.info.is_minimized,
             state.info.is_standard,

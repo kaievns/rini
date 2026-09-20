@@ -6690,7 +6690,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 /// stays where it was in both cases. See "Edge bounce" in `crates/rini-animation/docs/animation-smoothness.md`.
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
-    use crate::actor::reactor::animation::EDGE_BOUNCE_OVERSHOOT;
+    use rini_animation::motion::plan::EDGE_BOUNCE_OVERSHOOT;
     use rini_animation::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
@@ -6986,7 +6986,7 @@ fn a_focus_report_from_rinis_own_raise_does_not_move_the_selection() {
 
     // The user going somewhere is still honoured, even to a window the same raise touched, once the
     // cascade is over.
-    reactor.raise_echo = super::main_window::RaiseEcho::default();
+    reactor.raise_echo = rini_windows::focus::RaiseEcho::default();
     reactor.handle_event(Event::WindowServerFocusChanged(echoed, space));
     assert_eq!(reactor.layout_manager.layout_engine.focused_window(), Some(echoed));
 }

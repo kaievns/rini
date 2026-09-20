@@ -6,6 +6,8 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_geometry::{SameAs, is_off_screen, park_entry_frame};
 
+use crate::engine::AnimationRequest;
+
 /// What fraction of `frame`'s area lies inside `display`.
 pub fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
     let area = frame.size.width * frame.size.height;
@@ -183,6 +185,27 @@ pub fn is_moving(from: CGRect, to: CGRect) -> bool {
         || (to.size.width - from.size.width).abs() >= 0.5
         || (to.size.height - from.size.height).abs() >= 0.5
 }
+
+/// How far one window is travelling, as a single distance.
+///
+/// Diagonal moves are rare in a tiling layout, so the larger of the two axes is the honest measure and
+/// avoids paying for a square root on every window of every layout pass.
+fn travel(request: &AnimationRequest) -> f64 {
+    let dx = request.to.origin.x - request.from.origin.x;
+    let dy = request.to.origin.y - request.from.origin.y;
+    dx.abs().max(dy.abs())
+}
+
+/// Whether any window in this pass moves far enough for the movement to be worth showing.
+///
+/// The threshold is about cost, not precision: an animation covers the display for its duration, so a
+/// one-point move buys nothing and freezes everything. Two points, because the layout rounds to whole
+/// points and a column boundary can land either side of where it was without anything having moved.
+pub fn travels_visibly(requests: &[AnimationRequest]) -> bool {
+    const MIN_VISIBLE_TRAVEL: f64 = 2.0;
+    requests.iter().any(|request| travel(request) >= MIN_VISIBLE_TRAVEL)
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -735,5 +758,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    use rini_windows::ids::{WindowId, WindowServerId};
+
+    /// A strip column, as the animation path describes one: where it is now, where the layout wants it.
+    fn moving(from_x: f64, to_x: f64) -> AnimationRequest {
+        AnimationRequest {
+            window: WindowId::new(1, (from_x.abs() as u32).max(1)),
+            server_id: WindowServerId::new(1),
+            from: CGRect::new(CGPoint::new(from_x, 32.0), CGSize::new(859.0, 1081.0)),
+            to: CGRect::new(CGPoint::new(to_x, 32.0), CGSize::new(859.0, 1081.0)),
+            floating: false,
+        }
+    }
+
+    /// A one-point move is the measured case, not a hypothetical: a floating window oscillated between
+    /// x = 502 and x = 503 on every space-state refresh, and each of those ran a full-screen animation that
+    /// blanked every other window for 350ms.
+    #[test]
+    fn a_move_of_a_single_point_is_not_worth_animating() {
+        assert!(!travels_visibly(&[moving(502.0, 503.0)]));
+        assert!(!travels_visibly(&[moving(503.0, 502.0)]));
+        assert!(!travels_visibly(&[]));
+    }
+
+    #[test]
+    fn a_real_move_is_worth_animating() {
+        // A column step on this display, and the smallest move that counts.
+        assert!(travels_visibly(&[moving(4.0, 865.0)]));
+        assert!(travels_visibly(&[moving(4.0, 6.0)]));
+        // One window going somewhere is enough, however many are standing still around it.
+        assert!(travels_visibly(&[moving(502.0, 502.0), moving(4.0, 865.0)]));
+    }
+
+    /// Vertical movement counts too: a workspace switch travels in y, and reading only x would treat one as
+    /// motionless and place every window instantly.
+    #[test]
+    fn travel_is_measured_on_both_axes() {
+        let mut vertical = moving(4.0, 4.0);
+        vertical.to.origin.y = 32.0 + 1117.0;
+        assert!(travels_visibly(&[vertical]));
     }
 }

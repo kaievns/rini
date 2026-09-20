@@ -23,6 +23,7 @@ objc2-io-surface = { workspace = true }
 objc2-quartz-core = { workspace = true }
 objc2-screen-capture-kit = { workspace = true }
 rini-displays = { workspace = true }
+rini-ipc = { workspace = true }
 rini-runloop = { workspace = true }
 rini-skylight-sys = { workspace = true }
 rini-windows = { workspace = true }

@@ -1,6 +1,8 @@
 //! The authoritative picture of displays and spaces the spaces actor hands the application:
 //! screens with their current space, what changed, and which windows sit on which active space.
-use objc2_core_foundation::CGSize;
+use objc2_core_foundation::{CGPoint, CGSize};
+use rini_geometry::CGRectExt;
+use rini_ipc::protocol::{Direction, DisplaySelector};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 
@@ -54,6 +56,108 @@ impl ForwardedSpaceState {
     pub fn first_known_space(&self) -> Option<SpaceId> {
         self.iter_known_spaces().next()
     }
+
+    pub fn screen_for_point(&self, point: CGPoint) -> Option<&ScreenInfo> {
+        self.screens.iter().find(|screen| screen.frame.contains(point))
+    }
+
+    pub fn screen_for_direction_from_point(
+        &self,
+        origin: CGPoint,
+        direction: Direction,
+    ) -> Option<&ScreenInfo> {
+        fn interval_gap(a_min: f64, a_max: f64, b_min: f64, b_max: f64) -> f64 {
+            if a_max < b_min {
+                b_min - a_max
+            } else if b_max < a_min {
+                a_min - b_max
+            } else {
+                0.0
+            }
+        }
+
+        let mut best: Option<(f64, f64, &ScreenInfo)> = None;
+
+        for screen in &self.screens {
+            let frame = screen.frame;
+
+            if frame.contains(origin) {
+                continue;
+            }
+
+            let min = frame.min();
+            let max = frame.max();
+
+            let (primary_dist, orth_gap) = match direction {
+                Direction::Left => {
+                    if max.x > origin.x {
+                        continue;
+                    }
+                    (origin.x - max.x, interval_gap(min.y, max.y, origin.y, origin.y))
+                }
+                Direction::Right => {
+                    if min.x < origin.x {
+                        continue;
+                    }
+                    (min.x - origin.x, interval_gap(min.y, max.y, origin.y, origin.y))
+                }
+                Direction::Up => {
+                    // Smaller y means visually "up".
+                    if max.y > origin.y {
+                        continue;
+                    }
+                    (origin.y - max.y, interval_gap(min.x, max.x, origin.x, origin.x))
+                }
+                Direction::Down => {
+                    if min.y < origin.y {
+                        continue;
+                    }
+                    (min.y - origin.y, interval_gap(min.x, max.x, origin.x, origin.x))
+                }
+            };
+
+            let should_replace = best.as_ref().map_or(true, |(best_primary, best_orth, _)| {
+                primary_dist < *best_primary
+                    || (primary_dist == *best_primary && orth_gap < *best_orth)
+            });
+
+            if should_replace {
+                best = Some((primary_dist, orth_gap, screen));
+            }
+        }
+
+        best.map(|(_, _, screen)| screen)
+    }
+
+    /// `origin` is where a `Direction` selector is measured from; `None` resolves no direction.
+    pub fn screen_for_selector(
+        &self,
+        selector: &DisplaySelector,
+        origin: Option<CGPoint>,
+    ) -> Option<&ScreenInfo> {
+        match selector {
+            DisplaySelector::Direction(direction) => {
+                self.screen_for_direction_from_point(origin?, *direction)
+            }
+            DisplaySelector::Index(index) => self.screens_in_physical_order().get(*index).copied(),
+            DisplaySelector::Uuid(uuid) => {
+                self.screens.iter().find(|screen| screen.display_uuid == *uuid)
+            }
+        }
+    }
+
+    pub fn screens_in_physical_order(&self) -> Vec<&ScreenInfo> {
+        let mut screens: Vec<&ScreenInfo> = self.screens.iter().collect();
+        screens.sort_by(|a, b| {
+            let x_order = a.frame.origin.x.total_cmp(&b.frame.origin.x);
+            if x_order == std::cmp::Ordering::Equal {
+                a.frame.origin.y.total_cmp(&b.frame.origin.y)
+            } else {
+                x_order
+            }
+        });
+        screens
+    }
 }
 #[derive(Debug, Clone)]
 pub struct TopologyWindowDelta {
@@ -70,5 +174,67 @@ impl Default for TopologyWindowDelta {
             appeared: Vec::new(),
             disappeared: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGRect, CGSize};
+
+    use super::*;
+    use crate::ids::ScreenId;
+
+    fn state(frames: &[CGRect]) -> ForwardedSpaceState {
+        ForwardedSpaceState {
+            screens: frames
+                .iter()
+                .enumerate()
+                .map(|(i, frame)| ScreenInfo {
+                    id: ScreenId::new(i as u32 + 1),
+                    frame: *frame,
+                    display_uuid: format!("uuid-{i}"),
+                    name: None,
+                    space: Some(SpaceId::new(i as u64 + 1)),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn rect(x: f64, y: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(1000., 1000.))
+    }
+
+    #[test]
+    fn index_selector_orders_screens_left_to_right_then_top_to_bottom() {
+        let s = state(&[rect(2000., 0.), rect(0., 1000.), rect(0., 0.)]);
+        let ordered: Vec<_> = s.screens_in_physical_order().iter().map(|sc| sc.id).collect();
+        assert_eq!(ordered, vec![ScreenId::new(3), ScreenId::new(2), ScreenId::new(1)]);
+        assert_eq!(
+            s.screen_for_selector(&DisplaySelector::Index(1), None).map(|sc| sc.id),
+            Some(ScreenId::new(2))
+        );
+    }
+
+    #[test]
+    fn direction_selector_prefers_nearest_screen_with_smallest_orthogonal_gap() {
+        // Origin on screen 1; two screens to the right, one aligned and one far below.
+        let s = state(&[rect(0., 0.), rect(1000., 2500.), rect(1000., 0.)]);
+        let origin = Some(CGPoint::new(500., 500.));
+        let right = s.screen_for_selector(&DisplaySelector::Direction(Direction::Right), origin);
+        assert_eq!(right.map(|sc| sc.id), Some(ScreenId::new(3)));
+        assert!(s.screen_for_selector(&DisplaySelector::Direction(Direction::Left), origin).is_none());
+        assert!(s.screen_for_selector(&DisplaySelector::Direction(Direction::Right), None).is_none());
+    }
+
+    #[test]
+    fn uuid_and_point_lookups() {
+        let s = state(&[rect(0., 0.), rect(1000., 0.)]);
+        assert_eq!(
+            s.screen_for_selector(&DisplaySelector::Uuid("uuid-1".into()), None).map(|sc| sc.id),
+            Some(ScreenId::new(2))
+        );
+        assert_eq!(s.screen_for_point(CGPoint::new(1500., 10.)).map(|sc| sc.id), Some(ScreenId::new(2)));
+        assert!(s.screen_for_point(CGPoint::new(5000., 10.)).is_none());
     }
 }

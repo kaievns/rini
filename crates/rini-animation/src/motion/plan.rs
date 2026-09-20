@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use objc2_core_foundation::{CGPoint, CGRect};
 
 use crate::motion::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
+use rini_ipc::protocol::Direction;
 use rini_windows::ids::WindowId;
 use rini_geometry::SameAs;
 use crate::motion::fit::is_a_resize;
@@ -724,6 +725,22 @@ pub fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
     }
 }
 
+/// How far the surface gives when a command pushes past an end, in points. Enough to read as
+/// the view straining against a stop, small enough that no column leaves its place.
+pub const EDGE_BOUNCE_OVERSHOOT: f64 = 36.0;
+
+/// The surface's nudge for a push in `direction`: the way the view was pushed, so the content
+/// moves the opposite way, as it would have had there been anything further. Focus right at the
+/// last column pulls the strip left; the next workspace at the bottom of the stack pulls the
+/// row up.
+pub fn edge_bounce_overshoot(direction: Direction) -> CGPoint {
+    match direction {
+        Direction::Left => CGPoint::new(EDGE_BOUNCE_OVERSHOOT, 0.0),
+        Direction::Right => CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0),
+        Direction::Up => CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT),
+        Direction::Down => CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT),
+    }
+}
 /// One movement `fly` installs: a container's translation, or one loose tile's own animation.
 /// Pure output of [`animation_targets`].
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -912,5 +929,17 @@ mod tests {
         }
         assert!(!bounce_carries(GroupKey::Floating, sideways));
         assert!(bounce_carries(GroupKey::Floating, upward));
+    }
+
+    /// The surface gives the way the view was pushed: focus right at the last column pulls the
+    /// strip left, the next workspace at the bottom pulls the row up.
+    #[test]
+    fn an_edge_bounce_moves_the_content_the_way_it_would_have_gone() {
+        let o = EDGE_BOUNCE_OVERSHOOT;
+        assert_eq!(edge_bounce_overshoot(Direction::Right), CGPoint::new(-o, 0.0));
+        assert_eq!(edge_bounce_overshoot(Direction::Left), CGPoint::new(o, 0.0));
+        assert_eq!(edge_bounce_overshoot(Direction::Down), CGPoint::new(0.0, -o));
+        assert_eq!(edge_bounce_overshoot(Direction::Up), CGPoint::new(0.0, o));
+        assert!(o < 100.0, "a nudge, not a scroll");
     }
 }

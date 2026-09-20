@@ -15,7 +15,7 @@ use rini_config::{self as config, Config};
 use crate::log::{MetricsCommand, handle_command as handle_metrics_command};
 use rini_workspaces::{EventResponse, LayoutCommand, LayoutEvent};
 use crate::model::RiniState;
-use crate::model::space_activation::{
+use rini_displays::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
 use rini_displays::ids::SpaceId;
