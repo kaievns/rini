@@ -9,7 +9,7 @@ use super::{
 };
 use rini_windows::app::AppInfo;
 use rini_windows::ids::{WindowId, pid_t};
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_tiling::settings::LayoutSettings;
 use rini_ipc::protocol::WorkspaceSelector;
 use crate::LayoutSystem;
@@ -3183,7 +3183,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
-    use rini_shared::collections::HashMap;
+    use rustc_hash::FxHashMap as HashMap;
     use rini_windows::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
     use rini_tiling::settings::LayoutSettings;
     use crate::settings::VirtualWorkspaceSettings;

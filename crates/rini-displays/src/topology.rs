@@ -1,7 +1,7 @@
 //! The authoritative picture of displays and spaces the spaces actor hands the application:
 //! screens with their current space, what changed, and which windows sit on which active space.
 use objc2_core_foundation::CGSize;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 
 use crate::ids::SpaceId;

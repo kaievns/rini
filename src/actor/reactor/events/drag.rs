@@ -5,7 +5,7 @@ use rini_windows::ids::WindowId;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::{DragManager, LayoutManager};
 use crate::actor::reactor::{DragState, LayoutEvent};
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use rini_workspaces::LayoutCommand;
 use crate::model::RiniState;
 use rini_displays::ids::SpaceId;

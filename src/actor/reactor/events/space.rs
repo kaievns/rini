@@ -8,7 +8,7 @@ use crate::actor::reactor::{DragState, LayoutEvent, MissionControlState};
 use rini_displays::topology::SpaceEventKind;
 use rini_displays::topology::ForwardedSpaceState;
 use crate::actor::wm_controller::WmEvent;
-use rini_shared::collections::HashSet;
+use rustc_hash::FxHashSet as HashSet;
 use crate::model::RiniState;
 use crate::model::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 use rini_windows::catalogue::NativeFullscreenTransition;

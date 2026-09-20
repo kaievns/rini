@@ -4,7 +4,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use serde::{Deserialize, Serialize};
 
 use rini_windows::ids::{WindowId, pid_t};
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::settings::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
@@ -1917,7 +1917,7 @@ mod tests {
 
     use super::{Column, ScrollingLayoutSystem};
     use rini_windows::ids::{WindowId, pid_t};
-    use rini_shared::collections::HashMap;
+    use rustc_hash::FxHashMap as HashMap;
     use crate::settings::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
     use crate::{LayoutSystem, WindowLayoutConstraints};
     use crate::area::compute_tiling_area;

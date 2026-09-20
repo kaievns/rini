@@ -1,0 +1,18 @@
+[package]
+name = "rini-geometry"
+version = "0.1.0"
+edition = "2024"
+description = "Rect arithmetic over CoreGraphics geometry for rini: rounding, tolerance comparison, containment, serde adapters."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+objc2-core-foundation = { workspace = true, features = ["CFCGTypes"] }
+serde = { workspace = true, features = ["derive"] }
+serde_with = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

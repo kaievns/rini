@@ -313,7 +313,7 @@ which is exactly the case that returns a sliver.
 - The transform convention is `CGAffineTransformMakeTranslation(-tx, -ty)`, the
   negative of the target origin in top-left space. This matches
   `SLSGetWindowTransform` returning the negated origin, measured above.
-- The binding already exists in `crates/rini-macos/src/skylight.rs`
+- The binding already exists in `crates/rini-skylight-sys/src/lib.rs`
   (`SLSHWCaptureWindowList`), so reaching it is cheap.
 - Captures exclude the drop shadow, which is why yabai calls
   `sls_window_disable_shadow` on its proxies to match (`window_manager.c:473`),

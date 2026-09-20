@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use rini_windows::ids::WindowId;
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use crate::{VirtualWorkspaceId, WorkspaceStore};
 use rini_windows::ids::pid_t;
-use rini_shared::geometry::CGRectDef;
+use rini_geometry::CGRectDef;
 use rini_displays::ids::SpaceId;
 
 /// Saved floating frames. This is layout persistence, not workspace catalog

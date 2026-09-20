@@ -3,7 +3,7 @@
 //! workspace a window belongs to is not here; that index is `rini_workspaces::assignment`.
 use std::time::Instant;
 
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::SpaceId;
 
 use crate::ids::{WindowId, WindowServerId};

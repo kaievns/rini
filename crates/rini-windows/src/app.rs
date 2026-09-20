@@ -17,7 +17,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use rini_shared::geometry::CGRectDef;
+use rini_geometry::CGRectDef;
 use crate::ids::WindowServerId;
 use crate::window_server::WindowServerInfo;
 use crate::ax::element::{

@@ -12,7 +12,7 @@ use rini_workspaces::WindowVisibility;
 use rini_windows::state::WindowFilter;
 use rini_windows::app::WindowInfo as Window;
 use rini_windows::mouse::MouseState;
-use rini_shared::geometry::SameAs;
+use rini_geometry::SameAs;
 use rini_displays::ids::SpaceId;
 use rini_windows::window_server::WindowServerInfo;
 
@@ -465,7 +465,7 @@ pub fn handle_mouse_moved_over_window(
 
     let mut outcome = crate::actor::reactor::events::EventOutcome::default();
     if !payload.is_main {
-        let mut app_handles = rini_shared::collections::HashMap::default();
+        let mut app_handles = rustc_hash::FxHashMap::default();
         if let Some(app) = apps.apps.get(&window.pid) {
             app_handles.insert(window.pid, app.handle.clone());
         }

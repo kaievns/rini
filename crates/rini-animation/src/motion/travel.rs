@@ -4,7 +4,7 @@
 //! the caller's.
 
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_shared::geometry::{SameAs, is_off_screen, park_entry_frame};
+use rini_geometry::{SameAs, is_off_screen, park_entry_frame};
 
 /// What fraction of `frame`'s area lies inside `display`.
 pub fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {

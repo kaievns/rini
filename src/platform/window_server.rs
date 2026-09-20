@@ -42,10 +42,10 @@ pub fn mission_control_dock_overlay_visible() -> bool {
             get_num(&window, unsafe { kCGWindowLayer }) == Some(MISSION_CONTROL_DOCK_LAYER)
         })
 }
-#[cfg(not(any(test, feature = "test-support")))]
+#[cfg(not(test))]
 pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
     use objc2_core_foundation::{CFArray, CFRetained};
-    use rini_shared::geometry::CGRectExt;
+    use rini_geometry::CGRectExt;
     use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
     use rini_windows::ids::WindowServerId;
     use rini_windows::window_server::{get_window, make_key_window};
@@ -74,7 +74,7 @@ pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
             && make_key_window(info.pid, wsid).is_ok()
     })
 }
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool {
     false
 }

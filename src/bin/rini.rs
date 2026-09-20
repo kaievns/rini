@@ -17,16 +17,16 @@ use rini_displays::spaces::SpacesActor;
 use rini_wm::actor::window_notify as window_notify_actor;
 use rini_wm::actor::wm_controller::{self, WmController};
 use rini_config::{Config, config_file, restore_file};
-use rini_shared::log;
-use rini_shared::util::execute_startup_commands;
+use rini_wm::log;
+use rini_wm::startup::execute_startup_commands;
 use rini_wm::ipc;
 use rini_workspaces::LayoutEngine;
 use rini_windows::transaction::WindowTxStore;
-use rini_macos::accessibility::ensure_accessibility_permission;
+use rini_wm::platform::accessibility::ensure_accessibility_permission;
 use rini_runloop::executor::Executor;
 use rini_windows::sub_level::init_window_sub_level_server_port;
 use rini_displays::screen::displays_have_separate_spaces;
-use rini_macos::service::{ServiceCommands, handle_service_command};
+use rini_wm::platform::service::{ServiceCommands, handle_service_command};
 use rini_skylight_sys::{
     CGEnableEventStateCombining, CGSEventType, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
     SLSWindowManagementBridgeSetDelegate,
@@ -342,7 +342,7 @@ stays usable. Fix the config and restart. Error: {error}",
     let input_settings = rini_input::settings::InputSettings::from(&config);
     let event_tap = InputTap::new(
         &input_settings,
-        rini_macos::power::is_low_power_mode_enabled(),
+        rini_wm::platform::power::is_low_power_mode_enabled(),
         Box::new(wm_controller_sender.clone()),
         event_tap_rx,
     );

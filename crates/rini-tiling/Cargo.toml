@@ -10,10 +10,11 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-geometry = { workspace = true }
+rustc-hash = { workspace = true }
 enum_dispatch = { workspace = true }
 objc2-core-foundation = { workspace = true }
 rini-ipc = { workspace = true }
-rini-shared = { workspace = true }
 rini-windows = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 slotmap = { workspace = true }

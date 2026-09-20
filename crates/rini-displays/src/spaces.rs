@@ -6,7 +6,7 @@ use objc2_foundation::MainThreadMarker;
 
 use rini_runloop::channel;
 use rini_runloop::dispatch::DispatchExt;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 use rini_windows::window_server;
 

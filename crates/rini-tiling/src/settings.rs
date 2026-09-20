@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 fn no() -> bool {
     false
 }
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 fn default_scrolling_column_width_ratio() -> f64 {
     0.7

@@ -97,7 +97,7 @@ it, as do the four sketchybar `subscribe` hooks in the user config. The cause of
 the earlier failure was not established; a stale binary at a second path (see
 "Deploy is `service restart`") is the likeliest candidate.
 
-`MachServices` stays commented out in `crates/rini-macos/src/service.rs`. Enabling
+`MachServices` stays commented out in `src/platform/service.rs`. Enabling
 it would make launchd own the port and start rini on demand, which needs
 `bootstrap_check_in` instead of `bootstrap_register`. Not needed for the CLI to
 work.

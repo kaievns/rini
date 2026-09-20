@@ -10,6 +10,8 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-geometry = { workspace = true }
+rustc-hash = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = "1"
 objc2 = { workspace = true }
@@ -20,7 +22,6 @@ once_cell = { workspace = true }
 parking_lot = { workspace = true }
 rini-ipc = { workspace = true }
 rini-runloop = { workspace = true }
-rini-shared = { workspace = true }
 rini-skylight-sys = { workspace = true }
 rini-windows = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

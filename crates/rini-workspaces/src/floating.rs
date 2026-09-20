@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use rini_windows::ids::{WindowId, pid_t};
-use rini_shared::collections::{BTreeSet, HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::BTreeSet;
 use rini_windows::ids::BTreeExt;
 use rini_displays::ids::SpaceId;
 

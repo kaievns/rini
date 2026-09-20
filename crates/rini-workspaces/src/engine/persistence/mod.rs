@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
 use rini_windows::ids::{WindowId, pid_t};
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_tiling::settings::LayoutSettings;
 use crate::settings::VirtualWorkspaceSettings;
 use crate::LayoutSystem;

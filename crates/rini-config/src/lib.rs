@@ -16,7 +16,7 @@ pub use rini_tiling::settings::{
 };
 use serde::{Deserialize, Serialize};
 
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use rini_input::key::{Hotkey, HotkeySpec};
 
 pub mod actor;

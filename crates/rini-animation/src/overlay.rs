@@ -32,7 +32,7 @@ use crate::motion::plan::{
     Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
 };
 use crate::motion::z_group::{StackGroup, container_z};
-use rini_shared::geometry::{Round, SameAs};
+use rini_geometry::{Round, SameAs};
 use rini_displays::screen::CoordinateConverter;
 use crate::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::window_snapshot::{SnapshotImage, WindowSnapshot};

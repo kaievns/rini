@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use crate::display_affinity::ColumnWidth;
 
 /// The set of displays connected, as a name that can key a map.

@@ -8,7 +8,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 
 use crate::motion::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
 use rini_windows::ids::WindowId;
-use rini_shared::geometry::SameAs;
+use rini_geometry::SameAs;
 use crate::motion::fit::is_a_resize;
 
 /// Two translation vectors this close on both axes ride one container.
@@ -582,7 +582,7 @@ pub fn merge_plans(
 /// lend, so its member votes and exits on its own.
 fn rides_out(next: &FlightPlan, key: GroupKey, to: CGRect, viewport: CGRect) -> bool {
     let moving = next.groups.iter().any(|g| g.key == key && !g.is_still());
-    moving && rini_shared::geometry::is_off_screen(viewport, to)
+    moving && rini_geometry::is_off_screen(viewport, to)
 }
 
 /// Bends one loose tile toward `to` (its container's space) unless it is already going there.

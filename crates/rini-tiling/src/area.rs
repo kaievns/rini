@@ -3,7 +3,7 @@ use objc2_core_foundation::CGRect;
 pub fn compute_tiling_area(screen: CGRect, gaps: &crate::settings::GapSettings) -> CGRect {
     use objc2_core_foundation::{CGPoint, CGSize};
 
-    use rini_shared::geometry::Round;
+    use rini_geometry::Round;
     if gaps.outer.top == 0.0
         && gaps.outer.left == 0.0
         && gaps.outer.bottom == 0.0

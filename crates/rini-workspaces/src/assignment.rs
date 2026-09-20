@@ -2,7 +2,7 @@
 //! "which workspace owns this window" and "which windows does this workspace hold" are one lookup
 //! each and can never disagree. See "One workspace list" in `docs/workspaces-and-displays.md`.
 use rini_displays::ids::SpaceId;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_windows::ids::{WindowId, pid_t};
 use serde::{Deserialize, Serialize};
 

@@ -1392,8 +1392,8 @@ dependencies = [
  "objc2-quartz-core",
  "objc2-screen-capture-kit",
  "rini-displays",
+ "rini-geometry",
  "rini-runloop",
- "rini-shared",
  "rini-skylight-sys",
  "rini-windows",
  "tracing",
@@ -1412,12 +1412,11 @@ dependencies = [
  "rini-displays",
  "rini-input",
  "rini-ipc",
- "rini-macos",
  "rini-runloop",
- "rini-shared",
  "rini-tiling",
  "rini-windows",
  "rini-workspaces",
+ "rustc-hash",
  "serde",
  "serde_json",
  "strum",
@@ -1439,13 +1438,25 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "once_cell",
+ "rini-geometry",
+ "rini-ipc",
  "rini-runloop",
- "rini-shared",
  "rini-skylight-sys",
  "rini-windows",
+ "rustc-hash",
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "rini-geometry"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "serde",
+ "serde_json",
+ "serde_with",
 ]
 
 [[package]]
@@ -1460,11 +1471,12 @@ dependencies = [
  "objc2-core-graphics",
  "once_cell",
  "parking_lot",
+ "rini-geometry",
  "rini-ipc",
  "rini-runloop",
- "rini-shared",
  "rini-skylight-sys",
  "rini-windows",
+ "rustc-hash",
  "serde",
  "serde_json",
  "strum",
@@ -1500,41 +1512,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rini-macos"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags 2.11.0",
- "clap",
- "continue",
- "dispatchr",
- "futures-task",
- "libc",
- "nix 0.30.1",
- "num_enum",
- "objc2",
- "objc2-app-kit",
- "objc2-application-services",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "once_cell",
- "parking_lot",
- "rini-displays",
- "rini-runloop",
- "rini-shared",
- "rini-skylight-sys",
- "rini-windows",
- "serde",
- "serde_json",
- "static_assertions",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
 name = "rini-runloop"
 version = "0.1.0"
 dependencies = [
@@ -1550,25 +1527,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
-]
-
-[[package]]
-name = "rini-shared"
-version = "0.1.0"
-dependencies = [
- "libc",
- "objc2-core-foundation",
- "rini-ipc",
- "ron",
- "rustc-hash",
- "serde",
- "serde_json",
- "serde_with",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tracing-timing",
- "tracing-tree",
 ]
 
 [[package]]
@@ -1592,9 +1550,10 @@ version = "0.1.0"
 dependencies = [
  "enum_dispatch",
  "objc2-core-foundation",
+ "rini-geometry",
  "rini-ipc",
- "rini-shared",
  "rini-windows",
+ "rustc-hash",
  "serde",
  "slotmap",
  "tracing",
@@ -1617,12 +1576,13 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "regex",
+ "rini-geometry",
  "rini-ipc",
  "rini-mach-sys",
  "rini-runloop",
- "rini-shared",
  "rini-skylight-sys",
  "ron",
+ "rustc-hash",
  "serde",
  "serde_json",
  "static_assertions",
@@ -1665,12 +1625,11 @@ dependencies = [
  "rini-animation",
  "rini-config",
  "rini-displays",
+ "rini-geometry",
  "rini-input",
  "rini-ipc",
  "rini-mach-sys",
- "rini-macos",
  "rini-runloop",
- "rini-shared",
  "rini-skylight-sys",
  "rini-tiling",
  "rini-windows",
@@ -1708,13 +1667,13 @@ dependencies = [
  "objc2-core-foundation",
  "regex",
  "rini-displays",
+ "rini-geometry",
  "rini-ipc",
- "rini-macos",
  "rini-runloop",
- "rini-shared",
  "rini-tiling",
  "rini-windows",
  "ron",
+ "rustc-hash",
  "serde",
  "serde_with",
  "slotmap",

@@ -5,7 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [workspace]
-members = [".", "crates/rini-animation", "crates/rini-config", "crates/rini-displays", "crates/rini-input", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-macos", "crates/rini-runloop", "crates/rini-shared", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-workspaces"]
+members = [".", "crates/rini-animation", "crates/rini-config", "crates/rini-displays", "crates/rini-geometry", "crates/rini-input", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-workspaces"]
 resolver = "3"
 
 [[bin]]
@@ -176,8 +176,7 @@ tracing-tree = { version = "0.4.0", features = ["time"], default-features = fals
 futures-task = { version = "0.3.31", features = ["alloc"], default-features = false }
 num_enum = "0.7.4"
 rustc-hash = "2.1.1"
-rini-shared = { path = "crates/rini-shared" }
-rini-macos = { path = "crates/rini-macos" }
+rini-geometry = { path = "crates/rini-geometry" }
 rini-config = { path = "crates/rini-config" }
 rini-displays = { path = "crates/rini-displays" }
 rini-input = { path = "crates/rini-input" }
@@ -289,8 +288,7 @@ dashmap = { workspace = true }
 sigpipe = "0.1.3"
 embed_plist = "1.2.2"
 rustc-hash = { workspace = true }
-rini-shared = { workspace = true }
-rini-macos = { workspace = true }
+rini-geometry = { workspace = true }
 rini-config = { workspace = true }
 rini-displays = { workspace = true }
 rini-input = { workspace = true }
@@ -304,7 +302,6 @@ rini-windows = { workspace = true }
 rini-workspaces = { workspace = true }
 
 [dev-dependencies]
-rini-macos = { workspace = true, features = ["test-support"] }
 rini-windows = { workspace = true, features = ["test-support"] }
 rini-displays = { workspace = true, features = ["test-support"] }
 rini-workspaces = { workspace = true, features = ["test-support"] }

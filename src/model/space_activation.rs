@@ -1,4 +1,4 @@
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_displays::ids::{ScreenId, SpaceId};
 use rini_displays::screen::ScreenInfo;
 

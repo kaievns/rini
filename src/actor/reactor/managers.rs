@@ -14,7 +14,7 @@ use rini_input::input_tap as event_tap;
 use crate::actor::{
     raise_manager, window_notify, wm_controller,
 };
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_input::settings::WindowSnappingSettings;
 use rini_workspaces::LayoutEngine;
 use rini_workspaces::broadcast::BroadcastSender;

@@ -10,9 +10,9 @@ use crate::actor::reactor::managers::{
     AppManager, DragManager, LayoutManager, WorkspaceSwitchManager,
 };
 use rini_displays::topology::ForwardedSpaceState;
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use rini_config::{self as config, Config};
-use rini_shared::log::{MetricsCommand, handle_command as handle_metrics_command};
+use crate::log::{MetricsCommand, handle_command as handle_metrics_command};
 use rini_workspaces::{EventResponse, LayoutCommand, LayoutEvent};
 use crate::model::RiniState;
 use crate::model::space_activation::{

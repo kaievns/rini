@@ -8,13 +8,13 @@ use super::reactor::{self, Event};
 use rini_displays::spaces;
 use rini_windows::ids::WindowId;
 use rini_windows::transaction::Requested;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_windows::transaction::WindowTxStore;
 use rini_displays::ids::SpaceId;
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rini_windows::window_server::{self, WindowIterator};
 use rini_windows::ids::WindowServerId;
-use rini_macos::window_notify;
+use crate::platform::window_notify;
 
 #[derive(Default)]
 pub struct Ignored {

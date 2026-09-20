@@ -13,6 +13,8 @@ doctest = false
 test-support = []
 
 [dependencies]
+rini-geometry = { workspace = true }
+rustc-hash = { workspace = true }
 rini-mach-sys = { workspace = true }
 anyhow = { workspace = true }
 dashmap = { workspace = true }
@@ -29,7 +31,6 @@ parking_lot = { workspace = true }
 regex = { workspace = true }
 rini-ipc = { workspace = true }
 rini-runloop = { workspace = true }
-rini-shared = { workspace = true }
 rini-skylight-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 static_assertions = { workspace = true }

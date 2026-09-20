@@ -18,10 +18,10 @@ use objc2_core_graphics::{
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
-use rini_shared::geometry::{CGRectDef, CGSizeDef};
+use rini_geometry::{CGRectDef, CGSizeDef};
 use crate::ids::{WindowId, WindowServerId};
 #[cfg(any(test, feature = "test-support"))]
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use crate::ids::pid_t;
 use crate::ax::element::{AXUIElement, Error as AxError};
 use crate::cg_ok;

@@ -2,7 +2,7 @@
 //! specs parsed from the config, and the CGEvent/TIS reads that turn a keystroke into a `Hotkey`.
 use std::collections::HashMap as StdHashMap;
 
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::ffi::c_void;
 use std::fmt;
 use std::ptr::NonNull;

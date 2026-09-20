@@ -4,13 +4,12 @@ use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
 
 use rini_windows::ids::WindowId;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 #[cfg(test)]
 use rini_windows::rules::AppWorkspaceRule;
 use rini_tiling::settings::LayoutSettings;
 use crate::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use rini_ipc::protocol::WorkspaceSelector;
-use rini_shared::log::trace_misc;
 use crate::Direction;
 use rini_tiling::LayoutSystemKind;
 use rini_windows::rules::AppRuleDecision;
@@ -1092,7 +1091,7 @@ impl WorkspaceStore {
     pub fn workspaces_with_windows_outside(
         &self,
         window_store: &WindowStore,
-        live_spaces: &rini_shared::collections::HashSet<SpaceId>,
+        live_spaces: &rustc_hash::FxHashSet<SpaceId>,
     ) -> Vec<String> {
         // Workspaces are global now, so "stranded" is a property of the (display, workspace)
         // pair rather than of the workspace object: windows assigned to a native space that
@@ -2326,4 +2325,13 @@ mod tests {
         assert_eq!(hidden.origin.y, primary.max().y - 1.0);
         assert_eq!(hidden.origin.x, primary.origin.x - frame.size.width + 1.0);
     }
+}
+
+/// Runs `f`, tracing how long it took under `desc`.
+fn trace_misc<T>(desc: &str, f: impl FnOnce() -> T) -> T {
+    let start = std::time::Instant::now();
+    let out = f();
+    let end = std::time::Instant::now();
+    tracing::trace!(time = ?(end - start), "{desc}");
+    out
 }

@@ -8,7 +8,7 @@ use rini_ipc::protocol::{
 
 use rini_windows::ids::WindowId;
 use crate::actor::reactor::{Event, Reactor, Sender};
-use rini_shared::collections::HashSet;
+use rustc_hash::FxHashSet as HashSet;
 use crate::model::server::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
 use rini_workspaces::virtual_workspace::VirtualWorkspaceId;
 use rini_displays::screen::ScreenInfo;
@@ -727,7 +727,7 @@ impl Reactor {
             .virtual_workspace_manager()
             .get_stats(&self.state.windows);
 
-        let workspace_stats: rini_shared::collections::HashMap<String, usize> = stats
+        let workspace_stats: rustc_hash::FxHashMap<String, usize> = stats
             .workspace_window_counts
             .iter()
             .map(|(id, count)| (format!("{:?}", id), *count))

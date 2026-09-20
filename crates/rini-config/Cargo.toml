@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rustc-hash = { workspace = true }
 rini-input = { workspace = true }
 rini-workspaces = { workspace = true }
 rini-tiling = { workspace = true }
@@ -22,9 +23,7 @@ dirs = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 once_cell = { workspace = true }
-rini-macos = { workspace = true }
 rini-ipc = { workspace = true }
-rini-shared = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 strum = { workspace = true }

@@ -90,7 +90,8 @@ use crate::actor::raise_manager::{self, RaiseManager, RaiseRequest};
 use crate::actor::reactor::events::window_discovery;
 use rini_displays::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta};
 use crate::actor;
-use rini_shared::collections::{BTreeMap, HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::BTreeMap;
 use rini_config::Config;
 use rini_workspaces::{self as layout, Direction, LayoutEngine, LayoutEvent};
 use rini_workspaces::broadcast::{BroadcastEvent, BroadcastSender, protocol_window_id, protocol_workspace_id};
@@ -100,7 +101,7 @@ use rini_workspaces::AppRuleResult;
 use crate::model::RiniState;
 use rini_windows::mouse::MouseState;
 use rini_runloop::executor::Executor;
-use rini_shared::geometry::{CGRectDef, CGRectExt};
+use rini_geometry::{CGRectDef, CGRectExt};
 pub use rini_displays::screen::ScreenInfo;
 use rini_displays::ids::SpaceId;
 use rini_displays::screen::order_visible_spaces_by_position;
@@ -2296,7 +2297,7 @@ impl Reactor {
             ids.sort_unstable();
 
             if ids != self.notification_manager.last_sls_notification_ids {
-                rini_macos::window_notify::update_window_notifications(&ids);
+                crate::platform::window_notify::update_window_notifications(&ids);
 
                 self.notification_manager.last_sls_notification_ids = ids;
             }
@@ -4149,7 +4150,7 @@ impl Reactor {
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
     /// the real windows do not move. See "Edge bounce" in `crates/rini-animation/docs/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
-        if !self.config.settings.animate || rini_macos::power::is_low_power_mode_enabled() {
+        if !self.config.settings.animate || crate::platform::power::is_low_power_mode_enabled() {
             return;
         }
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
@@ -5780,7 +5781,7 @@ impl Reactor {
         let Some(screen) = self.space_state.screen_by_space(space) else {
             return false;
         };
-        if !rini_macos::window_server::focus_desktop_window(screen) {
+        if !crate::platform::window_server::focus_desktop_window(screen) {
             return false;
         }
 

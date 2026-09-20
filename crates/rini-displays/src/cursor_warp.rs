@@ -73,7 +73,7 @@ use objc2_core_graphics::{CGError, CGEvent};
 use tracing::{debug, info};
 
 use serde::{Deserialize, Serialize};
-use rini_shared::geometry::CGRectExt;
+use rini_geometry::CGRectExt;
 use rini_runloop::channel;
 
 use crate::screen::ScreenInfo;

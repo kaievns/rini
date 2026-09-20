@@ -20,7 +20,7 @@ use rini_displays::spaces;
 use super::wm_controller::{self, WmEvent};
 use rini_windows::app::NSRunningApplicationExt;
 use rini_runloop::dispatch::DispatchExt;
-use rini_macos::power::{init_power_state, set_low_power_mode_state};
+use crate::platform::power::{init_power_state, set_low_power_mode_state};
 use rini_skylight_sys::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
 
 #[repr(C)]

@@ -17,7 +17,7 @@ use rini_skylight_sys::{
     SLSRequestNotificationsForWindows, cid_t,
 };
 use rini_runloop::channel as actor;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::KnownCGSEvent;
 
 type Wid = u32;

@@ -10,7 +10,7 @@ use rini_config::{OuterGaps, WorkspaceSelector};
 use rini_workspaces::{Direction, LayoutCommand, LayoutEvent};
 use rini_windows::catalogue::NativeFullscreenTransition;
 use rini_windows::app::{AppInfo, WindowInfo};
-use rini_shared::geometry::SameAs;
+use rini_geometry::SameAs;
 use rini_windows::ids::WindowServerId;
 
 #[test]

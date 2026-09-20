@@ -6,7 +6,7 @@ use serde_with::serde_as;
 
 use rini_windows::ids::WindowId;
 use rini_windows::app::WindowInfo;
-use rini_shared::geometry::CGRectDef;
+use rini_geometry::CGRectDef;
 use rini_displays::ids::{ScreenId, SpaceId};
 use rini_displays::screen::ScreenInfo;
 use rini_windows::ids::WindowServerId;

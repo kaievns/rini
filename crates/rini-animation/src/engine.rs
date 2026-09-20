@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 
 use rini_runloop::channel;
 use rini_windows::ids::WindowId;
-use rini_shared::geometry::SameAs;
+use rini_geometry::SameAs;
 use rini_runloop::run_loop::RepeatingTimer;
 use rini_windows::ids::WindowServerId;
 use crate::snapshot_service::{SnapshotService, SnapshotTarget};
@@ -187,7 +187,7 @@ fn companion_of(
     candidates: &[(WindowServerId, CGRect)],
     display: CGRect,
 ) -> Option<(WindowServerId, CGRect)> {
-    if rini_shared::geometry::is_off_screen(display, frame) {
+    if rini_geometry::is_off_screen(display, frame) {
         return None;
     }
     let center = |r: CGRect| {
@@ -196,7 +196,7 @@ fn companion_of(
     let (cx, cy) = center(frame);
     candidates
         .iter()
-        .filter(|(_, candidate)| !rini_shared::geometry::is_off_screen(display, *candidate))
+        .filter(|(_, candidate)| !rini_geometry::is_off_screen(display, *candidate))
         .find(|(_, candidate)| {
             let dw = candidate.size.width - frame.size.width;
             let dh = candidate.size.height - frame.size.height;
@@ -471,7 +471,7 @@ fn handover_report(
         if !tiled.contains(window) {
             continue;
         }
-        if rini_shared::geometry::is_off_screen(display, *intended) {
+        if rini_geometry::is_off_screen(display, *intended) {
             continue;
         }
         let Some(actual) = real.get(window) else { continue };
@@ -1788,7 +1788,7 @@ impl FlightEngine {
                     // Only a frame on this display counts as a spawn; capturing off screen is slow.
                     let spawn = rini_windows::window_server::get_window(request.server_id)
                         .map(|info| info.frame)
-                        .filter(|f| !rini_shared::geometry::is_off_screen(display_frame, *f));
+                        .filter(|f| !rini_geometry::is_off_screen(display_frame, *f));
                     let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
                     let captured_at = Instant::now();
                     let picture = spawn
@@ -2845,14 +2845,14 @@ mod tests {
         assert!(!managed.contains(&9001), "a border seen before is still a border");
         // The clamped park is not judged off screen, so geometry alone cannot exclude it.
         let park = rect(1727.0, 1076.0, 1720.0, 1081.0);
-        assert!(!rini_shared::geometry::is_off_screen(DISPLAY, park));
+        assert!(!rini_geometry::is_off_screen(DISPLAY, park));
         assert!(companion_of(park, &[(WindowServerId::new(102682), park)], DISPLAY).is_some());
     }
 
     #[test]
     fn a_parked_window_neither_traces_nor_is_traced() {
         let park = rect(DISPLAY.size.width - 1.0, DISPLAY.size.height - 1.0, 859.0, 1081.0);
-        assert!(rini_shared::geometry::is_off_screen(DISPLAY, park));
+        assert!(rini_geometry::is_off_screen(DISPLAY, park));
         let twin = (WindowServerId::new(7), park);
         assert!(companion_of(park, &[twin], DISPLAY).is_none(), "a parked anchor");
         let on_screen = rect(4.0, 32.0, 859.0, 1081.0);
@@ -3104,7 +3104,7 @@ mod tests {
             let wrong: Vec<String> = cases
                 .iter()
                 .filter_map(|(name, real, from, to)| {
-                    let expected = rini_shared::geometry::park_entry_frame(*from, *to, display);
+                    let expected = rini_geometry::park_entry_frame(*from, *to, display);
                     let got = resolve_start(*real, *from, *to, display, None);
                     (got != expected).then(|| {
                         format!(
@@ -3844,7 +3844,7 @@ mod tests {
                 let visible: Vec<_> = frames
                     .iter()
                     .filter(|(_, intended, _)| {
-                        !rini_shared::geometry::is_off_screen(DISPLAY, *intended)
+                        !rini_geometry::is_off_screen(DISPLAY, *intended)
                     })
                     .collect();
                 let error = |intended: &CGRect, actual: &CGRect| {
@@ -3865,7 +3865,7 @@ mod tests {
                         .find(|(w, _, _)| w.idx.get() == report.worst_wsid)
                         .expect("seed 97: the worst names a measured window");
                     assert!(
-                        !rini_shared::geometry::is_off_screen(DISPLAY, worst.1),
+                        !rini_geometry::is_off_screen(DISPLAY, worst.1),
                         "seed 97: the worst came from a park"
                     );
                 }
@@ -4313,7 +4313,7 @@ mod tests {
                     running.final_frames.iter().copied().collect();
                 let report = handover_report(&running.final_frames, &tiled, &real, DISPLAY);
                 // A destination past the edge is a park, which the report excludes (2.3).
-                let measured = usize::from(!rini_shared::geometry::is_off_screen(DISPLAY, to));
+                let measured = usize::from(!rini_geometry::is_off_screen(DISPLAY, to));
                 assert_eq!(report.total, measured, "seed 95: only the drawn window is measured");
                 assert_eq!(report.count_over, 0);
 
@@ -4460,7 +4460,7 @@ mod tests {
                     from.size.width,
                     from.size.height,
                 );
-                if real.same_as(to) || rini_shared::geometry::is_off_screen(DISPLAY, real) {
+                if real.same_as(to) || rini_geometry::is_off_screen(DISPLAY, real) {
                     continue;
                 }
                 checked += 1;
@@ -4576,7 +4576,7 @@ mod tests {
                 assert_eq!(from.size, frame.size);
                 assert_eq!(to.origin.x - from.origin.x, from_offset.x - to_offset.x);
                 assert_eq!(from.origin.y, frame.origin.y, "a pan keeps the park's row");
-                let entry = rini_shared::geometry::park_entry_frame(frame, to, DISPLAY);
+                let entry = rini_geometry::park_entry_frame(frame, to, DISPLAY);
                 if from_offset.x.abs() != 1.0 {
                     assert_ne!(from, entry, "the pan path does not consult the park remap");
                 }
@@ -5765,7 +5765,7 @@ mod tests {
                         let got = dest(&merged, w).unwrap_or_else(|| panic!("{tag}: {w:?} unnamed after merge"));
                         // The one P4 exception: a member sent off the viewport rides its moving container (`rides_out`).
                         let rode_out = pan.is_none()
-                            && rini_shared::geometry::is_off_screen(DISPLAY, want)
+                            && rini_geometry::is_off_screen(DISPLAY, want)
                             && matches!(before.member(w), Some(Member::Rigid { key, .. })
                                 if before.groups.iter().any(|g| g.key == key && !g.is_still()));
                         if rode_out {
@@ -5946,7 +5946,7 @@ mod tests {
             let a = column(0.0);
             let b = column(1.0);
             let park = Gen(5).park(a.size);
-            assert!(rini_shared::geometry::is_off_screen(DISPLAY, park));
+            assert!(rini_geometry::is_off_screen(DISPLAY, park));
             let b_to = shifted(b, -863.0, 0.0);
             let others = [(b, b_to, false)];
             let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &others, DISPLAY);
@@ -5968,7 +5968,7 @@ mod tests {
             let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &[], DISPLAY);
             assert_eq!(travel, None);
             let a_end = resolve_end(a, park, DISPLAY, travel);
-            assert_eq!(a_end, rini_shared::geometry::park_entry_frame(park, a, DISPLAY));
+            assert_eq!(a_end, rini_geometry::park_entry_frame(park, a, DISPLAY));
             let still = column(0.0);
 
             let plan = reflow_plan(&[(wid(1), a, a_end, false), (wid(2), still, still, false)], DISPLAY);

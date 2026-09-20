@@ -9,7 +9,7 @@ use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
 use rini_windows::ids::WindowId;
 use crate::actor::{self, reactor};
 use rini_input::input_tap as event_tap;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_windows::ids::pid_t;
 use rini_runloop::timer::Timer;
 

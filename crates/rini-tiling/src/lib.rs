@@ -4,7 +4,7 @@ use enum_dispatch::enum_dispatch;
 use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use rini_windows::ids::{WindowId, pid_t};
 
 pub use rini_ipc::protocol::{Direction, ResizeOrientation};

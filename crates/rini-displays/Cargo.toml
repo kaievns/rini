@@ -13,6 +13,9 @@ doctest = false
 test-support = []
 
 [dependencies]
+rini-ipc = { workspace = true }
+rini-geometry = { workspace = true }
+rustc-hash = { workspace = true }
 dispatchr = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }
@@ -21,7 +24,6 @@ objc2-core-graphics = { workspace = true }
 objc2-foundation = { workspace = true }
 once_cell = { workspace = true }
 rini-runloop = { workspace = true }
-rini-shared = { workspace = true }
 rini-skylight-sys = { workspace = true }
 rini-windows = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

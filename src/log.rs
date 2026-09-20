@@ -1,4 +1,5 @@
-use std::time::{Duration, Instant};
+//! Tracing setup for the `rini` binary, and the timing histograms behind `MetricsCommand`.
+use std::time::Duration;
 
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -67,10 +68,3 @@ fn print_histograms(timing_layer: &TimingLayer) {
     });
 }
 
-pub fn trace_misc<T>(desc: &str, f: impl FnOnce() -> T) -> T {
-    let start = Instant::now();
-    let out = f();
-    let end = Instant::now();
-    tracing::trace!(time = ?(end - start), "{desc}");
-    out
-}

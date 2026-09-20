@@ -1,3 +1,4 @@
+//! `run_on_start`: the shell commands the config asks the `rini` binary to run once at launch.
 use tracing::{error, trace};
 
 pub fn parse_command(command: &str) -> Vec<String> {

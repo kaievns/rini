@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use rini_windows::ids::{WindowId, pid_t};
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use rini_displays::ids::SpaceId;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

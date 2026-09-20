@@ -60,25 +60,24 @@ monolith grew ten mutually importing module pairs.
 
 ## Current state
 
-The first attempt at the split cut by concern, not by context, and produced
-layers: `rini-shared`, `rini-macos`, `rini-config` (a hub), `rini-layout`
-(five contexts in one crate), `rini-motion`/`rini-overlay` (one context in
-two layers). Those crates exist today and dissolve into the contexts above,
-one context at a time. Each step: the context's crate appears with its full
-slice, importers repoint, the old crate shrinks, tests move with the code.
+Every context in the table above exists as its own crate, and the layers the
+first attempt at the split produced (`rini-shared`, `rini-macos`,
+`rini-layout`, `rini-motion`/`rini-overlay`, `rini-protocol`/`rini-client`)
+are gone. Each cut kept behaviour and test counts; the commit messages record
+what moved where and the inversions that made it possible (`Event` enums with
+an `EventSink`, `From<&Config>` for a context's settings, `Backend` speaking
+wire types).
 
-| step | status |
-|---|---|
-| `rini-runloop`, `rini-skylight-sys` | done: lifted out of `rini-macos` (and `channel` out of `rini-shared`) so `rini-windows` depends on libraries, not a layer |
-| `rini-windows` | done, first cut: `ids`, `state`, `rules` (matching; the settings types `AppWorkspaceRule`/`AppRulePosition`/`AppRuleSize` moved here from config, the first piece of the config inversion), `transaction`, `event` (`Event` + `EventSink`), the AX adapters (`ax`, `app`), `process`/`carbon`, `mouse`, `window_server`, the per-app `app_actor` and the Carbon `lifecycle` actor. `catalogue` (`WindowCatalogue`: every window met, by rini id and window-server id, with visibility, placement, native-fullscreen and rule flags) arrived with the workspaces cut. Still to come here: the SkyLight notification actor (`src/actor/window_notify.rs`, straddles windows and displays), `raise_manager`, and the window sub-level Mach query (`rini_macos::mach`). `MouseState` lives here because the app actor stamps its events with it; the event tap writes it |
-| `rini-displays` | done: `ids`, `screen` (cache, `ScreenInfo`, `CoordinateConverter`, SLS display/space queries), `topology` (`ForwardedSpaceState`, `TopologyWindowDelta`, `SpaceEventKind`), `space_query`, `space_switch`, `display_churn`, the spaces actor (inbound `Notification`, outbound `Event` through an `EventSink`; the application routes the topology snapshot to the event tap as well) and `cursor_warp` (owns `StackedUpperSide`, which config re-exports). `rini-shared::ids` is gone. Still in `rini-wm`: `notification_center` (also feeds app lifecycle and power events) and `mission_control_observer` (an AX observer on the Dock); in `rini-macos`: `focus_desktop_window`, `mission_control_dock_overlay_visible` |
-| `rini-tiling` | done: `LayoutSystem`/`LayoutId`/`LayoutSystemKind`, `ScrollingLayoutSystem`, constraints, the tiling area, and `settings` (`LayoutSettings`, `ScrollingLayoutSettings`, `GapSettings` and kin, moved out of config, which re-exports them). No space or workspace in it |
-| `rini-workspaces` | done: `rini-layout` renamed and given its settings (`VirtualWorkspaceSettings`, `MAX_WORKSPACES`, out of config); `assignment` (`WorkspaceAssignments`, the window → workspace index, both ways) split out of the old `WindowStore`, whose catalogue half is now `rini_windows::catalogue::WindowCatalogue`; `WindowStore` remains as the facade over both. Still to do here: `broadcast` (the engine sends IPC events itself; that belongs to the application, driven by `EventResponse`) and `LayoutEngine` itself, which orchestrates workspaces, floating, persistence and display affinity in one 4.4k-line type |
-| `rini-input` | done: `key` (modifiers, key codes, hotkeys, specs and their normalisation, the CGEvent/TIS reads), `binding` (`WmCommand`/`WmCmd`/`ExecCmd`: what a key can name; `Command`, the wire part, moved to `rini-protocol`), `settings` (`GestureSettings`, `WindowSnappingSettings`, `InputSettings`; config builds `InputSettings` from its tables, incl. a copy of tiling's strip-scroll gesture fields), `drag_swap`, `cursor`, `haptics`, `tap` (raw CGEventTap + re-enable governor), the `input_tap` and `gesture_tap` actors. Both emit `input::Event` through an `EventSink`; the application maps a fired binding to its command dispatch and pointer events to the reactor. The event tap no longer receives the topology snapshot (it stored it and never read it) |
-| `rini-animation` | done: `rini-motion` and `rini-overlay` merged into one crate (`motion::*` is the pure geometry; `window_snapshot`, `snapshot_service`, `edge_dressing`, `overlay`, `engine` the rest), plus `backdrop` (the desktop and bar window-server reads, from `rini-macos`). `animate` and `animation_duration` stay in config's `Settings`: the reactor decides whether a change flies, and the engine is told the duration per flight, so the context has no settings of its own |
-| `rini-ipc` | done: `protocol` (the wire types; `rini-protocol` folded in), `client` (`rini-client` folded in), `mach` (rini's Mach service, from `rini_macos::mach`), the server, `subscriptions`, `cli_exec`. The `Backend` trait now speaks wire types only (`u64` spaces, `protocol::WindowId`) and carries the two config methods, so the crate depends on no context and not on config; `rini-wm`'s `IpcBackend` converts ids and talks to the config actor. The window sub-level query that shared `mach.rs` is `rini_windows::sub_level` |
-| `rini-config` inversion | done except for the hub's own shape: every context owns its settings type and config fills them (`From<&Config> for InputSettings` is the pattern for a context that needs fields from several tables). Left in config: `Settings` itself, `animate`/`animation_duration` (the reactor's call, see the animation row), `mouse_follows_focus`/`auto_focus_blacklist`/`default_disable`/`run_on_start`/`hot_reload` (application) |
-| `rini-wm` | the reactor becomes a dispatcher over the contexts. Largest single job; last |
+What is still not where the map says:
+
+| where | what | why it waits |
+|---|---|---|
+| `rini-config` | is a hub in shape: one `Settings` struct that every context's fields hang off, filled from one file | it now depends on every context and nothing depends on it, so it is a hub at the edge, which is the tolerable kind. Its own decomposition (one table per context, `deny_unknown_fields` prevents `flatten`) is a schema question for the config file, not an architecture one |
+| `rini-workspaces` | `broadcast`: `LayoutEngine` sends IPC events itself | belongs to the application, driven by `EventResponse`; needs the reactor to own the broadcast channel |
+| `rini-workspaces` | `LayoutEngine`, 4.4k lines orchestrating workspaces, floating, persistence and display affinity | the seam to tiling is clean (`LayoutSystem`); the seams inside are not yet |
+| `rini-wm` | `wm_controller` lowers `WmCmd` aliases to `Command` | lowering them at parse time in `rini-input` changes what a binding parses to |
+| `rini-wm` | `notification_center` and `window_notify` feed two contexts each | they are the application's demultiplexers of macOS notification streams; splitting them by context is possible but doubles the subscriptions |
+| `rini-wm` | the reactor: 4.4k lines plus `events/`, holding every context's state | the largest single job; it becomes a dispatcher over the contexts now that they exist to dispatch to |
 
 ## The costs of crates
 

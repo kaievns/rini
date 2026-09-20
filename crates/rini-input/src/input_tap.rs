@@ -27,7 +27,7 @@ use objc2_core_graphics::{
 use tracing::{debug, error, trace, warn};
 
 use rini_runloop::channel;
-use rini_shared::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_windows::ids::WindowServerId;
 use rini_windows::mouse::{MouseState, set_mouse_state};
 use rini_windows::window_server;

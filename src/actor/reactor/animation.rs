@@ -6,9 +6,9 @@ use rini_animation::window_snapshot::is_a_resize;
 use rini_windows::app_actor::{AppThreadHandle, Request};
 use rini_windows::ids::{WindowId, pid_t};
 use crate::actor::reactor::Reactor;
-use rini_shared::collections::HashMap;
-use rini_shared::geometry::{Round, SameAs};
-use rini_macos::power;
+use rustc_hash::FxHashMap as HashMap;
+use rini_geometry::{Round, SameAs};
+use crate::platform::power;
 use rini_displays::ids::SpaceId;
 use rini_windows::ids::WindowServerId;
 

@@ -24,8 +24,8 @@ use rini_skylight_sys::{
     SLSCopyActiveMenuBarDisplayIdentifier, SLSGetDisplayMenubarHeight, SLSGetDockRectWithReason,
     SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode, SLSMainConnectionID,
 };
-use rini_shared::collections::HashMap;
-use rini_shared::geometry::CGRectDef;
+use rustc_hash::FxHashMap as HashMap;
+use rini_geometry::CGRectDef;
 use crate::ids::{ScreenId, SpaceId};
 
 #[derive(Debug, Clone)]

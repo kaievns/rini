@@ -21,7 +21,7 @@ use tracing::{Instrument, Span, debug, info, instrument, trace, warn};
 use rini_runloop::channel as actor;
 use crate::transaction::{Requested, TransactionId, WindowTxStore};
 use crate::event::{Event, EventSink};
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use crate::app::NSRunningApplicationExt;
 use crate::ids::{WindowId, pid_t};
 

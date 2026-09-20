@@ -4,7 +4,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 
 use rini_windows::ids::WindowId;
 use crate::settings::WindowSnappingSettings;
-use rini_shared::geometry::CGRectExt;
+use rini_geometry::CGRectExt;
 
 // less overlap once activated for a sticky
 const STICK_RATIO: f64 = 0.6;

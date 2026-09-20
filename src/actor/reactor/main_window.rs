@@ -1,7 +1,7 @@
 use super::Event;
 use rini_windows::app_actor::Quiet;
 use rini_windows::ids::{WindowId, pid_t};
-use rini_shared::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 #[derive(Default)]
 pub(crate) struct MainWindowTracker {
