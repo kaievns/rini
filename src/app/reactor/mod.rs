@@ -5,6 +5,7 @@
 //! changes by sending requests out to the other actors in the system.
 
 mod animation;
+mod commands;
 pub mod state;
 mod space_affinity;
 mod events;
@@ -1786,32 +1787,10 @@ impl Reactor {
                 dy,
                 duration_ms,
             })) => {
-                // Make sure the actor knows the display before asking it to draw, since it silently
-                // declines to animate without geometry.
-                self.publish_animation_display();
-                let response = match &self.communication_manager.workspace_animation_tx {
-                    Some(tx) => {
-                        _ = tx.send(crate::animation::platform::engine::Event::DebugSlide {
-                            dx: dx as f64,
-                            dy: dy as f64,
-                            duration: std::time::Duration::from_millis(duration_ms),
-                        });
-                        format!("overlay slide requested: dx {dx}, dy {dy}, {duration_ms}ms")
-                    }
-                    None => "the workspace animation actor is not running".to_string(),
-                };
-                return Ok(EventOutcome::no_change().with_stdout_line(response));
+                return self.on_debug_overlay_slide(dx, dy, duration_ms);
             }
             Event::Command(Command::Reactor(ReactorCommand::DebugWarmSnapshots)) => {
-                self.publish_animation_display();
-                let response = match &self.communication_manager.workspace_animation_tx {
-                    Some(tx) => {
-                        _ = tx.send(crate::animation::platform::engine::Event::WarmCache);
-                        "snapshot cache warm requested".to_string()
-                    }
-                    None => "the workspace animation actor is not running".to_string(),
-                };
-                return Ok(EventOutcome::no_change().with_stdout_line(response));
+                return self.on_debug_warm_snapshots();
             }
             Event::Command(Command::Reactor(ReactorCommand::Debug)) => {
                 return command_workflow::handle_command_reactor_debug(
@@ -1841,27 +1820,7 @@ impl Reactor {
                 scope,
                 source,
             })) => {
-                let Some(active_space) = self.active_display_space() else {
-                    return Ok(EventOutcome::no_change().with_stdout_line(
-                        "Could not restore saved layout: no active macOS space is available".into(),
-                    ));
-                };
-                let request = layout::RestoreRequest { scope, active_space, source };
-                let outcome = EventOutcome::window_membership_changed(false, true);
-                let report = self.layout_manager.layout_engine.restore_layout(
-                    path,
-                    request,
-                    &mut self.state.windows,
-                    &self.config.virtual_workspaces,
-                    &self.config.settings.layout,
-                );
-                return Ok(match report {
-                    Ok(report) => outcome.with_stdout_line(report.summary()),
-                    Err(error) => {
-                        tracing::error!(?scope, %error, "Could not restore saved layout");
-                        outcome.with_stdout_line(format!("Could not restore saved layout: {error}"))
-                    }
-                });
+                return self.on_restore_layout(path, scope, source);
             }
             Event::Command(Command::Reactor(ReactorCommand::Serialize)) => {
                 let serialized = self.serialize_state();
@@ -1877,17 +1836,7 @@ impl Reactor {
                 return Ok(self.cycle_app_windows(backward));
             }
             Event::Command(Command::Reactor(ReactorCommand::ToggleSpaceActivated)) => {
-                let space = self.active_display_space();
-                let display_uuid = space.and_then(|space| {
-                    self.space_state
-                        .screen_by_space(space)
-                        .and_then(|screen| screen.display_uuid_owned())
-                });
-                let config = self.activation_cfg();
-                return command_workflow::handle_command_reactor_toggle_space_activated(
-                    &mut self.space_activation_policy,
-                    command_workflow::ToggleSpacePayload { config, space, display_uuid },
-                );
+                return self.on_toggle_space_activated();
             }
             Event::Command(Command::Reactor(ReactorCommand::CloseWindow { window_server_id })) => {
                 return command_workflow::handle_close_window(
@@ -1898,187 +1847,22 @@ impl Reactor {
                 window_id,
                 window_server_id,
             })) => {
-                let window_id = WindowId::new(window_id.pid, window_id.idx);
-                let window_server_id = window_server_id.map(WindowServerId::new);
-                let resolved_space = self.affinity().best_space_for_window_id(window_id).or_else(|| {
-                    self.state.windows.window(window_id).and_then(|window| {
-                        self.affinity().best_space_for_window(&window.frame_monotonic, window.info.sys_id)
-                    })
-                });
-                return command_workflow::handle_command_reactor_focus_window(
-                    &self.state,
-                    &self.app_manager,
-                    command_workflow::FocusWindowPayload {
-                        window_id,
-                        window_server_id,
-                        resolved_space,
-                        space_is_active: resolved_space
-                            .is_some_and(|space| self.is_space_active(space)),
-                    },
-                );
+                return self.on_focus_window(window_id, window_server_id);
             }
             Event::Command(Command::Reactor(ReactorCommand::MoveMouseToDisplay(selector))) => {
-                let screen = self.screen_for_selector(&selector, None).cloned();
-                let focus_window = screen.as_ref().and_then(|screen| {
-                    let space = screen.space?;
-                    self.last_focused_window_in_space(space).or_else(|| {
-                        self.layout_manager
-                            .layout_engine
-                            .windows_in_active_workspace(&self.state.windows, space)
-                            .into_iter()
-                            .next()
-                    })
-                });
-                let target_is_active = screen
-                    .as_ref()
-                    .and_then(|screen| screen.space)
-                    .is_none_or(|space| self.is_space_active(space));
-                return command_workflow::handle_move_mouse_to_display(
-                    command_workflow::DisplayFocusPayload {
-                        screen,
-                        target_is_active,
-                        focus_window,
-                    },
-                );
+                return self.on_move_mouse_to_display(selector);
             }
             Event::Command(Command::Reactor(ReactorCommand::FocusDisplay(selector))) => {
-                let screen = self.screen_for_selector(&selector, None).cloned();
-                let focus_window = screen.as_ref().and_then(|screen| {
-                    let space = screen.space?;
-                    self.last_focused_window_in_space(space).or_else(|| {
-                        self.layout_manager
-                            .layout_engine
-                            .windows_in_active_workspace(&self.state.windows, space)
-                            .into_iter()
-                            .next()
-                    })
-                });
-                let target_is_active = screen
-                    .as_ref()
-                    .and_then(|screen| screen.space)
-                    .is_none_or(|space| self.is_space_active(space));
-                return command_workflow::handle_focus_display(
-                    command_workflow::DisplayFocusPayload {
-                        screen,
-                        target_is_active,
-                        focus_window,
-                    },
-                );
+                return self.on_focus_display(selector);
             }
             Event::Command(Command::Layout(command)) => {
-                let command_space = self.command_context_space();
-                let (visible_spaces, visible_space_centers) = self.visible_spaces_for_layout(false);
-                return command_workflow::handle_command_layout(
-                    &mut self.state,
-                    &mut self.layout_manager,
-                    &mut self.workspace_switch_manager,
-                    command_workflow::LayoutCommandPayload {
-                        command,
-                        command_space,
-                        visible_spaces,
-                        visible_space_centers,
-                    },
-                );
+                return self.on_layout_command(command);
             }
             Event::Command(Command::Reactor(ReactorCommand::MoveWindowToDisplay {
                 selector,
                 window_id,
             })) => {
-                if self.is_in_drag() {
-                    warn!("Ignoring move-window-to-display while a drag is active");
-                    return Ok(EventOutcome::no_change());
-                }
-                let command_space = self.workspace_command_space();
-                let resolved_window = {
-                    let workspaces = self.layout_manager.layout_engine.virtual_workspace_manager();
-                    match window_id {
-                        Some(index) => command_space
-                            .and_then(|space| {
-                                workspaces.find_window_by_idx(&self.state.windows, space, index)
-                            })
-                            .or_else(|| {
-                                self.iter_active_spaces().find_map(|space| {
-                                    workspaces.find_window_by_idx(&self.state.windows, space, index)
-                                })
-                            }),
-                        None => self
-                            .main_window()
-                            .or_else(|| self.window_id_under_cursor())
-                            .or_else(|| {
-                                command_space.and_then(|space| {
-                                    workspaces.find_window_by_idx(&self.state.windows, space, 0)
-                                })
-                            }),
-                    }
-                };
-                let Some(window) = resolved_window else {
-                    warn!("Move window to display ignored because no target window was resolved");
-                    return Ok(EventOutcome::no_change());
-                };
-                let Some(window_state) = self.state.windows.window(window) else {
-                    warn!(?window, "Move window to display ignored: unknown window");
-                    return Ok(EventOutcome::no_change());
-                };
-                let window_server_id = window_state.info.sys_id;
-                let window_frame = window_state.frame_monotonic;
-                let source_space = self
-                    .affinity().assigned_space_for_window_id(window)
-                    .or_else(|| self.affinity().best_space_for_window_id(window))
-                    .or_else(|| self.affinity().best_space_for_window(&window_frame, window_server_id));
-                let Some(source_space) = source_space.filter(|space| self.is_space_active(*space))
-                else {
-                    warn!(
-                        ?window,
-                        "Move window to display ignored: source space unavailable"
-                    );
-                    return Ok(EventOutcome::no_change());
-                };
-                let origin = self
-                    .space_state
-                    .screen_by_space(source_space)
-                    .map(|screen| screen.frame.mid())
-                    .or_else(|| self.current_screen_center());
-                let Some(target_screen) = self.screen_for_selector(&selector, origin).cloned()
-                else {
-                    warn!(
-                        ?selector,
-                        "Move window to display ignored: target display not found"
-                    );
-                    return Ok(EventOutcome::no_change());
-                };
-                let Some(target_space) =
-                    target_screen.space.filter(|space| self.is_space_active(*space))
-                else {
-                    warn!(
-                        ?selector,
-                        "Move window to display ignored: target space unavailable"
-                    );
-                    return Ok(EventOutcome::no_change());
-                };
-                if source_space == target_space {
-                    return Ok(EventOutcome::no_change());
-                }
-                let mut target_frame = window_frame;
-                let mut origin = target_screen.frame.mid();
-                origin.x -= window_frame.size.width / 2.0;
-                origin.y -= window_frame.size.height / 2.0;
-                let min = target_screen.frame.min();
-                let max = target_screen.frame.max();
-                origin.x = origin.x.max(min.x).min(max.x - window_frame.size.width);
-                origin.y = origin.y.max(min.y).min(max.y - window_frame.size.height);
-                target_frame.origin = origin;
-                return command_workflow::handle_command_reactor_move_window_to_display(
-                    &mut self.state,
-                    &mut self.layout_manager,
-                    command_workflow::MoveWindowToDisplayPayload {
-                        window,
-                        window_server_id,
-                        source_space,
-                        target_space,
-                        target_screen: target_screen.frame,
-                        target_frame,
-                    },
-                );
+                return self.on_move_window_to_display(selector, window_id);
             }
             _ => (),
         }

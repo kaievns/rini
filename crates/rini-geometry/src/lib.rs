@@ -186,6 +186,22 @@ pub fn park_entry_frame(park: ic::CGRect, destination: ic::CGRect, display: ic::
     ic::CGRect::new(ic::CGPoint::new(x, destination.origin.y), destination.size)
 }
 
+/// `frame` moved to the middle of `container`, then pulled back so no edge sits outside it.
+///
+/// A frame larger than the container keeps its size — the caller asked to move it, not resize it —
+/// and the clamp order leaves its far edge on the container's far edge, so it overflows past the
+/// origin. Callers that cannot accept an overflow must resize before calling.
+pub fn centered_in(frame: ic::CGRect, container: ic::CGRect) -> ic::CGRect {
+    let mut origin = container.mid();
+    origin.x -= frame.size.width / 2.0;
+    origin.y -= frame.size.height / 2.0;
+    let min = container.min();
+    let max = container.max();
+    origin.x = origin.x.max(min.x).min(max.x - frame.size.width);
+    origin.y = origin.y.max(min.y).min(max.y - frame.size.height);
+    ic::CGRect::new(origin, frame.size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +270,33 @@ mod tests {
         let from_right = park_entry_frame(rect(1727.0, 1116.0, 800.0, 600.0), destination, display);
         assert_eq!(from_right.origin.x, 1728.0);
         assert_eq!(from_right.size.width, 800.0);
+    }
+
+    #[test]
+    fn centering_puts_a_smaller_frame_in_the_middle() {
+        let centered = centered_in(rect(0.0, 0.0, 400.0, 300.0), rect(100.0, 200.0, 1000.0, 800.0));
+        assert_eq!(centered.size, ic::CGSize::new(400.0, 300.0));
+        assert_eq!(centered.origin, ic::CGPoint::new(400.0, 450.0));
+        assert_eq!(centered.mid(), rect(100.0, 200.0, 1000.0, 800.0).mid());
+    }
+
+    #[test]
+    fn centering_never_leaves_an_edge_outside_the_container() {
+        let container = rect(0.0, 0.0, 500.0, 500.0);
+        for origin in [(-9000.0, -9000.0), (9000.0, 9000.0)] {
+            let frame = rect(origin.0, origin.1, 100.0, 100.0);
+            let centered = centered_in(frame, container);
+            assert!(container.contains_rect(centered), "{centered:?} escaped {container:?}");
+        }
+    }
+
+    // An oversized frame keeps its size, so one pair of edges has to leave the container. The clamp
+    // order decides which: the far edge lands on the container's far edge and the origin overflows.
+    #[test]
+    fn an_oversized_frame_keeps_its_size_and_overflows_past_the_origin() {
+        let centered = centered_in(rect(0.0, 0.0, 900.0, 700.0), rect(0.0, 0.0, 500.0, 400.0));
+        assert_eq!(centered.size, ic::CGSize::new(900.0, 700.0));
+        assert_eq!(centered.origin, ic::CGPoint::new(-400.0, -300.0));
+        assert_eq!(centered.max(), ic::CGPoint::new(500.0, 400.0));
     }
 }
