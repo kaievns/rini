@@ -9,6 +9,7 @@ use crate::layout::settings::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
 use crate::layout::domain::constraints::{AxisConstraints, solve_axis_lengths};
+use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, gap_share, reveal_offset};
 use crate::layout::{LayoutSystem, WindowLayoutConstraints};
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
@@ -822,15 +823,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
             // oversized column.
             width = width.min(tiling.size.width.max(1.0));
 
-            // Absorb inner gaps so N columns of ratio 1/N fit: each column gives up (N-1)/N of a gap,
-            // with N inferred from the requested ratio. Table in "Column width", `docs/layout/strip.md`.
-            if gap_x > 0.0 && ratio > 0.0 {
-                let columns_abreast = (1.0 / ratio).round().max(1.0);
-                let gap_share = gap_x * (columns_abreast - 1.0) / columns_abreast;
-                let shrunk = width - gap_share;
-                if shrunk >= 1.0 {
-                    width = shrunk;
-                }
+            let shrunk = width - gap_share(ratio, gap_x);
+            if shrunk >= 1.0 {
+                width = shrunk;
             }
             column_widths.push(width);
             column_ratios.push(if tiling.size.width > 0.0 {
@@ -840,13 +835,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
             });
         }
 
-        let mut column_starts = Vec::with_capacity(state.columns.len());
-        let mut strip_cursor = 0.0;
-        for width in &column_widths {
-            column_starts.push(strip_cursor);
-            strip_cursor += *width + gap_x;
-        }
-        let strip_max_offset = column_starts.last().copied().unwrap_or(0.0);
+        let (column_starts, strip_max_offset) = column_starts(&column_widths, gap_x);
         let selected_col_idx = state.selected_location().map(|(idx, _)| idx).unwrap_or(0);
         let selected_width = column_widths
             .get(selected_col_idx)
@@ -857,56 +846,15 @@ impl LayoutSystem for ScrollingLayoutSystem {
         state.last_gap_x.store(gap_x.to_bits(), Ordering::Relaxed);
         state.last_step_px.store(step.to_bits(), Ordering::Relaxed);
 
-        let niri_navigation = matches!(
+        let anchor_x = anchor_x(
+            tiling,
+            selected_width,
+            selected_col_idx,
+            state.columns.len(),
+            self.settings.alignment,
             self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
+            state.center_override_window.is_some(),
         );
-        let anchor_x = if niri_navigation && state.center_override_window.is_none() {
-            // Keep strip anchoring stable in niri mode so focus changes do not
-            // shift unrelated columns when selected widths differ.
-            tiling.origin.x
-        } else {
-            match self.settings.alignment {
-                crate::layout::settings::ScrollingAlignment::Left => {
-                    if !niri_navigation
-                        && state.center_override_window.is_none()
-                        && state.columns.len() > 1
-                        && selected_col_idx == state.columns.len() - 1
-                    {
-                        tiling.origin.x + tiling.size.width - selected_width
-                    } else {
-                        tiling.origin.x
-                    }
-                }
-                crate::layout::settings::ScrollingAlignment::Center => {
-                    if !niri_navigation
-                        && state.center_override_window.is_none()
-                        && state.columns.len() > 1
-                    {
-                        if selected_col_idx == 0 {
-                            tiling.origin.x
-                        } else if selected_col_idx == state.columns.len() - 1 {
-                            tiling.origin.x + tiling.size.width - selected_width
-                        } else {
-                            tiling.origin.x + (tiling.size.width - selected_width) / 2.0
-                        }
-                    } else {
-                        tiling.origin.x + (tiling.size.width - selected_width) / 2.0
-                    }
-                }
-                crate::layout::settings::ScrollingAlignment::Right => {
-                    if !niri_navigation
-                        && state.center_override_window.is_none()
-                        && state.columns.len() > 1
-                        && selected_col_idx == 0
-                    {
-                        tiling.origin.x
-                    } else {
-                        tiling.origin.x + tiling.size.width - selected_width
-                    }
-                }
-            }
-        };
         let center_anchor_x = tiling.origin.x + (tiling.size.width - selected_width) / 2.0;
         let center_offset_delta = anchor_x - center_anchor_x;
         state
@@ -940,33 +888,18 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     .unwrap_or((tiling.size.width * base_ratio).max(1.0));
                 let mut offset = f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed));
                 let selected_start = column_starts.get(selected_col_idx).copied().unwrap_or(0.0);
-                let selected_x = anchor_x + selected_start - offset;
-                let visible_left = tiling.origin.x;
-                let visible_right = tiling.origin.x + tiling.size.width;
 
-                match reveal_direction {
-                    -1 => {
-                        if selected_x < visible_left {
-                            offset = anchor_x + selected_start - visible_left;
-                        } else if selected_x + selected_width > visible_right {
-                            offset = anchor_x + selected_start + selected_width - visible_right;
-                        }
-                    }
-                    1 => {
-                        if selected_x + selected_width > visible_right {
-                            offset = anchor_x + selected_start + selected_width - visible_right;
-                        } else if selected_x < visible_left {
-                            offset = anchor_x + selected_start - visible_left;
-                        }
-                    }
-                    2 => {
-                        if selected_x < visible_left {
-                            offset = anchor_x + selected_start - visible_left;
-                        } else if selected_x + selected_width > visible_right {
-                            offset = anchor_x + selected_start + selected_width - visible_right;
-                        }
-                    }
-                    _ => {}
+                let reveal = match reveal_direction {
+                    -1 => Some(Reveal::FromRight),
+                    1 => Some(Reveal::FromLeft),
+                    2 => Some(Reveal::Either),
+                    _ => None,
+                };
+                if let Some(reveal) = reveal
+                    && let Some(corrected) =
+                        reveal_offset(reveal, tiling, anchor_x, selected_start, selected_width, offset)
+                {
+                    offset = corrected;
                 }
                 state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
             }

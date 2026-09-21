@@ -3,3 +3,4 @@
 pub mod area;
 pub mod constraints;
 pub mod scrolling;
+pub mod strip;
