@@ -39,7 +39,7 @@ Consequences that follow from this and are tested in `virtual_workspace.rs`:
   Before, each `VirtualWorkspace` owned a set of member windows, and a window
   could sit in two sets after sleep/wake or a same-space workspace move, which
   leaked into queries and layout recovery. The index lives beside the window
-  catalogue (`rini_windows::catalogue`) in `WindowStore`; the operations that
+  catalogue (`crate::windows::domain::catalogue`) in `WindowStore`; the operations that
   touch both, such as removing a window or rekeying its identity, go through
   that facade so neither half is updated without the other.
 - **Last focus is per (workspace, display)** (`VirtualWorkspace.last_focused`),

@@ -23,7 +23,7 @@ use rini_mach_sys::mach_msg_header_t;
 
 type ClientPort = u32;
 
-/// What the window manager answers over IPC. `rini-wm` implements it for its reactor handle;
+/// What the window manager answers over IPC. The daemon implements it in `src/app/api/backend.rs`;
 /// every method blocks the Mach server thread until the reactor replies.
 pub trait Backend: Send + 'static {
     fn workspaces(&self, space: Option<u64>) -> Vec<crate::protocol::WorkspaceData>;

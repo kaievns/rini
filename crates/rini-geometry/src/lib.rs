@@ -157,7 +157,7 @@ impl<'de> DeserializeAs<'de, ic::CGRect> for CGRectDef {
 
 /// A frame keeps only a sliver within this many points on screen when macOS refuses the requested
 /// off-screen position. Apps clamp further (Kiro 41pt, Finder 52pt); see
-/// `crates/rini-tiling/docs/strip.md` "Parking".
+/// `docs/layout/strip.md` "Parking".
 pub const PARK_CLAMP_PX: f64 = 40.0;
 
 /// Whether `window` shows nothing usable on `display`: no intersection, or a sliver within

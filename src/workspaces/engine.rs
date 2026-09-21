@@ -541,7 +541,7 @@ impl LayoutEngine {
 
         if is_floating {
             // Floating windows are not strip members: navigation moves to the strip and resumes at its
-            // own selection. See "Navigation" in `crates/rini-tiling/docs/layout/strip.md`.
+            // own selection. See "Navigation" in `docs/layout/strip.md`.
             return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
         }
 
@@ -628,7 +628,7 @@ impl LayoutEngine {
                 }
             }
 
-            // The strip stops at its edge; it does not fall into the floating layer (`crates/rini-tiling/docs/layout/strip.md`).
+            // The strip stops at its edge; it does not fall into the floating layer (`docs/layout/strip.md`).
 
             let visible_windows = self.filter_active_workspace_windows(
                 window_store,
@@ -2265,7 +2265,7 @@ impl LayoutEngine {
                     // showing at the edge; it honours the corner at 1pt. The strip's own geometry is
                     // untouched — `calculate_layout_for_workspace` still answers with the real position,
                     // which is what the animation canvas is built from. See "macOS will not park a window
-                    // further off the left edge than 40pt" in `crates/rini-animation/docs/animation/capture-overlay-research.md`.
+                    // further off the left edge than 40pt" in `docs/animation/capture-overlay-research.md`.
                     let placed = if crate::workspaces::HiddenWindowPlacement::is_off_screen(screen, rect) {
                         // The corner records which side of the strip the column was on, so an animation
                         // can bring it back in from that edge instead of up from the bottom.

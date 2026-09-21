@@ -1,105 +1,163 @@
-# Architecture: one crate per bounded context
+# Architecture: an application in `src/`, libraries in `crates/`
 
-rini is a Cargo workspace. Each crate is a bounded context: a vertical slice
-that owns its model, its macOS adapters, its persistence, its settings, its
-tests and its docs. Crates are not layers. There is no "macOS crate", no
-"pure logic crate" and no "shared crate"; a context that needs an AX call
-makes it itself, behind its own API.
+rini is one Cargo package with a workspace beside it.
 
-## The contexts
+`src/` is the application. `crates/` holds the libraries it is built out of, and
+none of them knows what a window, a workspace or a layout is.
 
-| crate | domain language | owns |
-|---|---|---|
-| `rini-displays` | screens, native spaces, coordinates, which windows sit on which space | `ScreenId`, `SpaceId`, `ScreenInfo`, coordinate conversion, the topology snapshot (`ForwardedSpaceState`) and screen selection over it, the space activation policy; CGDisplay/NSScreen/SLS-space adapters, space switching, display churn; the spaces actor and the cursor-warp actor. Emits `displays::Event` |
-| `rini-windows` | windows and the apps that own them | `WindowId`, `WindowServerId`, `pid_t`, `AppInfo`, `WindowInfo`, the window catalogue (`WindowStore`), app rules and what counts as manageable, frame transaction ids, focus tracking (`MainWindowTracker` over `FocusEvent`) with the raise-echo and activation-focus rules, the raise manager; the per-app AX actor (observe, move, resize, raise, close), window-server reads (ids, order, levels), the Carbon front-app listener; app-rule and snapping settings. Emits `windows::Event` |
-| `rini-tiling` | strips, columns, the scrolling layout | the layout tree and its operations, gaps, insertion; pure, no adapters; tiling settings |
-| `rini-workspaces` | virtual workspaces | assignment of windows to workspaces, activation, stacked-workspace geometry; `layout.ron` save/restore, launch memory, floating positions; workspace settings |
-| `rini-input` | what the user asked for | key specs, the binding table, gesture and drag-swap recognition; CGEventTap adapters, Carbon hotkeys; key and gesture settings. Emits `rini-ipc` commands, so the reactor cannot tell a hotkey from a CLI call |
-| `rini-animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`pass`: what moves, what stays, what warms), which final frame writes go out; window snapshots and capture (ScreenCaptureKit, SkyLight), the Core Animation tile overlay, the flight engine; animation settings |
-| `rini-ipc` | the command, query and event language | the wire types, the Mach server, subscriptions, CLI exec, and the client library |
-| `rini-config` | the `rini.toml` file | parsing into each context's settings type, validation that spans contexts, watching and reload. Depends on every context; nothing depends on it |
-| `rini-wm` | the application | the reactor as orchestrator over the contexts, the macOS notification demultiplexers, the launch agent, wiring, and the `rini` binary. Depends on everything; nothing depends on it |
-| `rini-cli` | the command-line client | a `clap` front end over `rini-ipc`'s client; depends on the wire language and on `rini-config` for file locations, never on `rini-wm` |
+```text
+src/app/          the application layer
+src/windows/      windows and the apps that own them
+src/displays/     screens, native spaces, coordinates
+src/layout/       the scrolling strip
+src/workspaces/   virtual workspaces and their persistence
+src/input/        keys, bindings, gestures, drags
+src/animation/    movement on screen
 
-Technical libraries, each doing one thing and containing no domain:
+crates/rini-core/           identity types and file locations
+crates/rini-geometry/       rect arithmetic
+crates/rini-runloop/        the CFRunLoop executor, timers, span channels
+crates/rini-ipc/            the wire language and its Mach transport
+crates/rini-mach-sys/       raw Mach messaging
+crates/rini-skylight-sys/   raw SkyLight/CGS declarations
+crates/rini-cli/            the `rini-cli` binary
+```
 
-| crate | contents |
+## The features
+
+Each folder beside `app/` is a feature: a vertical slice that owns its model, its
+macOS adapters, its settings and its tests. A feature splits the same way every
+time.
+
+| folder | what goes in it |
 |---|---|
-| `rini-runloop` | the CFRunLoop executor, timers, and the span-carrying channel every actor uses |
-| `rini-skylight-sys` | raw declarations for the private SkyLight/CGS API, and the two identities it mints: `WindowServerId` (CGWindowID) and `SpaceId` (CGSSpaceID). No policy |
-| `rini-mach-sys` | raw Mach messaging: `mach_msg`, ports, bootstrap lookup, message helpers. Used by `rini-ipc` for rini's service and by `rini-windows` for SkyLight's sub-level port |
-| `rini-geometry` | rect arithmetic, rounding, tolerance comparison, serde adapters for CoreFoundation geometry |
+| `domain/` | the model, the value objects, the decisions, and the ports. No macOS, no reads of `platform/`. Provably free of AppKit |
+| `platform/` | the adapters and the actors that drive them: Accessibility, the window server, CGEventTaps, Core Animation |
+| feature root | `mod.rs` with the feature's public surface, `event.rs` with what it emits, `settings.rs` with what config fills in |
 
-## Dependency rules
+A feature with nothing to adapt has no `platform/`: `layout` is pure geometry and
+touches nothing outside itself.
 
-1. A context depends on technical libraries and on the published language of
-   the contexts upstream of it. `windows` is the most upstream context: it
-   knows nothing about screens. `displays` depends on it, because "which
-   windows are on this space" is a window-server query over window ids and the
-   windows context owns those reads. `tiling` and `workspaces` sit above both;
-   `input` and `animation` beside them, depending on `windows` and `displays`
-   only for ids and frames.
-2. `config` and `wm` depend downward on everything. Nothing depends on them.
-3. No crate is both widely depended on and widely dependent. A crate that
-   every context reads and that knows every context's vocabulary is a hub,
-   and every cut crosses a hub. `rini-config` was one: it sat under the layout
-   for settings and above the platform for hotkey parsing. It is inverted:
-   each context owns its settings type, config fills them.
-4. A context talks upward by emitting its own event type. The reactor
-   converts (`From<windows::Event> for reactor::Event`). A context never
-   imports the reactor.
-5. Identity lives with whoever mints it: `WindowId` is rini's own and lives in
-   `rini-windows`; `WindowServerId` and `SpaceId` are the window server's and
-   are declared in `rini-skylight-sys`, re-exported by the context that speaks
-   them (`rini_windows::ids`, `rini_displays::ids`). `rini-ipc` has wire twins
-   and `From` impls.
-6. No re-export shims. When a type moves, its importers change.
+| feature | domain language | owns |
+|---|---|---|
+| `windows` | windows and the apps that own them | `AppInfo`, `WindowInfo`, `WindowServerInfo`, the window records, app rules and what counts as manageable, frame transaction ids, focus tracking (`MainWindowTracker` over `FocusEvent`) with the raise-echo and activation-focus rules, the raise manager, and the `Request`/`Quiet` port into the per-app thread. `platform/`: the per-app AX actor (observe, move, resize, raise, close), window-server reads (ids, order, levels), the Carbon front-app listener, the process watcher, the SkyLight sub-level port. Emits `windows::event::Event` |
+| `displays` | screens, native spaces, coordinates, which windows sit on which space | `ScreenInfo`, `CoordinateConverter`, the topology snapshot (`ForwardedSpaceState`) and screen selection over it, the space activation policy. `platform/`: CGDisplay/NSScreen/SLS-space adapters, space switching, display churn, the spaces actor, the cursor-warp actor, the CGS notification stream. Emits `displays::event::Event` |
+| `layout` | strips, columns, the scrolling layout | the layout tree and its operations, gaps, insertion; the `LayoutSystem` seam; tiling settings |
+| `workspaces` | virtual workspaces | assignment of windows to workspaces, activation, stacked-workspace geometry, `WindowStore`; `layout.ron` save/restore in `engine/persistence/`, launch memory, floating positions; workspace settings |
+| `input` | what the user asked for | key specs, the binding table, gesture and drag-swap recognition. `platform/`: CGEventTap adapters, Carbon hotkeys, the haptic engine, the cursor. Emits `rini-ipc` commands, so the reactor cannot tell a hotkey from a CLI call |
+| `animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`domain::pass`), which final frame writes go out, and the `AnimationRequest`/`SnapshotTarget` ports. `platform/`: window snapshots and capture (ScreenCaptureKit, SkyLight), the Core Animation tile overlay, the flight engine |
 
-The compiler enforces the direction: a cycle between crates does not build.
-Inside one crate `use crate::anything` always compiles, which is how the
-monolith grew ten mutually importing module pairs.
+## The application layer
 
-## Current state
+`src/app/` is what turns the features into rini. Nothing in a feature imports it.
 
-Every context in the table above exists as its own crate, and the layers the
-first attempt at the split produced (`rini-shared`, `rini-macos`,
-`rini-layout`, `rini-motion`/`rini-overlay`, `rini-protocol`/`rini-client`)
-are gone. Each cut kept behaviour and test counts; the commit messages record
-what moved where and the inversions that made it possible (`Event` enums with
-an `EventSink`, `From<&Config>` for a context's settings, `Backend` speaking
-wire types).
+| module | what it is |
+|---|---|
+| `reactor/` | the orchestrator. Holds every feature's store, reduces the events they emit (`reactor/events/`), and drives them back. `reactor/state.rs` is `RiniState`; `reactor/query.rs` answers from a borrowed `StateView`; `reactor/managers.rs` holds the handles |
+| `config/` | the `config.toml` file: parsing into each feature's settings type, validation that spans features, watching and reload |
+| `api/` | the outward surface: the Mach IPC backend bound to the reactor (`api/backend.rs`) and the shapes a query answers in (`api/dto.rs`) |
+| `notifications.rs` | the NSWorkspace demultiplexer, feeding the two features that want it |
+| `hotkeys.rs` | the hotkey controller: lowers a `WmCmd` alias to a `Command` |
+| `launch_agent.rs` | the launch agent plist and the service subcommands |
+| `startup.rs` | the configured startup commands |
+| `logging.rs` | tracing setup |
+| `channels.rs` | the span-carrying channel every actor is wired with |
 
-There is no root package: every crate lives under `crates/`. `rini-wm` is the
-application: the reactor and its reducers, tests and query view
-(`actor/reactor/`, 16.5k lines of which 7.9k are tests), the NSWorkspace
-demultiplexer (`notification_center`), the hotkey controller (`wm_controller`),
-the query DTOs (`model/server`), the launch agent (`platform/service`), the IPC
-backend, startup, logging, and `bin/rini.rs`. No context adapter or model
-lives there any more.
+`src/main.rs` is the composition root: it parses the flags, takes the AX
+permission, builds every actor and joins them.
 
-What is still not where the map says:
+## The rules
+
+1. **A feature never names `crate::app`.** The application knows the features;
+   the features do not know the application. A feature talks upward by emitting
+   its own `event` type, and the reactor converts
+   (`From<windows::event::Event> for reactor::Event`).
+2. **`domain/` never touches macOS and never reads its own `platform/`.** A type
+   the domain needs and an adapter fills is a port: it is declared in `domain/`
+   and `platform/` imports it. `windows/domain/info.rs` and
+   `windows/domain/request.rs` are those ports for `windows`;
+   `animation/domain/request.rs` for `animation`.
+   `objc2_core_foundation`'s `CGRect`/`CGPoint`/`CGSize` are exempt — they are
+   the arithmetic every layout decision is in. So are the window server's plain
+   value types (`SpaceId`, `WindowServerId`, `DisplayReconfigFlags`), which are
+   vocabulary rather than API.
+3. **Features depend on features in one direction.** `windows` is the most
+   upstream: it knows nothing about screens. `displays` depends on it, because
+   "which windows are on this space" is a window-server query over window ids.
+   `layout` and `workspaces` sit above both; `input` and `animation` beside them,
+   reaching only for ids and frames.
+4. **Nothing in `crates/` knows what a workspace is.** A crate there is a
+   library: identity, geometry, a run loop, a wire protocol, two FFI surfaces.
+   `rini-cli` is the client binary and depends on `rini-core` and `rini-ipc`
+   only — it cannot link the daemon, which is what keeps the wire language
+   honest.
+5. **Identity lives in `rini-core`.** `WindowId` is rini's own; `WindowServerId`
+   (CGWindowID) and `SpaceId` (CGSSpaceID) are the window server's, declared in
+   `rini-skylight-sys` and re-exported; `ScreenId` is the CGDirectDisplayID.
+   `rini-ipc` has wire twins and `From` impls.
+6. **No re-export shims.** When a type moves, its importers change.
+
+`tests/architecture.rs` checks rules 1 and 2 against the tree on every
+`cargo test`, with comments stripped so prose about `platform` is not a
+dependency on it. Rule 4 the compiler checks: a crate cannot name the
+application's modules. Rules 3, 5 and 6 are conventions.
+
+## Why this shape and not one crate per feature
+
+The previous layout gave each feature its own crate. The dependency graph that
+produced was a near-total order — `windows` was a dependency of eight of the
+thirteen crates, `displays` of five — so a change to `windows` already rebuilt
+everything downstream of it. The split bought almost no incremental compile time,
+and it cost:
+
+- a `pub` on every type another slice touches, because `pub(crate)` stops at the
+  crate boundary;
+- two `test-support` cargo features standing in for `cfg(test)`, because
+  `cfg(test)` never fires across a crate boundary, plus a dev-dependency on each
+  of them from the reactor's tests;
+- `rini-config` and `rini-wm` sitting under everything and above nothing, which
+  is a hub however the arrows are drawn;
+- a repository with no application in it. `src/` was gone, so there was nowhere
+  for "what rini does when it starts" to live.
+
+The rules a crate boundary enforced are worth keeping; the boundary was not.
+`tests/architecture.rs` enforces them instead, and the one thing crates gave for
+free — a provable absence of macOS types — is what rule 2 now checks.
+
+`layout` is the closest thing here to a genuinely reusable library: pure, with a
+`LayoutSystem` seam and no platform coupling. It stays in `src/` because nothing
+else will ever use rini's scrolling layout, and it is the core domain rather than
+a dependency of it.
+
+## What is still not where the map says
 
 | where | what | why it waits |
 |---|---|---|
-| `rini-config` | is a hub in shape: one `Settings` struct that every context's fields hang off, filled from one file | it now depends on every context and nothing depends on it, so it is a hub at the edge, which is the tolerable kind. Its own decomposition (one table per context, `deny_unknown_fields` prevents `flatten`) is a schema question for the config file, not an architecture one |
-| `rini-workspaces` | `broadcast`: `LayoutEngine` sends IPC events itself | belongs to the application, driven by `EventResponse`; needs the reactor to own the broadcast channel |
-| `rini-workspaces` | `LayoutEngine`, 4.4k lines orchestrating workspaces, floating, persistence and display affinity | the seam to tiling is clean (`LayoutSystem`); the seams inside are not yet |
-| `rini-wm` | `wm_controller` lowers `WmCmd` aliases to `Command` | lowering them at parse time in `rini-input` changes what a binding parses to |
-| `rini-wm` | `notification_center` feeds two contexts | it is the application's demultiplexer of NSWorkspace notifications; splitting it by context is possible but doubles the subscriptions. (`window_notify` moved to `rini-displays` with a windows sink and a displays sink.) |
-| `rini-wm` | the reactor: 5.9k lines plus `events/` (2.9k), still owning every context's store | the decomposition so far moved what did not need the reactor: pure context logic to its crate (transactions, manageability, space activation, screen selection, focus rules, strip stack, frame writes, the layout-pass sort `rini_animation::pass`, app-rule follow-up `AfterRules`, the topology diff `analyze_space_snapshot`, the stale-window verdict `looks_gone`); the two focus actors (`RaiseManager`, `MainWindowTracker`) run in `rini-windows` against `EventSink`/`FocusEvent`; cross-context reads became borrowed views inside `rini-wm` (`space_affinity::SpaceAffinity`, `query::StateView`). What remains is orchestration: `dispatch_workflow`, `apply_event_outcome`, the layout-response and space-snapshot handlers, the strip-movement builders, and the `events/` reducers, which read and write several stores per event and so belong to the application. The next cut, if one is wanted, is the stores themselves: each context's store owned by its own actor with the reactor holding handles, which changes the event model rather than moving code |
+| `src/displays/screen.rs` | mixes `ScreenInfo`, `CoordinateConverter` and the bounds arithmetic (pure) with `Actual` reading NSScreen and CGDisplay | the `System` trait it is already generic over is the seam. Splitting it moves about 1000 lines and its tests, which is its own change. Named in `tests/architecture.rs` so nothing joins it |
+| `src/input/key.rs` | mixes `KeySpec` parsing (pure) with the Carbon keyboard-layout lookup | same shape, same reason |
+| `src/app/config/` | one `Settings` struct that every feature's fields hang off, filled from one file | it depends on every feature and nothing depends on it, so it is a hub at the edge, which is the tolerable kind. Its own decomposition (one table per feature, `deny_unknown_fields` prevents `flatten`) is a schema question for the config file, not an architecture one |
+| `src/workspaces/broadcast.rs` | `LayoutEngine` sends IPC events itself | belongs to `app/api/`, driven by `EventResponse`; needs the reactor to own the broadcast channel |
+| `src/workspaces/engine.rs` | 4.4k lines orchestrating workspaces, floating, persistence and display affinity | the seam to `layout` is clean (`LayoutSystem`); the seams inside are not yet |
+| `src/app/hotkeys.rs` | lowers `WmCmd` aliases to `Command` | lowering them at parse time in `input` changes what a binding parses to |
+| `src/app/notifications.rs` | feeds two features | it is the application's demultiplexer of NSWorkspace notifications; splitting it by feature is possible but doubles the subscriptions |
+| `src/app/reactor/` | 5.9k lines plus `events/` (2.9k), still owning every feature's store | what did not need the reactor has already left: pure feature logic to its `domain/` (transactions, manageability, space activation, screen selection, focus rules, strip stack, frame writes, the layout-pass sort, app-rule follow-up `AfterRules`, the topology diff `analyze_space_snapshot`, the stale-window verdict `looks_gone`); the two focus actors (`RaiseManager`, `MainWindowTracker`) run in `windows` against an `EventSink`; cross-feature reads became borrowed views (`reactor::space_affinity::SpaceAffinity`, `reactor::query::StateView`). What remains is orchestration: `dispatch_workflow`, `apply_event_outcome`, the layout-response and space-snapshot handlers, the strip-movement builders, and the `events/` reducers, which read and write several stores per event and so belong to the application. The next cut, if one is wanted, is the stores themselves: each feature's store owned by its own actor with the reactor holding handles, which changes the event model rather than moving code |
 
-## The costs of crates
+## The costs of this layout
 
-`pub(crate)` becomes `pub` at the boundary; the orphan rule forbids
-`impl ForeignTrait for ForeignType` (newtype or move the impl); test helpers
-another crate needs sit behind a `test-support` cargo feature, because
-`cfg(test)` never fires across crates. In exchange, a crate with no `objc2`
-dependency is provably free of macOS types, and `cargo test -p rini-tiling`
-builds plain Rust instead of linking AppKit.
+`use crate::anything` always compiles, which is how the monolith that preceded
+the crate split grew ten mutually importing module pairs. That is what
+`tests/architecture.rs` is for, and why it is a ratchet rather than a style
+guide: the two files that already break rule 2 are named in it, and nothing else
+may join them.
+
+`cargo test -p rini-geometry` still builds plain Rust instead of linking AppKit.
+`cargo test` on the application does link it, so the win is now "this module has
+no macOS in it, provably" rather than "this crate cannot link AppKit".
 
 ## Where documentation lives
 
-A finding lives in one place. Detail that belongs to one context goes in that
-crate's `docs/`; detail that spans contexts stays in the repo-level `docs/`.
-Code points at the doc by path when a reader would otherwise be stuck. When
-code moves between crates, its docs move with it.
+A finding lives in one place. Detail that belongs to one feature goes in
+`docs/<feature>/`; detail that spans features stays at the top of `docs/`. A
+library's detail stays with the library (`crates/rini-runloop/docs/`). Code
+points at the doc by path when a reader would otherwise be stuck. When code
+moves, its docs move with it.

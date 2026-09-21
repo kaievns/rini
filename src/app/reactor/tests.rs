@@ -6687,7 +6687,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 
 /// Pushing past an end bounces the view instead of doing nothing: focus right at the last column
 /// nudges the strip left; the previous workspace at the top of the stack nudges the row up. Focus
-/// stays where it was in both cases. See "Edge bounce" in `crates/rini-animation/docs/animation/animation-smoothness.md`.
+/// stays where it was in both cases. See "Edge bounce" in `docs/animation/animation-smoothness.md`.
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
@@ -6793,7 +6793,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
 
 /// A closed window disappears: the reactor sends the engine exactly one `ForgetWindow` for it
 /// and no flight of its own, on the AX path. See "A closed window disappears" in
-/// `crates/rini-animation/docs/animation/animation-smoothness.md`.
+/// `docs/animation/animation-smoothness.md`.
 #[test]
 fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     let (mut apps, mut reactor) = test_context();

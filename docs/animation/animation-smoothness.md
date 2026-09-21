@@ -8,13 +8,13 @@ the capture measurements this builds on.
 ## One engine
 
 Every animated movement runs through the overlay engine
-(`crates/rini-animation`: `engine.rs` + `overlay.rs`, geometry in `src/motion/`): window
+(`src/animation/platform/`: `engine.rs` + `overlay.rs`, geometry in `src/animation/domain/motion/`): window
 bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "The apply point"). Layout passes, strip pans, workspace
 switches, resizes, entrances and the edge bounce are all flights of it.
-`AnimationManager` (`crates/rini-wm/src/actor/reactor/animation.rs`) is the layout side: it
+`AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
-`rini_animation::pass::plan` (moves, unmoved windows the overlay must still
+`crate::animation::domain::pass::plan` (moves, unmoved windows the overlay must still
 draw, warm targets), decides whether the overlay flies (`config.settings.animate`,
 not low power, not a drag, something visibly travels) and places the real windows
 directly when it does not.
@@ -30,7 +30,7 @@ engine that is left.
 
 ## The overlay engine: containers carry the rigid pieces
 
-Every overlay flight is a `FlightPlan` (`rini_animation::motion::plan`): a
+Every overlay flight is a `FlightPlan` (`crate::animation::domain::motion::plan`): a
 set of rigid groups (`RigidGroup`, keyed `GroupKey::Rigid`), a loose set (resizes and entrances), and the
 floating windows. Each group is one `CALayer` container under the overlay's
 root (`TileOverlay::install` in `overlay.rs`). A container's `position` is the
@@ -319,7 +319,7 @@ A resize rides the per-window overlay path, ported
 from the parked `resize-rounds-1-2` branch onto the per-tile Core Animation
 machinery. The tile travels between its two rects like any other tile; what
 changes is how the picture maps onto it (`content_mode` in
-`rini_animation::motion::tile`):
+`crate::animation::domain::motion::tile`):
 
 - **A movement with a matching picture stretches.** Picture and frame are the
   same shape, so `kCAGravityResize` is exact. Strip movements always stretch,
@@ -627,7 +627,7 @@ Options, in order of expected value:
 ## Structural findings
 
 1. **`animate_layout` is the real strategy point.** The per-window half is
-   now `rini_animation::pass::plan`, a pure step over `PassWindow`s producing
+   now `crate::animation::domain::pass::plan`, a pure step over `PassWindow`s producing
    a `PassPlan` (moves, unmoved windows, warm targets), tested on its own.
    What is left in `animate_layout` is the flight decision (skip reasons, pan
    detection) and dispatch, still a static method over `&mut Reactor`; a

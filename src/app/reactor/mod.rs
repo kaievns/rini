@@ -1389,7 +1389,7 @@ impl Reactor {
                 }
                 // A closed window disappears; only its cached picture has to go. Once: the
                 // window-server path may have removed the window, and forgotten it, already. See
-                // "A closed window disappears" in `crates/rini-animation/docs/animation/animation-smoothness.md`.
+                // "A closed window disappears" in `docs/animation/animation-smoothness.md`.
                 if self.state.windows.window(wid).is_some()
                     && let Some(tx) = &self.communication_manager.workspace_animation_tx
                 {
@@ -3762,7 +3762,7 @@ impl Reactor {
     /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
     /// it holds unless something better arrives, so this settles rather than re-capturing. During a
     /// flight the animation actor holds the targets until lift ("Capture work in flight" in
-    /// `crates/rini-animation/docs/animation/animation-smoothness.md`), so calling this from the switch handler is safe.
+    /// `docs/animation/animation-smoothness.md`), so calling this from the switch handler is safe.
     fn warm_all_workspaces(&mut self, space: SpaceId) {
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
             return;
@@ -3955,7 +3955,7 @@ impl Reactor {
     /// Bounces the view against the end a command ran into: the strip's first or last column
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
-    /// the real windows do not move. See "Edge bounce" in `crates/rini-animation/docs/animation/animation-smoothness.md`.
+    /// the real windows do not move. See "Edge bounce" in `docs/animation/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
         if !self.config.settings.animate || crate::animation::platform::power::is_low_power_mode_enabled() {
             return;
@@ -4178,7 +4178,7 @@ impl Reactor {
             duration,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
-        // the animation actor defers it until the flight lifts (`crates/rini-animation/docs/animation/animation-smoothness.md`).
+        // the animation actor defers it until the flight lifts (`docs/animation/animation-smoothness.md`).
         self.warm_all_workspaces(space);
         true
     }

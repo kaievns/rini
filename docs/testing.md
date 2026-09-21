@@ -2,14 +2,13 @@
 
 ## A unit test must not read the live window server
 
-`crates/rini-windows/src/window_server.rs` answers queries from fakes and thread-local
-overrides when built with `cfg(test)` or the `test-support` feature. `rini-wm` turns
-the feature on as a dev-dependency, so its tests get the fakes although `rini-windows`
-itself is compiled as a normal dependency. `rini-workspaces` has a `test-support` feature of
-the same shape for its test-only accessors (`LayoutEngine::selected_window`,
-`WindowStore::debug_assert_invariants`). Four of the fakes used to fall through to
-the real window server when no override was set, which made reactor tests depend on
-the windows the developer happened to have open.
+`src/windows/platform/window_server.rs` answers queries from fakes and thread-local
+overrides under `cfg(test)`. That is the whole mechanism now: one crate, so `cfg(test)`
+reaches every module. It used to need a `test-support` cargo feature in three crates,
+because `cfg(test)` never fires across a crate boundary, and the reactor's tests had to
+turn it on as a dev-dependency to see the fakes at all. Four of the fakes used to fall
+through to the real window server when no override was set, which made reactor tests
+depend on the windows the developer happened to have open.
 
 Two tests flapped on that, and which of the two failed changed through the day as
 windows opened and closed:

@@ -141,7 +141,7 @@ impl AnimationManager {
         // animate FIRST, and its first frame draws the windows where they are leaving from, so the
         // picture stays continuous even if the real windows land before the overlay is visible.
         // Resizes ride the overlay too, anchored and cropped rather than stretched. See "Resizes
-        // through the overlay" in `crates/rini-animation/docs/animation/animation-smoothness.md`.
+        // through the overlay" in `docs/animation/animation-smoothness.md`.
         let any_resize = overlay_requests
             .iter()
             .any(|request| is_a_resize(request.from.size, request.to.size));

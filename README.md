@@ -71,8 +71,10 @@ soliciting users, I make breaking changes without warning, and persisted layout 
 no migration guarantees. If you want a stable macOS tiling WM with a community behind it,
 use [rift](https://github.com/acsandmann/rift) — it is actively maintained and good.
 
-Known rough edges are tracked in `roadmap.md`. The code is being split into workspace
-crates by bounded context; `docs/architecture.md` has the map and the current state.
+Known rough edges are tracked in `roadmap.md`. `src/` is the application, one folder per
+feature with a pure `domain/` and a macOS `platform/` inside each; `crates/` holds the
+libraries and the CLI. `docs/architecture.md` has the map, the rules, and what is still
+not where the map says.
 
 ## Building
 

@@ -47,14 +47,14 @@ activation only. No timer is involved:
 - `RaiseEcho` sits earlier in the same handler and returns a raise's own focus
   reports before the redirect is considered at all, so only the window the raise
   meant to focus reaches this. See "The offset is honest, and it still moved eight
-  times per press" in `crates/rini-animation/docs/capture-overlay-research.md`.
+  times per press" in `docs/animation/capture-overlay-research.md`.
 
 The pure decision is `activation_focus_target` in
-`crates/rini-windows/src/focus.rs`, so the four cases are tested without replaying
+`src/windows/domain/focus.rs`, so the four cases are tested without replaying
 an activation sequence.
 
 ## Related
 
-`crates/rini-animation/docs/capture-overlay-research.md`, "There is one overlay, so it follows the space
+`docs/animation/capture-overlay-research.md`, "There is one overlay, so it follows the space
 being animated". The same cmd-tab sequence also animated the wrong display, for an
 unrelated reason.
