@@ -32,11 +32,12 @@ use rini_core::ids::WindowServerId;
 use crate::windows::platform::mouse::{MouseState, set_mouse_state};
 use crate::windows::platform::window_server;
 
+use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::binding::WmCommand;
 use crate::input::platform::cursor;
 use crate::input::event::{Event, EventSink};
 use crate::input::key::{
-    Hotkey, KeyCode, Modifiers, is_modifier_key, key_code_from_event, modifier_key_is_active,
+    Hotkey, KeyCode, is_modifier_key, key_code_from_event, modifier_key_is_active,
     modifiers_from_flags_with_keys,
 };
 use crate::input::settings::InputSettings;
@@ -401,7 +402,6 @@ impl InputTap {
             }
             Request::SetEventProcessing(enabled) => {
                 state.event_processing_enabled = enabled;
-                state.reset(enabled);
                 if enabled {
                     self.reset_mouse_move_sample_gate();
                     self.reset_mouse_window();
@@ -414,7 +414,6 @@ impl InputTap {
                     if enabled { "enabled" } else { "disabled" }
                 );
                 state.focus_follows_mouse_enabled = enabled;
-                state.reset(enabled);
                 if enabled {
                     self.reset_mouse_move_sample_gate();
                     self.reset_mouse_window();
@@ -450,14 +449,12 @@ impl InputTap {
                         .map(|target| state.compute_disable_hotkey_active(target))
                         .unwrap_or(false);
                     if prev_active && !state.disable_hotkey_active {
-                        state.reset(true);
                         self.reset_mouse_move_sample_gate();
                         self.reset_mouse_window();
                     }
                     if prev_focus_follows_mouse_config_enabled
                         != state.focus_follows_mouse_config_enabled
                     {
-                        state.reset_mouse_sampling();
                         self.reset_mouse_move_sample_gate();
                         self.reset_mouse_window();
                     }
@@ -475,7 +472,6 @@ impl InputTap {
                 if state.low_power_mode != enabled {
                     debug!("low_power_mode changed in event tap: {}", enabled);
                     state.low_power_mode = enabled;
-                    state.reset_mouse_sampling();
                     self.mouse_move_min_interval_ns.set(mouse_move_sampling_profile(enabled));
                     self.reset_mouse_move_sample_gate();
                 }
@@ -499,7 +495,6 @@ impl InputTap {
                 debug!(?target, "focus_follows_mouse disabled while hotkey held");
             } else {
                 debug!(?target, "focus_follows_mouse re-enabled after hotkey release");
-                state.reset(true);
                 self.reset_mouse_move_sample_gate();
                 self.reset_mouse_window();
             }
@@ -877,35 +872,8 @@ impl State {
     }
 
     fn compute_disable_hotkey_active(&self, target: &Hotkey) -> bool {
-        let active_mods = modifiers_from_flags_with_keys(self.current_flags, &self.pressed_keys);
-
-        let check_modifier = |left: Modifiers, right: Modifiers| -> bool {
-            let target_has_left = target.modifiers.contains(left);
-            let target_has_right = target.modifiers.contains(right);
-            let active_has_left = active_mods.contains(left);
-            let active_has_right = active_mods.contains(right);
-
-            if target_has_left && target_has_right {
-                active_has_left || active_has_right
-            } else if target_has_left {
-                active_has_left
-            } else if target_has_right {
-                active_has_right
-            } else {
-                true
-            }
-        };
-
-        let shift_ok = check_modifier(Modifiers::SHIFT_LEFT, Modifiers::SHIFT_RIGHT);
-        let ctrl_ok = check_modifier(Modifiers::CONTROL_LEFT, Modifiers::CONTROL_RIGHT);
-        let alt_ok = check_modifier(Modifiers::ALT_LEFT, Modifiers::ALT_RIGHT);
-        let meta_ok = check_modifier(Modifiers::META_LEFT, Modifiers::META_RIGHT);
-
-        if !(shift_ok && ctrl_ok && alt_ok && meta_ok) {
-            return false;
-        }
-
-        self.base_key_active(target.key_code)
+        let active = modifiers_from_flags_with_keys(self.current_flags, &self.pressed_keys);
+        modifiers_satisfy(target.modifiers, active) && self.base_key_active(target.key_code)
     }
 
     fn base_key_active(&self, key_code: KeyCode) -> bool {
@@ -916,14 +884,6 @@ impl State {
         }
     }
 
-    fn reset(&mut self, enabled: bool) {
-        if enabled {
-            self.reset_mouse_sampling();
-        }
-    }
-
-    #[inline]
-    fn reset_mouse_sampling(&mut self) {}
 }
 
 #[inline]
