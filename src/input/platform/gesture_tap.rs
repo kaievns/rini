@@ -19,6 +19,9 @@ use rini_ipc::protocol::{Command, LayoutCommand as LC};
 use rini_runloop::channel;
 
 use crate::input::domain::binding::WmCommand;
+use crate::input::domain::gesture::{
+    ScrollStep, SwipeToward, normalized_fraction, scroll_step, swipe_step, touch_centroid,
+};
 use crate::input::event::{Event, EventSink};
 use crate::input::platform::haptics::{self, HapticPattern};
 use crate::input::settings::InputSettings;
@@ -64,13 +67,7 @@ struct SwipeConfig {
 impl SwipeConfig {
     fn from_settings(settings: &InputSettings) -> Self {
         let g = &settings.gestures;
-        let vt_norm = if g.swipe_vertical_tolerance > 1.0 && g.swipe_vertical_tolerance <= 100.0 {
-            (g.swipe_vertical_tolerance / 100.0).clamp(0.0, 1.0)
-        } else if g.swipe_vertical_tolerance > 100.0 {
-            1.0
-        } else {
-            g.swipe_vertical_tolerance.max(0.0).min(1.0)
-        };
+        let vt_norm = normalized_fraction(g.swipe_vertical_tolerance);
         SwipeConfig {
             enabled: g.enabled,
             consume_dock_swipe: g.consume_dock_swipe,
@@ -128,13 +125,7 @@ struct ScrollConfig {
 impl ScrollConfig {
     fn from_settings(settings: &InputSettings) -> Self {
         let g = &settings.strip_scroll;
-        let vt_norm = if g.vertical_tolerance > 1.0 && g.vertical_tolerance <= 100.0 {
-            (g.vertical_tolerance / 100.0).clamp(0.0, 1.0)
-        } else if g.vertical_tolerance > 100.0 {
-            1.0
-        } else {
-            g.vertical_tolerance.max(0.0).min(1.0)
-        };
+        let vt_norm = normalized_fraction(g.vertical_tolerance);
         ScrollConfig {
             enabled: g.enabled,
             consume_dock_swipe: settings.gestures.consume_dock_swipe,
@@ -509,14 +500,14 @@ impl GestureTap {
             }
         }
 
-        if too_many_touches || touch_count != cfg.fingers || active_count == 0 {
+        let centroid = (!too_many_touches)
+            .then(|| touch_centroid(touch_count, active_count, (sum_x, sum_y), cfg.fingers))
+            .flatten();
+        let Some((avg_x, avg_y)) = centroid else {
             let consuming = st.consuming;
             st.reset();
             return cfg.consume_dock_swipe && consuming;
-        }
-
-        let avg_x = sum_x / active_count as f64;
-        let avg_y = sum_y / active_count as f64;
+        };
 
         match st.phase {
             GesturePhase::Idle => {
@@ -529,26 +520,18 @@ impl GestureTap {
                 );
             }
             GesturePhase::Armed => {
-                let dx = avg_x - st.start_x;
-                let dy = avg_y - st.start_y;
-                let horizontal = dx.abs();
-                let vertical = dy.abs();
-
-                if horizontal > vertical && vertical <= cfg.vertical_tolerance {
-                    st.consuming = true;
-                }
-
-                if horizontal >= cfg.distance_pct && vertical <= cfg.vertical_tolerance {
-                    let mut dir_left = dx < 0.0;
-                    if cfg.invert_horizontal {
-                        dir_left = !dir_left;
-                    }
-                    let cmd = if dir_left {
-                        LC::NextWorkspace(cfg.skip_empty_workspaces)
-                    } else {
-                        LC::PrevWorkspace(cfg.skip_empty_workspaces)
+                let step = swipe_step(
+                    (avg_x - st.start_x, avg_y - st.start_y),
+                    cfg.vertical_tolerance,
+                    cfg.distance_pct,
+                    cfg.invert_horizontal,
+                );
+                st.consuming |= step.consuming;
+                if let Some(toward) = step.commit {
+                    let cmd = match toward {
+                        SwipeToward::Next => LC::NextWorkspace(cfg.skip_empty_workspaces),
+                        SwipeToward::Prev => LC::PrevWorkspace(cfg.skip_empty_workspaces),
                     };
-
                     if cfg.haptics_enabled {
                         let _ = haptics::perform_haptic(cfg.haptic_pattern);
                     }
@@ -564,6 +547,40 @@ impl GestureTap {
         }
 
         cfg.consume_dock_swipe && st.consuming
+    }
+
+    /// One frame of a horizontal scroll gesture, whatever phase it is in.
+    ///
+    /// Returns the strip movement to send, if this frame carried the accumulator past the step. An
+    /// off-axis frame leaves the accumulator and the consuming flag where they were, so a gesture that
+    /// wanders for a frame resumes rather than restarting.
+    fn advance_scroll(
+        &self,
+        cfg: &ScrollConfig,
+        st: &mut ScrollState,
+        centroid: (f64, f64),
+    ) -> Option<f64> {
+        let delta = (centroid.0 - st.last_x, centroid.1 - st.last_y);
+        st.last_x = centroid.0;
+        st.last_y = centroid.1;
+        match scroll_step(delta, st.accum_dx, cfg.vertical_tolerance, cfg.distance_pct, cfg.invert_horizontal) {
+            ScrollStep::OffAxis => None,
+            ScrollStep::Accumulating { accumulated } => {
+                st.consuming = true;
+                st.accum_dx = accumulated;
+                None
+            }
+            ScrollStep::Scroll { delta } => {
+                st.consuming = true;
+                st.accum_dx = 0.0;
+                Some(delta)
+            }
+        }
+    }
+
+    fn send_scroll(&self, delta: f64) {
+        let cmd = LC::ScrollStrip { delta };
+        self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
     }
 
     /// Returns whether this event belongs to a horizontal scrolling gesture
@@ -619,14 +636,14 @@ impl GestureTap {
             }
         }
 
-        if too_many_touches || touch_count != cfg.fingers || active_count == 0 {
+        let centroid = (!too_many_touches)
+            .then(|| touch_centroid(touch_count, active_count, (sum_x, sum_y), cfg.fingers))
+            .flatten();
+        let Some((avg_x, avg_y)) = centroid else {
             let consuming = st.consuming;
             st.reset();
             return cfg.consume_dock_swipe && consuming;
-        }
-
-        let avg_x = sum_x / active_count as f64;
-        let avg_y = sum_y / active_count as f64;
+        };
 
         match st.phase {
             GesturePhase::Idle => {
@@ -648,33 +665,8 @@ impl GestureTap {
                     return cfg.consume_dock_swipe && st.consuming;
                 }
 
-                let dx = avg_x - st.last_x;
-                let dy = avg_y - st.last_y;
-                let horizontal = dx.abs();
-                let vertical = dy.abs();
-
-                st.last_x = avg_x;
-                st.last_y = avg_y;
-
-                if vertical > cfg.vertical_tolerance || vertical >= horizontal {
-                    return cfg.consume_dock_swipe && st.consuming;
-                }
-
-                st.consuming = true;
-
-                st.accum_dx += dx;
-                let step = cfg.distance_pct;
-                if st.accum_dx.abs() >= step {
-                    let delta = if cfg.invert_horizontal {
-                        -st.accum_dx
-                    } else {
-                        st.accum_dx
-                    };
-                    let cmd = LC::ScrollStrip { delta };
-
-                    self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
-
-                    st.accum_dx = 0.0;
+                if let Some(delta) = self.advance_scroll(cfg, &mut st, (avg_x, avg_y)) {
+                    self.send_scroll(delta);
                     st.phase = GesturePhase::Committed;
                 }
             }
@@ -683,31 +675,10 @@ impl GestureTap {
                     let consuming = st.consuming;
                     st.reset();
                     return cfg.consume_dock_swipe && consuming;
-                } else if all_moved {
-                    let dx = avg_x - st.last_x;
-                    let dy = avg_y - st.last_y;
-                    let horizontal = dx.abs();
-                    let vertical = dy.abs();
-                    st.last_x = avg_x;
-                    st.last_y = avg_y;
-                    if vertical > cfg.vertical_tolerance || vertical >= horizontal {
-                        return cfg.consume_dock_swipe && st.consuming;
-                    }
-                    st.consuming = true;
-                    st.accum_dx += dx;
-                    let step = cfg.distance_pct;
-                    if st.accum_dx.abs() >= step {
-                        let delta = if cfg.invert_horizontal {
-                            -st.accum_dx
-                        } else {
-                            st.accum_dx
-                        };
-                        let cmd = LC::ScrollStrip { delta };
-
-                        self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
-
-                        st.accum_dx = 0.0;
-                    }
+                } else if all_moved
+                    && let Some(delta) = self.advance_scroll(cfg, &mut st, (avg_x, avg_y))
+                {
+                    self.send_scroll(delta);
                 }
             }
         }
