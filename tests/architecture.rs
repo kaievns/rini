@@ -41,11 +41,10 @@ const SKYLIGHT_VALUE_TYPES: [&str; 5] = [
     "KnownCGSEvent",
 ];
 
-/// Still on both sides of the domain/platform line. Both mix a pure model with the reads that fill
-/// it, and both want splitting on a seam they already have: `screen.rs` on its `System` trait,
-/// `key.rs` between `KeySpec` parsing and the Carbon keyboard-layout lookup. Nothing may be added
+/// Still on both sides of the domain/platform line: a pure model mixed with the reads that fill it.
+/// `screen.rs` wants splitting on the `System` trait it is already generic over. Nothing may be added
 /// here — split the file instead.
-const MIXED: [&str; 2] = ["src/displays/screen.rs", "src/input/key.rs"];
+const MIXED: [&str; 1] = ["src/displays/screen.rs"];
 
 fn rust_files(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();

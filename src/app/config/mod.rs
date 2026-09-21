@@ -17,7 +17,7 @@ pub use crate::layout::settings::{
 use serde::{Deserialize, Serialize};
 
 use rustc_hash::FxHashMap as HashMap;
-use crate::input::key::{Hotkey, HotkeySpec};
+use crate::input::domain::key::{Hotkey, HotkeySpec};
 
 pub mod actor;
 pub mod watcher;
@@ -441,8 +441,8 @@ impl Config {
                 let mut key_specs = Vec::new();
                 for (key, cmd) in c.keys {
                     let expanded_key =
-                        crate::input::key::expand_modifier_combination(&key, &c.modifier_combinations);
-                    let normalized_key = crate::input::key::normalize_spec(&expanded_key);
+                        crate::input::domain::key::expand_modifier_combination(&key, &c.modifier_combinations);
+                    let normalized_key = crate::input::domain::key::normalize_spec(&expanded_key);
                     let Ok(hotkey) = Hotkey::from_str(&normalized_key) else {
                         bail!("Could not parse hotkey: {key}");
                     };

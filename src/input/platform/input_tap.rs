@@ -36,9 +36,9 @@ use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::binding::WmCommand;
 use crate::input::platform::cursor;
 use crate::input::event::{Event, EventSink};
-use crate::input::key::{
-    Hotkey, KeyCode, is_modifier_key, key_code_from_event, modifier_key_is_active,
-    modifiers_from_flags_with_keys,
+use crate::input::domain::key::{Hotkey, KeyCode, is_modifier_key};
+use crate::input::platform::keyboard::{
+    key_code_from_event, modifier_key_is_active, modifiers_from_flags_with_keys,
 };
 use crate::input::settings::InputSettings;
 use crate::input::platform::tap;

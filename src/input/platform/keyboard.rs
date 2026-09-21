@@ -1,10 +1,11 @@
-//! Keys as the user names them and as the hardware reports them: modifiers, key codes, hotkeys,
-//! specs parsed from the config, and the CGEvent/TIS reads that turn a keystroke into a `Hotkey`.
-use std::collections::HashMap as StdHashMap;
+//! Turning a keystroke, or a key spec, into a physical key.
+//!
+//! Both need the live keyboard. `"a"` has to mean the key that produces `a` on the layout in use, and
+//! a CGEvent reports a virtual keycode only the layout can name, so the `FromStr` impls live here
+//! rather than beside the types they build in `crate::input::domain::key`.
 
-use rustc_hash::FxHashMap as HashMap;
+use std::collections::HashMap as StdHashMap;
 use std::ffi::c_void;
-use std::fmt;
 use std::ptr::NonNull;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -13,143 +14,15 @@ use anyhow::anyhow;
 use objc2_core_foundation::CFData;
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags};
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Modifiers(u8);
-
-impl Modifiers {
-    pub const ALT: Modifiers = Modifiers(0b0011_0000);
-    pub const ALT_LEFT: Modifiers = Modifiers(0b0001_0000);
-    pub const ALT_RIGHT: Modifiers = Modifiers(0b0010_0000);
-    pub const CONTROL: Modifiers = Modifiers(0b0000_1100);
-    pub const CONTROL_LEFT: Modifiers = Modifiers(0b0000_0100);
-    pub const CONTROL_RIGHT: Modifiers = Modifiers(0b0000_1000);
-    pub const META: Modifiers = Modifiers(0b1100_0000);
-    pub const META_LEFT: Modifiers = Modifiers(0b0100_0000);
-    pub const META_RIGHT: Modifiers = Modifiers(0b1000_0000);
-    // Generic modifiers (match either left or right)
-    pub const SHIFT: Modifiers = Modifiers(0b0000_0011);
-    // Specific left/right modifier bits
-    pub const SHIFT_LEFT: Modifiers = Modifiers(0b0000_0001);
-    pub const SHIFT_RIGHT: Modifiers = Modifiers(0b0000_0010);
-
-    pub fn empty() -> Self {
-        Modifiers(0)
-    }
-
-    pub fn contains(&self, other: Modifiers) -> bool {
-        (self.0 & other.0) == other.0
-    }
-
-    pub fn intersects(&self, other: Modifiers) -> bool {
-        (self.0 & other.0) != 0
-    }
-
-    pub fn insert(&mut self, other: Modifiers) {
-        self.0 |= other.0;
-    }
-
-    pub fn remove(&mut self, other: Modifiers) {
-        self.0 &= !other.0;
-    }
-
-    pub fn has_generic_modifiers(&self) -> bool {
-        MOD_FAMILIES.iter().any(|m| self.contains(m.generic))
-    }
-
-    pub fn expand_to_specific(&self) -> Vec<Modifiers> {
-        let mut variants = vec![Modifiers::empty()];
-
-        for m in MOD_FAMILIES {
-            let has_generic = self.contains(m.generic);
-            let has_left = self.contains(m.left);
-            let has_right = self.contains(m.right);
-
-            let left_allowed = has_left || has_generic;
-            let right_allowed = has_right || has_generic;
-
-            if left_allowed && right_allowed {
-                let mut new_variants = Vec::with_capacity(variants.len() * 3);
-                for v in &variants {
-                    let mut vl = *v;
-                    vl.insert(m.left);
-                    new_variants.push(vl);
-
-                    let mut vr = *v;
-                    vr.insert(m.right);
-                    new_variants.push(vr);
-
-                    let mut vboth = *v;
-                    vboth.insert(m.left);
-                    vboth.insert(m.right);
-                    new_variants.push(vboth);
-                }
-                variants = new_variants;
-            } else if left_allowed {
-                for v in &mut variants {
-                    v.insert(m.left);
-                }
-            } else if right_allowed {
-                for v in &mut variants {
-                    v.insert(m.right);
-                }
-            }
-        }
-
-        variants
-    }
-
-    pub fn insert_from_token(&mut self, token: &str) -> bool {
-        if let Some(mods) = modifier_from_token(token) {
-            self.insert(mods);
-            return true;
-        }
-        false
-    }
-}
-
-impl fmt::Display for Modifiers {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut parts: Vec<&str> = Vec::new();
-
-        for m in MOD_FAMILIES {
-            let l = self.contains(m.left);
-            let r = self.contains(m.right);
-
-            match (l, r) {
-                (true, true) => parts.push(m.name),
-                (true, false) => parts.push(m.left_name),
-                (false, true) => parts.push(m.right_name),
-                (false, false) => {}
-            }
-        }
-
-        write!(f, "{}", parts.join(" + "))
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ModFamily {
-    name: &'static str,
-    left_name: &'static str,
-    right_name: &'static str,
-
-    generic: Modifiers,
-    left: Modifiers,
-    right: Modifiers,
-
-    left_key: KeyCode,
-    right_key: KeyCode,
-
-    mask: CGEventFlags,
-    left_mask: u64,
-    right_mask: u64,
-}
+use crate::input::domain::key::{
+    F_KEYS, Hotkey, HotkeySpec, KeyCode, MOD_FAMILIES, ModFamily, Modifiers, normalize_token,
+};
 
 impl ModFamily {
     fn is_active(&self, flags: CGEventFlags) -> bool {
-        flags.contains(self.mask)
+        flags.0 & self.mask != 0
             || (flags.bits() & self.left_mask) != 0
             || (flags.bits() & self.right_mask) != 0
     }
@@ -162,306 +35,6 @@ impl ModFamily {
         (flags.bits() & self.right_mask) != 0
     }
 }
-
-const MOD_FAMILIES: &[ModFamily] = &[
-    ModFamily {
-        name: "Ctrl",
-        left_name: "CtrlLeft",
-        right_name: "CtrlRight",
-        generic: Modifiers::CONTROL,
-        left: Modifiers::CONTROL_LEFT,
-        right: Modifiers::CONTROL_RIGHT,
-        left_key: KeyCode::ControlLeft,
-        right_key: KeyCode::ControlRight,
-        mask: CGEventFlags::MaskControl,
-        left_mask: 0x00000001,
-        right_mask: 0x00002000,
-    },
-    ModFamily {
-        name: "Alt",
-        left_name: "AltLeft",
-        right_name: "AltRight",
-        generic: Modifiers::ALT,
-        left: Modifiers::ALT_LEFT,
-        right: Modifiers::ALT_RIGHT,
-        left_key: KeyCode::AltLeft,
-        right_key: KeyCode::AltRight,
-        mask: CGEventFlags::MaskAlternate,
-        left_mask: 0x00000020,
-        right_mask: 0x00000040,
-    },
-    ModFamily {
-        name: "Shift",
-        left_name: "ShiftLeft",
-        right_name: "ShiftRight",
-        generic: Modifiers::SHIFT,
-        left: Modifiers::SHIFT_LEFT,
-        right: Modifiers::SHIFT_RIGHT,
-        left_key: KeyCode::ShiftLeft,
-        right_key: KeyCode::ShiftRight,
-        mask: CGEventFlags::MaskShift,
-        left_mask: 0x00000002,
-        right_mask: 0x00000004,
-    },
-    ModFamily {
-        name: "Meta",
-        left_name: "MetaLeft",
-        right_name: "MetaRight",
-        generic: Modifiers::META,
-        left: Modifiers::META_LEFT,
-        right: Modifiers::META_RIGHT,
-        left_key: KeyCode::MetaLeft,
-        right_key: KeyCode::MetaRight,
-        mask: CGEventFlags::MaskCommand,
-        left_mask: 0x00000008,
-        right_mask: 0x00000010,
-    },
-];
-
-fn normalize_token(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
-
-#[derive(Copy, Clone)]
-enum Side {
-    Left,
-    Right,
-}
-
-fn split_side(token: &str) -> (Option<Side>, &str) {
-    if let Some(rest) = token.strip_prefix("left") {
-        return (Some(Side::Left), rest);
-    }
-    if let Some(rest) = token.strip_prefix("right") {
-        return (Some(Side::Right), rest);
-    }
-    if let Some(rest) = token.strip_suffix("left") {
-        return (Some(Side::Left), rest);
-    }
-    if let Some(rest) = token.strip_suffix("right") {
-        return (Some(Side::Right), rest);
-    }
-    if let Some(rest) = token.strip_prefix('l') {
-        return (Some(Side::Left), rest);
-    }
-    if let Some(rest) = token.strip_prefix('r') {
-        return (Some(Side::Right), rest);
-    }
-    (None, token)
-}
-
-fn modifier_from_token(token: &str) -> Option<Modifiers> {
-    let t = normalize_token(token);
-    let (side, base) = split_side(&t);
-    let family = match base {
-        "alt" | "option" => &MOD_FAMILIES[1],
-        "ctrl" | "control" => &MOD_FAMILIES[0],
-        "shift" => &MOD_FAMILIES[2],
-        "meta" | "cmd" | "command" => &MOD_FAMILIES[3],
-        _ => return None,
-    };
-
-    match side {
-        None => Some(family.generic),
-        Some(Side::Left) => Some(family.left),
-        Some(Side::Right) => Some(family.right),
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum KeyCode {
-    KeyA,
-    KeyS,
-    KeyD,
-    KeyF,
-    KeyH,
-    KeyG,
-    KeyZ,
-    KeyX,
-    KeyC,
-    KeyV,
-    IntlBackslash,
-    KeyB,
-    KeyQ,
-    KeyW,
-    KeyE,
-    KeyR,
-    KeyY,
-    KeyT,
-    Digit1,
-    Digit2,
-    Digit3,
-    Digit4,
-    Digit6,
-    Digit5,
-    Equal,
-    Digit9,
-    Digit7,
-    Minus,
-    Digit8,
-    Digit0,
-    BracketRight,
-    KeyO,
-    KeyU,
-    BracketLeft,
-    KeyI,
-    KeyP,
-    Enter,
-    KeyL,
-    KeyJ,
-    Quote,
-    KeyK,
-    Semicolon,
-    Backslash,
-    Comma,
-    Slash,
-    KeyN,
-    KeyM,
-    Period,
-    Tab,
-    Space,
-    Backquote,
-    Backspace,
-    NumpadEnter,
-    NumpadSubtract,
-    Escape,
-    MetaRight,
-    MetaLeft,
-    ShiftLeft,
-    CapsLock,
-    AltLeft,
-    ControlLeft,
-    ShiftRight,
-    AltRight,
-    ControlRight,
-    Fn,
-    F17,
-    NumpadDecimal,
-    NumpadMultiply,
-    NumpadAdd,
-    NumLock,
-    AudioVolumeUp,
-    AudioVolumeDown,
-    AudioVolumeMute,
-    NumpadDivide,
-    F18,
-    F19,
-    NumpadEqual,
-    Numpad0,
-    Numpad1,
-    Numpad2,
-    Numpad3,
-    Numpad4,
-    Numpad5,
-    Numpad6,
-    Numpad7,
-    F20,
-    Numpad8,
-    Numpad9,
-    IntlYen,
-    IntlRo,
-    NumpadComma,
-    F5,
-    F6,
-    F7,
-    F3,
-    F8,
-    F9,
-    Lang2,
-    F11,
-    Lang1,
-    F13,
-    F16,
-    F14,
-    F10,
-    ContextMenu,
-    F12,
-    F15,
-    Insert,
-    Home,
-    PageUp,
-    Delete,
-    F4,
-    End,
-    F2,
-    PageDown,
-    F1,
-    ArrowLeft,
-    ArrowRight,
-    ArrowDown,
-    ArrowUp,
-}
-
-impl fmt::Display for KeyCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use KeyCode::*;
-        let s = match self {
-            KeyA => "A",
-            KeyS => "S",
-            KeyD => "D",
-            KeyF => "F",
-            KeyH => "H",
-            KeyG => "G",
-            KeyZ => "Z",
-            KeyX => "X",
-            KeyC => "C",
-            KeyV => "V",
-            KeyB => "B",
-            KeyQ => "Q",
-            KeyW => "W",
-            KeyE => "E",
-            KeyR => "R",
-            KeyY => "Y",
-            KeyT => "T",
-            Digit1 => "1",
-            Digit2 => "2",
-            Digit3 => "3",
-            Digit4 => "4",
-            Digit5 => "5",
-            Digit6 => "6",
-            Digit7 => "7",
-            Digit8 => "8",
-            Digit9 => "9",
-            Digit0 => "0",
-            ArrowLeft => "Left",
-            ArrowRight => "Right",
-            ArrowUp => "Up",
-            ArrowDown => "Down",
-            Tab => "Tab",
-            Space => "Space",
-            Enter => "Enter",
-            Escape => "Escape",
-            _ => "Other",
-        };
-        write!(f, "{}", s)
-    }
-}
-
-const F_KEYS: [KeyCode; 20] = [
-    KeyCode::F1,
-    KeyCode::F2,
-    KeyCode::F3,
-    KeyCode::F4,
-    KeyCode::F5,
-    KeyCode::F6,
-    KeyCode::F7,
-    KeyCode::F8,
-    KeyCode::F9,
-    KeyCode::F10,
-    KeyCode::F11,
-    KeyCode::F12,
-    KeyCode::F13,
-    KeyCode::F14,
-    KeyCode::F15,
-    KeyCode::F16,
-    KeyCode::F17,
-    KeyCode::F18,
-    KeyCode::F19,
-    KeyCode::F20,
-];
 
 impl FromStr for KeyCode {
     type Err = anyhow::Error;
@@ -537,28 +110,6 @@ fn layout_char_keycode(ch: &str, fallback: KeyCode) -> KeyCode {
     keycode_from_char(ch).unwrap_or(fallback)
 }
 
-#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Hotkey {
-    pub modifiers: Modifiers,
-    pub key_code: KeyCode,
-}
-
-impl Hotkey {
-    pub fn new(modifiers: Modifiers, key_code: KeyCode) -> Self {
-        Self { modifiers, key_code }
-    }
-}
-
-impl fmt::Display for Hotkey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.modifiers == Modifiers::empty() {
-            write!(f, "{}", self.key_code)
-        } else {
-            write!(f, "{} + {}", self.modifiers, self.key_code)
-        }
-    }
-}
-
 fn parse_mods_and_optional_key(s: &str) -> Result<(Modifiers, Option<KeyCode>), anyhow::Error> {
     let parts: Vec<&str> = s.split('+').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
 
@@ -609,96 +160,6 @@ impl<'de> Deserialize<'de> for Hotkey {
     }
 }
 
-#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum HotkeySpec {
-    Hotkey(Hotkey),
-    ModifiersOnly { modifiers: Modifiers },
-}
-
-impl<'de> serde::de::Deserialize<'de> for HotkeySpec {
-    fn deserialize<D>(deserializer: D) -> Result<HotkeySpec, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        #[serde(untagged)]
-        enum HotkeyRepr {
-            Str(String),
-            Map {
-                modifiers: Option<Modifiers>,
-                key_code: Option<KeyCode>,
-            },
-        }
-
-        let repr = HotkeyRepr::deserialize(deserializer)?;
-        match repr {
-            HotkeyRepr::Str(s) => {
-                let (mods, key_opt) =
-                    parse_mods_and_optional_key(&s).map_err(serde::de::Error::custom)?;
-                if let Some(k) = key_opt {
-                    Ok(HotkeySpec::Hotkey(Hotkey::new(mods, k)))
-                } else if mods != Modifiers::empty() {
-                    Ok(HotkeySpec::ModifiersOnly { modifiers: mods })
-                } else {
-                    Err(serde::de::Error::custom(format!(
-                        "No key specified in hotkey: {}",
-                        s
-                    )))
-                }
-            }
-            HotkeyRepr::Map { modifiers, key_code } => {
-                let m = modifiers.unwrap_or(Modifiers::empty());
-                if let Some(k) = key_code {
-                    Ok(HotkeySpec::Hotkey(Hotkey::new(m, k)))
-                } else if m != Modifiers::empty() {
-                    Ok(HotkeySpec::ModifiersOnly { modifiers: m })
-                } else {
-                    Err(serde::de::Error::custom("No key specified in hotkey map"))
-                }
-            }
-        }
-    }
-}
-
-fn default_key_for_modifiers(mods: Modifiers) -> Option<KeyCode> {
-    for m in MOD_FAMILIES {
-        if !mods.intersects(m.generic) {
-            continue;
-        }
-        if mods.contains(m.right) && !mods.contains(m.left) {
-            return Some(m.right_key);
-        }
-        return Some(m.left_key);
-    }
-    None
-}
-
-impl HotkeySpec {
-    pub fn to_hotkey(&self) -> Option<Hotkey> {
-        match self {
-            HotkeySpec::Hotkey(h) => Some(h.clone()),
-            HotkeySpec::ModifiersOnly { modifiers } => {
-                default_key_for_modifiers(*modifiers).map(|k| Hotkey::new(*modifiers, k))
-            }
-        }
-    }
-}
-
-impl From<HotkeySpec> for Hotkey {
-    fn from(spec: HotkeySpec) -> Hotkey {
-        match spec {
-            HotkeySpec::Hotkey(h) => h,
-            HotkeySpec::ModifiersOnly { modifiers } => {
-                if let Some(k) = default_key_for_modifiers(modifiers) {
-                    Hotkey::new(modifiers, k)
-                } else {
-                    Hotkey::new(modifiers, KeyCode::ShiftLeft)
-                }
-            }
-        }
-    }
-}
-
 pub fn modifiers_from_flags(flags: CGEventFlags) -> Modifiers {
     let mut mods = Modifiers::empty();
     for m in MOD_FAMILIES {
@@ -744,7 +205,7 @@ pub fn modifiers_from_flags_with_keys<S: std::hash::BuildHasher>(
 pub fn modifier_flag_for_key(key_code: KeyCode) -> Option<CGEventFlags> {
     for m in MOD_FAMILIES {
         if key_code == m.left_key || key_code == m.right_key {
-            return Some(m.mask);
+            return Some(CGEventFlags(m.mask));
         }
     }
 
@@ -771,10 +232,6 @@ pub fn modifier_key_is_active(flags: CGEventFlags, key_code: KeyCode) -> bool {
     }
 
     modifier_flag_for_key(key_code).is_some_and(|flag| flags.contains(flag))
-}
-
-pub fn is_modifier_key(key_code: KeyCode) -> bool {
-    modifier_flag_for_key(key_code).is_some()
 }
 
 pub fn key_code_from_event(event: &CGEvent) -> Option<KeyCode> {
@@ -1087,6 +544,51 @@ fn fallback_keycode_from_char(ch: &str) -> Option<KeyCode> {
     Some(code)
 }
 
+impl<'de> serde::de::Deserialize<'de> for HotkeySpec {
+    fn deserialize<D>(deserializer: D) -> Result<HotkeySpec, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum HotkeyRepr {
+            Str(String),
+            Map {
+                modifiers: Option<Modifiers>,
+                key_code: Option<KeyCode>,
+            },
+        }
+
+        let repr = HotkeyRepr::deserialize(deserializer)?;
+        match repr {
+            HotkeyRepr::Str(s) => {
+                let (mods, key_opt) =
+                    parse_mods_and_optional_key(&s).map_err(serde::de::Error::custom)?;
+                if let Some(k) = key_opt {
+                    Ok(HotkeySpec::Hotkey(Hotkey::new(mods, k)))
+                } else if mods != Modifiers::empty() {
+                    Ok(HotkeySpec::ModifiersOnly { modifiers: mods })
+                } else {
+                    Err(serde::de::Error::custom(format!(
+                        "No key specified in hotkey: {}",
+                        s
+                    )))
+                }
+            }
+            HotkeyRepr::Map { modifiers, key_code } => {
+                let m = modifiers.unwrap_or(Modifiers::empty());
+                if let Some(k) = key_code {
+                    Ok(HotkeySpec::Hotkey(Hotkey::new(m, k)))
+                } else if m != Modifiers::empty() {
+                    Ok(HotkeySpec::ModifiersOnly { modifiers: m })
+                } else {
+                    Err(serde::de::Error::custom("No key specified in hotkey map"))
+                }
+            }
+        }
+    }
+}
+
 mod tests {
     #[allow(unused)]
     use super::*;
@@ -1217,78 +719,30 @@ mod tests {
         assert!(serde_json::from_str::<HotkeySpec>(r#""""#).is_err());
     }
 
-    #[test]
-    fn arrow_words_and_single_letters_are_canonicalised() {
-        assert_eq!(
-            normalize_spec("Alt + Shift + Down"),
-            "Alt + Shift + ArrowDown"
-        );
-        assert_eq!(normalize_spec("Ctrl + Up"), "Ctrl + ArrowUp");
-        assert_eq!(
-            normalize_spec("Shift + Left"),
-            "Shift + ArrowLeft"
-        );
-        assert_eq!(
-            normalize_spec("Meta + Right"),
-            "Meta + ArrowRight"
-        );
-    }
 
-}/// Canonicalises a key spec as written in `rini.toml`: single letters upper-cased, arrow words
-/// to `ArrowUp` and kin.
-pub fn normalize_spec(key: &str) -> String {
-    let mut out = String::with_capacity(key.len());
-    let mut word = String::new();
-
-    for ch in key.chars() {
-        if ch.is_alphabetic() {
-            word.push(ch);
-        } else {
-            if !word.is_empty() {
-                let token = if word.len() == 1 {
-                    word.to_ascii_uppercase()
-                } else {
-                    match word.to_lowercase().as_str() {
-                        "up" => "ArrowUp".to_string(),
-                        "down" => "ArrowDown".to_string(),
-                        "left" => "ArrowLeft".to_string(),
-                        "right" => "ArrowRight".to_string(),
-                        _ => word.clone(),
-                    }
-                };
-                out.push_str(&token);
-                word.clear();
-            }
-            out.push(ch);
-        }
-    }
-
-    if !word.is_empty() {
-        let token = if word.len() == 1 {
-            word.to_ascii_uppercase()
-        } else {
-            match word.to_lowercase().as_str() {
-                "up" => "ArrowUp".to_string(),
-                "down" => "ArrowDown".to_string(),
-                "left" => "ArrowLeft".to_string(),
-                "right" => "ArrowRight".to_string(),
-                _ => word.clone(),
-            }
-        };
-        out.push_str(&token);
-    }
-
-    out
 }
 
-/// Replaces a leading `[modifier_combinations]` alias (`comb1 + C`) with its definition.
-pub fn expand_modifier_combination(key: &str, combinations: &HashMap<String, String>) -> String {
-    if let Some(plus_pos) = key.find(" + ") {
-        let potential_combo = &key[..plus_pos];
-        if let Some(combo_value) = combinations.get(potential_combo) {
-            let rest = &key[plus_pos + 3..];
-            return format!("{} + {}", combo_value, rest);
+#[cfg(test)]
+mod mask_tests {
+    use super::*;
+
+    /// `crate::input::domain::key` holds each family's mask as a bit pattern so its table needs no
+    /// CoreGraphics. This is what stops a wrong literal going unnoticed.
+    #[test]
+    fn every_family_mask_is_the_core_graphics_one() {
+        let expected = [
+            ("Ctrl", CGEventFlags::MaskControl),
+            ("Alt", CGEventFlags::MaskAlternate),
+            ("Shift", CGEventFlags::MaskShift),
+            ("Meta", CGEventFlags::MaskCommand),
+        ];
+        assert_eq!(MOD_FAMILIES.len(), expected.len(), "a family was added without a mask check");
+        for (name, flags) in expected {
+            let family = MOD_FAMILIES
+                .iter()
+                .find(|m| m.name == name)
+                .unwrap_or_else(|| panic!("no {name} family"));
+            assert_eq!(family.mask, flags.0, "{name}");
         }
     }
-    key.to_string()
 }

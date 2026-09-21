@@ -5,6 +5,7 @@ pub mod cursor;
 pub mod gesture_tap;
 pub mod haptics;
 pub mod input_tap;
+pub mod keyboard;
 pub mod tap;
 
 #[inline(always)]

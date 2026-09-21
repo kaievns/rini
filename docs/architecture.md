@@ -44,7 +44,7 @@ touches nothing outside itself.
 | `displays` | screens, native spaces, coordinates, which windows sit on which space | `ScreenInfo`, `CoordinateConverter`, the topology snapshot (`ForwardedSpaceState`) and screen selection over it, the space activation policy. `platform/`: CGDisplay/NSScreen/SLS-space adapters, space switching, display churn, the spaces actor, the cursor-warp actor, the CGS notification stream. Emits `displays::event::Event` |
 | `layout` | strips, columns, the scrolling layout | the layout tree and its operations, gaps, insertion; the `LayoutSystem` seam; tiling settings |
 | `workspaces` | virtual workspaces | assignment of windows to workspaces, activation, stacked-workspace geometry, `WindowStore`; `layout.ron` save/restore in `engine/persistence/`, launch memory, floating positions; workspace settings |
-| `input` | what the user asked for | key specs, the binding table, gesture and drag-swap recognition. `platform/`: CGEventTap adapters, Carbon hotkeys, the haptic engine, the cursor. Emits `rini-ipc` commands, so the reactor cannot tell a hotkey from a CLI call |
+| `input` | what the user asked for | `Modifiers`, `KeyCode` and `Hotkey`, the token and spec parsing that needs no keyboard, the binding table, gesture and drag-swap recognition, and the rules the taps apply (`domain::gesture`, `domain::hotkey`). `platform/`: CGEventTap adapters, the layout-dependent `FromStr` impls (`platform::keyboard`), Carbon hotkeys, the haptic engine, the cursor. Emits `rini-ipc` commands, so the reactor cannot tell a hotkey from a CLI call |
 | `animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`domain::pass`), which final frame writes go out, the `AnimationRequest`/`SnapshotTarget` ports, and the flight engine's own decisions: when work happens (`domain::timing`), what a flight is and when it may capture (`domain::flight`), and how a request arriving mid-flight is admitted (`domain::admission`). `platform/`: window snapshots and capture (ScreenCaptureKit, SkyLight), the Core Animation tile overlay, the flight engine |
 
 ## The application layer
@@ -101,7 +101,8 @@ permission, builds every actor and joins them.
 
 `tests/architecture.rs` checks rules 1 and 2 against the tree on every
 `cargo test`, with comments stripped so prose about `platform` is not a
-dependency on it. Rule 4 the compiler checks: a crate cannot name the
+dependency on it. One file is named as an exception, and a further test fails if
+it stops needing to be. Rule 4 the compiler checks: a crate cannot name the
 application's modules. Rules 3, 5 and 6 are conventions.
 
 ## Why this shape and not one crate per feature
@@ -136,7 +137,6 @@ a dependency of it.
 | where | what | why it waits |
 |---|---|---|
 | `src/displays/screen.rs` | mixes `ScreenInfo`, `CoordinateConverter` and the bounds arithmetic (pure) with `Actual` reading NSScreen and CGDisplay | the `System` trait it is already generic over is the seam. Splitting it moves about 1000 lines and its tests, which is its own change. Named in `tests/architecture.rs` so nothing joins it |
-| `src/input/key.rs` | mixes `KeySpec` parsing (pure) with the Carbon keyboard-layout lookup | same shape, same reason |
 | `src/animation/platform/engine.rs` | 2.2k code lines, 1.6k of them one `impl FlightEngine`, plus 3.9k lines of tests | the decisions have left (`domain/timing.rs`, `domain/flight.rs`, `domain/admission.rs`); what remains is the actor: the overlay, the snapshot cache, the timer, and the main-thread work they need. Its tests are still grouped by investigation episode (`exploration`, `render_stability_fix`, `still_passes`) rather than by unit, so they did not move with the decisions they cover |
 | `src/app/config/` | one `Settings` struct that every feature's fields hang off, filled from one file | it depends on every feature and nothing depends on it, so it is a hub at the edge, which is the tolerable kind. Its own decomposition (one table per feature, `deny_unknown_fields` prevents `flatten`) is a schema question for the config file, not an architecture one |
 | `src/workspaces/broadcast.rs` | `LayoutEngine` sends IPC events itself | belongs to `app/api/`, driven by `EventResponse`; needs the reactor to own the broadcast channel |

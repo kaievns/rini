@@ -2,13 +2,13 @@
 //!
 //! Keys, bindings, trackpad gestures and drags come in through CGEventTaps; commands in the
 //! `rini_ipc::protocol` language go out, so the application cannot tell a hotkey from a CLI call.
-//! See `docs/architecture.md`.
+//! `domain::key` holds the vocabulary and the parsing that needs no keyboard; `platform::keyboard`
+//! holds the rest, because which physical key `"a"` names depends on the layout in use.
 //!
-//! `key` is still on both sides of the domain/platform line: the `KeySpec` parsing is pure, the
-//! keyboard-layout lookup reads Carbon.
+//! See `docs/architecture.md`.
+
 
 pub mod domain;
 pub mod event;
-pub mod key;
 pub mod platform;
 pub mod settings;

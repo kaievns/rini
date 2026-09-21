@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::input::platform::haptics::HapticPattern;
-use crate::input::key::HotkeySpec;
+use crate::input::domain::key::HotkeySpec;
 
 fn yes() -> bool {
     true

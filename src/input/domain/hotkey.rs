@@ -1,9 +1,9 @@
 //! Whether the keys held down are the ones a binding asked for.
 //!
-//! The types themselves still live in `crate::input::key`, which has not been split yet; what is
-//! here is the matching, which needs no keyboard.
+//! The matching, which needs no keyboard. Which physical key a spec names does, and is
+//! `crate::input::platform::keyboard`.
 
-use crate::input::key::Modifiers;
+use crate::input::domain::key::Modifiers;
 
 /// Every modifier family, as the pair of side-specific flags that name it.
 const SIDES: [(Modifiers, Modifiers); 4] = [
