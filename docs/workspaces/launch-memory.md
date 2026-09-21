@@ -80,6 +80,33 @@ the application is not running is the entire point. Measured live: TextEdit was
 recorded in workspace 1, then vanished from the file, because rini had stopped tracking
 its window while the process was still alive and the projection had produced nothing.
 
+The same rule applies per FIELD, which it did not at first, and that is what kept
+sending full-width windows back at half size. A width has three states, not two, and
+`ProjectedWidth` is the type that says so:
+
+| state | meaning | what `remember` stores |
+|---|---|---|
+| `Known(Some(w))` | the layout holding the window says `w` | `w` |
+| `Known(None)` | the layout holds the window at the display default | nothing, so ctrl-F can be undone across a relaunch |
+| `Unknown` | no layout holding the window could be consulted | whatever is already remembered |
+
+Collapsing `Unknown` into `Known(None)` is a data-destroying bug rather than a missed
+optimisation: the autosave runs every few seconds, so ONE projection that could not read
+the layout overwrote `FullWidth` with nothing, permanently. The window then relaunched at
+the default width and no record survived to say otherwise, which is why pressing ctrl-F
+again was the only fix and why the same report came back three times.
+`resolve_width` inherits by title first, then by position, matching `slot_for_window`.
+
+Reading the width consults EVERY layout configuration of the workspace, not only the
+active display size (`width_from_layouts` over `configurations_for`). A workspace holds a
+strip per display size, so a window made full width on the external is recorded in that
+size's layout, and while the built-in is showing, the active layout knows nothing about it.
+
+Every way the lookup can give up is logged, which it was not: `launch_slot_for_new_window`
+returned `None` for four different reasons in silence, so each time a width went missing
+the reason had to be reconstructed from the layout file. A missing topology is a `warn`,
+because nothing remembered can be found at all until it arrives.
+
 Two lookups also have to be right, and both were wrong first time:
 
 - The window's space comes from `workspace_info_for_window_any`, not

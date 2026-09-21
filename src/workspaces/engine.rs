@@ -1055,7 +1055,9 @@ impl LayoutEngine {
     /// `connected` is the display UUIDs currently attached, which is the topology the answer is filed
     /// under. Nothing is recorded without it, since an answer with no topology cannot be looked up.
     pub fn remember_launch_slots(&mut self, window_store: &WindowStore, connected: &[String]) {
-        use crate::workspaces::domain::launch_memory::{Slot, topology_key};
+        use crate::workspaces::domain::launch_memory::{
+            ProjectedSlot, ProjectedWidth, topology_key,
+        };
 
         if connected.is_empty() {
             return;
@@ -1073,7 +1075,7 @@ impl LayoutEngine {
 
         for (app_id, mut windows) in by_app {
             windows.sort_unstable();
-            let slots: Vec<Slot> = windows
+            let slots: Vec<ProjectedSlot> = windows
                 .into_iter()
                 .filter_map(|(_, window_id)| {
                     let window = window_store.window(window_id)?;
@@ -1098,19 +1100,22 @@ impl LayoutEngine {
                         .position(|(id, _)| *id == info.workspace_id)?;
                     // The width the window actually has, from its layout. The affinity map alone missed
                     // widths that came from the layout rather than a command.
-                    let width = self
-                        .workspace_layouts
-                        .active(info.space, info.workspace_id)
-                        .and_then(|layout| {
-                            let tree = self.workspace_tree(info.workspace_id);
-                            if tree.is_window_full_width(layout, window_id) {
-                                Some(ColumnWidth::FullWidth)
-                            } else {
-                                tree.column_width_offset(layout, window_id).map(ColumnWidth::Offset)
-                            }
-                        })
-                        .or_else(|| self.display_affinity.window_width(&display, window_id));
-                    Some(Slot {
+                    //
+                    // `Unknown` when no layout holding the window could be consulted and the record
+                    // has nothing either. It must NOT collapse to "no width": that is what erased a
+                    // remembered full width on the next autosave.
+                    let width = match self.width_from_layouts(
+                        info.space,
+                        info.workspace_id,
+                        window_id,
+                    ) {
+                        Some(width) => ProjectedWidth::Known(width),
+                        None => match self.display_affinity.window_width(&display, window_id) {
+                            Some(width) => ProjectedWidth::Known(Some(width)),
+                            None => ProjectedWidth::Unknown,
+                        },
+                    };
+                    Some(ProjectedSlot {
                         title: (!window.info.title.trim().is_empty())
                             .then(|| window.info.title.clone()),
                         display_uuid: display,
@@ -1121,6 +1126,35 @@ impl LayoutEngine {
                 .collect();
             self.launch_memory.remember(&app_id, &topology, slots);
         }
+    }
+
+    /// The width `window` has in its workspace, read from the layout that holds it.
+    ///
+    /// `None` means no layout of this workspace holds the window at all, which is not the same as the
+    /// window having no deliberate width — see `ProjectedWidth`. `Some(None)` is a window sitting at
+    /// the display's configured default.
+    ///
+    /// Every configuration is consulted, not only the active display size: a window made full width
+    /// on the external lives in that size's layout, and while the built-in is showing the active
+    /// layout knows nothing about it.
+    fn width_from_layouts(
+        &self,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+        window: WindowId,
+    ) -> Option<Option<ColumnWidth>> {
+        let tree = self.workspace_tree(workspace_id);
+        let mut consulted = false;
+        for layout in self.workspace_layouts.configurations_for(space, workspace_id) {
+            if tree.is_window_full_width(layout, window) {
+                return Some(Some(ColumnWidth::FullWidth));
+            }
+            if let Some(offset) = tree.column_width_offset(layout, window) {
+                return Some(Some(ColumnWidth::Offset(offset)));
+            }
+            consulted |= tree.contains_window(layout, window);
+        }
+        consulted.then_some(None)
     }
 
     /// The displays attached right now, which is the topology the launch memory is keyed by.
@@ -1146,9 +1180,27 @@ impl LayoutEngine {
         // Identity comes from the caller, not from the window store. The first sighting of a launching
         // application's window happens while the rules are being applied, and the window is not in the
         // store yet at that point — reading it there is why this silently did nothing.
+        // Every way of giving up here is logged. The first three times a remembered full width was
+        // lost, the reason had to be reconstructed from the layout file, because this returned `None`
+        // for four different reasons without saying which.
+        if self.connected_displays.is_empty() {
+            warn!(
+                idx = window.idx.get(),
+                app_id,
+                "no display topology yet, so nothing remembered can be looked up: this window gets \
+                 today's defaults"
+            );
+            return None;
+        }
         let topology = topology_key(&self.connected_displays);
         let slots = self.launch_memory.slots(app_id, &topology);
         if slots.is_empty() {
+            debug!(
+                idx = window.idx.get(),
+                app_id,
+                topology,
+                "nothing remembered for this application under this topology"
+            );
             return None;
         }
 
@@ -1172,12 +1224,22 @@ impl LayoutEngine {
             }
         }
 
-        let index = slot_for_window(slots, title, siblings.len(), &claimed)?;
+        let Some(index) = slot_for_window(slots, title, siblings.len(), &claimed) else {
+            debug!(
+                idx = window.idx.get(),
+                app_id,
+                ordinal = siblings.len(),
+                of = slots.len(),
+                "no free remembered slot for this window; it gets today's defaults"
+            );
+            return None;
+        };
         debug!(
             idx = window.idx.get(),
             app_id,
             slot = index,
             of = slots.len(),
+            width = ?slots.get(index).and_then(|slot| slot.width),
             "a relaunched window matched a remembered slot"
         );
         slots.get(index).cloned()
@@ -1307,6 +1369,11 @@ impl LayoutEngine {
     ) {
         let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned)
         else {
+            debug!(
+                idx = window.idx.get(),
+                ?space,
+                "no display known for this space, so no remembered width can be applied"
+            );
             return;
         };
         let found = self.display_affinity.window_width(&display, window);

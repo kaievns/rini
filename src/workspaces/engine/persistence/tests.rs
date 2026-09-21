@@ -2370,7 +2370,7 @@ fn launch_memory_survives_a_save_and_load() {
             display_uuid: "external".into(),
             workspace_index: 2,
             width: Some(ColumnWidth::Offset(0.25)),
-        }],
+        }.into()],
     );
     engine.launch_memory.remember(
         "com.mitchellh.ghostty",
@@ -2380,7 +2380,7 @@ fn launch_memory_survives_a_save_and_load() {
             display_uuid: "built-in".into(),
             workspace_index: 0,
             width: Some(ColumnWidth::FullWidth),
-        }],
+        }.into()],
     );
 
     let path = std::env::temp_dir()
@@ -2723,7 +2723,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
             display_uuid: DISPLAY.to_owned(),
             workspace_index: 1,
             width: Some(ColumnWidth::FullWidth),
-        }],
+        }.into()],
     );
 
     let result = engine
@@ -2825,5 +2825,105 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
         slots[0].width,
         Some(ColumnWidth::FullWidth),
         "the width came from the layout, with nothing in the affinity map"
+    );
+}
+
+/// The bug that came back three times. ctrl-F, quit rini, start it again: the window relaunched at the
+/// default half width, and the next autosave then overwrote `FullWidth` with nothing, so the record was
+/// gone for good and ctrl-F had to be pressed again.
+///
+/// The projection could not read the width here — this fixture withholds the topology, as a startup
+/// where windows are discovered before the first authoritative space snapshot does — and "could not
+/// read it" was indistinguishable from "it has no width". See `ProjectedWidth`.
+#[test]
+fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
+    use crate::workspaces::domain::display_affinity::ColumnWidth;
+    use crate::workspaces::engine::LayoutCommand;
+
+    const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    const APP: &str = "com.mitchellh.ghostty";
+    let space = SpaceId::new(11);
+
+    let insert = |store: &mut WindowStore, window: WindowId| {
+        let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
+        store.insert_window(
+            window,
+            WindowState {
+                info: WindowInfo {
+                    is_standard: true,
+                    is_root: true,
+                    is_minimized: false,
+                    is_resizable: true,
+                    min_size: None,
+                    max_size: None,
+                    title: "~/projects/rini".into(),
+                    frame,
+                    sys_id: Some(WindowServerId::new(window.idx.get())),
+                    bundle_id: Some(APP.into()),
+                    path: None,
+                    ax_role: None,
+                    ax_subrole: None,
+                    is_modal: false,
+                },
+                frame_monotonic: frame,
+                is_manageable: true,
+                ignore_app_rule: false,
+            },
+        );
+    };
+
+    let mut engine = test_engine();
+    let mut store = WindowStore::default();
+    let before_quit = WindowId::new(500, 1);
+    let _ = engine.handle_event(
+        &mut store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.set_connected_displays(vec![DISPLAY.to_owned()]);
+    insert(&mut store, before_quit);
+    let _ = engine.handle_event(&mut store, LayoutEvent::WindowAdded(space, before_quit));
+
+    engine.focused_window = Some(before_quit);
+    let _ = engine.handle_command(
+        &mut store,
+        Some(space),
+        &[space],
+        &HashMap::default(),
+        LayoutCommand::ToggleFullscreenWithinGaps,
+    );
+    engine.remember_launch_slots(&store, &[DISPLAY.to_owned()]);
+
+    let topology = crate::workspaces::domain::launch_memory::topology_key(&[DISPLAY.to_owned()]);
+    assert_eq!(
+        engine.launch_memory.slots(APP, &topology)[0].width,
+        Some(ColumnWidth::FullWidth),
+        "ctrl-F is what gets remembered"
+    );
+
+    // rini restarts, and the window is discovered before the topology is known.
+    let path = std::env::temp_dir().join(format!("full_width_{}.ron", std::process::id()));
+    engine.save(path.clone()).unwrap();
+    let mut reloaded = LayoutEngine::load(path.clone()).unwrap();
+    let _ = std::fs::remove_file(&path);
+
+    let mut store = WindowStore::default();
+    let after_relaunch = WindowId::new(900, 7);
+    let _ = reloaded.handle_event(
+        &mut store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    reloaded.update_space_display(space, Some(DISPLAY.to_owned()));
+    reloaded.set_connected_displays(vec![DISPLAY.to_owned()]);
+    insert(&mut store, after_relaunch);
+    let _ = reloaded.handle_event(&mut store, LayoutEvent::WindowAdded(space, after_relaunch));
+
+    // The autosave fires while the width still cannot be read. This is the step that used to
+    // destroy the record, and after it the window can never come back full width again.
+    reloaded.remember_launch_slots(&store, &[DISPLAY.to_owned()]);
+    assert_eq!(
+        reloaded.launch_memory.slots(APP, &topology)[0].width,
+        Some(ColumnWidth::FullWidth),
+        "a save that could not read the width must leave the remembered one standing"
     );
 }

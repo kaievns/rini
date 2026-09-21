@@ -238,6 +238,28 @@ impl WorkspaceLayouts {
         layouts
     }
 
+    /// Every layout configuration for ONE workspace on one space, the active display size first.
+    ///
+    /// A workspace holds a strip per display size, so a window made full width on the external is
+    /// recorded in that size's layout and is invisible to `active` while the built-in is showing.
+    /// Reading a window's width has to look at all of them, nearest first.
+    pub fn configurations_for(
+        &self,
+        space: SpaceId,
+        workspace_id: crate::workspaces::VirtualWorkspaceId,
+    ) -> Vec<LayoutId> {
+        let Some(info) = self.map.get(&(space, workspace_id)) else {
+            return Vec::new();
+        };
+        let mut layouts: Vec<LayoutId> = info.active().into_iter().collect();
+        for layout in info.configurations.values() {
+            if !layouts.contains(layout) {
+                layouts.push(*layout);
+            }
+        }
+        layouts
+    }
+
     /// Enumerate every serialized layout configuration, not only the currently active display
     /// size. Old-size configurations are restored later and therefore must be sanitized too.
     pub fn all_layouts(&self) -> Vec<(SpaceId, crate::workspaces::VirtualWorkspaceId, LayoutId)> {

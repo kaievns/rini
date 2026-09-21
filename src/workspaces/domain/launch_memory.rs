@@ -38,6 +38,65 @@ pub struct Slot {
     pub width: Option<ColumnWidth>,
 }
 
+/// What a projection could work out about one window's width.
+///
+/// The distinction is the whole point. A width that could not be READ is not a window without a
+/// width, and treating the two alike is what erased a remembered full-width window on the next
+/// autosave, so it relaunched at the default half width. See `docs/workspaces/launch-memory.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProjectedWidth {
+    /// The window's own layout answered. `None` is a real answer: the display's configured default.
+    Known(Option<ColumnWidth>),
+    /// No layout holding this window could be consulted, so what is already remembered must stand.
+    Unknown,
+}
+
+/// A slot as a projection produces it, before its unknowns are resolved against what is remembered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectedSlot {
+    pub title: Option<String>,
+    pub display_uuid: String,
+    pub workspace_index: usize,
+    pub width: ProjectedWidth,
+}
+
+/// Fixtures say what a slot's width IS, so they project a known one. Test-only: production builds a
+/// `ProjectedSlot` from the layout, which is the one place allowed to decide the width is unknown.
+#[cfg(test)]
+impl From<Slot> for ProjectedSlot {
+    fn from(slot: Slot) -> Self {
+        Self {
+            title: slot.title,
+            display_uuid: slot.display_uuid,
+            workspace_index: slot.workspace_index,
+            width: ProjectedWidth::Known(slot.width),
+        }
+    }
+}
+
+/// The width to store for one projected slot, given what the application already had remembered.
+///
+/// `Known` is taken as it stands, including a deliberate `None` for "back to the display default".
+/// `Unknown` inherits: by title first, since a title is what identifies a window across a relaunch,
+/// then by position for the applications whose titles change every session.
+pub fn resolve_width(
+    projected: &ProjectedSlot,
+    index: usize,
+    remembered: &[Slot],
+) -> Option<ColumnWidth> {
+    match projected.width {
+        ProjectedWidth::Known(width) => width,
+        ProjectedWidth::Unknown => projected
+            .title
+            .as_deref()
+            .and_then(|title| {
+                remembered.iter().find(|old| old.title.as_deref() == Some(title))
+            })
+            .or_else(|| remembered.get(index))
+            .and_then(|old| old.width),
+    }
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct LaunchMemory {
     /// Slots per application, per display topology.
@@ -56,10 +115,25 @@ impl LaunchMemory {
     /// means the windows could not be read, not that the application is meant to be forgotten — and
     /// forgetting is the one outcome that cannot be recovered from, since the whole point is to hold the
     /// arrangement across the application not running at all.
-    pub fn remember(&mut self, app_id: &str, topology: &str, slots: Vec<Slot>) {
-        if slots.is_empty() {
+    ///
+    /// The same rule applies per FIELD, not just per application: a slot whose width the projection
+    /// could not work out keeps the width already remembered (`resolve_width`). Replacing the set
+    /// wholesale with `width: None` is how a full-width window came back half sized.
+    pub fn remember(&mut self, app_id: &str, topology: &str, projected: Vec<ProjectedSlot>) {
+        if projected.is_empty() {
             return;
         }
+        let remembered = self.slots(app_id, topology).to_vec();
+        let slots: Vec<Slot> = projected
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| Slot {
+                title: slot.title.clone(),
+                display_uuid: slot.display_uuid.clone(),
+                workspace_index: slot.workspace_index,
+                width: resolve_width(slot, index, &remembered),
+            })
+            .collect();
         self.apps
             .entry(app_id.to_owned())
             .or_default()
@@ -149,7 +223,7 @@ mod tests {
                 display_uuid: EXTERNAL.to_owned(),
                 workspace_index: 2,
                 width: Some(ColumnWidth::Offset(0.0)),
-            }],
+            }.into()],
         );
         memory.remember(
             "com.mitchellh.ghostty",
@@ -159,7 +233,7 @@ mod tests {
                 display_uuid: BUILT_IN.to_owned(),
                 workspace_index: 0,
                 width: Some(ColumnWidth::FullWidth),
-            }],
+            }.into()],
         );
 
         let docked_slots = memory.slots("com.mitchellh.ghostty", &docked);
@@ -174,7 +248,7 @@ mod tests {
     #[test]
     fn a_topology_that_was_never_seen_remembers_nothing() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one-display", vec![slot("t", BUILT_IN, 0)]);
+        memory.remember("app", "one-display", vec![slot("t", BUILT_IN, 0).into()]);
         assert!(memory.slots("app", "two-displays").is_empty());
         assert!(memory.slots("other-app", "one-display").is_empty());
     }
@@ -228,8 +302,8 @@ mod tests {
     #[test]
     fn remembering_replaces_rather_than_accumulates() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0), slot("b", BUILT_IN, 1)]);
-        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0)]);
+        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into(), slot("b", BUILT_IN, 1).into()]);
+        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into()]);
         assert_eq!(memory.slots("app", "one").len(), 1);
     }
 
@@ -238,8 +312,92 @@ mod tests {
     #[test]
     fn remembering_nothing_leaves_what_is_known_alone() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0)]);
+        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into()]);
         memory.remember("app", "one", Vec::new());
         assert_eq!(memory.slots("app", "one").len(), 1, "the entry survives an empty projection");
+    }
+
+    fn projected(title: Option<&str>, width: ProjectedWidth) -> ProjectedSlot {
+        ProjectedSlot {
+            title: title.map(str::to_owned),
+            display_uuid: BUILT_IN.to_owned(),
+            workspace_index: 0,
+            width,
+        }
+    }
+
+    fn remembered(title: Option<&str>, width: Option<ColumnWidth>) -> Slot {
+        Slot {
+            title: title.map(str::to_owned),
+            display_uuid: BUILT_IN.to_owned(),
+            workspace_index: 0,
+            width,
+        }
+    }
+
+    // The bug this type exists for. The projection could not read the layout, so it reported
+    // `Unknown`; treating that as "no width" is what sent a full-width window back at half size.
+    #[test]
+    fn a_width_that_could_not_be_read_keeps_the_one_remembered() {
+        let old = [remembered(Some("~/projects/rini"), Some(ColumnWidth::FullWidth))];
+        let new = projected(Some("~/projects/rini"), ProjectedWidth::Unknown);
+        assert_eq!(resolve_width(&new, 0, &old), Some(ColumnWidth::FullWidth));
+    }
+
+    // The other half: toggling back to the default has to be recorded, or ctrl-F could never be
+    // undone across a relaunch. `Known(None)` is a deliberate answer and overwrites.
+    #[test]
+    fn a_width_read_as_the_default_overwrites_a_remembered_one() {
+        let old = [remembered(Some("term"), Some(ColumnWidth::FullWidth))];
+        let new = projected(Some("term"), ProjectedWidth::Known(None));
+        assert_eq!(resolve_width(&new, 0, &old), None);
+    }
+
+    #[test]
+    fn an_unknown_width_inherits_by_title_before_position() {
+        let old = [
+            remembered(Some("other"), Some(ColumnWidth::Offset(0.25))),
+            remembered(Some("mine"), Some(ColumnWidth::FullWidth)),
+        ];
+        // Position 0 would give the offset; the title says otherwise.
+        let new = projected(Some("mine"), ProjectedWidth::Unknown);
+        assert_eq!(resolve_width(&new, 0, &old), Some(ColumnWidth::FullWidth));
+    }
+
+    // An application whose titles change every session, so only the ordinal can match.
+    #[test]
+    fn an_unknown_width_falls_back_to_the_slot_in_the_same_position() {
+        let old = [
+            remembered(Some("page one"), None),
+            remembered(Some("page two"), Some(ColumnWidth::FullWidth)),
+        ];
+        let new = projected(Some("page three"), ProjectedWidth::Unknown);
+        assert_eq!(resolve_width(&new, 1, &old), Some(ColumnWidth::FullWidth));
+    }
+
+    #[test]
+    fn an_unknown_width_with_nothing_remembered_is_no_width() {
+        let new = projected(Some("term"), ProjectedWidth::Unknown);
+        assert_eq!(resolve_width(&new, 0, &[]), None);
+    }
+
+    /// The autosave loop that erased the record: every save re-projects, and one save that could not
+    /// read the layout used to overwrite the width with `None` for good.
+    #[test]
+    fn repeated_saves_that_cannot_read_the_layout_never_erase_a_width() {
+        let mut memory = LaunchMemory::default();
+        memory.remember(
+            "app",
+            "one",
+            vec![projected(Some("term"), ProjectedWidth::Known(Some(ColumnWidth::FullWidth)))],
+        );
+        for _ in 0..5 {
+            memory.remember("app", "one", vec![projected(Some("term"), ProjectedWidth::Unknown)]);
+            assert_eq!(
+                memory.slots("app", "one")[0].width,
+                Some(ColumnWidth::FullWidth),
+                "an unreadable projection must not erase the width"
+            );
+        }
     }
 }
