@@ -13,12 +13,17 @@ current behaviour annoys me.
   window it merely *sees* on a display, so a window that lands on the external for any
   reason is permanently re-homed there and never comes back. Measured: one window's home
   flipped built-in → external across a single move sequence. This is the root cause behind
-  "windows teleport between displays", and it contradicts the comment three lines above it
-  warning that overwriting the home is exactly what makes replug useless.
-- **A bad keybinding stops the window manager starting.** `Config::read(...).unwrap()`
-  panics on any unparseable value, so one bad command name in `config.toml` takes the whole
-  WM down, with the reason buried in a launch log. One bad binding should be reported and
-  skipped.
+  "windows teleport between displays". Its one guard covers only a home on a DETACHED
+  display (the evacuation case); a home on an attached display is overwritten freely,
+  because nothing distinguishes "the user dragged it here" from "rini put it here for an
+  unrelated reason". Re-observing is deliberate and the reason is recorded in
+  `docs/workspaces/workspaces-and-displays.md` under "Display affinity" — what is missing
+  is a reason to believe an observation, not the re-observing itself.
+- **A bad keybinding discards the whole config.** No longer fatal: `main.rs` reports the
+  error and falls back to the built-in defaults, so the WM starts and the hotkeys for
+  editing the config stay reachable. But one bad command name still costs every other
+  setting in the file. One bad binding should be reported and skipped, not the file
+  abandoned.
 - **Blank built-in display after manual window moves.** Untested since the workspace
   restructure; may already be fixed.
 - **First column stays put while the strip shifts on focus.** Needs measurement with the

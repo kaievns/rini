@@ -99,7 +99,7 @@ The two entry points feed the same `begin_group`:
   (`worth_flying`).
 - **Strip movements** (`Event::AnimateSurface` — workspace switches and strip
   pans; the wire event the reactor builds from the stacked-workspace
-  geometry in `model/strip_stack.rs`, carrying `SurfaceWindow`s) start `Immediate`: they arrive once
+  geometry in `animation/domain/motion/strip_stack.rs`, carrying `SurfaceWindow`s) start `Immediate`: they arrive once
   per keystroke and latency is the enemy. `surface_plan` puts every window
   on the surface in ONE group travelling by the viewport's travel
   (`surface_travel`, `pan_travel`): one container, one position
@@ -113,7 +113,7 @@ Mid-flight passes go through `merge_plans` (pure, tested), which retargets
 containers, not tiles. A rigid member of the incoming pass votes for its
 group's new position (`p = to - rel`); the largest cluster keeps the
 container, which bends from its presented position to the new destination
-under the same animation key (`group_travel_after_merge`). Members voting
+under the same animation key (`GROUP_ANIMATION_KEY`, `"rini.group.move"`). Members voting
 elsewhere are reparented at the frame they are drawn at, into a group whose
 remaining travel matches theirs, or into a new one. A member the pass sends
 off the viewport does not vote while its container moves (`rides_out`): it
@@ -142,7 +142,7 @@ pop at lift. Cross-container z is a tie rule, not a guarantee: strip
 windows do not overlap at rest, so overlap between two moving groups is
 transient, and the group holding focus is drawn first.
 
-Depth is banded by z-group (`tile_depth` in `model/z_group.rs`) at the
+Depth is banded by z-group (`tile_depth` in `animation/domain/motion/z_group.rs`) at the
 container level (`band_plan`, `rebank`). The floating container sits at
 `container_z`: zero with a floating focus, one `GROUP_STRIDE` behind with a
 strip focus (or no focus the flight draws); strip containers the other way
@@ -192,7 +192,7 @@ the service against a framed SkyLight capture swapped every refresh target
 two or three times per flight (log 22:34:04: swaps at 0.539, 0.549, 0.561
 in one pan): the two routes render a translucent window differently, so a
 route change alone failed the thumbprint match, and the next flight's cache
-held the other route's picture, repeating forever. The gate is on the
+held the other route's picture, repeating forever. The check blocks the
 refresh only; a chase's framed reveal is the truth for a grow whatever the
 cache holds. Every cut logs "picture swapped mid-flight" with its reason;
 that line is the acceptance counter, at most one `reason=refresh` per window
@@ -271,7 +271,7 @@ Mechanics worth remembering:
   tail was the problem. Pinned by `the_motion_is_nearly_home_by_half_time`.
 - `CAAnimation` treats a zero duration as "use the default 0.25s", so zero
   durations bypass the animation and draw the final frame directly.
-- `NSValue::valueWithPoint` (the from/to carrier) is gated behind the
+- `NSValue::valueWithPoint` (the from/to carrier) requires the
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
 
 Found on the first live run of the per-tile strip path: **floating tiles
@@ -298,7 +298,7 @@ to stop dead, which read as a dropped keypress. The layout reports it as
 only; `handle_virtual_workspace_command` for up/down), distinct from
 `boundary_hit`, which is the gesture's threshold crossing. The reactor
 (`start_edge_bounce`) sends `Event::Bounce` with the active workspace's surface
-and `edge_bounce_overshoot` (`reactor/animation.rs`): `EDGE_BOUNCE_OVERSHOOT` (36pt) the way the
+and `edge_bounce_overshoot` (`src/app/reactor/animation.rs`): `EDGE_BOUNCE_OVERSHOOT` (36pt) the way the
 content would have gone, so focus right pulls the strip left and the next
 workspace pulls the row up. The actor (`start_bounce`) composes a flight with
 no travel when none is running (every tile at rest, `final_frames` the layout

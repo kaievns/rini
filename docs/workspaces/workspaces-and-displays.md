@@ -22,7 +22,7 @@ Consequences that follow from this and are tested in `virtual_workspace.rs`:
 - **A window keeps its workspace when it changes display**
   (`move_window_to_space`). The workspace is the window's identity; only an
   explicit move-to-workspace command changes it. The old ordinal translation
-  was also gated on the target display having no assignments, so a window
+  was also conditional on the target display having no assignments, so a window
   dragged to a display already in use, or a Chrome tab torn off into a new
   window, silently landed on that display's active workspace and "vanished".
 - **A new window lands on the workspace its own display is showing**, not the
@@ -73,18 +73,22 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   display was known at the time, so a window seen before that mapping existed
   has none.
 - **Homes are re-observed on every settled topology, for attached displays
-  only** (`reobserve_display_affinity`). Written-once-never-revised went stale
+  only** (`sync_display_affinity`). Written-once-never-revised went stale
   the moment the user rearranged anything: a window dragged from the external
   to the built-in kept its old home and was hauled back on the next replug
   (reported as a Chrome and an editor window following the terminals across).
   Windows whose home is a detached display keep it: that is the evacuation case.
+  That guard is the only one. A home on an ATTACHED display is overwritten by any
+  sighting, because an observation carries no reason with it — "the user dragged it
+  here" and "rini put it here" look identical. Tracked in `roadmap.md` as a known
+  bug, since the cure for the stale home is also what makes a home unstable.
 - **Affinity for closed windows is dropped on every settled topology**
-  (`prune_display_affinity`). It was only cleared on the `WindowRemoved` path,
+  (`forget_affinity_for_dead_windows`). It was only cleared on the `WindowRemoved` path,
   not `WindowRemovedPreserveFloating`, which the display-change path uses.
   Measured: the external's affinity list held three closed windows while all
   fourteen live windows were homed to the built-in; repatriation reported
   `homed=[3 windows] to_move=[]` and the external came back empty every time.
-- **A native space belongs to one display.** `record_space_display` evicts any
+- **A native space belongs to one display.** `set_display_space` evicts any
   other display claiming the space; without that, two displays both appear to
   own it and the affinity pass moves windows between them forever.
 

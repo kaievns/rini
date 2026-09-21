@@ -1,7 +1,8 @@
 # The scrolling strip
 
-Rules `src/scrolling.rs` and the workspaces engine's focus paths enforce, with the
-failure each one answers. niri is the reference where behaviour is borrowed.
+Rules `src/layout/domain/scrolling.rs` and the workspaces engine's focus paths
+enforce, with the failure each one answers. niri is the reference where behaviour
+is borrowed.
 
 ## Column width
 
@@ -65,4 +66,4 @@ stacked a window the user had not chosen and left the selection untouched.
 Off-strip windows park at 1pt corners; live parks were measured at y=1085
 showing a 32pt band along the bottom. Both must read as off screen, or a parked
 window animated back in travels from the bottom corner instead of entering from
-the strip's edge (`hidden_window_placement.rs`).
+the strip's edge (`src/workspaces/domain/hidden_window_placement.rs`).

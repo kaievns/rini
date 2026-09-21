@@ -1,6 +1,6 @@
 # Space topology: one coherent snapshot, never a transient one
 
-The spaces actor (`src/spaces.rs`) is the only place that turns macOS display,
+The spaces actor (`src/displays/platform/spaces.rs`) is the only place that turns macOS display,
 space and session lifecycle signals into the `ForwardedSpaceState` the
 application builds its workspace model on. The application must only do that
 on top of a stable native-space picture, so the actor is deliberately
@@ -29,6 +29,7 @@ for transient spaces and later remap them onto the real desktop, which looked
 like "all windows reset to workspace 1".
 
 `ForwardedSpaceState` also carries `active_window_spaces`, which windows the
-window server reports on each active space. That is why this context depends
-on `rini-windows`: the join between windows and spaces is a window-server query
-over window ids, and the windows context owns those reads.
+window server reports on each active space. That is why `displays` depends on
+`windows` and not the other way round: the join between windows and spaces is a
+window-server query over window ids, and `windows/platform/window_server.rs`
+owns those reads.

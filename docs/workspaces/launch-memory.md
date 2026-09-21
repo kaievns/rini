@@ -14,8 +14,8 @@ application.
 - `window_width`: the `ColumnWidth` it last had **on each display**, stored as a ratio
   or the `FullWidth` mode rather than in points, so it survives a resolution change.
 
-`VirtualWorkspaceManager` records which workspace each window is assigned to. All three
-are written to `~/.rini/layout.ron` on save.
+`WorkspaceAssignments` (`src/workspaces/domain/assignment.rs`) records which workspace
+each window is assigned to. All three are written to `~/.rini/layout.ron` on save.
 
 All three are keyed by `WindowId { pid, idx }`. A pid is gone the moment the
 application quits, so every one of those records is dead weight on the next boot:

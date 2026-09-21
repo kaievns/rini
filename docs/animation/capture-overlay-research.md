@@ -305,7 +305,7 @@ which is exactly the case that returns a sliver.
 
 ### Confirmed and worth using
 
-- `SLSHWCaptureWindowList` is gated by the Screen Recording grant, not by window
+- `SLSHWCaptureWindowList` requires the Screen Recording grant, not window
   ownership. No scripting addition and no SIP disable. Verified working from a
   plain unprivileged connection.
 - It is much cheaper per window than ScreenCaptureKit: about 16ms against 38 to
@@ -319,7 +319,7 @@ which is exactly the case that returns a sliver.
   `sls_window_disable_shadow` on its proxies to match (`window_manager.c:473`),
   and it runs `cgimage_restore_alpha` when the source window's alpha is not 1.0
   (`window_manager.c:521-523`).
-- Version-gate it and fall back to ScreenCaptureKit when the array comes back
+- Check the OS version and fall back to ScreenCaptureKit when the array comes back
   null.
 
 ### The design this actually implies: a hybrid
@@ -379,8 +379,8 @@ image is not perceptible.
 
 **rini needs the Screen Recording grant.** It did not have it when this was
 written. (The rift-inherited overview overlay that first carried a
-ScreenCaptureKit pipeline has since been removed; `ui/snapshot_service.rs` is
-the pipeline now.)
+ScreenCaptureKit pipeline has since been removed;
+`src/animation/platform/snapshot_service.rs` is the pipeline now.)
 
 **Capture in a background thread.** At 14.5ms per window, refreshing even a few
 windows would blow several frames if it ran on the animation thread.
@@ -419,7 +419,7 @@ that route silently measures the wrong set.
 
 ## Phase 1 result: the overlay works
 
-Gating spike for the design, run 2026-08-16. Every question passed. Spikes are
+Go/no-go spike for the design, run 2026-08-16. Every question passed. Spikes are
 `overlay.swift`, `hold-overlay.swift`, `overlay2.swift` and `levels.swift`.
 
 ### Level and coverage
@@ -533,14 +533,16 @@ just not owned by anything called "Wallpaper":
         -20  sketchybar     24 windows across the strip
 ```
 
-Two consequences, both still live in the code:
+Two consequences followed, and both have since been fixed in `backdrop.rs`:
 
-- `desktop_backdrop_windows` excludes -2147483624 as `DOCK_LEVEL`, on the earlier
+- `desktop_backdrop_windows` excluded -2147483624 as `DOCK_LEVEL`, on the earlier
   reading that the Dock lives there. On this system that level holds the
-  wallpaper, so the composite route drops the one window it most needs.
-- `has_wallpaper` looks for an OWNER name containing "Wallpaper". The owner is
+  wallpaper, so the composite route dropped the one window it most needs. The
+  ceiling is now `DESKTOP_CEILING` (-2147483600) and everything at or below it
+  counts as desktop, the Dock-owned wallpaper included.
+- `has_wallpaper` looked for an OWNER name containing "Wallpaper". The owner is
   "Dock" and it is the window NAME that carries the "Wallpaper-" prefix, so the
-  flag is always false.
+  flag was always false. Both keys are now checked.
 
 Together those meant the composite route could not produce a wallpaper here at all,
 and `is_backdrop_worth_drawing` only accepts a wallpaperless composite when nothing
@@ -835,7 +837,7 @@ It decides two separate things:
   something off the strip is in front of any of them, and nothing at all when the
   order already obeys the rule — the common case, and it must cost nothing, because
   putting it back costs one Accessibility raise per window on screen. Only on-screen
-  windows are judged and raised (`strip_group_to_lift_for` in `actor/reactor.rs`),
+  windows are judged and raised (`strip_group_to_lift_for` in `src/app/reactor/mod.rs`),
   and the judgment runs twice per focus change: once with the raise the focus move
   issues, and again after the layout pass has been applied (`regroup_after_layout`),
   because nothing raises a column when it scrolls back into view — the engine's raise
@@ -894,8 +896,10 @@ snapped them back at the handover. They belong to a workspace but not to its str
 a scroll must leave them alone, while a switch between workspaces must take them
 along.
 
-So a canvas tile can be pinned. `start_canvas_pan` pins whatever the layout engine
-calls floating; `start_canvas_switch` pins nothing.
+So a tile can be pinned: `surface_travel` returns `(frame, frame)` for a pinned
+window, so a strip movement carries it nowhere. A pan pins whatever the layout
+engine calls floating; a switch pins nothing and moves the floating container by
+the strip's own travel (`FlightPlan.floating_travel`).
 
 The first attempt lifted pinned tiles out of the canvas and hung them off the
 overlay's root, above every strip tile. That is wrong twice over, and both ways were
@@ -905,11 +909,10 @@ transition. And a strip window with per-pixel alpha, a terminal at 95%, shows
 whatever is behind it, so lifting the floating window out took away what used to
 show through and left the backdrop showing instead.
 
-A pinned tile therefore stays in the canvas, keeping the z-position it gets from the
-window server's real front-to-back order like every other tile, and is counter-moved
-instead: at canvas offset o it is placed at its screen frame plus o, which cancels
-the canvas's own movement exactly. Two layer writes per frame at most, since only
-floating windows pin.
+A pinned tile therefore keeps the z-position it gets from the window server's real
+front-to-back order like every other tile. That survives the move to containers:
+floating tiles live in their own container, but `tile_depth` still orders tiles by
+the window server's order WITHIN a band, which is what this finding needs.
 
 Verified by pixel, on the left edge of a floating window during a scroll, before the
 z-order was corrected:
@@ -1133,7 +1136,7 @@ anything, which is what the sign of `from_offset = delta` buys. Reversing it wou
 start every chained press on the wrong side.
 
 The canvas was dissolved into per-tile animations for a while and is back as one
-container per rigid piece (`docs/animation-smoothness.md`, "The overlay engine").
+container per rigid piece (`docs/animation/animation-smoothness.md`, "The overlay engine").
 
 ## A one-point size change sent the whole strip to the Accessibility engine
 
@@ -1318,9 +1321,10 @@ measured and are not the cause:
   actually calls.
 - The backdrop and the bar, which are siblings of the canvas, render 1:1.
 
-A `check_geometry` call now asserts the first point on every animation and logs
-only when it fails, so a scale introduced in the layer tree cannot go unnoticed
-again.
+A `check_geometry` call used to assert the first point on every animation and log
+only when it failed. It was a canvas-era safeguard and went with the canvas
+(`d6c4ffe`); nothing checks this at runtime now, so a scale introduced in the
+layer tree would again have to be caught by eye.
 
 ## Nominal capture resolution paints a quarter of the buffer
 
@@ -1843,11 +1847,13 @@ released is eligible to have its backing store reclaimed, and a layer still
 holding it then draws nothing. The overlay sits at alpha 0 between animations,
 so nothing composites those surfaces for minutes at a time.
 
-`increment_use_count` on every cached capture prevents it. This one is reasoned
-rather than reproduced: purging happens on the system's schedule and did not
-reproduce inside a test session.
+The first fix was `increment_use_count` on every cached capture. It is gone, and
+nothing replaced it directly, because `own_copy` below covers this case too: a
+surface rini allocated itself is not the pool's to reclaim. The reclaim half was
+always reasoned rather than reproduced — purging happens on the system's schedule
+and did not reproduce inside a test session.
 
-The use count keeps a surface from being reclaimed, not from being reused.
+A use count would have kept a surface from being reclaimed, not from being reused.
 ScreenCaptureKit's sample buffers come from its own pool: once the completion
 returns, the surface is recycled for the next capture, and a layer still holding
 it draws whatever landed there next. Two same-size Chrome windows on different
