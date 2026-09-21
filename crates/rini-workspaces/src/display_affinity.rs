@@ -15,9 +15,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DisplayAffinity {

@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use r#continue::continuation;
 use rini_config::actor as config_actor;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 use rini_ipc::protocol::{self, ConfigCommand};
 use rini_runloop::dispatch::block_on;
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 
 use crate::actor::reactor::{Event, ReactorHandle};
 

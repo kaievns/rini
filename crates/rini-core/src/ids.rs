@@ -1,5 +1,9 @@
-//! Window and process identity. `WindowId` is rini's own (pid + per-process index, valid for the
-//! owning process's lifetime); `WindowServerId` is the window server's CGWindowID.
+//! Every identity rini speaks.
+//!
+//! `WindowId` is rini's own: a pid plus a per-process index, valid for the lifetime of the owning
+//! process. `ScreenId` is the CGDirectDisplayID. `WindowServerId` (CGWindowID) and `SpaceId`
+//! (CGSSpaceID) are the window server's, declared with the private API that mints them and
+//! re-exported here so a feature does not reach into `rini-skylight-sys` for a number.
 
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -7,7 +11,7 @@ use std::num::NonZeroU32;
 
 pub use libc::pid_t;
 
-pub use rini_skylight_sys::WindowServerId;
+pub use rini_skylight_sys::{SpaceId, WindowServerId};
 
 /// An identifier representing a window.
 ///
@@ -139,24 +143,26 @@ impl WindowId {
     }
 }
 
-impl From<WindowId> for rini_ipc::protocol::WindowId {
-    fn from(value: WindowId) -> Self {
-        Self {
-            pid: value.pid,
-            idx: value.idx.get(),
-        }
-    }
-}
-
-
-
-
 impl From<WindowId> for WindowServerId {
     fn from(id: WindowId) -> Self {
         Self(id.idx.into())
     }
 }
 
+
+/// A display, keyed by its CGDirectDisplayID.
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct ScreenId(u32);
+
+impl ScreenId {
+    pub fn new(id: u32) -> Self {
+        ScreenId(id)
+    }
+
+    pub fn as_u32(&self) -> u32 {
+        self.0
+    }
+}
 
 pub trait BTreeExt {
     fn remove_all_for_pid(&mut self, pid: pid_t) -> Self;
@@ -240,10 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn window_id_maps_onto_the_protocol_id_and_the_server_id() {
-        let protocol: rini_ipc::protocol::WindowId = wid().into();
-        assert_eq!((protocol.pid, protocol.idx), (42, 7));
+    fn window_id_maps_onto_the_server_id() {
         assert_eq!(WindowServerId::from(wid()).as_u32(), 7);
+    }
+
+    #[test]
+    fn a_screen_id_round_trips_through_its_raw_display_id() {
+        assert_eq!(ScreenId::new(69733382).as_u32(), 69733382);
     }
 
     #[test]

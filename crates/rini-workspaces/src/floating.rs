@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeSet;
-use rini_windows::ids::BTreeExt;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::BTreeExt;
+use rini_core::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatingFullscreenKind {

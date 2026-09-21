@@ -24,7 +24,7 @@ use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use objc2_core_foundation::CGRect;
 
-use crate::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TxRecord {

@@ -2,13 +2,13 @@ use objc2_core_foundation::{CGPoint, CGRect};
 
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::app_actor::Request;
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rini_windows::raise as raise_manager;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::Config;
 use rini_workspaces::{Direction, EventResponse, LayoutEvent};
-use rini_displays::ids::SpaceId;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowServerId;
 use rini_windows::window_server::WindowServerInfo;
 
 #[derive(Debug)]

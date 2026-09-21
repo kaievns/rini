@@ -12,7 +12,7 @@ use rini_windows::window_server;
 
 use crate::display_churn;
 use crate::event::{Event as OutEvent, EventSink};
-use crate::ids::SpaceId;
+use rini_core::ids::SpaceId;
 #[cfg(not(test))]
 use crate::screen::managed_display_space_ids;
 use crate::screen::{CoordinateConverter, ScreenCache, ScreenInfo};

@@ -8,7 +8,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 
 use crate::motion::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
 use rini_ipc::protocol::Direction;
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 use crate::motion::fit::is_a_resize;
 

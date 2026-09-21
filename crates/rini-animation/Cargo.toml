@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-core = { workspace = true }
 rini-geometry = { workspace = true }
 block2 = { workspace = true }
 objc2 = { workspace = true }

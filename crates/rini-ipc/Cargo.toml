@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-core = { workspace = true }
 rini-mach-sys = { workspace = true }
 thiserror = { workspace = true }
 rini-runloop = { workspace = true }

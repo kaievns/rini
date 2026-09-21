@@ -2,7 +2,7 @@ use tracing::{debug, trace};
 
 use super::window;
 use rini_windows::app::{AppInfo, WindowInfo};
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use crate::actor::reactor::LayoutEvent;
 use rini_windows::transaction::TransactionManager;
 use rini_windows::window_server::{compute_window_manageability, looks_gone};
@@ -11,8 +11,8 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
 use rini_workspaces::app_rules::AfterRules;
 use rini_workspaces::engine::{OnScreenEntry, on_screen_entry};
-use rini_displays::ids::SpaceId;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowServerId;
 
 /// Handler for window discovery events, responsible for processing newly discovered windows
 /// and managing the lifecycle of window state in the reactor.

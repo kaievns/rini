@@ -2,7 +2,7 @@ use tracing::{error, info, warn};
 
 use super::super::ScreenInfo;
 use rini_windows::app_actor::{AppThreadHandle, Quiet};
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use rini_windows::raise as raise_manager;
 use crate::actor::reactor::WorkspaceSwitchOrigin;
 use crate::actor::reactor::events::EventOutcome;
@@ -11,15 +11,15 @@ use crate::actor::reactor::managers::{
 };
 use rini_displays::topology::ForwardedSpaceState;
 use rustc_hash::FxHashMap as HashMap;
-use rini_config::{self as config, Config};
+use rini_config::Config;
 use crate::log::{MetricsCommand, handle_command as handle_metrics_command};
 use rini_workspaces::{EventResponse, LayoutCommand, LayoutEvent};
 use crate::model::RiniState;
 use rini_displays::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
-use rini_displays::ids::SpaceId;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowServerId;
 
 #[derive(Debug, Clone)]
 pub struct LayoutCommandPayload {
@@ -225,9 +225,9 @@ pub fn handle_command_reactor_save_and_exit(
     layout: &mut LayoutManager,
     active_space: Option<SpaceId>,
 ) -> anyhow::Result<EventOutcome> {
-    if let Err(e) = save_layout(state, layout, config::restore_file(), active_space) {
+    if let Err(e) = save_layout(state, layout, rini_core::paths::restore_file(), active_space) {
         error!("Could not save the layout file: {e}");
-        // A quit request is conditional on a durable master save. Keep Rini running when the
+        // A quit request is conditional on a durable canonical save. Keep Rini running when the
         // snapshot cannot be committed so the user can fix the filesystem problem or retry
         // without losing the only complete in-memory layout.
         return Ok(EventOutcome::no_change()

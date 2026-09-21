@@ -1,7 +1,7 @@
 use objc2_core_foundation::CGRect;
 use tracing::{debug, trace};
 
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use crate::actor::reactor::events::EventOutcome;
 use crate::actor::reactor::managers::DragManager;
 use crate::actor::reactor::{DragState, Quiet};
@@ -14,7 +14,7 @@ use rini_windows::state::WindowFilter;
 use rini_windows::app::WindowInfo as Window;
 use rini_windows::mouse::MouseState;
 use rini_geometry::SameAs;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 use rini_windows::window_server::WindowServerInfo;
 
 #[derive(Debug)]

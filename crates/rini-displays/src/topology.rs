@@ -6,7 +6,7 @@ use rini_ipc::protocol::{Direction, DisplaySelector};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 
-use crate::ids::SpaceId;
+use rini_core::ids::SpaceId;
 use crate::screen::ScreenInfo;
 use crate::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 
@@ -238,7 +238,7 @@ mod tests {
     use objc2_core_foundation::{CGRect, CGSize};
 
     use super::*;
-    use crate::ids::ScreenId;
+    use rini_core::ids::ScreenId;
 
     fn state(frames: &[CGRect]) -> ForwardedSpaceState {
         ForwardedSpaceState {

@@ -15,7 +15,7 @@ use rini_config::actor as config;
 pub use rini_input::binding::{ExecCmd, WmCmd, WmCommand};
 use rini_config::WorkspaceSelector;
 use rini_windows::app::NSRunningApplicationExt;
-use rini_windows::ids::pid_t;
+use rini_core::ids::pid_t;
 
 pub type Sender = actor::Sender<WmEvent>;
 

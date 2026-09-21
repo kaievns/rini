@@ -4,12 +4,12 @@ use std::process::{self};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse};
-use rini_windows::ids::WindowId as InternalWindowId;
+use rini_core::ids::WindowId as InternalWindowId;
 use rini_ipc::protocol::{self as reactor, DisplaySelector};
 use rini_config::WorkspaceSelector;
 use rini_ipc::RiniMachClient;
 use rini_workspaces as layout;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -590,7 +590,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         }
         ExecuteCommands::SaveLayout { file } => {
             let path = if file.saved {
-                rini_config::restore_file()
+                rini_core::paths::restore_file()
             } else {
                 absolute_layout_path(file.path.expect("clap requires either PATH or --saved"))?
             };
@@ -601,7 +601,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::LoadLayout { file, scope } => {
             let (path, source) = if file.saved {
                 (
-                    rini_config::restore_file(),
+                    rini_core::paths::restore_file(),
                     layout::RestoreSource::CurrentSpace,
                 )
             } else {

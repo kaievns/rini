@@ -6,7 +6,6 @@
 // Model
 pub mod catalogue;
 pub mod focus;
-pub mod ids;
 pub mod rules;
 pub mod state;
 pub mod transaction;

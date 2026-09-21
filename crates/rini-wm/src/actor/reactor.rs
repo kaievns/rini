@@ -51,8 +51,8 @@ mod SpaceEventHandler {
 
     pub fn handle_window_server_appeared(
         reactor: &mut super::Reactor,
-        window_server_id: rini_windows::ids::WindowServerId,
-        space: rini_displays::ids::SpaceId,
+        window_server_id: rini_core::ids::WindowServerId,
+        space: rini_core::ids::SpaceId,
         kind: rini_displays::topology::SpaceEventKind,
     ) {
         reactor.handle_event(super::Event::WindowServerAppeared(window_server_id, space, kind));
@@ -84,7 +84,7 @@ use rini_input::gesture_tap;
 use rini_input::input_tap as event_tap;
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rini_windows::raise::{self as raise_manager, RaiseManager, RaiseRequest};
 use crate::actor::reactor::events::window_discovery;
 use rini_displays::topology::{ForwardedSpaceState, SpaceEventKind, TopologyWindowDelta};
@@ -103,10 +103,10 @@ use rini_windows::mouse::MouseState;
 use rini_runloop::executor::Executor;
 use rini_geometry::CGRectDef;
 pub use rini_displays::screen::ScreenInfo;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 use rini_displays::screen::order_visible_spaces_by_position;
 use rini_windows::window_server;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 use rini_windows::window_server::{StackPlace, WindowServerInfo, covered_by_peer_above};
 
 pub type Sender = actor::Sender<Event>;
@@ -219,13 +219,13 @@ pub enum Event {
     WindowDestroyed(WindowId),
     #[serde(skip)]
     WindowServerDestroyed(
-        rini_windows::ids::WindowServerId,
+        rini_core::ids::WindowServerId,
         SpaceId,
         SpaceEventKind,
     ),
     #[serde(skip)]
     WindowServerAppeared(
-        rini_windows::ids::WindowServerId,
+        rini_core::ids::WindowServerId,
         SpaceId,
         SpaceEventKind,
     ),
@@ -588,7 +588,7 @@ impl Reactor {
             last_autosave: None,
             autosave_pending: false,
             #[cfg(not(test))]
-            autosave_path: Some(rini_config::restore_file()),
+            autosave_path: Some(rini_core::paths::restore_file()),
             // Tests drive update_layout, which autosaves. Never let the suite write to the
             // real layout file; a test that wants to exercise autosave sets a temp path.
             #[cfg(test)]

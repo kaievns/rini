@@ -1,0 +1,17 @@
+[package]
+name = "rini-core"
+version = "0.1.0"
+edition = "2024"
+description = "rini's shared kernel: the identity types every feature speaks, and the file locations the daemon and the CLI both resolve. No behaviour, no policy."
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+dirs = { workspace = true }
+libc = { workspace = true }
+rini-skylight-sys = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+ron = { workspace = true }
+serde_json = { workspace = true }

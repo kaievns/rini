@@ -5,7 +5,7 @@ use rini_windows::app::WindowInfo;
 use crate::{LayoutEvent, LayoutSystemKind};
 use crate::VirtualWorkspace;
 use rini_windows::state::WindowState;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 
 fn test_engine() -> LayoutEngine {
     LayoutEngine::new(

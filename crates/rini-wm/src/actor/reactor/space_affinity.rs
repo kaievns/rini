@@ -4,10 +4,10 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rustc_hash::FxHashSet as HashSet;
 
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 use rini_displays::topology::ForwardedSpaceState;
 use rini_geometry::CGRectExt;
-use rini_windows::ids::{WindowId, WindowServerId};
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_windows::state::WindowState;
 use rini_windows::transaction::TransactionManager;
 use rini_windows::window_server;
@@ -265,7 +265,7 @@ impl SpaceAffinity<'_> {
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::CGSize;
-    use rini_displays::ids::ScreenId;
+    use rini_core::ids::ScreenId;
     use rini_displays::screen::ScreenInfo;
     use rini_windows::transaction::WindowTxStore;
 

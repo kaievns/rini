@@ -10,6 +10,7 @@ publish = false
 doctest = false
 
 [dependencies]
+rini-core = { workspace = true }
 rini-geometry = { workspace = true }
 rustc-hash = { workspace = true }
 anyhow = { workspace = true }

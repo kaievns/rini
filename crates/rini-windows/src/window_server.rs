@@ -19,10 +19,10 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use rini_geometry::{CGRectDef, CGRectExt, CGSizeDef};
-use crate::ids::{WindowId, WindowServerId};
+use rini_core::ids::{WindowId, WindowServerId};
 #[cfg(any(test, feature = "test-support"))]
 use rustc_hash::FxHashMap as HashMap;
-use crate::ids::pid_t;
+use rini_core::ids::pid_t;
 use crate::ax::element::{AXUIElement, Error as AxError};
 use crate::cg_ok;
 #[cfg(not(any(test, feature = "test-support")))]

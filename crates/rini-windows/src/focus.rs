@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::app_actor::Quiet;
-use crate::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 
 /// The focus reports rini's own raises are about to produce.
 ///
@@ -263,7 +263,7 @@ mod tests {
         use std::time::{Duration, Instant};
 
         use super::RaiseEcho;
-        use crate::ids::WindowId;
+        use rini_core::ids::WindowId;
 
         fn wid(idx: u32) -> WindowId {
             WindowId::new(1, idx)

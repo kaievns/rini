@@ -12,7 +12,7 @@ use objc2_core_foundation::{
     CFRetained, CFRunLoop, CFRunLoopMode, CFString, kCFRunLoopCommonModes,
 };
 
-use crate::ids::pid_t;
+use rini_core::ids::pid_t;
 use crate::ax::element::{AXUIElement, Error as AxError};
 use rini_runloop::dispatch::DispatchExt;
 

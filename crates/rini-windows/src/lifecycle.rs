@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 
 use crate::app::{AppInfo, NSRunningApplicationExt};
 use crate::carbon::{CarbonListener, Event, event_type};
-use crate::ids::pid_t;
+use rini_core::ids::pid_t;
 
 const NO_ERR: i32 = 0;
 

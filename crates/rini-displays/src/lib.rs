@@ -3,7 +3,6 @@
 //! layouts. See `docs/architecture.md`.
 
 // Model
-pub mod ids;
 pub mod screen;
 pub mod space_activation;
 pub mod topology;

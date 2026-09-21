@@ -4,14 +4,14 @@ use test_log::test;
 use super::testing::*;
 use super::*;
 use rini_windows::app_actor::{AppThreadHandle, Request};
-use rini_windows::ids::pid_t;
+use rini_core::ids::pid_t;
 use crate::actor::wm_controller::WmEvent;
 use rini_config::{OuterGaps, WorkspaceSelector};
 use rini_workspaces::{Direction, LayoutCommand, LayoutEvent};
 use rini_windows::catalogue::NativeFullscreenTransition;
 use rini_windows::app::{AppInfo, WindowInfo};
 use rini_geometry::{CGRectExt, SameAs};
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
@@ -3469,7 +3469,7 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
     let display_uuid = "11111111-1111-1111-1111-111111111111".to_string();
     let screens_for = |space: SpaceId| -> Vec<ScreenInfo> {
         vec![ScreenInfo {
-            id: rini_displays::ids::ScreenId::new(0),
+            id: rini_core::ids::ScreenId::new(0),
             frame,
             space: Some(space),
             display_uuid: display_uuid.clone(),
@@ -3590,7 +3590,7 @@ fn fullscreen_screen_params_preserves_window_layout() {
     // with the fullscreen space id.
     reactor.space_state.fullscreen_spaces.insert(fullscreen_space);
     reactor.handle_event(space_state_event_from_screens(vec![ScreenInfo {
-        id: rini_displays::ids::ScreenId::new(0),
+        id: rini_core::ids::ScreenId::new(0),
         frame: full_screen,
         space: None,
         display_uuid: "test-display-0".to_string(),

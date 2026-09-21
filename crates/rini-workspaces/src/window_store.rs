@@ -4,9 +4,9 @@
 //! the two can never disagree.
 use std::ops::{Deref, DerefMut};
 
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 use rini_windows::catalogue::{NativeFullscreenRecord, NativeFullscreenTransition, WindowCatalogue};
-use rini_windows::ids::{WindowId, WindowServerId, pid_t};
+use rini_core::ids::{WindowId, WindowServerId, pid_t};
 use rini_windows::state::WindowState;
 
 pub use rini_windows::catalogue::{

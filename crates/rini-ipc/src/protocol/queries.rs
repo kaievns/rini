@@ -11,6 +11,15 @@ pub struct WindowId {
     pub idx: u32,
 }
 
+impl From<rini_core::ids::WindowId> for WindowId {
+    fn from(value: rini_core::ids::WindowId) -> Self {
+        Self {
+            pid: value.pid,
+            idx: value.idx.get(),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for WindowId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -314,4 +323,15 @@ pub struct DisplayData {
     pub is_active_context: bool,
     pub active_space_ids: Vec<u64>,
     pub inactive_space_ids: Vec<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wire_window_id_carries_the_kernel_ids_pid_and_index() {
+        let wire: WindowId = rini_core::ids::WindowId::new(42, 7).into();
+        assert_eq!((wire.pid, wire.idx), (42, 7));
+    }
 }

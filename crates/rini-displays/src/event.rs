@@ -2,8 +2,8 @@
 //! event type; this crate never imports the reactor.
 use rini_skylight_sys::WindowServerId;
 
-use crate::ids::SpaceId;
-use rini_windows::ids::WindowId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
 use crate::screen::CoordinateConverter;
 use crate::topology::{ForwardedSpaceState, SpaceEventKind};
 

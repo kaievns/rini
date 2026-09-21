@@ -5,16 +5,16 @@ use super::{Event, EventOutcome, Reactor, Record, ScreenInfo, TransactionId};
 use rini_windows::transaction::Requested;
 use crate::actor;
 use rini_windows::app_actor::{AppThreadHandle, Quiet, Request};
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use rini_displays::topology::ForwardedSpaceState;
 use std::collections::BTreeMap;
 use rini_config::Config;
 use rini_workspaces::{LayoutCommand, LayoutEngine};
 use rini_windows::app::{AppInfo, WindowInfo};
-use rini_windows::ids::pid_t;
+use rini_core::ids::pid_t;
 use rini_geometry::SameAs;
-use rini_displays::ids::SpaceId;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowServerId;
 use rini_windows::window_server::WindowServerInfo;
 
 impl Reactor {
@@ -35,7 +35,7 @@ impl Reactor {
 
     pub fn test_workspace_ids(
         &mut self,
-        space: rini_displays::ids::SpaceId,
+        space: rini_core::ids::SpaceId,
     ) -> Vec<rini_workspaces::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager
             .layout_engine
@@ -48,7 +48,7 @@ impl Reactor {
 
     pub fn test_workspace(
         &mut self,
-        space: rini_displays::ids::SpaceId,
+        space: rini_core::ids::SpaceId,
         index: usize,
     ) -> rini_workspaces::virtual_workspace::VirtualWorkspaceId {
         self.test_workspace_ids(space)[index]
@@ -66,14 +66,14 @@ impl Reactor {
     /// Which workspace `space` is currently showing.
     pub fn test_active_workspace(
         &self,
-        space: rini_displays::ids::SpaceId,
+        space: rini_core::ids::SpaceId,
     ) -> Option<rini_workspaces::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager.layout_engine.active_workspace(space)
     }
 
     pub fn test_workspace_for_window(
         &self,
-        space: rini_displays::ids::SpaceId,
+        space: rini_core::ids::SpaceId,
         wid: WindowId,
     ) -> Option<rini_workspaces::virtual_workspace::VirtualWorkspaceId> {
         self.layout_manager
@@ -300,7 +300,7 @@ pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) 
         .zip(spaces.into_iter())
         .enumerate()
         .map(|(idx, (frame, space))| ScreenInfo {
-            id: rini_displays::ids::ScreenId::new(idx as u32),
+            id: rini_core::ids::ScreenId::new(idx as u32),
             frame,
             space,
             display_uuid: format!("test-display-{idx}"),
@@ -359,7 +359,7 @@ pub fn fullscreen_startup_space_state(
     fullscreen_space: SpaceId,
 ) -> Event {
     let mut state = forwarded_space_state(vec![ScreenInfo {
-        id: rini_displays::ids::ScreenId::new(0),
+        id: rini_core::ids::ScreenId::new(0),
         frame: screen,
         space: None,
         display_uuid,

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/rini-animation", "crates/rini-cli", "crates/rini-config", "crates/rini-displays", "crates/rini-geometry", "crates/rini-input", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-wm", "crates/rini-workspaces"]
+members = ["crates/rini-animation", "crates/rini-cli", "crates/rini-config", "crates/rini-core", "crates/rini-displays", "crates/rini-geometry", "crates/rini-input", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-wm", "crates/rini-workspaces"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -135,6 +135,7 @@ num_enum = "0.7.4"
 rustc-hash = "2.1.1"
 rini-geometry = { path = "crates/rini-geometry" }
 rini-config = { path = "crates/rini-config" }
+rini-core = { path = "crates/rini-core" }
 rini-displays = { path = "crates/rini-displays" }
 rini-input = { path = "crates/rini-input" }
 rini-ipc = { path = "crates/rini-ipc" }

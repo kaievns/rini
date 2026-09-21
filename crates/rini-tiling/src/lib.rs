@@ -5,7 +5,7 @@ use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 
 use rustc_hash::FxHashMap as HashMap;
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 
 pub use rini_ipc::protocol::{Direction, ResizeOrientation};
 
@@ -207,7 +207,7 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
 #[cfg(test)]
 mod tests {
     use super::{LayoutSystem, ScrollingLayoutSystem, WindowLayoutConstraints};
-    use rini_windows::ids::WindowId;
+    use rini_core::ids::WindowId;
     use crate::settings::{ScrollingLayoutSettings, WindowInsertionPoint};
 
     fn w(idx: u32) -> WindowId {

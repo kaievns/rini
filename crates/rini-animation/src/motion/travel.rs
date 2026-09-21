@@ -760,7 +760,7 @@ mod tests {
         }
     }
 
-    use rini_windows::ids::{WindowId, WindowServerId};
+    use rini_core::ids::{WindowId, WindowServerId};
 
     /// A strip column, as the animation path describes one: where it is now, where the layout wants it.
     fn moving(from_x: f64, to_x: f64) -> AnimationRequest {

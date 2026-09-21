@@ -3,9 +3,9 @@ pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
 use rini_windows::app::AppInfo;
 use rini_windows::app_actor::AppThreadHandle;
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rini_workspaces::WindowStore;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 /// All mutable domain state is owned by the reactor thread.
 ///

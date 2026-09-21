@@ -2,7 +2,7 @@ use tracing::debug;
 
 use rini_windows::app::AppInfo;
 use rini_windows::app_actor::{AppThreadHandle, Quiet};
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use crate::actor::reactor::AppState;
 use crate::actor::reactor::events::{EventOutcome, WindowDiscoveryRequest};
 use crate::actor::reactor::managers::AppManager;

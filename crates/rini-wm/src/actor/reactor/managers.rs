@@ -4,7 +4,7 @@ use tracing::trace;
 use super::replay::Record;
 use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 use crate::actor;
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rini_input::drag_swap::DragManager as DragSwapManager;
 use crate::actor::reactor::Reactor;
 use crate::actor::reactor::animation::AnimationManager;
@@ -18,7 +18,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_input::settings::WindowSnappingSettings;
 use rini_workspaces::LayoutEngine;
 use rini_workspaces::broadcast::BroadcastSender;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 /// Manages application state and rules
 pub struct AppManager {

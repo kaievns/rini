@@ -5,7 +5,7 @@ use objc2_core_foundation::CGRect;
 
 use crate::app::{AppInfo, WindowInfo};
 use crate::app_actor::{AppThreadHandle, Quiet};
-use crate::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use crate::mouse::MouseState;
 use crate::transaction::{Requested, TransactionId};
 use crate::window_server::WindowServerInfo;

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::pid_t;
+use rini_core::ids::pid_t;
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]

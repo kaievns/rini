@@ -1,6 +1,6 @@
 //! What the input context tells the application: a binding fired, or the pointer did something the
 //! window manager reacts to. The application converts; this crate never imports the reactor.
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 
 use crate::binding::WmCommand;
 

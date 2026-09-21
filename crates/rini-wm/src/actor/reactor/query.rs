@@ -6,12 +6,12 @@ use rini_ipc::protocol::{
     WorkspaceLayoutData,
 };
 
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use crate::actor::reactor::{Event, Reactor, Sender};
 use crate::model::reactor::AppState;
 use rini_config::Settings;
 use rini_displays::topology::ForwardedSpaceState;
-use rini_windows::ids::pid_t;
+use rini_core::ids::pid_t;
 use rini_windows::app::WindowInfo;
 use rini_windows::state::WindowFilter;
 use rini_workspaces::{LayoutEngine, WindowStore};
@@ -20,7 +20,7 @@ use rustc_hash::FxHashSet as HashSet;
 use crate::model::server::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
 use rini_workspaces::virtual_workspace::VirtualWorkspaceId;
 use rini_displays::screen::ScreenInfo;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 #[derive(Clone)]
 pub struct ReactorQueryHandle {
@@ -344,7 +344,7 @@ impl StateView<'_> {
                 false
             };
 
-            let workspace_windows_ids: Vec<rini_windows::ids::WindowId> =
+            let workspace_windows_ids: Vec<rini_core::ids::WindowId> =
                 if let Some(space) = space_id {
                     self.engine.virtual_workspace_manager().workspace_windows(
                         &self.windows,
@@ -789,9 +789,9 @@ impl StateView<'_> {
                 rini_workspaces::VirtualWorkspaceId,
                 String,
                 bool,
-                Vec<rini_windows::ids::WindowId>,
-                Option<rini_windows::ids::WindowId>,
-                Vec<(rini_windows::ids::WindowId, objc2_core_foundation::CGRect)>,
+                Vec<rini_core::ids::WindowId>,
+                Option<rini_core::ids::WindowId>,
+                Vec<(rini_core::ids::WindowId, objc2_core_foundation::CGRect)>,
             )>,
         )> = Vec::new();
 
@@ -803,7 +803,7 @@ impl StateView<'_> {
 
                 let mut ws_entries = Vec::new();
                 for (workspace_id, workspace_name) in workspaces {
-                    let window_ids: Vec<rini_windows::ids::WindowId> =
+                    let window_ids: Vec<rini_core::ids::WindowId> =
                         self.windows.workspace_windows(space, workspace_id);
 
                     let last_focused = self.engine.virtual_workspace_manager()
@@ -827,14 +827,14 @@ impl StateView<'_> {
 
         let mut mapping_intermediate: Vec<(
             u64,
-            rini_windows::ids::WindowId,
+            rini_core::ids::WindowId,
             rini_workspaces::VirtualWorkspaceId,
         )> = Vec::new();
         for (window_id, assignment) in self.windows.iter_workspace_assignments() {
             mapping_intermediate.push((assignment.space.get(), window_id, assignment.workspace_id));
         }
 
-        let mut included_windows: HashSet<rini_windows::ids::WindowId> = HashSet::default();
+        let mut included_windows: HashSet<rini_core::ids::WindowId> = HashSet::default();
 
         let mut spaces_json = Vec::new();
         for (space_num, ws_entries) in spaces_intermediate {

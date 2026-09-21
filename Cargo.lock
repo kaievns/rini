@@ -1391,6 +1391,7 @@ dependencies = [
  "objc2-io-surface",
  "objc2-quartz-core",
  "objc2-screen-capture-kit",
+ "rini-core",
  "rini-displays",
  "rini-geometry",
  "rini-ipc",
@@ -1406,6 +1407,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "rini-config",
+ "rini-core",
  "rini-ipc",
  "rini-windows",
  "rini-workspaces",
@@ -1424,6 +1426,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "once_cell",
+ "rini-core",
  "rini-displays",
  "rini-input",
  "rini-ipc",
@@ -1443,6 +1446,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rini-core"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "rini-skylight-sys",
+ "ron",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rini-displays"
 version = "0.1.0"
 dependencies = [
@@ -1454,6 +1469,7 @@ dependencies = [
  "objc2-foundation",
  "once_cell",
  "parking_lot",
+ "rini-core",
  "rini-geometry",
  "rini-ipc",
  "rini-runloop",
@@ -1487,6 +1503,7 @@ dependencies = [
  "objc2-core-graphics",
  "once_cell",
  "parking_lot",
+ "rini-core",
  "rini-geometry",
  "rini-ipc",
  "rini-runloop",
@@ -1511,6 +1528,7 @@ dependencies = [
  "dashmap",
  "nix 0.30.1",
  "parking_lot",
+ "rini-core",
  "rini-mach-sys",
  "rini-runloop",
  "serde",
@@ -1566,6 +1584,7 @@ version = "0.1.0"
 dependencies = [
  "enum_dispatch",
  "objc2-core-foundation",
+ "rini-core",
  "rini-geometry",
  "rini-ipc",
  "rini-windows",
@@ -1592,6 +1611,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "regex",
+ "rini-core",
  "rini-geometry",
  "rini-ipc",
  "rini-mach-sys",
@@ -1640,6 +1660,7 @@ dependencies = [
  "regex",
  "rini-animation",
  "rini-config",
+ "rini-core",
  "rini-displays",
  "rini-geometry",
  "rini-input",
@@ -1682,6 +1703,7 @@ dependencies = [
  "enum_dispatch",
  "objc2-core-foundation",
  "regex",
+ "rini-core",
  "rini-displays",
  "rini-geometry",
  "rini-ipc",

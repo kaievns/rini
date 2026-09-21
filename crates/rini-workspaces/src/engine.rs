@@ -8,7 +8,7 @@ use super::{
     Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
 };
 use rini_windows::app::AppInfo;
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_tiling::settings::LayoutSettings;
 use rini_ipc::protocol::WorkspaceSelector;
@@ -22,7 +22,7 @@ use crate::display_affinity::ColumnWidth;
 use crate::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
 use crate::{AppRuleEffects, AppRuleResult, DisplayAffinity, FloatingPositionStore, WindowStore};
 use rini_windows::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 mod persistence;
 
@@ -1942,8 +1942,8 @@ impl LayoutEngine {
             LayoutCommand::ToggleFocusFloating => unreachable!(),
 
             LayoutCommand::SwapWindows(a, b) => {
-                let a = rini_windows::ids::WindowId::new(a.pid, a.idx);
-                let b = rini_windows::ids::WindowId::new(b.pid, b.idx);
+                let a = rini_core::ids::WindowId::new(a.pid, a.idx);
+                let b = rini_core::ids::WindowId::new(b.pid, b.idx);
                 let _ = self.workspace_tree_mut(workspace_id).swap_windows(layout, a, b);
 
                 EventResponse::default()

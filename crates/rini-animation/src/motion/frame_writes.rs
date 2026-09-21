@@ -2,7 +2,7 @@
 //! lift" in `docs/animation-smoothness.md`.
 use objc2_core_foundation::CGRect;
 use rini_geometry::{CGRectExt, is_off_screen};
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 
 /// The order the overlay's final frames go out to the apps: on-screen destinations first, parks
 /// last, each class in the order given. See "Real windows land before lift" in

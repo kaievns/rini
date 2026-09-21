@@ -13,6 +13,7 @@ doctest = false
 test-support = []
 
 [dependencies]
+rini-core = { workspace = true }
 rini-ipc = { workspace = true }
 rini-geometry = { workspace = true }
 rustc-hash = { workspace = true }

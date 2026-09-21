@@ -11,10 +11,10 @@ use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
 use rini_runloop::channel;
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 use rini_runloop::run_loop::RepeatingTimer;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 use crate::snapshot_service::{SnapshotService, SnapshotTarget};
 use crate::window_snapshot::{
     SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing,
@@ -2472,7 +2472,7 @@ impl FlightEngine {
             .filter(|(window, _)| tiled.contains(window))
             .filter_map(|(window, _)| {
                 let info = rini_windows::window_server::get_window(
-                    rini_windows::ids::WindowServerId::new(window.idx.get()),
+                    rini_core::ids::WindowServerId::new(window.idx.get()),
                 )?;
                 Some((*window, info.frame))
             })

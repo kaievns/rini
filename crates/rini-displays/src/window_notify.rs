@@ -9,14 +9,14 @@ use tracing::{debug, trace};
 
 use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rini_windows::event::{Event as WindowsEvent, EventSink as WindowsSink};
-use rini_windows::ids::{WindowId, WindowServerId};
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_windows::transaction::{Requested, WindowTxStore};
 use rini_windows::window_server::{self, WindowIterator};
 use rustc_hash::FxHashSet as HashSet;
 
 use crate::cgs_notify;
 use crate::event::{Event, EventSink};
-use crate::ids::SpaceId;
+use rini_core::ids::SpaceId;
 use crate::spaces;
 
 #[derive(Debug)]

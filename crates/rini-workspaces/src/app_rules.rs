@@ -1,9 +1,9 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use rini_windows::rules::{AppRulePosition, AppRuleSize};
 use crate::VirtualWorkspaceId;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 /// Complete result of applying a managed app rule to workspace policy.
 ///

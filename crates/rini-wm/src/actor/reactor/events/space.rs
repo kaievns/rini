@@ -1,7 +1,7 @@
 use tracing::{debug, trace};
 
 use rini_windows::app_actor::Request;
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use crate::actor::reactor::events::{EventOutcome, window};
 use crate::actor::reactor::managers::{DragManager, MissionControlManager};
 use crate::actor::reactor::{DragState, LayoutEvent, MissionControlState};
@@ -12,8 +12,8 @@ use rustc_hash::FxHashSet as HashSet;
 use crate::model::RiniState;
 use rini_windows::catalogue::NativeFullscreenTransition;
 use rini_windows::app::AppInfo;
-use rini_displays::ids::SpaceId;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowServerId;
 
 // spacewindowappeared/destroyed happen a lot when a display is connected/disconnected
 // since they are literally when a window enters or leaves a space and each display has its own space(s)

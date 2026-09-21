@@ -4,7 +4,7 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_geometry::{Round, SameAs};
 use rini_windows::app_actor::Request;
-use rini_windows::ids::{WindowId, WindowServerId};
+use rini_core::ids::{WindowId, WindowServerId};
 use rini_windows::transaction::TransactionId;
 
 use crate::engine::AnimationRequest;

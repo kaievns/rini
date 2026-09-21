@@ -11,6 +11,7 @@ name = "rini-cli"
 path = "src/main.rs"
 
 [dependencies]
+rini-core = { workspace = true }
 clap = { workspace = true }
 rini-config = { workspace = true }
 rini-ipc = { workspace = true }

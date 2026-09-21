@@ -28,7 +28,7 @@ use tracing::{debug, error, trace, warn};
 
 use rini_runloop::channel;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 use rini_windows::mouse::{MouseState, set_mouse_state};
 use rini_windows::window_server;
 

@@ -23,7 +23,7 @@ use crate::transaction::{Requested, TransactionId, WindowTxStore};
 use crate::event::{Event, EventSink};
 use rustc_hash::FxHashMap as HashMap;
 use crate::app::NSRunningApplicationExt;
-use crate::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 
 use crate::app::{AppInfo, WindowInfo};
 use crate::ax::element::{
@@ -35,7 +35,7 @@ use rini_runloop::executor::Executor;
 use crate::ax::observer::Observer;
 use crate::process::ProcessInfo;
 use rini_runloop::timer::Timer;
-use crate::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 use crate::window_server::{self, WindowServerInfo};
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";

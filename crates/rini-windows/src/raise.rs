@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::app_actor::{AppThreadHandle, Quiet, Request};
 use crate::event::{Event as WindowsEvent, EventSink};
-use crate::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 
 /// Messages that can be sent to the raise manager
 #[derive(Debug)]

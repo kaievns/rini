@@ -14,7 +14,7 @@ impl LayoutEngine {
         let unavailable_windows = engine.discard_unmatchable_startup_candidates(
             |window, id| {
                 rini_windows::window_server::get_window(
-                    rini_windows::ids::WindowServerId::new(id),
+                    rini_core::ids::WindowServerId::new(id),
                 )
                 .is_some_and(|info| info.pid == window.pid)
             },

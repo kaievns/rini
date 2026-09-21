@@ -6,7 +6,7 @@ use objc2_core_graphics::{
     CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName,
     kCGWindowNumber, kCGWindowOwnerName,
 };
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 use rini_windows::window_server::{bounds_from_dict, get_num, get_windows_raw, overlaps};
 
 fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {

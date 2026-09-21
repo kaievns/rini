@@ -6,7 +6,7 @@ use std::time::Instant;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::SpaceId;
 
-use crate::ids::{WindowId, WindowServerId};
+use rini_core::ids::{WindowId, WindowServerId};
 use crate::state::WindowState;
 use crate::window_server::WindowServerInfo;
 

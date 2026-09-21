@@ -10,10 +10,10 @@ use objc2_core_foundation::{CFArray, CFRetained, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 use crate::edge_dressing::dressing_after_insert;
-use rini_windows::ids::WindowServerId;
+use rini_core::ids::WindowServerId;
 
 pub use crate::motion::fit::{
     Coverage, fits_frame, is_a_resize, is_backdrop_worth_drawing, needs_capture, outgrows,

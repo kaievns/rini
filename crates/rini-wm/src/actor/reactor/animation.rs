@@ -5,11 +5,11 @@ use rini_animation::motion::travel::travels_visibly;
 use rini_animation::pass::{self, Move, PassPlan, PassWindow};
 use rini_animation::window_snapshot::is_a_resize;
 use rini_windows::app_actor::Request;
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use crate::actor::reactor::Reactor;
 use rustc_hash::FxHashMap as HashMap;
 use rini_animation::power;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places
 /// the real windows when it does not. A namespace; it holds no state. The sorting of a pass is

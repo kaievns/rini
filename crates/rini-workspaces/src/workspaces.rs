@@ -2,7 +2,7 @@ use objc2_core_foundation::CGSize;
 use serde::{Deserialize, Serialize};
 
 use super::{LayoutId, LayoutSystem};
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct WorkspaceLayouts {

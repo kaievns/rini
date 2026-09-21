@@ -15,6 +15,7 @@ test = false
 doctest = false
 
 [dependencies]
+rini-core = { workspace = true }
 anyhow = { workspace = true }
 arc-swap = "1"
 ascii_tree = "0.1.1"

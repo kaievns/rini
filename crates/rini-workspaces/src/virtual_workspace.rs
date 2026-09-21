@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
 
-use rini_windows::ids::WindowId;
+use rini_core::ids::WindowId;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 #[cfg(test)]
 use rini_windows::rules::AppWorkspaceRule;
@@ -16,8 +16,8 @@ use rini_windows::rules::AppRuleDecision;
 use crate::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 use crate::{WindowStore, WindowWorkspaceInfo};
-use rini_windows::ids::pid_t;
-use rini_displays::ids::SpaceId;
+use rini_core::ids::pid_t;
+use rini_core::ids::SpaceId;
 
 new_key_type! {
     pub struct VirtualWorkspaceId;
@@ -1156,8 +1156,8 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
-    use rini_windows::ids::WindowId;
-    use rini_displays::ids::SpaceId;
+    use rini_core::ids::WindowId;
+    use rini_core::ids::SpaceId;
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {
         match result {

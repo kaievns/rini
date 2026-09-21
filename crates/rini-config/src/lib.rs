@@ -1,7 +1,7 @@
 //! The config file: schema, parsing with suggestions, validation, save. Defaults and the
 //! documented shape live in `rini.default.toml`, which is embedded here.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::bail;
@@ -27,15 +27,6 @@ pub use rini_input::haptics::HapticPattern;
 pub use rini_input::settings::{GestureSettings, InputSettings, ScrollGestureSettings, WindowSnappingSettings};
 
 
-pub fn data_dir() -> PathBuf {
-    dirs::home_dir().unwrap().join(".rini")
-}
-pub fn restore_file() -> PathBuf {
-    data_dir().join("layout.ron")
-}
-pub fn config_file() -> PathBuf {
-    dirs::home_dir().unwrap().join(".config").join("rini").join("config.toml")
-}
 
 
 

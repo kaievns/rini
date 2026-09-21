@@ -9,7 +9,7 @@ pub use rini_ipc::protocol::{RestoreScope, RestoreSource};
 use serde::{Deserialize, Serialize};
 
 use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
-use rini_windows::ids::{WindowId, pid_t};
+use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_tiling::settings::LayoutSettings;
 use crate::settings::VirtualWorkspaceSettings;
@@ -20,7 +20,7 @@ use crate::{
     DisplayAffinity, FloatingPositionStore, VirtualWorkspaceId, WindowStore,
     WorkspaceStore,
 };
-use rini_displays::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 static SAVE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

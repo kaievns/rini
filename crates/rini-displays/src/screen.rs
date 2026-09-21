@@ -26,7 +26,7 @@ use rini_skylight_sys::{
 };
 use rustc_hash::FxHashMap as HashMap;
 use rini_geometry::CGRectDef;
-use crate::ids::{ScreenId, SpaceId};
+use rini_core::ids::{ScreenId, SpaceId};
 
 #[derive(Debug, Clone)]
 struct ScreenState {
@@ -951,7 +951,7 @@ pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
     use objc2_core_foundation::{CFArray, CFRetained};
     use rini_geometry::CGRectExt;
     use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
-    use rini_windows::ids::WindowServerId;
+    use rini_core::ids::WindowServerId;
     use rini_windows::window_server::{get_window, make_key_window};
     use std::ptr::NonNull;
     let Some(display_uuid) = screen.display_uuid_opt() else {

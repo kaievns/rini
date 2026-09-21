@@ -2,7 +2,7 @@
 use once_cell::sync::Lazy;
 use rini_skylight_sys::{CGSGetActiveSpace, SLSMainConnectionID, SLSSpaceGetType};
 
-use crate::ids::SpaceId;
+use rini_core::ids::SpaceId;
 
 static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 

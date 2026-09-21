@@ -12,7 +12,7 @@ use tracing::{error, info, instrument, warn};
 use rini_windows::app::NSRunningApplicationExt;
 use rini_windows::ax::element::AXUIElement;
 use rini_windows::ax::observer::Observer;
-use rini_windows::ids::pid_t;
+use rini_core::ids::pid_t;
 
 use crate::event::{Event, EventSink};
 
