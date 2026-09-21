@@ -768,6 +768,16 @@ impl ScrollingLayoutSystem {
     }
 }
 
+#[cfg(test)]
+impl ScrollingLayoutSystem {
+    /// Drop the selection, to check that commands which MOVE a window refuse to guess one.
+    fn clear_selection_for_test(&mut self, layout: LayoutId) {
+        if let Some(state) = self.layout_state_mut(layout) {
+            state.selected = None;
+        }
+    }
+}
+
 impl LayoutSystem for ScrollingLayoutSystem {
     fn create_layout(&mut self) -> LayoutId {
         self.layouts.insert(LayoutState::new(self.settings.column_width_ratio))
@@ -1572,12 +1582,14 @@ impl LayoutSystem for ScrollingLayoutSystem {
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
-        let Some(selected) = state.selected_or_first() else {
+        // The real selection, with no fall back to the first window. `selected_or_first` is fine
+        // for a query, but this MOVES a window: acting on the top of the strip because the
+        // selection was momentarily unset would fold a window the user is not looking at.
+        // `consume_or_expel_selection` does nothing in that state and so does this.
+        let Some((col_idx, row_idx)) = state.selected_location() else {
             return Vec::new();
         };
-        let Some((col_idx, _)) = state.locate(selected) else {
-            return Vec::new();
-        };
+        let selected = state.columns[col_idx].windows[row_idx];
 
         if state.columns[col_idx].windows.len() > 1 {
             // Folding OUT remembers the row, which is what lets the next press be symmetric.
@@ -3761,5 +3773,34 @@ mod tests {
             system.calculate_layout(layout, screen(1000.0, 800.0), &constraints, &GapSettings::default());
         let (a, b) = (frame_for(&frames, left), frame_for(&frames, right));
         assert!((a.size.height - b.size.height).abs() < 2.0, "left {a:?} right {b:?}");
+    }
+    /// Folding acts on the SELECTED window, never on whichever happens to be first. The reported
+    /// confusion was the old `toggle_stack` exploding a column and moving focus, but a fold that
+    /// fell back to the top of the strip would look identical, so it is pinned here.
+    #[test]
+    fn folding_out_takes_the_selected_window_not_the_top_of_the_stack() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[2]));
+        system.toggle_fold_of_selection(layout);
+
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[1]], vec![w[2]]],
+            "the bottom window is the one that left"
+        );
+        assert_eq!(system.selected_window(layout), Some(w[2]), "and it keeps the selection");
+    }
+
+    #[test]
+    fn folding_with_nothing_selected_does_nothing() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        let before = shape(&system, layout);
+
+        system.clear_selection_for_test(layout);
+        system.toggle_fold_of_selection(layout);
+
+        assert_eq!(shape(&system, layout), before, "no selection is not a licence to move w0");
+        let _ = w;
     }
 }
