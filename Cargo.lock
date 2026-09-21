@@ -1406,11 +1406,8 @@ name = "rini-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
- "rini-config",
  "rini-core",
  "rini-ipc",
- "rini-windows",
- "rini-workspaces",
  "serde",
  "serde_json",
  "sigpipe",

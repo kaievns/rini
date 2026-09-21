@@ -13,10 +13,7 @@ path = "src/main.rs"
 [dependencies]
 rini-core = { workspace = true }
 clap = { workspace = true }
-rini-config = { workspace = true }
 rini-ipc = { workspace = true }
-rini-windows = { workspace = true }
-rini-workspaces = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sigpipe = { workspace = true }

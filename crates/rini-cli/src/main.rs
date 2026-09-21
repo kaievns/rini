@@ -6,9 +6,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse};
 use rini_core::ids::WindowId as InternalWindowId;
 use rini_ipc::protocol::{self as reactor, DisplaySelector};
-use rini_config::WorkspaceSelector;
+use rini_ipc::protocol::WorkspaceSelector;
 use rini_ipc::RiniMachClient;
-use rini_workspaces as layout;
 use rini_core::ids::WindowServerId;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -24,7 +23,7 @@ struct Cli {
 
 enum CliCommand {
     Reactor(reactor::Command),
-    Config(rini_config::ConfigCommand),
+    Config(rini_ipc::protocol::ConfigCommand),
 }
 
 #[derive(Subcommand)]
@@ -250,7 +249,7 @@ enum CliResizeOrientation {
     Smart,
 }
 
-impl From<CliResizeOrientation> for rini_workspaces::ResizeOrientation {
+impl From<CliResizeOrientation> for rini_ipc::protocol::ResizeOrientation {
     fn from(value: CliResizeOrientation) -> Self {
         match value {
             CliResizeOrientation::Horizontal => Self::Horizontal,
@@ -602,22 +601,19 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
             let (path, source) = if file.saved {
                 (
                     rini_core::paths::restore_file(),
-                    layout::RestoreSource::CurrentSpace,
+                    rini_ipc::protocol::RestoreSource::CurrentSpace,
                 )
             } else {
                 (
                     absolute_layout_path(
                         file.path.expect("clap requires either PATH or --saved"),
                     )?,
-                    layout::RestoreSource::SavedActiveSpace,
+                    rini_ipc::protocol::RestoreSource::SavedActiveSpace,
                 )
             };
-            layout::LayoutEngine::load(path.clone()).map_err(|error| {
-                format!("could not load layout file at {}: {error}", path.display())
-            })?;
             let scope = match scope {
-                CliRestoreScope::Workspace => layout::RestoreScope::Workspace,
-                CliRestoreScope::Space => layout::RestoreScope::Space,
+                CliRestoreScope::Workspace => rini_ipc::protocol::RestoreScope::Workspace,
+                CliRestoreScope::Space => rini_ipc::protocol::RestoreScope::Space,
             };
             CliCommand::Reactor(reactor::Command::Reactor(
                 reactor::ReactorCommand::RestoreLayout { path, scope, source },
@@ -657,7 +653,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ),
     };
 
-    if let CliCommand::Config(rini_config::ConfigCommand::GetConfig) = &rini_command {
+    if let CliCommand::Config(rini_ipc::protocol::ConfigCommand::GetConfig) = &rini_command {
         return Ok(RiniRequest::GetConfig);
     }
 
@@ -702,7 +698,7 @@ fn absolute_layout_path(path: PathBuf) -> Result<PathBuf, String> {
 }
 
 fn map_window_command(cmd: WindowCommands) -> Result<CliCommand, String> {
-    use layout::LayoutCommand as LC;
+    use rini_ipc::protocol::LayoutCommand as LC;
     match cmd {
         WindowCommands::Next => Ok(CliCommand::Reactor(reactor::Command::Layout(LC::NextWindow))),
         WindowCommands::Prev => Ok(CliCommand::Reactor(reactor::Command::Layout(LC::PrevWindow))),
@@ -809,7 +805,7 @@ fn parse_event_kind(input: &str) -> Result<EventKind, String> {
 
 
 fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
-    use layout::LayoutCommand as LC;
+    use rini_ipc::protocol::LayoutCommand as LC;
     match cmd {
         WorkspaceCommands::Next { skip_empty } => Ok(CliCommand::Reactor(
             reactor::Command::Layout(LC::NextWorkspace(skip_empty)),
@@ -841,7 +837,7 @@ fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
 }
 
 fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
-    use layout::LayoutCommand as LC;
+    use rini_ipc::protocol::LayoutCommand as LC;
     match cmd {
         LayoutCommands::MoveNode { direction } => Ok(CliCommand::Reactor(
             reactor::Command::Layout(LC::MoveNode(parse_direction(&direction)?)),
@@ -882,7 +878,7 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
 }
 
 fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
-    use rini_config::ConfigCommand;
+    use rini_ipc::protocol::ConfigCommand;
 
     let cfg_cmd = match cmd {
         ConfigCommands::SetAnimate { value } => {
@@ -996,12 +992,12 @@ fn build_display_selector(
     }
 }
 
-fn parse_direction(value: &str) -> Result<layout::Direction, String> {
+fn parse_direction(value: &str) -> Result<rini_ipc::protocol::Direction, String> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "left" => Ok(layout::Direction::Left),
-        "right" => Ok(layout::Direction::Right),
-        "up" => Ok(layout::Direction::Up),
-        "down" => Ok(layout::Direction::Down),
+        "left" => Ok(rini_ipc::protocol::Direction::Left),
+        "right" => Ok(rini_ipc::protocol::Direction::Right),
+        "up" => Ok(rini_ipc::protocol::Direction::Up),
+        "down" => Ok(rini_ipc::protocol::Direction::Down),
         other => Err(format!(
             "Invalid direction '{}'; must be left, right, up, or down",
             other
