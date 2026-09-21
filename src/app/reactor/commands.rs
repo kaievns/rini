@@ -14,7 +14,7 @@ use rini_geometry::centered_in;
 use rini_ipc::protocol::{DisplaySelector, LayoutCommand, RestoreScope, RestoreSource};
 
 use crate::animation::platform::engine;
-use crate::displays::screen::ScreenInfo;
+use crate::displays::domain::screen::ScreenInfo;
 use crate::workspaces as layout;
 
 use super::events::EventOutcome;

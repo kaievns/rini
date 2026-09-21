@@ -15,7 +15,8 @@ use crate::displays::event::{Event as OutEvent, EventSink};
 use rini_core::ids::SpaceId;
 #[cfg(not(test))]
 use crate::displays::screen::managed_display_space_ids;
-use crate::displays::screen::{CoordinateConverter, ScreenCache, ScreenInfo};
+use crate::displays::screen::ScreenCache;
+use crate::displays::domain::screen::{CoordinateConverter, ScreenInfo};
 use crate::displays::domain::topology::{ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta};
 
 const REFRESH_DEFAULT_DELAY_NS: i64 = 100_000_000;

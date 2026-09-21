@@ -266,7 +266,7 @@ impl SpaceAffinity<'_> {
 mod tests {
     use objc2_core_foundation::CGSize;
     use rini_core::ids::ScreenId;
-    use crate::displays::screen::ScreenInfo;
+    use crate::displays::domain::screen::ScreenInfo;
     use crate::windows::domain::transaction::WindowTxStore;
 
     use super::*;

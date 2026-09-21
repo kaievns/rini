@@ -33,7 +33,7 @@ use crate::animation::domain::motion::plan::{
 };
 use crate::animation::domain::motion::z_group::{StackGroup, container_z};
 use rini_geometry::{Round, SameAs};
-use crate::displays::screen::CoordinateConverter;
+use crate::displays::domain::screen::CoordinateConverter;
 use crate::animation::platform::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::animation::platform::window_snapshot::{SnapshotImage, WindowSnapshot};
 

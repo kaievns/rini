@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 
 use rini_core::ids::SpaceId;
-use crate::displays::screen::ScreenInfo;
+use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

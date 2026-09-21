@@ -8,7 +8,7 @@ use rini_core::ids::WindowId;
 use crate::windows::domain::info::WindowInfo;
 use rini_geometry::CGRectDef;
 use rini_core::ids::{ScreenId, SpaceId};
-use crate::displays::screen::ScreenInfo;
+use crate::displays::domain::screen::ScreenInfo;
 use rini_core::ids::WindowServerId;
 
 /// Runtime-only workspace projection. Its windows retain the macOS

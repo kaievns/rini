@@ -76,7 +76,7 @@ use serde::{Deserialize, Serialize};
 use rini_geometry::CGRectExt;
 use rini_runloop::channel;
 
-use crate::displays::screen::ScreenInfo;
+use crate::displays::domain::screen::ScreenInfo;
 
 
 /// Which side of a side-by-side pair is the upper one when the pair is stacked. Settings vocabulary.

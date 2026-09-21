@@ -19,7 +19,7 @@ use rustc_hash::FxHashMap as HashMap;
 use rustc_hash::FxHashSet as HashSet;
 use crate::app::api::dto::{RuntimeDisplayData, RuntimeWindowData, RuntimeWorkspaceData};
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
-use crate::displays::screen::ScreenInfo;
+use crate::displays::domain::screen::ScreenInfo;
 use rini_core::ids::SpaceId;
 
 #[derive(Clone)]

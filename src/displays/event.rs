@@ -4,7 +4,7 @@ use rini_core::ids::WindowServerId;
 
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowId;
-use crate::displays::screen::CoordinateConverter;
+use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
 
 #[derive(Debug)]
