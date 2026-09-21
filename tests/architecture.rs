@@ -1,11 +1,8 @@
 //! The tree's rules, checked against the tree.
 //!
-//! Crate boundaries used to enforce them: a cycle between crates does not build. Inside one crate
-//! `use crate::anything` always compiles, and that is how the monolith this replaced grew ten
-//! mutually importing module pairs. So the rules are checked here instead, and they are a ratchet:
-//! the files that already break the macOS rule are named, and nothing else may join them.
-//!
-//! See `src/lib.rs` for the rules in prose and `docs/architecture.md` for why they are these rules.
+//! A ratchet: the files that already break the macOS rule are named in `MIXED`, and nothing else may
+//! join them. The rules in prose, why they are these rules, and why a test rather than the compiler
+//! holds them: `docs/architecture.md`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
