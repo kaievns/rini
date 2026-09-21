@@ -3,6 +3,7 @@
 //!
 //! Design in `docs/animation/animation-smoothness.md`; measurements in `docs/animation/capture-overlay-research.md`.
 
+use crate::animation::domain::request::AnimationRequest;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,8 @@ use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 use rini_runloop::run_loop::RepeatingTimer;
 use rini_core::ids::WindowServerId;
-use crate::animation::platform::snapshot_service::{SnapshotService, SnapshotTarget};
+use crate::animation::platform::snapshot_service::SnapshotService;
+use crate::animation::domain::request::SnapshotTarget;
 use crate::animation::platform::window_snapshot::{
     SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing,
 };
@@ -30,18 +32,6 @@ pub(crate) use crate::animation::domain::motion::surface::{pan_travel, surface_t
 
 
 /// One window's part in an animation, as the caller describes it.
-#[derive(Debug, Clone)]
-pub struct AnimationRequest {
-    pub window: WindowId,
-    pub server_id: WindowServerId,
-    /// Frame the window is leaving, in display coordinates.
-    pub from: CGRect,
-    /// Frame the window is arriving at, in display coordinates.
-    pub to: CGRect,
-    /// Off the strip, and so in the other z-order group.
-    pub floating: bool,
-}
-
 #[derive(Debug)]
 pub enum Event {
     /// Animate a set of windows. The caller must have already placed the real windows at their

@@ -4,7 +4,7 @@ use tracing::{debug, trace};
 use crate::animation::domain::motion::travel::travels_visibly;
 use crate::animation::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::animation::platform::window_snapshot::is_a_resize;
-use crate::windows::platform::app_actor::Request;
+use crate::windows::domain::request::Request;
 use rini_core::ids::{WindowId, pid_t};
 use crate::app::reactor::Reactor;
 use rustc_hash::FxHashMap as HashMap;

@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use super::{
     Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
 };
-use crate::windows::platform::app::AppInfo;
+use crate::windows::domain::info::AppInfo;
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::layout::settings::LayoutSettings;

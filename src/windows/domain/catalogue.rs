@@ -8,7 +8,7 @@ use rini_core::ids::SpaceId;
 
 use rini_core::ids::{WindowId, WindowServerId};
 use crate::windows::domain::state::WindowState;
-use crate::windows::platform::window_server::WindowServerInfo;
+use crate::windows::domain::info::WindowServerInfo;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WindowVisibility {
@@ -996,7 +996,7 @@ mod tests {
         );
         window_store.insert_window(
             wid,
-            WindowState::from(crate::windows::platform::app::WindowInfo {
+            WindowState::from(crate::windows::domain::info::WindowInfo {
                 is_standard: true,
                 is_root: true,
                 is_minimized: false,

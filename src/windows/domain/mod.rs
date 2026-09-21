@@ -2,7 +2,9 @@
 
 pub mod catalogue;
 pub mod focus;
+pub mod info;
 pub mod raise;
+pub mod request;
 pub mod rules;
 pub mod state;
 pub mod transaction;

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
 use rini_core::ids::WindowId;
-use crate::windows::platform::app::WindowInfo;
+use crate::windows::domain::info::WindowInfo;
 use rini_geometry::CGRectDef;
 use rini_core::ids::{ScreenId, SpaceId};
 use crate::displays::screen::ScreenInfo;

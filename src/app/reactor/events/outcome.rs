@@ -1,7 +1,7 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use crate::windows::platform::app::{AppInfo, WindowInfo};
-use crate::windows::platform::app_actor::Request;
+use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::windows::domain::request::Request;
 use rini_core::ids::{WindowId, pid_t};
 use crate::windows::domain::raise as raise_manager;
 use crate::app::hotkeys::WmEvent;
@@ -9,7 +9,7 @@ use crate::app::config::Config;
 use crate::workspaces::{Direction, EventResponse, LayoutEvent};
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
-use crate::windows::platform::window_server::WindowServerInfo;
+use crate::windows::domain::info::WindowServerInfo;
 
 #[derive(Debug)]
 pub(crate) struct WindowDiscoveryRequest {

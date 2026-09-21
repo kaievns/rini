@@ -1,6 +1,7 @@
 //! One actor per running app, on its own thread: observes the app through Accessibility and
 //! carries out the reactor's `Request`s (frames, raises, close). Emits `crate::windows::event::Event`.
 
+use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::num::NonZeroU32;
@@ -11,8 +12,7 @@ use std::time::{Duration, Instant};
 use objc2::rc::Retained;
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
-use objc2_core_foundation::{CFRunLoop, CGPoint, CGRect};
-use serde::{Deserialize, Serialize};
+use objc2_core_foundation::CFRunLoop;
 use tokio::sync::oneshot;
 use tokio::{join, select};
 use tokio_util::sync::CancellationToken;
@@ -25,7 +25,7 @@ use rustc_hash::FxHashMap as HashMap;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::{WindowId, pid_t};
 
-use crate::windows::platform::app::{AppInfo, WindowInfo};
+use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
@@ -36,7 +36,8 @@ use crate::windows::platform::ax::observer::Observer;
 use crate::windows::platform::process::ProcessInfo;
 use rini_runloop::timer::Timer;
 use rini_core::ids::WindowServerId;
-use crate::windows::platform::window_server::{self, WindowServerInfo};
+use crate::windows::platform::window_server::self;
+use crate::windows::domain::info::WindowServerInfo;
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";
 const kAXApplicationDeactivatedNotification: &str = "AXApplicationDeactivated";
@@ -156,73 +157,7 @@ fn decode_notification_data(
     Some((kind, wid))
 }
 
-#[derive(Clone)]
-pub struct AppThreadHandle {
-    requests_tx: channels::Sender<Request>,
-}
-
-impl AppThreadHandle {
-    /// A handle over any request channel: what tests and event replay stand in for a live app thread.
-    pub fn from_sender(requests_tx: channels::Sender<Request>) -> Self {
-        AppThreadHandle { requests_tx }
-    }
-
-    pub fn send(&self, req: Request) -> anyhow::Result<()> {
-        Ok(self.requests_tx.send(req))
-    }
-}
-
-impl Debug for AppThreadHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ThreadHandle").finish()
-    }
-}
-
-#[derive(Debug)]
-pub enum Request {
-    Terminate,
-    GetVisibleWindows,
-    /// Reconcile the authoritative Carbon front-process change with AX state.
-    ///
-    /// Carbon supplies the activation edge, while the app thread resolves the
-    /// focused/main window and the quiet marker before notifying the reactor.
-    ApplicationGloballyActivated(pid_t),
-    WindowMaybeDestroyed(WindowId),
-    CloseWindow(Option<WindowServerId>),
-
-    SetWindowFrame(WindowId, CGRect, TransactionId, bool),
-    SetBatchWindowFrame(Vec<(WindowId, CGRect)>, TransactionId, bool),
-    /// Position-only batch reserved for virtual workspace switches.
-    SetWorkspaceSwitchPositions(Vec<(WindowId, CGPoint)>, TransactionId, bool),
-    /// Raise the windows within a single space, in the given order. All windows must be
-    /// in the same space, or they will not be raised correctly.
-    ///
-    /// Events attributed to this request will use the provided [`Quiet`]
-    /// parameter for the last window only. Events for other windows will be
-    /// marked `Quiet::Yes` automatically.
-    Raise(Vec<WindowId>, CancellationToken, u64, Quiet),
-}
-
-impl Request {
-    #[inline]
-    fn disables_enhanced_ui(&self) -> bool {
-        match self {
-            Self::SetWindowFrame(_, _, _, enabled)
-            | Self::SetBatchWindowFrame(_, _, enabled)
-            | Self::SetWorkspaceSwitchPositions(_, _, enabled) => *enabled,
-            _ => false,
-        }
-    }
-}
-
 struct RaiseRequest(Vec<WindowId>, CancellationToken, u64, Quiet);
-
-#[derive(Debug, Copy, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub enum Quiet {
-    Yes,
-    #[default]
-    No,
-}
 
 pub fn spawn_app_thread(
     pid: pid_t,
@@ -359,7 +294,7 @@ impl State {
         notifications_rx: channels::Receiver<(AXUIElement, AxNotificationKind, Option<WindowId>)>,
         raises_rx: channels::Receiver<RaiseRequest>,
     ) {
-        let handle = AppThreadHandle { requests_tx };
+        let handle = AppThreadHandle::from_sender(requests_tx);
         if !self.init(handle, info) {
             return;
         }

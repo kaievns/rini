@@ -1,7 +1,7 @@
 //! The reactor's per-window record: what it last learned about a window and whether it manages it.
 use objc2_core_foundation::CGRect;
 
-use crate::windows::platform::app::WindowInfo;
+use crate::windows::domain::info::WindowInfo;
 
 #[derive(Debug)]
 pub struct WindowState {

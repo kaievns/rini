@@ -13,7 +13,7 @@ use rini_runloop::channel;
 use rini_runloop::timer::Timer;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::windows::platform::app_actor::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use crate::windows::event::{Event as WindowsEvent, EventSink};
 use rini_core::ids::{WindowId, pid_t};
 

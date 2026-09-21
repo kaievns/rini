@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use rustc_hash::FxHashMap as HashMap;
 
-use crate::windows::platform::app_actor::Quiet;
+use crate::windows::domain::request::Quiet;
 use rini_core::ids::{WindowId, pid_t};
 
 /// The focus reports rini's own raises are about to produce.

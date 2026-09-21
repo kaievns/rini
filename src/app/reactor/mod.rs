@@ -83,8 +83,8 @@ use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 
 use crate::input::platform::gesture_tap;
 use crate::input::platform::input_tap as event_tap;
-use crate::windows::platform::app::{AppInfo, WindowInfo};
-use crate::windows::platform::app_actor::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use rini_core::ids::{WindowId, pid_t};
 use crate::windows::domain::raise::{self as raise_manager, RaiseManager, RaiseRequest};
 use crate::app::reactor::events::window_discovery;
@@ -108,7 +108,8 @@ use rini_core::ids::SpaceId;
 use crate::displays::screen::order_visible_spaces_by_position;
 use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
-use crate::windows::platform::window_server::{StackPlace, WindowServerInfo, covered_by_peer_above};
+use crate::windows::platform::window_server::{StackPlace, covered_by_peer_above};
+use crate::windows::domain::info::WindowServerInfo;
 
 pub type Sender = channels::Sender<Event>;
 type Receiver = channels::Receiver<Event>;
@@ -3742,7 +3743,7 @@ impl Reactor {
                 self.transaction_manager.update_txid_entries([(wsid, txid, frame)]);
             }
             if let Some(app) = self.app_manager.apps.get(&wid.pid) {
-                _ = app.handle.send(crate::windows::platform::app_actor::Request::SetWindowFrame(
+                _ = app.handle.send(crate::windows::domain::request::Request::SetWindowFrame(
                     wid, frame, txid, true,
                 ));
             }
@@ -3788,7 +3789,7 @@ impl Reactor {
             .gaps
             .effective_for_display(screen.display_uuid_opt());
 
-        let mut targets: Vec<crate::animation::platform::snapshot_service::SnapshotTarget> = Vec::new();
+        let mut targets: Vec<crate::animation::domain::request::SnapshotTarget> = Vec::new();
         for (workspace_id, _) in &workspaces {
             let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
                 &self.state.windows,
@@ -3800,7 +3801,7 @@ impl Reactor {
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else { continue };
                 let Some(server_id) = window.info.sys_id else { continue };
-                targets.push(crate::animation::platform::snapshot_service::SnapshotTarget {
+                targets.push(crate::animation::domain::request::SnapshotTarget {
                     window: wid,
                     server_id,
                     size: frame.size,
@@ -4199,7 +4200,7 @@ impl Reactor {
             let Some(state) = self.state.windows.window(window) else { continue };
             let Some(server_id) = state.info.sys_id else { continue };
             _ = tx.send(crate::animation::platform::engine::Event::RefreshFocus(
-                crate::animation::platform::snapshot_service::SnapshotTarget {
+                crate::animation::domain::request::SnapshotTarget {
                     window,
                     server_id,
                     size: state.frame_monotonic.size,

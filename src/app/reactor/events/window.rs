@@ -11,11 +11,11 @@ use crate::windows::domain::state::WindowState;
 use crate::workspaces::LayoutEvent;
 use crate::workspaces::WindowVisibility;
 use crate::windows::domain::state::WindowFilter;
-use crate::windows::platform::app::WindowInfo as Window;
+use crate::windows::domain::info::WindowInfo as Window;
 use crate::windows::platform::mouse::MouseState;
 use rini_geometry::SameAs;
 use rini_core::ids::SpaceId;
-use crate::windows::platform::window_server::WindowServerInfo;
+use crate::windows::domain::info::WindowServerInfo;
 
 #[derive(Debug)]
 pub struct WindowCreatedPayload {

@@ -1,3 +1,4 @@
+use crate::windows::domain::info::WindowServerInfo;
 #[cfg(test)]
 use std::cell::RefCell;
 use std::ffi::{CStr, c_int};
@@ -16,9 +17,8 @@ use objc2_core_graphics::{
     kCGWindowBounds, kCGWindowLayer, kCGWindowNumber,
 };
 use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
 
-use rini_geometry::{CGRectDef, CGRectExt, CGSizeDef};
+use rini_geometry::CGRectExt;
 use rini_core::ids::{WindowId, WindowServerId};
 #[cfg(test)]
 use rustc_hash::FxHashMap as HashMap;
@@ -341,21 +341,6 @@ fn window_query_run(filter: &WindowQueryFilter<'_>) -> Option<WindowIterator> {
     }
     WindowIterator::from_owned_iterator(iterator)
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
-#[allow(unused)]
-pub struct WindowServerInfo {
-    pub id: WindowServerId,
-    pub pid: pid_t,
-    pub layer: i32,
-    #[serde(with = "CGRectDef")]
-    pub frame: CGRect,
-    #[serde(with = "CGSizeDef")]
-    pub min_frame: CGSize,
-    #[serde(with = "CGSizeDef")]
-    pub max_frame: CGSize,
-}
-
 
 pub fn window_parent(id: WindowServerId) -> Option<WindowServerId> {
     let query = WindowIterator::new(&[id])?;

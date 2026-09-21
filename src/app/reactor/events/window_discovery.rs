@@ -1,7 +1,7 @@
 use tracing::{debug, trace};
 
 use super::window;
-use crate::windows::platform::app::{AppInfo, WindowInfo};
+use crate::windows::domain::info::{AppInfo, WindowInfo};
 use rini_core::ids::{WindowId, pid_t};
 use crate::app::reactor::LayoutEvent;
 use crate::windows::domain::transaction::TransactionManager;
@@ -158,7 +158,7 @@ pub(crate) struct StaleCleanupSnapshot {
 
 #[derive(Debug)]
 pub(crate) struct StaleWindowObservation {
-    pub(crate) info: Option<crate::windows::platform::window_server::WindowServerInfo>,
+    pub(crate) info: Option<crate::windows::domain::info::WindowServerInfo>,
     pub(crate) suitable: Option<bool>,
     pub(crate) ordered_in: Option<bool>,
 }

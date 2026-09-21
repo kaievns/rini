@@ -3,6 +3,9 @@
 //! Fills a cache rather than capturing on demand: a capture is too slow to run at switch time.
 //! Results are `IOSurface` to keep a warm cache off the heap. See `docs/animation/capture-overlay-research.md`.
 
+use crate::animation::domain::request::SnapshotTarget;
+#[cfg(test)]
+use rini_core::ids::WindowServerId;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +27,6 @@ use objc2_screen_capture_kit::{
 use tracing::{debug, warn};
 
 use rini_core::ids::WindowId;
-use rini_core::ids::WindowServerId;
 use crate::animation::platform::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, WindowSnapshot};
 
 /// Concurrent captures. ScreenCaptureKit serialises internally, so wall clock stops improving past
@@ -145,14 +147,6 @@ fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
 }
 
 /// A window to capture, and the size its pixels should represent.
-#[derive(Debug, Clone, Copy)]
-pub struct SnapshotTarget {
-    pub window: WindowId,
-    pub server_id: WindowServerId,
-    /// The window's full size in points, as the layout intends it.
-    pub size: CGSize,
-}
-
 struct PendingCapture {
     target: SnapshotTarget,
     /// The window's frame size at enumeration: what the capture is of. Mid-resize it differs from

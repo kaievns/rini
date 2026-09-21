@@ -3,7 +3,8 @@ use std::future;
 use objc2_app_kit::NSRunningApplication;
 use tracing::{debug, warn};
 
-use crate::windows::platform::app::{AppInfo, NSRunningApplicationExt};
+use crate::windows::platform::app::NSRunningApplicationExt;
+use crate::windows::domain::info::AppInfo;
 use crate::windows::platform::carbon::{CarbonListener, Event, event_type};
 use rini_core::ids::pid_t;
 

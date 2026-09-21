@@ -1,6 +1,6 @@
 use tracing::{debug, trace};
 
-use crate::windows::platform::app_actor::Request;
+use crate::windows::domain::request::Request;
 use rini_core::ids::WindowId;
 use crate::app::reactor::events::{EventOutcome, window};
 use crate::app::reactor::managers::{DragManager, MissionControlManager};
@@ -11,7 +11,7 @@ use crate::app::hotkeys::WmEvent;
 use rustc_hash::FxHashSet as HashSet;
 use crate::app::reactor::state::RiniState;
 use crate::windows::domain::catalogue::NativeFullscreenTransition;
-use crate::windows::platform::app::AppInfo;
+use crate::windows::domain::info::AppInfo;
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
 
@@ -45,7 +45,7 @@ pub struct WindowServerAppearedObservations {
     pub mission_control_active: bool,
     pub assigned_space: Option<SpaceId>,
     pub last_known_user_space: Option<SpaceId>,
-    pub window_server_info: Option<crate::windows::platform::window_server::WindowServerInfo>,
+    pub window_server_info: Option<crate::windows::domain::info::WindowServerInfo>,
     pub app_known: bool,
     pub running_app_info: Option<AppInfo>,
 }

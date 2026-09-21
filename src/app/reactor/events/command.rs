@@ -1,7 +1,7 @@
 use tracing::{error, info, warn};
 
 use super::super::ScreenInfo;
-use crate::windows::platform::app_actor::{AppThreadHandle, Quiet};
+use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use rini_core::ids::WindowId;
 use crate::windows::domain::raise as raise_manager;
 use crate::app::reactor::WorkspaceSwitchOrigin;

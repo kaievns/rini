@@ -1,7 +1,7 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
-use crate::windows::platform::app::WindowInfo;
+use crate::windows::domain::info::WindowInfo;
 use crate::workspaces::{LayoutEvent, LayoutSystemKind};
 use crate::workspaces::VirtualWorkspace;
 use crate::windows::domain::state::WindowState;

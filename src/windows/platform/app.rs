@@ -1,3 +1,4 @@
+use crate::windows::domain::info::{AppInfo, WindowInfo};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -11,15 +12,12 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, define_class, exception, msg_send};
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication, NSWorkspace};
-use objc2_core_foundation::{CGRect, CGSize};
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString, ns_string};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
 
-use rini_geometry::CGRectDef;
 use rini_core::ids::WindowServerId;
-use crate::windows::platform::window_server::WindowServerInfo;
+use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
@@ -351,12 +349,6 @@ impl NSRunningApplicationExt for NSRunningApplication {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AppInfo {
-    pub bundle_id: Option<String>,
-    pub localized_name: Option<String>,
-}
-
 impl From<&NSRunningApplication> for AppInfo {
     fn from(app: &NSRunningApplication) -> Self {
         AppInfo {
@@ -364,33 +356,6 @@ impl From<&NSRunningApplication> for AppInfo {
             localized_name: app.localized_name().as_deref().map(ToString::to_string),
         }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct WindowInfo {
-    pub is_standard: bool,
-    #[serde(default)]
-    pub is_root: bool,
-    #[serde(default)]
-    pub is_minimized: bool,
-    #[serde(default)]
-    pub is_resizable: bool,
-    pub title: String,
-    #[serde(with = "CGRectDef")]
-    pub frame: CGRect,
-    #[serde(skip)]
-    pub min_size: Option<CGSize>,
-    #[serde(skip)]
-    pub max_size: Option<CGSize>,
-    pub sys_id: Option<WindowServerId>,
-    pub bundle_id: Option<String>,
-    pub path: Option<PathBuf>,
-    pub ax_role: Option<String>,
-    pub ax_subrole: Option<String>,
-    /// `AXModal`: the window blocks its app until dismissed. Electron and Zoom report such
-    /// dialogs as `AXStandardWindow`, so the subrole alone does not tell them from app windows.
-    #[serde(default)]
-    pub is_modal: bool,
 }
 
 impl WindowInfo {

@@ -12,7 +12,7 @@ use crate::app::reactor::state::AppState;
 use crate::app::config::Settings;
 use crate::displays::domain::topology::ForwardedSpaceState;
 use rini_core::ids::pid_t;
-use crate::windows::platform::app::WindowInfo;
+use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::state::WindowFilter;
 use crate::workspaces::{LayoutEngine, WindowStore};
 use rustc_hash::FxHashMap as HashMap;

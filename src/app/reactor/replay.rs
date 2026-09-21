@@ -8,7 +8,7 @@ use tempfile::NamedTempFile;
 use tracing::Span;
 
 use super::{Event, Reactor};
-use crate::windows::platform::app_actor::{AppThreadHandle, Request};
+use crate::windows::domain::request::{AppThreadHandle, Request};
 use crate::app::channels::{self};
 use crate::app::config::Config;
 use crate::workspaces::LayoutEngine;

@@ -4,18 +4,18 @@ use tracing::debug;
 use super::{Event, EventOutcome, Reactor, Record, ScreenInfo, TransactionId};
 use crate::windows::domain::transaction::Requested;
 use crate::app::channels;
-use crate::windows::platform::app_actor::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use rini_core::ids::WindowId;
 use crate::displays::domain::topology::ForwardedSpaceState;
 use std::collections::BTreeMap;
 use crate::app::config::Config;
 use crate::workspaces::{LayoutCommand, LayoutEngine};
-use crate::windows::platform::app::{AppInfo, WindowInfo};
+use crate::windows::domain::info::{AppInfo, WindowInfo};
 use rini_core::ids::pid_t;
 use rini_geometry::SameAs;
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
-use crate::windows::platform::window_server::WindowServerInfo;
+use crate::windows::domain::info::WindowServerInfo;
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {

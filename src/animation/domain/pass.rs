@@ -3,12 +3,12 @@
 //! here reads a store or sends a request.
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_geometry::{Round, SameAs};
-use crate::windows::platform::app_actor::Request;
+use crate::windows::domain::request::Request;
 use rini_core::ids::{WindowId, WindowServerId};
 use crate::windows::domain::transaction::TransactionId;
 
-use crate::animation::platform::engine::AnimationRequest;
-use crate::animation::platform::snapshot_service::SnapshotTarget;
+use crate::animation::domain::request::AnimationRequest;
+use crate::animation::domain::request::SnapshotTarget;
 
 /// A window as the layout pass sees it.
 #[derive(Debug, Clone, PartialEq)]

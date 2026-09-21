@@ -1,8 +1,8 @@
 use objc2_core_foundation::CGRect;
 pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
-use crate::windows::platform::app::AppInfo;
-use crate::windows::platform::app_actor::AppThreadHandle;
+use crate::windows::domain::info::AppInfo;
+use crate::windows::domain::request::AppThreadHandle;
 use rini_core::ids::{WindowId, pid_t};
 use crate::workspaces::WindowStore;
 use rini_core::ids::SpaceId;
@@ -94,7 +94,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ReactorError {
     #[error("App communication failed: {0}")]
-    AppCommunicationFailed(#[from] tokio::sync::mpsc::error::SendError<crate::windows::platform::app_actor::Request>),
+    AppCommunicationFailed(#[from] tokio::sync::mpsc::error::SendError<crate::windows::domain::request::Request>),
     #[error("Raise manager communication failed: {0}")]
     RaiseManagerCommunicationFailed(
         #[from] tokio::sync::mpsc::error::SendError<crate::windows::domain::raise::Event>,

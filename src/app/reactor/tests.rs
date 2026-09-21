@@ -3,13 +3,13 @@ use test_log::test;
 
 use super::testing::*;
 use super::*;
-use crate::windows::platform::app_actor::{AppThreadHandle, Request};
+use crate::windows::domain::request::{AppThreadHandle, Request};
 use rini_core::ids::pid_t;
 use crate::app::hotkeys::WmEvent;
 use crate::app::config::{OuterGaps, WorkspaceSelector};
 use crate::workspaces::{Direction, LayoutCommand, LayoutEvent};
 use crate::windows::domain::catalogue::NativeFullscreenTransition;
-use crate::windows::platform::app::{AppInfo, WindowInfo};
+use crate::windows::domain::info::{AppInfo, WindowInfo};
 use rini_geometry::{CGRectExt, SameAs};
 use rini_core::ids::WindowServerId;
 
@@ -1709,7 +1709,7 @@ fn fullscreen_does_not_suppress_other_same_pid_windows() {
     reactor.handle_event(Event::WindowCreated(
         second_wid,
         make_window_info(frame, Some(second_wsid), "Second Window", None),
-        Some(crate::windows::platform::window_server::WindowServerInfo {
+        Some(crate::windows::domain::info::WindowServerInfo {
             id: second_wsid,
             pid: original_wid.pid,
             layer: 0,
@@ -6668,7 +6668,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
 
     super::animation::AnimationManager::animate_layout(&mut reactor, space, &layout, false, None);
 
-    let mut animated: Vec<crate::animation::platform::engine::AnimationRequest> = Vec::new();
+    let mut animated: Vec<crate::animation::domain::request::AnimationRequest> = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
             crate::animation::platform::engine::Event::Animate { windows, .. } => animated = windows,

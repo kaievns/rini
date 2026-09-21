@@ -22,7 +22,7 @@ pub type Sender = channels::Sender<WmEvent>;
 type Receiver = channels::Receiver<WmEvent>;
 
 use self::WmCmd::*;
-use crate::windows::platform::app::AppInfo;
+use crate::windows::domain::info::AppInfo;
 use crate::app::channels;
 use crate::app::reactor;
 use crate::input::platform::input_tap as event_tap;

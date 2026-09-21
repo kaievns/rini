@@ -3,12 +3,12 @@
 //! imports the reactor.
 use objc2_core_foundation::CGRect;
 
-use crate::windows::platform::app::{AppInfo, WindowInfo};
-use crate::windows::platform::app_actor::{AppThreadHandle, Quiet};
+use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::windows::domain::request::{AppThreadHandle, Quiet};
 use rini_core::ids::{WindowId, pid_t};
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::domain::transaction::{Requested, TransactionId};
-use crate::windows::platform::window_server::WindowServerInfo;
+use crate::windows::domain::info::WindowServerInfo;
 
 #[derive(Debug)]
 pub enum Event {
