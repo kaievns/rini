@@ -34,6 +34,11 @@ struct Column {
     width_overridden: bool,
     #[serde(default)]
     height_weights: Vec<f64>,
+    /// Whether `height_weights` are DESIRED PIXEL HEIGHTS from a deliberate vertical resize, rather
+    /// than the equal ratios a freshly folded column starts at. The two are read differently and
+    /// conflating them is what collapsed a folded window to its title bar.
+    #[serde(default)]
+    height_overridden: bool,
 }
 
 impl Column {
@@ -41,6 +46,14 @@ impl Column {
         if self.height_weights.len() != self.windows.len() {
             self.height_weights.resize(self.windows.len(), 1.0);
         }
+    }
+
+    /// Equal shares, and no longer a deliberate split.
+    fn equalise_heights(&mut self) {
+        let count = self.windows.len();
+        self.height_weights.clear();
+        self.height_weights.resize(count, 1.0);
+        self.height_overridden = false;
     }
 }
 
@@ -125,6 +138,7 @@ impl LayoutState {
                 width_offset: 0.0,
                 width_overridden: false,
                 height_weights: vec![weight],
+            height_overridden: false,
             },
         );
         Some(origin)
@@ -160,6 +174,12 @@ impl LayoutState {
         let at = at.min(column.windows.len());
         column.windows.insert(at, wid);
         column.height_weights.insert(at, weight);
+        // The weight came from a column of its own, where one row took everything, so it says
+        // nothing about a share of this one. Only a column that was deliberately split keeps its
+        // numbers; otherwise the rows go back to dividing evenly.
+        if !column.height_overridden {
+            column.equalise_heights();
+        }
         true
     }
 
@@ -296,6 +316,7 @@ impl LayoutState {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0],
+        height_overridden: false,
         };
         let insert_at = (index + 1).min(self.columns.len());
         self.columns.insert(insert_at, column);
@@ -309,6 +330,7 @@ impl LayoutState {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0],
+        height_overridden: false,
         });
         self.selected = Some(wid);
         self.align_scroll_to_selected();
@@ -337,6 +359,7 @@ impl LayoutState {
                     width_offset: 0.0,
                     width_overridden: false,
                     height_weights: vec![1.0],
+                height_overridden: false,
                 });
             } else {
                 self.columns[target].ensure_height_weights();
@@ -352,9 +375,7 @@ impl LayoutState {
                 // height evenly, which is what stacking should do. A deliberate vertical
                 // resize afterwards still sets its own weights.
                 let _ = weight;
-                let count = self.columns[target].windows.len();
-                self.columns[target].height_weights.clear();
-                self.columns[target].height_weights.resize(count, 1.0);
+                self.columns[target].equalise_heights();
             }
             self.selected = Some(window);
             self.align_scroll_to_selected();
@@ -723,6 +744,7 @@ impl ScrollingLayoutSystem {
                     width_offset: 0.0,
                     width_overridden: false,
                     height_weights: vec![weight],
+                height_overridden: false,
                 },
             );
             state.selected = Some(wid);
@@ -1025,17 +1047,28 @@ impl LayoutSystem for ScrollingLayoutSystem {
                             )
                         })
                         .unwrap_or((0.0, None, None, true));
-                    let raw_weight = col.height_weights.get(row_idx).copied().unwrap_or(1.0);
-                    // The constraint solver first assigns `min` to every item,
-                    // then distributes the *remainder* proportionally by weight.
-                    // Our height_weights store desired pixel heights, so we must
-                    // subtract `min` to turn them into "growth above min" weights.
-                    // Without this adjustment, weights like [900, 100] with
-                    // min=[100,100] would produce [820, 180] instead of [900, 100].
+                    // Two meanings, and they are read differently.
                     //
-                    // For default weights (all 1.0), the subtraction would make
-                    // them near-zero but still equal, preserving equal distribution.
-                    let weight = (raw_weight - min).max(0.001);
+                    // A column nobody has resized vertically divides evenly: equal weights, and
+                    // `solve_axis_lengths` gives equal FINAL heights clamped by each window's own
+                    // limits. Subtracting `min` here is what broke that. Weights are 1.0 while the
+                    // minima are pixels, so `1.0 - min` floors at 0.001 for any window macOS
+                    // reported a minimum height for, and 1.0 for any it did not. A folded pair with
+                    // one reported minimum split 700/100 instead of 400/400: the window with the
+                    // minimum was left at it, which on screen is its title bar. It only happened
+                    // when the two windows disagreed about having a minimum, which is why it came
+                    // and went.
+                    //
+                    // After a deliberate vertical resize the weights ARE desired pixel heights, and
+                    // then the subtraction is right: the solver reserves every minimum first and
+                    // shares out the remainder, so weights of [900, 100] against minima of
+                    // [100, 100] have to become [800, 0] to land on 900/100.
+                    let weight = if col.height_overridden {
+                        let raw_weight = col.height_weights.get(row_idx).copied().unwrap_or(1.0);
+                        (raw_weight - min).max(0.001)
+                    } else {
+                        1.0
+                    };
                     AxisConstraints {
                         min,
                         fixed,
@@ -1414,6 +1447,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
             let available_height = (tiling.size.height - total_gap).max(0.0);
 
             if available_height > 0.0 {
+                col.height_overridden = true;
                 // Set weights directly to desired pixel heights. The constraint
                 // solver (`solve_axis_lengths`) first reserves each window's
                 // minimum height, then distributes the remainder proportionally
@@ -1523,6 +1557,58 @@ impl LayoutSystem for ScrollingLayoutSystem {
         moved
     }
 
+
+    /// Fold the selection into the column beside it, or back out to where it was folded in from.
+    ///
+    /// One command for both directions. Folding IN targets the previous column, as `toggle_stack`
+    /// does (niri's consume-into-column), falling back to the next one in the first column so the
+    /// key is never dead. Folding OUT moves only this window, and `StackOrigin` is what returns it
+    /// to the row it left rather than to the end of a column.
+    fn toggle_fold_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+        let niri_navigation = matches!(
+            self.settings.focus_navigation_style,
+            ScrollingFocusNavigationStyle::Niri
+        );
+        let Some(state) = self.layout_state_mut(layout) else {
+            return Vec::new();
+        };
+        let Some(selected) = state.selected_or_first() else {
+            return Vec::new();
+        };
+        let Some((col_idx, _)) = state.locate(selected) else {
+            return Vec::new();
+        };
+
+        if state.columns[col_idx].windows.len() > 1 {
+            // Folding OUT remembers the row, which is what lets the next press be symmetric.
+            if let Some(origin) = state.extract_from_stack(selected) {
+                state.stack_origins.insert(selected, origin);
+            }
+        } else if let Some(origin) = state.stack_origins.remove(&selected)
+            && state.restore_into_stack(selected, origin)
+        {
+            // Folded back into the row it came from.
+        } else {
+            // Nothing remembered, or the row is gone: fold into a neighbour, the previous column by
+            // preference and the next one in the first column, so the key is never dead.
+            let target = match col_idx.checked_sub(1) {
+                Some(previous) => Some(previous),
+                None => (col_idx + 1 < state.columns.len()).then_some(col_idx + 1),
+            };
+            let Some(target) = target else {
+                return Vec::new();
+            };
+            state.move_window_to_column_end(selected, target);
+        }
+
+        state.selected = Some(selected);
+        if niri_navigation {
+            state.reveal_selected_without_direction();
+        } else {
+            state.align_scroll_to_selected();
+        }
+        vec![selected]
+    }
 
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let niri_navigation = matches!(
@@ -1685,6 +1771,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
                 width_offset: 0.0,
                 width_overridden: false,
                 height_weights: vec![weight],
+            height_overridden: false,
             },
         );
         state.selected = Some(wid);
@@ -1776,6 +1863,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     width_offset: 0.0,
                     width_overridden: false,
                     height_weights: vec![moved_weights[idx]],
+                    height_overridden: false,
                 },
             );
             insert_at += 1;
@@ -1819,6 +1907,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
                 width_offset: 0.0,
                 width_overridden: false,
                 height_weights: vec![weight],
+            height_overridden: false,
             },
         );
         state.selected = Some(wid);
@@ -1869,6 +1958,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
             if total <= f64::EPSILON {
                 return;
             }
+            // A deliberate split from here on: the weights below are pixel-ish shares, not the
+            // equal ratios a folded column starts at.
+            column.height_overridden = true;
             let current_share = column.height_weights[row_idx] / total;
             let next_share = (current_share + amount).clamp(0.05, 0.95);
             let other_total = (total - column.height_weights[row_idx]).max(f64::EPSILON);
@@ -1935,6 +2027,10 @@ mod tests {
             &constraints,
             gaps,
         )
+    }
+
+    fn constraints_none() -> HashMap<WindowId, WindowLayoutConstraints> {
+        HashMap::default()
     }
 
     fn frame_for(frames: &[(WindowId, CGRect)], wid: WindowId) -> CGRect {
@@ -2016,6 +2112,7 @@ mod tests {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0, 1.0],
+        height_overridden: false,
         }];
         state.selected = Some(w1);
 
@@ -2092,6 +2189,7 @@ mod tests {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0, 1.0],
+        height_overridden: false,
         }];
         state.selected = Some(locked);
 
@@ -3449,5 +3547,219 @@ mod tests {
             maximized.origin.x + maximized.size.width <= neighbour.origin.x + 1.0,
             "maximized {maximized:?} runs into the next column at {neighbour:?}"
         );
+    }
+    /// Folding two windows together divides the height evenly, and it has to do that whether or not
+    /// macOS happened to report a minimum height for either of them.
+    ///
+    /// The reported minimum used to be subtracted from the weight. Weights are 1.0 in a freshly
+    /// folded column and minima are pixels, so a window with a minimum got 0.001 and a window
+    /// without got 1.0: the first was left at its minimum, which on screen is its title bar. Two
+    /// windows that both reported one, or neither, split evenly — which is why this came and went.
+    #[test]
+    fn folding_divides_the_height_evenly_even_when_one_window_reports_a_minimum() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (top, bottom) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, top);
+        system.add_window_after_selection(layout, bottom);
+        assert!(system.select_window(layout, bottom));
+        system.join_selection_with_direction(layout, Direction::Left);
+
+        let mut constraints = HashMap::default();
+        constraints.insert(
+            top,
+            WindowLayoutConstraints { is_resizable: true, min_height: 100.0, ..Default::default() },
+        );
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
+
+        let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
+        assert!(
+            (a.size.height - b.size.height).abs() < 2.0,
+            "folded windows must share the height: top {a:?} bottom {b:?}"
+        );
+    }
+
+    #[test]
+    fn folding_divides_the_height_evenly_with_no_constraints_at_all() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (top, bottom) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, top);
+        system.add_window_after_selection(layout, bottom);
+        assert!(system.select_window(layout, bottom));
+        system.join_selection_with_direction(layout, Direction::Left);
+
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
+        let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
+        assert!((a.size.height - b.size.height).abs() < 2.0, "top {a:?} bottom {b:?}");
+    }
+
+    /// A deliberate vertical resize still wins, and still survives a re-render. Equalising
+    /// unconditionally would have made the resize command do nothing.
+    #[test]
+    fn a_deliberate_vertical_resize_is_not_equalised_away() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (top, bottom) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, top);
+        system.add_window_after_selection(layout, bottom);
+        assert!(system.select_window(layout, bottom));
+        system.join_selection_with_direction(layout, Direction::Left);
+
+        assert!(system.select_window(layout, top));
+        system.resize_selection_by(layout, 0.2, ResizeOrientation::Vertical);
+
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
+        let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
+        assert!(a.size.height > b.size.height + 10.0, "resize lost: top {a:?} bottom {b:?}");
+    }
+
+    /// Folding a third window in re-equalises: the column was not deliberately split, so the new
+    /// arrival should not be squeezed in beside two windows keeping their old shares.
+    #[test]
+    fn folding_another_window_in_re_equalises_the_column() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+        for id in w {
+            system.add_window_after_selection(layout, id);
+        }
+        assert!(system.select_window(layout, w[1]));
+        system.join_selection_with_direction(layout, Direction::Left);
+        assert!(system.select_window(layout, w[2]));
+        system.join_selection_with_direction(layout, Direction::Left);
+
+        let screen = screen(1000.0, 900.0);
+        let gaps = GapSettings::default();
+        let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
+        let heights: Vec<f64> = w.iter().map(|id| frame_for(&frames, *id).size.height).collect();
+        let spread = heights.iter().cloned().fold(f64::MIN, f64::max)
+            - heights.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(spread < 2.0, "three folded windows must share the height, got {heights:?}");
+    }
+    /// A window whose minimum width is wider than the configured column gets the width it needs,
+    /// and its neighbour starts after it. Without this the window was drawn at the default 50% and
+    /// clipped, because macOS refuses the resize and keeps it at its own minimum.
+    #[test]
+    fn a_column_reserves_the_minimum_width_its_window_demands() {
+        let mut settings = ScrollingLayoutSettings::default();
+        settings.column_width_ratio = 0.5;
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let (acme, neighbour) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, acme);
+        system.add_window_after_selection(layout, neighbour);
+
+        let mut constraints = HashMap::default();
+        constraints.insert(
+            acme,
+            WindowLayoutConstraints { is_resizable: true, min_width: 600.0, ..Default::default() },
+        );
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
+
+        let wide = frame_for(&frames, acme);
+        let next = frame_for(&frames, neighbour);
+        assert!(
+            wide.size.width >= 600.0 - 1.0,
+            "a 600pt minimum against a 500pt default column, got {wide:?}"
+        );
+        assert!(
+            next.origin.x >= wide.origin.x + wide.size.width - 1.0,
+            "the neighbour must start after it: {wide:?} then {next:?}"
+        );
+    }
+    /// One key, both directions, and it comes back. `toggle_stack`'s fold-out half explodes the
+    /// whole column, so pressing it twice on a column of three does not return you to a column of
+    /// three; this does.
+    #[test]
+    fn folding_a_window_in_and_out_returns_it_to_the_same_row() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fold_of_selection(layout);
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[2]], vec![w[1]]],
+            "folded out into its own column"
+        );
+
+        system.toggle_fold_of_selection(layout);
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[1], w[2]]],
+            "and back between the two it left"
+        );
+    }
+
+    #[test]
+    fn folding_a_lone_window_in_puts_it_under_the_column_to_its_left() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (left, right) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, left);
+        system.add_window_after_selection(layout, right);
+
+        assert!(system.select_window(layout, right));
+        system.toggle_fold_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![left, right]]);
+
+        system.toggle_fold_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![left], vec![right]], "and out again");
+    }
+
+    // The first column has nothing to its left, so the key folds right rather than doing nothing.
+    #[test]
+    fn folding_the_first_column_reaches_for_the_next_one() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (first, second) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, first);
+        system.add_window_after_selection(layout, second);
+
+        assert!(system.select_window(layout, first));
+        system.toggle_fold_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![second, first]]);
+    }
+
+    #[test]
+    fn folding_a_single_window_strip_does_nothing() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let only = wid(1, 1);
+        system.add_window_after_selection(layout, only);
+
+        system.toggle_fold_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![only]], "nothing to fold into");
+    }
+
+    /// Folded windows share the height, which is the whole point of folding them. Pinned here as
+    /// well as at `join_selection_with_direction`, because this is the path the key actually takes.
+    #[test]
+    fn folding_in_divides_the_height_evenly() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (left, right) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, left);
+        system.add_window_after_selection(layout, right);
+        assert!(system.select_window(layout, right));
+        system.toggle_fold_of_selection(layout);
+
+        let mut constraints = HashMap::default();
+        constraints.insert(
+            left,
+            WindowLayoutConstraints { is_resizable: true, min_height: 100.0, ..Default::default() },
+        );
+        let frames =
+            system.calculate_layout(layout, screen(1000.0, 800.0), &constraints, &GapSettings::default());
+        let (a, b) = (frame_for(&frames, left), frame_for(&frames, right));
+        assert!((a.size.height - b.size.height).abs() < 2.0, "left {a:?} right {b:?}");
     }
 }

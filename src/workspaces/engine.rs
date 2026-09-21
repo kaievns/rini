@@ -1589,6 +1589,7 @@ impl LayoutEngine {
     ) -> EventResponse {
                 self.debug_tree(space);
                 self.floating.clear_active_for_app(space, pid);
+                let mut constraints_changed = false;
 
                 let mut windows_by_workspace: HashMap<
                     crate::workspaces::VirtualWorkspaceId,
@@ -1622,19 +1623,29 @@ impl LayoutEngine {
                         app_bundle_id,
                     );
 
-                    self.window_layout_constraints.insert(
-                        wid,
-                        WindowLayoutConstraints {
-                            is_resizable,
-                            locked_width: size_hint.width,
-                            locked_height: size_hint.height,
-                            min_width: min_size.map_or(0.0, |s| s.width),
-                            min_height: min_size.map_or(0.0, |s| s.height),
-                            max_width: max_size.map_or(0.0, |s| s.width),
-                            max_height: max_size.map_or(0.0, |s| s.height),
-                        }
-                        .normalized(),
-                    );
+                    // A minimum size comes from the WINDOW SERVER, which does not always have the
+                    // window yet when Accessibility reports it. So constraints arrive late, and a
+                    // window whose minimum width is wider than the default column was laid out at
+                    // the default and clipped, until some later pass happened to recompute it —
+                    // which is why left/right navigation "fixed" it. A change here has to ask for
+                    // that pass itself.
+                    let constraints = WindowLayoutConstraints {
+                        is_resizable,
+                        locked_width: size_hint.width,
+                        locked_height: size_hint.height,
+                        min_width: min_size.map_or(0.0, |s| s.width),
+                        min_height: min_size.map_or(0.0, |s| s.height),
+                        max_width: max_size.map_or(0.0, |s| s.width),
+                        max_height: max_size.map_or(0.0, |s| s.height),
+                    }
+                    .normalized();
+                    let previous = self.window_layout_constraints.insert(wid, constraints);
+                    if previous != Some(constraints)
+                        && (constraints.constrains_layout()
+                            || previous.is_some_and(|old| old.constrains_layout()))
+                    {
+                        constraints_changed = true;
+                    }
 
                     let title_ref = title_opt.as_deref();
                     let ax_role_ref = ax_role_opt.as_deref();
@@ -1713,18 +1724,21 @@ impl LayoutEngine {
                             space,
                             workspace_index,
                         });
-                        return EventResponse::default();
+                        return EventResponse {
+                            changed: constraints_changed,
+                            ..EventResponse::default()
+                        };
                     }
                     self.commit_workspace_focus(window_store, space, Some(window));
                     return EventResponse {
-                        changed: app_rule_outcome.has_resizes(),
+                        changed: app_rule_outcome.has_resizes() || constraints_changed,
                         raise_windows: vec![window],
                         focus_window: Some(window),
                         boundary_hit: None,
                         edge_hit: None,
                     };
                 }
-                if app_rule_outcome.has_resizes() {
+                if app_rule_outcome.has_resizes() || constraints_changed {
                     return EventResponse {
                         changed: true,
                         ..EventResponse::default()
@@ -2199,6 +2213,12 @@ impl LayoutEngine {
                 self.workspace_tree_mut(workspace_id)
                     .consume_or_expel_selection(layout, direction);
                 EventResponse::default()
+            }
+            LayoutCommand::ToggleFold => {
+                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
+                let raise_windows =
+                    self.workspace_tree_mut(workspace_id).toggle_fold_of_selection(layout);
+                Self::response_for_raised_windows(raise_windows)
             }
             LayoutCommand::ToggleStack => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
@@ -3560,7 +3580,13 @@ mod tests {
             ),
             CGRect::new(CGPoint::new(1224.0, 274.0), CGSize::new(640.0, 480.0))
         );
-        assert_eq!(layout_outcome.response, EventResponse::default());
+        // `changed` because this discovery is where the window's size limits were learned. The
+        // fixture window is locked to 300x200, and a layout computed before that was known is the
+        // clipping this reports.
+        assert_eq!(
+            layout_outcome.response,
+            EventResponse { changed: true, ..EventResponse::default() }
+        );
         let focus = focus.expect("focus rule should request a workspace switch");
         assert_eq!(focus.window, window);
         assert_eq!(focus.space, space);

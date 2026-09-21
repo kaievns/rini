@@ -207,6 +207,8 @@ enum WindowCommands {
     ToggleFloat,
     /// Toggle the selected column filling the tiling area, still scrolling with the strip
     ToggleFullscreenWithinGaps,
+    /// Fold the selected window into the column beside it, or back out to where it came from
+    ToggleFold,
     /// Grow the current window size (increments by ~5%).
     ResizeGrow {
         /// Axis to resize; smart chooses the nearest applicable split.
@@ -729,6 +731,9 @@ fn map_window_command(cmd: WindowCommands) -> Result<CliCommand, String> {
         WindowCommands::ToggleFullscreenWithinGaps => Ok(CliCommand::Reactor(
             reactor::Command::Layout(LC::ToggleFullscreenWithinGaps),
         )),
+        WindowCommands::ToggleFold => {
+            Ok(CliCommand::Reactor(reactor::Command::Layout(LC::ToggleFold)))
+        }
         WindowCommands::ResizeGrow { orientation } => Ok(CliCommand::Reactor(
             reactor::Command::Layout(LC::ResizeWindowGrow(orientation.into())),
         )),

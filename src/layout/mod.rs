@@ -19,7 +19,7 @@ pub use domain::scrolling::ScrollingLayoutSystem;
 
 slotmap::new_key_type! { pub struct LayoutId; }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WindowLayoutConstraints {
     pub is_resizable: bool,
     pub locked_width: f64,
@@ -52,6 +52,22 @@ impl WindowLayoutConstraints {
             max_width,
             max_height,
         }
+    }
+
+    /// Whether these limits can change a frame at all.
+    ///
+    /// A window that reports nothing is the common case, and discovering one must not ask for a
+    /// layout pass. A window that reports a minimum wider than the default column must, because
+    /// the limits arrive from the window server after Accessibility has already had the window
+    /// placed. See "Column width" in `docs/layout/strip.md`.
+    pub fn constrains_layout(self) -> bool {
+        let c = self.normalized();
+        c.min_width > 0.0
+            || c.min_height > 0.0
+            || c.max_width > 0.0
+            || c.max_height > 0.0
+            || c.locked_width > 0.0
+            || c.locked_height > 0.0
     }
 
     pub fn min_for_axis(self, horizontal: bool) -> f64 {
@@ -185,6 +201,9 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     fn move_selection(&mut self, layout: LayoutId, direction: Direction) -> bool;
 
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
+
+    /// Fold the selection into the neighbouring column, or back out to where it came from.
+    fn toggle_fold_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
 
     /// Cycle the selected column through the configured preset widths.
     fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId>;
@@ -356,4 +375,43 @@ mod tests {
 #[enum_dispatch(LayoutSystem)]
 pub enum LayoutSystemKind {
     Scrolling(ScrollingLayoutSystem),
+}
+
+#[cfg(test)]
+mod constrains_layout_tests {
+    use super::WindowLayoutConstraints;
+
+    #[test]
+    fn a_window_that_reports_nothing_constrains_nothing() {
+        assert!(!WindowLayoutConstraints::default().constrains_layout());
+        assert!(
+            !WindowLayoutConstraints { is_resizable: true, ..Default::default() }
+                .constrains_layout(),
+            "being resizable is not a limit on its own"
+        );
+    }
+
+    // The ACME case: a minimum wider than the default column. Learning this has to be worth a
+    // layout pass, or the window stays clipped at the default width until something else recomputes.
+    #[test]
+    fn a_minimum_width_constrains_the_layout() {
+        let acme = WindowLayoutConstraints {
+            is_resizable: true,
+            min_width: 1800.0,
+            ..Default::default()
+        };
+        assert!(acme.constrains_layout());
+    }
+
+    #[test]
+    fn a_locked_or_maximum_size_constrains_the_layout() {
+        for c in [
+            WindowLayoutConstraints { locked_width: 300.0, ..Default::default() },
+            WindowLayoutConstraints { locked_height: 200.0, ..Default::default() },
+            WindowLayoutConstraints { max_width: 900.0, ..Default::default() },
+            WindowLayoutConstraints { min_height: 120.0, ..Default::default() },
+        ] {
+            assert!(c.constrains_layout(), "{c:?}");
+        }
+    }
 }

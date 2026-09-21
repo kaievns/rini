@@ -85,6 +85,40 @@ consume-into-column), falling back to the next column only in the first
 column. It used to pull the next column's windows into the current one, which
 stacked a window the user had not chosen and left the selection untouched.
 
+**`toggle_fold` is the symmetric one, and is what a fold key should be bound to.**
+`toggle_stack` is not a round trip: folding in moves one window, folding out
+explodes the whole column, so a second press on a column of three does not give
+you a column of three. `toggle_fold` moves only the selected window in both
+directions and remembers the row it left (`StackOrigin`), so pressing it twice
+returns the strip to the shape it had. It folds into the previous column by
+preference and the next one from the first column, so the key is never dead.
+
+**Folded windows divide the height evenly unless someone has resized them.**
+`height_weights` means two different things and they are read differently: equal
+ratios in a column nobody has touched, and desired pixel heights after a
+deliberate vertical resize (`Column::height_overridden` says which). Reading the
+ratios as pixel heights collapsed a folded window to its title bar. The solver
+subtracts each window's reported minimum to turn pixel weights into "growth
+above the minimum", and against a weight of 1.0 that subtraction floors at 0.001
+for any window macOS reported a minimum height for, and leaves 1.0 for any it did
+not — so a folded pair split 700/100 instead of 400/400. It only misbehaved when
+the two windows disagreed about having a minimum, which is why it came and went.
+
+## Column width and what the window will accept
+
+A column reserves `max(configured width, its windows' minimum width)`, so a
+window whose minimum is wider than the configured column gets the width it needs
+and its neighbour starts after it.
+
+The limits arrive late. A minimum comes from the WINDOW SERVER, and Accessibility
+can report a new window before the server has it, so the first layout runs with
+no limits at all and the window is placed at the default width — where macOS
+refuses to shrink it and it is drawn clipped. Any later pass fixed it, which is
+why left/right navigation appeared to. Learning a limit now asks for that pass
+itself: `on_windows_on_screen_updated` reports `changed` when a window's
+constraints differ from what was recorded, and `constrains_layout` keeps the
+common case of a window with no limits from costing a pass.
+
 ## Parking
 
 Off-strip windows park at 1pt corners; live parks were measured at y=1085

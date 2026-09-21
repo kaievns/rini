@@ -329,6 +329,8 @@ comb1 = "Alt + Shift"
 # - move_node = "left"|"right"|"up"|"down"
 # - join_window = "left"|"right" (moves the window into the neighbouring column; up/down do nothing)
 # - consume_or_expel_window = "left"|"right" (join, or split back out when already joined)
+# - toggle_fold (one key both ways: fold the selected window into the column beside it, or back
+#   out to the row it came from. Symmetric, unlike toggle_stack)
 # - toggle_stack (in a joined column: give every OTHER window its own column to the right;
 #   otherwise move the selected window into the column to its left)
 # - unjoin_windows (pop the selected window out of its column into a new column to the right)
@@ -372,7 +374,8 @@ comb1 = "Alt + Shift"
 
 "Alt + Shift + Left" = { join_window = "left" }
 "Alt + Shift + Right" = { join_window = "right" }
-"Alt + Comma" = "toggle_stack"
+"Alt + Comma" = "toggle_fold"
+"Alt + Shift + Comma" = "toggle_stack"
 "Alt + Ctrl + E" = "unjoin_windows"
 
 "Alt + Shift + Space" = "toggle_window_floating"
