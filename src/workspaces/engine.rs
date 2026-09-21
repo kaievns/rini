@@ -1507,25 +1507,20 @@ impl LayoutEngine {
         LayoutEventOutcome { response, app_rules }
     }
 
-    fn handle_event_inner(
+    /// Every window an app has on a space, as the app itself reports them.
+    ///
+    /// The authoritative list: windows missing from it are gone, and windows in it rini has not
+    /// placed are new. App rules are applied here, because this is where a window first arrives with
+    /// its bundle id and title known.
+    fn on_windows_on_screen_updated(
         &mut self,
         window_store: &mut WindowStore,
-        event: LayoutEvent,
+        space: SpaceId,
+        pid: pid_t,
+        windows_with_titles: Vec<OnScreenEntry>,
+        app_info: Option<AppInfo>,
         app_rule_outcome: &mut AppRuleOutcome,
     ) -> EventResponse {
-        debug!(?event);
-        match event {
-            LayoutEvent::SpaceExposed(space, size) => {
-                self.debug_tree(space);
-
-                let workspaces =
-                    self.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
-                for (id, _) in workspaces {
-                    let tree = &mut self.virtual_workspace_manager.workspaces[id].layout_system;
-                    self.workspace_layouts.ensure_active_for_workspace(space, size, id, tree);
-                }
-            }
-            LayoutEvent::WindowsOnScreenUpdated(space, pid, windows_with_titles, app_info) => {
                 self.debug_tree(space);
                 self.floating.clear_active_for_app(space, pid);
 
@@ -1669,6 +1664,36 @@ impl LayoutEngine {
                         ..EventResponse::default()
                     };
                 }
+        EventResponse::default()
+    }
+
+    fn handle_event_inner(
+        &mut self,
+        window_store: &mut WindowStore,
+        event: LayoutEvent,
+        app_rule_outcome: &mut AppRuleOutcome,
+    ) -> EventResponse {
+        debug!(?event);
+        match event {
+            LayoutEvent::SpaceExposed(space, size) => {
+                self.debug_tree(space);
+
+                let workspaces =
+                    self.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
+                for (id, _) in workspaces {
+                    let tree = &mut self.virtual_workspace_manager.workspaces[id].layout_system;
+                    self.workspace_layouts.ensure_active_for_workspace(space, size, id, tree);
+                }
+            }
+            LayoutEvent::WindowsOnScreenUpdated(space, pid, windows_with_titles, app_info) => {
+                return self.on_windows_on_screen_updated(
+                    window_store,
+                    space,
+                    pid,
+                    windows_with_titles,
+                    app_info,
+                    app_rule_outcome,
+                );
             }
             LayoutEvent::WindowDiscoveryCompleted(pid, app_id, discovered_spaces) => {
                 let ignored = self.discard_unmatched_candidates_for_app(
@@ -1766,14 +1791,8 @@ impl LayoutEngine {
         EventResponse::default()
     }
 
-    pub fn handle_command(
-        &mut self,
-        window_store: &mut WindowStore,
-        space: Option<SpaceId>,
-        visible_spaces: &[SpaceId],
-        visible_space_centers: &HashMap<SpaceId, CGPoint>,
-        command: LayoutCommand,
-    ) -> EventResponse {
+    /// What the tree looks like as a command arrives. Only ever read from a log.
+    fn debug_command_tree(&self, space: Option<SpaceId>) {
         if let Some(space) = space {
             if let Some(ws_id) = self.virtual_workspace_manager.active_workspace(space) {
                 if let Some(layout) = self.workspace_layouts.active(space, ws_id) {
@@ -1786,14 +1805,15 @@ impl LayoutEngine {
                 debug!("No active workspace for space {:?}", space);
             }
         }
-        let is_floating = if let Some(focus) = self.focused_window {
-            self.floating.is_floating(focus)
-        } else {
-            false
-        };
-        debug!(?self.focused_window, last_floating_focus=?self.floating.last_focus(), ?is_floating);
+    }
 
-        if let LayoutCommand::ToggleWindowFloating = &command {
+    /// Moves the focused window between the strip and the floating layer.
+    fn toggle_window_floating(
+        &mut self,
+        window_store: &mut WindowStore,
+        space: Option<SpaceId>,
+        is_floating: bool,
+    ) -> EventResponse {
             let Some(wid) = self.focused_window else {
                 return EventResponse::default();
             };
@@ -1838,12 +1858,19 @@ impl LayoutEngine {
                 debug!("Removed window {:?} from tiling tree, now floating", wid);
             }
             return EventResponse::default();
-        }
+    }
 
-        if let LayoutCommand::ToggleFullscreen | LayoutCommand::ToggleFullscreenWithinGaps =
-            &command
-            && is_floating
-        {
+    /// Fullscreens a FLOATING window, or takes it back out. `ToggleFullscreenWithinGaps` keeps the
+    /// layout's gaps around the window rather than covering the whole display.
+    ///
+    /// A tiled window does not come here: its own arm in `handle_command` handles it, which is why
+    /// the caller tests `is_floating` before calling rather than this deciding.
+    fn toggle_floating_fullscreen(
+        &mut self,
+        window_store: &WindowStore,
+        space: Option<SpaceId>,
+        command: &LayoutCommand,
+    ) -> EventResponse {
             let Some(wid) = self.focused_window else {
                 return EventResponse::default();
             };
@@ -1878,30 +1905,17 @@ impl LayoutEngine {
                 boundary_hit: None,
                 edge_hit: None,
             };
-        }
+    }
 
-        let Some(space) = space else {
-            return EventResponse::default();
-        };
-        let workspace_id = match self.virtual_workspace_manager.active_workspace(space) {
-            Some(id) => id,
-            None => {
-                warn!("No active virtual workspace for space {:?}", space);
-                return EventResponse::default();
-            }
-        };
-        let layout = match self.workspace_layouts.active(space, workspace_id) {
-            Some(id) => id,
-            None => {
-                warn!(
-                    "No active layout for workspace {:?} on space {:?}; command ignored",
-                    workspace_id, space
-                );
-                return EventResponse::default();
-            }
-        };
-
-        if let LayoutCommand::ToggleFocusFloating = &command {
+    /// Moves focus between the strip and the floating layer, without moving any window.
+    fn toggle_focus_floating(
+        &mut self,
+        window_store: &mut WindowStore,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+        layout: LayoutId,
+        is_floating: bool,
+    ) -> EventResponse {
             if is_floating {
                 let selection = self.workspace_tree(workspace_id).selected_window(layout);
                 let mut raise_windows =
@@ -1935,6 +1949,55 @@ impl LayoutEngine {
                 self.apply_focus_response(window_store, space, workspace_id, layout, &response);
                 return response;
             }
+    }
+
+    pub fn handle_command(
+        &mut self,
+        window_store: &mut WindowStore,
+        space: Option<SpaceId>,
+        visible_spaces: &[SpaceId],
+        visible_space_centers: &HashMap<SpaceId, CGPoint>,
+        command: LayoutCommand,
+    ) -> EventResponse {
+        self.debug_command_tree(space);
+        let is_floating = self.focused_window.is_some_and(|focus| self.floating.is_floating(focus));
+        debug!(?self.focused_window, last_floating_focus=?self.floating.last_focus(), ?is_floating);
+
+        if let LayoutCommand::ToggleWindowFloating = &command {
+            return self.toggle_window_floating(window_store, space, is_floating);
+        }
+
+        if let LayoutCommand::ToggleFullscreen | LayoutCommand::ToggleFullscreenWithinGaps = &command
+            && is_floating
+        {
+            return self.toggle_floating_fullscreen(window_store, space, &command);
+        }
+
+
+        let Some(space) = space else {
+            return EventResponse::default();
+        };
+        let workspace_id = match self.virtual_workspace_manager.active_workspace(space) {
+            Some(id) => id,
+            None => {
+                warn!("No active virtual workspace for space {:?}", space);
+                return EventResponse::default();
+            }
+        };
+        let layout = match self.workspace_layouts.active(space, workspace_id) {
+            Some(id) => id,
+            None => {
+                warn!(
+                    "No active layout for workspace {:?} on space {:?}; command ignored",
+                    workspace_id, space
+                );
+                return EventResponse::default();
+            }
+        };
+
+        if let LayoutCommand::ToggleFocusFloating = &command {
+            return self
+                .toggle_focus_floating(window_store, space, workspace_id, layout, is_floating);
         }
 
         match command {
@@ -2476,54 +2539,18 @@ impl LayoutEngine {
         self.workspace_tree(ws_id).selected_window(layout)
     }
 
-    pub fn handle_virtual_workspace_command(
+    /// Moves a window to another workspace on the same space, following it if asked.
+    ///
+    /// The window is whichever index was named, else the focused one. Following means the display
+    /// switches to the destination, which is why this cannot simply reassign and return.
+    fn move_window_to_workspace(
         &mut self,
         window_store: &mut WindowStore,
         space: SpaceId,
-        command: &LayoutCommand,
+        workspace: &WorkspaceSelector,
+        follow: bool,
+        maybe_id: &Option<u32>,
     ) -> EventResponse {
-        match command {
-            // Workspaces stack downward: the next one is below, the previous above. No step
-            // (the end with `prevent_wrapping`, or nothing left in that direction to skip to)
-            // reports the edge instead of silence.
-            LayoutCommand::NextWorkspace(skip_empty) => {
-                if let Some(current_workspace) =
-                    self.virtual_workspace_manager.active_workspace(space)
-                {
-                    if let Some(next_workspace) = self.virtual_workspace_manager.next_workspace(
-                        window_store,
-                        space,
-                        current_workspace,
-                        *skip_empty,
-                    ) {
-                        return self.activate_workspace(window_store, space, next_workspace, None);
-                    }
-                }
-                EventResponse { edge_hit: Some(Direction::Down), ..EventResponse::default() }
-            }
-            LayoutCommand::PrevWorkspace(skip_empty) => {
-                if let Some(current_workspace) =
-                    self.virtual_workspace_manager.active_workspace(space)
-                {
-                    if let Some(prev_workspace) = self.virtual_workspace_manager.prev_workspace(
-                        window_store,
-                        space,
-                        current_workspace,
-                        *skip_empty,
-                    ) {
-                        return self.activate_workspace(window_store, space, prev_workspace, None);
-                    }
-                }
-                EventResponse { edge_hit: Some(Direction::Up), ..EventResponse::default() }
-            }
-            LayoutCommand::SwitchToWorkspace(workspace_index) => {
-                self.switch_to_workspace(window_store, space, *workspace_index, None)
-            }
-            LayoutCommand::MoveWindowToWorkspace {
-                workspace,
-                follow,
-                window_id: maybe_id,
-            } => {
                 let focused_window = if let Some(spec_u32) = maybe_id {
                     match self.virtual_workspace_manager.find_window_by_idx(
                         window_store,
@@ -2633,7 +2660,7 @@ impl LayoutEngine {
                     );
                 }
 
-                if *follow {
+                if follow {
                     return self.activate_workspace(
                         window_store,
                         op_space,
@@ -2690,7 +2717,56 @@ impl LayoutEngine {
                     changed: true,
                     ..EventResponse::default()
                 }
+    }
+
+    pub fn handle_virtual_workspace_command(
+        &mut self,
+        window_store: &mut WindowStore,
+        space: SpaceId,
+        command: &LayoutCommand,
+    ) -> EventResponse {
+        match command {
+            // Workspaces stack downward: the next one is below, the previous above. No step
+            // (the end with `prevent_wrapping`, or nothing left in that direction to skip to)
+            // reports the edge instead of silence.
+            LayoutCommand::NextWorkspace(skip_empty) => {
+                if let Some(current_workspace) =
+                    self.virtual_workspace_manager.active_workspace(space)
+                {
+                    if let Some(next_workspace) = self.virtual_workspace_manager.next_workspace(
+                        window_store,
+                        space,
+                        current_workspace,
+                        *skip_empty,
+                    ) {
+                        return self.activate_workspace(window_store, space, next_workspace, None);
+                    }
+                }
+                EventResponse { edge_hit: Some(Direction::Down), ..EventResponse::default() }
             }
+            LayoutCommand::PrevWorkspace(skip_empty) => {
+                if let Some(current_workspace) =
+                    self.virtual_workspace_manager.active_workspace(space)
+                {
+                    if let Some(prev_workspace) = self.virtual_workspace_manager.prev_workspace(
+                        window_store,
+                        space,
+                        current_workspace,
+                        *skip_empty,
+                    ) {
+                        return self.activate_workspace(window_store, space, prev_workspace, None);
+                    }
+                }
+                EventResponse { edge_hit: Some(Direction::Up), ..EventResponse::default() }
+            }
+            LayoutCommand::SwitchToWorkspace(workspace_index) => {
+                self.switch_to_workspace(window_store, space, *workspace_index, None)
+            }
+            LayoutCommand::MoveWindowToWorkspace {
+                workspace,
+                follow,
+                window_id: maybe_id,
+            } => self.move_window_to_workspace(window_store, space, workspace, *follow, maybe_id),
             LayoutCommand::CreateWorkspace => {
                 match self.virtual_workspace_manager.create_workspace(space, None) {
                     Ok(_workspace_id) => {
