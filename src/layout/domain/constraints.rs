@@ -11,6 +11,29 @@ fn sanitize(v: f64) -> f64 {
     if v.is_finite() { v.max(0.0) } else { 0.0 }
 }
 
+/// `size` reduced to what the window will actually accept, never grown.
+///
+/// Applied to a maximized frame as well as an ordinary column slot. It used to apply only to the
+/// slot: a maximized window was handed the whole tiling width regardless of its maximum, while the
+/// strip reserved the CLAMPED width for its column, so the next column was laid out overlapping it.
+/// Both sides read this now, which is what makes them agree.
+pub fn clamp_to_constraints(
+    size: objc2_core_foundation::CGSize,
+    constraints: crate::layout::WindowLayoutConstraints,
+) -> objc2_core_foundation::CGSize {
+    let c = constraints.normalized();
+    let axis = |available: f64, horizontal: bool| {
+        let desired = c.fixed_for_axis(horizontal).unwrap_or(available).max(c.min_for_axis(horizontal));
+        let capped = if c.max_for_axis(horizontal) > 0.0 {
+            desired.min(c.max_for_axis(horizontal))
+        } else {
+            desired
+        };
+        capped.min(available).max(0.0)
+    };
+    objc2_core_foundation::CGSize::new(axis(size.width, true), axis(size.height, false))
+}
+
 /// Solve 1D segment lengths for a container axis.
 ///
 /// Rules:
@@ -139,10 +162,10 @@ pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
 
     if remaining <= f64::EPSILON {
         let used: f64 = lengths.iter().sum();
-        let drini = usable - used;
-        if drini.abs() > f64::EPSILON {
+        let drift = usable - used;
+        if drift.abs() > f64::EPSILON {
             if let Some(idx) = (0..n).rfind(|&idx| lengths[idx] > 0.0) {
-                lengths[idx] = (lengths[idx] + drini).max(0.0);
+                lengths[idx] = (lengths[idx] + drift).max(0.0);
             }
         }
     }
@@ -268,5 +291,68 @@ mod tests {
         assert_eq!(solved.len(), 2);
         assert!((solved[0] - 600.0).abs() < 0.001);
         assert!((solved[1] - 600.0).abs() < 0.001);
+    }
+}
+
+#[cfg(test)]
+mod clamp_tests {
+    use objc2_core_foundation::CGSize;
+
+    use super::clamp_to_constraints;
+    use crate::layout::WindowLayoutConstraints;
+
+    fn max_width(width: f64) -> WindowLayoutConstraints {
+        WindowLayoutConstraints { is_resizable: true, max_width: width, ..Default::default() }
+    }
+
+    #[test]
+    fn an_unconstrained_size_is_left_alone() {
+        let size = CGSize::new(1000.0, 800.0);
+        let got = clamp_to_constraints(size, WindowLayoutConstraints::default());
+        assert_eq!((got.width, got.height), (1000.0, 800.0));
+    }
+
+    // The maximized case: the whole tiling width offered to a window that will not take it.
+    #[test]
+    fn a_maximum_caps_the_size_offered() {
+        let got = clamp_to_constraints(CGSize::new(3008.0, 1692.0), max_width(800.0));
+        assert_eq!(got.width, 800.0, "a window that cannot be 3008 wide must not be told it is");
+        assert_eq!(got.height, 1692.0, "the other axis is unconstrained");
+    }
+
+    #[test]
+    fn a_fixed_size_wins_over_what_is_offered() {
+        let fixed = WindowLayoutConstraints {
+            is_resizable: false,
+            locked_width: 600.0,
+            locked_height: 400.0,
+            ..Default::default()
+        };
+        let got = clamp_to_constraints(CGSize::new(3008.0, 1692.0), fixed);
+        assert_eq!((got.width, got.height), (600.0, 400.0));
+    }
+
+    // Never GROWN: the frame is a slot the window has to fit inside, so a minimum larger than the
+    // slot cannot push it out of the slot. Overlap is worse than a window smaller than it asked for.
+    #[test]
+    fn a_minimum_larger_than_the_slot_does_not_grow_past_it() {
+        let min = WindowLayoutConstraints {
+            is_resizable: true,
+            min_width: 900.0,
+            ..Default::default()
+        };
+        assert_eq!(clamp_to_constraints(CGSize::new(400.0, 400.0), min).width, 400.0);
+    }
+
+    #[test]
+    fn a_negative_or_absurd_constraint_cannot_produce_a_negative_size() {
+        let junk = WindowLayoutConstraints {
+            is_resizable: true,
+            min_width: -50.0,
+            max_width: -10.0,
+            ..Default::default()
+        };
+        let got = clamp_to_constraints(CGSize::new(500.0, 500.0), junk);
+        assert!(got.width >= 0.0 && got.height >= 0.0, "got {got:?}");
     }
 }

@@ -8,11 +8,23 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::layout::settings::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
-use crate::layout::domain::constraints::{AxisConstraints, solve_axis_lengths};
+use crate::layout::domain::constraints::{AxisConstraints, clamp_to_constraints, solve_axis_lengths};
 use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, gap_share, reveal_offset};
 use crate::layout::{LayoutSystem, WindowLayoutConstraints};
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
+
+/// Where a maximized window sat in its column stack, so a second press can put it back.
+///
+/// A neighbour rather than an index: while the window is maximized its old column can move along
+/// the strip, gain windows or lose them, and an index would point somewhere else by then.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+struct StackOrigin {
+    /// A window that stayed behind in the column.
+    anchor: WindowId,
+    /// It sat below the anchor rather than above it.
+    below: bool,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 struct Column {
@@ -57,6 +69,9 @@ struct LayoutState {
     #[serde(skip, default = "default_atomic")]
     overscroll_accumulation: AtomicU64,
     fullscreen_within_gaps: HashSet<WindowId>,
+    /// Only for windows pulled out of a stack to be maximized.
+    #[serde(default)]
+    stack_origins: HashMap<WindowId, StackOrigin>,
 }
 
 impl LayoutState {
@@ -76,11 +91,76 @@ impl LayoutState {
             last_center_offset_delta_px: AtomicU64::new(0.0f64.to_bits()),
             overscroll_accumulation: AtomicU64::new(0.0f64.to_bits()),
             fullscreen_within_gaps: HashSet::default(),
+            stack_origins: HashMap::default(),
         }
     }
 
     fn first_window(&self) -> Option<WindowId> {
         self.columns.first().and_then(|c| c.windows.first()).copied()
+    }
+
+    /// Pull `wid` out of a shared column into its own, immediately to the right.
+    ///
+    /// `None` when it was alone in its column and there was nothing to pull it out of. Otherwise the
+    /// neighbour to put it back beside, which the caller keeps until the window is restored.
+    fn extract_from_stack(&mut self, wid: WindowId) -> Option<StackOrigin> {
+        let (col_idx, row_idx) = self.locate(wid)?;
+        if self.columns[col_idx].windows.len() <= 1 {
+            return None;
+        }
+        // Taken before the removal, while the neighbours are still where they were.
+        let origin = if row_idx > 0 {
+            StackOrigin { anchor: self.columns[col_idx].windows[row_idx - 1], below: true }
+        } else {
+            StackOrigin { anchor: self.columns[col_idx].windows[row_idx + 1], below: false }
+        };
+        self.columns[col_idx].ensure_height_weights();
+        self.columns[col_idx].windows.remove(row_idx);
+        let weight = self.columns[col_idx].height_weights.remove(row_idx);
+        let insert_at = (col_idx + 1).min(self.columns.len());
+        self.columns.insert(
+            insert_at,
+            Column {
+                windows: vec![wid],
+                width_offset: 0.0,
+                width_overridden: false,
+                height_weights: vec![weight],
+            },
+        );
+        Some(origin)
+    }
+
+    /// Put `wid` back beside the neighbour it was pulled away from.
+    ///
+    /// `false` when the anchor is gone, in which case the window stays the column it became: there
+    /// is no stack left to rejoin, and inventing one would put it somewhere the user never had it.
+    fn restore_into_stack(&mut self, wid: WindowId, origin: StackOrigin) -> bool {
+        let Some((anchor_col, _)) = self.locate(origin.anchor) else {
+            return false;
+        };
+        let Some((col_idx, row_idx)) = self.locate(wid) else {
+            return false;
+        };
+        if col_idx == anchor_col {
+            return false;
+        }
+        self.columns[col_idx].ensure_height_weights();
+        self.columns[col_idx].windows.remove(row_idx);
+        let weight = self.columns[col_idx].height_weights.remove(row_idx);
+        if self.columns[col_idx].windows.is_empty() {
+            self.columns.remove(col_idx);
+        }
+        // Located again: removing the column above may have shifted the anchor's own index.
+        let Some((anchor_col, anchor_row)) = self.locate(origin.anchor) else {
+            return false;
+        };
+        let at = if origin.below { anchor_row + 1 } else { anchor_row };
+        let column = &mut self.columns[anchor_col];
+        column.ensure_height_weights();
+        let at = at.min(column.windows.len());
+        column.windows.insert(at, wid);
+        column.height_weights.insert(at, weight);
+        true
     }
 
     fn locate(&self, wid: WindowId) -> Option<(usize, usize)> {
@@ -178,6 +258,10 @@ impl LayoutState {
             self.columns.remove(col_idx);
         }
         self.fullscreen_within_gaps.remove(&wid);
+        self.stack_origins.remove(&wid);
+        // An origin anchored on a window that has closed cannot be restored into, and keeping it
+        // would send the next un-maximize hunting for a window that is gone.
+        self.stack_origins.retain(|_, origin| origin.anchor != wid);
 
         if self.selected == Some(wid) {
             self.selected = None;
@@ -303,6 +387,7 @@ impl Clone for LayoutState {
                 self.overscroll_accumulation.load(Ordering::Relaxed),
             ),
             fullscreen_within_gaps: self.fullscreen_within_gaps.clone(),
+            stack_origins: self.stack_origins.clone(),
         }
     }
 }
@@ -982,28 +1067,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         CGPoint::new(x.round(), tiling.origin.y.round()),
                         CGSize::new(tiling.size.width.round(), tiling.size.height.round()),
                     );
-                } else if let Some(c) = constraints.get(wid).copied() {
-                    let c = c.normalized();
-                    let desired_w = c
-                        .fixed_for_axis(true)
-                        .unwrap_or(frame.size.width)
-                        .max(c.min_for_axis(true));
-                    let desired_h = c
-                        .fixed_for_axis(false)
-                        .unwrap_or(frame.size.height)
-                        .max(c.min_for_axis(false));
-                    let desired_w = if c.max_for_axis(true) > 0.0 {
-                        desired_w.min(c.max_for_axis(true))
-                    } else {
-                        desired_w
-                    };
-                    let desired_h = if c.max_for_axis(false) > 0.0 {
-                        desired_h.min(c.max_for_axis(false))
-                    } else {
-                        desired_h
-                    };
-                    frame.size.width = desired_w.min(frame.size.width).max(0.0);
-                    frame.size.height = desired_h.min(frame.size.height).max(0.0);
+                }
+                if let Some(c) = constraints.get(wid).copied() {
+                    frame.size = clamp_to_constraints(frame.size, c);
                 }
                 out.push((*wid, frame));
                 y_cursor += row_height;
@@ -1128,6 +1194,14 @@ impl LayoutSystem for ScrollingLayoutSystem {
             }
             if state.fullscreen_within_gaps.remove(&from) {
                 state.fullscreen_within_gaps.insert(to);
+            }
+            if let Some(origin) = state.stack_origins.remove(&from) {
+                state.stack_origins.insert(to, origin);
+            }
+            for origin in state.stack_origins.values_mut() {
+                if origin.anchor == from {
+                    origin.anchor = to;
+                }
             }
         }
     }
@@ -1462,9 +1536,21 @@ impl LayoutSystem for ScrollingLayoutSystem {
             return Vec::new();
         };
 
-        if !state.fullscreen_within_gaps.remove(&selected) {
+        if state.fullscreen_within_gaps.remove(&selected) {
+            // Back where it came from, if that place still exists. A window that was alone in its
+            // column has no origin and simply stops being maximized.
+            if let Some(origin) = state.stack_origins.remove(&selected) {
+                state.restore_into_stack(selected, origin);
+            }
+        } else {
+            // A maximized window fills the tiling area, which would cover the siblings sharing its
+            // column. Pull it out first, so what is on screen matches what the tree says.
+            if let Some(origin) = state.extract_from_stack(selected) {
+                state.stack_origins.insert(selected, origin);
+            }
             state.fullscreen_within_gaps.insert(selected);
         }
+        state.selected = Some(selected);
 
         // Rescroll so the resized column stays visible, as the resize path does.
         if niri_navigation {
@@ -1481,7 +1567,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
     /// niri's switch-preset-column-width. Unlike ResizeWindowGrow/Shrink, which
     /// step by a fixed ~5% and leave columns at arbitrary in-between widths, this
     /// snaps to a known set — so every column ends up at one of a few predictable
-    /// sizes instead of driniing.
+    /// sizes instead of drifting.
     ///
     /// Widths are stored as `width_offset` relative to `column_width_ratio`, the
     /// same representation the resize path uses, so nothing else needs to know
@@ -3213,6 +3299,155 @@ mod tests {
         assert!(
             h1 > 100.0,
             "the pre-existing window must not collapse to a title bar, got height {h1}"
+        );
+    }
+    /// The shape of the strip: one inner vec per column, windows top to bottom.
+    fn shape(system: &ScrollingLayoutSystem, layout: LayoutId) -> Vec<Vec<WindowId>> {
+        system
+            .layout_state(layout)
+            .expect("layout")
+            .columns
+            .iter()
+            .map(|column| column.windows.clone())
+            .collect()
+    }
+
+    fn stacked_three(settings: ScrollingLayoutSettings) -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+        for id in w {
+            system.add_window_after_selection(layout, id);
+        }
+        // Pull w2 and w3 into w1's column, so the strip is one column of three.
+        assert!(system.select_window(layout, w[1]));
+        system.join_selection_with_direction(layout, Direction::Left);
+        assert!(system.select_window(layout, w[2]));
+        system.join_selection_with_direction(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]], "fixture is one stack");
+        (system, layout, w)
+    }
+
+    /// Maximizing a stacked window used to leave it in the column, where it covered the siblings it
+    /// was sharing with: the tree said three windows abreast and the screen showed one.
+    #[test]
+    fn maximizing_a_stacked_window_pulls_it_out_of_the_stack() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[2]], vec![w[1]]],
+            "the maximized window gets its own column and the stack closes up"
+        );
+        assert!(system.is_window_full_width(layout, w[1]));
+    }
+
+    #[test]
+    fn a_second_press_puts_it_back_between_the_windows_it_left() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]], "back in its old row");
+        assert!(!system.is_window_full_width(layout, w[1]));
+    }
+
+    // Row 0 has no window above it, so the anchor is the one BELOW and it has to be restored in
+    // front of it rather than after it.
+    #[test]
+    fn the_top_of_a_stack_goes_back_to_the_top() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[0]));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![w[1], w[2]], vec![w[0]]]);
+
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]], "back on top, not below");
+    }
+
+    /// The "if available" half. Every window it could go back beside has closed, so it stays the
+    /// column it became rather than being put somewhere the user never had it.
+    #[test]
+    fn a_window_whose_stack_is_gone_stays_its_own_column() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        system.remove_window(w[0]);
+        system.remove_window(w[2]);
+
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![w[1]]]);
+        assert!(!system.is_window_full_width(layout, w[1]), "it still stops being maximized");
+    }
+
+    // The anchor closing must not leave an origin pointing at it: restoring into a window that is
+    // gone is how a stale record turns into a window in the wrong place.
+    #[test]
+    fn closing_the_anchor_alone_leaves_the_rest_of_the_stack_reachable() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        // w0 was the anchor, being directly above w1.
+        system.remove_window(w[0]);
+
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![w[2]], vec![w[1]]], "no stack to rejoin");
+    }
+
+    // A window alone in its column has nothing to be pulled out of, which is the common case and
+    // must not gain a column on every press.
+    #[test]
+    fn maximizing_a_lone_window_does_not_reshape_the_strip() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (a, b) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, a);
+        system.add_window_after_selection(layout, b);
+
+        assert!(system.select_window(layout, a));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![a], vec![b]]);
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        assert_eq!(shape(&system, layout), vec![vec![a], vec![b]]);
+    }
+
+    /// The reservation and the frame have to agree. The strip reserved the CLAMPED width for the
+    /// column while the window was handed the whole tiling width, so the next column was laid out
+    /// on top of it.
+    #[test]
+    fn a_maximized_window_that_cannot_fill_the_viewport_does_not_overlap_the_next_column() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (narrow, next) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, narrow);
+        system.add_window_after_selection(layout, next);
+
+        assert!(system.select_window(layout, narrow));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+
+        let mut constraints = HashMap::default();
+        constraints.insert(
+            narrow,
+            WindowLayoutConstraints { is_resizable: true, max_width: 400.0, ..Default::default() },
+        );
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
+
+        let maximized = frame_for(&frames, narrow);
+        let neighbour = frame_for(&frames, next);
+        assert_eq!(maximized.size.width, 400.0, "it cannot be wider than it says");
+        assert!(
+            maximized.origin.x + maximized.size.width <= neighbour.origin.x + 1.0,
+            "maximized {maximized:?} runs into the next column at {neighbour:?}"
         );
     }
 }

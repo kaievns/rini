@@ -20,6 +20,22 @@ is borrowed.
   width it was. It is deleted rather than fixed, because macOS's own fullscreen
   already covers "cover everything". A window that fills the tiling area is a
   full-width COLUMN, which is what niri means by `maximize-column`.
+- **A maximized window never outgrows the space reserved for it.** The column's
+  reserved width is clamped to what its windows accept; the frame was not, so a
+  window with a maximum width was handed the whole tiling width and the next
+  column was laid out on top of it. Both sides read
+  `constraints::clamp_to_constraints` now. A minimum larger than the slot does
+  not grow the window past it — overlap is worse than a window smaller than it
+  asked for.
+- **Maximizing a stacked window pulls it out of the stack.** It fills the tiling
+  area, which would otherwise cover the siblings sharing its column while the
+  tree still claimed they were abreast. It becomes its own column immediately to
+  the right, and a second press puts it back beside the neighbour it left
+  (`StackOrigin`). A neighbour is remembered rather than a row index, because
+  while the window is maximized its old column can move along the strip or
+  change size. If every window it could return to has closed, it stays the
+  column it became rather than being put somewhere the user never had it.
+  The move rides the ordinary layout pass, so it animates like a join or unjoin.
 - **Inner gaps are absorbed into the column width so N columns of ratio 1/N
   fit.** Without it two 0.5 columns need `2*(0.5*W) + gap`, one gap more than
   the viewport; the second column is never fully visible, reveal-on-demand
