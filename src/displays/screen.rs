@@ -1,0 +1,984 @@
+use std::cmp::Ordering;
+use std::f64;
+use std::mem::MaybeUninit;
+
+type CGDirectDisplayID = u32;
+use std::ptr::NonNull;
+
+use objc2::rc::Retained;
+use objc2::{ClassType, msg_send};
+use objc2_app_kit::NSScreen;
+use objc2_core_foundation::{
+    CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize,
+};
+use objc2_core_graphics::{CGDisplayBounds, CGError, CGGetActiveDisplayList, CGMainDisplayID};
+use objc2_foundation::{MainThreadMarker, NSArray, NSNumber, ns_string};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
+
+use rini_skylight_sys::{
+    CFRelease, CFUUIDCreateFromString, CFUUIDCreateString, CGDisplayCreateUUIDFromDisplayID,
+    CGDisplayGetDisplayIDFromUUID, CGSCopyBestManagedDisplayForRect, CGSCopyManagedDisplaySpaces,
+    CGSCopyManagedDisplays, CGSCopySpaces, CGSGetActiveSpace, CGSManagedDisplayGetCurrentSpace,
+    CGSSpaceMask, CoreDockGetAutoHideEnabled, CoreDockGetOrientationAndPinning, G_CONNECTION,
+    SLSCopyActiveMenuBarDisplayIdentifier, SLSGetDisplayMenubarHeight, SLSGetDockRectWithReason,
+    SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode, SLSMainConnectionID,
+};
+use rustc_hash::FxHashMap as HashMap;
+use rini_geometry::CGRectDef;
+use rini_core::ids::{ScreenId, SpaceId};
+
+#[derive(Debug, Clone)]
+struct ScreenState {
+    screens: Vec<ScreenInfo>,
+    converter: CoordinateConverter,
+}
+
+pub struct ScreenCache<S: System = Actual> {
+    system: S,
+    uuids: Vec<CFRetained<CFString>>,
+    state: Option<ScreenState>,
+    pending_generation: u64,
+    processed_generation: u64,
+    sleeping: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenInfo {
+    pub id: ScreenId,
+    #[serde(with = "CGRectDef")]
+    pub frame: CGRect,
+    pub display_uuid: String,
+    pub name: Option<String>,
+    pub space: Option<SpaceId>,
+}
+
+impl ScreenInfo {
+    pub fn display_uuid_opt(&self) -> Option<&str> {
+        if self.display_uuid.is_empty() {
+            None
+        } else {
+            Some(self.display_uuid.as_str())
+        }
+    }
+
+    pub fn display_uuid_owned(&self) -> Option<String> {
+        self.display_uuid_opt().map(|uuid| uuid.to_string())
+    }
+}
+
+impl ScreenCache<Actual> {
+    pub fn new(mtm: MainThreadMarker) -> Self {
+        Self::new_with(Actual { mtm })
+    }
+}
+
+impl<S: System> ScreenCache<S> {
+    fn new_with(system: S) -> ScreenCache<S> {
+        ScreenCache {
+            system,
+            uuids: Vec::new(),
+            state: None,
+            pending_generation: 0,
+            processed_generation: 0,
+            sleeping: false,
+        }
+    }
+
+    pub fn mark_dirty(&mut self) {
+        self.pending_generation = self.pending_generation.wrapping_add(1);
+    }
+
+    pub fn mark_sleeping(&mut self, sleeping: bool) {
+        self.sleeping = sleeping;
+        if !sleeping {
+            self.mark_dirty();
+        }
+    }
+
+    pub fn refresh(&mut self) -> Option<(Vec<ScreenInfo>, CoordinateConverter)> {
+        self.refresh_snapshot(false).map(|s| (s.screens, s.converter))
+    }
+
+    fn refresh_snapshot(&mut self, force: bool) -> Option<ScreenState> {
+        if self.sleeping {
+            return self.state.clone();
+        }
+
+        let dirty = self.pending_generation != self.processed_generation;
+        let should_rebuild = force || self.state.is_none() || dirty;
+
+        if !should_rebuild {
+            // Even when displays are unchanged, the active space per display can change.
+            // Recompute spaces against cached UUIDs to avoid stale space ids.
+            let spaces: Vec<Option<SpaceId>> = self
+                .uuids
+                .iter()
+                .map(|screen| unsafe {
+                    CGSManagedDisplayGetCurrentSpace(
+                        SLSMainConnectionID(),
+                        CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
+                    )
+                })
+                .map(|id| if id == 0 { None } else { Some(SpaceId::new(id)) })
+                .collect();
+
+            if let Some(state) = self.state.clone() {
+                let screens = state
+                    .screens
+                    .into_iter()
+                    .zip(spaces)
+                    .map(|(mut screen, space)| {
+                        screen.space = space;
+                        screen
+                    })
+                    .collect();
+                return Some(ScreenState { screens, ..state });
+            }
+            return None;
+        }
+
+        let ns_screens = self.system.ns_screens();
+        debug!("ns_screens={ns_screens:?}");
+        let mut cg_screens = self.system.cg_screens().ok()?;
+        debug!("cg_screens={cg_screens:?}");
+
+        if cg_screens.is_empty() {
+            self.uuids.clear();
+            let state = ScreenState {
+                screens: Vec::new(),
+                converter: CoordinateConverter::default(),
+            };
+            self.state = Some(state.clone());
+            self.processed_generation = self.pending_generation;
+            return Some(state);
+        }
+
+        cg_screens.sort_by(|a, b| {
+            let x_order = a.bounds.origin.x.total_cmp(&b.bounds.origin.x);
+            if x_order == Ordering::Equal {
+                a.bounds.origin.y.total_cmp(&b.bounds.origin.y)
+            } else {
+                x_order
+            }
+        });
+
+        let main_id = CGMainDisplayID();
+        if let Some(main_screen_idx) = cg_screens.iter().position(|s| s.cg_id.as_u32() == main_id) {
+            cg_screens.swap(0, main_screen_idx);
+        } else {
+            warn!("Could not find main screen. cg_screens={cg_screens:?}");
+        }
+
+        let uuids: Vec<CFRetained<CFString>> =
+            cg_screens.iter().map(|screen| self.system.display_uuid(screen)).collect();
+        let uuid_strings: Vec<String> = uuids.iter().map(|uuid| uuid.to_string()).collect();
+
+        let union_max_y = cg_screens
+            .iter()
+            .map(|screen| screen.bounds.max().y)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let converter = CoordinateConverter { screen_height: union_max_y };
+
+        let screens: Vec<ScreenInfo> = cg_screens
+            .iter()
+            .enumerate()
+            .map(|(idx, &CGScreenInfo { cg_id, bounds })| {
+                let notch_height = self.system.notch_height(cg_id.as_u32());
+                let frame = constrain_display_bounds(cg_id.as_u32(), bounds, notch_height);
+                let display_uuid =
+                    uuid_strings.get(idx).cloned().filter(|uuid| !uuid.is_empty()).unwrap_or_else(
+                        || {
+                            warn!("Missing cached UUID for {:?}; using fallback", cg_id);
+                            format!("cgdisplay-{}", cg_id.as_u32())
+                        },
+                    );
+                ScreenInfo {
+                    id: cg_id,
+                    frame,
+                    display_uuid,
+                    name: ns_screens.iter().find(|s| s.cg_id == cg_id).and_then(|s| s.name.clone()),
+                    space: None,
+                }
+            })
+            .collect();
+
+        let spaces: Vec<Option<SpaceId>> = uuids
+            .iter()
+            .map(|screen| unsafe {
+                CGSManagedDisplayGetCurrentSpace(
+                    SLSMainConnectionID(),
+                    CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
+                )
+            })
+            .map(|id| if id == 0 { None } else { Some(SpaceId::new(id)) })
+            .collect();
+
+        self.uuids = uuids;
+        self.processed_generation = self.pending_generation;
+        let screens = screens
+            .into_iter()
+            .zip(spaces)
+            .map(|(mut screen, space)| {
+                screen.space = space;
+                screen
+            })
+            .collect();
+        self.state = Some(ScreenState { screens, converter });
+        self.state.clone()
+    }
+}
+
+const DOCK_ORIENTATION_LEFT: i32 = 1;
+const DOCK_ORIENTATION_BOTTOM: i32 = 2;
+const DOCK_ORIENTATION_RIGHT: i32 = 3;
+
+fn menu_bar_hidden() -> bool {
+    let mut status = 0;
+    unsafe { SLSGetMenuBarAutohideEnabled(*G_CONNECTION, &mut status) };
+    status != 0
+}
+
+fn menu_bar_height(did: u32) -> f64 {
+    let mut height: u32 = 0;
+    unsafe { SLSGetDisplayMenubarHeight(did, &mut height) };
+    height as f64
+}
+
+fn menu_bar_inset(hidden: bool, height: f64, notch_height: f64) -> f64 {
+    if hidden {
+        // An auto-hidden menu bar does not reserve space on displays without a notch.
+        // Notched built-in displays must retain their safe-area inset.
+        notch_height
+    } else {
+        // macOS reports the menubar height without the topmost usable pixel; add 1 to
+        // avoid leaving a dead strip or placing windows under the bar.
+        height + 1.0
+    }
+}
+
+fn dock_hidden() -> bool {
+    unsafe { CoreDockGetAutoHideEnabled() }
+}
+
+fn dock_orientation() -> i32 {
+    let mut orientation = 0;
+    let mut pinning = 0;
+    unsafe { CoreDockGetOrientationAndPinning(&mut orientation, &mut pinning) };
+    orientation
+}
+
+fn dock_rect() -> CGRect {
+    let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0));
+    let mut reason = 0;
+    unsafe { SLSGetDockRectWithReason(*G_CONNECTION, &mut rect, &mut reason) };
+    rect
+}
+
+fn dock_rect_with_reason() -> (CGRect, i32) {
+    let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0));
+    let mut reason = 0;
+    unsafe { SLSGetDockRectWithReason(*G_CONNECTION, &mut rect, &mut reason) };
+    (rect, reason)
+}
+
+fn dock_display_id() -> Option<u32> {
+    unsafe {
+        let dock = dock_rect();
+        let uuid_ref = CGSCopyBestManagedDisplayForRect(*G_CONNECTION, dock);
+        if uuid_ref.is_null() {
+            return None;
+        }
+        let uuid = CFUUIDCreateFromString(std::ptr::null_mut(), uuid_ref);
+        if uuid.is_null() {
+            CFRelease(uuid_ref as *mut _);
+            return None;
+        }
+        let did = CGDisplayGetDisplayIDFromUUID(uuid);
+        CFRelease(uuid as *mut _);
+        CFRelease(uuid_ref as *mut _);
+        if did == 0 { None } else { Some(did) }
+    }
+}
+
+fn rects_intersect(a: &CGRect, b: &CGRect) -> bool {
+    let ax2 = a.origin.x + a.size.width;
+    let ay2 = a.origin.y + a.size.height;
+    let bx2 = b.origin.x + b.size.width;
+    let by2 = b.origin.y + b.size.height;
+
+    !(ax2 <= b.origin.x || bx2 <= a.origin.x || ay2 <= b.origin.y || by2 <= a.origin.y)
+}
+
+fn constrain_display_bounds(did: u32, raw: CGRect, notch_height: f64) -> CGRect {
+    let mut frame = raw;
+
+    let menu_bar_inset = menu_bar_inset(menu_bar_hidden(), menu_bar_height(did), notch_height);
+    if menu_bar_inset > 0.0 {
+        frame.origin.y += menu_bar_inset;
+        frame.size.height = (frame.size.height - menu_bar_inset).max(0.0);
+    }
+
+    let auto_hide = dock_hidden();
+    let (dock, dock_reason) = dock_rect_with_reason();
+
+    let dock_display = dock_display_id();
+
+    let dock_visible = (!auto_hide || dock_reason == 0)
+        && dock_display.map(|dock_did| dock_did == did).unwrap_or(false)
+        && rects_intersect(&frame, &dock);
+
+    if dock_visible {
+        match dock_orientation() {
+            DOCK_ORIENTATION_LEFT => {
+                frame.origin.x += dock.size.width;
+                frame.size.width = (frame.size.width - dock.size.width).max(0.0);
+            }
+            DOCK_ORIENTATION_RIGHT => {
+                frame.size.width = (frame.size.width - dock.size.width).max(0.0);
+            }
+            DOCK_ORIENTATION_BOTTOM => {
+                frame.size.height = (frame.size.height - dock.size.height).max(0.0);
+            }
+            _ => {
+                if dock.size.width > dock.size.height {
+                    frame.origin.y += dock.size.height;
+                    frame.size.height = (frame.size.height - dock.size.height).max(0.0);
+                } else {
+                    frame.origin.x += dock.size.width;
+                    frame.size.width = (frame.size.width - dock.size.width).max(0.0);
+                }
+            }
+        }
+    }
+
+    frame
+}
+
+/// Converts between Quartz and Cocoa coordinate systems.
+#[derive(Clone, Copy, Debug)]
+pub struct CoordinateConverter {
+    /// The y offset of the Cocoa origin in the Quartz coordinate system, and
+    /// vice versa. This is the height of the first screen. The origins
+    /// are the bottom left and top left of the screen, respectively.
+    screen_height: f64,
+}
+
+/// Creates a `CoordinateConverter` that returns None for any conversion.
+impl Default for CoordinateConverter {
+    fn default() -> Self {
+        Self { screen_height: f64::NAN }
+    }
+}
+
+impl CoordinateConverter {
+    pub fn from_height(height: f64) -> Self {
+        Self { screen_height: height }
+    }
+
+    pub fn from_screen(screen: &NSScreen) -> Option<Self> {
+        let screen_id = screen.get_number().ok()?;
+        let bounds = CGDisplayBounds(screen_id.as_u32());
+        Some(Self::from_height(bounds.origin.y + bounds.size.height))
+    }
+
+    pub fn screen_height(&self) -> Option<f64> {
+        if self.screen_height.is_nan() {
+            None
+        } else {
+            Some(self.screen_height)
+        }
+    }
+
+    pub fn convert_point(&self, point: CGPoint) -> Option<CGPoint> {
+        if self.screen_height.is_nan() {
+            return None;
+        }
+        Some(CGPoint::new(point.x, self.screen_height - point.y))
+    }
+
+    pub fn convert_rect(&self, rect: CGRect) -> Option<CGRect> {
+        if self.screen_height.is_nan() {
+            return None;
+        }
+        Some(CGRect::new(
+            CGPoint::new(rect.origin.x, self.screen_height - rect.max().y),
+            rect.size,
+        ))
+    }
+}
+
+#[allow(private_interfaces)]
+pub trait System {
+    fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError>;
+    fn display_uuid(&self, screen: &CGScreenInfo) -> CFRetained<CFString>;
+    fn ns_screens(&self) -> Vec<NSScreenInfo>;
+    fn notch_height(&self, _did: u32) -> f64 {
+        0.0
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CGScreenInfo {
+    cg_id: ScreenId,
+    bounds: CGRect,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct NSScreenInfo {
+    frame: CGRect,
+    visible_frame: CGRect,
+    cg_id: ScreenId,
+    name: Option<String>,
+}
+
+pub struct Actual {
+    mtm: MainThreadMarker,
+}
+#[allow(private_interfaces)]
+impl System for Actual {
+    fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError> {
+        const MAX_SCREENS: usize = 64;
+        let mut ids: MaybeUninit<[CGDirectDisplayID; MAX_SCREENS]> = MaybeUninit::uninit();
+        let mut count: u32 = 0;
+        let ids = unsafe {
+            let err = CGGetActiveDisplayList(
+                MAX_SCREENS as u32,
+                ids.as_mut_ptr() as *mut CGDirectDisplayID,
+                &mut count,
+            );
+            if err != CGError::Success {
+                return Err(err);
+            }
+            std::slice::from_raw_parts(ids.as_ptr() as *const u32, count as usize)
+        };
+        Ok(ids
+            .iter()
+            .map(|&cg_id| CGScreenInfo {
+                cg_id: ScreenId::new(cg_id),
+                bounds: CGDisplayBounds(cg_id),
+            })
+            .collect())
+    }
+
+    fn display_uuid(&self, screen: &CGScreenInfo) -> CFRetained<CFString> {
+        unsafe {
+            if let Some(uuid) = NonNull::new(CGDisplayCreateUUIDFromDisplayID(screen.cg_id.as_u32())) {
+                let uuid_str = CFUUIDCreateString(std::ptr::null_mut(), uuid.as_ptr());
+                CFRelease(uuid.as_ptr());
+                if let Some(uuid_str) = NonNull::new(uuid_str) {
+                    return CFRetained::from_raw(uuid_str);
+                } else {
+                    warn!(
+                        "CGDisplayCreateUUIDFromDisplayID returned invalid string for {:?}",
+                        screen
+                    );
+                }
+            } else {
+                warn!(
+                    "CGDisplayCreateUUIDFromDisplayID returned null for display {:?}",
+                    screen.cg_id
+                );
+            }
+            let managed = CGSCopyBestManagedDisplayForRect(SLSMainConnectionID(), screen.bounds);
+            if let Some(managed) = NonNull::new(managed) {
+                CFRetained::from_raw(managed)
+            } else {
+                warn!(
+                    "CGSCopyBestManagedDisplayForRect returned null for display {:?}",
+                    screen.cg_id
+                );
+                CFString::from_str("")
+            }
+        }
+    }
+
+    fn ns_screens(&self) -> Vec<NSScreenInfo> {
+        NSScreen::screens(self.mtm)
+            .iter()
+            .flat_map(|s| {
+                let name = s.localizedName().to_string();
+                Some(NSScreenInfo {
+                    frame: s.frame(),
+                    visible_frame: s.visibleFrame(),
+                    cg_id: s.get_number().ok()?,
+                    name: Some(name),
+                })
+            })
+            .collect()
+    }
+
+    fn notch_height(&self, did: u32) -> f64 {
+        let screens = NSScreen::screens(self.mtm);
+        let builtin = unsafe { rini_skylight_sys::CGDisplayIsBuiltin(did) };
+        if !builtin {
+            return 0.0;
+        }
+
+        for screen in screens {
+            if let Ok(screen_id) = screen.get_number() {
+                if screen_id.as_u32() == did {
+                    #[allow(deprecated)]
+                    let insets = screen.safeAreaInsets();
+                    return insets.top;
+                }
+            }
+        }
+        0.0
+    }
+}
+
+
+
+
+pub trait NSScreenExt {
+    fn get_number(&self) -> Result<ScreenId, ()>;
+}
+impl NSScreenExt for NSScreen {
+    fn get_number(&self) -> Result<ScreenId, ()> {
+        let desc = self.deviceDescription();
+        match desc.objectForKey(ns_string!("NSScreenNumber")) {
+            Some(val) if unsafe { msg_send![&*val, isKindOfClass:NSNumber::class() ] } => {
+                let number: &NSNumber = unsafe { std::mem::transmute(val) };
+                Ok(ScreenId::new(number.as_u32()))
+            }
+            val => {
+                warn!(
+                    "Could not get NSScreenNumber for screen with name {:?}: {:?}",
+                    self.localizedName(),
+                    val,
+                );
+                Err(())
+            }
+        }
+    }
+}
+
+pub fn get_active_space_number() -> Option<SpaceId> {
+    active_menu_bar_display_uuid().and_then(|uuid| current_space_for_display_uuid(&uuid))
+}
+
+pub fn active_menu_bar_display_uuid() -> Option<String> {
+    Some(
+        unsafe {
+            CFRetained::<CFString>::from_raw(NonNull::new(SLSCopyActiveMenuBarDisplayIdentifier(
+                SLSMainConnectionID(),
+            ))?)
+        }
+        .to_string(),
+    )
+}
+
+pub fn current_space_for_display_uuid(display_uuid: &str) -> Option<SpaceId> {
+    if display_uuid.is_empty() {
+        return None;
+    }
+
+    let uuid = objc2_core_foundation::CFString::from_str(display_uuid);
+    let id = unsafe {
+        CGSManagedDisplayGetCurrentSpace(
+            SLSMainConnectionID(),
+            CFRetained::<CFString>::as_ptr(&uuid).as_ptr(),
+        )
+    };
+
+    if id == 0 {
+        None
+    } else {
+        Some(SpaceId::new(id as u64))
+    }
+}
+
+pub fn displays_have_separate_spaces() -> bool {
+    unsafe { SLSGetSpaceManagementMode(SLSMainConnectionID()) == 1 }
+}
+
+/// Utilities for querying the current system configuration. For diagnostic purposes only.
+#[allow(dead_code)]
+pub mod diagnostic {
+    use objc2_core_foundation::CFArray;
+
+    use super::*;
+
+    pub fn cur_space() -> SpaceId {
+        SpaceId::new(unsafe { CGSGetActiveSpace(SLSMainConnectionID()) })
+    }
+
+    pub fn visible_spaces() -> CFRetained<CFArray<SpaceId>> {
+        unsafe {
+            let arr = CGSCopySpaces(SLSMainConnectionID(), CGSSpaceMask::ALL_VISIBLE_SPACES);
+            CFRetained::from_raw(NonNull::new_unchecked(arr.cast::<CFArray<SpaceId>>()))
+        }
+    }
+
+    pub fn all_spaces() -> CFRetained<CFArray<SpaceId>> {
+        unsafe {
+            let arr = CGSCopySpaces(SLSMainConnectionID(), CGSSpaceMask::ALL_SPACES);
+            CFRetained::from_raw(NonNull::new_unchecked(arr.cast::<CFArray<SpaceId>>()))
+        }
+    }
+
+    pub fn managed_displays() -> CFRetained<CFArray> {
+        unsafe {
+            CFRetained::from_raw(NonNull::new_unchecked(CGSCopyManagedDisplays(
+                SLSMainConnectionID(),
+            )))
+        }
+    }
+
+    pub fn managed_display_spaces() -> Retained<NSArray> {
+        unsafe {
+            Retained::from_raw(CGSCopyManagedDisplaySpaces(SLSMainConnectionID()))
+                .expect("CGSCopyManagedDisplaySpaces returned null")
+        }
+    }
+}
+
+pub fn order_visible_spaces_by_position(
+    spaces: impl IntoIterator<Item = (SpaceId, CGPoint)>,
+) -> Vec<SpaceId> {
+    let mut spaces: Vec<_> = spaces.into_iter().collect();
+
+    // order spaces by the physical screen coordinates (left-to-right, then bottom-to-top).
+    spaces.sort_by(|(_, a_center), (_, b_center)| {
+        let x_order = a_center.x.total_cmp(&b_center.x);
+        if x_order == Ordering::Equal {
+            a_center.y.total_cmp(&b_center.y)
+        } else {
+            x_order
+        }
+    });
+
+    spaces.into_iter().map(|(space, _)| space).collect()
+}
+
+pub fn managed_display_space_ids() -> HashMap<String, Vec<SpaceId>> {
+    let mut out: HashMap<String, Vec<SpaceId>> = HashMap::default();
+    unsafe {
+        let raw = CGSCopyManagedDisplaySpaces(SLSMainConnectionID());
+        if raw.is_null() {
+            return out;
+        }
+
+        let displays: CFRetained<CFArray<CFDictionary<CFString, CFType>>> =
+            CFRetained::from_raw(std::ptr::NonNull::new_unchecked(raw.cast()));
+        let display_id_key = CFString::from_static_str("Display Identifier");
+        let spaces_key = CFString::from_static_str("Spaces");
+        let managed_space_id_key = CFString::from_static_str("ManagedSpaceID");
+
+        for idx in 0..displays.len() {
+            let Some(display_entry) = displays.get(idx) else {
+                continue;
+            };
+            let display_id = display_entry
+                .get(&display_id_key)
+                .and_then(|v| v.downcast::<CFString>().ok())
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            if display_id.is_empty() {
+                continue;
+            }
+
+            let mut space_ids = Vec::new();
+            if let Some(spaces_value) = display_entry.get(&spaces_key) {
+                if let Ok(spaces) = spaces_value.downcast::<CFArray>() {
+                    let spaces = CFRetained::cast_unchecked::<CFArray<CFType>>(spaces);
+                    for space_entry in spaces.iter() {
+                        if let Ok(space_dict) = space_entry.downcast::<CFDictionary>() {
+                            let space_dict = CFRetained::cast_unchecked::<
+                                CFDictionary<CFString, CFType>,
+                            >(space_dict);
+                            let space_id = space_dict
+                                .get(&managed_space_id_key)
+                                .and_then(|v| v.downcast::<CFNumber>().ok())
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(0);
+                            if space_id != 0 {
+                                space_ids.push(SpaceId::new(space_id as u64));
+                            }
+                        }
+                    }
+                }
+            }
+
+            out.insert(display_id, space_ids);
+        }
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod test {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGRect, CGSize};
+    use objc2_core_graphics::CGError;
+
+    use super::{
+        CGScreenInfo, CoordinateConverter, NSScreenInfo, ScreenCache, ScreenId, System,
+        rects_intersect,
+    };
+    use crate::displays::screen::{SpaceId, order_visible_spaces_by_position};
+
+    #[test]
+    fn auto_hidden_menu_bar_does_not_inset_a_display_without_a_notch() {
+        assert_eq!(super::menu_bar_inset(true, 24.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn auto_hidden_menu_bar_preserves_the_notch_safe_area() {
+        assert_eq!(super::menu_bar_inset(true, 37.0, 32.0), 32.0);
+    }
+
+    #[test]
+    fn visible_menu_bar_reserves_its_reported_height() {
+        assert_eq!(super::menu_bar_inset(false, 24.0, 0.0), 25.0);
+    }
+
+    struct Stub {
+        cg_screens: Vec<CGScreenInfo>,
+        ns_screens: Vec<NSScreenInfo>,
+    }
+    impl System for Stub {
+        fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError> {
+            Ok(self.cg_screens.clone())
+        }
+
+        fn display_uuid(&self, _screen: &CGScreenInfo) -> CFRetained<CFString> {
+            CFString::from_str("stub")
+        }
+
+        fn ns_screens(&self) -> Vec<NSScreenInfo> {
+            self.ns_screens.clone()
+        }
+
+        fn notch_height(&self, _did: u32) -> f64 {
+            0.0
+        }
+    }
+
+    struct SequenceSystem {
+        cg_screens: RefCell<VecDeque<Vec<CGScreenInfo>>>,
+        ns_screens: RefCell<VecDeque<Vec<NSScreenInfo>>>,
+        uuids: RefCell<VecDeque<CFRetained<CFString>>>,
+    }
+
+    impl SequenceSystem {
+        fn new(
+            cg_screens: Vec<Vec<CGScreenInfo>>,
+            ns_screens: Vec<Vec<NSScreenInfo>>,
+            uuids: Vec<CFRetained<CFString>>,
+        ) -> Self {
+            Self {
+                cg_screens: RefCell::new(VecDeque::from(cg_screens)),
+                ns_screens: RefCell::new(VecDeque::from(ns_screens)),
+                uuids: RefCell::new(VecDeque::from(uuids)),
+            }
+        }
+    }
+
+    impl System for SequenceSystem {
+        fn cg_screens(&self) -> Result<Vec<CGScreenInfo>, CGError> {
+            Ok(self.cg_screens.borrow_mut().pop_front().unwrap_or_default())
+        }
+
+        fn display_uuid(&self, _screen: &CGScreenInfo) -> CFRetained<CFString> {
+            self.uuids
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| CFString::from_str("missing-uuid"))
+        }
+
+        fn ns_screens(&self) -> Vec<NSScreenInfo> {
+            self.ns_screens.borrow_mut().pop_front().unwrap_or_default()
+        }
+
+        fn notch_height(&self, _did: u32) -> f64 {
+            0.0
+        }
+    }
+
+    #[test]
+    fn it_calculates_the_visible_frame() {
+        let stub = Stub {
+            cg_screens: vec![
+                CGScreenInfo {
+                    cg_id: ScreenId::new(1),
+                    bounds: CGRect::new(CGPoint::new(3840.0, 1080.0), CGSize::new(1512.0, 982.0)),
+                },
+                CGScreenInfo {
+                    cg_id: ScreenId::new(3),
+                    bounds: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
+                },
+            ],
+            ns_screens: vec![
+                NSScreenInfo {
+                    cg_id: ScreenId::new(3),
+                    frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
+                    visible_frame: CGRect::new(
+                        CGPoint::new(0.0, 76.0),
+                        CGSize::new(3840.0, 2059.0),
+                    ),
+                    name: None,
+                },
+                NSScreenInfo {
+                    cg_id: ScreenId::new(1),
+                    frame: CGRect::new(CGPoint::new(3840.0, 98.0), CGSize::new(1512.0, 982.0)),
+                    visible_frame: CGRect::new(
+                        CGPoint::new(3840.0, 98.0),
+                        CGSize::new(1512.0, 950.0),
+                    ),
+                    name: None,
+                },
+            ],
+        };
+        let mut sc = ScreenCache::new_with(stub);
+        let (screens, _) = sc.refresh().unwrap();
+
+        let secondary = screens.iter().find(|screen| screen.id == ScreenId::new(1)).unwrap();
+        assert_eq!(
+            secondary.frame,
+            super::constrain_display_bounds(
+                1,
+                CGRect::new(CGPoint::new(3840.0, 1080.0), CGSize::new(1512.0, 982.0)),
+                0.0,
+            )
+        );
+
+        let primary = screens.iter().find(|screen| screen.id == ScreenId::new(3)).unwrap();
+        assert_eq!(
+            primary.frame,
+            super::constrain_display_bounds(
+                3,
+                CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
+                0.0,
+            )
+        );
+    }
+
+    #[test]
+    fn clears_cached_screen_identifiers_when_display_list_is_empty() {
+        let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1440.0, 900.0));
+        let visible_frame = CGRect::new(CGPoint::new(0.0, 22.0), CGSize::new(1440.0, 878.0));
+
+        let system = SequenceSystem::new(
+            vec![vec![CGScreenInfo { cg_id: ScreenId::new(1), bounds }], vec![]],
+            vec![
+                vec![NSScreenInfo {
+                    cg_id: ScreenId::new(1),
+                    frame: bounds,
+                    visible_frame,
+                    name: None,
+                }],
+                vec![],
+            ],
+            vec![CFString::from_str("uuid-1")],
+        );
+
+        let mut cache = ScreenCache::new_with(system);
+
+        let (screens, _) = cache.refresh().unwrap();
+        assert_eq!(screens.len(), 1);
+        assert_eq!(cache.uuids.len(), 1);
+
+        cache.mark_dirty();
+        let (screens, converter) = cache.refresh().unwrap();
+        assert!(screens.is_empty());
+        assert!(cache.uuids.is_empty());
+        assert!(converter.convert_point(CGPoint::new(0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn orders_spaces_by_horizontal_position() {
+        let spaces = vec![
+            (SpaceId::new(1), CGPoint::new(-500.0, 0.0)),
+            (SpaceId::new(2), CGPoint::new(0.0, 0.0)),
+            (SpaceId::new(3), CGPoint::new(500.0, 100.0)),
+        ];
+
+        let ordered = order_visible_spaces_by_position(spaces);
+        assert_eq!(ordered, vec![SpaceId::new(1), SpaceId::new(2), SpaceId::new(3)]);
+    }
+
+    #[test]
+    fn orders_spaces_by_vertical_position_when_aligned() {
+        let spaces = vec![
+            (SpaceId::new(10), CGPoint::new(0.0, -200.0)),
+            (SpaceId::new(11), CGPoint::new(0.0, 150.0)),
+        ];
+
+        let ordered = order_visible_spaces_by_position(spaces);
+        assert_eq!(ordered, vec![SpaceId::new(10), SpaceId::new(11)]);
+    }
+    #[test]
+    fn coordinate_converter_flips_y_against_the_first_screen_and_is_an_involution() {
+        let converter = CoordinateConverter::from_height(1000.0);
+        let point = converter.convert_point(CGPoint::new(10.0, 100.0)).unwrap();
+        assert_eq!((point.x, point.y), (10.0, 900.0));
+        let rect = CGRect::new(CGPoint::new(10.0, 100.0), CGSize::new(50.0, 20.0));
+        let flipped = converter.convert_rect(rect).unwrap();
+        assert_eq!((flipped.origin.x, flipped.origin.y), (10.0, 880.0));
+        assert_eq!(flipped.size.width, 50.0);
+        let back = converter.convert_rect(flipped).unwrap();
+        assert_eq!((back.origin.x, back.origin.y), (10.0, 100.0));
+    }
+
+    #[test]
+    fn a_default_converter_has_no_screen_and_converts_nothing() {
+        let converter = CoordinateConverter::default();
+        assert_eq!(converter.screen_height(), None);
+        assert!(converter.convert_point(CGPoint::new(1.0, 1.0)).is_none());
+        assert!(converter.convert_rect(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0))).is_none());
+    }
+
+    #[test]
+    fn rects_touching_at_an_edge_do_not_intersect() {
+        let a = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(10.0, 10.0));
+        let b = CGRect::new(CGPoint::new(10.0, 0.0), CGSize::new(10.0, 10.0));
+        let c = CGRect::new(CGPoint::new(9.0, 9.0), CGSize::new(10.0, 10.0));
+        assert!(!rects_intersect(&a, &b));
+        assert!(rects_intersect(&a, &c));
+    }
+
+}
+
+/// Make a display's desktop window key, so the display holds focus with no app window on it.
+#[cfg(not(test))]
+pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
+    use objc2_core_foundation::{CFArray, CFRetained};
+    use rini_geometry::CGRectExt;
+    use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
+    use rini_core::ids::WindowServerId;
+    use crate::windows::platform::window_server::{get_window, make_key_window};
+    use std::ptr::NonNull;
+    let Some(display_uuid) = screen.display_uuid_opt() else {
+        return false;
+    };
+    let uuid = objc2_core_foundation::CFString::from_str(display_uuid);
+    let displays = CFArray::from_objects(&[&*uuid]);
+    let Some(windows) = NonNull::new(unsafe {
+        SLSManagedDisplaysCopyRoleWindows(*G_CONNECTION, CFRetained::as_ptr(&displays).as_ptr(), 1)
+    }) else {
+        return false;
+    };
+    let windows = unsafe { CFRetained::from_raw(windows) };
+    windows.iter().any(|number| {
+        let Some(id) = number.as_i64().and_then(|id| u32::try_from(id).ok()) else {
+            return false;
+        };
+        let wsid = WindowServerId::new(id);
+        let Some(info) = get_window(wsid) else {
+            return false;
+        };
+        info.layer < 0
+            && screen.frame.contains(info.frame.mid())
+            && make_key_window(info.pid, wsid).is_ok()
+    })
+}
+#[cfg(test)]
+pub fn focus_desktop_window(_screen: &ScreenInfo) -> bool {
+    false
+}

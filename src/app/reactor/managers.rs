@@ -1,0 +1,470 @@
+use objc2_core_foundation::{CGPoint, CGRect};
+use tracing::trace;
+
+use super::replay::Record;
+use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
+use crate::app::channels;
+use rini_core::ids::{WindowId, pid_t};
+use crate::input::domain::drag_swap::DragManager as DragSwapManager;
+use crate::app::reactor::Reactor;
+use crate::app::reactor::animation::AnimationManager;
+use crate::displays::domain::topology::ForwardedSpaceState;
+use crate::input::platform::gesture_tap;
+use crate::input::platform::input_tap as event_tap;
+use crate::app::hotkeys as wm_controller;
+use crate::displays::platform::window_notify;
+use crate::windows::domain::raise as raise_manager;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::input::settings::WindowSnappingSettings;
+use crate::workspaces::LayoutEngine;
+use crate::workspaces::broadcast::BroadcastSender;
+use rini_core::ids::SpaceId;
+
+/// Manages application state and rules
+pub struct AppManager {
+    pub apps: HashMap<pid_t, AppState>,
+}
+
+impl AppManager {
+    pub fn new() -> Self {
+        AppManager { apps: HashMap::default() }
+    }
+}
+
+/// Manages drag operations and window swapping
+pub struct DragManager {
+    pub drag_state: super::DragState,
+    pub drag_swap_manager: DragSwapManager,
+    pub skip_layout_for_window: Option<WindowId>,
+}
+
+impl DragManager {
+    pub fn reset(&mut self) {
+        self.drag_swap_manager.reset();
+    }
+
+    pub fn last_target(&self) -> Option<WindowId> {
+        self.drag_swap_manager.last_target()
+    }
+
+    pub fn dragged(&self) -> Option<WindowId> {
+        self.drag_swap_manager.dragged()
+    }
+
+    pub fn origin_frame(&self) -> Option<CGRect> {
+        self.drag_swap_manager.origin_frame()
+    }
+
+    pub fn update_config(&mut self, config: WindowSnappingSettings) {
+        self.drag_swap_manager.update_config(config);
+    }
+}
+
+/// Manages window notifications
+pub struct NotificationManager {
+    pub last_sls_notification_ids: Vec<u32>,
+    pub _window_notify_tx: Option<window_notify::Sender>,
+}
+
+/// Manages menu state and interactions
+pub struct MenuManager {
+    pub menu_state: super::MenuState,
+}
+
+/// Manages Mission Control state
+pub struct MissionControlManager {
+    pub mission_control_state: super::MissionControlState,
+    pub pending_mission_control_refresh: HashSet<pid_t>,
+}
+
+/// Manages workspace switching state
+pub struct WorkspaceSwitchManager {
+    pub workspace_switch_state: super::WorkspaceSwitchState,
+    pub workspace_switch_generation: u64,
+    pub active_workspace_switch: Option<u64>,
+    pub pending_workspace_switch_origin: Option<WorkspaceSwitchOrigin>,
+    pub pending_workspace_mouse_warp: Option<WindowId>,
+}
+
+impl WorkspaceSwitchManager {
+    pub fn start_workspace_switch(&mut self, origin: WorkspaceSwitchOrigin) {
+        self.workspace_switch_generation = self.workspace_switch_generation.wrapping_add(1);
+        self.active_workspace_switch = Some(self.workspace_switch_generation);
+        self.workspace_switch_state = WorkspaceSwitchState::Active;
+        self.pending_workspace_switch_origin = Some(origin);
+    }
+
+    pub fn manual_switch_in_progress(&self) -> bool {
+        self.workspace_switch_state == WorkspaceSwitchState::Active
+            && self.pending_workspace_switch_origin == Some(WorkspaceSwitchOrigin::Manual)
+    }
+
+    pub fn mark_workspace_switch_inactive(&mut self) {
+        self.workspace_switch_state = WorkspaceSwitchState::Inactive;
+        self.pending_workspace_switch_origin = None;
+    }
+}
+
+/// Manages refocus and cleanup state
+pub struct RefocusManager {
+    pub stale_cleanup_state: super::StaleCleanupState,
+    pub refocus_state: super::RefocusState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshQuarantineState {
+    Ready,
+    Sleeping,
+    SessionInactive,
+    DisplayChurn,
+}
+
+pub struct RefreshQuarantineManager {
+    pub sleeping: bool,
+    pub session_inactive: bool,
+    pub display_churn_active: bool,
+    pub awaiting_post_wake_snapshot: bool,
+    pub awaiting_post_session_snapshot: bool,
+    pub pending_visible_refresh: bool,
+    pub deferred_refresh_tracks_mission_control: bool,
+}
+
+impl RefreshQuarantineManager {
+    pub fn state(&self) -> RefreshQuarantineState {
+        if self.sleeping {
+            RefreshQuarantineState::Sleeping
+        } else if self.session_inactive {
+            RefreshQuarantineState::SessionInactive
+        } else if self.display_churn_active {
+            RefreshQuarantineState::DisplayChurn
+        } else {
+            RefreshQuarantineState::Ready
+        }
+    }
+
+    pub fn blocks_refreshes(&self) -> bool {
+        self.state() != RefreshQuarantineState::Ready
+    }
+}
+
+/// Manages communication channels to other actors
+pub struct CommunicationManager {
+    pub event_tap_tx: Option<event_tap::Sender>,
+    pub gesture_tap_tx: Option<gesture_tap::Sender>,
+    pub cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
+    pub workspace_animation_tx: Option<crate::animation::platform::engine::Sender>,
+    pub raise_manager_tx: raise_manager::Sender,
+    pub event_broadcaster: BroadcastSender,
+    pub wm_sender: Option<wm_controller::Sender>,
+    pub events_tx: Option<channels::Sender<Event>>,
+}
+
+/// Manages recording state
+pub struct RecordingManager {
+    pub record: Record,
+}
+
+/// Manages layout engine state
+pub struct LayoutManager {
+    pub layout_engine: LayoutEngine,
+}
+
+pub type LayoutResult = Vec<(SpaceId, Vec<(WindowId, CGRect)>)>;
+
+/// How much of a fully-scrolled-away window stays on screen, in points.
+///
+/// macOS will not let a window be positioned entirely outside every display — it
+/// clamps it back — so a scrolling layout has to leave a deliberate sliver
+/// visible at the edge. 1pt is the smallest value that still satisfies the window
+/// server while being visually negligible.
+///
+/// Was 10pt, which is individually small but stacks: with a dozen scrolled-away
+/// columns parked at the same edge the result is a conspicuous ~10pt band of
+/// overlapping window edges on both sides of the screen, and it is worse on a
+/// wide external display where more columns are off-strip.
+const WINDOW_HIDDEN_THRESHOLD: f64 = 1.0;
+
+fn bound_frame_to_screen(frame: CGRect, screen: CGRect) -> CGRect {
+    let screen_left = screen.origin.x;
+    let screen_top = screen.origin.y;
+    let screen_right = screen.max().x;
+    let screen_bottom = screen.max().y;
+    let max_y = (screen_bottom - frame.size.height).max(screen_top);
+    let x = if frame.max().x <= screen_left {
+        screen_left - frame.size.width + WINDOW_HIDDEN_THRESHOLD
+    } else if frame.origin.x >= screen_right {
+        screen_right - WINDOW_HIDDEN_THRESHOLD
+    } else {
+        frame.origin.x
+    };
+
+    CGRect::new(
+        CGPoint::new(x, frame.origin.y.clamp(screen_top, max_y)),
+        frame.size,
+    )
+}
+
+// NOTE on z-order: scrolled-away columns keep whatever stacking they had, so a
+// parked sliver can sit ON TOP of a window that is actually on screen. There is
+// no fix available from here. AX exposes only AXRaise, with no lower/send-to-back
+// counterpart, and the SkyLight ordering calls used elsewhere in this file
+// (SLSOrderWindow via CgsWindow) work only on windows owned by our own
+// connection — a cross-process SLSOrderWindow/SLSSetWindowLevel is refused by the
+// window server (kCGErrorIllegalArgument). Keeping the sliver at 1pt is the
+// available mitigation.
+
+fn bound_scrolling_tiled_frames_to_screen(
+    reactor: &Reactor,
+    layout: &mut Vec<(WindowId, CGRect)>,
+    screen: CGRect,
+    active_workspace_windows: &HashSet<WindowId>,
+) {
+    for (wid, frame) in layout.iter_mut() {
+        if !active_workspace_windows.contains(wid)
+            || reactor.layout_manager.layout_engine.is_window_floating(*wid)
+        {
+            continue;
+        }
+        *frame = bound_frame_to_screen(*frame, screen);
+    }
+}
+
+impl LayoutManager {
+    pub fn update_layout(
+        reactor: &mut Reactor,
+        is_resize: bool,
+        is_workspace_switch: bool,
+        space_scope: Option<SpaceId>,
+    ) -> Result<bool, crate::app::reactor::state::ReactorError> {
+        let layout_result = Self::calculate_layout(reactor, space_scope);
+        Self::apply_layout(reactor, layout_result, is_resize, is_workspace_switch)
+    }
+
+    fn calculate_layout(reactor: &mut Reactor, space_scope: Option<SpaceId>) -> LayoutResult {
+        if reactor.state.windows.tracked_window_count() == 0 {
+            return LayoutResult::new();
+        }
+        let screens = reactor.space_state.screens.clone();
+        let all_screen_frames: Vec<CGRect> = screens.iter().map(|s| s.frame).collect();
+        let active_space_count = screens
+            .iter()
+            .filter_map(|screen| screen.space)
+            .filter(|space| reactor.is_space_active(*space))
+            .count();
+        let mut layout_result = LayoutResult::new();
+
+        for screen in screens {
+            let Some(space) = screen.space else {
+                continue;
+            };
+            if space_scope.is_some_and(|scope| scope != space) {
+                continue;
+            }
+            if !reactor.is_space_active(space) {
+                continue;
+            }
+            let display_uuid_opt = screen.display_uuid_owned();
+            let gaps = reactor
+                .config
+                .settings
+                .layout
+                .gaps
+                .effective_for_display(display_uuid_opt.as_deref());
+            // A reconnected display's layout is NOT reattached here any more.
+            //
+            // This ran a whole-space remap on every layout pass, from the display's last
+            // known space id onto its current one. Two problems: remap_space deletes the
+            // workspaces already on the target id and drops their window assignments, and a
+            // layout pass is far too hot a path to be mutating space identity from — it fired
+            // on ordinary space switches too. Window placement across a display change is now
+            // decided by per-window affinity in Reactor::repatriate_windows_to_display, which
+            // runs once per topology change.
+            reactor
+                .layout_manager
+                .layout_engine
+                .update_space_display(space, display_uuid_opt.clone());
+            let mut layout =
+                reactor.layout_manager.layout_engine.calculate_layout_with_virtual_workspaces(
+                    &reactor.state.windows,
+                    space,
+                    screen.frame.clone(),
+                    &gaps,
+                    |wid| reactor.state.windows.window(wid).map(|w| w.frame_monotonic),
+                    &all_screen_frames,
+                );
+            if active_space_count > 1 {
+                let active_workspace_windows: HashSet<WindowId> = reactor
+                    .layout_manager
+                    .layout_engine
+                    .windows_in_active_workspace(&reactor.state.windows, space)
+                    .into_iter()
+                    .collect();
+                bound_scrolling_tiled_frames_to_screen(
+                    reactor,
+                    &mut layout,
+                    screen.frame,
+                    &active_workspace_windows,
+                );
+            }
+            layout_result.push((space, layout));
+        }
+
+        layout_result
+    }
+
+    fn apply_layout(
+        reactor: &mut Reactor,
+        layout_result: LayoutResult,
+        is_resize: bool,
+        is_workspace_switch: bool,
+    ) -> Result<bool, crate::app::reactor::state::ReactorError> {
+        let main_window = reactor.main_window();
+        trace!(?main_window);
+        // Keep skipping the dragged window for as long as the drag is active.
+        //
+        // This used to `.take()` the marker, so only the FIRST layout pass after a
+        // move event left the window alone. A drag produces many passes, and every
+        // later one reasserted the window's stored frame — for a floating window that
+        // is its saved position, so releasing the mouse snapped it back to where it
+        // started. Observed with System Settings: draggable, but it returned to the
+        // same spot on release.
+        //
+        // The marker is cleared where the drag actually ends (reactor.rs:4301 on
+        // mouse-up, and reactor.rs:4278 when the window stops being dragged), so
+        // reading it without consuming it keeps the window untouched for the whole
+        // gesture instead of one frame of it.
+        let skip_wid = reactor
+            .drag_manager
+            .skip_layout_for_window
+            .or(reactor.drag_manager.drag_swap_manager.dragged());
+        let mut any_frame_changed = false;
+
+        for (space, layout) in layout_result {
+            if is_workspace_switch {
+                any_frame_changed |=
+                    AnimationManager::workspace_switch_layout(reactor, space, &layout, skip_wid);
+            } else if reactor.workspace_switch_manager.active_workspace_switch.is_some() {
+                any_frame_changed |=
+                    AnimationManager::instant_layout(reactor, space, &layout, skip_wid);
+            } else {
+                any_frame_changed |=
+                    AnimationManager::animate_layout(reactor, space, &layout, is_resize, skip_wid);
+            }
+        }
+
+        Ok(any_frame_changed)
+    }
+}
+
+/// Manages pending space changes
+pub struct PendingSpaceChangeManager {
+    pub pending_space_change: Option<ForwardedSpaceState>,
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    use super::{WINDOW_HIDDEN_THRESHOLD, bound_frame_to_screen};
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    #[test]
+    fn bound_frame_to_screen_keeps_partial_overlap_for_strip_behavior() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(1500.0, 50.0, 700.0, 400.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        assert_eq!(bounded.origin.x, 1500.0);
+        assert_eq!(bounded.size.width, 700.0);
+    }
+
+    #[test]
+    fn bound_frame_to_screen_parks_fully_offscreen_windows_to_hidden_sliver() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(1200.0, 80.0, 600.0, 300.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        // Derived from WINDOW_HIDDEN_THRESHOLD rather than hardcoded, so tuning the
+        // sliver width does not require editing the expectations.
+        assert_eq!(bounded.origin.x, 2000.0 - 600.0 + WINDOW_HIDDEN_THRESHOLD);
+        assert_eq!(bounded.size.width, 600.0);
+    }
+
+    #[test]
+    fn bound_frame_to_screen_parks_right_offscreen_windows_to_hidden_sliver() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(3200.0, 80.0, 600.0, 300.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        assert_eq!(bounded.origin.x, 3000.0 - WINDOW_HIDDEN_THRESHOLD);
+        assert_eq!(bounded.size.width, 600.0);
+    }
+
+    /// The sliver must stay small enough not to read as a visible band of window
+    /// edges when many columns are parked at the same screen edge, but non-zero:
+    /// macOS refuses to leave a window entirely outside every display.
+    #[test]
+    fn hidden_sliver_is_minimal_but_nonzero() {
+        assert!(
+            WINDOW_HIDDEN_THRESHOLD > 0.0 && WINDOW_HIDDEN_THRESHOLD <= 2.0,
+            "sliver must be >0 (macOS clamps fully off-screen windows back) and \
+             small enough to be visually negligible, got {}",
+            WINDOW_HIDDEN_THRESHOLD
+        );
+    }
+
+    /// Parked columns must be dropped from the raise list: raising them is wasted
+    /// AX work and puts an invisible sliver in front of real windows.
+    ///
+    /// Mirrors the predicate in Reactor::is_window_parked_offscreen without needing
+    /// a live reactor.
+    #[test]
+    fn parked_windows_are_excluded_from_the_raise_list() {
+        const VISIBLE_SLACK: f64 = 4.0;
+        let screen = rect(0.0, 0.0, 1000.0, 800.0);
+
+        // Strip order, parked at both edges. The rightmost being LAST is what used
+        // to leave it frontmost.
+        let windows = [
+            ("parked_left", rect(-599.0, 0.0, 600.0, 800.0)),
+            ("onscreen_a", rect(4.0, 0.0, 490.0, 800.0)),
+            ("onscreen_b", rect(500.0, 0.0, 490.0, 800.0)),
+            ("parked_right", rect(999.0, 0.0, 600.0, 800.0)),
+        ];
+
+        let parked = |frame: CGRect| {
+            let visible =
+                (frame.max().x.min(screen.max().x) - frame.origin.x.max(screen.origin.x)).max(0.0);
+            visible <= VISIBLE_SLACK
+        };
+
+        let kept: Vec<&str> = windows
+            .iter()
+            .filter(|(_, frame)| !parked(*frame))
+            .map(|(label, _)| *label)
+            .collect();
+
+        assert_eq!(
+            kept,
+            vec!["onscreen_a", "onscreen_b"],
+            "only on-screen columns should be raised"
+        );
+
+        // A window straddling the edge is NOT parked -- it is partially visible and
+        // must still be raised.
+        let straddling = rect(960.0, 0.0, 490.0, 800.0);
+        assert!(
+            !parked(straddling),
+            "partially visible window must not count as parked"
+        );
+    }
+
+    #[test]
+    fn bound_frame_to_screen_does_not_park_partially_visible_right_windows() {
+        let screen = rect(2000.0, 0.0, 1000.0, 800.0);
+        let frame = rect(2998.0, 80.0, 600.0, 300.0);
+        let bounded = bound_frame_to_screen(frame, screen);
+        assert_eq!(bounded.origin.x, 2998.0);
+        assert_eq!(bounded.size.width, 600.0);
+    }
+}

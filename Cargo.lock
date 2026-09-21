@@ -1377,12 +1377,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
-name = "rini-animation"
+name = "rini"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "arc-swap",
+ "ascii_tree",
+ "bitflags 2.11.0",
  "block2",
+ "clap",
+ "continue",
+ "crossbeam-channel",
+ "dashmap",
+ "dirs",
+ "dispatchr",
+ "embed_plist",
+ "enum_dispatch",
+ "futures-task",
+ "libc",
+ "nix 0.30.1",
+ "notify",
+ "notify-debouncer-mini",
+ "num_enum",
  "objc2",
  "objc2-app-kit",
+ "objc2-application-services",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-core-media",
@@ -1391,14 +1410,38 @@ dependencies = [
  "objc2-io-surface",
  "objc2-quartz-core",
  "objc2-screen-capture-kit",
+ "once_cell",
+ "parking_lot",
+ "pretty_assertions",
+ "regex",
  "rini-core",
- "rini-displays",
  "rini-geometry",
  "rini-ipc",
+ "rini-mach-sys",
  "rini-runloop",
  "rini-skylight-sys",
- "rini-windows",
+ "ron",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sigpipe",
+ "slotmap",
+ "static_assertions",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "test-log",
+ "test_bin",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "toml",
  "tracing",
+ "tracing-subscriber",
+ "tracing-timing",
+ "tracing-tree",
 ]
 
 [[package]]
@@ -1414,35 +1457,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rini-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "continue",
- "dirs",
- "notify",
- "notify-debouncer-mini",
- "once_cell",
- "rini-core",
- "rini-displays",
- "rini-input",
- "rini-ipc",
- "rini-runloop",
- "rini-tiling",
- "rini-windows",
- "rini-workspaces",
- "rustc-hash",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
 name = "rini-core"
 version = "0.1.0"
 dependencies = [
@@ -1455,30 +1469,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rini-displays"
-version = "0.1.0"
-dependencies = [
- "dispatchr",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "once_cell",
- "parking_lot",
- "rini-core",
- "rini-geometry",
- "rini-ipc",
- "rini-runloop",
- "rini-skylight-sys",
- "rini-windows",
- "rustc-hash",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "rini-geometry"
 version = "0.1.0"
 dependencies = [
@@ -1486,33 +1476,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
-]
-
-[[package]]
-name = "rini-input"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "objc2",
- "objc2-app-kit",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "once_cell",
- "parking_lot",
- "rini-core",
- "rini-geometry",
- "rini-ipc",
- "rini-runloop",
- "rini-skylight-sys",
- "rini-windows",
- "rustc-hash",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -1573,147 +1536,6 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "rini-tiling"
-version = "0.1.0"
-dependencies = [
- "enum_dispatch",
- "objc2-core-foundation",
- "rini-core",
- "rini-geometry",
- "rini-ipc",
- "rini-windows",
- "rustc-hash",
- "serde",
- "slotmap",
- "tracing",
-]
-
-[[package]]
-name = "rini-windows"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dashmap",
- "dispatchr",
- "libc",
- "objc2",
- "objc2-app-kit",
- "objc2-application-services",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "once_cell",
- "parking_lot",
- "regex",
- "rini-core",
- "rini-geometry",
- "rini-ipc",
- "rini-mach-sys",
- "rini-runloop",
- "rini-skylight-sys",
- "ron",
- "rustc-hash",
- "serde",
- "serde_json",
- "static_assertions",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "rini-wm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "ascii_tree",
- "bitflags 2.11.0",
- "clap",
- "continue",
- "crossbeam-channel",
- "dashmap",
- "dirs",
- "dispatchr",
- "embed_plist",
- "enum_dispatch",
- "futures-task",
- "nix 0.30.1",
- "notify",
- "notify-debouncer-mini",
- "num_enum",
- "objc2",
- "objc2-app-kit",
- "objc2-application-services",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "once_cell",
- "parking_lot",
- "pretty_assertions",
- "regex",
- "rini-animation",
- "rini-config",
- "rini-core",
- "rini-displays",
- "rini-geometry",
- "rini-input",
- "rini-ipc",
- "rini-mach-sys",
- "rini-runloop",
- "rini-skylight-sys",
- "rini-tiling",
- "rini-windows",
- "rini-workspaces",
- "ron",
- "rustc-hash",
- "serde",
- "serde_json",
- "serde_with",
- "sigpipe",
- "slotmap",
- "static_assertions",
- "strum",
- "strum_macros",
- "tempfile",
- "test-log",
- "test_bin",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tracing-timing",
- "tracing-tree",
-]
-
-[[package]]
-name = "rini-workspaces"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "enum_dispatch",
- "objc2-core-foundation",
- "regex",
- "rini-core",
- "rini-displays",
- "rini-geometry",
- "rini-ipc",
- "rini-runloop",
- "rini-tiling",
- "rini-windows",
- "ron",
- "rustc-hash",
- "serde",
- "serde_with",
- "slotmap",
- "tempfile",
- "tracing",
 ]
 
 [[package]]

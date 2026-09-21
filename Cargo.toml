@@ -1,5 +1,91 @@
+[package]
+name = "rini"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+description = "A scrollable-tiling window manager for macOS. The daemon: the features, the reactor that orchestrates them, and the rini binary."
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "rini"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "rini"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+anyhow = { workspace = true }
+arc-swap = "1"
+ascii_tree = "0.1.1"
+bitflags = { workspace = true }
+block2 = { workspace = true }
+clap = { workspace = true }
+continue = { workspace = true }
+crossbeam-channel = { workspace = true }
+dashmap = { workspace = true }
+dirs = { workspace = true }
+dispatchr = { workspace = true }
+embed_plist = "1.2.2"
+enum_dispatch = { workspace = true }
+futures-task = { workspace = true }
+libc = { workspace = true }
+nix = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+num_enum = { workspace = true }
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-application-services = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }
+objc2-core-media = { workspace = true }
+objc2-core-video = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-io-surface = { workspace = true }
+objc2-quartz-core = { workspace = true }
+objc2-screen-capture-kit = { workspace = true }
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+regex = { workspace = true }
+rini-core = { workspace = true }
+rini-geometry = { workspace = true }
+rini-ipc = { workspace = true }
+rini-mach-sys = { workspace = true }
+rini-runloop = { workspace = true }
+rini-skylight-sys = { workspace = true }
+ron = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+sigpipe = { workspace = true }
+slotmap = { workspace = true }
+static_assertions = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-timing = { workspace = true }
+tracing-tree = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = { workspace = true }
+test-log = { version = "0.2.16", default-features = false }
+test_bin = "0.5.0"
+tokio = { workspace = true, features = ["sync", "macros"] }
+
 [workspace]
-members = ["crates/rini-animation", "crates/rini-cli", "crates/rini-config", "crates/rini-core", "crates/rini-displays", "crates/rini-geometry", "crates/rini-input", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys", "crates/rini-tiling", "crates/rini-windows", "crates/rini-wm", "crates/rini-workspaces"]
+members = ["crates/rini-cli", "crates/rini-core", "crates/rini-geometry", "crates/rini-ipc", "crates/rini-mach-sys", "crates/rini-runloop", "crates/rini-skylight-sys"]
 resolver = "3"
 
 [workspace.dependencies]
@@ -134,18 +220,11 @@ futures-task = { version = "0.3.31", features = ["alloc"], default-features = fa
 num_enum = "0.7.4"
 rustc-hash = "2.1.1"
 rini-geometry = { path = "crates/rini-geometry" }
-rini-config = { path = "crates/rini-config" }
 rini-core = { path = "crates/rini-core" }
-rini-displays = { path = "crates/rini-displays" }
-rini-input = { path = "crates/rini-input" }
 rini-ipc = { path = "crates/rini-ipc" }
-rini-animation = { path = "crates/rini-animation" }
 rini-mach-sys = { path = "crates/rini-mach-sys" }
 rini-runloop = { path = "crates/rini-runloop" }
 rini-skylight-sys = { path = "crates/rini-skylight-sys" }
-rini-tiling = { path = "crates/rini-tiling" }
-rini-windows = { path = "crates/rini-windows" }
-rini-workspaces = { path = "crates/rini-workspaces" }
 libc = "0.2"
 continue = { git = "https://github.com/drewcrawford/continue" }
 block2 = { version = "0.6.2", default-features = false, features = ["alloc"] }
