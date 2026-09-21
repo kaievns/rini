@@ -53,9 +53,9 @@ impl RestorePlan {
                 .contains(&request.active_space)
                 .then_some(request.active_space)
                 .or_else(|| {
-                    // The disk master can still contain the previous launch's SpaceIds even
+                    // The saved file can still contain the previous launch's SpaceIds even
                     // though startup already repaired the live engine. Display identity bridges
-                    // that interval until the next master save.
+                    // that interval until the next full save.
                     engine
                         .display_uuid_for_space(request.active_space)
                         .and_then(|display| snapshot.display_affinity.space_for_display(&display))
@@ -253,7 +253,7 @@ impl RestorePlan {
                 .expect("workspace sources were validated before extraction");
             // A restore replaces layout contents, not the target workspace's identity. Names are
             // configured/current-session metadata and must not be copied from another workspace or
-            // from an old master snapshot.
+            // from an old saved snapshot.
             workspace.name = engine
                 .virtual_workspace_manager
                 .workspace_info(mapping.target_space, mapping.target_workspace)
@@ -648,5 +648,110 @@ impl LayoutEngine {
         for window in state.floating_windows {
             self.floating.add_floating(window);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::CGSize;
+
+    use crate::layout::settings::LayoutSettings;
+    use crate::workspaces::settings::VirtualWorkspaceSettings;
+    use crate::workspaces::LayoutEvent;
+
+    use super::*;
+
+    fn engine() -> LayoutEngine {
+        LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default(), None)
+    }
+
+    /// An engine that has seen `spaces`, each on the display named `uuid-<space>`.
+    fn engine_with(spaces: &[u64]) -> LayoutEngine {
+        let mut engine = engine();
+        let mut store = WindowStore::default();
+        for &space in spaces {
+            let space = SpaceId::new(space);
+            let _ = engine.handle_event(
+                &mut store,
+                LayoutEvent::SpaceExposed(space, CGSize::new(1000.0, 800.0)),
+            );
+            engine.update_space_display(space, Some(format!("uuid-{}", space.get())));
+        }
+        engine
+    }
+
+    fn request(active: u64, source: RestoreSource) -> RestoreRequest {
+        RestoreRequest { scope: RestoreScope::Space, active_space: SpaceId::new(active), source }
+    }
+
+    #[test]
+    fn a_saved_active_space_is_restored_from_when_the_snapshot_recorded_one() {
+        let mut snapshot = engine_with(&[10, 20]);
+        snapshot.persistence.set_saved_active_space(Some(SpaceId::new(20)));
+        let got = RestorePlan::source_space(&snapshot, &engine(), request(10, RestoreSource::SavedActiveSpace));
+        assert_eq!(got.unwrap(), SpaceId::new(20));
+    }
+
+    // A recorded active space the snapshot no longer holds is stale; the live space is used instead.
+    #[test]
+    fn a_recorded_space_missing_from_the_snapshot_falls_back_to_the_live_one() {
+        let mut snapshot = engine_with(&[10, 20]);
+        snapshot.persistence.set_saved_active_space(Some(SpaceId::new(99)));
+        let got = RestorePlan::source_space(&snapshot, &engine(), request(10, RestoreSource::SavedActiveSpace));
+        assert_eq!(got.unwrap(), SpaceId::new(10));
+    }
+
+    #[test]
+    fn restoring_the_current_space_prefers_the_saved_entry_with_the_same_id() {
+        let snapshot = engine_with(&[10, 20]);
+        let got = RestorePlan::source_space(&snapshot, &engine(), request(20, RestoreSource::CurrentSpace));
+        assert_eq!(got.unwrap(), SpaceId::new(20));
+    }
+
+    // macOS mints a new SpaceId for a display on every reconnect, so the saved file can name a space
+    // the live session no longer has. The display's own identity bridges that gap: the same monitor
+    // gets its own saved layout back even though its space id has changed underneath.
+    #[test]
+    fn a_renumbered_space_is_bridged_by_the_display_it_belongs_to() {
+        // Saved under space 10 on uuid-10; the live session calls that same display's space 55.
+        let snapshot = engine_with(&[10]);
+        let mut live = engine();
+        let mut store = WindowStore::default();
+        let renumbered = SpaceId::new(55);
+        let _ = live.handle_event(
+            &mut store,
+            LayoutEvent::SpaceExposed(renumbered, CGSize::new(1000.0, 800.0)),
+        );
+        live.update_space_display(renumbered, Some("uuid-10".to_string()));
+
+        let got = RestorePlan::source_space(&snapshot, &live, request(55, RestoreSource::CurrentSpace));
+        assert_eq!(got.unwrap(), SpaceId::new(10), "the display, not the space id, identifies it");
+    }
+
+    #[test]
+    fn a_snapshot_holding_one_space_is_unambiguous_however_it_is_numbered() {
+        let snapshot = engine_with(&[10]);
+        let got = RestorePlan::source_space(&snapshot, &engine(), request(77, RestoreSource::CurrentSpace));
+        assert_eq!(got.unwrap(), SpaceId::new(10));
+    }
+
+    #[test]
+    fn a_snapshot_with_no_spaces_cannot_be_restored_from() {
+        let err = RestorePlan::source_space(&engine(), &engine(), request(10, RestoreSource::CurrentSpace))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no macOS spaces"), "{err}");
+    }
+
+    // Guessing here would restore one display's arrangement onto another, which is the failure the
+    // whole display-identity scheme exists to avoid. Refusing and saying why is the right answer.
+    #[test]
+    fn several_saved_spaces_with_nothing_to_choose_between_them_is_refused() {
+        let snapshot = engine_with(&[10, 20]);
+        let err = RestorePlan::source_space(&snapshot, &engine(), request(77, RestoreSource::CurrentSpace))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot choose a source from 2"), "{err}");
+        assert!(err.contains("save the layout again"), "the message has to say what to do: {err}");
     }
 }

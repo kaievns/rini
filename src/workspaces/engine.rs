@@ -137,7 +137,7 @@ pub struct LayoutEngine {
     /// layout, and it is what the launch memory is keyed by.
     connected_displays: Vec<String>,
     persistence: PersistenceState,
-    /// Set only while a master-file startup restore is waiting for the first display snapshot.
+    /// Set only while a saved-file startup restore is waiting for the first display snapshot.
     startup_restore_pending: bool,
 }
 

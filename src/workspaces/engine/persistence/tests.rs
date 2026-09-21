@@ -1245,7 +1245,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     let source_a = SpaceId::new(601);
     let source_b = SpaceId::new(602);
     // The target id also exists in the file. Portable restore must still use the saved origin,
-    // while master-file restore deliberately prefers this matching current-space entry.
+    // while saved-file restore deliberately prefers this matching current-space entry.
     let target_space = source_a;
     let size = CGSize::new(1200.0, 800.0);
     let mut snapshot = test_engine();
@@ -1306,25 +1306,25 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
         target_name,
     );
 
-    let mut master_target = test_engine();
-    let mut master_store = WindowStore::default();
-    let _ = master_target
-        .handle_event(&mut master_store, LayoutEvent::SpaceExposed(target_space, size));
-    let master_workspace = master_target.active_workspace(target_space).unwrap();
-    master_target
+    let mut saved_target = test_engine();
+    let mut saved_store = WindowStore::default();
+    let _ = saved_target
+        .handle_event(&mut saved_store, LayoutEvent::SpaceExposed(target_space, size));
+    let saved_workspace = saved_target.active_workspace(target_space).unwrap();
+    saved_target
         .restore_layout(
             path.clone(),
-            RestoreRequest::from_master_file(RestoreScope::Workspace, target_space),
-            &mut master_store,
+            RestoreRequest::from_saved_file(RestoreScope::Workspace, target_space),
+            &mut saved_store,
             &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
         )
         .unwrap();
     let _ = std::fs::remove_file(path);
     assert_eq!(
-        master_target
+        saved_target
             .virtual_workspace_manager
-            .workspace_info(target_space, master_workspace)
+            .workspace_info(target_space, saved_workspace)
             .unwrap()
             .name,
         target_name,
@@ -1332,7 +1332,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
 }
 
 #[test]
-fn master_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
+fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
     let mut workspace_settings = VirtualWorkspaceSettings::default();
     workspace_settings.default_workspace_count = 6;
     workspace_settings.workspace_names =
@@ -1361,7 +1361,7 @@ fn master_workspace_restore_uses_target_ordinal_and_preserves_configured_name() 
         "saved-s".to_string(),
     ));
     let path = std::env::temp_dir().join(format!(
-        "rini-master-workspace-ordinal-test-{}-{}.ron",
+        "rini-saved-workspace-ordinal-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
@@ -1378,7 +1378,7 @@ fn master_workspace_restore_uses_target_ordinal_and_preserves_configured_name() 
     engine
         .restore_layout(
             path.clone(),
-            RestoreRequest::from_master_file(RestoreScope::Workspace, space),
+            RestoreRequest::from_saved_file(RestoreScope::Workspace, space),
             &mut window_store,
             &workspace_settings,
             &layout_settings,
@@ -1409,7 +1409,7 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
         ));
     }
     let path = std::env::temp_dir().join(format!(
-        "rini-master-display-source-test-{}.ron",
+        "rini-saved-display-source-test-{}.ron",
         std::process::id(),
     ));
     snapshot
@@ -1423,7 +1423,7 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
     engine
         .restore_layout(
             path.clone(),
-            RestoreRequest::from_master_file(RestoreScope::Workspace, current_a),
+            RestoreRequest::from_saved_file(RestoreScope::Workspace, current_a),
             &mut window_store,
             &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),

@@ -6,7 +6,7 @@ impl LayoutEngine {
         Self::load_with_schema_version(&path).map(|(engine, _)| engine)
     }
 
-    /// Load the master snapshot used for process startup and report its persisted coverage.
+    /// Load the saved snapshot used for process startup and report its persisted coverage.
     /// Validation and menu previews continue to use `load` without emitting restore logs.
     pub fn load_for_startup_restore(path: PathBuf) -> anyhow::Result<Self> {
         let (mut engine, schema_version) = Self::load_with_schema_version(&path)?;
@@ -292,7 +292,7 @@ impl LayoutEngine {
         }
     }
 
-    /// Reconcile startup-only native SpaceId churn using the display identity saved in the master
+    /// Reconcile startup-only native SpaceId churn using the display identity saved in the
     /// file. Normal space switches must never call this path: a new current space on a display is
     /// ordinarily a distinct layout, not a renamed old space.
     pub fn reconcile_startup_spaces(
