@@ -274,8 +274,12 @@ impl Reactor {
 
 }
 
-/// Everything a query reads, borrowed from the reactor for the length of one answer. Queries
-/// never mutate: a space the engine has not initialised lists no workspaces.
+/// Everything a query reads, borrowed from the reactor for the length of one answer. Queries never
+/// mutate.
+///
+/// Workspaces are global and every display shows one of the same list, so a space id narrows which
+/// workspace is ACTIVE and which windows are on it, not which workspaces exist. Asking about a space
+/// rini has never seen still lists them all.
 pub(crate) struct StateView<'a> {
     pub(crate) windows: &'a WindowStore,
     pub(crate) engine: &'a LayoutEngine,
@@ -669,6 +673,7 @@ impl StateView<'_> {
             census,
             orphaned_workspaces,
             stale_homes,
+            // Every tracked window, manageable or not: see the note on filtering above.
             windows_managed: self.windows.tracked_window_count(),
         }
     }
@@ -953,5 +958,206 @@ impl StateView<'_> {
         });
 
         serde_json::to_string_pretty(&out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGPoint, CGSize};
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    use crate::app::reactor::state::AppState;
+    use crate::app::reactor::testing::make_window_info;
+    use crate::displays::domain::screen::ScreenInfo;
+    use crate::windows::domain::request::AppThreadHandle;
+    use crate::windows::domain::state::WindowState;
+    use crate::workspaces::LayoutEvent;
+    use rini_core::ids::{ScreenId, WindowServerId};
+
+    use super::*;
+
+    fn rect(x: f64, w: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 800.0))
+    }
+
+    fn engine() -> LayoutEngine {
+        LayoutEngine::new(
+            &crate::workspaces::settings::VirtualWorkspaceSettings::default(),
+            &crate::layout::settings::LayoutSettings::default(),
+            None,
+        )
+    }
+
+    fn screens(spaces: &[u64]) -> ForwardedSpaceState {
+        ForwardedSpaceState {
+            screens: spaces
+                .iter()
+                .enumerate()
+                .map(|(i, &space)| ScreenInfo {
+                    id: ScreenId::new(i as u32 + 1),
+                    frame: rect(i as f64 * 1000.0, 1000.0),
+                    display_uuid: format!("uuid-{space}"),
+                    name: None,
+                    space: Some(SpaceId::new(space)),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// An app entry, so a window belonging to it is visible to a query at all.
+    fn apps(pids: &[pid_t]) -> FxHashMap<pid_t, AppState> {
+        let (tx, _rx) = rini_runloop::channel::channel();
+        pids.iter()
+            .map(|&pid| {
+                (
+                    pid,
+                    AppState {
+                        info: crate::windows::domain::info::AppInfo {
+                            bundle_id: Some(format!("com.test.{pid}")),
+                            localized_name: Some(format!("App {pid}")),
+                        },
+                        handle: AppThreadHandle::from_sender(tx.clone()),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    struct Fixture {
+        windows: WindowStore,
+        engine: LayoutEngine,
+        spaces: ForwardedSpaceState,
+        apps: FxHashMap<pid_t, AppState>,
+        config: crate::app::config::Config,
+        active: FxHashSet<SpaceId>,
+    }
+
+    impl Fixture {
+        fn new(space_ids: &[u64], pids: &[pid_t]) -> Self {
+            let mut engine = engine();
+            let mut windows = WindowStore::default();
+            for &space in space_ids {
+                let _ = engine.handle_event(
+                    &mut windows,
+                    LayoutEvent::SpaceExposed(SpaceId::new(space), CGSize::new(1000.0, 800.0)),
+                );
+            }
+            Fixture {
+                windows,
+                engine,
+                spaces: screens(space_ids),
+                apps: apps(pids),
+                config: crate::app::config::Config::default(),
+                active: space_ids.iter().map(|&s| SpaceId::new(s)).collect(),
+            }
+        }
+
+        fn add_window(&mut self, pid: pid_t, idx: u32, manageable: bool) -> WindowId {
+            let wid = WindowId::new(pid, idx);
+            let info = make_window_info(rect(0.0, 400.0), Some(WindowServerId::new(idx)), "w", None);
+            let mut state = WindowState::from(info);
+            state.is_manageable = manageable;
+            self.windows.insert_window(wid, state);
+            wid
+        }
+
+        fn view(&self) -> StateView<'_> {
+            StateView {
+                windows: &self.windows,
+                engine: &self.engine,
+                spaces: &self.spaces,
+                apps: &self.apps,
+                settings: &self.config.settings,
+                active_spaces: &self.active,
+                main_window: None,
+                default_space: self.spaces.screens.first().and_then(|s| s.space),
+                active_context_space: self.spaces.screens.first().and_then(|s| s.space),
+            }
+        }
+    }
+
+    #[test]
+    fn a_managed_window_answers_with_its_app_name_and_live_frame() {
+        let mut f = Fixture::new(&[10], &[1]);
+        let wid = f.add_window(1, 1, true);
+        let data = f.view().create_window_data(wid).expect("a managed window answers");
+        assert_eq!(data.id, wid);
+        assert_eq!(data.app_name, Some("App 1".to_string()));
+        assert_eq!(data.info.frame, rect(0.0, 400.0));
+    }
+
+    // A window whose app rini has not registered is invisible to every query, including
+    // diagnostics. Worth knowing, because the window is on screen and the tool says nothing.
+    #[test]
+    fn a_window_whose_app_is_unknown_answers_nothing() {
+        let mut f = Fixture::new(&[10], &[]);
+        let wid = f.add_window(1, 1, true);
+        assert!(f.view().create_window_data(wid).is_none());
+    }
+
+    #[test]
+    fn an_unmanageable_window_is_filtered_out() {
+        let mut f = Fixture::new(&[10], &[1]);
+        let wid = f.add_window(1, 1, false);
+        assert!(f.view().create_window_data(wid).is_none());
+    }
+
+    #[test]
+    fn a_window_that_does_not_exist_answers_nothing() {
+        let f = Fixture::new(&[10], &[1]);
+        assert!(f.view().create_window_data(WindowId::new(9, 9)).is_none());
+    }
+
+    // Workspaces are global: the same list belongs to every display, and a space id only decides
+    // which of them is active and what is on it. So an unknown space still lists every workspace,
+    // with none of them active.
+    #[test]
+    fn workspaces_are_listed_for_a_space_rini_has_never_seen() {
+        let f = Fixture::new(&[10], &[1]);
+        let known = f.view().handle_workspace_query(Some(SpaceId::new(10)));
+        let unknown = f.view().handle_workspace_query(Some(SpaceId::new(999)));
+        assert_eq!(known.len(), unknown.len(), "the list does not depend on the space");
+        assert!(known.iter().any(|w| w.is_active), "one is active on a space rini knows");
+        assert!(!unknown.iter().any(|w| w.is_active), "none is active on one it does not");
+    }
+
+    #[test]
+    fn every_attached_display_is_reported_with_its_uuid_and_space() {
+        let f = Fixture::new(&[10, 20], &[]);
+        let displays = f.view().handle_displays_query();
+        assert_eq!(displays.len(), 2);
+        let uuids: Vec<_> = displays.iter().map(|d| d.info.display_uuid.clone()).collect();
+        assert_eq!(uuids, vec!["uuid-10".to_string(), "uuid-20".to_string()]);
+    }
+
+    #[test]
+    fn diagnostics_reports_one_entry_per_attached_space() {
+        let f = Fixture::new(&[10, 20], &[1]);
+        let diagnostics = f.view().handle_diagnostics_query();
+        let reported: Vec<u64> = diagnostics.spaces.iter().map(|s| s.space_id).collect();
+        assert_eq!(reported, vec![10, 20]);
+        assert!(diagnostics.orphaned_workspaces.is_empty());
+        assert!(diagnostics.stale_homes.is_empty());
+    }
+
+    // `windows_managed` is the count of TRACKED windows, manageable or not. Diagnostics filters
+    // nothing on purpose, so a window rini owns but does not tile is visible here rather than
+    // silently missing -- which is the whole point of the tool. The field name undersells that.
+    #[test]
+    fn diagnostics_counts_every_tracked_window_not_just_the_tileable_ones() {
+        let mut f = Fixture::new(&[10], &[1]);
+        f.add_window(1, 1, true);
+        f.add_window(1, 2, false);
+        assert_eq!(f.view().handle_diagnostics_query().windows_managed, 2);
+    }
+
+    #[test]
+    fn applications_are_reported_once_each_with_their_bundle_id() {
+        let f = Fixture::new(&[10], &[1, 2]);
+        let apps = f.view().handle_applications_query();
+        let mut bundles: Vec<_> = apps.iter().filter_map(|a| a.bundle_id.clone()).collect();
+        bundles.sort();
+        assert_eq!(bundles, vec!["com.test.1".to_string(), "com.test.2".to_string()]);
     }
 }
