@@ -18,7 +18,18 @@ use crate::windows::domain::transaction::{Requested, TransactionId};
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
 
+use tracing::{debug, trace};
+
+use rini_core::ids::pid_t;
+
+use crate::displays::domain::topology::ForwardedSpaceState;
+use crate::windows::domain::request::{Quiet, Request};
+use crate::workspaces::LayoutEvent;
+
+use super::DragState;
 use super::events::EventOutcome;
+use super::events::app as application_workflow;
+use super::events::drag as interaction_workflow;
 use super::events::space as topology_workflow;
 use super::events::system as system_workflow;
 use super::events::window as window_workflow;
@@ -314,6 +325,250 @@ impl Reactor {
             outcome.dispatch_mouse_up = true;
         }
         outcome.focused_window = raised_window;
+        Ok(outcome)
+    }
+}
+
+impl Reactor {
+    pub(super) fn on_application_launched(
+        &mut self,
+        payload: application_workflow::ApplicationLaunchedPayload,
+        raised_window: Option<WindowId>,
+    ) -> anyhow::Result<EventOutcome> {
+        let pid = payload.pid;
+        let mut outcome =
+            application_workflow::handle_application_launched(&mut self.app_manager, payload)?;
+        if self.main_window_tracker.is_globally_frontmost(pid) {
+            outcome.app_requests.push((pid, Request::ApplicationGloballyActivated(pid)));
+        }
+        outcome.focused_window = raised_window;
+        Ok(outcome)
+    }
+
+    pub(super) fn on_application_activated(
+        &mut self,
+        pid: pid_t,
+        quiet: Quiet,
+        raised_window: Option<WindowId>,
+    ) -> anyhow::Result<EventOutcome> {
+        self.clear_menu_state_for_non_owner(pid);
+        let mut outcome = application_workflow::handle_application_activated(
+            application_workflow::ApplicationActivatedPayload { pid, quiet },
+        )?;
+        if quiet == Quiet::No {
+            outcome.absorb(self.handle_app_activation_workspace_switch(pid));
+        }
+        outcome.focused_window = raised_window;
+        Ok(outcome)
+    }
+
+    /// A global activation the tracker has already seen is dropped.
+    ///
+    /// The app thread resolves the current AX main window and emits `ApplicationActivated` in reply,
+    /// so cached focus is deliberately not replayed here.
+    pub(super) fn on_application_globally_activated(
+        &mut self,
+        pid: pid_t,
+        duplicate: bool,
+        should_update_notifications: bool,
+    ) -> anyhow::Result<EventOutcome> {
+        if duplicate {
+            trace!(pid, "Ignoring duplicate global application activation");
+            return Ok(EventOutcome::focus_changed(None, should_update_notifications));
+        }
+        self.clear_menu_state_for_non_owner(pid);
+        if !self.is_login_window_pid(pid)
+            && let Some(app) = self.app_manager.apps.get(&pid)
+        {
+            let _ = app.handle.send(Request::ApplicationGloballyActivated(pid));
+        }
+        Ok(EventOutcome::focus_changed(None, should_update_notifications))
+    }
+
+    pub(super) fn on_window_server_focus_changed(
+        &mut self,
+        window: WindowId,
+        reported_space: SpaceId,
+    ) -> anyhow::Result<EventOutcome> {
+        if self.layout_manager.layout_engine.focused_window() == Some(window) {
+            if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
+                _ = event_tap_tx.send(crate::input::platform::input_tap::Request::EnforceHidden);
+            }
+            return Ok(EventOutcome::default());
+        }
+        if !self.state.windows.contains_window(window) {
+            if let Some(app) = self.app_manager.apps.get(&window.pid) {
+                let _ = app.handle.send(Request::GetVisibleWindows);
+            }
+            return Ok(EventOutcome::default());
+        }
+        if !self.is_space_active(reported_space) {
+            return Ok(EventOutcome::default());
+        }
+        // rini's own raise, coming back as a focus report. Following it moves the layout's selection
+        // to a window the user did not ask for, and the strip scrolls to it.
+        if self.raise_echo.swallows(window, std::time::Instant::now()) {
+            trace!(?window, "ignoring a focus report provoked by rini's own raise");
+            return Ok(EventOutcome::default());
+        }
+        // Whichever window gains or loses focus renders differently now, so both need a fresh
+        // picture before the next animation draws them.
+        self.refresh_focus_pictures(window);
+        // An app activation picked its own window, and it may not be the one the user was in.
+        if let Some(redirect) = self.activation_redirect(window, reported_space) {
+            return Ok(redirect);
+        }
+        // Follow focus to the window's own workspace.
+        //
+        // Auto-switching only happened on APP activation, so cmd-` — which cycles windows inside the
+        // already-active app — moved focus to a window sitting in another workspace without the
+        // display switching to it. The window is parked off-screen, so focus went somewhere invisible
+        // and the keystroke looked like it had done nothing.
+        let outcome =
+            self.maybe_auto_switch_to_window_workspace(window.pid, window, reported_space);
+        // Once per activation: whatever was not used above is not used later either.
+        self.main_window_tracker.take_activation_target(window.pid);
+        if outcome.arrange.requested {
+            return Ok(outcome);
+        }
+        // A click raises only the window under the cursor, which splits the strip around a floating
+        // window. The strip is one group, so `apply_event_outcome` lifts all of it once this focus has
+        // landed (`regroup_after_layout`).
+        Ok(EventOutcome::default()
+            .with_layout_event(LayoutEvent::WindowFocused(reported_space, window)))
+    }
+
+    pub(super) fn on_windows_discovered(
+        &mut self,
+        payload: application_workflow::WindowsDiscoveredPayload,
+        raised_window: Option<WindowId>,
+    ) -> anyhow::Result<EventOutcome> {
+        if self.refreshes_blocked() {
+            debug!(
+                pid = payload.pid,
+                state = ?self.refresh_quarantine_state(),
+                "Ignoring windows discovery while refresh quarantine is active"
+            );
+            self.defer_visible_refresh(true);
+            return Ok(EventOutcome::default());
+        }
+        let mut outcome = application_workflow::handle_windows_discovered(payload)?;
+        outcome.focused_window = raised_window;
+        Ok(outcome)
+    }
+
+    pub(super) fn on_window_created(
+        &mut self,
+        payload: window_workflow::WindowCreatedPayload,
+        raised_window: Option<WindowId>,
+    ) -> anyhow::Result<EventOutcome> {
+        let mut outcome = window_workflow::handle_window_created(
+            &mut self.state,
+            &self.transaction_manager,
+            payload,
+        )?;
+        outcome.focused_window = raised_window;
+        Ok(outcome)
+    }
+
+    pub(super) fn on_window_destroyed(
+        &mut self,
+        window: WindowId,
+        raised_window: Option<WindowId>,
+    ) -> anyhow::Result<EventOutcome> {
+        // macOS can replace AXUIElements during lifecycle/display churn while the native window
+        // remains alive. Recovery already schedules a stable refresh, so preserve topology until then.
+        // Outside churn, retain the original AX destruction behaviour and remove the window at once.
+        if self.refreshes_blocked() {
+            return Ok(EventOutcome::default());
+        }
+        // A closed window disappears; only its cached picture has to go. Once: the window-server path
+        // may have removed the window, and forgotten it, already. See "A closed window disappears" in
+        // `docs/animation/animation-smoothness.md`.
+        if self.state.windows.window(window).is_some()
+            && let Some(tx) = &self.communication_manager.workspace_animation_tx
+        {
+            _ = tx.send(crate::animation::platform::engine::Event::ForgetWindow(window));
+        }
+        let mut outcome = window_workflow::handle_window_destroyed(
+            &mut self.state,
+            &self.transaction_manager,
+            &mut self.drag_manager,
+            window_workflow::WindowDestroyedPayload { window },
+        )?;
+        outcome.focused_window = raised_window;
+        Ok(outcome)
+    }
+
+    pub(super) fn on_space_state_changed(
+        &mut self,
+        space_state: ForwardedSpaceState,
+    ) -> anyhow::Result<EventOutcome> {
+        let releases_lifecycle = space_state.releases_lifecycle_refresh_quarantine;
+        let releases_display_churn = space_state.releases_display_churn_refresh_quarantine;
+        let outcome = self.handle_authoritative_space_snapshot(space_state)?;
+        if releases_lifecycle {
+            self.release_post_instability_quarantine_after_authoritative_snapshot();
+        }
+        if releases_display_churn {
+            self.refresh_quarantine_manager.display_churn_active = false;
+            self.request_refresh_when_spaces_actor_stabilizes();
+            // A display was plugged in or unplugged. Flush any debounced save now: this is exactly
+            // the transition where the arrangement about to be replaced is the one worth remembering,
+            // and it is also when the layout file gets consulted to put windows back on the display
+            // they came from.
+            if self.autosave_pending {
+                self.save_layout_now();
+            }
+        }
+        Ok(outcome)
+    }
+
+    pub(super) fn on_mouse_up(&mut self) -> anyhow::Result<EventOutcome> {
+        let pending_swap = self.get_pending_drag_swap();
+        let (visible_spaces, visible_space_centers) = self.visible_spaces_for_layout(true);
+        let swap_space = pending_swap
+            .and_then(|(dragged, _)| {
+                let state = self.state.windows.window(dragged)?;
+                self.affinity().best_space_for_window(&state.frame_monotonic, state.info.sys_id)
+            })
+            .or_else(|| {
+                self.drag_manager
+                    .drag_swap_manager
+                    .origin_frame()
+                    .and_then(|frame| self.affinity().best_space_for_frame(&frame))
+            })
+            .or_else(|| self.space_state.screens.iter().find_map(|screen| screen.space));
+        let session = match &self.drag_manager.drag_state {
+            DragState::Active { session } | DragState::PendingSwap { session, .. } => {
+                Some(session.clone())
+            }
+            DragState::Inactive => None,
+        };
+        let final_space = session.as_ref().and_then(|session| {
+            session
+                .settled_space
+                .or_else(|| self.affinity().best_space_for_frame(&session.last_frame))
+                .or_else(|| self.affinity().best_space_for_window_id(session.window))
+        });
+        let focused = self.window_id_under_cursor().and_then(|window| {
+            self.affinity().best_space_for_window_id(window).map(|space| (space, window))
+        });
+        let mut outcome = interaction_workflow::handle_mouse_up(
+            &mut self.state,
+            &mut self.layout_manager,
+            &mut self.drag_manager,
+            interaction_workflow::MouseUpPayload {
+                pending_swap,
+                swap_space,
+                final_space,
+                visible_spaces,
+                visible_space_centers,
+            },
+        )?;
+        if let Some((space, window)) = focused {
+            outcome = outcome.with_layout_event(LayoutEvent::WindowFocused(space, window));
+        }
         Ok(outcome)
     }
 }
