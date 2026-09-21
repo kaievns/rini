@@ -92,10 +92,6 @@ pub fn dressing_is_real(mean_alpha: f64) -> bool {
 /// The side of the square a [`thumbprint`] samples an image down to.
 const THUMBPRINT_SIDE: usize = 32;
 
-/// Share of samples that may differ and still count as the same rendering: forgives a blinking
-/// cursor, not a half-painted surface. See "A grow holds, then reveals" in `docs/animation/animation-smoothness.md`.
-const STABLE_MAX_DIFFERING: f64 = 0.03;
-const STABLE_CHANNEL_TOLERANCE: u8 = 8;
 
 /// A small fingerprint of an image's content, for the reveal chase's settledness check.
 pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
@@ -130,19 +126,6 @@ pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
         out.extend_from_slice(unsafe { std::slice::from_raw_parts(data.add(y * stride), side * 4) });
     }
     Some(out)
-}
-
-/// Whether two consecutive thumbprints show the same rendering.
-pub fn renderings_match(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() || a.is_empty() {
-        return false;
-    }
-    let differing = a
-        .iter()
-        .zip(b)
-        .filter(|(x, y)| x.abs_diff(**y) > STABLE_CHANNEL_TOLERANCE)
-        .count();
-    (differing as f64) <= (a.len() as f64) * STABLE_MAX_DIFFERING
 }
 
 /// The harvested hairline: small owned bitmaps, in [`DressingLayout`] order. Owned copies, because
@@ -421,28 +404,6 @@ mod tests {
         // Measured: alpha 244 of 255.
         assert!(dressing_is_real(244.0 / 255.0));
         assert!(dressing_is_real(1.0));
-    }
-
-    #[test]
-    fn a_rendering_matches_itself_through_cursor_noise_but_not_through_repaints() {
-        let a = vec![100u8; 4096];
-        assert!(renderings_match(&a, &a), "identical");
-        let mut cursor = a.clone();
-        for value in cursor.iter_mut().take(80) {
-            *value = 200; // ~2% of samples
-        }
-        assert!(renderings_match(&a, &cursor), "cursor-sized noise still matches");
-        let mut repaint = a.clone();
-        for value in repaint.iter_mut().take(1024) {
-            *value = 200; // a quarter of the image
-        }
-        assert!(!renderings_match(&a, &repaint), "a repaint does not");
-    }
-
-    #[test]
-    fn mismatched_or_empty_thumbprints_never_match() {
-        assert!(!renderings_match(&[1, 2, 3], &[1, 2]));
-        assert!(!renderings_match(&[], &[]));
     }
 
     #[test]
