@@ -56,7 +56,6 @@ struct LayoutState {
     last_center_offset_delta_px: AtomicU64,
     #[serde(skip, default = "default_atomic")]
     overscroll_accumulation: AtomicU64,
-    fullscreen: HashSet<WindowId>,
     fullscreen_within_gaps: HashSet<WindowId>,
 }
 
@@ -76,7 +75,6 @@ impl LayoutState {
             last_step_px: AtomicU64::new(0.0f64.to_bits()),
             last_center_offset_delta_px: AtomicU64::new(0.0f64.to_bits()),
             overscroll_accumulation: AtomicU64::new(0.0f64.to_bits()),
-            fullscreen: HashSet::default(),
             fullscreen_within_gaps: HashSet::default(),
         }
     }
@@ -179,7 +177,6 @@ impl LayoutState {
         if col.windows.is_empty() {
             self.columns.remove(col_idx);
         }
-        self.fullscreen.remove(&wid);
         self.fullscreen_within_gaps.remove(&wid);
 
         if self.selected == Some(wid) {
@@ -305,7 +302,6 @@ impl Clone for LayoutState {
             overscroll_accumulation: AtomicU64::new(
                 self.overscroll_accumulation.load(Ordering::Relaxed),
             ),
-            fullscreen: self.fullscreen.clone(),
             fullscreen_within_gaps: self.fullscreen_within_gaps.clone(),
         }
     }
@@ -722,7 +718,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         weight: Some(column.height_weights.get(index).copied().unwrap_or(1.0)),
                         window_id: Some(window.into()),
                         is_selected: state.selected == Some(window),
-                        is_fullscreen: state.fullscreen.contains(&window),
                         is_fullscreen_within_gaps: state.fullscreen_within_gaps.contains(&window),
                         role: None,
                         pending_split: None,
@@ -735,7 +730,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     weight: Some((state.column_width_ratio + column.width_offset).max(0.0)),
                     window_id: None,
                     is_selected: false,
-                    is_fullscreen: false,
                     is_fullscreen_within_gaps: false,
                     role: Some("column".to_owned()),
                     pending_split: None,
@@ -750,7 +744,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
             weight: None,
             window_id: None,
             is_selected: false,
-            is_fullscreen: false,
             is_fullscreen_within_gaps: false,
             role: None,
             pending_split: None,
@@ -982,11 +975,9 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     CGPoint::new(x.round(), y_cursor.round()),
                     CGSize::new(column_width.round(), row_height.round()),
                 );
-                if state.fullscreen.contains(wid) {
-                    frame = screen;
-                } else if state.fullscreen_within_gaps.contains(wid) {
-                    // Full WIDTH, not the tiling rect: keeping the strip-relative x is what lets the
-                    // column keep scrolling with the strip (`docs/layout/strip.md`).
+                if state.fullscreen_within_gaps.contains(wid) {
+                    // The tiling rect's SIZE at the column's own x: keeping the strip-relative x is
+                    // what lets the column keep scrolling with the strip (`docs/layout/strip.md`).
                     frame = CGRect::new(
                         CGPoint::new(x.round(), tiling.origin.y.round()),
                         CGSize::new(tiling.size.width.round(), tiling.size.height.round()),
@@ -1135,9 +1126,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
             if state.center_override_window == Some(from) {
                 state.center_override_window = Some(to);
             }
-            if state.fullscreen.remove(&from) {
-                state.fullscreen.insert(to);
-            }
             if state.fullscreen_within_gaps.remove(&from) {
                 state.fullscreen_within_gaps.insert(to);
             }
@@ -1185,9 +1173,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
             return;
         }
         if full {
-            // Full width and true fullscreen are mutually exclusive modes, exactly as the
-            // two toggle commands treat them.
-            state.fullscreen.remove(&wid);
             state.fullscreen_within_gaps.insert(wid);
         } else {
             state.fullscreen_within_gaps.remove(&wid);
@@ -1465,21 +1450,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
     }
 
 
-    fn toggle_fullscreen_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
-        let Some(state) = self.layout_state_mut(layout) else {
-            return Vec::new();
-        };
-        let Some(selected) = state.selected_or_first() else {
-            return Vec::new();
-        };
-        if state.fullscreen.remove(&selected) {
-            return vec![selected];
-        }
-        state.fullscreen_within_gaps.remove(&selected);
-        state.fullscreen.insert(selected);
-        vec![selected]
-    }
-
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
@@ -1493,7 +1463,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
         };
 
         if !state.fullscreen_within_gaps.remove(&selected) {
-            state.fullscreen.remove(&selected);
             state.fullscreen_within_gaps.insert(selected);
         }
 

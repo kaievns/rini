@@ -21,7 +21,7 @@ pub enum LayoutCommand {
     UnjoinWindows,
     ToggleFocusFloating,
     ToggleWindowFloating,
-    ToggleFullscreen,
+    /// niri's `maximize-column`: the column fills the tiling area and stays in the strip.
     ToggleFullscreenWithinGaps,
     ResizeWindowGrow(ResizeOrientation),
     ResizeWindowShrink(ResizeOrientation),

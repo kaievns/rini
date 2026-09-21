@@ -13,7 +13,6 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::layout::settings::LayoutSettings;
 use rini_ipc::protocol::WorkspaceSelector;
 use crate::workspaces::LayoutSystem;
-use crate::workspaces::domain::floating::FloatingFullscreenKind;
 use crate::layout::WindowLayoutConstraints;
 use crate::workspaces::domain::app_rules::{AfterRules, AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus, BeforeRules};
 use crate::windows::domain::state::WindowState;
@@ -1927,32 +1926,24 @@ impl LayoutEngine {
             return EventResponse::default();
     }
 
-    /// Fullscreens a FLOATING window, or takes it back out. `ToggleFullscreenWithinGaps` keeps the
-    /// layout's gaps around the window rather than covering the whole display.
+    /// Maximizes a FLOATING window to the tiling area, or takes it back out. Its pre-maximize frame
+    /// is kept in `floating_positions`, since a floating window has no column to fall back to.
     ///
     /// A tiled window does not come here: its own arm in `handle_command` handles it, which is why
     /// the caller tests `is_floating` before calling rather than this deciding.
-    fn toggle_floating_fullscreen(
+    fn toggle_floating_maximized(
         &mut self,
         window_store: &WindowStore,
         space: Option<SpaceId>,
-        command: &LayoutCommand,
     ) -> EventResponse {
             let Some(wid) = self.focused_window else {
                 return EventResponse::default();
             };
-            let target = match command {
-                LayoutCommand::ToggleFullscreenWithinGaps => FloatingFullscreenKind::WithinGaps,
-                _ => FloatingFullscreenKind::Full,
-            };
-            if self.floating.fullscreen_kind(wid) == Some(target) {
-                self.floating.set_fullscreen(wid, None);
+            if self.floating.is_maximized(wid) {
+                self.floating.set_maximized(wid, false);
             } else {
-                // Only save the pre-fullscreen frame when switching from a non-fullscreen state,
-                // and _not_ when switching between fullscreen kinds.
-                if self.floating.fullscreen_kind(wid).is_none()
-                    && let Some(space) = space
-                {
+                // The frame to come back to, saved on the way in.
+                if let Some(space) = space {
                     let ws = self
                         .virtual_workspace_manager
                         .workspace_for_window(window_store, space, wid)
@@ -1963,7 +1954,7 @@ impl LayoutEngine {
                         self.floating_positions.store(space, ws, wid, frame);
                     }
                 }
-                self.floating.set_fullscreen(wid, Some(target));
+                self.floating.set_maximized(wid, true);
             }
             return EventResponse {
                 changed: true,
@@ -2034,10 +2025,10 @@ impl LayoutEngine {
             return self.toggle_window_floating(window_store, space, is_floating);
         }
 
-        if let LayoutCommand::ToggleFullscreen | LayoutCommand::ToggleFullscreenWithinGaps = &command
+        if let LayoutCommand::ToggleFullscreenWithinGaps = &command
             && is_floating
         {
-            return self.toggle_floating_fullscreen(window_store, space, &command);
+            return self.toggle_floating_maximized(window_store, space);
         }
 
 
@@ -2170,21 +2161,6 @@ impl LayoutEngine {
                     }
                 }
                 EventResponse::default()
-            }
-            LayoutCommand::ToggleFullscreen => {
-                let raise_windows =
-                    self.workspace_tree_mut(workspace_id).toggle_fullscreen_of_selection(layout);
-                if raise_windows.is_empty() {
-                    EventResponse::default()
-                } else {
-                    EventResponse {
-                        changed: true,
-                        raise_windows,
-                        focus_window: None,
-                        boundary_hit: None,
-                        edge_hit: None,
-                    }
-                }
             }
             LayoutCommand::ToggleFullscreenWithinGaps => {
                 let raise_windows = self
@@ -2461,26 +2437,23 @@ impl LayoutEngine {
                 );
             }
 
-            let fullscreen: Vec<(WindowId, FloatingFullscreenKind)> = positions
+            let maximized: Vec<WindowId> = positions
                 .keys()
                 .copied()
-                .filter_map(|w| self.floating.fullscreen_kind(w).map(|k| (w, k)))
+                .filter(|w| self.floating.is_maximized(*w))
                 .collect();
-            for (w, kind) in fullscreen {
-                let rect = match kind {
-                    FloatingFullscreenKind::Full => screen,
-                    FloatingFullscreenKind::WithinGaps => {
-                        let o = &gaps.outer;
-                        CGRect::new(
-                            CGPoint::new(screen.origin.x + o.left, screen.origin.y + o.top),
-                            CGSize::new(
-                                screen.size.width - o.left - o.right,
-                                screen.size.height - o.top - o.bottom,
-                            ),
-                        )
-                    }
-                };
-                positions.insert(w, rect);
+            let o = &gaps.outer;
+            for w in maximized {
+                positions.insert(
+                    w,
+                    CGRect::new(
+                        CGPoint::new(screen.origin.x + o.left, screen.origin.y + o.top),
+                        CGSize::new(
+                            screen.size.width - o.left - o.right,
+                            screen.size.height - o.top - o.bottom,
+                        ),
+                    ),
+                );
             }
         }
 

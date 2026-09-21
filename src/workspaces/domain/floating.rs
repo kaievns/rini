@@ -6,12 +6,6 @@ use std::collections::BTreeSet;
 use rini_core::ids::BTreeExt;
 use rini_core::ids::SpaceId;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FloatingFullscreenKind {
-    Full,
-    WithinGaps,
-}
-
 #[derive(Serialize, Deserialize, Default)]
 pub struct FloatingManager {
     floating_windows: BTreeSet<WindowId>,
@@ -19,7 +13,9 @@ pub struct FloatingManager {
     active_floating_windows: HashMap<SpaceId, HashMap<pid_t, HashSet<WindowId>>>,
     last_floating_focus: Option<WindowId>,
     #[serde(skip)]
-    fullscreen_windows: HashMap<WindowId, FloatingFullscreenKind>,
+    /// Floating windows filling the tiling area. Not persisted: a floating window's frame is
+    /// restored from `floating_positions`, and a maximized one has no frame of its own to keep.
+    maximized_windows: HashSet<WindowId>,
 }
 
 impl FloatingManager {
@@ -41,30 +37,23 @@ impl FloatingManager {
 
     pub fn remove_floating(&mut self, window_id: WindowId) {
         self.floating_windows.remove(&window_id);
-        self.fullscreen_windows.remove(&window_id);
+        self.maximized_windows.remove(&window_id);
         self.remove_active_entries(window_id);
         if self.last_floating_focus == Some(window_id) {
             self.last_floating_focus = None;
         }
     }
 
-    pub fn set_fullscreen(
-        &mut self,
-        window_id: WindowId,
-        kind: Option<FloatingFullscreenKind>,
-    ) {
-        match kind {
-            Some(k) => {
-                self.fullscreen_windows.insert(window_id, k);
-            }
-            None => {
-                self.fullscreen_windows.remove(&window_id);
-            }
+    pub fn set_maximized(&mut self, window_id: WindowId, maximized: bool) {
+        if maximized {
+            self.maximized_windows.insert(window_id);
+        } else {
+            self.maximized_windows.remove(&window_id);
         }
     }
 
-    pub fn fullscreen_kind(&self, window_id: WindowId) -> Option<FloatingFullscreenKind> {
-        self.fullscreen_windows.get(&window_id).copied()
+    pub fn is_maximized(&self, window_id: WindowId) -> bool {
+        self.maximized_windows.contains(&window_id)
     }
 
     pub fn clear_active_for_app(&mut self, space: SpaceId, pid: pid_t) {
@@ -111,10 +100,10 @@ impl FloatingManager {
             self.floating_windows.insert(to);
         }
 
-        let fullscreen = self.fullscreen_windows.remove(&from);
-        self.fullscreen_windows.remove(&to);
-        if let Some(k) = fullscreen {
-            self.fullscreen_windows.insert(to, k);
+        let maximized = self.maximized_windows.remove(&from);
+        self.maximized_windows.remove(&to);
+        if maximized {
+            self.maximized_windows.insert(to);
         }
 
         let active_spaces: Vec<_> = self
@@ -164,7 +153,7 @@ impl FloatingManager {
     pub fn remove_all_for_pid(&mut self, pid: pid_t) {
         let _ = self.floating_windows.remove_all_for_pid(pid);
 
-        self.fullscreen_windows.retain(|w, _| w.pid != pid);
+        self.maximized_windows.retain(|w| w.pid != pid);
 
         for space_map in self.active_floating_windows.values_mut() {
             space_map.remove(&pid);
@@ -232,13 +221,13 @@ mod tests {
         let space = SpaceId::new(3);
 
         floating.add_floating(provisional_live);
-        floating.set_fullscreen(provisional_live, Some(FloatingFullscreenKind::Full));
+        floating.set_maximized(provisional_live, true);
         floating.add_active(space, provisional_live.pid, provisional_live);
 
         floating.transfer_window_identity(restored_tiled, provisional_live);
 
         assert!(!floating.is_floating(provisional_live));
-        assert_eq!(floating.fullscreen_kind(provisional_live), None);
+        assert!(!floating.is_maximized(provisional_live));
         assert!(!floating.active_flat(space).contains(&provisional_live));
     }
 }

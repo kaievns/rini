@@ -12,6 +12,14 @@ is borrowed.
   half-size on 2 and full on 3 with nothing about the window changing. niri
   does the same; full width is `maximize-column`'s job, here
   `toggle_fullscreen_within_gaps`, and that mode is remembered per display.
+- **There is one maximize mode, and it stays in the strip.** A second mode,
+  `toggle_fullscreen`, used to assign the usable frame with its own absolute
+  origin. That differed from this one by nothing but the outer gap, and it
+  reserved no space in the strip and did not scroll: the window sat still while
+  its neighbours slid under it, and the column it had left behind stayed the
+  width it was. It is deleted rather than fixed, because macOS's own fullscreen
+  already covers "cover everything". A window that fills the tiling area is a
+  full-width COLUMN, which is what niri means by `maximize-column`.
 - **Inner gaps are absorbed into the column width so N columns of ratio 1/N
   fit.** Without it two 0.5 columns need `2*(0.5*W) + gap`, one gap more than
   the viewport; the second column is never fully visible, reveal-on-demand

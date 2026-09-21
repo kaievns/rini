@@ -4939,23 +4939,12 @@ fn laid_out_frame(
 }
 
 #[test]
-fn floating_window_toggles_to_fullscreen() {
-    let (mut reactor, wid, space1, screen, _floating_frame) = reactor_with_floating_window();
-    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreen);
-    let laid_out = laid_out_frame(&mut reactor, space1, screen, wid).expect("window laid out");
-    assert!(
-        laid_out.same_as(screen),
-        "expected fullscreen {screen:?}, got {laid_out:?}"
-    );
-}
-
-#[test]
 fn floating_window_toggle_off_restore_previous_frame() {
     let (mut reactor, wid, space1, screen, floating_frame) = reactor_with_floating_window();
     // Turn on
-    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreen);
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
     // Turn off
-    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreen);
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
     let laid_out = laid_out_frame(&mut reactor, space1, screen, wid).expect("window laid out");
     assert!(
         laid_out.same_as(floating_frame),
@@ -4990,7 +4979,7 @@ fn floating_window_toggles_to_fullscreen_within_gaps() {
 /// save_current_layout normalizes floating-versus-tiled ownership and rewrites
 /// stored floating frames. Those mutations are correct for an explicit save but
 /// destructive on every layout change: wiring them into the layout path broke
-/// un-fullscreening a floating window, because the frame it should return to had
+/// un-maximizing a floating window, because the frame it should return to had
 /// already been overwritten. autosave_current_layout must only refresh fingerprints
 /// and write.
 #[test]
@@ -5002,7 +4991,7 @@ fn autosave_preserves_floating_restore_frame() {
     let _ = std::fs::remove_dir_all(&dir);
 
     // Autosave between the two toggles, which is what the live reactor does.
-    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreen);
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
     let active = reactor.workspace_command_space();
     // The write itself may legitimately be refused: the persisted-topology validator
     // rejects snapshots taken while a workspace has no layout state, which happens
@@ -5014,7 +5003,7 @@ fn autosave_preserves_floating_restore_frame() {
         &reactor.state.windows,
         active,
     );
-    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreen);
+    reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);
 
     let laid_out = laid_out_frame(&mut reactor, space1, screen, wid).expect("window laid out");
     assert!(

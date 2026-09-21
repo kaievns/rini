@@ -184,7 +184,6 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
 
     fn move_selection(&mut self, layout: LayoutId, direction: Direction) -> bool;
 
-    fn toggle_fullscreen_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
 
     /// Cycle the selected column through the configured preset widths.

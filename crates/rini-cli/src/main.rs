@@ -205,9 +205,7 @@ enum WindowCommands {
     },
     /// Toggle window floating state
     ToggleFloat,
-    /// Toggle fullscreen mode (fills the whole screen, ignores outer gaps)
-    ToggleFullscreen,
-    /// Toggle fullscreen within configured outer gaps (respects outer gaps / fills tiling area)
+    /// Toggle the selected column filling the tiling area, still scrolling with the strip
     ToggleFullscreenWithinGaps,
     /// Grow the current window size (increments by ~5%).
     ResizeGrow {
@@ -727,9 +725,6 @@ fn map_window_command(cmd: WindowCommands) -> Result<CliCommand, String> {
         },
         WindowCommands::ToggleFloat => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::ToggleWindowFloating,
-        ))),
-        WindowCommands::ToggleFullscreen => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::ToggleFullscreen,
         ))),
         WindowCommands::ToggleFullscreenWithinGaps => Ok(CliCommand::Reactor(
             reactor::Command::Layout(LC::ToggleFullscreenWithinGaps),

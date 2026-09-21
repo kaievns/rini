@@ -199,9 +199,9 @@ pub struct ContainerTreeNode {
     pub window_id: Option<WindowId>,
     /// Layout-engine selection, which is distinct from OS window focus.
     pub is_selected: bool,
-    pub is_fullscreen: bool,
+    /// Filling the tiling area, still a member of the strip.
     pub is_fullscreen_within_gaps: bool,
-    /// Semantic role when the mode defines one, such as `master`, `stack`, or `column`.
+    /// Semantic role when the layout defines one. The scrolling strip uses `column`.
     pub role: Option<String>,
     /// Pending BSP split direction, if this leaf is preselected for insertion.
     pub pending_split: Option<Direction>,
