@@ -506,3 +506,168 @@ fn handle_mouse_up_if_needed(
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGPoint, CGSize};
+
+    use crate::app::reactor::DragState;
+    use crate::app::reactor::managers::DragManager;
+    use crate::app::reactor::state::RiniState;
+    use crate::app::reactor::testing::make_window_info;
+    use crate::windows::domain::state::WindowState;
+    use crate::windows::domain::transaction::WindowTxStore;
+    use rini_core::ids::WindowServerId;
+
+    use super::*;
+
+    const WSID: u32 = 7;
+
+    fn rect(x: f64, y: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(100.0, 100.0))
+    }
+
+    fn wid() -> WindowId {
+        WindowId::new(1, 1)
+    }
+
+    fn state() -> RiniState {
+        let mut state = RiniState::default();
+        let info = make_window_info(rect(0.0, 0.0), Some(WindowServerId::new(WSID)), "w", None);
+        state.windows.insert_window(wid(), WindowState::from(info));
+        state.windows.track_window_server_id(WindowServerId::new(WSID), wid());
+        state
+    }
+
+    fn drag() -> DragManager {
+        DragManager {
+            drag_state: DragState::Inactive,
+            drag_swap_manager: crate::input::domain::drag_swap::DragManager::new(
+                crate::input::settings::WindowSnappingSettings::default(),
+            ),
+            skip_layout_for_window: None,
+        }
+    }
+
+    /// `mouse_state` is always passed in, because a `None` makes the classifier read the live mouse.
+    fn classify(
+        state: &mut RiniState,
+        transactions: &TransactionManager,
+        drag: &mut DragManager,
+        new_frame: CGRect,
+        last_seen: Option<TransactionId>,
+        requested: bool,
+        mouse: MouseState,
+        mission_control: bool,
+    ) -> FrameChangeDisposition {
+        let mut mouse = Some(mouse);
+        classify_window_frame_change(
+            state,
+            transactions,
+            drag,
+            wid(),
+            new_frame,
+            last_seen,
+            requested,
+            &mut mouse,
+            mission_control,
+        )
+    }
+
+    fn handled(d: &FrameChangeDisposition) -> bool {
+        matches!(d, FrameChangeDisposition::Handled)
+    }
+
+    #[test]
+    fn a_frame_report_for_an_unknown_window_is_nothing_to_analyse() {
+        let mut empty = RiniState::default();
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let d = classify(&mut empty, &tx, &mut drag(), rect(5.0, 5.0), None, false, MouseState::Up, false);
+        assert!(handled(&d));
+    }
+
+    #[test]
+    fn mission_control_ends_any_drag_and_swallows_the_report() {
+        let mut s = state();
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let mut dr = drag();
+        dr.skip_layout_for_window = Some(wid());
+        let d = classify(&mut s, &tx, &mut dr, rect(5.0, 5.0), None, false, MouseState::Up, true);
+        assert!(handled(&d));
+        assert!(matches!(dr.drag_state, DragState::Inactive));
+        assert_eq!(dr.skip_layout_for_window, None, "Mission Control moves every window");
+    }
+
+    // The window server replays frames. A report carrying an older transaction id is an echo of a
+    // write rini has already superseded, and acting on it walks the window backwards.
+    #[test]
+    fn a_report_from_a_superseded_write_is_discarded_without_moving_the_window() {
+        let mut s = state();
+        let wsid = WindowServerId::new(WSID);
+        let tx = TransactionManager::new(WindowTxStore::new());
+        // One record per window holds both the txid and the target, so the write rini is waiting for
+        // is stored last and the report claims an earlier one.
+        let stale = TransactionId::default().next();
+        let current = stale.next();
+        tx.store_txid(wsid, current, rect(50.0, 50.0));
+
+        let d = classify(&mut s, &tx, &mut drag(), rect(9.0, 9.0), Some(stale), false, MouseState::Up, false);
+        assert!(handled(&d));
+        assert_eq!(
+            s.windows.window(wid()).unwrap().frame_monotonic,
+            rect(0.0, 0.0),
+            "an echo must not update the monotonic frame"
+        );
+    }
+
+    #[test]
+    fn a_report_acknowledging_rinis_own_write_lands_and_clears_the_target() {
+        let mut s = state();
+        let wsid = WindowServerId::new(WSID);
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let txid = TransactionId::default().next();
+        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+
+        let d = classify(&mut s, &tx, &mut drag(), rect(50.0, 50.0), Some(txid), false, MouseState::Up, false);
+        assert!(handled(&d));
+        assert_eq!(s.windows.window(wid()).unwrap().frame_monotonic, rect(50.0, 50.0));
+        assert_eq!(tx.get_target_frame(wsid), None, "the write is acknowledged");
+    }
+
+    // A held mouse means the user is dragging, so rini's pending target is abandoned rather than
+    // waited for, and the move goes on to geometry analysis.
+    #[test]
+    fn a_held_mouse_abandons_rinis_pending_target_and_analyses_the_move() {
+        let mut s = state();
+        let wsid = WindowServerId::new(WSID);
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let txid = TransactionId::default().next();
+        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+
+        let d = classify(&mut s, &tx, &mut drag(), rect(9.0, 9.0), Some(txid), false, MouseState::Down, false);
+        assert!(!handled(&d), "the user's drag is real geometry");
+        assert_eq!(tx.get_target_frame(wsid), None, "rini stops waiting for its own write");
+    }
+
+    #[test]
+    fn a_frame_rini_asked_for_lands_without_analysis() {
+        let mut s = state();
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let d = classify(&mut s, &tx, &mut drag(), rect(12.0, 12.0), None, true, MouseState::Up, false);
+        assert!(handled(&d));
+        assert_eq!(s.windows.window(wid()).unwrap().frame_monotonic, rect(12.0, 12.0));
+    }
+
+    #[test]
+    fn an_unprompted_move_needs_geometry_analysis() {
+        let mut s = state();
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let d = classify(&mut s, &tx, &mut drag(), rect(300.0, 300.0), None, false, MouseState::Up, false);
+        assert!(!handled(&d));
+        assert_eq!(
+            s.windows.window(wid()).unwrap().frame_monotonic,
+            rect(0.0, 0.0),
+            "the frame is not accepted until the analysis decides what the move means"
+        );
+    }
+}

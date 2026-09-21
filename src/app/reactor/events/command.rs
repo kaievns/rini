@@ -419,3 +419,168 @@ pub fn handle_command_reactor_move_window_to_display(
         .with_layout_response(response, None)
         .with_pre_layout_window_frame_write(payload.window, payload.target_frame, true))
 }
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    use crate::app::reactor::managers::AppManager;
+    use crate::app::reactor::state::RiniState;
+    use crate::app::reactor::testing::make_window_info;
+    use crate::windows::domain::state::WindowState;
+    use rini_core::ids::ScreenId;
+
+    use super::*;
+
+    fn wid() -> WindowId {
+        WindowId::new(1, 1)
+    }
+
+    fn screen(space: Option<SpaceId>) -> ScreenInfo {
+        ScreenInfo {
+            id: ScreenId::new(1),
+            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)),
+            display_uuid: "uuid-1".into(),
+            name: None,
+            space,
+        }
+    }
+
+    fn display_payload(space: Option<SpaceId>, active: bool, focus: Option<WindowId>) -> DisplayFocusPayload {
+        DisplayFocusPayload { screen: Some(screen(space)), target_is_active: active, focus_window: focus }
+    }
+
+    fn focused_window(outcome: &EventOutcome) -> Option<(SpaceId, WindowId)> {
+        outcome.layout_events.iter().find_map(|event| match event {
+            LayoutEvent::WindowFocused(space, window) => Some((*space, *window)),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_selector_naming_no_display_does_nothing() {
+        let none = DisplayFocusPayload { screen: None, target_is_active: true, focus_window: None };
+        for outcome in [
+            handle_move_mouse_to_display(none.clone()).unwrap(),
+            handle_focus_display(none).unwrap(),
+        ] {
+            assert!(outcome.layout_events.is_empty());
+            assert_eq!(outcome.mouse_warps, Vec::new());
+        }
+    }
+
+    // A display whose space is not active is one rini is not managing right now. Warping onto it
+    // would put the cursor somewhere no layout answers for.
+    #[test]
+    fn an_inactive_target_display_is_refused_by_both_commands() {
+        let payload = display_payload(Some(SpaceId::new(2)), false, Some(wid()));
+        for outcome in [
+            handle_move_mouse_to_display(payload.clone()).unwrap(),
+            handle_focus_display(payload).unwrap(),
+        ] {
+            assert_eq!(outcome.mouse_warps, Vec::new());
+            assert_eq!(focused_window(&outcome), None);
+        }
+    }
+
+    // The two commands differ only here: moving the mouse always warps, and focusing warps only when
+    // there is no window to focus instead.
+    #[test]
+    fn moving_the_mouse_warps_and_focusing_prefers_a_window() {
+        let payload = display_payload(Some(SpaceId::new(2)), true, Some(wid()));
+
+        let moved = handle_move_mouse_to_display(payload.clone()).unwrap();
+        assert_eq!(moved.mouse_warps, vec![screen(None).frame.mid()]);
+        assert_eq!(focused_window(&moved), Some((SpaceId::new(2), wid())));
+
+        let focused = handle_focus_display(payload).unwrap();
+        assert_eq!(focused.mouse_warps, Vec::new(), "the window takes focus, the cursor stays put");
+        assert_eq!(focused_window(&focused), Some((SpaceId::new(2), wid())));
+    }
+
+    #[test]
+    fn focusing_a_display_with_no_window_on_it_warps_the_cursor_instead() {
+        let outcome = handle_focus_display(display_payload(Some(SpaceId::new(2)), true, None)).unwrap();
+        assert_eq!(outcome.mouse_warps, vec![screen(None).frame.mid()]);
+        assert_eq!(focused_window(&outcome), None);
+    }
+
+    fn state_with_window() -> RiniState {
+        let mut state = RiniState::default();
+        let info = make_window_info(screen(None).frame, Some(WindowServerId::new(7)), "w", None);
+        state.windows.insert_window(wid(), WindowState::from(info));
+        state
+    }
+
+    #[test]
+    fn focusing_a_tracked_window_on_an_active_space_raises_it() {
+        let outcome = handle_command_reactor_focus_window(
+            &state_with_window(),
+            &AppManager::new(),
+            FocusWindowPayload {
+                window_id: wid(),
+                window_server_id: None,
+                resolved_space: Some(SpaceId::new(2)),
+                space_is_active: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(focused_window(&outcome), Some((SpaceId::new(2), wid())));
+        assert!(!outcome.raise_requests.is_empty());
+    }
+
+    #[test]
+    fn focusing_a_tracked_window_is_refused_without_an_active_space() {
+        for (space, active) in [(None, true), (Some(SpaceId::new(2)), false)] {
+            let outcome = handle_command_reactor_focus_window(
+                &state_with_window(),
+                &AppManager::new(),
+                FocusWindowPayload {
+                    window_id: wid(),
+                    window_server_id: None,
+                    resolved_space: space,
+                    space_is_active: active,
+                },
+            )
+            .unwrap();
+            assert_eq!(focused_window(&outcome), None, "space {space:?} active {active}");
+            assert!(outcome.raise_requests.is_empty());
+        }
+    }
+
+    // A window rini does not track cannot be raised through the layout, but the window server can
+    // still be told to make it key. That is how focusing something unmanaged works at all.
+    #[test]
+    fn an_untracked_window_is_made_key_through_the_window_server() {
+        let outcome = handle_command_reactor_focus_window(
+            &RiniState::default(),
+            &AppManager::new(),
+            FocusWindowPayload {
+                window_id: wid(),
+                window_server_id: Some(WindowServerId::new(7)),
+                resolved_space: None,
+                space_is_active: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(focused_window(&outcome), None);
+        assert_eq!(outcome.make_key_windows, vec![(1, WindowServerId::new(7))]);
+    }
+
+    #[test]
+    fn an_untracked_window_with_no_server_id_cannot_be_focused_at_all() {
+        let outcome = handle_command_reactor_focus_window(
+            &RiniState::default(),
+            &AppManager::new(),
+            FocusWindowPayload {
+                window_id: wid(),
+                window_server_id: None,
+                resolved_space: None,
+                space_is_active: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome.make_key_windows, Vec::new());
+        assert_eq!(focused_window(&outcome), None);
+    }
+}

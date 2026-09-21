@@ -564,3 +564,192 @@ pub(crate) fn emit_layout_events(
     }
     outcome
 }
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    use crate::app::reactor::state::RiniState;
+    use crate::app::reactor::testing::make_window_info;
+    use crate::windows::domain::info::WindowServerInfo;
+    use crate::windows::domain::state::WindowState;
+
+    use super::*;
+
+    fn wid(pid: pid_t, idx: u32) -> WindowId {
+        WindowId::new(pid, idx)
+    }
+
+    fn frame() -> CGRect {
+        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, 100.0))
+    }
+
+    /// One app with `count` windows, each tracked under a window-server id equal to its index.
+    fn state_with(pid: pid_t, count: u32) -> RiniState {
+        let mut state = RiniState::default();
+        for idx in 1..=count {
+            let wsid = WindowServerId::new(idx);
+            let info = make_window_info(frame(), Some(wsid), "w", Some("com.test"));
+            state.windows.insert_window(wid(pid, idx), WindowState::from(info));
+            state.windows.track_window_server_id(wsid, wid(pid, idx));
+            // Without a visible window the app looks absent, and cleanup skips entirely.
+            state.windows.mark_window_visible(wsid);
+        }
+        state
+    }
+
+    /// A window the server still knows about, at a sane frame: not gone.
+    fn present(wsid: u32) -> StaleWindowObservation {
+        StaleWindowObservation {
+            info: Some(WindowServerInfo {
+                id: WindowServerId::new(wsid),
+                pid: 1,
+                layer: 0,
+                frame: frame(),
+                min_frame: CGSize::new(0.0, 0.0),
+                max_frame: CGSize::new(0.0, 0.0),
+            }),
+            suitable: Some(true),
+            ordered_in: Some(true),
+        }
+    }
+
+    /// The server answers, and its answer is that the window is neither suitable nor on screen.
+    fn gone(wsid: u32) -> StaleWindowObservation {
+        StaleWindowObservation { suitable: Some(false), ordered_in: Some(false), ..present(wsid) }
+    }
+
+    /// The server did not answer. Not the same as answering "gone".
+    fn unanswered(wsid: u32) -> StaleWindowObservation {
+        StaleWindowObservation { info: None, suitable: None, ordered_in: None, ..present(wsid) }
+    }
+
+    fn snapshot(
+        observations: Vec<(u32, StaleWindowObservation)>,
+    ) -> StaleCleanupSnapshot {
+        StaleCleanupSnapshot {
+            pending_refresh: false,
+            suppressed: false,
+            mission_control_active: false,
+            drag_active: false,
+            inactive_windows: HashSet::default(),
+            server_observations: observations
+                .into_iter()
+                .map(|(wsid, o)| (WindowServerId::new(wsid), o))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_window_the_app_no_longer_lists_and_the_server_calls_gone_is_stale() {
+        let state = state_with(1, 2);
+        let snap = snapshot(vec![(1, present(1)), (2, gone(2))]);
+        let (stale, _) = identify_stale_windows(&state, 1, &[wid(1, 1)], &snap);
+        assert_eq!(stale, vec![wid(1, 2)]);
+    }
+
+    #[test]
+    fn a_window_the_app_still_lists_is_never_stale() {
+        let state = state_with(1, 2);
+        // Even with the server calling it gone: the app is authoritative about its own windows.
+        let snap = snapshot(vec![(1, gone(1)), (2, gone(2))]);
+        let (stale, _) = identify_stale_windows(&state, 1, &[wid(1, 1), wid(1, 2)], &snap);
+        assert!(stale.is_empty());
+    }
+
+    // The distinction the whole path turns on. See `docs/testing.md`: an unanswerable query and a
+    // negative one mean different things, and treating "no answer" as "gone" retires live windows.
+    #[test]
+    fn an_unanswered_query_is_not_a_negative_one() {
+        let state = state_with(1, 1);
+        let snap = snapshot(vec![(1, unanswered(1))]);
+        let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
+        assert!(stale.is_empty(), "no server answer must not retire a window");
+    }
+
+    #[test]
+    fn a_window_with_no_observation_at_all_is_left_alone() {
+        let state = state_with(1, 1);
+        let (stale, _) = identify_stale_windows(&state, 1, &[], &snapshot(vec![]));
+        assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn another_apps_windows_are_never_touched() {
+        let mut state = state_with(1, 1);
+        let wsid = WindowServerId::new(9);
+        let info = make_window_info(frame(), Some(wsid), "other", Some("com.other"));
+        state.windows.insert_window(wid(2, 9), WindowState::from(info));
+        state.windows.track_window_server_id(wsid, wid(2, 9));
+        let snap = snapshot(vec![(1, gone(1)), (9, gone(9))]);
+        let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
+        assert_eq!(stale, vec![wid(1, 1)], "pid 2's window is not this app's business");
+    }
+
+    #[test]
+    fn a_minimized_window_is_not_stale_for_being_absent() {
+        let mut state = state_with(1, 1);
+        let mut info = make_window_info(frame(), Some(WindowServerId::new(1)), "w", None);
+        info.is_minimized = true;
+        state.windows.insert_window(wid(1, 1), WindowState::from(info));
+        let snap = snapshot(vec![(1, gone(1))]);
+        let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
+        assert!(stale.is_empty(), "minimized windows are absent on purpose");
+    }
+
+    #[test]
+    fn a_window_on_a_known_inactive_space_is_not_stale_for_being_absent() {
+        let state = state_with(1, 1);
+        let mut snap = snapshot(vec![(1, gone(1))]);
+        snap.inactive_windows.insert(wid(1, 1));
+        let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
+        assert!(stale.is_empty(), "a parked window is absent on purpose");
+    }
+
+    #[test]
+    fn cleanup_is_skipped_whenever_the_world_is_mid_change() {
+        let state = state_with(1, 1);
+        for mutate in [
+            (|s: &mut StaleCleanupSnapshot| s.suppressed = true) as fn(&mut StaleCleanupSnapshot),
+            |s| s.mission_control_active = true,
+            |s| s.drag_active = true,
+        ] {
+            let mut snap = snapshot(vec![(1, gone(1))]);
+            mutate(&mut snap);
+            let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
+            assert!(stale.is_empty(), "{snap:?} should skip cleanup entirely");
+        }
+    }
+
+    #[test]
+    fn pending_refresh_is_reported_back_when_cleanup_runs() {
+        let state = state_with(1, 1);
+        let mut snap = snapshot(vec![(1, gone(1))]);
+        snap.pending_refresh = true;
+        let (_, pending) = identify_stale_windows(&state, 1, &[], &snap);
+        assert!(pending, "the caller clears the pid from the pending-refresh set");
+    }
+
+    // Skipping cleanup also withholds pending_refresh, so the pid stays queued and the refresh is
+    // retried once the world settles. Clearing it here would drop the retry.
+    #[test]
+    fn a_skipped_cleanup_leaves_the_pending_refresh_queued() {
+        let state = state_with(1, 1);
+        let mut snap = snapshot(vec![(1, gone(1))]);
+        snap.pending_refresh = true;
+        snap.mission_control_active = true;
+        let (stale, pending) = identify_stale_windows(&state, 1, &[], &snap);
+        assert!(stale.is_empty());
+        assert!(!pending, "the pid must stay queued for a retry");
+    }
+
+    #[test]
+    fn an_app_with_nothing_visible_is_not_judged_at_all() {
+        let mut state = RiniState::default();
+        let info = make_window_info(frame(), Some(WindowServerId::new(1)), "w", None);
+        state.windows.insert_window(wid(1, 1), WindowState::from(info));
+        state.windows.track_window_server_id(WindowServerId::new(1), wid(1, 1));
+        let (stale, _) = identify_stale_windows(&state, 1, &[], &snapshot(vec![(1, gone(1))]));
+        assert!(stale.is_empty(), "nothing visible and nothing listed teaches nothing");
+    }
+}
