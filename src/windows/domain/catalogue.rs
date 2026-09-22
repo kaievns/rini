@@ -20,11 +20,16 @@ pub enum WindowVisibility {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Where rini puts a window: in the strip, or free.
+///
+/// There is no `NativeFullscreen` variant. There was, it was set on suspend and read nowhere, and
+/// every reader asked `NativeFullscreenRecord` instead — which is keyed both by window and by
+/// window-server id and is the single source of truth for "macOS has this window". A second one
+/// would be a second thing to keep in step.
 pub enum WindowPlacement {
     #[default]
     Tiled,
     Floating,
-    NativeFullscreen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -512,7 +517,11 @@ impl WindowCatalogue {
             fullscreen_space,
             transition,
         };
-        self.windows.entry(window_id).or_default().placement = WindowPlacement::NativeFullscreen;
+        // The entry is created if it is absent — a window can go fullscreen before rini has one for
+        // it, and the rekey path needs something to carry the record across. Its PLACEMENT is left
+        // alone: that says what the window will be again when it comes back, and
+        // `NativeFullscreenRecord` is what says macOS has it now.
+        self.windows.entry(window_id).or_default();
         self.app_windows.entry(window_id.pid).or_default().insert(window_id);
         self.upsert_native_fullscreen_record(record)
     }
@@ -608,6 +617,8 @@ impl WindowCatalogue {
     ) -> Option<NativeFullscreenRecord> {
         let original_window_id = self.native_fullscreen_original_window(window_id)?;
         let record = self.remove_native_fullscreen_record_by_original_window(original_window_id)?;
+        // Re-derived rather than remembered: an app rule may have started floating this window
+        // while macOS had it.
         if let Some(window) = self.windows.get_mut(&record.current_window_id) {
             window.placement = if window.rule_floating {
                 WindowPlacement::Floating

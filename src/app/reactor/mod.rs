@@ -177,10 +177,15 @@ pub enum Event {
     /// application on startup.
     ///
     /// Both WindowInfo (accessibility) and WindowServerInfo are collected for
-    /// any already-open windows when the launch event is sent. Since this
-    /// event isn't ordered with respect to the Space events, it is possible to
-    /// receive this event for a space we just switched off of.. FIXME. The same
-    /// is true of WindowCreated events.
+    /// any already-open windows when the launch event is sent.
+    ///
+    /// NOT ordered against the Space events, so it can arrive naming a space rini has just switched
+    /// off, and the same is true of window creation. That is a property of two independent macOS
+    /// streams and cannot be fixed by ordering them; what handles it is that a discovered window's
+    /// space is RESOLVED rather than taken from the event —
+    /// `space_resolution::discovery` prefers a space that is actually showing over one inherited
+    /// from a stale report. If a window ever lands on the space you just left, that rule is where to
+    /// look, not here.
     ApplicationLaunched {
         pid: pid_t,
         info: AppInfo,
@@ -250,8 +255,11 @@ pub enum Event {
     /// don't interfere with drags. This event is used to update the layout in
     /// case updates were supressed while the button was down.
     ///
-    /// FIXME: This can be interleaved incorrectly with the MouseState in app
-    /// actor events.
+    /// Can interleave wrongly with the `MouseState` carried on app-actor frame events: this arrives
+    /// on the input thread while those arrive per application, so a frame report generated while the
+    /// button was down can be handled after the release that was meant to unsuppress it. Tracked in
+    /// `roadmap.md` under known bugs; acting on it needs a measured case, because the visible
+    /// symptom is a layout pass that does not happen rather than one that goes wrong.
     MouseUp,
     /// Sent by the event tap only when the cursor enters a different window.
     /// Window resolution and transition deduplication stay on the input
@@ -5018,8 +5026,11 @@ impl Reactor {
         self.main_window_tracker.main_window()
     }
 
+    /// Resolves rather than caches. Three callers, each once per event, and resolving reads the
+    /// window server — so this is a real cost but not a hot one, and a cache here would be a second
+    /// copy of the answer `space_resolution` exists to give. Left alone deliberately: the TODO that
+    /// used to be here asked for an optimisation with no measurement behind it.
     fn main_window_space(&self) -> Option<SpaceId> {
-        // TODO: Optimize this with a cache or something.
         let wid = self.main_window()?;
         self.affinity().best_space_for_window_id(wid)
     }

@@ -20,6 +20,12 @@ current behaviour annoys me.
   external attached.
 - **Some floating drags produce no `AXWindowMoved`,** so no drag session is created and the
   layout keeps reasserting the stored frame.
+- **`MouseUp` can interleave wrongly with app-actor `MouseState`.** Layout changes are
+  suppressed while the button is down; `MouseUp` arrives on the input thread while frame
+  reports arrive per application, so a report generated during the drag can be handled
+  after the release meant to unsuppress it. The symptom is a layout pass that does not
+  happen, which is why it has survived: it looks like nothing. Needs a measured case
+  before it can be acted on.
 
 ## Cleanup
 - **Merge the two gesture tables.** `[settings.gestures]` (workspace swipe) and

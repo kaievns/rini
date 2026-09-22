@@ -135,7 +135,12 @@ sweep (`2462e4a`) took the layout-mode vocabulary. What is left:
 
 ### 2.1 `FIXME`s that describe live defects, not tidying
 
-**PARTLY — the restored-dead-apps FIXME was stale and is gone (`37dd37b`); the other three are live and stay.**
+**DONE — no `FIXME` remains in the reactor. The restored-dead-apps one was stale (`37dd37b`). Of the
+other three: the unordered-launch hazard now names where it is handled (`space_resolution::discovery`
+resolves a discovered window's space rather than trusting the event); the `MouseUp`/`MouseState`
+interleave is a real race and is now a roadmap entry with what it needs, a measured case, because its
+symptom is a layout pass that does NOT happen; and the "optimize with a cache" TODO had no
+measurement behind it and is replaced by what the call actually costs.**
 
 ```
 src/app/reactor/mod.rs:171    receive this event for a space we just switched off of.. FIXME
@@ -208,11 +213,12 @@ Largest methods: `handle_layout_response` (297), `dispatch_workflow` (280),
 
 **OPEN — checked by narrowing each to `&Reactor`: all four genuinely mutate, because they commit frame transactions. The fix is the `present(motion)` boundary, which changes the event model.**
 
-New, found while resolving the native-fullscreen question: `WindowPlacement::NativeFullscreen` is
-write-only. It is set in `catalogue.rs:515` and read nowhere; every reader goes through the
-`NativeFullscreenRecord` instead, which is keyed both by window and by window-server id. The variant
-is not wrong, it is unused, and deleting it means deciding what a suspended window's placement should
-say instead — left alone rather than guessed at.
+New, found while resolving the native-fullscreen question: `WindowPlacement::NativeFullscreen` was
+write-only, set on suspend and read nowhere because every reader asked `NativeFullscreenRecord`.
+DONE — the variant is deleted and placement now says what the window will be when it comes back. The
+`or_default()` that set it was load-bearing for a different reason: it created the catalogue entry
+for a window that goes fullscreen before rini has one, which the rekey path needs. A test caught
+that immediately.
 
 `src/app/reactor/animation.rs` and `managers.rs` take `reactor: &mut Reactor`
 rather than `&mut self` on a narrower borrow — 9 signatures. `animate_layout`'s own
