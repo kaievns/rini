@@ -154,7 +154,7 @@ pub struct Settings {
     pub focus_follows_mouse_disable_hotkey: Option<HotkeySpec>,
     /// Bundle ids whose activation must not switch workspaces (Spotlight-style focus stealers).
     #[serde(default)]
-    pub auto_focus_blacklist: Vec<String>,
+    pub auto_focus_denylist: Vec<String>,
     #[serde(default)]
     pub layout: LayoutSettings,
     #[serde(default)]

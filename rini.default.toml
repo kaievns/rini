@@ -53,7 +53,7 @@ stacked_display_lower_top_at = 0.4
 # Examples:
 #   "com.apple.dock", "com.apple.systemuiserver", "com.apple.SecurityAgent",
 #   "com.raycast.macos", "com.apple.Spotlight"
-auto_focus_blacklist = []
+auto_focus_denylist = []
 
 # Run commands on start
 #

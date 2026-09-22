@@ -4011,9 +4011,9 @@ impl Reactor {
             return EventOutcome::no_change();
         };
 
-        if self.config.settings.auto_focus_blacklist.contains(&bundle_id_str) {
+        if self.config.settings.auto_focus_denylist.contains(&bundle_id_str) {
             debug!(
-                "App {} is blacklisted for auto-focus workspace switching, ignoring activation",
+                "App {} is on the auto-focus denylist, ignoring activation",
                 bundle_id_str
             );
             return EventOutcome::no_change();

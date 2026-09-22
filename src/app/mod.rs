@@ -9,6 +9,7 @@
 //! Nothing here is imported by a feature. See `docs/architecture.md`.
 
 pub mod api;
+pub mod boot;
 pub mod channels;
 pub mod config;
 pub mod hotkeys;

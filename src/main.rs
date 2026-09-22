@@ -16,7 +16,6 @@ use rini::app::reactor::{self, Reactor};
 use rini::displays::platform::spaces::SpacesActor;
 use rini::displays::platform::window_notify as window_notify_actor;
 use rini::app::hotkeys::{self as wm_controller, WmController};
-use rini::app::config::Config;
 use rini_core::paths::{config_file, restore_file};
 use rini::app::logging as log;
 use rini::app::startup::execute_startup_commands;
@@ -145,28 +144,12 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
     }
 
     let config_path = opt.config.clone().unwrap_or_else(|| config_file());
-    // A broken config must not stop rini from starting. This used to be an unwrap, so a single
-    // unparseable line took the whole window manager down at launch, leaving no way to fix the
-    // config except from a terminal opened by something else. One mistyped keybinding was enough.
-    //
-    // Falling back to the defaults keeps windows managed and the hotkeys for editing the config
-    // reachable, which is the only state from which a user can actually recover. The layout
-    // restore below already degrades this way; the config read was the odd one out.
-    let mut config = if config_path.exists() {
-        match Config::read(&config_path) {
-            Ok(config) => config,
-            Err(error) => {
-                eprintln!(
-                    "Could not read the config at {}; starting with the built-in defaults so rini \
-stays usable. Fix the config and restart. Error: {error}",
-                    config_path.display()
-                );
-                Config::default()
-            }
-        }
-    } else {
-        Config::default()
-    };
+    // The fallback rule and its history are `app::boot::config_or_default`, which is also where its
+    // tests are: this path is only reachable by running the binary.
+    let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
+    if let Some(complaint) = complaint {
+        eprintln!("{complaint}");
+    }
     config.settings.animate &= !opt.no_animate;
     config.settings.default_disable |= opt.default_disable;
 
@@ -201,7 +184,7 @@ stays usable. Fix the config and restart. Error: {error}",
     // that is not attached while keeping each window's display affinity, so those
     // windows lay out fresh on a live display and return to their own display when it
     // is plugged back in.
-    let want_restore = !opt.no_restore || opt.restore;
+    let want_restore = rini::app::boot::wants_restore(opt.restore, opt.no_restore);
     let mut layout = if want_restore {
         let path = restore_file();
         match LayoutEngine::load_for_startup_restore(path.clone()) {
