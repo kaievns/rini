@@ -3,19 +3,19 @@
 //! They were defined among the tests themselves, at lines 779 through 5103 of one file, so "how do
 //! I get a reactor with a floating window" meant scrolling for it.
 use objc2_core_foundation::{CGPoint, CGSize};
+use rini_core::ids::{WindowServerId, pid_t};
 
-use super::*;
-use crate::windows::domain::request::Request;
-use rini_core::ids::pid_t;
-use crate::workspaces::{LayoutCommand, LayoutEvent};
+use crate::app::reactor::testing::*;
+use crate::app::reactor::*;
 use crate::windows::domain::info::WindowInfo;
-use rini_core::ids::WindowServerId;
+use crate::windows::domain::request::Request;
+use crate::workspaces::{LayoutCommand, LayoutEvent};
 
 /// Builds a reactor with `space1` active on a screen and a single tiled window
 /// (`wid`/`wsid`) assigned to `space1`. `space2` exists with workspaces so it can
 /// be a reassignment target. Returns the pieces the `appeared` tests need.
-pub fn reactor_with_window_on_space1() -> (Reactor, WindowId, WindowServerId, SpaceId, SpaceId, CGRect)
-{
+pub fn reactor_with_window_on_space1()
+-> (Reactor, WindowId, WindowServerId, SpaceId, SpaceId, CGRect) {
     let mut reactor = test_reactor();
     let pid = 1;
     let frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
@@ -34,7 +34,10 @@ pub fn reactor_with_window_on_space1() -> (Reactor, WindowId, WindowServerId, Sp
     reactor.add_test_window(wid, wsid, Some(space1), frame);
 
     assert!(reactor.assign_test_window_to_workspace(space1, wid, space1_workspace));
-    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space1));
+    assert_eq!(
+        reactor.affinity().assigned_space_for_window_id(wid),
+        Some(space1)
+    );
 
     (reactor, wid, wsid, space1, space2, frame)
 }
@@ -51,10 +54,10 @@ pub fn reactor_with_window_moved_to_space2()
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(111);
 
-    reactor.handle_event(space_state_event(
-        vec![screen1, screen2],
-        vec![Some(space1), Some(space2)],
-    ));
+    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
+        Some(space1),
+        Some(space2),
+    ]));
 
     reactor.add_test_app(pid);
 
@@ -67,7 +70,10 @@ pub fn reactor_with_window_moved_to_space2()
     assert!(reactor.assign_test_window_to_workspace(space2, wid, space2_workspace));
     let txid = reactor.transaction_manager.generate_next_txid(wsid);
     reactor.transaction_manager.store_txid(wsid, txid, moved_frame);
-    assert_eq!(reactor.affinity().assigned_space_for_window_id(wid), Some(space2));
+    assert_eq!(
+        reactor.affinity().assigned_space_for_window_id(wid),
+        Some(space2)
+    );
 
     (reactor, wid, wsid, space1, space2, moved_frame)
 }
@@ -91,10 +97,10 @@ pub fn reactor_with_window_on_space1_two_displays() -> (
     let wid = WindowId::new(pid, 1);
     let wsid = WindowServerId::new(121);
 
-    reactor.handle_event(space_state_event(
-        vec![screen1, screen2],
-        vec![Some(space1), Some(space2)],
-    ));
+    reactor.handle_event(space_state_event(vec![screen1, screen2], vec![
+        Some(space1),
+        Some(space2),
+    ]));
 
     reactor.add_test_app(pid);
 
@@ -239,13 +245,10 @@ pub fn rekey_window(reactor: &mut Reactor, old_wid: WindowId, new_wid: WindowId)
         .clone();
     reactor.discover_test_windows(
         old_wid.pid,
-        vec![(
-            new_wid,
-            WindowInfo {
-                sys_id: old_info.sys_id,
-                ..old_info
-            },
-        )],
+        vec![(new_wid, WindowInfo {
+            sys_id: old_info.sys_id,
+            ..old_info
+        })],
         vec![new_wid],
     );
 }
@@ -266,13 +269,13 @@ pub fn has_window_in_layout(
         .any(|(layout_wid, _)| *layout_wid == wid)
 }
 
-pub fn test_layout(reactor: &mut Reactor, space: SpaceId, screen: CGRect) -> Vec<(WindowId, CGRect)> {
+pub fn test_layout(
+    reactor: &mut Reactor,
+    space: SpaceId,
+    screen: CGRect,
+) -> Vec<(WindowId, CGRect)> {
     let gaps = reactor.config.settings.layout.gaps.clone();
-    reactor.layout_manager.layout_engine.calculate_layout(
-        space,
-        screen,
-        &gaps,
-    )
+    reactor.layout_manager.layout_engine.calculate_layout(space, screen, &gaps)
 }
 
 pub fn make_active_app(

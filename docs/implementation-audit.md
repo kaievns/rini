@@ -240,12 +240,29 @@ Named in `docs/architecture.md` as belonging to `app/api/`. Unchanged.
 
 ### 4.1 One 5,949-line integration test file
 
-**PARTLY — the 15 fixtures are in `src/app/reactor/tests/fixtures.rs` (`02c1f6e`); splitting the 168 cases by subject is open.**
+**DONE — the fixtures came out first (`02c1f6e`), then the 184 cases split by subject into eight
+files under `src/app/reactor/tests/`.**
 
-`src/app/reactor/tests/mod.rs` (was `tests.rs`): 184 tests, 5,949 lines, plus 604 lines of scaffolding
-in `reactor/testing.rs`. Every test builds a whole `Reactor`. This is where a
-reactor change is verified, which means a reactor change is slow to verify and the
-failure points at an orchestration, not a rule.
+| file | tests | lines |
+|---|---|---|
+| `displays.rs` | 45 | 1,920 |
+| `tiling.rs` | 32 | 1,211 |
+| `workspaces.rs` | 28 | 1,204 |
+| `focus.rs` | 23 | 791 |
+| `fullscreen.rs` | 17 | 624 |
+| `spaces.rs` | 17 | 463 |
+| `lifecycle.rs` | 13 | 436 |
+| `windows.rs` | 9 | 394 |
+| `fixtures.rs` | — | 349 |
+| `mod.rs` | — | 20 |
+
+`tiling.rs` is not called `layout.rs`: a module named `layout` inside `tests` shadows the `layout`
+alias the siblings use for `crate::workspaces`.
+
+Every test here still builds a whole `Reactor`, which is what makes them integration tests. The
+answer to "a reactor change is slow to verify" is not to make these cheaper but to keep moving rules
+out to where they can be tested alone — `space_resolution`, `present`, `hotkeys::lower`,
+`admissible` and `pointer` each left with their tests.
 
 The recent batches moved the opposite way deliberately — pure decisions to
 `domain/` where they are tested in isolation — and that is why
@@ -258,7 +275,7 @@ The recent batches moved the opposite way deliberately — pure decisions to
 | `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. Needs a fake `AXUIElement` seam. PARTLY: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`) |
 | `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (42 tests) beside it, so covered |
 | `src/input/platform/gesture_tap.rs` | 657 | DONE: the phase machine is `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`) |
-| `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `tests.rs` |
+| `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
 | `src/main.rs` | 430 | one 317-line `main`; composition root |
 | `src/app/hotkeys/mod.rs` | 404 | DONE: the alias lowering is `hotkeys/lower.rs` with 7 tests |
 

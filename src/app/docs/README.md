@@ -15,7 +15,9 @@ knows the features and converts what they emit.
 | `reactor/space_affinity.rs` | Which space a window is on — the gathering |
 | `reactor/space_resolution.rs` | Which space a window is on — the rules, pure |
 | `reactor/query.rs` | Answers from a borrowed `StateView` |
+| `reactor/present.rs` | The frame-writing capability: record a destination, number the write |
 | `reactor/managers.rs` | The handles: eight manager structs plus the layout manager |
+| `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
 | `config/` | `config.toml`: parsing into each feature's settings, validation that spans features, watching and reload |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
 | `hotkeys/` | The controller: app launches, hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a binding alias to a `reactor::Command`, which is where the tests are |
@@ -40,18 +42,41 @@ state a user can recover from.
 feature's `domain/` over several passes. What remains in `reactor/mod.rs` reads and
 writes several stores per event, which is what the application is for.
 
-## Reading order
-
-`reactor/state.rs` → `reactor/events/` → `reactor/mod.rs`, and `main.rs` for how it is
-all assembled.
-
 **A binding alias is a translation, not a side effect.** `hotkeys/lower.rs` turns a
 `WmCmd` into a `reactor::Command`, an `Exec`, a config reload, or a named refusal. It
 was ninety match arms inside `handle_event`, each ending in a `send`, so nothing could
 check that two aliases did not lower to the same command.
 
+## Where the reactor's tests are
+
+`reactor/tests/` is one module per subject. A failing test names the subject, and the
+file you open to change one is the size of that subject rather than of the reactor.
+
+| file | what it covers |
+|---|---|
+| `displays.rs` | screens arriving and leaving, resolution changes, per-display workspaces, display homes |
+| `tiling.rs` | layout passes, strips, columns, folding, resizes, drags, animation |
+| `workspaces.rs` | creating and switching workspaces, moving windows, app rules, queries |
+| `focus.rs` | focus moves, focus-follows-mouse, raise echoes, cmd-tab, per-app main window |
+| `fullscreen.rs` | full width and height on the strip, and macOS taking a window fullscreen off it |
+| `spaces.rs` | which space is current, what happens while that is unknown, space membership |
+| `lifecycle.rs` | windows and apps appearing, disappearing, dying, and surviving a restart |
+| `windows.rs` | which windows rini takes on and which it refuses |
+| `fixtures.rs` | the reactors, apps and windows the cases are built on |
+
+`tiling.rs` is not `layout.rs` because a module named `layout` inside `tests` shadows the
+`layout` alias the siblings use for `crate::workspaces`.
+
+A rule that can be tested without a reactor does not belong here. `space_resolution`,
+`present`, `hotkeys::lower`, `windows::domain::admissible` and `input::domain::pointer`
+each left this module and took their tests with them.
+
+## Reading order
+
+`reactor/state.rs` → `reactor/events/` → `reactor/mod.rs`, and `main.rs` for how it is
+all assembled.
+
 ## Known debt
 
-`reactor/mod.rs` is the largest file in the tree with four functions over 250 lines, and
-its tests live in one large integration module rather than beside the rules. Both are
+`reactor/mod.rs` is the largest file in the tree with four functions over 250 lines,
 tracked in [`docs/implementation-audit.md`](../../../docs/implementation-audit.md).
