@@ -2596,12 +2596,6 @@ impl Reactor {
         self.layout_manager
             .layout_engine
             .forget_affinity_for_dead_windows(&self.state.windows);
-        let attached: Vec<String> = self
-            .space_state
-            .screens
-            .iter()
-            .filter_map(|screen| screen.display_uuid_owned())
-            .collect();
         let observations: Vec<(String, Vec<WindowId>)> = self
             .space_state
             .screens
@@ -2622,7 +2616,7 @@ impl Reactor {
             }
             self.layout_manager
                 .layout_engine
-                .sync_display_affinity(&uuid, &windows, &attached);
+                .sync_display_affinity(&uuid, &windows);
         }
     }
 

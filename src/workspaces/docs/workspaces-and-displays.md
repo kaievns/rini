@@ -72,16 +72,24 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   that brings them back on replug. A home is only written if the space's
   display was known at the time, so a window seen before that mapping existed
   has none.
-- **Homes are re-observed on every settled topology, for attached displays
-  only** (`sync_display_affinity`). Written-once-never-revised went stale
-  the moment the user rearranged anything: a window dragged from the external
-  to the built-in kept its old home and was hauled back on the next replug
-  (reported as a Chrome and an editor window following the terminals across).
-  Windows whose home is a detached display keep it: that is the evacuation case.
-  That guard is the only one. A home on an ATTACHED display is overwritten by any
-  sighting, because an observation carries no reason with it — "the user dragged it
-  here" and "rini put it here" look identical. Tracked in `roadmap.md` as a known
-  bug, since the cure for the stale home is also what makes a home unstable.
+- **A home is written by an intent, never by an observation.** Four things write it:
+  a drag to another display (`events::drag`), an explicit move command
+  (`events::command`), a first sighting (`note_window_display_home`), and a restore.
+  All four are moments where something asked for the window to be somewhere.
+
+  The settled-topology pass (`sync_display_affinity`) only records the strip order and
+  homes windows that have none yet. It used to re-home any window it merely SAW on a
+  display, which is circular: the pass observes the result of rini's own layout, and
+  that layout already follows from the home. So every reason a window was temporarily
+  elsewhere — parked, evacuated on an unplug, laid out on a neighbour — became its new
+  address, and it never came back on a replug. That is the "windows teleport between
+  displays" report. Windows homed to a DETACHED display were already spared as the
+  evacuation case; the attached case was the one that moved.
+
+  Written-once-never-revised was the original behaviour and it went stale the moment
+  the user rearranged anything, which is why the observation pass was added. The fix is
+  not to observe harder: it is that a drag is an intent and writes the home itself.
+
 - **Affinity for closed windows is dropped on every settled topology**
   (`forget_affinity_for_dead_windows`). It was only cleared on the `WindowRemoved` path,
   not `WindowRemovedPreserveFloating`, which the display-change path uses.

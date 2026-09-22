@@ -9,16 +9,6 @@ current behaviour annoys me.
 
 ## Known bugs
 
-- **Display affinity is rewritten by observation.** `sync_display_affinity` re-homes any
-  window it merely *sees* on a display, so a window that lands on the external for any
-  reason is permanently re-homed there and never comes back. Measured: one window's home
-  flipped built-in → external across a single move sequence. This is the root cause behind
-  "windows teleport between displays". Its one guard covers only a home on a DETACHED
-  display (the evacuation case); a home on an attached display is overwritten freely,
-  because nothing distinguishes "the user dragged it here" from "rini put it here for an
-  unrelated reason". Re-observing is deliberate and the reason is recorded in
-  `src/workspaces/docs/workspaces-and-displays.md` under "Display affinity" — what is missing
-  is a reason to believe an observation, not the re-observing itself.
 - **A bad keybinding discards the whole config.** No longer fatal: `main.rs` reports the
   error and falls back to the built-in defaults, so the WM starts and the hotkeys for
   editing the config stay reachable. But one bad command name still costs every other

@@ -463,3 +463,54 @@ mod tests {
         assert_eq!(affinity.space_for_display("built-in"), Some(SpaceId::new(1)));
     }
 }
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    const BUILT_IN: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
+    const EXTERNAL: &str = "B5E7ECDB-94D9-4565-949D-5F22F78D104A";
+
+    fn win(idx: u32) -> WindowId {
+        WindowId::new(500, idx)
+    }
+
+    /// The bug behind "windows teleport between displays". A window homed to the built-in is SEEN on
+    /// the external — because rini parked it there, or evacuated it, or laid it out there — and the
+    /// settled-topology pass used to make that its new home. It then never came back on a replug.
+    ///
+    /// Every real way a window changes display writes the home at the moment the user asks: a drag,
+    /// an explicit move, a first sighting, a restore. An observation is not one of those; it is the
+    /// result of rini's own layout, which already follows from the home.
+    #[test]
+    fn seeing_a_window_on_another_display_does_not_re_home_it() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home(win(1), BUILT_IN);
+
+        affinity.set_window_home_if_absent(win(1), EXTERNAL);
+
+        assert_eq!(
+            affinity.window_home(win(1)),
+            Some(BUILT_IN),
+            "an observation must not overwrite a home the user chose"
+        );
+    }
+
+    /// The pass still has to home a window nobody has placed yet, which is the first sighting and
+    /// the reason it runs at all.
+    #[test]
+    fn a_window_with_no_home_takes_the_display_it_is_seen_on() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home_if_absent(win(2), EXTERNAL);
+        assert_eq!(affinity.window_home(win(2)), Some(EXTERNAL));
+    }
+
+    /// An explicit intent still moves it. This is what a drag and a move command call.
+    #[test]
+    fn an_explicit_move_re_homes_the_window() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home(win(3), BUILT_IN);
+        affinity.set_window_home(win(3), EXTERNAL);
+        assert_eq!(affinity.window_home(win(3)), Some(EXTERNAL));
+    }
+}

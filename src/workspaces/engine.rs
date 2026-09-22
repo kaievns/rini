@@ -9,7 +9,7 @@ use super::{
 };
 use crate::windows::domain::info::AppInfo;
 use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use rustc_hash::FxHashMap as HashMap;
 use crate::layout::settings::LayoutSettings;
 use rini_ipc::protocol::WorkspaceSelector;
 use crate::layout::WindowLayoutConstraints;
@@ -1254,21 +1254,27 @@ impl LayoutEngine {
     /// Re-observe where windows are, and in what order, for one attached display on a settled
     /// topology. `live_windows` is the display's strip in visual order. Windows homed to a
     /// detached display keep that home (evacuation). See `src/workspaces/docs/workspaces-and-displays.md`.
+    /// Record what is on one display for a settled topology: the strip order, and a home for any
+    /// window that does not have one yet.
+    ///
+    /// It does NOT re-home a window that already has one, and that is the whole point. Every real
+    /// way a window changes display already writes the home at the moment the user asks: a drag
+    /// (`events::drag`), an explicit move command (`events::command`), a first sighting
+    /// (`note_window_display_home`), a restore. This pass runs afterwards and sees the RESULT of
+    /// rini's own layout, which already follows from the home — so re-homing from it was circular,
+    /// and any reason a window was temporarily somewhere else became its new address.
+    ///
+    /// That is the "windows teleport between displays" report: a window rini parked, evacuated or
+    /// laid out on a neighbour was re-homed there by the next settled topology and never came back.
+    /// Windows homed to a DETACHED display are the evacuation case and were already spared; this
+    /// spares the attached case too, which is the one that was moving.
     pub fn sync_display_affinity(
         &mut self,
         display_uuid: &str,
         live_windows: &[WindowId],
-        attached_displays: &[String],
     ) {
-        let attached: HashSet<&str> = attached_displays.iter().map(String::as_str).collect();
         for window in live_windows {
-            let keeps_absent_home = self
-                .display_affinity
-                .window_home(*window)
-                .is_some_and(|home| home != display_uuid && !attached.contains(home));
-            if !keeps_absent_home {
-                self.display_affinity.set_window_home(*window, display_uuid);
-            }
+            self.display_affinity.set_window_home_if_absent(*window, display_uuid);
         }
 
         // The strip is the arrangement to rebuild on replug, so it must reflect only the
