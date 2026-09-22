@@ -10,7 +10,7 @@ they are all closed.
 | — | `Observer::new` / `new_with_notification` (1.5) | **done** shared `create` |
 | — | Two SkyLight capture paths (1.4) | **done** shared `capture_list_via_skylight` |
 | — | Two broadcast builders (1.6) | **done** shared `broadcast_context` |
-| 1 | Twelve space-resolution answers | todo |
+| 1 | Twelve space-resolution answers | **done** rules -> `space_resolution.rs`, 10 tests; 1 dead method deleted |
 | 5 | Two event taps, one lifecycle | todo |
 | 10 | `gesture_tap.rs` state machine, 0 tests | todo |
 | 6 | `rini-cli` 824 lines, 2 tests | todo |

@@ -12,6 +12,7 @@ use crate::windows::domain::state::WindowState;
 use crate::windows::domain::transaction::TransactionManager;
 use crate::windows::platform::window_server;
 use crate::workspaces::{LayoutEngine, WindowStore};
+use super::space_resolution::{self as resolve, Candidates};
 
 pub(crate) struct SpaceAffinity<'a> {
     pub(crate) windows: &'a WindowStore,
@@ -26,28 +27,45 @@ impl SpaceAffinity<'_> {
         self.active_spaces.contains(&space)
     }
 
+    /// Every source's answer for a frame and possibly a window-server id, before any is preferred.
+    ///
+    /// The reads live here; the precedence lives in `space_resolution`, which is why there is one
+    /// gather and several rules over it rather than six functions that each read again.
+    fn candidates_for_frame(
+        &self,
+        frame: &CGRect,
+        window_server_id: Option<WindowServerId>,
+    ) -> Candidates {
+        let geometry = self.best_space_for_frame(frame);
+        Candidates {
+            reported: window_server_id.and_then(|wsid| self.resolve_native_space(wsid, None)),
+            parked_assignment: self.hidden_assigned_space_for_frame(window_server_id, frame),
+            assignment: window_server_id
+                .and_then(|wsid| self.windows.tracked_window_id(wsid))
+                .and_then(|wid| self.assigned_space_for_window_id(wid)),
+            geometry,
+            geometry_is_active: geometry.is_some_and(|space| self.is_space_active(space)),
+            native_fullscreen: window_server_id
+                .is_some_and(|wsid| self.is_known_fullscreen_window(wsid)),
+        }
+    }
+
+    fn candidates_for_window(&self, wid: WindowId) -> Option<Candidates> {
+        let window = self.windows.window(wid)?;
+        let mut candidates =
+            self.candidates_for_frame(&window.frame_monotonic, window.info.sys_id);
+        // A tracked window's assignment is known without going through its server id, which it may
+        // not have yet.
+        candidates.assignment = self.assigned_space_for_window_id(wid);
+        Some(candidates)
+    }
+
     pub(crate) fn best_space_for_window(
         &self,
         frame: &CGRect,
         window_server_id: Option<WindowServerId>,
     ) -> Option<SpaceId> {
-        if let Some(wsid) = window_server_id
-            && self.is_known_fullscreen_window(wsid)
-        {
-            return None;
-        }
-
-        if let Some(wsid) = window_server_id {
-            if let Some(space) = self.resolve_native_space(wsid, None) {
-                return Some(space);
-            }
-        }
-
-        if let Some(space) = self.hidden_assigned_space_for_frame(window_server_id, frame) {
-            return Some(space);
-        }
-
-        self.best_space_for_frame(frame)
+        resolve::placement(&self.candidates_for_frame(frame, window_server_id))
     }
 
     pub(crate) fn best_space_for_frame(&self, frame: &CGRect) -> Option<SpaceId> {
@@ -109,23 +127,8 @@ impl SpaceAffinity<'_> {
         (target_space == assigned_space).then_some(target_space)
     }
 
-    pub(crate) fn current_reported_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
-        self.windows
-            .window(wid)
-            .and_then(|window| window.info.sys_id)
-            .and_then(|wsid| self.resolve_native_space(wsid, None))
-    }
-
     pub(crate) fn authoritative_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
-        let reported_space = self.current_reported_space_for_window_id(wid);
-        if let Some(hidden_assigned_space) = self.hidden_assigned_space_for_window_id(wid) {
-            return match reported_space {
-                Some(space) if space != hidden_assigned_space => Some(space),
-                _ => Some(hidden_assigned_space),
-            };
-        }
-
-        reported_space.or_else(|| self.assigned_space_for_window_id(wid))
+        self.candidates_for_window(wid).and_then(|c| resolve::authoritative(&c))
     }
 
     /// Resolve native space ownership from the strongest available source.
@@ -159,11 +162,7 @@ impl SpaceAffinity<'_> {
     }
 
     pub(crate) fn best_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
-        self.authoritative_space_for_window_id(wid).or_else(|| {
-            self.windows
-                .window(wid)
-                .and_then(|window| self.best_space_for_window_state(window))
-        })
+        self.candidates_for_window(wid).and_then(|c| resolve::best(&c))
     }
 
     pub(crate) fn is_window_on_known_inactive_space(&self, wid: WindowId) -> bool {
@@ -172,19 +171,7 @@ impl SpaceAffinity<'_> {
     }
 
     pub(crate) fn discovery_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
-        let window = self.windows.window(wid)?;
-        let authoritative = self.authoritative_space_for_window_id(wid);
-        if let Some(space) = authoritative {
-            return Some(space);
-        }
-
-        if let Some(space) = self.best_space_for_frame(&window.frame_monotonic)
-            && self.is_space_active(space)
-        {
-            return Some(space);
-        }
-
-        self.best_space_for_window_id(wid)
+        self.candidates_for_window(wid).and_then(|c| resolve::discovery(&c))
     }
 
     pub(crate) fn geometry_space_for_window(
@@ -192,17 +179,7 @@ impl SpaceAffinity<'_> {
         frame: &CGRect,
         window_server_id: Option<WindowServerId>,
     ) -> Option<SpaceId> {
-        if let Some(wsid) = window_server_id
-            && self.is_known_fullscreen_window(wsid)
-        {
-            return None;
-        }
-
-        if let Some(space) = self.hidden_assigned_space_for_frame(window_server_id, frame) {
-            return Some(space);
-        }
-
-        self.best_space_for_frame(frame)
+        resolve::geometry_only(&self.candidates_for_frame(frame, window_server_id))
     }
 
     pub(crate) fn is_known_fullscreen_window(&self, wsid: WindowServerId) -> bool {

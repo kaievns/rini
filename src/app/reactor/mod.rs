@@ -9,6 +9,7 @@ mod commands;
 mod observations;
 pub mod state;
 mod space_affinity;
+mod space_resolution;
 mod events;
 mod managers;
 mod query;
