@@ -4171,11 +4171,21 @@ impl Reactor {
         EventOutcome::no_change()
     }
 
+    fn flush_engine_broadcasts(&mut self) {
+        for event in self.layout_manager.layout_engine.drain_broadcasts() {
+            let _ = self.communication_manager.event_broadcaster.send(event);
+        }
+    }
+
     fn handle_layout_response(
         &mut self,
         response: layout::EventResponse,
         workspace_switch_space: Option<SpaceId>,
     ) {
+        // Whatever the engine wanted announced, sent from here: the engine fills an outbox and the
+        // application owns the wire. Draining at the top means every path that reaches a layout
+        // response flushes, which is every path that can change what a subscriber sees.
+        self.flush_engine_broadcasts();
         if self.is_in_drag() {
             self.workspace_switch_manager.mark_workspace_switch_inactive();
             return;

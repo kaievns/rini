@@ -15,7 +15,7 @@ use rini_ipc::protocol::WorkspaceSelector;
 use crate::layout::WindowLayoutConstraints;
 use crate::workspaces::domain::app_rules::{AfterRules, AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus, BeforeRules};
 use crate::windows::domain::state::WindowState;
-use crate::workspaces::broadcast::{BroadcastEvent, BroadcastSender, protocol_workspace_id};
+use crate::workspaces::broadcast::{BroadcastEvent, protocol_workspace_id};
 use crate::workspaces::domain::display_affinity::ColumnWidth;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
 use crate::workspaces::{AppRuleEffects, AppRuleResult, DisplayAffinity, FloatingPositionStore, WindowStore};
@@ -123,7 +123,13 @@ pub struct LayoutEngine {
     window_layout_constraints: HashMap<WindowId, WindowLayoutConstraints>,
     virtual_workspace_manager: WorkspaceStore,
     layout_settings: LayoutSettings,
-    broadcast_tx: Option<BroadcastSender>,
+    /// Events the engine wants announced, for the application to send.
+    ///
+    /// An outbox rather than the IPC channel itself: `docs/architecture.md` puts broadcasting in
+    /// `app/api/`, and a layout engine holding a wire sender is what made "what did that command
+    /// announce" unanswerable without standing up a channel. `RefCell` because several of the
+    /// places that announce only hold `&self`.
+    outbox: std::cell::RefCell<Vec<BroadcastEvent>>,
     /// Durable display identity: which native space each physical display owns, and which
     /// display each window belongs to. Replaces the former `space_display_map` /
     /// `display_last_space` pair, which could disagree with each other.
@@ -1444,7 +1450,6 @@ impl LayoutEngine {
     pub fn new(
         virtual_workspace_config: &crate::workspaces::settings::VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
-        broadcast_tx: Option<BroadcastSender>,
     ) -> Self {
         let virtual_workspace_manager =
             WorkspaceStore::new_with_config(virtual_workspace_config, layout_settings);
@@ -1458,7 +1463,7 @@ impl LayoutEngine {
             window_layout_constraints: HashMap::default(),
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
-            broadcast_tx,
+            outbox: Default::default(),
             display_affinity: DisplayAffinity::default(),
             launch_memory: crate::workspaces::domain::launch_memory::LaunchMemory::default(),
             connected_displays: Vec::new(),
@@ -3277,44 +3282,44 @@ impl LayoutEngine {
     }
 
     fn broadcast_workspace_changed(&self, space_id: SpaceId) {
-        if let Some(ref broadcast_tx) = self.broadcast_tx {
-            if let Some((active_workspace_id, active_workspace_name)) =
-                self.active_workspace_id_and_name(space_id)
-            {
-                let display_uuid = self.display_uuid_for_space(space_id);
-                let _ = broadcast_tx.send(BroadcastEvent::WorkspaceChanged {
-                    workspace_id: protocol_workspace_id(active_workspace_id),
-                    workspace_name: active_workspace_name.clone(),
-                    space_id: space_id.get(),
-                    display_uuid,
-                });
-            }
+        if let Some((active_workspace_id, active_workspace_name)) =
+            self.active_workspace_id_and_name(space_id)
+        {
+            let display_uuid = self.display_uuid_for_space(space_id);
+            self.announce(BroadcastEvent::WorkspaceChanged {
+                workspace_id: protocol_workspace_id(active_workspace_id),
+                workspace_name: active_workspace_name.clone(),
+                space_id: space_id.get(),
+                display_uuid,
+            });
         }
     }
 
+    fn announce(&self, event: BroadcastEvent) {
+        self.outbox.borrow_mut().push(event);
+    }
+
+    /// Take what the engine wants announced. The application owns the channel and sends these.
+    pub fn drain_broadcasts(&self) -> Vec<BroadcastEvent> {
+        std::mem::take(&mut *self.outbox.borrow_mut())
+    }
+
     fn broadcast_windows_changed(&self, window_store: &WindowStore, space_id: SpaceId) {
-        if let Some(ref broadcast_tx) = self.broadcast_tx {
-            if let Some((workspace_id, workspace_name)) =
-                self.active_workspace_id_and_name(space_id)
-            {
-                let windows = self
-                    .virtual_workspace_manager
-                    .windows_in_active_workspace(window_store, space_id)
-                    .iter()
-                    .map(|window_id| window_id.to_debug_string())
-                    .collect();
-
-                let display_uuid = self.display_uuid_for_space(space_id);
-                let event = BroadcastEvent::WindowsChanged {
-                    workspace_id: protocol_workspace_id(workspace_id),
-                    workspace_name,
-                    windows,
-                    space_id: space_id.get(),
-                    display_uuid,
-                };
-
-                let _ = broadcast_tx.send(event);
-            }
+        if let Some((workspace_id, workspace_name)) = self.active_workspace_id_and_name(space_id) {
+            let windows = self
+                .virtual_workspace_manager
+                .windows_in_active_workspace(window_store, space_id)
+                .iter()
+                .map(|window_id| window_id.to_debug_string())
+                .collect();
+            let display_uuid = self.display_uuid_for_space(space_id);
+            self.announce(BroadcastEvent::WindowsChanged {
+                workspace_id: protocol_workspace_id(workspace_id),
+                workspace_name,
+                windows,
+                space_id: space_id.get(),
+                display_uuid,
+            });
         }
     }
 
@@ -3386,8 +3391,7 @@ mod tests {
         LayoutEngine::new(
             &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
-            None,
-        )
+    )
     }
 
     fn build_three_spaces() -> (
@@ -3458,7 +3462,7 @@ mod tests {
     fn a_modal_window_floats_by_default_and_a_plain_one_is_tiled() {
         let settings = VirtualWorkspaceSettings::default();
         assert!(settings.float_modal_windows);
-        let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default(), None);
+        let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(91);
         let (plain, modal) = (WindowId::new(7, 1), WindowId::new(7, 2));
@@ -3481,7 +3485,7 @@ mod tests {
 
         let mut off = VirtualWorkspaceSettings::default();
         off.float_modal_windows = false;
-        let mut engine = LayoutEngine::new(&off, &LayoutSettings::default(), None);
+        let mut engine = LayoutEngine::new(&off, &LayoutSettings::default());
         let mut window_store = WindowStore::default();
         let _ = engine.handle_event(
             &mut window_store,
@@ -3512,7 +3516,7 @@ mod tests {
             ax_subrole: None,
             modal: None,
         }];
-        let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default(), None);
+        let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(90);
         let window = WindowId::new(7, 1);
@@ -3602,7 +3606,7 @@ mod tests {
         }];
         let mut layout_settings = LayoutSettings::default();
         layout_settings.scrolling.min_column_width_ratio = 0.1;
-        let mut engine = LayoutEngine::new(&settings, &layout_settings, None);
+        let mut engine = LayoutEngine::new(&settings, &layout_settings);
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(91);
         let window = WindowId::new(8, 1);
@@ -4069,7 +4073,7 @@ mod tests {
         let space = SpaceId::new(82);
         let mut settings = VirtualWorkspaceSettings::default();
         settings.prevent_wrapping = true;
-        let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default(), None);
+        let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
 
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
         assert!(
@@ -4109,8 +4113,7 @@ mod tests {
         let mut engine = LayoutEngine::new(
             &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
-            None,
-        );
+    );
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
         assert!(
             engine

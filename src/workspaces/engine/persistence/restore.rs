@@ -662,7 +662,7 @@ mod tests {
     use super::*;
 
     fn engine() -> LayoutEngine {
-        LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default(), None)
+        LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default())
     }
 
     /// An engine that has seen `spaces`, each on the display named `uuid-<space>`.

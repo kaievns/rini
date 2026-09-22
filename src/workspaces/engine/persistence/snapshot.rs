@@ -86,7 +86,7 @@ impl PersistedLayout {
             window_layout_constraints: HashMap::default(),
             virtual_workspace_manager: self.virtual_workspace_manager,
             layout_settings: LayoutSettings::default(),
-            broadcast_tx: None,
+            outbox: Default::default(),
             display_affinity: self.display_affinity,
             launch_memory: self.launch_memory,
             connected_displays: Vec::new(),

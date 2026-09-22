@@ -422,9 +422,7 @@ impl LayoutEngine {
         &mut self,
         virtual_workspace_config: &VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
-        broadcast_tx: Option<BroadcastSender>,
     ) {
-        self.broadcast_tx = broadcast_tx;
         self.set_layout_settings(layout_settings);
         self.app_rules = AppRuleEngine::new(&virtual_workspace_config.app_rules, virtual_workspace_config.float_modal_windows);
         self.virtual_workspace_manager

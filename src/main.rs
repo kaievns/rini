@@ -212,25 +212,13 @@ stays usable. Fix the config and restart. Error: {error}",
                      layout: {error}",
                     path.display()
                 );
-                LayoutEngine::new(
-                    &config.virtual_workspaces,
-                    &config.settings.layout,
-                    Some(broadcast_tx.clone()),
-                )
+                LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout)
             }
         }
     } else {
-        LayoutEngine::new(
-            &config.virtual_workspaces,
-            &config.settings.layout,
-            Some(broadcast_tx.clone()),
-        )
+        LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout)
     };
-    layout.finish_loading(
-        &config.virtual_workspaces,
-        &config.settings.layout,
-        Some(broadcast_tx.clone()),
-    );
+    layout.finish_loading(&config.virtual_workspaces, &config.settings.layout);
     let (event_tap_tx, event_tap_rx) = rini::app::channels::channel();
     let (wnd_tx, wnd_rx) = rini::app::channels::channel();
     let window_tx_store = WindowTxStore::new();

@@ -11,7 +11,6 @@ fn test_engine() -> LayoutEngine {
     LayoutEngine::new(
         &VirtualWorkspaceSettings::default(),
         &LayoutSettings::default(),
-        None,
     )
 }
 
@@ -1343,7 +1342,7 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
     let layout_settings = LayoutSettings::default();
     let space = SpaceId::new(609);
     let size = CGSize::new(1200.0, 800.0);
-    let mut snapshot = LayoutEngine::new(&workspace_settings, &layout_settings, None);
+    let mut snapshot = LayoutEngine::new(&workspace_settings, &layout_settings);
     let mut snapshot_store = WindowStore::default();
     let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
     let saved_workspaces = snapshot.virtual_workspace_manager.existing_workspaces(space);
@@ -1371,7 +1370,7 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
         .save_current_layout(path.clone(), &snapshot_store, Some(space))
         .unwrap();
 
-    let mut engine = LayoutEngine::new(&workspace_settings, &layout_settings, None);
+    let mut engine = LayoutEngine::new(&workspace_settings, &layout_settings);
     let mut window_store = WindowStore::default();
     let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
     let target_s = engine.virtual_workspace_manager.existing_workspaces(space)[5].0;
@@ -1442,7 +1441,7 @@ fn startup_restore_reapplies_configured_workspace_names() {
     saved_settings.workspace_names = vec!["Old A".into(), "Old B".into()];
     let layout_settings = LayoutSettings::default();
     let space = SpaceId::new(608);
-    let mut snapshot = LayoutEngine::new(&saved_settings, &layout_settings, None);
+    let mut snapshot = LayoutEngine::new(&saved_settings, &layout_settings);
     let mut window_store = WindowStore::default();
     let _ = snapshot.handle_event(
         &mut window_store,
@@ -1452,7 +1451,7 @@ fn startup_restore_reapplies_configured_workspace_names() {
     let mut current_settings = saved_settings;
     current_settings.workspace_names = vec!["A".into(), "S".into()];
 
-    restored.finish_loading(&current_settings, &layout_settings, None);
+    restored.finish_loading(&current_settings, &layout_settings);
 
     let names = restored
         .virtual_workspace_manager
@@ -1853,7 +1852,7 @@ fn space_restore_rejects_workspace_count_mismatch_before_mutating_layouts() {
 
     let mut target_settings = VirtualWorkspaceSettings::default();
     target_settings.default_workspace_count = 3;
-    let mut engine = LayoutEngine::new(&target_settings, &LayoutSettings::default(), None);
+    let mut engine = LayoutEngine::new(&target_settings, &LayoutSettings::default());
     let mut window_store = WindowStore::default();
     let sentinel = WindowId::new(11, 1);
     let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
@@ -3040,5 +3039,42 @@ fn a_layout_file_wrapped_in_the_old_layout_system_tag_is_refused_by_name() {
     assert!(
         message.contains("predates schema 4") && message.contains("laid out fresh"),
         "the error has to say what happened and what follows: {message}"
+    );
+}
+
+/// What a command announces is now answerable without a channel: the engine fills an outbox and the
+/// application drains it. Before this the sender lived on the engine, so asserting a broadcast meant
+/// standing up IPC, and nothing did.
+#[test]
+fn switching_workspace_announces_the_switch_and_its_windows() {
+    use crate::workspaces::broadcast::BroadcastEvent;
+
+    let space = SpaceId::new(31);
+    let mut engine = test_engine();
+    let mut store = WindowStore::default();
+    let _ = engine.handle_event(
+        &mut store,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
+    );
+    // Whatever exposing a space announced is not what this test is about.
+    let _ = engine.drain_broadcasts();
+
+    let workspaces: Vec<_> = engine
+        .virtual_workspace_manager
+        .list_workspaces(space)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert!(workspaces.len() > 1, "the fixture needs somewhere to switch to");
+    let _ = engine.switch_to_workspace(&store, space, 1, None);
+
+    let announced = engine.drain_broadcasts();
+    assert!(
+        announced.iter().any(|event| matches!(event, BroadcastEvent::WorkspaceChanged { .. })),
+        "a subscriber has to hear that the workspace changed: {announced:?}"
+    );
+    assert!(
+        engine.drain_broadcasts().is_empty(),
+        "draining takes them, so the application cannot send the same event twice"
     );
 }

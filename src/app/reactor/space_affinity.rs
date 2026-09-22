@@ -274,7 +274,6 @@ mod tests {
         let engine = LayoutEngine::new(
             &crate::app::config::VirtualWorkspaceSettings::default(),
             &crate::app::config::LayoutSettings::default(),
-            None,
         );
         let transactions = TransactionManager::new(WindowTxStore::new());
         let active_spaces: HashSet<SpaceId> = spaces.iter_known_spaces().collect();

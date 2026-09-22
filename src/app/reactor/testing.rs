@@ -283,7 +283,6 @@ pub fn test_reactor_with_workspace_settings(
     Reactor::new_for_test(LayoutEngine::new(
         workspace_settings,
         &crate::app::config::LayoutSettings::default(),
-        None,
     ))
 }
 

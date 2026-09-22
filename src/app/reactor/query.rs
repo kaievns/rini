@@ -984,7 +984,6 @@ mod tests {
         LayoutEngine::new(
             &crate::workspaces::settings::VirtualWorkspaceSettings::default(),
             &crate::layout::settings::LayoutSettings::default(),
-            None,
         )
     }
 
