@@ -2,6 +2,8 @@
 //! window manager on certain spaces and launching app threads. It also
 //! controls hotkey registration.
 
+mod lower;
+
 use std::path::PathBuf;
 
 use dispatchr::queue;
@@ -13,7 +15,6 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::input::platform::gesture_tap;
 use crate::app::config::actor as config;
 pub use crate::input::domain::binding::{ExecCmd, WmCmd, WmCommand};
-use crate::app::config::WorkspaceSelector;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::pid_t;
 
@@ -21,7 +22,6 @@ pub type Sender = channels::Sender<WmEvent>;
 
 type Receiver = channels::Receiver<WmEvent>;
 
-use self::WmCmd::*;
 use crate::windows::domain::info::AppInfo;
 use crate::app::channels;
 use crate::app::reactor;
@@ -29,7 +29,6 @@ use crate::input::platform::input_tap as event_tap;
 use crate::windows::domain::transaction::WindowTxStore;
 use rini_runloop::dispatch::DispatchExt;
 
-use crate::workspaces as layout;
 
 #[derive(Debug)]
 pub enum WmEvent {
@@ -223,82 +222,21 @@ impl WmController {
             KeyboardLayoutChanged => {
                 _ = self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
             }
-            Command(Wm(ReloadConfig)) => self.reload_config(),
-            Command(Wm(crate::input::domain::binding::WmCmd::ToggleSpaceActivated)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
-                    reactor::ReactorCommand::ToggleSpaceActivated,
-                )));
-            }
-            Command(Wm(NextWorkspace)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Layout(
-                    layout::LayoutCommand::NextWorkspace(None),
-                )));
-            }
-            Command(Wm(PrevWorkspace)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Layout(
-                    layout::LayoutCommand::PrevWorkspace(None),
-                )));
-            }
-            Command(Wm(SwitchToWorkspace(ws_sel))) => {
-                let maybe_index: Option<usize> = match &ws_sel {
-                    WorkspaceSelector::Index(i) => Some(*i),
-                    WorkspaceSelector::Name(name) => self
-                        .config
-                        .config
-                        .virtual_workspaces
-                        .workspace_names
-                        .iter()
-                        .position(|n| n == name),
-                };
-
-                if let Some(workspace_index) = maybe_index {
-                    self.events_tx.send(reactor::Event::Command(reactor::Command::Layout(
-                        layout::LayoutCommand::SwitchToWorkspace(workspace_index),
-                    )));
-                } else {
-                    tracing::warn!(
-                        "Hotkey requested switch to workspace {:?} but it could not be resolved; ignoring",
-                        ws_sel
+            // Every binding alias is a translation; `lower` is that translation and is tested on
+            // its own. What is left here is the two things only the controller can carry out.
+            Command(Wm(cmd)) => match lower::lower(cmd, &self.config.config.virtual_workspaces.workspace_names) {
+                lower::Lowered::Command(cmd) => {
+                    self.events_tx.send(reactor::Event::Command(cmd));
+                }
+                lower::Lowered::Exec(cmd) => self.exec_cmd(cmd),
+                lower::Lowered::ReloadConfig => self.reload_config(),
+                lower::Lowered::UnknownWorkspace(selector) => {
+                    warn!(
+                        ?selector,
+                        "a binding asked for a workspace that is not configured; ignoring"
                     );
                 }
-            }
-            Command(Wm(MoveWindowToWorkspace(workspace))) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Layout(
-                    layout::LayoutCommand::MoveWindowToWorkspace {
-                        workspace,
-                        follow: false,
-                        window_id: None,
-                    },
-                )));
-            }
-            Command(Wm(CreateWorkspace)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Layout(
-                    layout::LayoutCommand::CreateWorkspace,
-                )));
-            }
-            Command(Wm(SwitchToLastWorkspace)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Layout(
-                    layout::LayoutCommand::SwitchToLastWorkspace,
-                )));
-            }
-            Command(Wm(CloseWindow)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
-                    reactor::ReactorCommand::CloseWindow { window_server_id: None },
-                )));
-            }
-            Command(Wm(CycleAppWindows)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
-                    reactor::ReactorCommand::CycleAppWindows { backward: false },
-                )));
-            }
-            Command(Wm(CycleAppWindowsBackward)) => {
-                self.events_tx.send(reactor::Event::Command(reactor::Command::Reactor(
-                    reactor::ReactorCommand::CycleAppWindows { backward: true },
-                )));
-            }
-            Command(Wm(Exec(cmd))) => {
-                self.exec_cmd(cmd);
-            }
+            },
             Command(ReactorCommand(cmd)) => {
                 self.events_tx.send(reactor::Event::Command(cmd));
             }

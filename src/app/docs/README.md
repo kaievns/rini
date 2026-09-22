@@ -18,7 +18,7 @@ knows the features and converts what they emit.
 | `reactor/managers.rs` | The handles: eight manager structs plus the layout manager |
 | `config/` | `config.toml`: parsing into each feature's settings, validation that spans features, watching and reload |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
-| `hotkeys.rs` | Lowers a `WmCmd` alias to a `Command` |
+| `hotkeys/` | The controller: app launches, hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a binding alias to a `reactor::Command`, which is where the tests are |
 | `notifications.rs` | The NSWorkspace demultiplexer |
 | `launch_agent.rs`, `startup.rs`, `logging.rs`, `channels.rs` | The service plist, configured startup commands, tracing, and the span-carrying channel every actor is wired with |
 
@@ -43,6 +43,11 @@ writes several stores per event, which is what the application is for.
 
 `reactor/state.rs` → `reactor/events/` → `reactor/mod.rs`, and `main.rs` for how it is
 all assembled.
+
+**A binding alias is a translation, not a side effect.** `hotkeys/lower.rs` turns a
+`WmCmd` into a `reactor::Command`, an `Exec`, a config reload, or a named refusal. It
+was ninety match arms inside `handle_event`, each ending in a `send`, so nothing could
+check that two aliases did not lower to the same command.
 
 ## Known debt
 

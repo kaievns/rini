@@ -254,7 +254,7 @@ The recent batches moved the opposite way deliberately — pure decisions to
 | `src/input/platform/gesture_tap.rs` | 657 | DONE: the phase machine is `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`) |
 | `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `tests.rs` |
 | `src/main.rs` | 430 | one 317-line `main`; composition root |
-| `src/app/hotkeys.rs` | 404 | one 178-line `handle_event` |
+| `src/app/hotkeys/mod.rs` | 404 | DONE: the alias lowering is `hotkeys/lower.rs` with 7 tests |
 
 ### 4.3 Worst code-to-test ratios among tested files
 
