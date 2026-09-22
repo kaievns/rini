@@ -145,6 +145,68 @@ impl ReEnableGovernor {
     }
 }
 
+/// A recovery message from a tap's own callbacks, on the tap's thread.
+///
+/// One type for both taps: the session tap and the HID gesture tap had an identical copy each,
+/// alongside an identical forty-line handler for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recovery {
+    /// The OS disabled the tap (timeout or user input); the governor decides when to re-arm.
+    TapDisabled(u64),
+    /// A deferred re-arm's cooldown ran out.
+    CooldownElapsed(u64),
+    /// The Mach port died, so there is nothing left to re-enable.
+    TapInvalidated(u64),
+}
+
+/// What a tap thread should do about a `Recovery`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recovered {
+    /// Re-arm this generation now.
+    ReArm(u64),
+    /// Leave the tap down for `wait`, then re-arm. Input keeps flowing without it meanwhile.
+    StandDown { generation: u64, wait: std::time::Duration },
+    /// Build a new tap; this one's port is gone.
+    Rebuild(u64),
+    /// A message about a tap that has already been replaced. Doing anything would re-arm a dead
+    /// generation, which is how a stale tap came back and started swallowing events again.
+    Ignore,
+}
+
+/// Decide what a recovery message means, given which generation is live now.
+///
+/// Pure so the generation rules can be exercised without a tap: `ReEnableGovernor` was already
+/// extracted and tested, but the part that decides whether a message is even about the current tap
+/// was written twice inline and tested neither time.
+pub fn on_recovery(
+    recovery: Recovery,
+    live_generation: u64,
+    governor: &mut ReEnableGovernor,
+    now: std::time::Instant,
+) -> Recovered {
+    match recovery {
+        Recovery::TapDisabled(generation) => {
+            if generation != live_generation {
+                return Recovered::Ignore;
+            }
+            match governor.on_disabled(now) {
+                ReEnableDecision::Now => Recovered::ReArm(generation),
+                ReEnableDecision::After(wait) => Recovered::StandDown { generation, wait },
+            }
+        }
+        Recovery::CooldownElapsed(generation) => {
+            if generation == live_generation {
+                Recovered::ReArm(generation)
+            } else {
+                Recovered::Ignore
+            }
+        }
+        // Not generation-checked on purpose: an invalidated port cannot be re-enabled, so the tap
+        // has to be rebuilt whichever generation reported it.
+        Recovery::TapInvalidated(generation) => Recovered::Rebuild(generation),
+    }
+}
+
 impl EventTap {
     unsafe fn create(
         location: CGTapLoc,
@@ -420,5 +482,81 @@ mod tests {
             governor.on_disabled(start + Duration::from_secs(120)),
             ReEnableDecision::Now
         );
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use std::time::{Duration, Instant};
+
+    use super::{ReEnableGovernor, Recovered, Recovery, on_recovery};
+
+    fn decide(recovery: Recovery, live: u64, governor: &mut ReEnableGovernor) -> Recovered {
+        on_recovery(recovery, live, governor, Instant::now())
+    }
+
+    #[test]
+    fn a_disable_of_the_live_tap_re_arms_it() {
+        let mut governor = ReEnableGovernor::new();
+        assert_eq!(decide(Recovery::TapDisabled(7), 7, &mut governor), Recovered::ReArm(7));
+    }
+
+    /// The rule that kept a replaced tap from coming back. A message about an old generation must
+    /// not re-arm anything: that tap is gone, and re-enabling it puts a second tap in the delivery
+    /// path swallowing events.
+    #[test]
+    fn a_disable_of_a_replaced_tap_is_ignored() {
+        let mut governor = ReEnableGovernor::new();
+        assert_eq!(decide(Recovery::TapDisabled(6), 7, &mut governor), Recovered::Ignore);
+        assert_eq!(decide(Recovery::CooldownElapsed(6), 7, &mut governor), Recovered::Ignore);
+    }
+
+    #[test]
+    fn a_stale_disable_does_not_count_against_the_burst_limit() {
+        let mut governor = ReEnableGovernor::new();
+        for _ in 0..5 {
+            assert_eq!(decide(Recovery::TapDisabled(1), 9, &mut governor), Recovered::Ignore);
+        }
+        assert_eq!(
+            decide(Recovery::TapDisabled(9), 9, &mut governor),
+            Recovered::ReArm(9),
+            "the live tap's first disable is still its first"
+        );
+    }
+
+    /// Three disables inside the window mean the tap is stalled rather than unlucky, and it stands
+    /// down so macOS keeps delivering input without it.
+    #[test]
+    fn a_burst_of_disables_stands_the_tap_down() {
+        let mut governor = ReEnableGovernor::new();
+        let now = Instant::now();
+        assert_eq!(on_recovery(Recovery::TapDisabled(1), 1, &mut governor, now), Recovered::ReArm(1));
+        assert_eq!(
+            on_recovery(Recovery::TapDisabled(1), 1, &mut governor, now + Duration::from_secs(1)),
+            Recovered::ReArm(1)
+        );
+        let third =
+            on_recovery(Recovery::TapDisabled(1), 1, &mut governor, now + Duration::from_secs(2));
+        match third {
+            Recovered::StandDown { generation, wait } => {
+                assert_eq!(generation, 1);
+                assert!(wait >= Duration::from_secs(1), "a stand-down has to actually wait");
+            }
+            other => panic!("expected a stand-down, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_cooldown_elapsing_on_the_live_tap_re_arms_it() {
+        let mut governor = ReEnableGovernor::new();
+        assert_eq!(decide(Recovery::CooldownElapsed(4), 4, &mut governor), Recovered::ReArm(4));
+    }
+
+    /// An invalidated port is NOT generation-checked: it cannot be re-enabled at all, so whichever
+    /// generation noticed, a new tap has to be built.
+    #[test]
+    fn an_invalidated_port_is_rebuilt_whatever_generation_reported_it() {
+        let mut governor = ReEnableGovernor::new();
+        assert_eq!(decide(Recovery::TapInvalidated(2), 9, &mut governor), Recovered::Rebuild(2));
     }
 }

@@ -121,17 +121,8 @@ pub type SharedHotkeyTable = Arc<ArcSwap<HashMap<Hotkey, Vec<WmCommand>>>>;
 
 struct CallbackCtx {
     this: Arc<InputTap>,
-    recovery_tx: tokio::sync::mpsc::UnboundedSender<Recovery>,
+    recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     tap_generation: u64,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Recovery {
-    /// The OS disabled the tap (timeout or user input); the governor decides when to re-arm.
-    TapDisabled(u64),
-    /// A deferred re-arm's cooldown ran out.
-    CooldownElapsed(u64),
-    TapInvalidated(u64),
 }
 
 unsafe fn drop_mouse_ctx(ptr: *mut std::ffi::c_void) {
@@ -163,7 +154,7 @@ impl InputTap {
     fn create_tap_with_mask(
         self: &Arc<Self>,
         mask: CGEventMask,
-        recovery_tx: tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) -> Option<tap::EventTap> {
         let tap_generation = self.tap_generation.get().wrapping_add(1);
         let ctx = Box::new(CallbackCtx {
@@ -197,7 +188,7 @@ impl InputTap {
 
     fn rebuild_event_tap_mask_if_needed(
         self: &Arc<Self>,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let next_mask = self.desired_event_mask();
         if next_mask == self.event_mask.get() {
@@ -217,7 +208,7 @@ impl InputTap {
     fn rebuild_invalidated_event_tap(
         self: &Arc<Self>,
         generation: u64,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         if generation != self.tap_generation.get() {
             debug!(generation, "Ignoring invalidation from a replaced event tap");
@@ -309,41 +300,31 @@ impl InputTap {
             tokio::select! {
                 maybe_recovery = recovery_rx.recv() => {
                     let Some(recovery) = maybe_recovery else { break };
-                    match recovery {
-                        Recovery::TapDisabled(generation) => {
-                            if generation != this.tap_generation.get() {
-                                continue;
-                            }
-                            match governor.on_disabled(std::time::Instant::now()) {
-                                tap::ReEnableDecision::Now => {
-                                    this.re_enable_tap(generation, &recovery_tx);
-                                }
-                                tap::ReEnableDecision::After(wait) => {
-                                    warn!(
-                                        ?wait,
-                                        "Event tap is being disabled repeatedly; standing down \
-                                         so input keeps flowing without it"
-                                    );
-                                    let tx = recovery_tx.clone();
-                                    _cooldown = rini_runloop::run_loop::RepeatingTimer::every(wait, move || {
-                                        _ = tx.send(Recovery::CooldownElapsed(generation));
-                                    });
-                                    if _cooldown.is_none() {
-                                        error!("Could not start the re-enable cooldown; re-arming immediately");
-                                        this.re_enable_tap(generation, &recovery_tx);
-                                    }
-                                }
-                            }
-                        }
-                        Recovery::CooldownElapsed(generation) => {
+                    match tap::on_recovery(
+                        recovery,
+                        this.tap_generation.get(),
+                        &mut governor,
+                        std::time::Instant::now(),
+                    ) {
+                        tap::Recovered::ReArm(generation) => {
                             _cooldown = None;
-                            if generation == this.tap_generation.get() {
+                            this.re_enable_tap(generation, &recovery_tx);
+                        }
+                        tap::Recovered::StandDown { generation, wait } => {
+                            warn!(?wait, "Event tap is being disabled repeatedly; standing down so input keeps flowing without it");
+                            let tx = recovery_tx.clone();
+                            _cooldown = rini_runloop::run_loop::RepeatingTimer::every(wait, move || {
+                                _ = tx.send(tap::Recovery::CooldownElapsed(generation));
+                            });
+                            if _cooldown.is_none() {
+                                tracing::error!("Could not start the re-enable cooldown; re-arming immediately");
                                 this.re_enable_tap(generation, &recovery_tx);
                             }
                         }
-                        Recovery::TapInvalidated(generation) => {
+                        tap::Recovered::Rebuild(generation) => {
                             this.rebuild_invalidated_event_tap(generation, &recovery_tx);
                         }
+                        tap::Recovered::Ignore => {}
                     }
                 }
                 maybe_request = requests_rx.recv() => {
@@ -359,7 +340,7 @@ impl InputTap {
     fn re_enable_tap(
         self: &Arc<Self>,
         generation: u64,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let re_enabled = self.tap.borrow().as_ref().is_some_and(|tap| tap.re_enable());
         if re_enabled {
@@ -374,7 +355,7 @@ impl InputTap {
     fn on_request(
         self: &Arc<Self>,
         request: Request,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let mut should_rebuild_mask = false;
         let mut state = self.state.borrow_mut();
@@ -805,7 +786,7 @@ unsafe extern "C-unwind" fn event_tap_disabled(user_info: *mut std::ffi::c_void)
         return;
     }
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
-    let _ = ctx.recovery_tx.send(Recovery::TapDisabled(ctx.tap_generation));
+    let _ = ctx.recovery_tx.send(tap::Recovery::TapDisabled(ctx.tap_generation));
 }
 
 unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_void) {
@@ -813,7 +794,7 @@ unsafe extern "C-unwind" fn event_tap_invalidated(user_info: *mut std::ffi::c_vo
         return;
     }
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
-    let _ = ctx.recovery_tx.send(Recovery::TapInvalidated(ctx.tap_generation));
+    let _ = ctx.recovery_tx.send(tap::Recovery::TapInvalidated(ctx.tap_generation));
 }
 
 impl State {

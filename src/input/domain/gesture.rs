@@ -104,6 +104,90 @@ pub fn scroll_step(
     ScrollStep::Scroll { delta: if invert { -accumulated } else { accumulated } }
 }
 
+/// Where a swipe is between the fingers landing and the workspace switching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SwipePhase {
+    /// No fingers of interest down, or the gesture has been given up on.
+    #[default]
+    Idle,
+    /// The fingers are down and where they started is known; travel is being measured.
+    Armed,
+    /// Far enough, the command has gone out, and nothing more happens until the fingers lift.
+    Committed,
+}
+
+/// A swipe being watched: where it started, and what has been decided about it so far.
+///
+/// The arithmetic above was extracted from the tap; this is the state around it, which was not, so
+/// the phase transitions could only be exercised with a trackpad. `consuming` is sticky on purpose:
+/// once a frame of the gesture has been claimed, releasing it mid-swipe would hand a half-finished
+/// swipe to whatever is underneath.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SwipeTrack {
+    pub phase: SwipePhase,
+    start: (f64, f64),
+    consuming: bool,
+}
+
+/// What the tap should do about one frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SwipeOutcome {
+    /// Swallow the event rather than passing it on.
+    pub consume: bool,
+    /// Switch workspace this way. Fires once per gesture.
+    pub commit: Option<SwipeToward>,
+}
+
+impl SwipeTrack {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The gesture is over, whether it ended, was cancelled, or stopped being this gesture.
+    ///
+    /// Returns whether to consume the event that ended it: a gesture rini has been claiming has to
+    /// keep claiming its last frame, or the Dock sees a stray swipe and switches spaces itself.
+    pub fn end(&mut self) -> bool {
+        let was_consuming = self.consuming;
+        self.reset();
+        was_consuming
+    }
+
+    /// One frame of the gesture, at `centroid`, with `fingers_down` fingers still on the pad.
+    pub fn advance(
+        &mut self,
+        centroid: (f64, f64),
+        fingers_down: usize,
+        tolerance: f64,
+        distance: f64,
+        invert: bool,
+    ) -> SwipeOutcome {
+        match self.phase {
+            SwipePhase::Idle => {
+                self.start = centroid;
+                self.phase = SwipePhase::Armed;
+                SwipeOutcome { consume: false, commit: None }
+            }
+            SwipePhase::Armed => {
+                let delta = (centroid.0 - self.start.0, centroid.1 - self.start.1);
+                let step = swipe_step(delta, tolerance, distance, invert);
+                self.consuming |= step.consuming;
+                if step.commit.is_some() {
+                    self.phase = SwipePhase::Committed;
+                }
+                SwipeOutcome { consume: self.consuming, commit: step.commit }
+            }
+            SwipePhase::Committed => {
+                // One command per gesture. The fingers lifting is what arms the next one.
+                if fingers_down == 0 {
+                    self.reset();
+                }
+                SwipeOutcome { consume: self.consuming, commit: None }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rini_geometry::IsWithin;
@@ -216,6 +300,82 @@ mod tests {
         assert_eq!(
             scroll_step((0.2, 0.0), 0.0, 0.5, 0.05, true),
             ScrollStep::Scroll { delta: -0.2 }
+        );
+    }
+    use super::{SwipePhase, SwipeTrack};
+
+    /// The first frame only records where the fingers are. Committing on it would fire on a tap.
+    #[test]
+    fn the_first_frame_arms_without_consuming_or_committing() {
+        let mut track = SwipeTrack::default();
+        let out = track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
+        assert_eq!(track.phase, SwipePhase::Armed);
+        assert_eq!(out, super::SwipeOutcome { consume: false, commit: None });
+    }
+
+    #[test]
+    fn travel_past_the_distance_commits_once_and_then_stops() {
+        let mut track = SwipeTrack::default();
+        track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
+        let out = track.advance((0.2, 0.5), 3, 0.1, 0.2, false);
+        assert_eq!(out.commit, Some(super::SwipeToward::Next));
+        assert_eq!(track.phase, SwipePhase::Committed);
+
+        let again = track.advance((0.0, 0.5), 3, 0.1, 0.2, false);
+        assert_eq!(again.commit, None, "one command per gesture, however far it keeps going");
+    }
+
+    // Sticky on purpose: releasing a claimed gesture mid-swipe hands half of it to the Dock.
+    #[test]
+    fn a_gesture_stays_consumed_once_it_has_been_claimed() {
+        let mut track = SwipeTrack::default();
+        track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
+        assert!(track.advance((0.4, 0.5), 3, 0.1, 0.2, false).consume, "claimed here");
+        // A frame that wanders off-axis would not claim on its own.
+        assert!(
+            track.advance((0.4, 0.9), 3, 0.1, 0.2, false).consume,
+            "and stays claimed through a frame that would not have claimed it"
+        );
+    }
+
+    #[test]
+    fn lifting_every_finger_after_a_commit_arms_the_next_gesture() {
+        let mut track = SwipeTrack::default();
+        track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
+        track.advance((0.2, 0.5), 3, 0.1, 0.2, false);
+        assert_eq!(track.phase, SwipePhase::Committed);
+        track.advance((0.2, 0.5), 0, 0.1, 0.2, false);
+        assert_eq!(track.phase, SwipePhase::Idle, "ready for the next swipe");
+    }
+
+    /// `end` reports whether the final event still has to be swallowed, which is what stops the
+    /// Dock acting on the tail of a swipe rini has already handled.
+    #[test]
+    fn ending_a_claimed_gesture_consumes_its_last_event() {
+        let mut track = SwipeTrack::default();
+        track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
+        track.advance((0.4, 0.5), 3, 0.1, 0.2, false);
+        assert!(track.end());
+        assert_eq!(track.phase, SwipePhase::Idle);
+    }
+
+    #[test]
+    fn ending_a_gesture_that_was_never_claimed_consumes_nothing() {
+        let mut track = SwipeTrack::default();
+        track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
+        assert!(!track.end());
+    }
+
+    #[test]
+    fn a_new_gesture_measures_from_its_own_start() {
+        let mut track = SwipeTrack::default();
+        track.advance((0.9, 0.5), 3, 0.1, 0.2, false);
+        track.end();
+        track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
+        assert_eq!(
+            track.advance((0.45, 0.5), 3, 0.1, 0.2, false).commit,
+            None,
+            "0.05 from the new start, not 0.45 from the old one"
         );
     }
 }

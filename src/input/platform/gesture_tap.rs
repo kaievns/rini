@@ -20,7 +20,8 @@ use rini_runloop::channel;
 
 use crate::input::domain::binding::WmCommand;
 use crate::input::domain::gesture::{
-    ScrollStep, SwipeToward, normalized_fraction, scroll_step, swipe_step, touch_centroid,
+    ScrollStep, SwipePhase, SwipeToward, SwipeTrack, normalized_fraction, scroll_step,
+    touch_centroid,
 };
 use crate::input::event::{Event, EventSink};
 use crate::input::platform::haptics::{self, HapticPattern};
@@ -82,34 +83,9 @@ impl SwipeConfig {
     }
 }
 
-#[derive(Default, Debug)]
-struct SwipeState {
-    phase: GesturePhase,
-    start_x: f64,
-    start_y: f64,
-    consuming: bool,
-}
-
-impl SwipeState {
-    fn reset(&mut self) {
-        self.phase = GesturePhase::Idle;
-        self.start_x = 0.0;
-        self.start_y = 0.0;
-        self.consuming = false;
-    }
-}
-
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq)]
-enum GesturePhase {
-    #[default]
-    Idle,
-    Armed,
-    Committed,
-}
-
 struct SwipeHandler {
     cfg: SwipeConfig,
-    state: RefCell<SwipeState>,
+    state: RefCell<SwipeTrack>,
 }
 
 #[derive(Debug, Clone)]
@@ -139,7 +115,7 @@ impl ScrollConfig {
 
 #[derive(Default, Debug)]
 struct ScrollState {
-    phase: GesturePhase,
+    phase: SwipePhase,
     start_x: f64,
     start_y: f64,
     last_x: f64,
@@ -150,7 +126,7 @@ struct ScrollState {
 
 impl ScrollState {
     fn reset(&mut self) {
-        self.phase = GesturePhase::Idle;
+        self.phase = SwipePhase::Idle;
         self.start_x = 0.0;
         self.start_y = 0.0;
         self.last_x = 0.0;
@@ -168,17 +144,8 @@ struct ScrollHandler {
 struct CallbackCtx {
     this: Rc<GestureTap>,
     consumes: bool,
-    recovery_tx: tokio::sync::mpsc::UnboundedSender<Recovery>,
+    recovery_tx: tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     tap_generation: u64,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Recovery {
-    /// The OS disabled the tap (timeout or user input); the governor decides when to re-arm.
-    TapDisabled(u64),
-    /// A deferred re-arm's cooldown ran out.
-    CooldownElapsed(u64),
-    TapInvalidated(u64),
 }
 
 unsafe fn drop_gesture_ctx(ptr: *mut std::ffi::c_void) {
@@ -218,40 +185,31 @@ impl GestureTap {
             tokio::select! {
                 maybe_recovery = recovery_rx.recv() => {
                     let Some(recovery) = maybe_recovery else { break };
-                    match recovery {
-                        Recovery::TapDisabled(generation) => {
-                            if generation != this.tap_generation.get() {
-                                continue;
-                            }
-                            match governor.on_disabled(std::time::Instant::now()) {
-                                tap::ReEnableDecision::Now => {
-                                    this.re_enable_tap(generation, &recovery_tx);
-                                }
-                                tap::ReEnableDecision::After(wait) => {
-                                    warn!(
-                                        ?wait,
-                                        "Gesture tap is being disabled repeatedly; standing down"
-                                    );
-                                    let tx = recovery_tx.clone();
-                                    _cooldown = rini_runloop::run_loop::RepeatingTimer::every(wait, move || {
-                                        _ = tx.send(Recovery::CooldownElapsed(generation));
-                                    });
-                                    if _cooldown.is_none() {
-                                        tracing::error!("Could not start the re-enable cooldown; re-arming immediately");
-                                        this.re_enable_tap(generation, &recovery_tx);
-                                    }
-                                }
-                            }
-                        }
-                        Recovery::CooldownElapsed(generation) => {
+                    match tap::on_recovery(
+                        recovery,
+                        this.tap_generation.get(),
+                        &mut governor,
+                        std::time::Instant::now(),
+                    ) {
+                        tap::Recovered::ReArm(generation) => {
                             _cooldown = None;
-                            if generation == this.tap_generation.get() {
+                            this.re_enable_tap(generation, &recovery_tx);
+                        }
+                        tap::Recovered::StandDown { generation, wait } => {
+                            warn!(?wait, "Gesture tap is being disabled repeatedly; standing down so input keeps flowing without it");
+                            let tx = recovery_tx.clone();
+                            _cooldown = rini_runloop::run_loop::RepeatingTimer::every(wait, move || {
+                                _ = tx.send(tap::Recovery::CooldownElapsed(generation));
+                            });
+                            if _cooldown.is_none() {
+                                tracing::error!("Could not start the re-enable cooldown; re-arming immediately");
                                 this.re_enable_tap(generation, &recovery_tx);
                             }
                         }
-                        Recovery::TapInvalidated(generation) => {
+                        tap::Recovered::Rebuild(generation) => {
                             this.rebuild_invalidated_tap(generation, &recovery_tx);
                         }
+                        tap::Recovered::Ignore => {}
                     }
                 }
                 maybe_request = requests_rx.recv() => {
@@ -267,7 +225,7 @@ impl GestureTap {
     fn re_enable_tap(
         self: &Rc<Self>,
         generation: u64,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let re_enabled = self.tap.borrow().as_ref().is_some_and(|tap| tap.re_enable());
         if re_enabled {
@@ -282,7 +240,7 @@ impl GestureTap {
     fn on_request(
         self: &Rc<Self>,
         request: GestureRequest,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         match request {
             GestureRequest::SettingsUpdated(settings) => {
@@ -297,7 +255,7 @@ impl GestureTap {
         let swipe = if swipe_cfg.enabled {
             Some(SwipeHandler {
                 cfg: swipe_cfg,
-                state: RefCell::new(SwipeState::default()),
+                state: RefCell::new(SwipeTrack::default()),
             })
         } else {
             None
@@ -318,7 +276,7 @@ impl GestureTap {
 
     fn update_gesture_handlers(
         self: &Rc<Self>,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let settings = self.settings.borrow();
         let (swipe, scroll) = Self::build_gesture_handlers(&settings);
@@ -340,7 +298,7 @@ impl GestureTap {
 
     fn create_and_install_tap(
         self: &Rc<Self>,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         let mask = gesture_event_mask();
         let tap_location = CGTapLoc::HIDEventTap;
@@ -407,7 +365,7 @@ impl GestureTap {
     fn rebuild_invalidated_tap(
         self: &Rc<Self>,
         generation: u64,
-        recovery_tx: &tokio::sync::mpsc::UnboundedSender<Recovery>,
+        recovery_tx: &tokio::sync::mpsc::UnboundedSender<tap::Recovery>,
     ) {
         if generation != self.tap_generation.get() || !self.gesture_handlers_enabled() {
             trace!(generation, "Ignoring invalidation from a replaced gesture tap");
@@ -459,94 +417,68 @@ impl GestureTap {
 
     /// Returns whether this event belongs to a horizontal swipe Rini owns and
     /// should therefore be suppressed at the event tap.
+    /// Read one `NSEvent` into a centroid, hand it to `SwipeTrack`, and act on the answer.
+    ///
+    /// The phases and the travel arithmetic are both in `input::domain::gesture`; what is left here
+    /// is the AppKit reading and the two side effects — the haptic and the command.
     fn handle_gesture_event(&self, handler: &SwipeHandler, nsevent: &NSEvent) -> bool {
         let cfg = &handler.cfg;
-        let state = &handler.state;
-
-        let mut st = state.borrow_mut();
+        let mut track = handler.state.borrow_mut();
 
         let phase = nsevent.phase();
         if matches!(phase, NSEventPhase::Ended | NSEventPhase::Cancelled) {
-            let consuming = st.consuming;
-            st.reset();
-            return cfg.consume_dock_swipe && consuming;
+            return cfg.consume_dock_swipe && track.end();
         }
         if matches!(phase, NSEventPhase::Began) {
-            st.reset();
+            track.reset();
         }
 
-        let touches = nsevent.allTouches();
-        let mut sum_x = 0.0f64;
-        let mut sum_y = 0.0f64;
+        let mut sum = (0.0f64, 0.0f64);
         let mut touch_count = 0usize;
         let mut active_count = 0usize;
         let mut too_many_touches = false;
-
-        for t in touches.iter() {
-            let phase = t.phase();
+        for touch in nsevent.allTouches().iter() {
+            let phase = touch.phase();
             let ended =
                 phase.contains(NSTouchPhase::Ended) || phase.contains(NSTouchPhase::Cancelled);
-
             touch_count += 1;
             if touch_count > cfg.fingers {
                 too_many_touches = true;
                 break;
             }
-
-            if !ended && let Some((x, y)) = touch_normalized_position(&t) {
-                sum_x += x;
-                sum_y += y;
+            if !ended && let Some((x, y)) = touch_normalized_position(&touch) {
+                sum.0 += x;
+                sum.1 += y;
                 active_count += 1;
             }
         }
 
         let centroid = (!too_many_touches)
-            .then(|| touch_centroid(touch_count, active_count, (sum_x, sum_y), cfg.fingers))
+            .then(|| touch_centroid(touch_count, active_count, sum, cfg.fingers))
             .flatten();
-        let Some((avg_x, avg_y)) = centroid else {
-            let consuming = st.consuming;
-            st.reset();
-            return cfg.consume_dock_swipe && consuming;
+        let Some(centroid) = centroid else {
+            return cfg.consume_dock_swipe && track.end();
         };
 
-        match st.phase {
-            GesturePhase::Idle => {
-                st.start_x = avg_x;
-                st.start_y = avg_y;
-                st.phase = GesturePhase::Armed;
-                trace!(
-                    "swipe armed: start_x={:.3} start_y={:.3}",
-                    st.start_x, st.start_y
-                );
+        let outcome = track.advance(
+            centroid,
+            active_count,
+            cfg.vertical_tolerance,
+            cfg.distance_pct,
+            cfg.invert_horizontal,
+        );
+        if let Some(toward) = outcome.commit {
+            let cmd = match toward {
+                SwipeToward::Next => LC::NextWorkspace(cfg.skip_empty_workspaces),
+                SwipeToward::Prev => LC::PrevWorkspace(cfg.skip_empty_workspaces),
+            };
+            if cfg.haptics_enabled {
+                let _ = haptics::perform_haptic(cfg.haptic_pattern);
             }
-            GesturePhase::Armed => {
-                let step = swipe_step(
-                    (avg_x - st.start_x, avg_y - st.start_y),
-                    cfg.vertical_tolerance,
-                    cfg.distance_pct,
-                    cfg.invert_horizontal,
-                );
-                st.consuming |= step.consuming;
-                if let Some(toward) = step.commit {
-                    let cmd = match toward {
-                        SwipeToward::Next => LC::NextWorkspace(cfg.skip_empty_workspaces),
-                        SwipeToward::Prev => LC::PrevWorkspace(cfg.skip_empty_workspaces),
-                    };
-                    if cfg.haptics_enabled {
-                        let _ = haptics::perform_haptic(cfg.haptic_pattern);
-                    }
-                    self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
-                    st.phase = GesturePhase::Committed;
-                }
-            }
-            GesturePhase::Committed => {
-                if active_count == 0 {
-                    st.reset();
-                }
-            }
+            self.events
+                .send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
         }
-
-        cfg.consume_dock_swipe && st.consuming
+        cfg.consume_dock_swipe && outcome.consume
     }
 
     /// One frame of a horizontal scroll gesture, whatever phase it is in.
@@ -646,19 +578,19 @@ impl GestureTap {
         };
 
         match st.phase {
-            GesturePhase::Idle => {
+            SwipePhase::Idle => {
                 st.start_x = avg_x;
                 st.start_y = avg_y;
                 st.last_x = avg_x;
                 st.last_y = avg_y;
                 st.accum_dx = 0.0;
-                st.phase = GesturePhase::Armed;
+                st.phase = SwipePhase::Armed;
                 trace!(
                     "scroll armed: start_x={:.3} start_y={:.3}",
                     st.start_x, st.start_y
                 );
             }
-            GesturePhase::Armed => {
+            SwipePhase::Armed => {
                 if !all_moved {
                     st.last_x = avg_x;
                     st.last_y = avg_y;
@@ -667,10 +599,10 @@ impl GestureTap {
 
                 if let Some(delta) = self.advance_scroll(cfg, &mut st, (avg_x, avg_y)) {
                     self.send_scroll(delta);
-                    st.phase = GesturePhase::Committed;
+                    st.phase = SwipePhase::Committed;
                 }
             }
-            GesturePhase::Committed => {
+            SwipePhase::Committed => {
                 if active_count == 0 {
                     let consuming = st.consuming;
                     st.reset();
@@ -742,7 +674,7 @@ unsafe extern "C-unwind" fn gesture_tap_disabled(user_info: *mut std::ffi::c_voi
         return;
     }
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
-    let _ = ctx.recovery_tx.send(Recovery::TapDisabled(ctx.tap_generation));
+    let _ = ctx.recovery_tx.send(tap::Recovery::TapDisabled(ctx.tap_generation));
 }
 
 unsafe extern "C-unwind" fn gesture_tap_invalidated(user_info: *mut std::ffi::c_void) {
@@ -750,5 +682,5 @@ unsafe extern "C-unwind" fn gesture_tap_invalidated(user_info: *mut std::ffi::c_
         return;
     }
     let ctx = unsafe { &*(user_info as *const CallbackCtx) };
-    let _ = ctx.recovery_tx.send(Recovery::TapInvalidated(ctx.tap_generation));
+    let _ = ctx.recovery_tx.send(tap::Recovery::TapInvalidated(ctx.tap_generation));
 }
