@@ -13,7 +13,6 @@ use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::layout::settings::LayoutSettings;
 use crate::workspaces::settings::VirtualWorkspaceSettings;
-use crate::workspaces::LayoutSystem;
 use crate::workspaces::broadcast::BroadcastSender;
 use crate::windows::domain::rules::AppRuleEngine;
 use crate::workspaces::{

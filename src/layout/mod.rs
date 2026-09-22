@@ -1,14 +1,8 @@
 //! The scrolling layout: a strip of columns of windows and the operations on it.
 //!
 //! Pure geometry over window ids and frames; knows nothing about workspaces or spaces, and has no
-//! `platform` because it touches nothing outside itself. `LayoutSystem` is the seam every other
-//! feature reaches it through. See `docs/layout/strip.md`.
-use enum_dispatch::enum_dispatch;
-use objc2_core_foundation::CGRect;
-use serde::{Deserialize, Serialize};
-
-use rustc_hash::FxHashMap as HashMap;
-use rini_core::ids::{WindowId, pid_t};
+//! `platform` because it touches nothing outside itself. `ScrollingLayoutSystem` is the seam every
+//! other feature reaches it through. See `docs/layout/strip.md`.
 
 pub use rini_ipc::protocol::{Direction, ResizeOrientation};
 
@@ -114,114 +108,10 @@ impl WindowLayoutConstraints {
     }
 }
 
-#[enum_dispatch]
-pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
-    fn create_layout(&mut self) -> LayoutId;
-    fn contains_layout(&self, layout: LayoutId) -> bool;
-    fn clone_layout(&mut self, layout: LayoutId) -> LayoutId;
-    fn remove_layout(&mut self, layout: LayoutId);
-
-    fn draw_tree(&self, layout: LayoutId) -> String;
-    /// Return a stable, platform-neutral view of the layout topology for IPC consumers.
-    fn container_tree(&self, layout: LayoutId) -> rini_ipc::protocol::ContainerTreeNode;
-
-    fn calculate_layout(
-        &self,
-        layout: LayoutId,
-        screen: CGRect,
-        constraints: &HashMap<WindowId, WindowLayoutConstraints>,
-        gaps: &settings::GapSettings,
-    ) -> Vec<(WindowId, CGRect)>;
-
-    fn selected_window(&self, layout: LayoutId) -> Option<WindowId>;
-    /// Return every window stored in this layout, including members hidden by a stack.
-    /// Persistence validation must not confuse "currently visible" with "serialized" or an
-    /// unmatchable hidden member can survive forever as a ghost.
-    fn all_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId>;
-    fn visible_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId>;
-    fn visible_windows_under_selection(&self, layout: LayoutId) -> Vec<WindowId>;
-    fn move_focus(
-        &mut self,
-        layout: LayoutId,
-        direction: Direction,
-    ) -> (Option<WindowId>, Vec<WindowId>);
-    fn window_in_direction(&self, layout: LayoutId, direction: Direction) -> Option<WindowId>;
-    fn add_window_after_selection(&mut self, layout: LayoutId, wid: WindowId);
-    /// Replace a window identity in-place without changing its layout position.
-    fn replace_window(&mut self, from: WindowId, to: WindowId);
-    fn remove_window(&mut self, wid: WindowId);
-    /// The width a window's column carries, if it has been sized away from the default.
-    ///
-    /// Needed so moving a window between workspaces or displays keeps the width the user gave
-    /// it; a fresh column otherwise starts at the default ratio and the window appeared to
-    /// reset to 50%.
-    fn column_width_offset(&self, _layout: LayoutId, _wid: WindowId) -> Option<f64> {
-        None
-    }
-
-    /// Re-apply a width carried from another column.
-    fn set_column_width_offset(&mut self, _layout: LayoutId, _wid: WindowId, _offset: f64) {}
-
-    /// Whether this window's column occupies the whole viewport width.
-    ///
-    /// Separate from `column_width_offset` because full width is a MODE rather than a ratio:
-    /// it stays full on a display of any size, so it cannot be represented as an offset from
-    /// the configured default and survive a move between displays.
-    fn is_window_full_width(&self, _layout: LayoutId, _wid: WindowId) -> bool {
-        false
-    }
-
-    /// Set or clear the full-viewport-width mode for a window's column.
-    fn set_window_full_width(&mut self, _layout: LayoutId, _wid: WindowId, _full: bool) {}
-
-    /// Remove a window from ONE layout only.
-    ///
-    /// `remove_window` spans every layout the system owns. A workspace now owns one layout
-    /// (strip) per display, so normalizing a single display's strip must not reach into the
-    /// others — doing so deleted windows from the display they legitimately sat on.
-    fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId);
-    fn remove_windows_for_app(&mut self, pid: pid_t);
-    fn windows_for_app(&self, layout: LayoutId, pid: pid_t) -> Vec<WindowId>;
-    fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>);
-    fn has_windows_for_app(&self, layout: LayoutId, pid: pid_t) -> bool;
-    fn contains_window(&self, layout: LayoutId, wid: WindowId) -> bool;
-    fn select_window(&mut self, layout: LayoutId, wid: WindowId) -> bool;
-    fn on_window_resized(
-        &mut self,
-        layout: LayoutId,
-        wid: WindowId,
-        old_frame: CGRect,
-        new_frame: CGRect,
-        screen: CGRect,
-        gaps: &settings::GapSettings,
-    );
-
-    fn swap_windows(&mut self, layout: LayoutId, a: WindowId, b: WindowId) -> bool;
-
-    fn move_selection(&mut self, layout: LayoutId, direction: Direction) -> bool;
-
-    fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
-
-    /// Fold the selection into the column on `side`, or back out to where it came from.
-    fn toggle_fold_of_selection(&mut self, layout: LayoutId, side: Direction) -> Vec<WindowId>;
-
-    /// Cycle the selected column through the configured preset widths.
-    fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId>;
-
-    fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
-    fn unstack_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
-    fn parent_of_selection_is_stacked(&self, layout: LayoutId) -> bool;
-    fn resize_selection_by(
-        &mut self,
-        layout: LayoutId,
-        amount: f64,
-        orientation: ResizeOrientation,
-    );
-}
 
 #[cfg(test)]
 mod tests {
-    use super::{LayoutSystem, ScrollingLayoutSystem, WindowLayoutConstraints};
+    use super::{ScrollingLayoutSystem, WindowLayoutConstraints};
     use rini_core::ids::WindowId;
     use crate::layout::settings::{ScrollingLayoutSettings, WindowInsertionPoint};
 
@@ -364,14 +254,6 @@ mod tests {
             1
         );
     }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[derive(Debug)]
-#[enum_dispatch(LayoutSystem)]
-pub enum LayoutSystemKind {
-    Scrolling(ScrollingLayoutSystem),
 }
 
 #[cfg(test)]

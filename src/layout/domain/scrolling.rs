@@ -10,7 +10,7 @@ use crate::layout::settings::{
 };
 use crate::layout::domain::constraints::{AxisConstraints, clamp_to_constraints, solve_axis_lengths};
 use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, gap_share, reveal_offset};
-use crate::layout::{LayoutSystem, WindowLayoutConstraints};
+use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
 
@@ -793,16 +793,16 @@ impl ScrollingLayoutSystem {
     }
 }
 
-impl LayoutSystem for ScrollingLayoutSystem {
-    fn create_layout(&mut self) -> LayoutId {
+impl ScrollingLayoutSystem {
+    pub fn create_layout(&mut self) -> LayoutId {
         self.layouts.insert(LayoutState::new(self.settings.column_width_ratio))
     }
 
-    fn contains_layout(&self, layout: LayoutId) -> bool {
+    pub fn contains_layout(&self, layout: LayoutId) -> bool {
         self.layouts.contains_key(layout)
     }
 
-    fn clone_layout(&mut self, layout: LayoutId) -> LayoutId {
+    pub fn clone_layout(&mut self, layout: LayoutId) -> LayoutId {
         let cloned = self
             .layouts
             .get(layout)
@@ -811,11 +811,11 @@ impl LayoutSystem for ScrollingLayoutSystem {
         self.layouts.insert(cloned)
     }
 
-    fn remove_layout(&mut self, layout: LayoutId) {
+    pub fn remove_layout(&mut self, layout: LayoutId) {
         self.layouts.remove(layout);
     }
 
-    fn draw_tree(&self, layout: LayoutId) -> String {
+    pub fn draw_tree(&self, layout: LayoutId) -> String {
         let Some(state) = self.layouts.get(layout) else {
             return String::new();
         };
@@ -834,7 +834,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
         out
     }
 
-    fn container_tree(&self, layout: LayoutId) -> rini_ipc::protocol::ContainerTreeNode {
+    /// Return a stable, platform-neutral view of the layout topology for IPC consumers.
+    pub fn container_tree(&self, layout: LayoutId) -> rini_ipc::protocol::ContainerTreeNode {
         let state = self.layouts.get(layout).expect("unknown scrolling layout");
         let children = state
             .columns
@@ -877,7 +878,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn calculate_layout(
+    pub fn calculate_layout(
         &self,
         layout: LayoutId,
         screen: CGRect,
@@ -1133,19 +1134,22 @@ impl LayoutSystem for ScrollingLayoutSystem {
         out
     }
 
-    fn selected_window(&self, layout: LayoutId) -> Option<WindowId> {
+    pub fn selected_window(&self, layout: LayoutId) -> Option<WindowId> {
         self.layout_state(layout).and_then(|state| state.selected_or_first())
     }
 
-    fn all_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId> {
+    /// Return every window stored in this layout, including members hidden by a stack.
+    /// Persistence validation must not confuse "currently visible" with "serialized" or an
+    /// unmatchable hidden member can survive forever as a ghost.
+    pub fn all_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId> {
         self.layout_state(layout).map(Self::all_windows).unwrap_or_default()
     }
 
-    fn visible_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId> {
+    pub fn visible_windows_in_layout(&self, layout: LayoutId) -> Vec<WindowId> {
         self.layout_state(layout).map(Self::all_windows).unwrap_or_default()
     }
 
-    fn visible_windows_under_selection(&self, layout: LayoutId) -> Vec<WindowId> {
+    pub fn visible_windows_under_selection(&self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state(layout) else {
             return Vec::new();
         };
@@ -1156,7 +1160,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
     }
 
 
-    fn move_focus(
+    pub fn move_focus(
         &mut self,
         layout: LayoutId,
         direction: Direction,
@@ -1188,7 +1192,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         (new_sel, raise)
     }
 
-    fn window_in_direction(&self, layout: LayoutId, direction: Direction) -> Option<WindowId> {
+    pub fn window_in_direction(&self, layout: LayoutId, direction: Direction) -> Option<WindowId> {
         let state = self.layout_state(layout)?;
         let (col_idx, row_idx) = state.selected_location()?;
         match direction {
@@ -1211,7 +1215,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn add_window_after_selection(&mut self, layout: LayoutId, wid: WindowId) {
+    pub fn add_window_after_selection(&mut self, layout: LayoutId, wid: WindowId) {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1226,7 +1230,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn replace_window(&mut self, from: WindowId, to: WindowId) {
+    /// Replace a window identity in-place without changing its layout position.
+    pub fn replace_window(&mut self, from: WindowId, to: WindowId) {
         if from == to {
             return;
         }
@@ -1258,13 +1263,18 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn remove_window(&mut self, wid: WindowId) {
+    pub fn remove_window(&mut self, wid: WindowId) {
         for state in self.layouts.values_mut() {
             let _ = state.remove_window(wid);
         }
     }
 
-    fn column_width_offset(&self, layout: LayoutId, wid: WindowId) -> Option<f64> {
+    /// The width a window's column carries, if it has been sized away from the default.
+    ///
+    /// Needed so moving a window between workspaces or displays keeps the width the user gave
+    /// it; a fresh column otherwise starts at the default ratio and the window appeared to
+    /// reset to 50%.
+    pub fn column_width_offset(&self, layout: LayoutId, wid: WindowId) -> Option<f64> {
         let state = self.layout_state(layout)?;
         let (col_idx, _) = state.locate(wid)?;
         let column = state.columns.get(col_idx)?;
@@ -1273,7 +1283,8 @@ impl LayoutSystem for ScrollingLayoutSystem {
         column.width_overridden.then_some(column.width_offset)
     }
 
-    fn set_column_width_offset(&mut self, layout: LayoutId, wid: WindowId, offset: f64) {
+    /// Re-apply a width carried from another column.
+    pub fn set_column_width_offset(&mut self, layout: LayoutId, wid: WindowId, offset: f64) {
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -1286,12 +1297,18 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn is_window_full_width(&self, layout: LayoutId, wid: WindowId) -> bool {
+    /// Whether this window's column occupies the whole viewport width.
+    ///
+    /// Separate from `column_width_offset` because full width is a MODE rather than a ratio:
+    /// it stays full on a display of any size, so it cannot be represented as an offset from
+    /// the configured default and survive a move between displays.
+    pub fn is_window_full_width(&self, layout: LayoutId, wid: WindowId) -> bool {
         self.layout_state(layout)
             .is_some_and(|state| state.fullscreen_within_gaps.contains(&wid))
     }
 
-    fn set_window_full_width(&mut self, layout: LayoutId, wid: WindowId, full: bool) {
+    /// Set or clear the full-viewport-width mode for a window's column.
+    pub fn set_window_full_width(&mut self, layout: LayoutId, wid: WindowId, full: bool) {
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -1305,13 +1322,18 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId) {
+    /// Remove a window from ONE layout only.
+    ///
+    /// `remove_window` spans every layout the system owns. A workspace now owns one layout
+    /// (strip) per display, so normalizing a single display's strip must not reach into the
+    /// others — doing so deleted windows from the display they legitimately sat on.
+    pub fn remove_window_from_layout(&mut self, layout: LayoutId, wid: WindowId) {
         if let Some(state) = self.layouts.get_mut(layout) {
             let _ = state.remove_window(wid);
         }
     }
 
-    fn remove_windows_for_app(&mut self, pid: pid_t) {
+    pub fn remove_windows_for_app(&mut self, pid: pid_t) {
         for state in self.layouts.values_mut() {
             let windows: Vec<_> = state
                 .columns
@@ -1325,7 +1347,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn windows_for_app(&self, layout: LayoutId, pid: pid_t) -> Vec<WindowId> {
+    pub fn windows_for_app(&self, layout: LayoutId, pid: pid_t) -> Vec<WindowId> {
         self.layout_state(layout)
             .map(|state| {
                 state
@@ -1338,7 +1360,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
             .unwrap_or_default()
     }
 
-    fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>) {
+    pub fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>) {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1385,19 +1407,19 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn has_windows_for_app(&self, layout: LayoutId, pid: pid_t) -> bool {
+    pub fn has_windows_for_app(&self, layout: LayoutId, pid: pid_t) -> bool {
         self.layout_state(layout)
             .map(|state| state.columns.iter().flat_map(|c| c.windows.iter()).any(|w| w.pid == pid))
             .unwrap_or(false)
     }
 
-    fn contains_window(&self, layout: LayoutId, wid: WindowId) -> bool {
+    pub fn contains_window(&self, layout: LayoutId, wid: WindowId) -> bool {
         self.layout_state(layout)
             .map(|state| state.locate(wid).is_some())
             .unwrap_or(false)
     }
 
-    fn select_window(&mut self, layout: LayoutId, wid: WindowId) -> bool {
+    pub fn select_window(&mut self, layout: LayoutId, wid: WindowId) -> bool {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1422,7 +1444,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn on_window_resized(
+    pub fn on_window_resized(
         &mut self,
         layout: LayoutId,
         wid: WindowId,
@@ -1518,7 +1540,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         }
     }
 
-    fn swap_windows(&mut self, layout: LayoutId, a: WindowId, b: WindowId) -> bool {
+    pub fn swap_windows(&mut self, layout: LayoutId, a: WindowId, b: WindowId) -> bool {
         let Some(state) = self.layout_state_mut(layout) else {
             return false;
         };
@@ -1550,7 +1572,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         true
     }
 
-    fn move_selection(&mut self, layout: LayoutId, direction: Direction) -> bool {
+    pub fn move_selection(&mut self, layout: LayoutId, direction: Direction) -> bool {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1587,7 +1609,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
     /// Folding OUT lands the new column on the side AWAY from `side`, because that is where the
     /// window was before it folded into that column. Folding IN prefers the row it was folded out
     /// of (`StackOrigin`) over appending to the end, so the rows keep their order too.
-    fn toggle_fold_of_selection(&mut self, layout: LayoutId, side: Direction) -> Vec<WindowId> {
+    pub fn toggle_fold_of_selection(&mut self, layout: LayoutId, side: Direction) -> Vec<WindowId> {
         let away = match side {
             Direction::Left => Direction::Right,
             Direction::Right => Direction::Left,
@@ -1639,7 +1661,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         vec![selected]
     }
 
-    fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+    pub fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1687,7 +1709,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
     /// Widths are stored as `width_offset` relative to `column_width_ratio`, the
     /// same representation the resize path uses, so nothing else needs to know
     /// these came from a preset.
-    fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId> {
+    pub fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let presets: Vec<f64> = self
             .settings
             .preset_column_widths
@@ -1739,7 +1761,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
     }
 
 
-    fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+    pub fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
@@ -1780,7 +1802,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         vec![selected]
     }
 
-    fn unstack_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+    pub fn unstack_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
@@ -1806,7 +1828,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         others
     }
 
-    fn parent_of_selection_is_stacked(&self, layout: LayoutId) -> bool {
+    pub fn parent_of_selection_is_stacked(&self, layout: LayoutId) -> bool {
         let Some(state) = self.layout_state(layout) else {
             return false;
         };
@@ -1816,7 +1838,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         state.columns[col_idx].windows.len() > 1
     }
 
-    fn resize_selection_by(
+    pub fn resize_selection_by(
         &mut self,
         layout: LayoutId,
         amount: f64,
@@ -1896,7 +1918,7 @@ mod tests {
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
     use crate::layout::settings::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
-    use crate::layout::{LayoutSystem, WindowLayoutConstraints};
+    use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::{Direction, LayoutId, ResizeOrientation};
 

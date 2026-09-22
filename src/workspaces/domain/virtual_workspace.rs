@@ -11,7 +11,7 @@ use crate::layout::settings::LayoutSettings;
 use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use rini_ipc::protocol::WorkspaceSelector;
 use crate::workspaces::Direction;
-use crate::layout::LayoutSystemKind;
+use crate::layout::ScrollingLayoutSystem;
 use crate::windows::domain::rules::AppRuleDecision;
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::workspaces::domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
@@ -56,10 +56,10 @@ pub struct VirtualWorkspace {
     /// Focused window per display: a workspace owns one strip per display.
     last_focused: HashMap<SpaceId, WindowId>,
     #[serde(default = "default_layout_system_kind")]
-    pub layout_system: LayoutSystemKind,
+    pub layout_system: ScrollingLayoutSystem,
 }
 
-fn default_layout_system_kind() -> LayoutSystemKind {
+fn default_layout_system_kind() -> ScrollingLayoutSystem {
     VirtualWorkspace::create_layout_system(&LayoutSettings::default())
 }
 
@@ -72,20 +72,18 @@ impl VirtualWorkspace {
         }
     }
 
-    pub fn tree(&self) -> &LayoutSystemKind {
+    pub fn tree(&self) -> &ScrollingLayoutSystem {
         &self.layout_system
     }
 
-    pub fn tree_mut(&mut self) -> &mut LayoutSystemKind {
+    pub fn tree_mut(&mut self) -> &mut ScrollingLayoutSystem {
         &mut self.layout_system
     }
 
-    pub fn create_layout_system(settings: &LayoutSettings) -> LayoutSystemKind {
+    pub fn create_layout_system(settings: &LayoutSettings) -> ScrollingLayoutSystem {
         let mut scrolling = settings.scrolling.clone();
         scrolling.base = settings.resolved_base();
-        LayoutSystemKind::Scrolling(crate::layout::ScrollingLayoutSystem::new(
-            &scrolling,
-        ))
+        crate::layout::ScrollingLayoutSystem::new(&scrolling)
     }
 
     pub fn set_last_focused(&mut self, space: SpaceId, window_id: Option<WindowId>) {

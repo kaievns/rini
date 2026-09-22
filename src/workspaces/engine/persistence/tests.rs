@@ -2,7 +2,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
 use crate::windows::domain::info::WindowInfo;
-use crate::workspaces::{LayoutEvent, LayoutSystemKind};
+use crate::workspaces::{LayoutEvent, ScrollingLayoutSystem};
 use crate::workspaces::VirtualWorkspace;
 use crate::windows::domain::state::WindowState;
 use rini_core::ids::WindowServerId;
@@ -1059,12 +1059,12 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
 fn persisted_layout_schema_is_versioned_and_legacy_files_still_load() {
     let engine = test_engine();
     let serialized = engine.serialize_to_string();
-    assert!(serialized.contains("\"schema_version\":3"), "{serialized}");
+    assert!(serialized.contains("\"schema_version\":4"), "{serialized}");
 
-    let legacy = serialized.replacen("\"schema_version\":3,", "", 1);
+    let legacy = serialized.replacen("\"schema_version\":4,", "", 1);
     LayoutEngine::deserialize_from_str(&legacy).unwrap();
 
-    let future = serialized.replacen("\"schema_version\":3", "\"schema_version\":4", 1);
+    let future = serialized.replacen("\"schema_version\":4", "\"schema_version\":5", 1);
     let error = match LayoutEngine::deserialize_from_str(&future) {
         Ok(_) => panic!("future schema version should be rejected"),
         Err(error) => error,
@@ -1079,7 +1079,7 @@ fn schema_v2_display_maps_are_folded_into_the_affinity_registry() {
     let engine = test_engine();
     let v2 = engine
         .serialize_to_string()
-        .replacen("\"schema_version\":3", "\"schema_version\":2", 1)
+        .replacen("\"schema_version\":4", "\"schema_version\":2", 1)
         .replacen(
             "\"display_affinity\":(display_space:{},window_home:{},display_strip:{},window_width:{})",
             "\"space_display_map\":{(7):Some(\"external-uuid\")},\
@@ -1945,15 +1945,28 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
     assert!(!engine.persistence.windows.contains_key(&ghost));
 }
 
+/// This used to compare `mem::discriminant`, asking whether the right layout SYSTEM came back out
+/// of the file. With one system left that question has no content, so it asks the one that does:
+/// whether the strip's own shape survives the trip.
 #[test]
 fn layout_system_round_trips_through_ron() {
-    let system = VirtualWorkspace::create_layout_system(&LayoutSettings::default());
+    let mut system = VirtualWorkspace::create_layout_system(&LayoutSettings::default());
+    let layout = system.create_layout();
+    let (first, second) = (WindowId::new(400, 1), WindowId::new(400, 2));
+    system.add_window_after_selection(layout, first);
+    system.add_window_after_selection(layout, second);
+    system.toggle_fold_of_selection(layout, crate::layout::Direction::Left);
+
     let serialized = ron::ser::to_string(&system).unwrap();
-    let restored: LayoutSystemKind = ron::from_str(&serialized).unwrap();
+    let restored: ScrollingLayoutSystem = ron::from_str(&serialized).unwrap();
+
+    assert!(restored.contains_layout(layout), "the layout id has to survive");
     assert_eq!(
-        std::mem::discriminant(&system),
-        std::mem::discriminant(&restored)
+        restored.all_windows_in_layout(layout),
+        system.all_windows_in_layout(layout),
+        "and so does the column the two windows were folded into"
     );
+    assert_eq!(restored.selected_window(layout), Some(second));
 }
 
 #[test]
@@ -2993,4 +3006,37 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
     );
     assert!(response.changed, "without this the reactor runs no layout pass and nothing animates");
     assert_eq!(response.raise_windows, vec![stacked[1]]);
+}
+
+/// What happens to the layout file that exists on disk right now. Schema 4 dropped the
+/// `LayoutSystemKind` wrapper, so a schema-3 file tags every layout `scrolling((...))` for an enum
+/// that is gone. RON reports that as a shape mismatch deep inside the tree, which says nothing
+/// useful, so the tag is looked for first and the answer is a sentence instead.
+#[test]
+fn a_layout_file_wrapped_in_the_old_layout_system_tag_is_refused_by_name() {
+    let mut engine = test_engine();
+    let mut store = WindowStore::default();
+    let _ = engine.handle_event(
+        &mut store,
+        LayoutEvent::SpaceExposed(SpaceId::new(9), CGSize::new(1728.0, 1085.0)),
+    );
+    let current = engine.serialize_to_string();
+    assert!(current.contains("layout_system"), "the fixture needs a workspace: {current}");
+    assert!(
+        !current.contains("scrolling("),
+        "schema 4 must not write the tag itself: {current}"
+    );
+
+    // A schema-3 file, as the previous build wrote them.
+    let legacy = current.replacen("layout_system:(", "layout_system:scrolling((", 1);
+    assert_ne!(legacy, current, "the fixture has to actually contain a layout_system");
+
+    let message = match LayoutEngine::deserialize_from_str(&legacy) {
+        Ok(_) => panic!("a file carrying the old tag cannot be read"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        message.contains("predates schema 4") && message.contains("laid out fresh"),
+        "the error has to say what happened and what follows: {message}"
+    );
 }

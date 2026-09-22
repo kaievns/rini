@@ -1,7 +1,7 @@
 use objc2_core_foundation::CGSize;
 use serde::{Deserialize, Serialize};
 
-use crate::workspaces::{LayoutId, LayoutSystem};
+use crate::workspaces::{LayoutId, ScrollingLayoutSystem};
 use rini_core::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -118,7 +118,7 @@ impl WorkspaceLayouts {
         space: SpaceId,
         size: CGSize,
         workspaces: impl IntoIterator<Item = crate::workspaces::VirtualWorkspaceId>,
-        tree: &mut impl LayoutSystem,
+        tree: &mut ScrollingLayoutSystem,
     ) {
         let size = Size::from(size);
         for workspace_id in workspaces {
@@ -295,7 +295,7 @@ impl WorkspaceLayouts {
         space: SpaceId,
         size: CGSize,
         workspace_id: crate::workspaces::VirtualWorkspaceId,
-        tree: &mut impl LayoutSystem,
+        tree: &mut ScrollingLayoutSystem,
     ) {
         self.ensure_active_for_space(space, size, std::iter::once(workspace_id), tree);
     }

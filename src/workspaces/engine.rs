@@ -5,14 +5,13 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 use super::{
-    Direction, FloatingManager, LayoutId, LayoutSystemKind, ResizeOrientation, WorkspaceLayouts,
+    Direction, FloatingManager, LayoutId, ResizeOrientation, ScrollingLayoutSystem, WorkspaceLayouts,
 };
 use crate::windows::domain::info::AppInfo;
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::layout::settings::LayoutSettings;
 use rini_ipc::protocol::WorkspaceSelector;
-use crate::workspaces::LayoutSystem;
 use crate::layout::WindowLayoutConstraints;
 use crate::workspaces::domain::app_rules::{AfterRules, AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus, BeforeRules};
 use crate::windows::domain::state::WindowState;
@@ -185,12 +184,12 @@ impl LayoutEngine {
     }
 
     /// Get mutable access to a workspace's layout system.
-    fn workspace_tree_mut(&mut self, ws_id: VirtualWorkspaceId) -> &mut LayoutSystemKind {
+    fn workspace_tree_mut(&mut self, ws_id: VirtualWorkspaceId) -> &mut ScrollingLayoutSystem {
         &mut self.virtual_workspace_manager.workspaces[ws_id].layout_system
     }
 
     /// Get immutable access to a workspace's layout system.
-    fn workspace_tree(&self, ws_id: VirtualWorkspaceId) -> &LayoutSystemKind {
+    fn workspace_tree(&self, ws_id: VirtualWorkspaceId) -> &ScrollingLayoutSystem {
         &self.virtual_workspace_manager.workspaces[ws_id].layout_system
     }
 
@@ -245,7 +244,7 @@ impl LayoutEngine {
         let mut scrolling = settings.scrolling.clone();
         scrolling.base = settings.resolved_base();
         for (_, ws) in self.virtual_workspace_manager.workspaces.iter_mut() {
-            let LayoutSystemKind::Scrolling(system) = &mut ws.layout_system;
+            let system = &mut ws.layout_system;
             system.update_settings(&scrolling);
         }
     }
@@ -264,7 +263,7 @@ impl LayoutEngine {
     /// learn how far the strip moved, which is exact and needs no reference to any window's real frame.
     pub fn strip_scroll_offset(&self, space: SpaceId) -> Option<f64> {
         let (ws_id, layout) = self.workspace_and_layout(space)?;
-        let LayoutSystemKind::Scrolling(system) = self.workspace_tree(ws_id);
+        let system = self.workspace_tree(ws_id);
         system.scroll_offset(layout)
     }
 
@@ -2259,17 +2258,17 @@ impl LayoutEngine {
             }
             LayoutCommand::ScrollStrip { delta } => {
                 let mut resp = EventResponse::default();
-                let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id);
+                let system = self.workspace_tree_mut(workspace_id);
                 resp.boundary_hit = system.scroll_by_delta(layout, delta);
                 resp
             }
             LayoutCommand::SnapStrip => {
-                let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id);
+                let system = self.workspace_tree_mut(workspace_id);
                 system.snap_to_nearest_column(layout);
                 EventResponse::default()
             }
             LayoutCommand::CenterSelection => {
-                let LayoutSystemKind::Scrolling(system) = self.workspace_tree_mut(workspace_id);
+                let system = self.workspace_tree_mut(workspace_id);
                 system.center_selected_column(layout);
                 EventResponse::default()
             }

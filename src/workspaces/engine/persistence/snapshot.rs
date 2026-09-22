@@ -1,6 +1,8 @@
 use super::*;
 
-pub(super) const CURRENT_SCHEMA_VERSION: u32 = 3;
+/// 4 dropped the `LayoutSystemKind` wrapper. Version 3 files tag every layout `scrolling((...))`
+/// for an enum that no longer exists, so they are refused rather than half-read.
+pub(super) const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 fn legacy_schema_version() -> u32 {
     0

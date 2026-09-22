@@ -44,19 +44,18 @@ impl LayoutEngine {
     }
 
     fn deserialize_from_str_with_schema_version(buf: &str) -> anyhow::Result<(Self, u32)> {
-        let persisted = match PersistedLayout::deserialize(buf) {
-            Ok(persisted) => persisted,
-            Err(original_error) => {
-                let Some(migrated) = migrate_legacy_layout_system_tags(buf) else {
-                    return Err(original_error.into());
-                };
-                PersistedLayout::deserialize(&migrated).map_err(|migration_error| {
-                    anyhow::anyhow!(
-                        "could not parse layout file ({original_error}); compatibility migration also failed ({migration_error})"
-                    )
-                })?
-            }
-        };
+        // Checked before parsing, because parsing is what fails: schema 4 dropped the
+        // `LayoutSystemKind` wrapper, so every earlier file tags its layouts `scrolling((...))`
+        // for an enum that no longer exists and RON reports a shape mismatch deep inside the tree.
+        // Saying so here is the difference between "start fresh" and an unreadable error.
+        if buf.contains("layout_system:scrolling(") {
+            return Err(anyhow::anyhow!(
+                "this layout file predates schema {}: it wraps each layout in the layout-system \
+                 tag that rini no longer has, so the saved strip is ignored and laid out fresh",
+                CURRENT_SCHEMA_VERSION,
+            ));
+        }
+        let persisted = PersistedLayout::deserialize(buf)?;
         if persisted.schema_version > CURRENT_SCHEMA_VERSION {
             return Err(anyhow::anyhow!(
                 "layout schema version {} is newer than supported version {}",
@@ -433,64 +432,3 @@ impl LayoutEngine {
     }
 }
 
-pub(super) fn migrate_legacy_layout_system_tags(input: &str) -> Option<String> {
-    // Only `scrolling` remains. The other four tags named layout systems rift had and rini
-    // deleted, and rewriting them produced an unknown-variant error one step further on instead
-    // of a clear one about the tag itself.
-    const TAGS: [(&str, &str); 1] = [("(kind:\"scrolling\",", "scrolling((")];
-
-    let mut output = String::with_capacity(input.len());
-    let mut cursor = 0;
-    let mut changed = false;
-    while cursor < input.len() {
-        let Some((start, needle, replacement)) = TAGS
-            .iter()
-            .filter_map(|(needle, replacement)| {
-                input[cursor..]
-                    .find(needle)
-                    .map(|offset| (cursor + offset, *needle, *replacement))
-            })
-            .min_by_key(|(start, _, _)| *start)
-        else {
-            output.push_str(&input[cursor..]);
-            break;
-        };
-
-        let mut depth = 0usize;
-        let mut in_string = false;
-        let mut escaped = false;
-        let mut end = None;
-        for (offset, ch) in input[start..].char_indices() {
-            if in_string {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == '"' {
-                    in_string = false;
-                }
-                continue;
-            }
-            match ch {
-                '"' => in_string = true,
-                '(' => depth += 1,
-                ')' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        end = Some(start + offset);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let end = end?;
-        output.push_str(&input[cursor..start]);
-        output.push_str(replacement);
-        output.push_str(&input[start + needle.len()..end]);
-        output.push_str("))");
-        cursor = end + 1;
-        changed = true;
-    }
-    changed.then_some(output)
-}

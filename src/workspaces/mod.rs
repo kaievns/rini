@@ -18,7 +18,7 @@ pub use domain::floating::FloatingManager;
 pub use domain::floating_position_store::FloatingPositionStore;
 pub use domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
 pub use rini_ipc::protocol::{Direction, ResizeOrientation};
-pub use crate::layout::{LayoutId, LayoutSystem, LayoutSystemKind, ScrollingLayoutSystem};
+pub use crate::layout::{LayoutId, ScrollingLayoutSystem};
 pub use domain::virtual_workspace::{VirtualWorkspace, VirtualWorkspaceId, WorkspaceStats, WorkspaceStore};
 pub use domain::window_store::{
     PendingWindowOperation, WindowPlacement, WindowRecord, WindowStore, WindowVisibility,
