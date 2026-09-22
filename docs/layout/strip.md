@@ -89,9 +89,29 @@ stacked a window the user had not chosen and left the selection untouched.
 `toggle_stack` is not a round trip: folding in moves one window, folding out
 explodes the whole column, so a second press on a column of three does not give
 you a column of three. `toggle_fold` moves only the selected window in both
-directions and remembers the row it left (`StackOrigin`), so pressing it twice
-returns the strip to the shape it had. It folds into the previous column by
-preference and the next one from the first column, so the key is never dead.
+directions, and it takes a side, so one binding per side gives the same control
+each way (`ctrl-,` left, `ctrl-.` right by default).
+
+Pressing one key twice returns the strip to its shape, which takes two different
+mechanisms:
+
+- **Folding OUT lands on the side AWAY from the key's own.** A window folded into
+  the column on its left came FROM that column's right, so that is where the left
+  key puts it back. The other key unfolds too, to its own side — each key is the
+  inverse of itself, not of the other one.
+- **Folding IN prefers the row it was folded out of** (`StackOrigin`) over
+  appending to the end, so the rows keep their order as well as the columns.
+
+There is no falling back to the other side at the ends of the strip. With both
+keys bound, that would make them agree in the first and last columns, which is
+the surprise this replaced.
+
+**One window leaves a stack one way.** `split_out` is that way. Unfolding,
+expelling (`consume_or_expel_window`), unstacking (`toggle_stack`) and
+`unjoin_windows` were four copies of the same removal, each with its own idea of
+where the new column goes and whether the height weight travelled with it — 164
+lines that are now 35 plus four thin callers. The column left behind re-equalises
+there, in one place, rather than in each caller that remembered to.
 
 **Folded windows divide the height evenly unless someone has resized them.**
 `height_weights` means two different things and they are read differently: equal

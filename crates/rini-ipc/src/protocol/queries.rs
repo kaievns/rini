@@ -3,7 +3,7 @@ use std::fmt;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{Direction, LayoutKind};
+use crate::LayoutKind;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize)]
 pub struct WindowId {
@@ -203,8 +203,6 @@ pub struct ContainerTreeNode {
     pub is_fullscreen_within_gaps: bool,
     /// Semantic role when the layout defines one. The scrolling strip uses `column`.
     pub role: Option<String>,
-    /// Pending BSP split direction, if this leaf is preselected for insertion.
-    pub pending_split: Option<Direction>,
     pub children: Vec<ContainerTreeNode>,
 }
 

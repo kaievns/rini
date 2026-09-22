@@ -2214,10 +2214,11 @@ impl LayoutEngine {
                     .consume_or_expel_selection(layout, direction);
                 EventResponse::default()
             }
-            LayoutCommand::ToggleFold => {
+            LayoutCommand::ToggleFold(side) => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                let raise_windows =
-                    self.workspace_tree_mut(workspace_id).toggle_fold_of_selection(layout);
+                let raise_windows = self
+                    .workspace_tree_mut(workspace_id)
+                    .toggle_fold_of_selection(layout, side);
                 Self::response_for_raised_windows(raise_windows)
             }
             LayoutCommand::ToggleStack => {

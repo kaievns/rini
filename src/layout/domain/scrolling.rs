@@ -116,12 +116,19 @@ impl LayoutState {
     ///
     /// `None` when it was alone in its column and there was nothing to pull it out of. Otherwise the
     /// neighbour to put it back beside, which the caller keeps until the window is restored.
-    fn extract_from_stack(&mut self, wid: WindowId) -> Option<StackOrigin> {
+    /// Take `wid` out of its column into a column of its own, on `side` of the one it left.
+    ///
+    /// The one way a window leaves a stack. Unfolding, expelling and unstacking were four copies of
+    /// this, each with its own idea of where the new column goes and whether the weight travels.
+    ///
+    /// Returns the neighbour to fold it back beside, or `None` when it was alone and there was no
+    /// stack to leave. Nothing is moved in that case.
+    fn split_out(&mut self, wid: WindowId, side: Direction) -> Option<StackOrigin> {
         let (col_idx, row_idx) = self.locate(wid)?;
         if self.columns[col_idx].windows.len() <= 1 {
             return None;
         }
-        // Taken before the removal, while the neighbours are still where they were.
+        // Read before the removal, while the neighbours are still where they were.
         let origin = if row_idx > 0 {
             StackOrigin { anchor: self.columns[col_idx].windows[row_idx - 1], below: true }
         } else {
@@ -130,7 +137,15 @@ impl LayoutState {
         self.columns[col_idx].ensure_height_weights();
         self.columns[col_idx].windows.remove(row_idx);
         let weight = self.columns[col_idx].height_weights.remove(row_idx);
-        let insert_at = (col_idx + 1).min(self.columns.len());
+        // The column it left keeps its own shape, and it had one row fewer a moment ago, so an
+        // even split has to be recomputed rather than inherited.
+        if !self.columns[col_idx].height_overridden {
+            self.columns[col_idx].equalise_heights();
+        }
+        let insert_at = match side {
+            Direction::Left => col_idx,
+            _ => (col_idx + 1).min(self.columns.len()),
+        };
         self.columns.insert(
             insert_at,
             Column {
@@ -138,7 +153,7 @@ impl LayoutState {
                 width_offset: 0.0,
                 width_overridden: false,
                 height_weights: vec![weight],
-            height_overridden: false,
+                height_overridden: false,
             },
         );
         Some(origin)
@@ -837,7 +852,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         is_selected: state.selected == Some(window),
                         is_fullscreen_within_gaps: state.fullscreen_within_gaps.contains(&window),
                         role: None,
-                        pending_split: None,
                         children: Vec::new(),
                     })
                     .collect();
@@ -849,7 +863,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     is_selected: false,
                     is_fullscreen_within_gaps: false,
                     role: Some("column".to_owned()),
-                    pending_split: None,
                     children: windows,
                 }
             })
@@ -863,7 +876,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
             is_selected: false,
             is_fullscreen_within_gaps: false,
             role: None,
-            pending_split: None,
             children,
         }
     }
@@ -1568,13 +1580,22 @@ impl LayoutSystem for ScrollingLayoutSystem {
     }
 
 
-    /// Fold the selection into the column beside it, or back out to where it was folded in from.
+    /// Fold the selection into the column on `side`, or back out of the column it is in.
     ///
-    /// One command for both directions. Folding IN targets the previous column, as `toggle_stack`
-    /// does (niri's consume-into-column), falling back to the next one in the first column so the
-    /// key is never dead. Folding OUT moves only this window, and `StackOrigin` is what returns it
-    /// to the row it left rather than to the end of a column.
-    fn toggle_fold_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+    /// `side` names the column this key works with, so one binding per side gives symmetric control.
+    /// There is no falling back to the other side: with both keys bound that would make them agree
+    /// at the ends of the strip.
+    ///
+    /// Pressing the same key twice puts the window back, which takes two different mechanisms.
+    /// Folding OUT lands the new column on the side AWAY from `side`, because that is where the
+    /// window was before it folded into that column. Folding IN prefers the row it was folded out
+    /// of (`StackOrigin`) over appending to the end, so the rows keep their order too.
+    fn toggle_fold_of_selection(&mut self, layout: LayoutId, side: Direction) -> Vec<WindowId> {
+        let away = match side {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+            _ => return Vec::new(),
+        };
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1592,25 +1613,24 @@ impl LayoutSystem for ScrollingLayoutSystem {
         let selected = state.columns[col_idx].windows[row_idx];
 
         if state.columns[col_idx].windows.len() > 1 {
-            // Folding OUT remembers the row, which is what lets the next press be symmetric.
-            if let Some(origin) = state.extract_from_stack(selected) {
+            if let Some(origin) = state.split_out(selected, away) {
                 state.stack_origins.insert(selected, origin);
             }
-        } else if let Some(origin) = state.stack_origins.remove(&selected)
-            && state.restore_into_stack(selected, origin)
-        {
-            // Folded back into the row it came from.
         } else {
-            // Nothing remembered, or the row is gone: fold into a neighbour, the previous column by
-            // preference and the next one in the first column, so the key is never dead.
-            let target = match col_idx.checked_sub(1) {
-                Some(previous) => Some(previous),
-                None => (col_idx + 1 < state.columns.len()).then_some(col_idx + 1),
+            let restored = match state.stack_origins.remove(&selected) {
+                Some(origin) => state.restore_into_stack(selected, origin),
+                None => false,
             };
-            let Some(target) = target else {
-                return Vec::new();
-            };
-            state.move_window_to_column_end(selected, target);
+            if !restored {
+                let target = match side {
+                    Direction::Left => col_idx.checked_sub(1),
+                    _ => (col_idx + 1 < state.columns.len()).then_some(col_idx + 1),
+                };
+                let Some(target) = target else {
+                    return Vec::new();
+                };
+                state.move_window_to_column_end(selected, target);
+            }
         }
 
         state.selected = Some(selected);
@@ -1643,7 +1663,7 @@ impl LayoutSystem for ScrollingLayoutSystem {
         } else {
             // A maximized window fills the tiling area, which would cover the siblings sharing its
             // column. Pull it out first, so what is on screen matches what the tree says.
-            if let Some(origin) = state.extract_from_stack(selected) {
+            if let Some(origin) = state.split_out(selected, Direction::Right) {
                 state.stack_origins.insert(selected, origin);
             }
             state.fullscreen_within_gaps.insert(selected);
@@ -1768,24 +1788,10 @@ impl LayoutSystem for ScrollingLayoutSystem {
         let Some((col_idx, row_idx)) = state.selected_location() else {
             return;
         };
-        state.columns[col_idx].ensure_height_weights();
-        let wid = state.columns[col_idx].windows.remove(row_idx);
-        let weight = state.columns[col_idx].height_weights.remove(row_idx);
-        let insert_at = match direction {
-            Direction::Left => col_idx,
-            Direction::Right => col_idx + 1,
-            Direction::Up | Direction::Down => unreachable!(),
-        };
-        state.columns.insert(
-            insert_at,
-            Column {
-                windows: vec![wid],
-                width_offset: 0.0,
-                width_overridden: false,
-                height_weights: vec![weight],
-            height_overridden: false,
-            },
-        );
+        let wid = state.columns[col_idx].windows[row_idx];
+        if state.split_out(wid, direction).is_none() {
+            return;
+        }
         state.selected = Some(wid);
         if niri_navigation {
             state.reveal_selected_without_direction();
@@ -1840,47 +1846,26 @@ impl LayoutSystem for ScrollingLayoutSystem {
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
-        let (col_idx, row_idx) = match state.selected_location() {
-            Some(loc) => loc,
-            None => return Vec::new(),
+        let Some((col_idx, row_idx)) = state.selected_location() else {
+            return Vec::new();
         };
         if state.columns[col_idx].windows.len() <= 1 {
             return Vec::new();
         }
-        state.columns[col_idx].ensure_height_weights();
         let selected = state.columns[col_idx].windows[row_idx];
-        let windows = std::mem::take(&mut state.columns[col_idx].windows);
-        let weights = std::mem::take(&mut state.columns[col_idx].height_weights);
-        let mut moved = Vec::new();
-        let mut remaining = Vec::new();
-        let mut remaining_weights = Vec::new();
-        let mut moved_weights = Vec::new();
-        for (wid, w) in windows.into_iter().zip(weights.into_iter()) {
-            if wid == selected {
-                remaining.push(wid);
-                remaining_weights.push(w);
-            } else {
-                moved.push(wid);
-                moved_weights.push(w);
-            }
+        // Every window EXCEPT the selected one leaves, each to its own column, keeping their order.
+        // Splitting them right to left means each lands immediately after the column being emptied,
+        // so the row order becomes the column order.
+        let others: Vec<WindowId> = state.columns[col_idx]
+            .windows
+            .iter()
+            .copied()
+            .filter(|wid| *wid != selected)
+            .collect();
+        for wid in others.iter().rev() {
+            state.split_out(*wid, Direction::Right);
         }
-        state.columns[col_idx].windows = remaining;
-        state.columns[col_idx].height_weights = remaining_weights;
-        let mut insert_at = col_idx + 1;
-        for (idx, wid) in moved.iter().copied().enumerate() {
-            state.columns.insert(
-                insert_at,
-                Column {
-                    windows: vec![wid],
-                    width_offset: 0.0,
-                    width_overridden: false,
-                    height_weights: vec![moved_weights[idx]],
-                    height_overridden: false,
-                },
-            );
-            insert_at += 1;
-        }
-        moved
+        others
     }
 
     fn parent_of_selection_is_stacked(&self, layout: LayoutId) -> bool {
@@ -1901,27 +1886,13 @@ impl LayoutSystem for ScrollingLayoutSystem {
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
-        let (col_idx, row_idx) = match state.selected_location() {
-            Some(loc) => loc,
-            None => return,
+        let Some((col_idx, row_idx)) = state.selected_location() else {
+            return;
         };
-        if state.columns[col_idx].windows.len() <= 1 {
+        let wid = state.columns[col_idx].windows[row_idx];
+        if state.split_out(wid, Direction::Right).is_none() {
             return;
         }
-        state.columns[col_idx].ensure_height_weights();
-        let wid = state.columns[col_idx].windows.remove(row_idx);
-        let weight = state.columns[col_idx].height_weights.remove(row_idx);
-        let insert_at = (col_idx + 1).min(state.columns.len());
-        state.columns.insert(
-            insert_at,
-            Column {
-                windows: vec![wid],
-                width_offset: 0.0,
-                width_overridden: false,
-                height_weights: vec![weight],
-            height_overridden: false,
-            },
-        );
         state.selected = Some(wid);
         if niri_navigation {
             state.reveal_selected_without_direction();
@@ -3696,14 +3667,14 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[1]));
-        system.toggle_fold_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert_eq!(
             shape(&system, layout),
             vec![vec![w[0], w[2]], vec![w[1]]],
             "folded out into its own column"
         );
 
-        system.toggle_fold_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert_eq!(
             shape(&system, layout),
             vec![vec![w[0], w[1], w[2]]],
@@ -3720,16 +3691,18 @@ mod tests {
         system.add_window_after_selection(layout, right);
 
         assert!(system.select_window(layout, right));
-        system.toggle_fold_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert_eq!(shape(&system, layout), vec![vec![left, right]]);
 
-        system.toggle_fold_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert_eq!(shape(&system, layout), vec![vec![left], vec![right]], "and out again");
     }
 
-    // The first column has nothing to its left, so the key folds right rather than doing nothing.
+    /// The first column has nothing to its left, and the left key does NOT quietly fold right
+    /// instead: with a key bound per side, doing that would make the two keys agree at the ends of
+    /// the strip, which is the surprise this replaced.
     #[test]
-    fn folding_the_first_column_reaches_for_the_next_one() {
+    fn folding_left_from_the_first_column_does_nothing() {
         let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
         let layout = system.create_layout();
         let (first, second) = (wid(1, 1), wid(1, 2));
@@ -3737,43 +3710,110 @@ mod tests {
         system.add_window_after_selection(layout, second);
 
         assert!(system.select_window(layout, first));
-        system.toggle_fold_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![first], vec![second]],
+            "nothing on the left to fold into"
+        );
+
+        // The other key reaches the column that IS there.
+        system.toggle_fold_of_selection(layout, Direction::Right);
         assert_eq!(shape(&system, layout), vec![vec![second, first]]);
     }
 
     #[test]
-    fn folding_a_single_window_strip_does_nothing() {
-        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
-        let layout = system.create_layout();
-        let only = wid(1, 1);
-        system.add_window_after_selection(layout, only);
-
-        system.toggle_fold_of_selection(layout);
-        assert_eq!(shape(&system, layout), vec![vec![only]], "nothing to fold into");
-    }
-
-    /// Folded windows share the height, which is the whole point of folding them. Pinned here as
-    /// well as at `join_selection_with_direction`, because this is the path the key actually takes.
-    #[test]
-    fn folding_in_divides_the_height_evenly() {
+    fn folding_right_puts_the_window_under_the_column_to_its_right() {
         let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
         let layout = system.create_layout();
         let (left, right) = (wid(1, 1), wid(1, 2));
         system.add_window_after_selection(layout, left);
         system.add_window_after_selection(layout, right);
-        assert!(system.select_window(layout, right));
-        system.toggle_fold_of_selection(layout);
 
-        let mut constraints = HashMap::default();
-        constraints.insert(
-            left,
-            WindowLayoutConstraints { is_resizable: true, min_height: 100.0, ..Default::default() },
-        );
-        let frames =
-            system.calculate_layout(layout, screen(1000.0, 800.0), &constraints, &GapSettings::default());
-        let (a, b) = (frame_for(&frames, left), frame_for(&frames, right));
-        assert!((a.size.height - b.size.height).abs() < 2.0, "left {a:?} right {b:?}");
+        assert!(system.select_window(layout, left));
+        system.toggle_fold_of_selection(layout, Direction::Right);
+        assert_eq!(shape(&system, layout), vec![vec![right, left]]);
+
+        // Out again, to the left of that column, which is where it started.
+        system.toggle_fold_of_selection(layout, Direction::Right);
+        assert_eq!(shape(&system, layout), vec![vec![left], vec![right]], "and back out");
     }
+
+    /// The other key also unfolds, but sends the window out its own way: each key is the inverse of
+    /// itself, not of the other one.
+    #[test]
+    fn the_other_key_unfolds_to_its_own_side() {
+        let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+        let layout = system.create_layout();
+        let (left, right) = (wid(1, 1), wid(1, 2));
+        system.add_window_after_selection(layout, left);
+        system.add_window_after_selection(layout, right);
+
+        assert!(system.select_window(layout, right));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(shape(&system, layout), vec![vec![left, right]]);
+
+        system.toggle_fold_of_selection(layout, Direction::Right);
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![right], vec![left]],
+            "the right key sends it out to the left, so it lands the other side of its neighbour"
+        );
+    }
+
+    /// Folding OUT lands away from the key's own side, which is what makes pressing one key twice
+    /// a round trip: a window folded into the column on the left came FROM its right.
+    #[test]
+    fn folding_out_lands_away_from_the_side_the_key_names() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fold_of_selection(layout, Direction::Left);
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[2]], vec![w[1]]],
+            "the left key sends it out to the right"
+        );
+
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fold_of_selection(layout, Direction::Right);
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[1]], vec![w[0], w[2]]],
+            "and the right key sends it out to the left"
+        );
+    }
+
+    /// The property that matters: one key, pressed twice, leaves the strip as it was. Checked for
+    /// both keys and from both starting states, since the two directions take different paths
+    /// through the toggle.
+    #[test]
+    fn pressing_one_fold_key_twice_returns_the_strip_to_its_shape() {
+        for side in [Direction::Left, Direction::Right] {
+            // Starting folded in.
+            let (mut system, layout, _w) = stacked_three(ScrollingLayoutSettings::default());
+            let selected = system.selected_window(layout).expect("a selection");
+            let before = shape(&system, layout);
+            system.toggle_fold_of_selection(layout, side);
+            system.toggle_fold_of_selection(layout, side);
+            assert_eq!(shape(&system, layout), before, "{side:?} from a stack, window {selected:?}");
+
+            // Starting as its own column, with a neighbour on each side to fold into.
+            let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
+            let layout = system.create_layout();
+            let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
+            for id in w {
+                system.add_window_after_selection(layout, id);
+            }
+            assert!(system.select_window(layout, w[1]));
+            let before = shape(&system, layout);
+            system.toggle_fold_of_selection(layout, side);
+            assert_ne!(shape(&system, layout), before, "{side:?} should have folded it in");
+            system.toggle_fold_of_selection(layout, side);
+            assert_eq!(shape(&system, layout), before, "{side:?} from a lone column");
+        }
+    }
+
     /// Folding acts on the SELECTED window, never on whichever happens to be first. The reported
     /// confusion was the old `toggle_stack` exploding a column and moving focus, but a fold that
     /// fell back to the top of the strip would look identical, so it is pinned here.
@@ -3782,7 +3822,7 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[2]));
-        system.toggle_fold_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         assert_eq!(
             shape(&system, layout),
@@ -3798,7 +3838,7 @@ mod tests {
         let before = shape(&system, layout);
 
         system.clear_selection_for_test(layout);
-        system.toggle_fold_of_selection(layout);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         assert_eq!(shape(&system, layout), before, "no selection is not a licence to move w0");
         let _ = w;

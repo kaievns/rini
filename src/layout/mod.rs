@@ -202,8 +202,8 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
 
     fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
 
-    /// Fold the selection into the neighbouring column, or back out to where it came from.
-    fn toggle_fold_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
+    /// Fold the selection into the column on `side`, or back out to where it came from.
+    fn toggle_fold_of_selection(&mut self, layout: LayoutId, side: Direction) -> Vec<WindowId>;
 
     /// Cycle the selected column through the configured preset widths.
     fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId>;

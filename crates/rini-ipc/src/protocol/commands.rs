@@ -18,12 +18,11 @@ pub enum LayoutCommand {
     JoinWindow(Direction),
     ConsumeOrExpelWindow(Direction),
     ToggleStack,
-    /// Fold the selected window into the column beside it, or back out of it.
+    /// Fold the selected window into the column on this side, or back out of the column it is in.
     ///
-    /// One key for both directions, and symmetric: it moves the SELECTED window only, and folding
-    /// out returns it to the row it was folded in from. `ToggleStack` is not that — its fold-out
-    /// half explodes the whole column, so pressing it twice does not get you back.
-    ToggleFold,
+    /// Symmetric, unlike `ToggleStack`, whose fold-out half explodes the whole column so a second
+    /// press never gets you back. One binding per side gives the same control both ways.
+    ToggleFold(Direction),
     UnjoinWindows,
     ToggleFocusFloating,
     ToggleWindowFloating,
