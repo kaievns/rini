@@ -628,10 +628,18 @@ Options, in order of expected value:
 
 1. **`animate_layout` is the real strategy point.** The per-window half is
    now `crate::animation::domain::pass::plan`, a pure step over `PassWindow`s producing
-   a `PassPlan` (moves, unmoved windows, warm targets), tested on its own.
+   a `PassPlan` (moves, unmoved windows, warm targets), tested on its own. The
+   frame-writing half is `app::reactor::present::Present`: two borrows — the window
+   store and the transaction table — instead of `&mut Reactor`, which said nothing
+   about what a layout pass touches. `Present` owns the rule that one application's
+   batch shares ONE transaction id, because the app applies the frames together and a
+   per-window id would have each report matched against a different write. That rule
+   was inline and untested; it has five tests now.
+
    What is left in `animate_layout` is the flight decision (skip reasons, pan
-   detection) and dispatch, still a static method over `&mut Reactor`; a
-   narrow `present(motion)` boundary would finish it.
+   detection) and dispatch. It still takes `&mut Reactor`, and legitimately: it reads
+   the config, the layout engine and the drag state, and sends to the animation actor.
+   Those are the reactor's, not a narrower capability's.
 2. **Reactor-side strip builders share boilerplate.** `start_strip_switch`,
    `start_strip_pan`, `start_edge_bounce` and `warm_all_workspaces` each
    repeat the screen-lookup / gaps / `calculate_layout_for_workspace` loop,

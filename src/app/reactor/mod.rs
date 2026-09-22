@@ -12,6 +12,7 @@ mod space_affinity;
 mod space_resolution;
 mod events;
 mod managers;
+mod present;
 mod query;
 mod replay;
 

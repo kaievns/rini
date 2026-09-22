@@ -7,6 +7,7 @@ use crate::animation::platform::window_snapshot::is_a_resize;
 use crate::windows::domain::request::Request;
 use rini_core::ids::{WindowId, pid_t};
 use crate::app::reactor::Reactor;
+use crate::app::reactor::present::Present;
 use rustc_hash::FxHashMap as HashMap;
 use crate::animation::platform::power;
 use rini_core::ids::SpaceId;
@@ -64,18 +65,11 @@ impl AnimationManager {
     }
 
     /// Records a move in the window store and the transaction table; returns its transaction id.
+    ///
+    /// The narrow borrows are `present::Present`, which is also where the batching rule and its
+    /// tests live.
     fn commit(reactor: &mut Reactor, m: &Move) -> crate::windows::domain::transaction::TransactionId {
-        let txid = m
-            .server_id
-            .map(|wsid| reactor.transaction_manager.generate_next_txid(wsid))
-            .unwrap_or_default();
-        if let Some(wsid) = m.server_id {
-            reactor.transaction_manager.update_txid_entries([(wsid, txid, m.to)]);
-        }
-        if let Some(window) = reactor.state.windows.window_mut(m.window) {
-            window.frame_monotonic = m.to;
-        }
-        txid
+        Present::new(&mut reactor.state.windows, &reactor.transaction_manager).commit(m.window, m.to)
     }
 
     pub fn animate_layout(
@@ -255,9 +249,6 @@ impl AnimationManager {
                 "Instant workspace positioning"
             );
             per_app.entry(m.window.pid).or_default().push((m.window, m.to, m.size_unchanged()));
-            if let Some(window) = reactor.state.windows.window_mut(m.window) {
-                window.frame_monotonic = m.to;
-            }
         }
 
         for (pid, frames) in per_app {
@@ -265,22 +256,10 @@ impl AnimationManager {
                 debug!(?pid, "Skipping layout update for app - app no longer exists");
                 continue;
             };
-            let wsid_of = |reactor: &Reactor, wid: WindowId| {
-                reactor.state.windows.window(wid).and_then(|w| w.info.sys_id)
-            };
-            let (first_wid, first_target, _) = frames[0];
-            let mut txid = Default::default();
-            if let Some(wsid) = wsid_of(reactor, first_wid) {
-                txid = reactor.transaction_manager.generate_next_txid(wsid);
-                let mut entries = vec![(wsid, txid, first_target)];
-                for &(wid, frame, _) in frames.iter().skip(1) {
-                    if let Some(wsid) = wsid_of(reactor, wid) {
-                        reactor.transaction_manager.set_last_sent_txid(wsid, txid);
-                        entries.push((wsid, txid, frame));
-                    }
-                }
-                reactor.transaction_manager.update_txid_entries(entries);
-            }
+            let destinations: Vec<(WindowId, CGRect)> =
+                frames.iter().map(|&(wid, to, _)| (wid, to)).collect();
+            let txid = Present::new(&mut reactor.state.windows, &reactor.transaction_manager)
+                .commit_app_batch(&destinations);
             for request in pass::instant_requests(frames, txid, position_only) {
                 if let Err(e) = handle.send(request) {
                     debug!(?pid, ?e, "Failed to send instant layout request - app may have quit");
