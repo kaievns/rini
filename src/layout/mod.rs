@@ -208,14 +208,9 @@ pub trait LayoutSystem: Serialize + for<'de> Deserialize<'de> {
     /// Cycle the selected column through the configured preset widths.
     fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId>;
 
-    fn join_selection_with_direction(&mut self, layout: LayoutId, direction: Direction);
-    fn consume_or_expel_selection(&mut self, layout: LayoutId, direction: Direction) {
-        self.join_selection_with_direction(layout, direction);
-    }
     fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
     fn unstack_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId>;
     fn parent_of_selection_is_stacked(&self, layout: LayoutId) -> bool;
-    fn unjoin_selection(&mut self, _layout: LayoutId);
     fn resize_selection_by(
         &mut self,
         layout: LayoutId,
@@ -360,7 +355,9 @@ mod tests {
         scrolling.add_window_after_selection(layout, w(2));
         let tree = scrolling.container_tree(layout);
         assert_eq!(tree.node_type, rini_ipc::protocol::ContainerNodeType::Container);
-        assert!(tree.children.iter().all(|node| node.role.as_deref() == Some("column")));
+        assert!(tree.children.iter().all(|node| {
+            node.layout_kind == Some(rini_ipc::protocol::LayoutKind::Vertical)
+        }));
         assert_eq!(window_nodes(&tree).len(), 2);
         assert_eq!(
             window_nodes(&tree).iter().filter(|node| node.is_selected).count(),

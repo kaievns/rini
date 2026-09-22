@@ -307,14 +307,8 @@ enum WorkspaceCommands {
 enum LayoutCommands {
     /// Move the selected node in a direction
     MoveNode { direction: String },
-    /// Join the selected window with neighbor in a direction
-    JoinWindow { direction: String },
-    /// Join with a neighbor, or unjoin when the selected window is already joined
-    ConsumeOrExpelWindow { direction: String },
     /// Toggle stacked state for the selected container
     ToggleStack,
-    /// Unjoin previously joined windows
-    Unjoin,
     /// Toggle floating on the focused selection (tree focus)
     ToggleFocusFloat,
     /// Swap two windows by window id (`WindowId { pid: ..., idx: ... }`)
@@ -842,17 +836,8 @@ fn map_layout_command(cmd: LayoutCommands) -> Result<CliCommand, String> {
         LayoutCommands::MoveNode { direction } => Ok(CliCommand::Reactor(
             reactor::Command::Layout(LC::MoveNode(parse_direction(&direction)?)),
         )),
-        LayoutCommands::JoinWindow { direction } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::JoinWindow(parse_direction(&direction)?)),
-        )),
-        LayoutCommands::ConsumeOrExpelWindow { direction } => Ok(CliCommand::Reactor(
-            reactor::Command::Layout(LC::ConsumeOrExpelWindow(parse_direction(&direction)?)),
-        )),
         LayoutCommands::ToggleStack => {
             Ok(CliCommand::Reactor(reactor::Command::Layout(LC::ToggleStack)))
-        }
-        LayoutCommands::Unjoin => {
-            Ok(CliCommand::Reactor(reactor::Command::Layout(LC::UnjoinWindows)))
         }
         LayoutCommands::ToggleFocusFloat => Ok(CliCommand::Reactor(reactor::Command::Layout(
             LC::ToggleFocusFloating,

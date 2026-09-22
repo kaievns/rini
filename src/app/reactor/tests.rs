@@ -48,7 +48,7 @@ fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
         .collect();
     assert!(
         state.container_tree.children.iter().all(|node| node.window_id.is_none()
-            && node.role.as_deref() == Some("column")),
+),
         "scrolling exposes columns at the top level: {:#?}",
         state.container_tree
     );

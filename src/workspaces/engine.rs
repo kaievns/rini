@@ -2202,18 +2202,6 @@ impl LayoutEngine {
             | LayoutCommand::MoveWindowToWorkspace { .. }
             | LayoutCommand::CreateWorkspace
             | LayoutCommand::SwitchToLastWorkspace => EventResponse::default(),
-            LayoutCommand::JoinWindow(direction) => {
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                self.workspace_tree_mut(workspace_id)
-                    .join_selection_with_direction(layout, direction);
-                EventResponse::default()
-            }
-            LayoutCommand::ConsumeOrExpelWindow(direction) => {
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                self.workspace_tree_mut(workspace_id)
-                    .consume_or_expel_selection(layout, direction);
-                EventResponse::default()
-            }
             LayoutCommand::ToggleFold(side) => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 let raise_windows = self
@@ -2224,11 +2212,6 @@ impl LayoutEngine {
             LayoutCommand::ToggleStack => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
                 self.toggle_stack_for_workspace(workspace_id, layout)
-            }
-            LayoutCommand::UnjoinWindows => {
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                self.workspace_tree_mut(workspace_id).unjoin_selection(layout);
-                EventResponse::default()
             }
             LayoutCommand::ResizeWindowGrow(orientation) => {
                 if is_floating {

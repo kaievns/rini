@@ -2981,7 +2981,7 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
         Some(space),
         &[space],
         &HashMap::default(),
-        LayoutCommand::JoinWindow(crate::layout::Direction::Left),
+        LayoutCommand::ToggleFold(crate::layout::Direction::Left),
     );
 
     let response = engine.handle_command(

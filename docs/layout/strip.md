@@ -107,11 +107,21 @@ keys bound, that would make them agree in the first and last columns, which is
 the surprise this replaced.
 
 **One window leaves a stack one way.** `split_out` is that way. Unfolding,
-expelling (`consume_or_expel_window`), unstacking (`toggle_stack`) and
-`unjoin_windows` were four copies of the same removal, each with its own idea of
-where the new column goes and whether the height weight travelled with it — 164
-lines that are now 35 plus four thin callers. The column left behind re-equalises
-there, in one place, rather than in each caller that remembered to.
+expelling, unstacking and unjoining were four copies of the same removal, each
+with its own idea of where the new column goes and whether the height weight
+travelled with it — 164 lines that are now 35 plus its callers. The column left
+behind re-equalises there, in one place, rather than in each caller that
+remembered to.
+
+**Two commands cover folding, not five.** `join_window`,
+`consume_or_expel_window` and `unjoin_windows` are deleted. They were rift's
+tree-era vocabulary for moving a window between containers, and against a single
+scrolling layout each was a partial view of `toggle_fold`: join was its fold-in
+half, unjoin its fold-out half, and consume-or-expel almost the whole thing but
+with the fold-out landing on the side asked for instead of the side the window
+came from, so it never round-tripped. What is left is `toggle_fold` per side and
+`toggle_stack`, which keeps its own meaning: it explodes a whole column rather
+than moving one window.
 
 **Folded windows divide the height evenly unless someone has resized them.**
 `height_weights` means two different things and they are read differently: equal

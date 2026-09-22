@@ -184,15 +184,13 @@ pub struct LayoutStateData {
 pub enum ContainerNodeType {
     Container,
     Window,
-    /// An empty slot retained by a layout engine, such as an empty BSP root.
-    Placeholder,
 }
 
 /// A platform-neutral view of one node in a tiled layout.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContainerTreeNode {
     pub node_type: ContainerNodeType,
-    /// Split/stack behavior for a container. Window and placeholder nodes use `None`.
+    /// How a container arranges its children. The strip's root is horizontal, a column vertical.
     pub layout_kind: Option<LayoutKind>,
     /// This node's relative share within its parent, when the layout engine has one.
     pub weight: Option<f64>,
@@ -201,8 +199,6 @@ pub struct ContainerTreeNode {
     pub is_selected: bool,
     /// Filling the tiling area, still a member of the strip.
     pub is_fullscreen_within_gaps: bool,
-    /// Semantic role when the layout defines one. The scrolling strip uses `column`.
-    pub role: Option<String>,
     pub children: Vec<ContainerTreeNode>,
 }
 

@@ -15,15 +15,12 @@ pub enum LayoutCommand {
     PrevWindow,
     MoveFocus(#[serde(rename = "direction")] Direction),
     MoveNode(Direction),
-    JoinWindow(Direction),
-    ConsumeOrExpelWindow(Direction),
     ToggleStack,
     /// Fold the selected window into the column on this side, or back out of the column it is in.
     ///
     /// Symmetric, unlike `ToggleStack`, whose fold-out half explodes the whole column so a second
     /// press never gets you back. One binding per side gives the same control both ways.
     ToggleFold(Direction),
-    UnjoinWindows,
     ToggleFocusFloating,
     ToggleWindowFloating,
     /// niri's `maximize-column`: the column fills the tiling area and stays in the strip.

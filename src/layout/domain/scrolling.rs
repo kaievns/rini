@@ -851,7 +851,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
                         window_id: Some(window.into()),
                         is_selected: state.selected == Some(window),
                         is_fullscreen_within_gaps: state.fullscreen_within_gaps.contains(&window),
-                        role: None,
                         children: Vec::new(),
                     })
                     .collect();
@@ -862,7 +861,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
                     window_id: None,
                     is_selected: false,
                     is_fullscreen_within_gaps: false,
-                    role: Some("column".to_owned()),
                     children: windows,
                 }
             })
@@ -875,7 +873,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
             window_id: None,
             is_selected: false,
             is_fullscreen_within_gaps: false,
-            role: None,
             children,
         }
     }
@@ -1742,65 +1739,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
     }
 
 
-    fn join_selection_with_direction(&mut self, layout: LayoutId, direction: Direction) {
-        let Some(state) = self.layout_state_mut(layout) else {
-            return;
-        };
-        let Some(selected) = state.selected else { return };
-        let (col_idx, _) = match state.selected_location() {
-            Some(loc) => loc,
-            None => return,
-        };
-        let target_col = match direction {
-            Direction::Left => col_idx.checked_sub(1),
-            Direction::Right => (col_idx + 1 < state.columns.len()).then_some(col_idx + 1),
-            _ => None,
-        };
-        let Some(target_col) = target_col else { return };
-        state.move_window_to_column_end(selected, target_col);
-    }
-
-    fn consume_or_expel_selection(&mut self, layout: LayoutId, direction: Direction) {
-        if !matches!(direction, Direction::Left | Direction::Right) {
-            return;
-        }
-
-        let is_joined = self
-            .layout_state(layout)
-            .and_then(|state| {
-                let (col_idx, _) = state.selected_location()?;
-                Some(state.columns[col_idx].windows.len() > 1)
-            })
-            .unwrap_or(false);
-
-        if !is_joined {
-            self.join_selection_with_direction(layout, direction);
-            return;
-        }
-
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
-        let Some(state) = self.layout_state_mut(layout) else {
-            return;
-        };
-        let Some((col_idx, row_idx)) = state.selected_location() else {
-            return;
-        };
-        let wid = state.columns[col_idx].windows[row_idx];
-        if state.split_out(wid, direction).is_none() {
-            return;
-        }
-        state.selected = Some(wid);
-        if niri_navigation {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
-        }
-        state.clamp_scroll_offset();
-    }
-
     fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
@@ -1876,30 +1814,6 @@ impl LayoutSystem for ScrollingLayoutSystem {
             return false;
         };
         state.columns[col_idx].windows.len() > 1
-    }
-
-    fn unjoin_selection(&mut self, layout: LayoutId) {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
-        let Some(state) = self.layout_state_mut(layout) else {
-            return;
-        };
-        let Some((col_idx, row_idx)) = state.selected_location() else {
-            return;
-        };
-        let wid = state.columns[col_idx].windows[row_idx];
-        if state.split_out(wid, Direction::Right).is_none() {
-            return;
-        }
-        state.selected = Some(wid);
-        if niri_navigation {
-            state.reveal_selected_without_direction();
-        } else {
-            state.align_scroll_to_selected();
-        }
-        state.clamp_scroll_offset();
     }
 
     fn resize_selection_by(
@@ -2531,7 +2445,7 @@ mod tests {
     #[test]
     fn move_selection_right_extracts_selected_from_stacked_column() {
         let (mut system, layout, w1, w2) = setup_two_windows(ScrollingLayoutSettings::default());
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         assert!(system.move_selection(layout, Direction::Right));
         let state = system.layouts.get(layout).expect("layout state missing");
@@ -2544,43 +2458,13 @@ mod tests {
     #[test]
     fn move_selection_left_extracts_selected_from_stacked_column_at_edge() {
         let (mut system, layout, w1, w2) = setup_two_windows(ScrollingLayoutSettings::default());
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         assert!(system.move_selection(layout, Direction::Left));
         let state = system.layouts.get(layout).expect("layout state missing");
         assert_eq!(state.columns.len(), 2);
         assert_eq!(state.columns[0].windows, vec![w2]);
         assert_eq!(state.columns[1].windows, vec![w1]);
-        assert_eq!(state.selected, Some(w2));
-    }
-
-    #[test]
-    fn consume_or_expel_left_toggles_selected_window_on_left_side() {
-        let (mut system, layout, w1, w2) = setup_two_windows(ScrollingLayoutSettings::default());
-
-        system.consume_or_expel_selection(layout, Direction::Left);
-        let state = system.layouts.get(layout).expect("layout state missing");
-        assert_eq!(state.columns.len(), 1);
-        assert_eq!(state.columns[0].windows, vec![w1, w2]);
-
-        system.consume_or_expel_selection(layout, Direction::Left);
-        let state = system.layouts.get(layout).expect("layout state missing");
-        assert_eq!(state.columns.len(), 2);
-        assert_eq!(state.columns[0].windows, vec![w2]);
-        assert_eq!(state.columns[1].windows, vec![w1]);
-        assert_eq!(state.selected, Some(w2));
-    }
-
-    #[test]
-    fn consume_or_expel_right_expels_selected_window_on_right_side() {
-        let (mut system, layout, w1, w2) = setup_two_windows(ScrollingLayoutSettings::default());
-        system.join_selection_with_direction(layout, Direction::Left);
-
-        system.consume_or_expel_selection(layout, Direction::Right);
-        let state = system.layouts.get(layout).expect("layout state missing");
-        assert_eq!(state.columns.len(), 2);
-        assert_eq!(state.columns[0].windows, vec![w1]);
-        assert_eq!(state.columns[1].windows, vec![w2]);
         assert_eq!(state.selected, Some(w2));
     }
 
@@ -2659,7 +2543,7 @@ mod tests {
         system.add_window_after_selection(layout, w2);
 
         // Join them to the same column
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         let screen = screen(1000.0, 800.0);
         let gaps = GapSettings::default();
@@ -2700,7 +2584,7 @@ mod tests {
         let w2 = wid(1, 2);
         system.add_window_after_selection(layout, w1);
         system.add_window_after_selection(layout, w2);
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert!(system.select_window(layout, w1));
 
         let screen = screen(1000.0, 800.0);
@@ -2722,7 +2606,7 @@ mod tests {
         let w2 = wid(1, 2);
         system.add_window_after_selection(layout, w1);
         system.add_window_after_selection(layout, w2);
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert!(system.select_window(layout, w1));
 
         let screen = screen(1000.0, 800.0);
@@ -3402,9 +3286,9 @@ mod tests {
         }
         // Pull w2 and w3 into w1's column, so the strip is one column of three.
         assert!(system.select_window(layout, w[1]));
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert!(system.select_window(layout, w[2]));
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]], "fixture is one stack");
         (system, layout, w)
     }
@@ -3546,7 +3430,7 @@ mod tests {
         system.add_window_after_selection(layout, top);
         system.add_window_after_selection(layout, bottom);
         assert!(system.select_window(layout, bottom));
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         let mut constraints = HashMap::default();
         constraints.insert(
@@ -3572,7 +3456,7 @@ mod tests {
         system.add_window_after_selection(layout, top);
         system.add_window_after_selection(layout, bottom);
         assert!(system.select_window(layout, bottom));
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         let screen = screen(1000.0, 800.0);
         let gaps = GapSettings::default();
@@ -3591,7 +3475,7 @@ mod tests {
         system.add_window_after_selection(layout, top);
         system.add_window_after_selection(layout, bottom);
         assert!(system.select_window(layout, bottom));
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         assert!(system.select_window(layout, top));
         system.resize_selection_by(layout, 0.2, ResizeOrientation::Vertical);
@@ -3614,9 +3498,9 @@ mod tests {
             system.add_window_after_selection(layout, id);
         }
         assert!(system.select_window(layout, w[1]));
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
         assert!(system.select_window(layout, w[2]));
-        system.join_selection_with_direction(layout, Direction::Left);
+        system.toggle_fold_of_selection(layout, Direction::Left);
 
         let screen = screen(1000.0, 900.0);
         let gaps = GapSettings::default();

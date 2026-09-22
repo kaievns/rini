@@ -327,13 +327,10 @@ comb1 = "Alt + Shift"
 # - next_window / prev_window (focus wraps when it reaches last window in current workspace)
 # - move_focus = "left"|"right"|"up"|"down"
 # - move_node = "left"|"right"|"up"|"down"
-# - join_window = "left"|"right" (moves the window into the neighbouring column; up/down do nothing)
-# - consume_or_expel_window = "left"|"right" (join, or split back out when already joined)
 # - toggle_fold = "left"|"right" (fold the selected window into the column on that side, or back
 #   out to the row it came from. One binding per side; symmetric, unlike toggle_stack)
 # - toggle_stack (in a joined column: give every OTHER window its own column to the right;
 #   otherwise move the selected window into the column to its left)
-# - unjoin_windows (pop the selected window out of its column into a new column to the right)
 # - toggle_focus_floating / toggle_window_floating / toggle_fullscreen_within_gaps
 # - resize_window_grow / resize_window_shrink (without param, horizontal is default)
 # - resize_window_grow = "horizontal"|"vertical"|"smart"
@@ -372,12 +369,9 @@ comb1 = "Alt + Shift"
 
 "Alt + Tab" = "switch_to_last_workspace"
 
-"Alt + Shift + Left" = { join_window = "left" }
-"Alt + Shift + Right" = { join_window = "right" }
 "Alt + Comma" = { toggle_fold = "left" }
 "Alt + Period" = { toggle_fold = "right" }
 "Alt + Shift + Comma" = "toggle_stack"
-"Alt + Ctrl + E" = "unjoin_windows"
 
 "Alt + Shift + Space" = "toggle_window_floating"
 # niri's maximize-column: the column fills the tiling area and keeps scrolling with

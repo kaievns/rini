@@ -434,13 +434,10 @@ impl LayoutEngine {
 }
 
 pub(super) fn migrate_legacy_layout_system_tags(input: &str) -> Option<String> {
-    const TAGS: [(&str, &str); 5] = [
-        ("(kind:\"traditional\",", "traditional(("),
-        ("(kind:\"bsp\",", "bsp(("),
-        ("(kind:\"master_stack\",", "master_stack(("),
-        ("(kind:\"scrolling\",", "scrolling(("),
-        ("(kind:\"stack\",", "stack(("),
-    ];
+    // Only `scrolling` remains. The other four tags named layout systems rift had and rini
+    // deleted, and rewriting them produced an unknown-variant error one step further on instead
+    // of a clear one about the tag itself.
+    const TAGS: [(&str, &str); 1] = [("(kind:\"scrolling\",", "scrolling((")];
 
     let mut output = String::with_capacity(input.len());
     let mut cursor = 0;

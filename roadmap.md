@@ -33,7 +33,9 @@ current behaviour annoys me.
 
 ## Cleanup
 - **Collapse the `LayoutSystem` trait onto `ScrollingLayoutSystem`.** One implementation is
-  left. Doing it means bumping the `layout.ron` schema (the enum wrapper is serialized).
+  left, behind a 55-method trait and a one-variant `LayoutSystemKind` dispatch enum — the
+  last structural leftover of rift's multiple layouts. Doing it means bumping the
+  `layout.ron` schema, because that enum wrapper is the serialized tag.
 - **Merge the two gesture tables.** `[settings.gestures]` (workspace swipe) and
   `[settings.layout.scrolling.gestures]` (column scroll) configure one event tap.
 
