@@ -1055,4 +1055,123 @@ mod tests {
             })
         );
     }
+    /// Every window subcommand has to map to a DISTINCT wire command. The arms are 33 lines of
+    /// near-identical shape, which is exactly where a copy-paste sends two keys to one command and
+    /// nothing complains.
+    #[test]
+    fn no_two_window_subcommands_map_to_the_same_wire_command() {
+        let commands = vec![
+            ("next", WindowCommands::Next),
+            ("prev", WindowCommands::Prev),
+            (
+                "focus",
+                WindowCommands::Focus {
+                    direction: Some("left".into()),
+                    window_id: None,
+                    window_server_id: None,
+                },
+            ),
+            ("toggle-float", WindowCommands::ToggleFloat),
+            ("toggle-fullscreen-within-gaps", WindowCommands::ToggleFullscreenWithinGaps),
+            ("toggle-fold", WindowCommands::ToggleFold { direction: "left".into() }),
+            (
+                "resize-grow",
+                WindowCommands::ResizeGrow { orientation: CliResizeOrientation::Horizontal },
+            ),
+            (
+                "resize-shrink",
+                WindowCommands::ResizeShrink { orientation: CliResizeOrientation::Horizontal },
+            ),
+            ("resize-by", WindowCommands::ResizeBy { amount: 0.05 }),
+        ];
+        let mut seen: Vec<(&str, serde_json::Value)> = Vec::new();
+        for (label, command) in commands {
+            let mapped = map_window_command(command)
+                .and_then(into_protocol_command)
+                .unwrap_or_else(|e| panic!("{label} did not map: {e}"));
+            let wire = serde_json::to_value(&mapped).unwrap();
+            if let Some((other, _)) = seen.iter().find(|(_, seen)| *seen == wire) {
+                panic!("{label} and {other} both map to {wire}");
+            }
+            seen.push((label, wire));
+        }
+    }
+
+    /// The two directional fold bindings must differ, which is the whole reason the command carries
+    /// a direction.
+    #[test]
+    fn the_two_fold_directions_are_different_wire_commands() {
+        let left = map_window_command(WindowCommands::ToggleFold { direction: "left".into() })
+            .and_then(into_protocol_command)
+            .unwrap();
+        let right = map_window_command(WindowCommands::ToggleFold { direction: "right".into() })
+            .and_then(into_protocol_command)
+            .unwrap();
+        assert_ne!(
+            serde_json::to_value(&left).unwrap(),
+            serde_json::to_value(&right).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_direction_is_read_case_and_space_insensitively() {
+        for text in ["left", "LEFT", " Left "] {
+            assert_eq!(parse_direction(text).unwrap(), rini_ipc::protocol::Direction::Left);
+        }
+        assert!(parse_direction("sideways").is_err());
+        assert!(parse_direction("").is_err());
+    }
+
+    /// Each orientation has to reach the wire distinctly too, or `--orientation vertical` silently
+    /// resizes horizontally.
+    #[test]
+    fn the_resize_orientations_are_different_wire_commands() {
+        let mut seen = Vec::new();
+        for orientation in [
+            CliResizeOrientation::Horizontal,
+            CliResizeOrientation::Vertical,
+            CliResizeOrientation::Smart,
+        ] {
+            let mapped = map_window_command(WindowCommands::ResizeGrow { orientation })
+                .and_then(into_protocol_command)
+                .unwrap();
+            let wire = serde_json::to_value(&mapped).unwrap();
+            assert!(!seen.contains(&wire), "an orientation duplicates another: {wire}");
+            seen.push(wire);
+        }
+    }
+
+    #[test]
+    fn a_window_subcommand_with_a_bad_direction_fails_rather_than_defaulting() {
+        assert!(
+            map_window_command(WindowCommands::ToggleFold { direction: "sideways".into() }).is_err(),
+            "a typo must not silently become one of the two real directions"
+        );
+    }
+
+    #[test]
+    fn a_window_server_id_reads_as_decimal_or_hex() {
+        assert_eq!(parse_window_server_id("42").unwrap().as_u32(), 42);
+        assert_eq!(parse_window_server_id(" 0x2a ").unwrap().as_u32(), 42);
+        assert!(parse_window_server_id("").is_err());
+        assert!(parse_window_server_id("0xzz").is_err());
+        assert!(parse_window_server_id("-1").is_err());
+    }
+
+    #[test]
+    fn a_window_id_reads_as_json_or_as_its_debug_form() {
+        let from_json = parse_window_id(r#"{"pid":123,"idx":456}"#).unwrap();
+        let from_debug = parse_window_id("WindowId { pid: 123, idx: 456 }").unwrap();
+        assert_eq!(from_json, from_debug);
+        assert_eq!(from_json.pid, 123);
+        assert_eq!(from_json.idx.get(), 456);
+        assert!(parse_window_id("123").is_err());
+    }
+
+    /// A zero index is not a window. `WindowId::idx` is a `NonZeroU32`, and the wire type has to
+    /// refuse rather than wrap.
+    #[test]
+    fn a_window_id_index_of_zero_is_refused() {
+        assert!(parse_window_id(r#"{"pid":123,"idx":0}"#).is_err());
+    }
 }

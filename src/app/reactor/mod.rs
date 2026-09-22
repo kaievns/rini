@@ -508,7 +508,9 @@ impl Reactor {
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         one_space: bool,
     ) -> Reactor {
-        // FIXME: Remove apps that are no longer running from restored state.
+        // Apps that are no longer running were already dropped from the restored state, at load
+        // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
+        // window server id is gone AND whose bundle is not running.
         record.start(&config, &layout_engine);
         let (raise_manager_tx, _rx) = channels::channel();
         let (window_notify_tx, window_tx_store) = match window_notify {

@@ -330,6 +330,8 @@ fn load_removes_serialized_window_state_without_a_fingerprint() {
 
 #[test]
 fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
+    // Also the answer to a FIXME that sat in `Reactor::new` asking for restored state to drop apps
+    // that are no longer running: `closed` below is exactly that case, and it is discarded here.
     let mut engine = test_engine();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(129);

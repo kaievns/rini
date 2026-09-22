@@ -13,8 +13,8 @@ they are all closed.
 | 1 | Twelve space-resolution answers | **done** rules -> `space_resolution.rs`, 10 tests; 1 dead method deleted |
 | 5 | Two event taps, one lifecycle | **done** shared `Recovery`/`on_recovery`, 6 tests |
 | 10 | `gesture_tap.rs` state machine, 0 tests | **done** `SwipeTrack` in domain, 7 tests |
-| 6 | `rini-cli` 824 lines, 2 tests | todo |
-| 8 | `FIXME mod.rs:501` restored state keeps dead apps | todo |
+| 6 | `rini-cli` 824 lines, 2 tests | **done** 2 -> 10 tests, incl. a no-collision sweep |
+| 8 | `FIXME mod.rs:501` restored state keeps dead apps | **done** stale: already handled at load, and tested |
 | 2 | `LayoutEngine` owns 14 things | todo |
 | 3 | `Reactor` holds every store | todo |
 | 4 | 5,949-line integration test file | todo |
