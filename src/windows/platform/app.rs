@@ -27,15 +27,55 @@ const NS_KEY_VALUE_OBSERVING_OPTION_INITIAL: usize = 1 << 2;
 
 type ApplicationCallback = Arc<dyn Fn(pid_t, AppInfo) + Send + Sync + 'static>;
 
+/// The two properties of `NSRunningApplication` rini waits on.
+///
+/// One value rather than a pair of everything: observe, unobserve and both "already handled"
+/// flags existed twice each, differing only in a key path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Observed {
+    ActivationPolicy,
+    FinishedLaunching,
+}
+
+impl Observed {
+    fn key_path(self) -> &'static NSString {
+        match self {
+            Self::ActivationPolicy => ns_string!("activationPolicy"),
+            Self::FinishedLaunching => ns_string!("finishedLaunching"),
+        }
+    }
+
+    /// Whether the property has reached the value rini is waiting for. A notification fires on
+    /// every change, including the ones that are not it yet.
+    fn is_ready(self, app: &NSRunningApplication) -> bool {
+        match self {
+            Self::ActivationPolicy => {
+                app.activationPolicy() == NSApplicationActivationPolicy::Regular
+            }
+            Self::FinishedLaunching => app.isFinishedLaunching(),
+        }
+    }
+
+    const ALL: [Self; 2] = [Self::ActivationPolicy, Self::FinishedLaunching];
+}
+
 struct ApplicationObserverIvars {
     app: Retained<NSRunningApplication>,
     handler: ApplicationCallback,
     info: AppInfo,
     pid: pid_t,
-    observing_activation_policy: Cell<bool>,
-    observing_finished_launching: Cell<bool>,
-    activation_policy_notified: Cell<bool>,
-    finished_launching_notified: Cell<bool>,
+    observing: [Cell<bool>; 2],
+    notified: [Cell<bool>; 2],
+}
+
+impl ApplicationObserverIvars {
+    fn observing(&self, what: Observed) -> &Cell<bool> {
+        &self.observing[what as usize]
+    }
+
+    fn notified(&self, what: Observed) -> &Cell<bool> {
+        &self.notified[what as usize]
+    }
 }
 
 define_class!(
@@ -55,10 +95,11 @@ define_class!(
             let Some(key_path) = key_path else {
                 return;
             };
-            if key_path.isEqualToString(ns_string!("activationPolicy")) {
-                self.handle_activation_policy();
-            } else if key_path.isEqualToString(ns_string!("finishedLaunching")) {
-                self.handle_finished_launching();
+            for what in Observed::ALL {
+                if key_path.isEqualToString(what.key_path()) {
+                    self.handle(what);
+                    return;
+                }
             }
         }
     }
@@ -78,107 +119,54 @@ impl ApplicationObserver {
             handler,
             info,
             pid,
-            observing_activation_policy: Cell::new(false),
-            observing_finished_launching: Cell::new(false),
-            activation_policy_notified: Cell::new(false),
-            finished_launching_notified: Cell::new(false),
+            observing: [Cell::new(false), Cell::new(false)],
+            notified: [Cell::new(false), Cell::new(false)],
         });
         unsafe { msg_send![super(observer), init] }
     }
 
-    fn observe_activation_policy(&self) {
+    fn observe(&self, what: Observed) {
         let ivars = self.ivars();
-        if ivars.observing_activation_policy.get() || ivars.activation_policy_notified.get() {
+        if ivars.observing(what).get() || ivars.notified(what).get() {
             return;
         }
-        ivars.observing_activation_policy.set(true);
+        ivars.observing(what).set(true);
         unsafe {
             let _: () = msg_send![
                 &*ivars.app,
                 addObserver: self,
-                forKeyPath: ns_string!("activationPolicy"),
+                forKeyPath: what.key_path(),
                 options: (NS_KEY_VALUE_OBSERVING_OPTION_NEW | NS_KEY_VALUE_OBSERVING_OPTION_INITIAL),
                 context: std::ptr::null_mut::<c_void>()
             ];
         }
     }
 
-    fn observe_finished_launching(&self) {
-        let ivars = self.ivars();
-        if ivars.observing_finished_launching.get() || ivars.finished_launching_notified.get() {
-            return;
-        }
-        ivars.observing_finished_launching.set(true);
-        unsafe {
-            let _: () = msg_send![
-                &*ivars.app,
-                addObserver: self,
-                forKeyPath: ns_string!("finishedLaunching"),
-                options: (NS_KEY_VALUE_OBSERVING_OPTION_NEW | NS_KEY_VALUE_OBSERVING_OPTION_INITIAL),
-                context: std::ptr::null_mut::<c_void>()
-            ];
-        }
-    }
-
-    fn handle_activation_policy(&self) {
+    /// Report once, the first time the property is ready, and stop observing it.
+    fn handle(&self, what: Observed) {
         let (callback, info, pid) = {
             let ivars = self.ivars();
-            if ivars.activation_policy_notified.get() {
+            if ivars.notified(what).get() || !what.is_ready(&ivars.app) {
                 return;
             }
-            if ivars.app.activationPolicy() != NSApplicationActivationPolicy::Regular {
-                return;
-            }
-            ivars.activation_policy_notified.set(true);
+            ivars.notified(what).set(true);
             (ivars.handler.clone(), ivars.info.clone(), ivars.pid)
         };
 
-        self.unobserve_activation_policy();
+        self.unobserve(what);
         callback(pid, info);
     }
 
-    fn handle_finished_launching(&self) {
-        let (callback, info, pid) = {
-            let ivars = self.ivars();
-            if ivars.finished_launching_notified.get() {
-                return;
-            }
-            if !ivars.app.isFinishedLaunching() {
-                return;
-            }
-            ivars.finished_launching_notified.set(true);
-            (ivars.handler.clone(), ivars.info.clone(), ivars.pid)
-        };
-
-        self.unobserve_finished_launching();
-        callback(pid, info);
-    }
-
-    fn unobserve_activation_policy(&self) {
+    fn unobserve(&self, what: Observed) {
         let ivars = self.ivars();
-        if !ivars.observing_activation_policy.replace(false) {
+        if !ivars.observing(what).replace(false) {
             return;
         }
         let _ = exception::catch(AssertUnwindSafe(|| unsafe {
             let _: () = msg_send![
                 &*ivars.app,
                 removeObserver: self,
-                forKeyPath: ns_string!("activationPolicy"),
-                context: std::ptr::null_mut::<c_void>()
-            ];
-        }));
-    }
-
-    fn unobserve_finished_launching(&self) {
-        let ivars = self.ivars();
-        if !ivars.observing_finished_launching.replace(false) {
-            return;
-        }
-        let _ = exception::catch(AssertUnwindSafe(|| unsafe {
-            let _: () = msg_send![
-                &*ivars.app,
-                removeObserver: self,
-                forKeyPath: ns_string!("finishedLaunching"),
+                forKeyPath: what.key_path(),
                 context: std::ptr::null_mut::<c_void>()
             ];
         }));
@@ -187,8 +175,9 @@ impl ApplicationObserver {
 
 impl Drop for ApplicationObserver {
     fn drop(&mut self) {
-        self.unobserve_activation_policy();
-        self.unobserve_finished_launching();
+        for what in Observed::ALL {
+            self.unobserve(what);
+        }
     }
 }
 
@@ -215,7 +204,7 @@ pub fn ensure_activation_policy_observer(pid: pid_t, info: AppInfo) {
         return;
     };
     observe_application(app, info, callback, |observer| {
-        observer.observe_activation_policy()
+        observer.observe(Observed::ActivationPolicy)
     });
 }
 
@@ -232,16 +221,16 @@ pub fn ensure_finished_launching_observer(pid: pid_t, info: AppInfo) {
         return;
     };
     observe_application(app, info, callback, |observer| {
-        observer.observe_finished_launching()
+        observer.observe(Observed::FinishedLaunching)
     });
 }
 
 pub fn remove_activation_policy_observer(pid: pid_t) {
-    with_application_observer(pid, |observer| observer.unobserve_activation_policy());
+    with_application_observer(pid, |observer| observer.unobserve(Observed::ActivationPolicy));
 }
 
 pub fn remove_finished_launching_observer(pid: pid_t) {
-    with_application_observer(pid, |observer| observer.unobserve_finished_launching());
+    with_application_observer(pid, |observer| observer.unobserve(Observed::FinishedLaunching));
 }
 
 pub fn remove_application_observer(pid: pid_t) {
@@ -305,7 +294,7 @@ pub fn running_apps(bundle: Option<String>) -> impl Iterator<Item = (pid_t, AppI
             {
                 if let Some(cb) = callback.clone() {
                     observe_application(app, info, cb, |observer| {
-                        observer.observe_activation_policy()
+                        observer.observe(Observed::ActivationPolicy)
                     });
                 }
                 return None;

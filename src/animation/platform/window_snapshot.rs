@@ -75,27 +75,38 @@ pub fn capture_via_skylight(
     window_size: (f64, f64),
     scale: f64,
 ) -> Option<WindowSnapshot> {
+    capture_list_via_skylight(&[window], window_size, scale)
+}
+
+/// One `SLSHWCaptureWindowList` call, for one window or several composited together.
+///
+/// The single-window and composite paths were the same thirty lines twice over, differing in
+/// whether the id array had one element.
+fn capture_list_via_skylight(
+    windows: &[WindowServerId],
+    covers: (f64, f64),
+    scale: f64,
+) -> Option<WindowSnapshot> {
+    if windows.is_empty() {
+        return None;
+    }
     let cid = unsafe { SLSMainConnectionID() };
-    let id = window.as_u32();
-    let array: *mut CFArray<CGImage> =
-        unsafe { SLSHWCaptureWindowList(cid, &id as *const u32, 1 as c_int, CAPTURE_OPTIONS) };
+    let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
+    let array: *mut CFArray<CGImage> = unsafe {
+        SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS)
+    };
     if array.is_null() {
         return None;
     }
     // SAFETY: SLSHWCaptureWindowList returns a +1 CFArray of CGImage, so ownership transfers here.
     let array = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(array)?) };
     let image = array.iter().next()?;
-
+    let scale = if scale > 0.0 { scale } else { 1.0 };
     let px_w = CGImage::width(Some(&image)) as f64;
     let px_h = CGImage::height(Some(&image)) as f64;
-    let scale = if scale > 0.0 { scale } else { 1.0 };
-
     Some(WindowSnapshot {
         image: SnapshotImage::Bitmap(image),
-        coverage: Coverage {
-            covered: (px_w / scale, px_h / scale),
-            window: window_size,
-        },
+        coverage: Coverage { covered: (px_w / scale, px_h / scale), window: covers },
         source: SnapshotSource::SkyLight,
         dressing: None,
         taken: std::time::Instant::now(),
@@ -206,30 +217,7 @@ pub fn capture_composite_via_skylight(
     covers: (f64, f64),
     scale: f64,
 ) -> Option<WindowSnapshot> {
-    if windows.is_empty() {
-        return None;
-    }
-    let cid = unsafe { SLSMainConnectionID() };
-    let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
-    let array: *mut CFArray<CGImage> = unsafe {
-        SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS)
-    };
-    if array.is_null() {
-        return None;
-    }
-    // SAFETY: SLSHWCaptureWindowList returns a +1 CFArray of CGImage, so ownership transfers here.
-    let array = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(array)?) };
-    let image = array.iter().next()?;
-    let scale = if scale > 0.0 { scale } else { 1.0 };
-    let px_w = CGImage::width(Some(&image)) as f64;
-    let px_h = CGImage::height(Some(&image)) as f64;
-    Some(WindowSnapshot {
-        image: SnapshotImage::Bitmap(image),
-        coverage: Coverage { covered: (px_w / scale, px_h / scale), window: covers },
-        source: SnapshotSource::SkyLight,
-        dressing: None,
-        taken: std::time::Instant::now(),
-    })
+    capture_list_via_skylight(windows, covers, scale)
 }
 
 /// Snapshots held per window, so a switch can composite without capturing anything synchronously.

@@ -1008,6 +1008,8 @@ impl LayoutEngine {
         }
     }
 
+    /// The last space seen on this display. macOS recreates spaces after sleep or a replug, and
+    /// this is what lets layout state migrate onto the new id.
     pub fn last_space_for_display_uuid(&self, display_uuid: &str) -> Option<SpaceId> {
         self.display_affinity.space_for_display(display_uuid)
     }
@@ -1018,13 +1020,6 @@ impl LayoutEngine {
 
     fn display_uuid_for_space(&self, space: SpaceId) -> Option<String> {
         self.display_affinity.display_for_space(space).map(str::to_owned)
-    }
-
-    /// Returns the last known space associated with the given display UUID.
-    /// Useful when the OS recreates spaces (e.g. after sleep/resume) and we
-    /// want to migrate layout state to the new space id.
-    pub fn space_for_display_uuid(&self, display_uuid: &str) -> Option<SpaceId> {
-        self.display_affinity.space_for_display(display_uuid)
     }
 
     pub fn display_affinity(&self) -> &DisplayAffinity {

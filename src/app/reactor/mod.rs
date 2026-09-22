@@ -107,6 +107,15 @@ pub use rini_ipc::protocol::Command;
 pub use crate::app::reactor::state::{DisplaySelector, DragSession, DragState, MenuState, MissionControlState, ReactorCommand, RefocusState, StaleCleanupState, WorkspaceSwitchOrigin, WorkspaceSwitchState};
 pub use crate::windows::domain::transaction::Requested;
 
+/// The five answers every broadcast event needs about where a window is.
+struct BroadcastContext {
+    space: SpaceId,
+    workspace_id: crate::workspaces::VirtualWorkspaceId,
+    workspace_index: Option<u64>,
+    workspace_name: String,
+    display_uuid: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct ReactorHandle {
     sender: Sender,
@@ -1920,64 +1929,69 @@ impl Reactor {
         }
     }
 
+    /// Where a window is, as a broadcast event has to describe it.
+    ///
+    /// `None` when the window has no active space, no active workspace, or is on a space that is
+    /// not showing — in which case no broadcast goes out at all. Every event below needs the same
+    /// five answers and used to resolve them itself.
+    fn broadcast_context(&self, window_id: WindowId) -> Option<BroadcastContext> {
+        let space = self.affinity().best_space_for_window_id(window_id)?;
+        if !self.is_space_active(space) {
+            return None;
+        }
+        let engine = &self.layout_manager.layout_engine;
+        let workspace_id = engine.active_workspace(space)?;
+        Some(BroadcastContext {
+            space,
+            workspace_id,
+            workspace_index: engine.active_workspace_idx(space),
+            workspace_name: engine
+                .workspace_name(space, workspace_id)
+                .unwrap_or_else(|| format!("Workspace {workspace_id:?}")),
+            display_uuid: self.display_uuid_for_space(space),
+        })
+    }
+
     fn broadcast_window_title_changed(
         &mut self,
         window_id: WindowId,
         previous_title: String,
         new_title: String,
     ) {
-        if previous_title != new_title
-            && let Some(space) = self.affinity().best_space_for_window_id(window_id)
-            && self.is_space_active(space)
-            && let Some(workspace_id) = self.layout_manager.layout_engine.active_workspace(space)
-        {
-            let workspace_index = self.layout_manager.layout_engine.active_workspace_idx(space);
-
-            let workspace_name = self
-                .layout_manager
-                .layout_engine
-                .workspace_name(space, workspace_id)
-                .unwrap_or_else(|| format!("Workspace {:?}", workspace_id));
-
-            let display_uuid = self.display_uuid_for_space(space);
-
-            let event = BroadcastEvent::WindowTitleChanged {
+        if previous_title == new_title {
+            return;
+        }
+        let Some(at) = self.broadcast_context(window_id) else {
+            return;
+        };
+        let _ = self.communication_manager.event_broadcaster.send(
+            BroadcastEvent::WindowTitleChanged {
                 window_id: protocol_window_id(window_id),
-                workspace_id: protocol_workspace_id(workspace_id),
-                workspace_index,
-                workspace_name,
+                workspace_id: protocol_workspace_id(at.workspace_id),
+                workspace_index: at.workspace_index,
+                workspace_name: at.workspace_name,
                 previous_title,
                 new_title,
-                space_id: space.get(),
-                display_uuid,
-            };
-            let _ = self.communication_manager.event_broadcaster.send(event);
-        }
+                space_id: at.space.get(),
+                display_uuid: at.display_uuid,
+            },
+        );
     }
 
     fn broadcast_focused_window_changed(&self, window_id: WindowId) {
-        if let Some(space) = self.affinity().best_space_for_window_id(window_id)
-            && self.is_space_active(space)
-            && let Some(workspace_id) = self.layout_manager.layout_engine.active_workspace(space)
-        {
-            let workspace_index = self.layout_manager.layout_engine.active_workspace_idx(space);
-            let workspace_name = self
-                .layout_manager
-                .layout_engine
-                .workspace_name(space, workspace_id)
-                .unwrap_or_else(|| format!("Workspace {:?}", workspace_id));
-            let display_uuid = self.display_uuid_for_space(space);
-
-            let event = BroadcastEvent::FocusedWindowChanged {
+        let Some(at) = self.broadcast_context(window_id) else {
+            return;
+        };
+        let _ = self.communication_manager.event_broadcaster.send(
+            BroadcastEvent::FocusedWindowChanged {
                 window_id: protocol_window_id(window_id),
-                workspace_id: protocol_workspace_id(workspace_id),
-                workspace_index,
-                workspace_name,
-                space_id: space.get(),
-                display_uuid,
-            };
-            let _ = self.communication_manager.event_broadcaster.send(event);
-        }
+                workspace_id: protocol_workspace_id(at.workspace_id),
+                workspace_index: at.workspace_index,
+                workspace_name: at.workspace_name,
+                space_id: at.space.get(),
+                display_uuid: at.display_uuid,
+            },
+        );
     }
 
     fn maybe_reapply_app_rules_for_window(&mut self, window_id: WindowId) {

@@ -49,11 +49,25 @@ impl Observer {
     pub fn new<F: Fn(AXUIElement, usize) + 'static>(
         pid: pid_t,
     ) -> Result<ObserverBuilder<F>, AxError> {
+        Self::create(pid, internal_callback)
+    }
+
+    /// `AXObserverCreate` with whichever trampoline the callback shape needs. The only difference
+    /// between the two constructors above and below.
+    fn create<F>(
+        pid: pid_t,
+        trampoline: unsafe extern "C-unwind" fn(
+            NonNull<AXObserver>,
+            NonNull<RawAXUIElement>,
+            NonNull<CFString>,
+            *mut c_void,
+        ),
+    ) -> Result<ObserverBuilder<F>, AxError> {
         let mut observer_ptr: *mut AXObserver = ptr::null_mut();
         let status = unsafe {
             AXObserver::create(
                 pid,
-                Some(internal_callback),
+                Some(trampoline),
                 NonNull::new(&mut observer_ptr as *mut *mut AXObserver).expect("nonnull pointer"),
             )
         };
@@ -72,19 +86,7 @@ impl Observer {
     pub fn new_with_notification<F: Fn(AXUIElement, &'static str) + 'static>(
         pid: pid_t,
     ) -> Result<ObserverBuilder<F>, AxError> {
-        let mut observer_ptr: *mut AXObserver = ptr::null_mut();
-        let status = unsafe {
-            AXObserver::create(
-                pid,
-                Some(internal_callback_with_notification),
-                NonNull::new(&mut observer_ptr as *mut *mut AXObserver).expect("nonnull pointer"),
-            )
-        };
-        make_result(status)?;
-        let observer = unsafe {
-            CFRetained::from_raw(NonNull::new(observer_ptr).expect("observer must be non-null"))
-        };
-        Ok(ObserverBuilder(observer, PhantomData))
+        Self::create(pid, internal_callback_with_notification)
     }
 }
 
