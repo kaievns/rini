@@ -6,6 +6,13 @@ came from. Ranked within each section by what it costs to leave alone.
 
 Measured at commit `118e35d`: **54,751 non-test code lines**, 1101 tests.
 
+**Status: worked through in `45adc4b`..`02c1f6e`, taking the tests to 1144.** Ten of
+the entries below are closed, three are partly closed and one is not started; the
+reasons are in each section and summarised in `docs/audit-progress.md`. The findings
+are left as written rather than edited into the past tense, because what they say
+about how the code got that way is the part worth keeping. What changed since is
+marked `DONE`, `PARTLY` or `OPEN` at the head of each entry.
+
 Method: normalised function bodies hashed for exact duplicates (1794 functions,
 7 groups), `difflib` similarity over 918 production functions ≥10 lines for near
 duplicates, caller counts per public method, and per-file code-to-test ratios.
@@ -16,6 +23,8 @@ The duplicate-detection pass over FFI declaration blocks produces false positive
 ## 1. Duplicate and parallel implementations
 
 ### 1.1 Twelve answers to "which space is this window on"
+
+**DONE — the six precedence orders are five named rules in `space_resolution.rs` with 10 tests; the one dead method is deleted (`ffc0155`).**
 
 `src/app/reactor/space_affinity.rs` exposes twelve space-resolution methods over
 the same stores. Caller counts:
@@ -48,6 +57,8 @@ recorded in `docs/workspaces/workspaces-and-displays.md`.
 
 ### 1.2 Two event taps, one lifecycle, written twice
 
+**DONE — `tap::Recovery` and `tap::on_recovery` are shared, with 6 tests on the generation rules (`06da288`).**
+
 `src/input/platform/gesture_tap.rs:202` `run` and
 `src/input/platform/input_tap.rs:278` `run` are 0.83 similar over 63 and 79 lines.
 Both own: a recovery channel, a `tap::ReEnableGovernor`, a cooldown
@@ -59,6 +70,8 @@ the input freeze recorded in `docs/permissions-and-the-launch-agent.md`). The lo
 that drives it is not.
 
 ### 1.3 Three parallel KVO observer pairs
+
+**DONE — one `Observed` enum, eight functions down to four (`45adc4b`).**
 
 `src/windows/platform/app.rs`, each pair differing only in which key path it
 observes:
@@ -73,11 +86,15 @@ Six functions, ~89 lines, for two observed properties.
 
 ### 1.4 Two SkyLight capture paths
 
+**DONE — both call `capture_list_via_skylight` (`45adc4b`).**
+
 `src/animation/platform/window_snapshot.rs:73` `capture_via_skylight` (31 lines)
 and `:204` `capture_composite_via_skylight` (30 lines), 0.83 similar. The
 difference is one window versus a window list.
 
 ### 1.5 Two AX observer constructors
+
+**DONE — both call `create` (`45adc4b`).**
 
 `src/windows/platform/ax/observer.rs:49` `new` and `:72` `new_with_notification`,
 0.98 similar over 17 lines. `new` is `new_with_notification` with one argument
@@ -85,11 +102,15 @@ fixed.
 
 ### 1.6 Two broadcast builders
 
+**DONE — both use `broadcast_context` (`45adc4b`).**
+
 `src/app/reactor/mod.rs:1923` `broadcast_window_title_changed` (34 lines) and
 `:1958` `broadcast_focused_window_changed` (24 lines), 0.91 similar. Same
 resolve-window-then-send shape, different payload.
 
 ### 1.7 Two identical display-space one-liners
+
+**DONE — the one with no callers is deleted (`45adc4b`).**
 
 `src/workspaces/engine.rs:1011` `last_space_for_display_uuid` and `:1026`
 `space_for_display_uuid` are both exactly
@@ -113,6 +134,8 @@ Little survives here, because the fork's deletions were thorough and the recent
 sweep (`2462e4a`) took the layout-mode vocabulary. What is left:
 
 ### 2.1 `FIXME`s that describe live defects, not tidying
+
+**PARTLY — the restored-dead-apps FIXME was stale and is gone (`37dd37b`); the other three are live and stay.**
 
 ```
 src/app/reactor/mod.rs:171    receive this event for a space we just switched off of.. FIXME
@@ -149,6 +172,8 @@ Test scaffolding sits behind `#[cfg(test)]` in every case found
 
 ### 3.1 `LayoutEngine` owns fourteen unrelated things
 
+**PARTLY — the IPC channel is out, replaced by an outbox the application drains (`a4ad095`). `display_affinity` and `launch_memory` stay: both are load-bearing in `layout.ron`, so moving them is a schema change.**
+
 `src/workspaces/engine.rs`, 2,876 code lines, 20 tests (144 lines per test). Its
 fields:
 
@@ -168,6 +193,8 @@ Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_work
 
 ### 3.2 `Reactor` holds every store and 41 event variants
 
+**OPEN — deliberately. See 3.3.**
+
 `src/app/reactor/mod.rs`, 4,201 code lines, no in-file tests. Direct field
 reaches: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
 `communication_manager` 17, `refresh_quarantine_manager` 14,
@@ -178,6 +205,8 @@ Largest methods: `handle_layout_response` (297), `dispatch_workflow` (280),
 `apply_event_outcome` (269), `handle_authoritative_space_snapshot` (250).
 
 ### 3.3 Static methods over `&mut Reactor`
+
+**OPEN — checked by narrowing each to `&Reactor`: all four genuinely mutate, because they commit frame transactions. The fix is the `present(motion)` boundary, which changes the event model.**
 
 `src/app/reactor/animation.rs` and `managers.rs` take `reactor: &mut Reactor`
 rather than `&mut self` on a narrower borrow — 9 signatures. `animate_layout`'s own
@@ -199,7 +228,9 @@ Named in `docs/architecture.md` as belonging to `app/api/`. Unchanged.
 
 ### 4.1 One 5,949-line integration test file
 
-`src/app/reactor/tests.rs`: 184 tests, 5,949 lines, plus 604 lines of scaffolding
+**PARTLY — the 15 fixtures are in `src/app/reactor/tests/fixtures.rs` (`02c1f6e`); splitting the 168 cases by subject is open.**
+
+`src/app/reactor/tests/mod.rs` (was `tests.rs`): 184 tests, 5,949 lines, plus 604 lines of scaffolding
 in `reactor/testing.rs`. Every test builds a whole `Reactor`. This is where a
 reactor change is verified, which means a reactor change is slow to verify and the
 failure points at an orchestration, not a rule.
@@ -212,14 +243,16 @@ The recent batches moved the opposite way deliberately — pure decisions to
 
 | file | code | why it resists |
 |---|---|---|
-| `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. Needs a fake `AXUIElement` seam |
+| `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. Needs a fake `AXUIElement` seam. PARTLY: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`) |
 | `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (42 tests) beside it, so covered |
-| `src/input/platform/gesture_tap.rs` | 657 | owns its own state machine inline; the rules left for `domain/gesture.rs` but the loop did not |
+| `src/input/platform/gesture_tap.rs` | 657 | DONE: the phase machine is `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`) |
 | `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `tests.rs` |
 | `src/main.rs` | 430 | one 317-line `main`; composition root |
 | `src/app/hotkeys.rs` | 404 | one 178-line `handle_event` |
 
 ### 4.3 Worst code-to-test ratios among tested files
+
+**PARTLY — `rini-cli` is 2 tests to 10 (`37dd37b`); the rest stand.**
 
 ```
 crates/rini-cli/src/main.rs       824 code / 2 tests   412:1
