@@ -208,6 +208,12 @@ Largest methods: `handle_layout_response` (297), `dispatch_workflow` (280),
 
 **OPEN — checked by narrowing each to `&Reactor`: all four genuinely mutate, because they commit frame transactions. The fix is the `present(motion)` boundary, which changes the event model.**
 
+New, found while resolving the native-fullscreen question: `WindowPlacement::NativeFullscreen` is
+write-only. It is set in `catalogue.rs:515` and read nowhere; every reader goes through the
+`NativeFullscreenRecord` instead, which is keyed both by window and by window-server id. The variant
+is not wrong, it is unused, and deleting it means deciding what a suspended window's placement should
+say instead — left alone rather than guessed at.
+
 `src/app/reactor/animation.rs` and `managers.rs` take `reactor: &mut Reactor`
 rather than `&mut self` on a narrower borrow — 9 signatures. `animate_layout`'s own
 doc (`docs/animation/animation-smoothness.md`, "Structural findings") already calls

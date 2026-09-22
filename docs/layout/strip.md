@@ -20,6 +20,20 @@ is borrowed.
   width it was. It is deleted rather than fixed, because macOS's own fullscreen
   already covers "cover everything". A window that fills the tiling area is a
   full-width COLUMN, which is what niri means by `maximize-column`.
+- **macOS's own fullscreen takes the window off the strip entirely.** It is on a
+  space of its own and rini does not manage it while it is there: it leaves the
+  layout tree (`WindowRemovedPreserveFloating`, so the workspace assignment and
+  floating state survive to bring it back), and every space-resolution rule
+  answers `None` for it rather than the space it used to be assigned to.
+
+  Both halves used to be conditional and both let a fullscreen window keep a
+  column reserved for it. Leaving the strip required rini's own assignment to
+  AGREE with the last user space it had seen (`fullscreen_departure`), so a window
+  whose bookkeeping disagreed — or one no user space had been observed for — stayed
+  in the strip while macOS had it. And three of the five rules in
+  `space_resolution` still answered with its old assignment, so the rest of the
+  reactor thought it was somewhere it was not. A window macOS has taken is not a
+  claim rini's bookkeeping gets to veto.
 - **A maximized window never outgrows the space reserved for it.** The column's
   reserved width is clamped to what its windows accept; the frame was not, so a
   window with a maximum width was handed the whole tiling width and the next

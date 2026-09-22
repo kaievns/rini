@@ -42,12 +42,13 @@ impl Candidates {
 /// Falling back to the plain assignment last is what keeps a window rini has never seen on screen
 /// attached to the workspace it was put in.
 ///
-/// `native_fullscreen` is deliberately NOT consulted here, which preserves what this did before the
-/// rules were named: only the two geometry-bearing rules below refuse a fullscreen window, so a
-/// tracked one keeps whatever space it was assigned. That asymmetry is recorded in
-/// `docs/implementation-audit.md`; it is preserved rather than corrected, because correcting it
-/// changes where windows go when macOS takes one fullscreen and nothing currently pins that.
+/// A window macOS has taken fullscreen has no space rini claims, under this rule as under the
+/// others. It is on a space of its own and is not managed while it is there, so answering with the
+/// space it used to be assigned to is answering about a window that is not there.
 pub(crate) fn authoritative(c: &Candidates) -> Option<SpaceId> {
+    if c.native_fullscreen {
+        return None;
+    }
     if let Some(parked) = c.parked_assignment {
         return match c.reported {
             Some(reported) if reported != parked => Some(reported),
@@ -88,6 +89,9 @@ pub(crate) fn best(c: &Candidates) -> Option<SpaceId> {
 /// almost always in front of the user, so geometry that lands on a visible space beats an
 /// assignment inherited from a saved layout.
 pub(crate) fn discovery(c: &Candidates) -> Option<SpaceId> {
+    if c.native_fullscreen {
+        return None;
+    }
     authoritative(c).or_else(|| c.active_geometry()).or_else(|| best(c))
 }
 
@@ -171,14 +175,11 @@ mod tests {
         assert_eq!(discovery(&c), space(5), "it still falls through to best, which allows it");
     }
 
-    /// The rules DISAGREE about a native-fullscreen window, and this pins which way round.
-    ///
-    /// Only the two rules that would otherwise trust geometry refuse it. A tracked window keeps the
-    /// space it was assigned, because dropping that is how a window comes back from macOS's
-    /// fullscreen having lost its workspace. Preserved from before the rules were named; see
-    /// `docs/implementation-audit.md`.
+    /// Every rule refuses a window macOS has taken fullscreen. It is on its own space and rini does
+    /// not manage it while it is there, so there is no space to answer with — not even the one it was
+    /// assigned to before, which is the answer three of these used to give.
     #[test]
-    fn a_native_fullscreen_window_is_refused_only_by_the_geometry_rules() {
+    fn a_native_fullscreen_window_belongs_to_no_space_under_any_rule() {
         let c = Candidates {
             native_fullscreen: true,
             reported: space(2),
@@ -187,11 +188,11 @@ mod tests {
             geometry: space(5),
             geometry_is_active: true,
         };
-        assert_eq!(placement(&c), None, "placement will not put a window macOS owns anywhere");
+        assert_eq!(authoritative(&c), None);
+        assert_eq!(placement(&c), None);
         assert_eq!(geometry_only(&c), None);
-        assert_eq!(authoritative(&c), space(2), "but a tracked window keeps its space");
-        assert_eq!(best(&c), space(2));
-        assert_eq!(discovery(&c), space(2));
+        assert_eq!(best(&c), None);
+        assert_eq!(discovery(&c), None);
     }
 
     #[test]

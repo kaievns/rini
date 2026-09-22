@@ -90,11 +90,11 @@ pub fn handle_window_server_destroyed(
             Some(wsid),
             last_known_user_space,
         );
-        if let (Some(wid), Some(user_space)) = (window_id, last_known_user_space)
-            && assigned_space == Some(user_space)
+        if let Some((wid, from_space)) =
+            fullscreen_departure(window_id, assigned_space, last_known_user_space)
         {
             outcome = outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
-            layout_changed = active_spaces.contains(&user_space);
+            layout_changed = from_space.is_some_and(|space| active_spaces.contains(&space));
         }
         if layout_changed && !mission_control_active {
             outcome = outcome.with_arrange_passes(1);
@@ -296,14 +296,13 @@ pub fn handle_window_server_appeared(
                     {
                         outcome = outcome.with_app_request(pid, Request::GetVisibleWindows);
                     }
-                    if let Some(wid) = tracked_window_id {
-                        if let Some(user_space) = last_known_user_space
-                            && assigned_space == Some(user_space)
-                        {
-                            outcome = outcome
-                                .with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
-                            layout_changed = active_spaces.contains(&user_space);
-                        }
+                    if let Some((wid, from_space)) =
+                        fullscreen_departure(tracked_window_id, assigned_space, last_known_user_space)
+                    {
+                        outcome = outcome
+                            .with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
+                        layout_changed =
+                            from_space.is_some_and(|space| active_spaces.contains(&space));
                     }
                     if layout_changed {
                         outcome = outcome.with_arrange_passes(1);
@@ -428,6 +427,25 @@ pub fn handle_space_lifecycle(
     }
     Ok(EventOutcome::layout_changed(false).with_active_space_recompute())
 }
+/// Whether a window macOS has taken fullscreen leaves the strip, and from which space.
+///
+/// It always leaves, for any window rini tracks: a fullscreen window sits on a space of its own and
+/// is not managed while it is there, so a column reserved for it is a column reserved for a window
+/// that is not on screen.
+///
+/// This used to require rini's own assignment to AGREE with the last user space it had seen. When
+/// they disagreed — or when no user space had been observed at all — the window stayed in the strip
+/// and the layout kept a gap for it. `from_space` is only for deciding whether the layout of a
+/// VISIBLE space changed and needs a pass; it is not a condition on leaving.
+pub(crate) fn fullscreen_departure(
+    tracked_window: Option<WindowId>,
+    assigned_space: Option<SpaceId>,
+    last_known_user_space: Option<SpaceId>,
+) -> Option<(WindowId, Option<SpaceId>)> {
+    let window = tracked_window?;
+    Some((window, assigned_space.or(last_known_user_space)))
+}
+
 pub(crate) fn resolve_last_known_user_space(
     window_space: Option<SpaceId>,
     fallback_space: Option<SpaceId>,
@@ -467,6 +485,42 @@ fn record_fullscreen_window(
 #[cfg(test)]
 mod workflow_tests {
     use super::*;
+
+    /// The case that used to keep a fullscreen window in the strip: rini's assignment and the last
+    /// user space it saw disagree. It still leaves, because macOS having the window is not a claim
+    /// rini's bookkeeping gets to veto.
+    #[test]
+    fn a_fullscreen_window_leaves_the_strip_even_when_the_spaces_disagree() {
+        let window = WindowId::new(7, 1);
+        let assigned = SpaceId::new(3);
+        let last_seen = SpaceId::new(9);
+        assert_eq!(
+            fullscreen_departure(Some(window), Some(assigned), Some(last_seen)),
+            Some((window, Some(assigned)))
+        );
+    }
+
+    #[test]
+    fn a_fullscreen_window_leaves_the_strip_with_no_user_space_ever_observed() {
+        let window = WindowId::new(7, 1);
+        assert_eq!(fullscreen_departure(Some(window), None, None), Some((window, None)));
+    }
+
+    #[test]
+    fn the_space_reported_is_the_assignment_first_then_the_last_seen_one() {
+        let window = WindowId::new(7, 1);
+        assert_eq!(
+            fullscreen_departure(Some(window), None, Some(SpaceId::new(9))),
+            Some((window, Some(SpaceId::new(9)))),
+            "with no assignment, the last space it was seen on is what may need a layout pass"
+        );
+    }
+
+    /// A window rini does not track has nothing to remove from the strip.
+    #[test]
+    fn an_untracked_fullscreen_window_departs_nothing() {
+        assert_eq!(fullscreen_departure(None, Some(SpaceId::new(3)), Some(SpaceId::new(3))), None);
+    }
 
     #[test]
     fn last_known_user_space_prefers_window_observation() {
