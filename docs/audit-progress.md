@@ -18,4 +18,4 @@ they are all closed.
 | 2 | `LayoutEngine` owns 14 things | **partly** IPC channel out (14 -> 13 fields, now an outbox the app drains); `display_affinity` + `launch_memory` remain, woven into the save format |
 | 3 | `Reactor` holds every store | todo |
 | 4 | 5,949-line integration test file | todo |
-| 7 | `app_actor.rs` 1,376 lines, 0 tests | todo |
+| 7 | `app_actor.rs` 1,376 lines, 0 tests | **partly** admission rules -> `domain/admissible.rs`, 11 tests; the AX driver itself still needs a fake element seam |

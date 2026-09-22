@@ -1,6 +1,7 @@
 //! One actor per running app, on its own thread: observes the app through Accessibility and
 //! carries out the reactor's `Request`s (frames, raises, close). Emits `crate::windows::event::Event`.
 
+use crate::windows::domain::admissible;
 use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
 use std::cell::RefCell;
 use std::fmt::Debug;
@@ -1187,40 +1188,27 @@ impl State {
         else {
             return None;
         };
-        if !Self::has_visible_cg_peer(info.sys_id, server_info) && !info.is_minimized {
-            trace!(pid = ?self.pid, sys_id = ?info.sys_id, "Ignoring AX window without a visible CG window");
-            return None;
-        }
-
-        let bundle_is_widget = info.bundle_id.as_deref().map_or(false, |id| {
-            let id_lower = id.to_ascii_lowercase();
-            id_lower.ends_with(".widget") || id_lower.contains(".widget.")
-        });
-
-        let path_is_extension = info.path.as_ref().and_then(|p| p.to_str()).map_or(false, |path| {
-            let lower = path.to_ascii_lowercase();
-            lower.contains(".appex/") || lower.ends_with(".appex")
-        });
-
-        if bundle_is_widget || path_is_extension {
-            trace!(bundle_id = ?info.bundle_id, path = ?info.path, "Ignoring widget/app-extension window");
-            return None;
-        }
-
-        if info.ax_role.as_deref() == Some("AXPopover") || info.ax_role.as_deref() == Some("AXMenu")
-        //|| info.ax_subrole.as_deref() == Some("AXUnknown")
-        {
+        let candidate = admissible::Candidate {
+            has_visible_peer: Self::has_visible_cg_peer(info.sys_id, server_info),
+            is_minimized: info.is_minimized,
+            bundle_id: info.bundle_id.as_deref(),
+            path: info.path.as_ref().and_then(|p| p.to_str()),
+            ax_role: info.ax_role.as_deref(),
+        };
+        if let Some(reason) = admissible::rejection(&candidate) {
             trace!(
+                pid = ?self.pid,
+                sys_id = ?info.sys_id,
+                bundle_id = ?info.bundle_id,
                 role = ?info.ax_role,
-                subrole = ?info.ax_subrole,
-                "Ignoring non-standard AX window"
+                ?reason,
+                "Not registering this AX window"
             );
             return None;
         }
 
         // TODO: improve this heuristic using ideas from AeroSpace(maybe implement a similar testing architecture based on ax dumps)
-        if (self.bundle_id.as_deref() == Some("com.googlecode.iterm2")
-            || self.bundle_id.as_deref() == Some("com.apple.TextInputUI.xpc.CursorUIViewService"))
+        if admissible::needs_title_element_to_be_standard(self.bundle_id.as_deref())
             && elem.attribute("AXTitleUIElement").is_err()
         {
             info.is_standard = false;
@@ -1361,7 +1349,7 @@ impl State {
 
     #[inline]
     fn has_visible_cg_peer(wsid: Option<WindowServerId>, hint: Option<WindowServerInfo>) -> bool {
-        wsid.is_none() || hint.is_some()
+        admissible::has_visible_peer(wsid.is_some(), hint.is_some())
     }
 
     fn handle_ax_error(&mut self, wid: WindowId, err: &AXError) -> bool {
