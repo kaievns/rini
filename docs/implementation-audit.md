@@ -206,8 +206,34 @@ reaches: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
 `transaction_manager` 11, `pending_space_change_manager` 3. Eight "manager"
 structs plus `RiniState`.
 
-Largest methods: `handle_layout_response` (297), `dispatch_workflow` (280),
-`apply_event_outcome` (269), `handle_authoritative_space_snapshot` (250).
+Largest methods: `handle_layout_response` (303 → 251), `dispatch_workflow` (288),
+`apply_event_outcome` (271), `handle_authoritative_space_snapshot` (251).
+
+`handle_layout_response` gave up three rules to `windows::domain::raise_order`
+(`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
+`layout::domain::boundary` (`workspace_step_at_boundary`), with 15 tests between them.
+One of those extractions was a bug fix: see 3.2.1.
+
+`dispatch_workflow` is long because it is a dispatch table — one arm per event variant,
+every arm delegating. Length is not the defect there and splitting it by event family
+would add a "not handled" return for nothing.
+
+#### 3.2.1 The raise list's order was thrown away by its own batching
+
+Raising is last-wins, so a raise list's order IS the z-order it produces.
+`handle_layout_response` built that order carefully — `lead_with_regroup` puts the strip
+first, back to front, focused last — and then batched the list by `(pid, space)` through
+an `FxHashMap` and collected `into_values()`. With 8 applications that returns the
+batches exactly REVERSED, measured:
+
+```
+insertion order: [1, 2, 3, 4, 5, 6, 7, 8]
+hash order:      [8, 7, 6, 5, 4, 3, 2, 1]
+```
+
+So across applications the focused window was raised FIRST instead of last and ended up
+behind the strip it was supposed to lead. `group_by_app_and_space` keeps first-appearance
+order and is tested for it.
 
 ### 3.3 Static methods over `&mut Reactor`
 

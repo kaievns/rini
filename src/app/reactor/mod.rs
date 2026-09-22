@@ -58,7 +58,9 @@ use events::{
     focus as focus_service, space as topology_workflow, system as system_workflow,
     window as window_workflow,
 };
+use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
+use crate::windows::domain::raise_order;
 use space_affinity::SpaceAffinity;
 use managers::LayoutManager;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -4240,26 +4242,11 @@ impl Reactor {
         if let Some(dir) = boundary_hit
             && self.config.settings.layout.scrolling.gestures.propagate_to_workspace_swipe
         {
-            let skip_empty = self.config.settings.gestures.skip_empty;
-            let invert_horizontal =
-                self.config.settings.layout.scrolling.gestures.invert_horizontal;
-            let cmd = if invert_horizontal {
-                match dir {
-                    Direction::Left => Some(layout::LayoutCommand::NextWorkspace(Some(skip_empty))),
-                    Direction::Right => {
-                        Some(layout::LayoutCommand::PrevWorkspace(Some(skip_empty)))
-                    }
-                    _ => None,
-                }
-            } else {
-                match dir {
-                    Direction::Left => Some(layout::LayoutCommand::PrevWorkspace(Some(skip_empty))),
-                    Direction::Right => {
-                        Some(layout::LayoutCommand::NextWorkspace(Some(skip_empty)))
-                    }
-                    _ => None,
-                }
-            };
+            let cmd = workspace_step_at_boundary(
+                dir,
+                self.config.settings.layout.scrolling.gestures.invert_horizontal,
+                self.config.settings.gestures.skip_empty,
+            );
             if let Some(cmd) = cmd {
                 let space = workspace_switch_space.or_else(|| self.command_context_space());
                 if let Some(space) = space {
@@ -4381,46 +4368,15 @@ impl Reactor {
             self.insert_app_handle_for_window(&mut app_handles, wid);
         }
 
-        let mut raise_windows: Vec<WindowId> = raise_windows
-            .into_iter()
-            .filter(|wid| self.is_window_on_active_space(*wid))
-            .collect();
+        let raise_windows: Vec<WindowId> =
+            raise_windows.into_iter().filter(|wid| self.is_window_on_active_space(*wid)).collect();
 
-        // Drop scrolled-away columns from the raise list entirely.
-        //
-        // A scrolling layout parks off-strip columns just past the screen edge,
-        // leaving a 1pt sliver (macOS refuses to place a window entirely outside
-        // every display). Raising those slivers is pointless — nothing of them is
-        // visible — and it actively hurts: each one is an extra AX round-trip per
-        // focus change, and any raise issued after the on-screen windows puts a
-        // sliver in front of them.
-        //
-        // An earlier attempt SORTED parked windows to the front of the list instead,
-        // on the theory that raising is last-wins so raising them first would leave
-        // them behind. That worked for stacking but caused visible flicker, because
-        // `wids.first()` is not just "the first raise": handle_raise_request treats
-        // it as the PRIMARY window and uses it for make-key, the is_standard check
-        // and the activation wait (app.rs). Sorting a parked, off-screen window into
-        // that slot made macOS activate an invisible window and then raise the real
-        // one immediately after.
-        //
-        // Not raising them at all avoids both problems and is strictly less work.
-        // They keep whatever relative z-order they already had, which is invisible
-        // by definition while they are parked, and they get raised normally the
-        // moment they scroll back into view.
-        //
-        // Guarded: if EVERY window in the list is parked, keep the list as-is rather
-        // than emptying it. An empty raise list is a different code path above (it
-        // can skip the raise and the focus entirely), and the caller asked for these
-        // windows for a reason — e.g. a workspace switch where the layout has not
-        // been applied yet, so the frames still describe the old positions.
-        if raise_windows.iter().any(|wid| !self.affinity().is_window_parked_offscreen(*wid)) {
-            raise_windows.retain(|wid| !self.affinity().is_window_parked_offscreen(*wid));
-        }
+        let mut raise_windows = raise_order::drop_parked(raise_windows, |wid| {
+            self.affinity().is_window_parked_offscreen(wid)
+        });
 
         // The strip goes up as one group. A focus move raises only the window it lands on, which leaves a
-        // floating window in front of the columns beside it. See `model::z_group`. The regroup's order
-        // (back to front, focused last) leads; whatever else the layout asked for follows.
+        // floating window in front of the columns beside it. See `model::z_group`.
         if let Some(target) = focus_window
             && let Some(space) = self.affinity().best_space_for_window_id(target)
         {
@@ -4435,10 +4391,7 @@ impl Reactor {
                     self.insert_app_handle_for_window(&mut app_handles, *wid);
                 }
                 self.regroup_raised = regroup.clone();
-                let rest: Vec<WindowId> =
-                    raise_windows.into_iter().filter(|wid| !regroup.contains(wid)).collect();
-                raise_windows = regroup;
-                raise_windows.extend(rest);
+                raise_windows = raise_order::lead_with_regroup(raise_windows, &regroup);
             }
         }
 
@@ -4450,13 +4403,9 @@ impl Reactor {
                 focus_window,
             );
         }
-        let mut windows_by_app_and_screen = HashMap::default();
-        for &wid in &raise_windows {
-            windows_by_app_and_screen
-                .entry((wid.pid, self.affinity().best_space_for_window_id(wid)))
-                .or_insert(vec![])
-                .push(wid);
-        }
+        let batches = raise_order::group_by_app_and_space(&raise_windows, |wid| {
+            self.affinity().best_space_for_window_id(wid)
+        });
         let focus_window_with_warp = focus_window.map(|wid| {
             let warp = if self.config.settings.mouse_follows_focus {
                 if self.workspace_switch_manager.workspace_switch_state
@@ -4475,7 +4424,7 @@ impl Reactor {
         });
 
         self.dispatch_raise(raise_manager::Event::RaiseRequest(RaiseRequest {
-            raise_windows: windows_by_app_and_screen.into_values().collect(),
+            raise_windows: batches,
             focus_window: focus_window_with_warp,
             app_handles,
             focus_quiet,

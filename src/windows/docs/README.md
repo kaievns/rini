@@ -14,6 +14,7 @@ or layout: everything else depends on it and it depends on nothing.
 | **App rules** | `domain/rules.rs` — matching config rules against a window. Resolving a match against workspaces is `workspaces::domain::app_rules` |
 | **Focus** | `domain/focus.rs` — `MainWindowTracker`, the raise-echo rule, and the activation-focus rule that stops cmd-tab moving a display |
 | **Raising** | `domain/raise.rs` — the raise manager |
+| **Raise order** | `domain/raise_order.rs` — which windows are worth raising, and in what order |
 | **Frame transactions** | `domain/transaction.rs` — txids, so a frame report can be matched to the write that caused it |
 | **The port into a window** | `domain/request.rs` — `Request`/`Quiet`, what the per-app thread accepts |
 
@@ -37,6 +38,13 @@ rather than an assignment.
 server has it, so `admissible::has_visible_peer` treats "no server id yet" as visible
 rather than absent. The reverse — an id the server does not report — means the window
 is not on screen.
+
+**A raise list is a z-order.** Raising is last-wins, so the order of the list IS the
+stacking it produces. `domain/raise_order.rs` exists because that order kept being
+thrown away: the batching step grouped the list through a hash map, which handed the
+batches back in hash order and undid the strip regroup that had just been built. With
+eight applications, `FxHashMap` returned them exactly reversed, so the focused window
+was raised first instead of last and ended up behind the strip.
 
 ## Reading order
 
