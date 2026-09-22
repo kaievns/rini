@@ -5,3 +5,4 @@ pub mod drag_swap;
 pub mod gesture;
 pub mod hotkey;
 pub mod key;
+pub mod pointer;

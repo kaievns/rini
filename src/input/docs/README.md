@@ -11,6 +11,7 @@ why the CLI is a first-class client rather than a debugging aid.
 | `domain/key.rs` | `Modifiers`, `KeyCode`, and the token parsing that needs no keyboard |
 | `domain/hotkey.rs` | `modifiers_satisfy`: whether the keys held down are the ones a binding asked for |
 | `domain/binding.rs` | `WmCmd`/`WmCommand`: the binding table and what a config string parses to |
+| `domain/pointer.rs` | When a mouse move is worth processing, when the cached pointer window still answers, and which events the tap asks for at all |
 | `domain/gesture.rs` | Trackpad rules over normalised touches: `swipe_step`, `scroll_step`, `touch_centroid`, and `SwipeTrack`'s phase machine |
 | `domain/drag_swap.rs` | Recognising a drag that means "swap these two windows" |
 | `platform/tap.rs` | `EventTap`, plus the shared tap lifecycle: `ReEnableGovernor` and `on_recovery` |
@@ -39,7 +40,14 @@ normalised positions, so it can be exercised without a trackpad.
 
 `domain/gesture.rs` → `platform/tap.rs` → then either tap.
 
+**The mask is a decision, not a constant.** Mouse buttons are always asked for, because
+a drag is how a window moves between displays. Keys are asked for only when something is
+bound, and mouse moves only when focus-follows-mouse is both configured and live. The two
+halves are independent, so a machine that only uses hotkeys does not pay a window-server
+query per pointer movement.
+
 ## Known debt
 
-`input_tap.rs` is 759 lines with one test — the worst ratio in the tree. Its gesture
-sibling had its phase machine extracted; this one has not.
+`input_tap.rs` is still the largest file here. Its pure decisions are now
+`domain/pointer.rs` and the mask has tests, but the callback, the hotkey table and the
+modifier bookkeeping remain, and those need the tap.

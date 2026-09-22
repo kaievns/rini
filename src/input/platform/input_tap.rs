@@ -36,6 +36,7 @@ use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::binding::WmCommand;
 use crate::input::platform::cursor;
 use crate::input::event::{Event, EventSink};
+use crate::input::domain::pointer;
 use crate::input::domain::key::{Hotkey, KeyCode, is_modifier_key};
 use crate::input::platform::keyboard::{
     key_code_from_event, modifier_key_is_active, modifiers_from_flags_with_keys,
@@ -65,7 +66,7 @@ pub struct InputTap {
     event_mask: Cell<CGEventMask>,
     mouse_move_last_timestamp: Cell<Option<u64>>,
     mouse_move_min_interval_ns: Cell<u64>,
-    mouse_window: Cell<MouseWindow>,
+    mouse_window: Cell<pointer::PointerCache>,
     tap: RefCell<Option<tap::EventTap>>,
     tap_generation: Cell<u64>,
     disable_hotkey: RefCell<Option<Hotkey>>,
@@ -91,12 +92,6 @@ struct State {
     current_flags: CGEventFlags,
 }
 
-#[derive(Clone, Copy, Default)]
-struct MouseWindow {
-    hint: Option<WindowServerId>,
-    resolved: Option<WindowServerId>,
-    valid: bool,
-}
 
 impl Default for State {
     fn default() -> Self {
@@ -131,17 +126,20 @@ unsafe fn drop_mouse_ctx(ptr: *mut std::ffi::c_void) {
 
 impl InputTap {
     #[inline]
-    fn focus_follows_mouse_handler_enabled(state: &State) -> bool {
-        state.focus_follows_mouse_config_enabled && state.focus_follows_mouse_enabled
-    }
-
     fn keyboard_handlers_enabled(&self) -> bool {
-        self.disable_hotkey.borrow().is_some() || !self.hotkeys.load().is_empty()
+        pointer::wants_keyboard_events(
+            self.disable_hotkey.borrow().is_some(),
+            self.hotkeys.load().len(),
+        )
     }
 
     fn mouse_move_handlers_enabled(&self) -> bool {
         let state = self.state.borrow();
-        state.event_processing_enabled && Self::focus_follows_mouse_handler_enabled(&state)
+        pointer::wants_mouse_move_events(
+            state.event_processing_enabled,
+            state.focus_follows_mouse_config_enabled,
+            state.focus_follows_mouse_enabled,
+        )
     }
 
     fn desired_event_mask(&self) -> CGEventMask {
@@ -247,7 +245,11 @@ impl InputTap {
             .unwrap_or(false);
         let event_mask = build_event_mask(
             disable_hotkey.is_some(),
-            state.event_processing_enabled && Self::focus_follows_mouse_handler_enabled(&state),
+            pointer::wants_mouse_move_events(
+                state.event_processing_enabled,
+                state.focus_follows_mouse_config_enabled,
+                state.focus_follows_mouse_enabled,
+            ),
         );
         let mouse_move_min_interval_ns = mouse_move_sampling_profile(state.low_power_mode);
         InputTap {
@@ -257,7 +259,7 @@ impl InputTap {
             event_mask: Cell::new(event_mask),
             mouse_move_last_timestamp: Cell::new(None),
             mouse_move_min_interval_ns: Cell::new(mouse_move_min_interval_ns),
-            mouse_window: Cell::new(MouseWindow::default()),
+            mouse_window: Cell::new(pointer::PointerCache::default()),
             tap: RefCell::new(None),
             tap_generation: Cell::new(0),
             disable_hotkey: RefCell::new(disable_hotkey),
@@ -489,7 +491,7 @@ impl InputTap {
 
     #[inline]
     fn reset_mouse_window(&self) {
-        self.mouse_window.set(MouseWindow::default());
+        self.mouse_window.set(pointer::PointerCache::default());
     }
 
     fn reconcile_after_tap_reenabled(&self) {
@@ -609,14 +611,14 @@ impl InputTap {
                 // Keep the hint current even when WindowServer resolves both
                 // samples to the same window. This preserves the fast path
                 // after a transient overlay changes the CGEvent hint.
-                self.mouse_window.set(MouseWindow {
+                self.mouse_window.set(pointer::PointerCache {
                     hint,
                     resolved: window,
                     valid: true,
                 });
                 return true;
             }
-            self.mouse_window.set(MouseWindow {
+            self.mouse_window.set(pointer::PointerCache {
                 hint,
                 resolved: window,
                 valid: true,
@@ -634,17 +636,12 @@ impl InputTap {
     fn resolve_mouse_window(
         hint: Option<WindowServerId>,
         point: CGPoint,
-        previous: MouseWindow,
+        previous: pointer::PointerCache,
     ) -> Option<WindowServerId> {
-        // A non-empty CGEvent hint is stable while the pointer remains in the
-        // same window. Reuse the scalar result in that common case. When the
-        // hint is absent, the pointer can cross windows without changing it,
-        // so retain the fallback lookup for correctness.
-        if previous.valid && hint.is_some() && previous.hint == hint {
-            return previous.resolved;
+        match pointer::pointer_window(previous, hint) {
+            pointer::PointerWindow::Cached(resolved) => resolved,
+            pointer::PointerWindow::NeedsLookup => window_server::get_window_at_point(point),
         }
-
-        window_server::get_window_at_point(point)
     }
 
     /// Admit a mouse move for full processing. This deliberately contains
@@ -654,10 +651,11 @@ impl InputTap {
     #[inline]
     fn admit_mouse_move(&self, event: &CGEvent) -> bool {
         let timestamp = CGEvent::timestamp(Some(event));
-        let last_timestamp = self.mouse_move_last_timestamp.get();
-        if last_timestamp.is_some_and(|last| {
-            timestamp.saturating_sub(last) < self.mouse_move_min_interval_ns.get()
-        }) {
+        if !pointer::admits_move(
+            self.mouse_move_last_timestamp.get(),
+            timestamp,
+            self.mouse_move_min_interval_ns.get(),
+        ) {
             return false;
         }
         self.mouse_move_last_timestamp.set(Some(timestamp));
@@ -915,6 +913,58 @@ fn build_event_mask(keyboard_enabled: bool, mouse_move_enabled: bool) -> CGEvent
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wants(mask: CGEventMask, ty: CGEventType) -> bool {
+        mask & (1u64 << (ty.0 as u64)) != 0
+    }
+
+    /// Mouse buttons are always asked for: they are how a drag is noticed, and a drag is how a
+    /// window is moved between displays.
+    #[test]
+    fn the_mask_always_carries_the_mouse_buttons() {
+        for enabled in [false, true] {
+            let mask = build_event_mask(enabled, enabled);
+            for ty in [
+                CGEventType::LeftMouseDown,
+                CGEventType::LeftMouseUp,
+                CGEventType::RightMouseDown,
+                CGEventType::RightMouseUp,
+                CGEventType::LeftMouseDragged,
+                CGEventType::RightMouseDragged,
+            ] {
+                assert!(wants(mask, ty), "{ty:?} missing with enabled={enabled}");
+            }
+        }
+    }
+
+    /// The rule that keeps rini out of the keyboard path. An active tap holds each matching event
+    /// until the callback answers, so asking for keys nobody is listening for puts rini between the
+    /// user and every keystroke for nothing.
+    #[test]
+    fn keys_are_only_in_the_mask_when_something_is_bound() {
+        let without = build_event_mask(false, false);
+        for ty in [CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged] {
+            assert!(!wants(without, ty), "{ty:?} should not be asked for");
+        }
+        let with = build_event_mask(true, false);
+        for ty in [CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged] {
+            assert!(wants(with, ty), "{ty:?} should be asked for");
+        }
+    }
+
+    #[test]
+    fn mouse_moves_are_only_in_the_mask_when_focus_follows_mouse_is_live() {
+        assert!(!wants(build_event_mask(false, false), CGEventType::MouseMoved));
+        assert!(wants(build_event_mask(false, true), CGEventType::MouseMoved));
+    }
+
+    /// The two halves are independent: keyboard bindings must not drag mouse moves in with them, or
+    /// every pointer movement becomes a window-server query on a machine that only uses hotkeys.
+    #[test]
+    fn the_two_halves_of_the_mask_are_independent() {
+        assert!(!wants(build_event_mask(true, false), CGEventType::MouseMoved));
+        assert!(!wants(build_event_mask(false, true), CGEventType::KeyDown));
+    }
 
     #[test]
     fn tap_recovery_discards_cached_keys_and_uses_live_flags() {
