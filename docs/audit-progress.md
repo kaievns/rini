@@ -17,5 +17,5 @@ they are all closed.
 | 8 | `FIXME mod.rs:501` restored state keeps dead apps | **done** stale: already handled at load, and tested |
 | 2 | `LayoutEngine` owns 14 things | **partly** IPC channel out (14 -> 13 fields, now an outbox the app drains); `display_affinity` + `launch_memory` remain, woven into the save format |
 | 3 | `Reactor` holds every store | **not done** the four `&mut Reactor` methods all genuinely mutate; the fix is the `present(motion)` boundary, which changes the event model |
-| 4 | 5,949-line integration test file | **partly** 15 fixtures -> `tests/fixtures.rs`; splitting the 168 cases by subject is still open |
+| 4 | 5,949-line integration test file | **partly** 15 fixtures -> `src/app/reactor/tests/fixtures.rs`; splitting the 168 cases by subject is still open |
 | 7 | `app_actor.rs` 1,376 lines, 0 tests | **partly** admission rules -> `domain/admissible.rs`, 11 tests; the AX driver itself still needs a fake element seam |

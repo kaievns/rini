@@ -5,7 +5,7 @@
 //! Animation tiles, and flies the tiles while the real windows move underneath. Knows windows and
 //! frames, not workspaces or strips.
 //!
-//! See `docs/architecture.md` and `docs/animation/animation-smoothness.md`.
+//! See `docs/architecture.md` and `src/animation/docs/animation-smoothness.md`.
 
 pub mod domain;
 pub mod platform;

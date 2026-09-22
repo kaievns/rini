@@ -128,7 +128,7 @@ unsafe impl Sync for Config {}
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     /// Whether layout changes, strip movements and workspace switches are animated. Everything
-    /// animates through the overlay (`docs/animation/animation-smoothness.md`); off places windows at once.
+    /// animates through the overlay (`src/animation/docs/animation-smoothness.md`); off places windows at once.
     #[serde(default = "yes")]
     pub animate: bool,
     #[serde(default = "default_animation_duration")]

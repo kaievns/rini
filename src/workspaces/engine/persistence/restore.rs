@@ -625,7 +625,7 @@ impl LayoutEngine {
             self.persistence.forget_window(window);
         }
         // Only this display's focus and strip come from the snapshot. A workspace holds a strip per
-        // display, so replacing the whole object wiped the others (`docs/workspaces/workspaces-and-displays.md`).
+        // display, so replacing the whole object wiped the others (`src/workspaces/docs/workspaces-and-displays.md`).
         {
             let target_space = state.target_space;
             let restored_focus = state.workspace.last_focused(target_space);

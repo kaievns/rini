@@ -905,7 +905,7 @@ impl ScrollingLayoutSystem {
             let holds_full_width =
                 col.windows.iter().any(|wid| state.fullscreen_within_gaps.contains(wid));
             // A lone column keeps its width; expanding it tied a window's size to its neighbours.
-            // See "Column width" in `docs/layout/strip.md`.
+            // See "Column width" in `src/layout/docs/strip.md`.
             let ratio = if holds_full_width {
                 1.0
             } else {
@@ -1115,7 +1115,7 @@ impl ScrollingLayoutSystem {
                 );
                 if state.fullscreen_within_gaps.contains(wid) {
                     // The tiling rect's SIZE at the column's own x: keeping the strip-relative x is
-                    // what lets the column keep scrolling with the strip (`docs/layout/strip.md`).
+                    // what lets the column keep scrolling with the strip (`src/layout/docs/strip.md`).
                     frame = CGRect::new(
                         CGPoint::new(x.round(), tiling.origin.y.round()),
                         CGSize::new(tiling.size.width.round(), tiling.size.height.round()),

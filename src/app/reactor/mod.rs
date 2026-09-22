@@ -3128,7 +3128,7 @@ impl Reactor {
     /// Cheap to call repeatedly: the service drops targets already in flight and the cache keeps what
     /// it holds unless something better arrives, so this settles rather than re-capturing. During a
     /// flight the animation actor holds the targets until lift ("Capture work in flight" in
-    /// `docs/animation/animation-smoothness.md`), so calling this from the switch handler is safe.
+    /// `src/animation/docs/animation-smoothness.md`), so calling this from the switch handler is safe.
     fn warm_all_workspaces(&mut self, space: SpaceId) {
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
             return;
@@ -3321,7 +3321,7 @@ impl Reactor {
     /// Bounces the view against the end a command ran into: the strip's first or last column
     /// (`Left`/`Right`), or the top or bottom of the workspace stack (`Up`/`Down`). The active
     /// workspace's surface nudges `EDGE_BOUNCE_OVERSHOOT` the way the view was pushed and returns;
-    /// the real windows do not move. See "Edge bounce" in `docs/animation/animation-smoothness.md`.
+    /// the real windows do not move. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
         if !self.config.settings.animate || crate::animation::platform::power::is_low_power_mode_enabled() {
             return;
@@ -3544,7 +3544,7 @@ impl Reactor {
             duration,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
-        // the animation actor defers it until the flight lifts (`docs/animation/animation-smoothness.md`).
+        // the animation actor defers it until the flight lifts (`src/animation/docs/animation-smoothness.md`).
         self.warm_all_workspaces(space);
         true
     }

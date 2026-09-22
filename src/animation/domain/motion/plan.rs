@@ -1,5 +1,5 @@
 //! A pass as rigid pieces: the pure half of the container model.
-//! See "The overlay engine" and "Layout changes" in `docs/animation/animation-smoothness.md`.
+//! See "The overlay engine" and "Layout changes" in `src/animation/docs/animation-smoothness.md`.
 
 
 use std::collections::HashMap;
@@ -393,7 +393,7 @@ fn is_zero(p: CGPoint) -> bool {
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at presented frames, a pan adds its travel to every group. `presented` is each
 /// container's presented position, read by the overlay just before. See "Mid-flight passes" in
-/// `docs/animation/animation-smoothness.md`.
+/// `src/animation/docs/animation-smoothness.md`.
 pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,
@@ -751,7 +751,7 @@ pub enum AnimationTarget {
 
 /// What a flight animates, and nothing else: one `Container` per strip group with travel, the
 /// floating container when it travels, and a `Tile` per changing, entrance and moving floating
-/// member. Rigid members are never named. See "The overlay engine" in `docs/animation/animation-smoothness.md`.
+/// member. Rigid members are never named. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
     let mut out = Vec::new();
     let position = |key: GroupKey, travel: CGPoint| {

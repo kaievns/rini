@@ -4,7 +4,7 @@
 [settings]
 # Animations
 # - animate: every layout change, strip movement and workspace switch is drawn as one
-#   Core Animation flight in an overlay (docs/animation-smoothness.md); off places windows at once
+#   Core Animation flight in an overlay (src/animation/docs/animation-smoothness.md); off places windows at once
 # - animation_duration: seconds per movement (>= 0.0; 0.35 reads well)
 animate = true
 animation_duration = 0.35

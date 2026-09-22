@@ -11,7 +11,7 @@ use rini_core::ids::{WindowId, pid_t};
 ///
 /// macOS reports a focus change for every window a raise touches, and a raise walks the whole workspace.
 /// The window meant to end up focused is never swallowed. Cascade measured in
-/// `docs/animation/capture-overlay-research.md`, "The offset is honest, and it still moved eight times per press".
+/// `src/animation/docs/capture-overlay-research.md`, "The offset is honest, and it still moved eight times per press".
 #[derive(Debug, Default)]
 pub struct RaiseEcho {
     windows: Vec<WindowId>,

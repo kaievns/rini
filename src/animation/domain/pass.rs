@@ -50,7 +50,7 @@ pub struct PassPlan {
     pub moves: Vec<Move>,
     /// Windows on the active workspace the pass leaves where they are, `from == to`. The overlay is
     /// opaque and covers the display, so anything it omits vanishes for the length of the flight.
-    /// See "The overlay has to draw everything it covers" in `docs/animation/capture-overlay-research.md`.
+    /// See "The overlay has to draw everything it covers" in `src/animation/docs/capture-overlay-research.md`.
     pub unmoved: Vec<AnimationRequest>,
     /// Every moving window with a server id, visible or not: the ones that slide in on a later
     /// switch are exactly the ones sitting off-strip now, and only capturable ahead of time.

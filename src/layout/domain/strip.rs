@@ -2,7 +2,7 @@
 //!
 //! The arithmetic `ScrollingLayoutSystem::calculate_layout` runs before it assigns any frame. It was
 //! inline, so none of it could be exercised without a whole layout: these are the same decisions with
-//! their inputs named. See "Column width" and "Navigation" in `docs/layout/strip.md`.
+//! their inputs named. See "Column width" and "Navigation" in `src/layout/docs/strip.md`.
 
 use objc2_core_foundation::CGRect;
 
@@ -68,7 +68,7 @@ pub fn column_starts(column_widths: &[f64], gap_x: f64) -> (Vec<f64>, f64) {
 ///
 /// Without this, three columns at ratio 1/3 need three full widths plus two gaps and the third falls
 /// off the display. Each column gives up `(N-1)/N` of a gap, with N inferred from the ratio the user
-/// asked for. Table in "Column width", `docs/layout/strip.md`.
+/// asked for. Table in "Column width", `src/layout/docs/strip.md`.
 pub fn gap_share(ratio: f64, gap_x: f64) -> f64 {
     if gap_x <= 0.0 || ratio <= 0.0 {
         return 0.0;

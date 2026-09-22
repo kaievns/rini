@@ -58,7 +58,7 @@ impl HiddenWindowPlacement {
         }
     }
 
-    /// `rini_geometry::is_off_screen`; see `docs/layout/strip.md` "Parking".
+    /// `rini_geometry::is_off_screen`; see `src/layout/docs/strip.md` "Parking".
     pub fn is_off_screen(screen: CGRect, window: CGRect) -> bool {
         rini_geometry::is_off_screen(screen, window)
     }
@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn a_corner_park_with_a_sliver_showing_is_off_screen() {
         let screen = rect(0.0, 0.0, 1728.0, 1117.0);
-        // Corner parks and the live y=1085 parks must both read as off screen (`docs/layout/strip.md`).
+        // Corner parks and the live y=1085 parks must both read as off screen (`src/layout/docs/strip.md`).
         assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1116.0, 859.0, 1081.0)));
         assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-858.0, 1116.0, 859.0, 1081.0)));
         assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1085.0, 1720.0, 1081.0)));

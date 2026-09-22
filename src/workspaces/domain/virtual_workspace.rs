@@ -140,7 +140,7 @@ impl VirtualWorkspace {
 pub struct WorkspaceStore {
     pub workspaces: SlotMap<VirtualWorkspaceId, VirtualWorkspace>,
     /// The workspace list, shared by every display; which one a display shows is
-    /// `active_workspace_per_space`. See "One workspace list" in `docs/workspaces/workspaces-and-displays.md`.
+    /// `active_workspace_per_space`. See "One workspace list" in `src/workspaces/docs/workspaces-and-displays.md`.
     workspace_order: Vec<VirtualWorkspaceId>,
     pub active_workspace_per_space:
         HashMap<SpaceId, (Option<VirtualWorkspaceId>, VirtualWorkspaceId)>,
@@ -840,7 +840,7 @@ impl WorkspaceStore {
     }
 
     /// Keep a window in the workspace it is already in, moving only which display it is on. The
-    /// workspace is the window's identity; see `docs/workspaces/workspaces-and-displays.md`.
+    /// workspace is the window's identity; see `src/workspaces/docs/workspaces-and-displays.md`.
     fn preserved_workspace_assignment(
         &self,
         window_store: &WindowStore,

@@ -1,7 +1,7 @@
 //! The animation overlay: one rini-owned opaque window holding a picture of every animating window.
 //! Real windows are placed at their final frames once, underneath it; tiles ride containers, one
-//! per rigid piece of the flight. See "The overlay engine" in `docs/animation/animation-smoothness.md` and
-//! the capture measurements in `docs/animation/capture-overlay-research.md`.
+//! per rigid piece of the flight. See "The overlay engine" in `src/animation/docs/animation-smoothness.md` and
+//! the capture measurements in `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -39,7 +39,7 @@ use crate::animation::platform::window_snapshot::{SnapshotImage, WindowSnapshot}
 
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
-/// See "Level and coverage" in `docs/animation/capture-overlay-research.md`.
+/// See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
 const OVERLAY_LEVEL: isize = 18;
 
 define_class!(
@@ -117,7 +117,7 @@ impl OverlayTile {
 
 
 /// The shadow a real window casts, which no capture API includes. Fitted to measured falloffs;
-/// see "Shadows are never in the surface" in `docs/animation/capture-overlay-research.md`.
+/// see "Shadows are never in the surface" in `src/animation/docs/capture-overlay-research.md`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct ShadowStyle {
     opacity: f32,
@@ -141,7 +141,7 @@ const SHADOW_REACH: f64 = 70.0;
 const BAR_Z: f64 = 10_000.0;
 
 /// Below the deepest tile the depth model can produce. See "The overlay engine" in
-/// `docs/animation/animation-smoothness.md`.
+/// `src/animation/docs/animation-smoothness.md`.
 const BACKDROP_Z: f64 = -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
 
 
@@ -149,7 +149,7 @@ const BACKDROP_Z: f64 = -((crate::animation::domain::motion::z_group::MAX_TILE_D
 
 
 /// The window server places real windows on whole points; a layer at a fraction is resampled and
-/// pops at the lift. See "Real windows land before lift" in `docs/animation/animation-smoothness.md`.
+/// pops at the lift. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
 fn whole(rect: CGRect) -> CGRect {
     rect.round()
 }
@@ -159,7 +159,7 @@ fn whole_point(point: CGPoint) -> CGPoint {
 }
 
 /// Commits and flushes the run loop's implicit transaction too, or the change waits behind the
-/// reactor's next synchronous calls. See "The overlay engine" in `docs/animation/animation-smoothness.md`.
+/// reactor's next synchronous calls. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 fn commit_now() {
     CATransaction::commit();
     CATransaction::flush();
@@ -308,7 +308,7 @@ fn animate_layer_frame(layer: &CALayer, from: CGRect, to: CGRect, timing: Timing
 }
 
 /// One window's picture, and a caster behind it carrying only the shadow, masked to a ring outside
-/// the tile. See "A layer shadow covers the whole layer" in `docs/animation/capture-overlay-research.md`.
+/// the tile. See "A layer shadow covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
 struct Tile {
     picture: Retained<CALayer>,
     shadow: Retained<CALayer>,
@@ -347,7 +347,7 @@ pub struct TileOverlay {
     /// The real desktop, drawn behind everything and held still.
     backdrop: Retained<CALayer>,
     /// The bar, redrawn on top with its own alpha since the overlay covers the real one. See "The
-    /// bar has to be captured on its own" in `docs/animation/capture-overlay-research.md`.
+    /// bar has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
     bar: Retained<CALayer>,
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
@@ -361,7 +361,7 @@ pub struct TileOverlay {
 
 impl TileOverlay {
     /// Creates the overlay once, ordered in but fully transparent. `frame` must be the display's
-    /// full bounds in CoreGraphics coordinates. See "Level and coverage" in `docs/animation/capture-overlay-research.md`.
+    /// full bounds in CoreGraphics coordinates. See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
     pub fn new(frame: CGRect, scale: f64, mtm: MainThreadMarker) -> Option<Self> {
         let converter = CoordinateConverter::from_height(primary_display_height());
         let cocoa_frame = converter.convert_rect(frame)?;
@@ -540,7 +540,7 @@ impl TileOverlay {
             }
         } else {
             // A hard cut on purpose: a crossfade pulses a translucent window's net opacity. See
-            // "Window borders during animations" in `docs/animation/animation-smoothness.md`.
+            // "Window borders during animations" in `src/animation/docs/animation-smoothness.md`.
             set_layer_contents(&entry.picture, snapshot);
         }
         if snapshot.dressing.is_some() {
@@ -571,7 +571,7 @@ impl TileOverlay {
     }
 
     /// Composes a flight at frame zero: one container per group, loose members under `Loose` /
-    /// `Floating`. Pre-flight only; see "The overlay engine" in `docs/animation/animation-smoothness.md`.
+    /// `Floating`. Pre-flight only; see "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     pub(crate) fn install(&mut self, plan: &FlightPlan, tiles: &[OverlayTile], banding: &Banding) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
@@ -711,7 +711,7 @@ impl TileOverlay {
     }
 
     /// Nudges the containers by `overshoot` and back, additively, on top of any movement in flight.
-    /// See "Edge bounce" in `docs/animation/animation-smoothness.md`.
+    /// See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
     pub(crate) fn bounce(&mut self, overshoot: CGPoint, duration: Duration) {
         if duration.is_zero() {
             return;
@@ -813,7 +813,7 @@ impl TileOverlay {
     }
 
     /// Whether every container and picture is presented within half a point of its model: the
-    /// render server runs behind the actor's clock. See "Real windows land before lift" in `docs/animation/animation-smoothness.md`.
+    /// render server runs behind the actor's clock. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
     pub fn settled(&self) -> bool {
         let close = |a: CGPoint, b: CGPoint| (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() < 0.5;
         let same_size =
@@ -840,7 +840,7 @@ impl TileOverlay {
     }
 
     /// Applies one merged pass to a flight in progress in one transaction, reading every presented
-    /// position before writing. See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+    /// position before writing. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
     pub(crate) fn retarget(
         &mut self,
         delta: &PlanDelta,
@@ -978,7 +978,7 @@ impl TileOverlay {
     }
 
     /// The resize: every layer of the tile rides its own pair of endpoint geometries on the shared
-    /// curve. See "Resizes through the overlay" in `docs/animation/animation-smoothness.md`.
+    /// curve. See "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
     fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, timing: Timing) {
         let Some(entry) = self.tile_layers.get_mut(&window) else { return };
         entry.resize_until = Some(timing.ends_at());
@@ -1076,7 +1076,7 @@ impl TileOverlay {
 }
 
 /// The bar's picture at the strip's origin, at the size it covers, never stretched. See "The bar
-/// has to be captured on its own" in `docs/animation/capture-overlay-research.md`.
+/// has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
 fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
 }
@@ -1090,7 +1090,7 @@ fn dressing_image(
 }
 
 /// Every harvested piece, whatever `size`, so a fresh harvest swaps in place. See "Window borders
-/// during animations" in `docs/animation/animation-smoothness.md`.
+/// during animations" in `src/animation/docs/animation-smoothness.md`.
 fn dressing_piece_indices(
     dressing: &crate::animation::platform::edge_dressing::EdgeDressing,
     size: CGSize,
@@ -1252,7 +1252,7 @@ fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
 }
 
 /// Gives the caster the shadow of a window of `size`, clipped to a ring outside it. See "A layer
-/// shadow covers the whole layer" in `docs/animation/capture-overlay-research.md`.
+/// shadow covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
 fn set_tile_shadow(layer: &CALayer, mask: &objc2_quartz_core::CAShapeLayer, size: CGSize) {
     layer.setShadowPath(Some(&silhouette_path(size, CGPoint::new(0.0, 0.0))));
     mask.setFrame(shadow_mask_frame(size));

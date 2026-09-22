@@ -2,7 +2,7 @@
 //!
 //! Pure geometry over window ids and frames; knows nothing about workspaces or spaces, and has no
 //! `platform` because it touches nothing outside itself. `ScrollingLayoutSystem` is the seam every
-//! other feature reaches it through. See `docs/layout/strip.md`.
+//! other feature reaches it through. See `src/layout/docs/strip.md`.
 
 pub use rini_ipc::protocol::{Direction, ResizeOrientation};
 
@@ -53,7 +53,7 @@ impl WindowLayoutConstraints {
     /// A window that reports nothing is the common case, and discovering one must not ask for a
     /// layout pass. A window that reports a minimum wider than the default column must, because
     /// the limits arrive from the window server after Accessibility has already had the window
-    /// placed. See "Column width" in `docs/layout/strip.md`.
+    /// placed. See "Column width" in `src/layout/docs/strip.md`.
     pub fn constrains_layout(self) -> bool {
         let c = self.normalized();
         c.min_width > 0.0

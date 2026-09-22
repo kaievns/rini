@@ -361,7 +361,7 @@ impl LayoutEngine {
 
     /// Release the saved slots of a display that is not attached, keeping only which display they
     /// belonged to. Restoring them strands windows at a missing display's coordinates; see
-    /// "Restore must not strand windows" in `docs/workspaces/workspaces-and-displays.md`.
+    /// "Restore must not strand windows" in `src/workspaces/docs/workspaces-and-displays.md`.
     fn release_windows_saved_on_absent_displays(&mut self, current_spaces: &[(SpaceId, String)]) {
         let live_displays: HashSet<&str> =
             current_spaces.iter().map(|(_, display)| display.as_str()).collect();

@@ -1,5 +1,5 @@
 //! The authority on native displays and spaces: buffers lifecycle churn and forwards one coherent
-//! `ForwardedSpaceState` at a time. Why it buffers, and what it nulls out, is in `docs/displays/topology.md`.
+//! `ForwardedSpaceState` at a time. Why it buffers, and what it nulls out, is in `src/displays/docs/topology.md`.
 use dispatchr::queue;
 use dispatchr::time::Time;
 use objc2_foundation::MainThreadMarker;
@@ -24,7 +24,7 @@ const REFRESH_SPACE_SWITCH_DELAY_NS: i64 = 50_000_000;
 const REFRESH_RETRY_DELAY_NS: i64 = 100_000_000;
 const REFRESH_MAX_RETRIES: u8 = 10;
 
-// Two identical samples and a quiet window server; see `docs/displays/topology.md`.
+// Two identical samples and a quiet window server; see `src/displays/docs/topology.md`.
 const DISPLAY_CHURN_QUIET_NS: i64 = 100_000_000;
 const DISPLAY_STABILIZE_RETRY_NS: i64 = 100_000_000;
 const DISPLAY_STABILIZE_MAX_ATTEMPTS: u8 = 10;

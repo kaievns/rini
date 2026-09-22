@@ -35,7 +35,7 @@ pub struct DisplayAffinity {
     #[serde(default)]
     display_strip: HashMap<String, Vec<WindowId>>,
     /// Column width each window last had on each display, keyed by display UUID. Width belongs
-    /// to the display, not the workspace: see "Display affinity" in `docs/workspaces/workspaces-and-displays.md`.
+    /// to the display, not the workspace: see "Display affinity" in `src/workspaces/docs/workspaces-and-displays.md`.
     #[serde(default)]
     window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
 }

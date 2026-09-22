@@ -6,7 +6,7 @@
 //! window arrives as a default-width column in whatever workspace happens to be active.
 //!
 //! This holds the same three facts keyed by bundle identifier and display topology instead. See
-//! `docs/workspaces/launch-memory.md` (in this crate).
+//! `src/workspaces/docs/launch-memory.md` (in this crate).
 
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +42,7 @@ pub struct Slot {
 ///
 /// The distinction is the whole point. A width that could not be READ is not a window without a
 /// width, and treating the two alike is what erased a remembered full-width window on the next
-/// autosave, so it relaunched at the default half width. See `docs/workspaces/launch-memory.md`.
+/// autosave, so it relaunched at the default half width. See `src/workspaces/docs/launch-memory.md`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProjectedWidth {
     /// The window's own layout answered. `None` is a real answer: the display's configured default.

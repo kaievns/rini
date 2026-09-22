@@ -135,7 +135,7 @@ pub struct LayoutEngine {
     /// `display_last_space` pair, which could disagree with each other.
     display_affinity: DisplayAffinity,
     /// Where each application's windows belong, under a key that survives the application. See
-    /// `docs/workspaces/launch-memory.md` (in this crate).
+    /// `src/workspaces/docs/launch-memory.md` (in this crate).
     launch_memory: crate::workspaces::domain::launch_memory::LaunchMemory,
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
@@ -545,7 +545,7 @@ impl LayoutEngine {
 
         if is_floating {
             // Floating windows are not strip members: navigation moves to the strip and resumes at its
-            // own selection. See "Navigation" in `docs/layout/strip.md`.
+            // own selection. See "Navigation" in `src/layout/docs/strip.md`.
             return self.move_focus_escape_to_tiled(window_store, space, ws_id, layout);
         }
 
@@ -632,7 +632,7 @@ impl LayoutEngine {
                 }
             }
 
-            // The strip stops at its edge; it does not fall into the floating layer (`docs/layout/strip.md`).
+            // The strip stops at its edge; it does not fall into the floating layer (`src/layout/docs/strip.md`).
 
             let visible_windows = self.filter_active_workspace_windows(
                 window_store,
@@ -796,7 +796,7 @@ impl LayoutEngine {
 
         // Where this application's windows were the last time this set of displays was attached. Only
         // consulted for a window with no workspace yet, so it cannot override an explicit rule or a
-        // window rini has already placed. See `docs/workspaces/launch-memory.md` (in this crate).
+        // window rini has already placed. See `src/workspaces/docs/launch-memory.md` (in this crate).
         let remembered = self
             .virtual_workspace_manager
             .workspace_for_window(window_store, space, wid)
@@ -1049,7 +1049,7 @@ impl LayoutEngine {
     /// Projects live windows into the launch memory, so their next launch can find them.
     ///
     /// A projection computed before each save rather than hooks on every move and resize: one write
-    /// path, and no new work in the paths that place windows. See `docs/workspaces/launch-memory.md` (in this crate).
+    /// path, and no new work in the paths that place windows. See `src/workspaces/docs/launch-memory.md` (in this crate).
     ///
     /// `connected` is the display UUIDs currently attached, which is the topology the answer is filed
     /// under. Nothing is recorded without it, since an answer with no topology cannot be looked up.
@@ -1253,7 +1253,7 @@ impl LayoutEngine {
 
     /// Re-observe where windows are, and in what order, for one attached display on a settled
     /// topology. `live_windows` is the display's strip in visual order. Windows homed to a
-    /// detached display keep that home (evacuation). See `docs/workspaces/workspaces-and-displays.md`.
+    /// detached display keep that home (evacuation). See `src/workspaces/docs/workspaces-and-displays.md`.
     pub fn sync_display_affinity(
         &mut self,
         display_uuid: &str,
@@ -2374,7 +2374,7 @@ impl LayoutEngine {
                     // showing at the edge; it honours the corner at 1pt. The strip's own geometry is
                     // untouched — `calculate_layout_for_workspace` still answers with the real position,
                     // which is what the animation canvas is built from. See "macOS will not park a window
-                    // further off the left edge than 40pt" in `docs/animation/capture-overlay-research.md`.
+                    // further off the left edge than 40pt" in `src/animation/docs/capture-overlay-research.md`.
                     let placed = if crate::workspaces::HiddenWindowPlacement::is_off_screen(screen, rect) {
                         // The corner records which side of the strip the column was on, so an animation
                         // can bring it back in from that edge instead of up from the bottom.

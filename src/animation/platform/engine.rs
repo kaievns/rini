@@ -1,7 +1,7 @@
 //! Drives the capture-based animation overlay: owns the overlay and the snapshot cache.
 //! Runs on the main thread because Core Animation requires it.
 //!
-//! Design in `docs/animation/animation-smoothness.md`; measurements in `docs/animation/capture-overlay-research.md`.
+//! Design in `src/animation/docs/animation-smoothness.md`; measurements in `src/animation/docs/capture-overlay-research.md`.
 
 use crate::animation::domain::admission::*;
 use crate::animation::domain::flight::*;
@@ -49,7 +49,7 @@ pub enum Event {
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
     DebugSlide { dx: f64, dy: f64, duration: Duration },
     /// Move the whole strip surface by one travel, as one rigid group; a leaving window animates
-    /// off screen while its real frame parks. See "Strip movements" in `docs/animation/animation-smoothness.md`.
+    /// off screen while its real frame parks. See "Strip movements" in `src/animation/docs/animation-smoothness.md`.
     AnimateSurface {
         windows: Vec<SurfaceWindow>,
         from_offset: CGPoint,
@@ -61,7 +61,7 @@ pub enum Event {
         duration: Duration,
     },
     /// Nudge the strip surface by `overshoot` and bring it back; real windows stay put. Rides an
-    /// in-flight movement additively. See "Edge bounce" in `docs/animation/animation-smoothness.md`.
+    /// in-flight movement additively. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
     Bounce {
         windows: Vec<SurfaceWindow>,
         overshoot: CGPoint,
@@ -142,7 +142,7 @@ struct RunningAnimation {
     /// The window gaining focus, from the latest pass that named one; its group is banded in front.
     focus: Option<WindowId>,
     /// The flight as rigid pieces: what `install` composed and `fly` animates.
-    /// See "The overlay engine" in `docs/animation/animation-smoothness.md`.
+    /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     plan: plan::FlightPlan,
     /// Dropped when the animation ends, which invalidates the timer.
     _clock: Option<RepeatingTimer>,
@@ -209,7 +209,7 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &WindowSnapshot) -> Overl
 }
 
 /// Depth for every tile, banded by z-group (`tile_depth`); companions keep their window's depth.
-/// The reactor's regroup matches it. See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+/// The reactor's regroup matches it. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
     let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
     for tile in tiles.iter_mut().filter(|t| !t.companion) {
@@ -223,7 +223,7 @@ fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
 }
 
 /// The flight's z-order as containers: `container_z - within` reproduces `-tile_depth`.
-/// See "The overlay engine" in `docs/animation/animation-smoothness.md`.
+/// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 fn band_plan(
     plan: &plan::FlightPlan,
     tiles: &[OverlayTile],
@@ -376,7 +376,7 @@ impl RunningAnimation {
     }
 
     /// Takes a settled picture for a window this flight is holding for. The picture must fit the
-    /// destination, for entrances too. See "The reservation fallback" in `docs/animation/animation-smoothness.md`.
+    /// destination, for entrances too. See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
     fn claim(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> Option<Claimed> {
         if self.started.is_some() {
             return None;
@@ -481,7 +481,7 @@ impl RunningAnimation {
 }
 
 /// The pictures that only make sense for the display the overlay is on; forgotten as a unit.
-/// See "A render of the wrong display" in `docs/animation/capture-overlay-research.md`.
+/// See "A render of the wrong display" in `src/animation/docs/capture-overlay-research.md`.
 #[derive(Default)]
 struct DisplayPictures {
     /// Whatever the backdrop is currently showing; reused rather than recaptured.
@@ -728,7 +728,7 @@ impl FlightEngine {
         let wanted: Vec<SnapshotTarget> = targets
             .into_iter()
             // A usable picture of the wrong size, or a stale one, is recaptured. See "A window
-            // that was resized keeps a usable picture" in `docs/animation/capture-overlay-research.md`.
+            // that was resized keeps a usable picture" in `src/animation/docs/capture-overlay-research.md`.
             .filter(|target| {
                 let cached = self.cache.usable(target.window);
                 crate::animation::platform::window_snapshot::needs_capture(
@@ -806,7 +806,7 @@ impl FlightEngine {
     }
 
     /// Recaptures both ends of a focus change once per flight, by the service route only.
-    /// See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+    /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
         let current = self.running.as_ref().and_then(|running| running.focus);
         let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
@@ -907,7 +907,7 @@ impl FlightEngine {
     }
 
     /// Chases the first settled picture for a holding grow or entrance, one thread per window.
-    /// See "A grow holds, then reveals" in `docs/animation/animation-smoothness.md`.
+    /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
     fn chase_reveal_pictures(&self, awaiting: &[(WindowId, CGSize)]) {
         if !capture_work_allowed(self.phase(), CaptureKind::Chase) {
             return;
@@ -1213,7 +1213,7 @@ impl FlightEngine {
                     resolved.push((request.window, start, end, request.floating));
                 }
                 // No picture: almost always a window that just opened. See "A window that opens
-                // travels from its spawn frame" in `docs/animation/animation-smoothness.md`.
+                // travels from its spawn frame" in `src/animation/docs/animation-smoothness.md`.
                 None => {
                     // Only a frame on this display counts as a spawn; capturing off screen is slow.
                     let spawn = crate::windows::platform::window_server::get_window(request.server_id)
@@ -1380,7 +1380,7 @@ impl FlightEngine {
     }
 
     /// Runs one plan through the shared machinery: merge into a running flight (`merge_plans`),
-    /// or install a fresh one. See "The overlay engine" in `docs/animation/animation-smoothness.md`.
+    /// or install a fresh one. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     fn begin_group(
         &mut self,
         mut tiles: Vec<OverlayTile>,
@@ -1425,7 +1425,7 @@ impl FlightEngine {
                 running.merge_pass(tiles, focus);
             }
             if in_flight {
-                // See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+                // See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
                 let Self { overlay, running, .. } = self;
                 let running = running.as_mut().expect("checked above");
                 let presented = overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
@@ -1623,7 +1623,7 @@ impl FlightEngine {
     }
 
     /// Animates the whole strip surface as one rigid group: one container, one position
-    /// animation. See "Strip movements" in `docs/animation/animation-smoothness.md`.
+    /// animation. See "Strip movements" in `src/animation/docs/animation-smoothness.md`.
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -1654,7 +1654,7 @@ impl FlightEngine {
             match self.cache.usable(window.window).cloned() {
                 Some(snapshot) => {
                     // A wrong-shaped picture is stretched rather than dropped. See "A window that
-                    // was resized keeps a usable picture" in `docs/animation/capture-overlay-research.md`.
+                    // was resized keeps a usable picture" in `src/animation/docs/capture-overlay-research.md`.
                     if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
@@ -1747,7 +1747,7 @@ impl FlightEngine {
     }
 
     /// Nudges the strip surface by `overshoot` and back, additively on a running flight or as the
-    /// only motion of a no-travel one. See "Edge bounce" in `docs/animation/animation-smoothness.md`.
+    /// only motion of a no-travel one. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
     fn start_bounce(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -1877,7 +1877,7 @@ impl FlightEngine {
     }
 
     /// Logs how many real windows are not where their tiles finished, and the worst of them.
-    /// See "Real windows land before lift" in `docs/animation/animation-smoothness.md`.
+    /// See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
     fn report_handover_error(&self) {
         let Some(report) = self.handover() else { return };
         if report.count_over > 0 {
@@ -1940,7 +1940,7 @@ impl FlightEngine {
         }
 
         // Size-checked: a render for the other display can land after a display change. See "A
-        // render of the wrong display, drawn at its own size" in `docs/animation/capture-overlay-research.md`.
+        // render of the wrong display, drawn at its own size" in `src/animation/docs/capture-overlay-research.md`.
         if let Some(rendered) = self.pictures.desktop.clone().filter(|rendered| {
             crate::animation::platform::window_snapshot::spans_display(rendered.coverage.covered, display_size)
         }) {
@@ -2036,7 +2036,7 @@ impl FlightEngine {
     }
 
     /// Recaptures the bar on its own, keeping its alpha; a no-op while the overlay covers it.
-    /// See "The bar has to be captured on its own" in `docs/animation/capture-overlay-research.md`.
+    /// See "The bar has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
     fn refresh_bar(&mut self) {
         let Some((display_frame, scale)) = self.display else { return };
         if self.overlay.as_ref().is_some_and(TileOverlay::is_visible) {
@@ -2638,7 +2638,7 @@ mod tests {
             );
         }
 
-        /// T8 (1.4). See "A grow holds, then reveals" in `docs/animation/animation-smoothness.md`.
+        /// T8 (1.4). See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
         #[test]
         fn a_hold_is_short_and_settles_on_the_first_repaint() {
             let limit = reveal_hold_limit(Duration::from_millis(300));
@@ -3304,7 +3304,7 @@ mod tests {
             assert!(chase_settled(Some(&q), &p, Some(&q)), "a repaint settles even after a change");
         }
 
-        /// 2.4. See "A grow holds, then reveals" in `docs/animation/animation-smoothness.md`.
+        /// 2.4. See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
         #[test]
         fn the_hold_is_capped_at_a_blink() {
             for ms in [180u64, 300, 375, 500, 1000] {
@@ -4114,7 +4114,7 @@ mod tests {
     }
 
     /// Change 3 of `.kiro/specs/exit-entrance-animation-regressions`: depth is banded once per flight
-    /// from its latest focus. See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+    /// from its latest focus. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
     mod flight_restack {
         use super::preservation::{Gen, RUNS, stacked};
         use super::*;
@@ -4778,7 +4778,7 @@ mod tests {
     }
 
     /// A pass merging into a flight in progress (`merge_plans`). The 3:27:20 tear is the case it
-    /// exists for. See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+    /// exists for. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
     mod rigid_strip {
         use super::preservation::{DISPLAY, Gen, RUNS};
         use super::rigid_groups::random_requests;
@@ -5240,7 +5240,7 @@ mod tests {
     }
 
     /// Task 1 of `.kiro/specs/rigid-strip-groups`: a pass as rigid pieces. See "Layout changes" and
-    /// "Strip movements" in `docs/animation/animation-smoothness.md`.
+    /// "Strip movements" in `src/animation/docs/animation-smoothness.md`.
     mod rigid_groups {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;

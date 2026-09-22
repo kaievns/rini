@@ -159,8 +159,22 @@ no macOS in it, provably" rather than "this crate cannot link AppKit".
 
 ## Where documentation lives
 
-A finding lives in one place. Detail that belongs to one feature goes in
-`docs/<feature>/`; detail that spans features stays at the top of `docs/`. A
-library's detail stays with the library (`crates/rini-runloop/docs/`). Code
-points at the doc by path when a reader would otherwise be stuck. When code
-moves, its docs move with it.
+A finding lives in one place, and that place is beside the code it is about.
+
+Every feature and every crate has its own `docs/`, with a `README.md` explaining what
+the module owns, the shape that matters, a reading order, and its known debt:
+
+```text
+src/<feature>/docs/README.md    what this feature is, and how to read it
+src/<feature>/docs/<topic>.md   a finding that belongs to this feature
+crates/<crate>/docs/README.md   same, for a library
+docs/                           only what genuinely spans features
+```
+
+What is left at the top of the tree is cross-cutting: this file, `testing.md`,
+`signing.md`, `permissions-and-the-launch-agent.md`, and the implementation audit.
+Anything that names one feature belongs inside it.
+
+Code points at the doc by path when a reader would otherwise be stuck. When code moves,
+its docs move with it — and since a feature's docs now live inside the feature, moving a
+folder moves both.

@@ -1,7 +1,7 @@
 //! Background window capture through ScreenCaptureKit, for windows SkyLight cannot serve.
 //!
 //! Fills a cache rather than capturing on demand: a capture is too slow to run at switch time.
-//! Results are `IOSurface` to keep a warm cache off the heap. See `docs/animation/capture-overlay-research.md`.
+//! Results are `IOSurface` to keep a warm cache off the heap. See `src/animation/docs/capture-overlay-research.md`.
 
 use crate::animation::domain::request::SnapshotTarget;
 #[cfg(test)]
@@ -30,7 +30,7 @@ use rini_core::ids::WindowId;
 use crate::animation::platform::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, WindowSnapshot};
 
 /// Concurrent captures. ScreenCaptureKit serialises internally, so wall clock stops improving past
-/// four. See "Capture cost" in `docs/animation/capture-overlay-research.md`.
+/// four. See "Capture cost" in `src/animation/docs/capture-overlay-research.md`.
 const MAX_CONCURRENT: usize = 4;
 
 /// Alpha above which a pixel counts as painted; shadows are excluded, so a painted edge is opaque.
@@ -62,7 +62,7 @@ fn edges_are_painted(width: usize, height: usize, alpha_at: impl Fn(usize, usize
 }
 
 /// Does a capture's content reach the far edge of its buffer? `None` means it could not be inspected.
-/// See "Nominal capture resolution paints a quarter of the buffer" in `docs/animation/capture-overlay-research.md`.
+/// See "Nominal capture resolution paints a quarter of the buffer" in `src/animation/docs/capture-overlay-research.md`.
 fn content_reaches_edges(buffer: &objc2_core_video::CVPixelBuffer) -> Option<bool> {
     use objc2_core_video::{
         CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight,
@@ -197,7 +197,7 @@ impl SnapshotService {
     }
 
     /// Invalidates everything in flight on a display change. See "A render of the wrong display,
-    /// drawn at its own size" in `docs/animation/capture-overlay-research.md`.
+    /// drawn at its own size" in `src/animation/docs/capture-overlay-research.md`.
     pub fn invalidate(&self) {
         self.revision.fetch_add(1, Ordering::Release);
     }
@@ -294,7 +294,7 @@ impl SnapshotService {
                     // Rounded corners must stay transparent.
                     config.setShouldBeOpaque(false);
                     // Nominal renders at point size into a pixel-sized buffer. See "Nominal capture
-                    // resolution paints a quarter of the buffer" in docs/animation/capture-overlay-research.md.
+                    // resolution paints a quarter of the buffer" in src/animation/docs/capture-overlay-research.md.
                     config.setCaptureResolution(SCCaptureResolutionType::Best);
                 }
                 queued.push(PendingCapture { target: *target, size, filter, config, revision });
@@ -315,7 +315,7 @@ impl SnapshotService {
     }
 
     /// Requests a render of the display with every app window excluded. See "The wallpaper is not
-    /// reliably a window" in `docs/animation/capture-overlay-research.md`.
+    /// reliably a window" in `src/animation/docs/capture-overlay-research.md`.
     pub fn request_desktop(&self, display_id: u32, size: CGSize) {
         {
             let mut state = self.state.lock().unwrap();
@@ -345,7 +345,7 @@ impl SnapshotService {
             };
 
             // The bar is excluded too, although below layer 0: the overlay draws it from its own
-            // capture. See "The bar has to be captured on its own" in docs/animation/capture-overlay-research.md.
+            // capture. See "The bar has to be captured on its own" in src/animation/docs/capture-overlay-research.md.
             let windows = unsafe { content.windows() };
             let excluded: Vec<Retained<SCWindow>> = windows
                 .iter()

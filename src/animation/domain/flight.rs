@@ -3,7 +3,7 @@
 //! One pass over the layout becomes a flight: which windows move as a rigid group, which z-band each
 //! belongs to, whether a snapshot may be captured yet, and whether a picture that arrived mid-flight
 //! is worth swapping in. Decided over ids, frames and progress fractions, with nothing of Core
-//! Animation in it. Design in `docs/animation/animation-smoothness.md`.
+//! Animation in it. Design in `src/animation/docs/animation-smoothness.md`.
 
 use objc2_core_foundation::CGRect;
 use std::collections::{HashMap, HashSet};
@@ -16,7 +16,7 @@ use super::timing::{
 };
 
 /// Which of `tiles` to recapture mid-flight: the two ends of a focus change, and nothing else.
-/// See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+/// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn refresh_targets(
     previous: Option<WindowId>,
     current: Option<WindowId>,
@@ -42,7 +42,7 @@ pub(in crate::animation) enum GroupStart {
 }
 
 /// The unmanaged window tracing `frame` as its border, if any. A parked window never traces and is
-/// never traced. See "Window borders during animations" in `docs/animation/animation-smoothness.md`.
+/// never traced. See "Window borders during animations" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn companion_of(
     frame: CGRect,
     candidates: &[(WindowServerId, CGRect)],
@@ -70,7 +70,7 @@ pub(in crate::animation) fn companion_of(
         .copied()
 }
 
-/// Which path composed a flight. See "The apply point" in `docs/animation/animation-smoothness.md`.
+/// Which path composed a flight. See "The apply point" in `src/animation/docs/animation-smoothness.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::animation) enum FlightKind {
     /// A per-window layout pass: moves and resizes.
@@ -120,7 +120,7 @@ pub(in crate::animation) struct CacheComparison {
 }
 
 /// Whether a picture landing mid-flight may change what a tile draws. `progress` is `None`
-/// before the flight starts moving. See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+/// before the flight starts moving. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn should_swap_mid_flight(
     state: TileState,
     settled: bool,
@@ -184,7 +184,7 @@ pub(in crate::animation) enum CaptureKind {
 }
 
 /// Whether a flight in `phase` may start `kind` of capture work now.
-/// See "Capture work in flight" in `docs/animation/animation-smoothness.md`.
+/// See "Capture work in flight" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn capture_work_allowed(phase: FlightPhase, kind: CaptureKind) -> bool {
     match phase {
         FlightPhase::Idle => true,
@@ -222,7 +222,7 @@ pub(in crate::animation) fn finish_harvest_set(
 }
 
 /// Whether an in-flight merge leaves the already-applied frames stale. A parked window has no
-/// tile, so `frames_changed` counts too. See "Mid-flight passes" in `docs/animation/animation-smoothness.md`.
+/// tile, so `frames_changed` counts too. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn mark_stale_on_untiled_change(changed: bool, frames_changed: bool) -> bool {
     changed || frames_changed
 }
@@ -240,7 +240,7 @@ pub(in crate::animation) struct HandoverReport {
 }
 
 /// Measures every tiled window's real frame against its intended one. Parks are excluded: macOS
-/// clamps them. See "Real windows land before lift" in `docs/animation/animation-smoothness.md`.
+/// clamps them. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn handover_report(
     final_frames: &[(WindowId, CGRect)],
     tiled: &[WindowId],
@@ -273,7 +273,7 @@ pub(in crate::animation) fn handover_report(
 }
 
 /// Share of samples that may differ and still count as the same rendering: forgives a blinking
-/// cursor, not a half-painted surface. See "A grow holds, then reveals" in `docs/animation/animation-smoothness.md`.
+/// cursor, not a half-painted surface. See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) const STABLE_MAX_DIFFERING: f64 = 0.03;
 pub(in crate::animation) const STABLE_CHANNEL_TOLERANCE: u8 = 8;
 
@@ -291,7 +291,7 @@ pub(in crate::animation) fn renderings_match(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Whether a chase capture counts as the window's settled rendering.
-/// See "A grow holds, then reveals" in `docs/animation/animation-smoothness.md`.
+/// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn chase_settled(prev: Option<&[u8]>, print: &[u8], pre_resize: Option<&[u8]>) -> bool {
     prev.is_some_and(|previous| renderings_match(previous, print))
         || pre_resize.is_some_and(|before| !renderings_match(before, print))
@@ -309,7 +309,7 @@ pub(in crate::animation) enum Claimed {
 }
 
 /// Whether a composed pass is worth an overlay flight.
-/// See "Layout changes" in `docs/animation/animation-smoothness.md`.
+/// See "Layout changes" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn worth_flying(moving_drawable: bool, running: bool) -> bool {
     moving_drawable || running
 }

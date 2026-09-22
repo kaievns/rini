@@ -1,5 +1,5 @@
 //! The geometry of a flight: how tiles group, travel, ease and stack. Pure functions over
-//! CoreGraphics rects; nothing here draws. See `docs/animation/animation-smoothness.md`.
+//! CoreGraphics rects; nothing here draws. See `src/animation/docs/animation-smoothness.md`.
 pub mod easing;
 pub mod fit;
 pub mod frame_writes;

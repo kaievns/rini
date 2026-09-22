@@ -1,7 +1,7 @@
 //! Bitmap snapshots of windows, for the capture-based animation overlay.
 //!
 //! SkyLight captures what is on screen, fresh; ScreenCaptureKit serves everything else from a
-//! background cache. Constraints and costs of both: `docs/animation/capture-overlay-research.md`.
+//! background cache. Constraints and costs of both: `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
 use std::ffi::c_int;
@@ -21,7 +21,7 @@ pub use crate::animation::domain::motion::fit::{
 };
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
-/// actually does" in `docs/animation/capture-overlay-research.md`.
+/// actually does" in `src/animation/docs/capture-overlay-research.md`.
 const CAPTURE_OPTIONS: u32 = (1 << 11) | (1 << 8);
 
 /// A window's pixels, whichever API produced them. Core Animation accepts either form.
@@ -114,7 +114,7 @@ fn capture_list_via_skylight(
 }
 
 /// Captures one window through `CGWindowListCreateImage`, which only renders a composited window.
-/// See "The hairline is composited outside every capture" in `docs/animation/capture-overlay-research.md`.
+/// See "The hairline is composited outside every capture" in `src/animation/docs/capture-overlay-research.md`.
 pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSnapshot> {
     let frame = crate::windows::platform::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
@@ -143,7 +143,7 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSn
 }
 
 /// One framed capture that yields the picture and its hairline: the reveal chase's capture.
-/// See "A grow holds, then reveals" in `docs/animation/animation-smoothness.md`.
+/// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
 pub fn capture_via_framed_with_dressing(
     window: WindowServerId,
     scale: f64,

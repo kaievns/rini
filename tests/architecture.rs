@@ -203,3 +203,97 @@ fn every_feature_and_its_layers_are_declared() {
         }
     }
 }
+
+/// Every feature and every crate carries its own `docs/README.md`.
+///
+/// The convention is in `docs/architecture.md` under "Where documentation lives". It is a test
+/// because a new feature is exactly when nobody remembers it.
+#[test]
+fn every_feature_and_crate_documents_itself() {
+    let mut missing = Vec::new();
+    for feature in FEATURES.iter().chain(["app"].iter()) {
+        let readme = Path::new("src").join(feature).join("docs/README.md");
+        if !readme.is_file() {
+            missing.push(slash(&readme));
+        }
+    }
+    for entry in fs::read_dir("crates").expect("readable crates directory") {
+        let crate_dir = entry.expect("readable entry").path();
+        if !crate_dir.is_dir() {
+            continue;
+        }
+        let readme = crate_dir.join("docs/README.md");
+        if !readme.is_file() {
+            missing.push(slash(&readme));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "a module explains itself beside its code. See \"Where documentation lives\" in \
+         docs/architecture.md:\n{}",
+        missing.join("\n")
+    );
+}
+
+/// Every path a doc or a comment points at still exists.
+///
+/// Docs rotted three times before this: paths survived two renames of the tree and pointed at
+/// modules that had moved, which is worse than no pointer because it reads as current.
+#[test]
+fn every_documented_path_resolves() {
+    let mut broken = Vec::new();
+    let mut check = |text: &str, source: &str| {
+        for candidate in text.split(['`', '(', ')', ' ', '\n', ',', ';', '"']) {
+            let candidate = candidate.trim_end_matches(['.', ':', '\'']);
+            let is_path = (candidate.starts_with("src/")
+                || candidate.starts_with("crates/")
+                || candidate.starts_with("tests/")
+                || candidate.starts_with("docs/"))
+                && (candidate.ends_with(".rs")
+                    || candidate.ends_with(".md")
+                    || candidate.ends_with(".toml"));
+            // `<feature>` in a diagram is not a path, and a crate's own docs are named relative
+            // to its root, so `docs/x.md` inside `crates/y/` means `crates/y/docs/x.md`.
+            if !is_path || candidate.contains('<') {
+                continue;
+            }
+            let crate_relative = source
+                .split_once("/src/")
+                .map(|(crate_root, _)| PathBuf::from(crate_root).join(candidate));
+            if Path::new(candidate).exists()
+                || crate_relative.is_some_and(|path| path.exists())
+            {
+                continue;
+            }
+            broken.push(format!("{source}: {candidate}"));
+        }
+    };
+    let mut files: Vec<PathBuf> = rust_files(Path::new("src"));
+    files.extend(rust_files(Path::new("crates")));
+    for dir in ["docs", "src", "crates"] {
+        collect_markdown(Path::new(dir), &mut files);
+    }
+    for path in files {
+        let text = fs::read_to_string(&path).expect("readable file");
+        check(&text, &slash(&path));
+    }
+    broken.sort();
+    broken.dedup();
+    assert!(
+        broken.is_empty(),
+        "these point at files that do not exist. A stale pointer reads as a current one:\n{}",
+        broken.join("\n")
+    );
+}
+
+fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries {
+        let path = entry.expect("readable entry").path();
+        if path.is_dir() {
+            collect_markdown(&path, out);
+        } else if path.extension().is_some_and(|e| e == "md") {
+            out.push(path);
+        }
+    }
+}

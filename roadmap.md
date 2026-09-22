@@ -17,7 +17,7 @@ current behaviour annoys me.
   display (the evacuation case); a home on an attached display is overwritten freely,
   because nothing distinguishes "the user dragged it here" from "rini put it here for an
   unrelated reason". Re-observing is deliberate and the reason is recorded in
-  `docs/workspaces/workspaces-and-displays.md` under "Display affinity" — what is missing
+  `src/workspaces/docs/workspaces-and-displays.md` under "Display affinity" — what is missing
   is a reason to believe an observation, not the re-observing itself.
 - **A bad keybinding discards the whole config.** No longer fatal: `main.rs` reports the
   error and falls back to the built-in defaults, so the WM starts and the hotkeys for

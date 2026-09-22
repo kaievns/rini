@@ -484,7 +484,7 @@ impl Reactor {
         }
         // A closed window disappears; only its cached picture has to go. Once: the window-server path
         // may have removed the window, and forgotten it, already. See "A closed window disappears" in
-        // `docs/animation/animation-smoothness.md`.
+        // `src/animation/docs/animation-smoothness.md`.
         if self.state.windows.window(window).is_some()
             && let Some(tx) = &self.communication_manager.workspace_animation_tx
         {

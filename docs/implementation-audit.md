@@ -53,7 +53,7 @@ hidden_assigned_space_for_frame                —   (frame, not window)
 The names do not say how the answers differ — `best`, `assigned`, `authoritative`,
 `discovery`, `reported`, `geometry` are six words for six precedence orders over
 the same four sources. Picking the wrong one is the shape of several bugs already
-recorded in `docs/workspaces/workspaces-and-displays.md`.
+recorded in `src/workspaces/docs/workspaces-and-displays.md`.
 
 ### 1.2 Two event taps, one lifecycle, written twice
 
@@ -126,7 +126,7 @@ A delegation chain rather than a contradiction, but four names for one lookup:
 
 Plus wrappers in `engine.rs`. The `_any` variant exists because the plain one
 consults only each space's ACTIVE workspace — a distinction that has already cost
-two bugs (`docs/workspaces/launch-memory.md`, "Recording").
+two bugs (`src/workspaces/docs/launch-memory.md`, "Recording").
 
 ## 2. Legacy branching that could be consolidated
 
@@ -216,7 +216,7 @@ say instead — left alone rather than guessed at.
 
 `src/app/reactor/animation.rs` and `managers.rs` take `reactor: &mut Reactor`
 rather than `&mut self` on a narrower borrow — 9 signatures. `animate_layout`'s own
-doc (`docs/animation/animation-smoothness.md`, "Structural findings") already calls
+doc (`src/animation/docs/animation-smoothness.md`, "Structural findings") already calls
 this out and names the fix: a `present(motion)` boundary.
 
 ### 3.4 `src/displays/screen.rs` straddles domain and platform

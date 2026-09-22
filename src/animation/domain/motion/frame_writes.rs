@@ -1,12 +1,12 @@
 //! Which final-frame writes go out to the apps, and in what order. See "Real windows land before
-//! lift" in `docs/animation/animation-smoothness.md`.
+//! lift" in `src/animation/docs/animation-smoothness.md`.
 use objc2_core_foundation::CGRect;
 use rini_geometry::{CGRectExt, is_off_screen};
 use rini_core::ids::WindowId;
 
 /// The order the overlay's final frames go out to the apps: on-screen destinations first, parks
 /// last, each class in the order given. See "Real windows land before lift" in
-/// `docs/animation/animation-smoothness.md`.
+/// `src/animation/docs/animation-smoothness.md`.
 pub fn frame_send_order(
     frames: Vec<(WindowId, CGRect)>,
     display: CGRect,
@@ -21,7 +21,7 @@ pub fn frame_send_order(
 /// every such write is an Accessibility round trip that makes the app repaint while the overlay is
 /// flying. A pan sent 20 frames of which 13 were park-to-park; the app repaints stalled the
 /// compositor for 50-130ms at the start of the flight. See "Real windows land before lift" in
-/// `docs/animation/animation-smoothness.md`.
+/// `src/animation/docs/animation-smoothness.md`.
 ///
 /// A park is a sliver still touching the display, never a frame wholly off it: a workspace switch
 /// leaves its departing row a full display height below, which macOS clamps to a 41pt band along

@@ -62,7 +62,7 @@ pub(crate) fn authoritative(c: &Candidates) -> Option<SpaceId> {
 ///
 /// Geometry is the last resort rather than the first: a parked window's frame is off screen on
 /// purpose, so believing it walks windows onto whichever display the park happens to overlap. That
-/// feedback loop is recorded in `docs/workspaces/workspaces-and-displays.md`.
+/// feedback loop is recorded in `src/workspaces/docs/workspaces-and-displays.md`.
 pub(crate) fn placement(c: &Candidates) -> Option<SpaceId> {
     if c.native_fullscreen {
         return None;
