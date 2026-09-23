@@ -159,7 +159,18 @@ no macOS in it, provably" rather than "this crate cannot link AppKit".
 
 ## Where documentation lives
 
-A finding lives in one place, and that place is beside the code it is about.
+Three kinds of written record, in three places, and they do not overlap.
+
+**`specs/` is what the software must do.** Requirements, as obligations with their reasons, plus the
+report that gave rise to each one. Read `specs/README.md` first: it carries the rule that anything the
+user reports — a bug, a quirk, a behaviour ask — becomes a requirement there in the same change that
+acts on it. A test says the code does something; it does not say the behaviour was asked for, and this
+repo has already had one bug "fixed three times" because only the symptom was ever recorded.
+
+**`docs/` is how the code came to be that way.** Measurements, findings, rejected approaches, audit
+history. A requirement links to its evidence here; the evidence does not restate the requirement.
+
+**A finding lives in one place, and that place is beside the code it is about.**
 
 Every feature and every crate has its own `docs/`, with a `README.md` explaining what
 the module owns, the shape that matters, a reading order, and its known debt:
@@ -178,3 +189,9 @@ Anything that names one feature belongs inside it.
 Code points at the doc by path when a reader would otherwise be stuck. When code moves,
 its docs move with it — and since a feature's docs now live inside the feature, moving a
 folder moves both.
+
+Three tests in `tests/architecture.rs` hold this rather than good intentions:
+`every_feature_and_crate_documents_itself` requires the READMEs to exist,
+`every_documented_path_resolves` fails on any path mentioned anywhere that no longer exists, and
+`every_spec_is_listed_in_the_index` stops a spec nothing links to. A stale sentence reads exactly like
+a current one, which is why none of this is left to discipline.

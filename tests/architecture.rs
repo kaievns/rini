@@ -278,7 +278,7 @@ fn every_documented_path_resolves() {
     };
     let mut files: Vec<PathBuf> = rust_files(Path::new("src"));
     files.extend(rust_files(Path::new("crates")));
-    for dir in ["docs", "src", "crates"] {
+    for dir in ["docs", "specs", "src", "crates"] {
         collect_markdown(Path::new(dir), &mut files);
     }
     for path in files {
@@ -330,6 +330,64 @@ fn no_accessibility_element_is_ever_logged() {
         "formatting an Accessibility element queries the application, so a log line becomes a \
          round-trip that blocks on a hung app. Log the window id instead:\n{}",
         offenders.join("\n")
+    );
+}
+
+/// Every spec is reachable from the index, and the index names nothing that is missing.
+///
+/// A spec nobody links to is a spec nobody reads, and `specs/README.md` is the only way in. The rule
+/// that keeps them current is in that file; this is the part a test can hold.
+#[test]
+fn every_spec_is_listed_in_the_index() {
+    let index = fs::read_to_string("specs/README.md").expect("specs/README.md exists");
+
+    let mut unlisted = Vec::new();
+    for entry in fs::read_dir("specs").expect("readable specs directory") {
+        let path = entry.expect("readable entry").path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name == "README.md" || !name.ends_with(".md") {
+            continue;
+        }
+        if !index.contains(name) {
+            unlisted.push(name.to_owned());
+        }
+    }
+    unlisted.sort();
+    assert!(
+        unlisted.is_empty(),
+        "these specs are not in specs/README.md, so nothing leads to them:\n  {}",
+        unlisted.join("\n  ")
+    );
+}
+
+/// Every requirement is written as an obligation.
+///
+/// A spec that describes the code instead of stating what is required reads as a summary, and a
+/// summary does not tell anyone whether a change is allowed. Each spec has to contain at least one
+/// MUST, MUST NOT or MAY.
+#[test]
+fn every_spec_states_obligations_rather_than_describing_the_code() {
+    let mut toothless = Vec::new();
+    for entry in fs::read_dir("specs").expect("readable specs directory") {
+        let path = entry.expect("readable entry").path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name == "README.md" || !name.ends_with(".md") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).expect("readable spec");
+        if !["MUST", "MAY"].iter().any(|word| text.contains(word)) {
+            toothless.push(name.to_owned());
+        }
+    }
+    toothless.sort();
+    assert!(
+        toothless.is_empty(),
+        "these specs describe rather than require. State the obligation and its reason:\n  {}",
+        toothless.join("\n  ")
     );
 }
 
