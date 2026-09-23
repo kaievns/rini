@@ -885,6 +885,55 @@ mod strip_regroup {
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
     }
 
+    /// A window that has just opened is frontmost, and the strip must be left behind it.
+    ///
+    /// The symptom this is for: opening a Settings window made it appear and then instantly drop behind
+    /// the columns, so it had to be cmd-tabbed back to. macOS raises a new window, so the order is
+    /// `[Settings, right, left, parked]` — and the regroup called that broken, because any strip window
+    /// behind the frontmost floating one counted. It raised the whole strip back over it.
+    ///
+    /// Nothing is sandwiched here. A floating window in front of the whole strip is the point of
+    /// floating, so there is nothing to put right.
+    #[test]
+    fn a_newly_opened_floating_window_is_left_in_front_of_the_strip() {
+        let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
+        // Front to back: the new Settings window, then the strip.
+        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
+            904, 902, 901, 903,
+        ]));
+
+        // The layout still believes a strip window has focus: rini has not yet been told the new
+        // window took it, which is the race the old rule turned into a visible bug.
+        reactor.send_layout_event(LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1)));
+        reactor.regroup_after_layout();
+        crate::windows::platform::window_server::set_front_to_back_override(None);
+
+        assert!(
+            raise_request(&mut raise_rx).is_none(),
+            "the strip must not be raised over a window that just opened"
+        );
+    }
+
+    /// And the case the regroup exists for still works: a floating window BETWEEN two columns.
+    #[test]
+    fn a_floating_window_between_two_columns_still_lifts_the_strip() {
+        let (mut reactor, mut raise_rx, _space) = reactor_with_sandwich();
+        // Front to back: right column, Settings, left column, parked column.
+        crate::windows::platform::window_server::set_front_to_back_override(Some(vec![
+            902, 904, 901, 903,
+        ]));
+
+        reactor.send_layout_event(LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1)));
+        reactor.regroup_after_layout();
+        crate::windows::platform::window_server::set_front_to_back_override(None);
+
+        let request = raise_request(&mut raise_rx).expect("the sandwich is still put right");
+        assert!(
+            !request.raise_windows.iter().flatten().any(|w| *w == WindowId::new(1, 4)),
+            "and the floating window is never raised with the strip"
+        );
+    }
+
     /// Focus landing on the floating window raises only what the layout asked for.
     #[test]
     fn a_focus_response_onto_the_floating_window_lifts_nothing_extra() {

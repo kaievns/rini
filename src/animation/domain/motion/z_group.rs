@@ -77,15 +77,26 @@ pub fn tile_depth(
 
 /// Whether the real window order breaks the rule, given the groups front to back.
 ///
-/// It is broken as soon as something off the strip sits in front of something on it. Checked before doing
-/// anything about it, because putting it back costs one Accessibility raise per window on screen, and a
-/// click that lands on an order which is already grouped should cost nothing.
+/// Broken means a floating window is INSIDE the strip: something on the strip in front of it and
+/// something on the strip behind it. The strip is one group and cannot have a hole in it.
+///
+/// A floating window in front of the whole strip is not broken, it is the point of floating. That
+/// distinction is the fix for a window vanishing the moment it opened: macOS raises a new window, so
+/// it is frontmost with every strip window behind it, and the older rule — "broken as soon as
+/// something off the strip sits in front of something on it" — called that broken and raised the strip
+/// back over a window the user had just asked for.
+///
+/// Checked before doing anything about it, because putting the order back costs one Accessibility
+/// raise per window on screen, and a click landing on an order that is already grouped should cost
+/// nothing.
 pub fn tiled_is_behind(front_to_back: &[StackGroup]) -> bool {
-    let first_floating = front_to_back.iter().position(|group| *group == StackGroup::Floating);
-    match first_floating {
-        Some(floating) => front_to_back[floating..].contains(&StackGroup::Tiled),
-        None => false,
-    }
+    let Some(floating) = front_to_back.iter().position(|group| *group == StackGroup::Floating)
+    else {
+        return false;
+    };
+    let strip_in_front = front_to_back[..floating].contains(&StackGroup::Tiled);
+    let strip_behind = front_to_back[floating..].contains(&StackGroup::Tiled);
+    strip_in_front && strip_behind
 }
 
 /// The windows to raise to put the strip back in front, back to front.
@@ -133,18 +144,25 @@ mod tests {
 
     /// The floating windows are left out rather than raised first. Raising them in the same sequence would
     /// leave their order against the strip up to whichever app answered first.
+    ///
+    /// The order has to be genuinely broken for there to be anything to raise, so the strip is on both
+    /// sides of the floating pair here.
     #[test]
     fn regrouping_never_raises_a_window_off_the_strip() {
-        let order = [(5830, Floating), (1350, Floating), (90, Tiled)];
-        assert_eq!(regroup_tiled(&order), vec![90]);
+        let order = [(90, Tiled), (5830, Floating), (1350, Floating), (91, Tiled)];
+        assert_eq!(regroup_tiled(&order), vec![91, 90]);
     }
 
     /// The measured case: clicking the left half of a 50/50 pair left the floating Settings window between
     /// the two terminals, in front of one and behind the other.
+    ///
+    /// This test used to assert `[Floating, Tiled]` was broken too, generalising from the measured
+    /// sandwich to "a floating window in front of ANY strip window". That generalisation was the bug:
+    /// a newly opened window is frontmost with the whole strip behind it, so it matched, and the strip
+    /// was raised back over a window the user had just opened.
     #[test]
-    fn a_floating_window_in_front_of_any_strip_window_breaks_the_rule() {
+    fn a_floating_window_inside_the_strip_breaks_the_rule() {
         assert!(tiled_is_behind(&[Tiled, Floating, Tiled, Tiled]));
-        assert!(tiled_is_behind(&[Floating, Tiled]));
         assert!(tiled_is_behind(&[Tiled, Tiled, Floating, Tiled]));
     }
 
@@ -247,5 +265,35 @@ mod tests {
             container_z(Tiled, Tiled) - within as f64,
             -(tile_depth(Some(3), false, Tiled, Tiled) as f64)
         );
+    }
+
+    /// A floating window in FRONT of the whole strip is the wanted state, not a broken order.
+    ///
+    /// This is what a window that has just opened looks like: macOS raises it, so it is frontmost and
+    /// every strip window is behind it. Calling that broken raises the strip over a window the user
+    /// just asked for, and it disappears behind the columns a moment after appearing.
+    #[test]
+    fn a_floating_window_in_front_of_the_whole_strip_is_not_broken() {
+        assert!(!tiled_is_behind(&[Floating, Tiled, Tiled]));
+        assert!(regroup_tiled(&[(5830, Floating), (90, Tiled), (91, Tiled)]).is_empty());
+    }
+
+    /// Two floating windows in front of the strip: still the wanted state.
+    #[test]
+    fn several_floating_windows_in_front_of_the_strip_are_not_broken() {
+        assert!(!tiled_is_behind(&[Floating, Floating, Tiled]));
+    }
+
+    /// The order this rule exists for: a floating window BETWEEN two strip windows. The strip is one
+    /// group and cannot have something else inside it.
+    #[test]
+    fn a_floating_window_between_two_strip_windows_is_broken() {
+        assert!(tiled_is_behind(&[Tiled, Floating, Tiled]));
+    }
+
+    /// Only floating windows, with no strip at all, is nothing to judge.
+    #[test]
+    fn an_order_with_no_strip_window_is_not_broken() {
+        assert!(!tiled_is_behind(&[Floating, Floating]));
     }
 }

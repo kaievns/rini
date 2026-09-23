@@ -833,9 +833,10 @@ It decides two separate things:
   group, then the other group, with a stride between groups wide enough that no
   window count can make them interleave. Without it, the animation drew the floating
   window over the columns sliding past underneath.
-- **Real order.** `regroup_tiled` returns the strip windows back to front when
-  something off the strip is in front of any of them, and nothing at all when the
-  order already obeys the rule — the common case, and it must cost nothing, because
+- **Real order.** `regroup_tiled` returns the strip windows back to front when a
+  floating window is INSIDE the strip — something on the strip in front of it and
+  something on the strip behind it — and nothing at all when the order already obeys the
+  rule — the common case, and it must cost nothing, because
   putting it back costs one Accessibility raise per window on screen. Only on-screen
   windows are judged and raised (`strip_group_to_lift_for` in `src/app/reactor/mod.rs`),
   and the judgment runs twice per focus change: once with the raise the focus move
@@ -846,6 +847,15 @@ It decides two separate things:
   view behind it and sat between the focused column and the floating window, the
   sandwich seen after keyboard navigation with System Settings floating. The second
   pass is skipped when the first already raised everything it would.
+
+  The rule was "something off the strip is in front of any strip window", which was a
+  generalisation from that measured sandwich and was wrong. macOS raises a newly opened
+  window, so it is frontmost with the whole strip behind it, and that matched: opening a
+  System Settings window made it appear and then instantly drop behind the columns, so it
+  had to be cmd-tabbed back to. A floating window in front of the whole strip is the point
+  of floating; only a floating window with strip windows on BOTH sides is a broken order.
+  Three tests hold it, one of them `a_newly_opened_floating_window_is_left_in_front_of_the_strip`
+  at the reactor level.
 
   Raising the WHOLE strip, parked columns included, was tried and measured on
   2026-09-15: 19 windows across 10 apps took seconds (one activation wait per app,
