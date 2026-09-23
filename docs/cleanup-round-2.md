@@ -8,7 +8,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | # | item | measure | state |
 |---|---|---|---|
 | 1 | the `?elem` FIXME in `trace` | formatting an `AXUIElement` is an AX round-trip; obeyed on the hot path, ignored on the error path | **done** |
-| 2 | `animation/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | open |
+| 2 | `animation/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | **done** — 25 tests |
 | 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | open |
 | 4 | `main.rs` | 300-line `main`, no test | open |
 | 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | open |
@@ -46,3 +46,25 @@ nine call sites pass what they already had in scope instead of threading an elem
 Guarded by `no_accessibility_element_is_ever_logged` in `tests/architecture.rs`, because a comment
 did not hold. Reintroducing it at the `watch` failure site fails with the file, line and the offending
 code; reintroducing it in `trace` itself no longer compiles, since there is no element to format.
+
+## 2. `animation/domain/admission.rs`
+
+Seven pure functions governing what happens when a layout pass arrives while windows are still
+flying, and no tests at all. Every function is `pub(in crate::animation)`, so `dead_code` could not
+see them either.
+
+25 tests. Three of the rules were probed by breaking them, and each was caught:
+
+| broken | caught by |
+|---|---|
+| `same_as` -> `==` in `merge_action` | a destination differing by floating-point noise reads as a retarget |
+| the capture-budget check | a spent budget stops being reported, and reports the picture instead |
+| the frame-zero hold branch | a holding flight sends only the newcomers instead of everything |
+
+Two rules turned out to be worth stating rather than just covering. `merge_action` uses `same_as`
+rather than `==` so a repeated key press is `Redundant` rather than `Retargeted` — otherwise a held
+key bends the tile toward where it already is on every repeat and the flight never lands.
+`entrance_plan` checks the capture budget BEFORE the picture, so a flight that has spent its captures
+says so rather than blaming a picture it never took; each of the four refusals names itself, because
+"the window appeared without animating" has four causes and the log is the only way to tell them
+apart afterwards.
