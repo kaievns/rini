@@ -75,12 +75,41 @@ Still open: `calculate_layout_with_virtual_workspaces` (201), `move_window_to_wo
 
 ## 2. `windows/platform/app_actor.rs` — 1,369 lines, 0 tests
 
-The largest untested production file; needs a fake `AXUIElement` seam. `handle_notification`
-166, `handle_request` 157, `handle_raise_request` 134. Carries the three worst TODOs: a
-window-matching heuristic known to be wrong (`:1210`), a missing frontmost-window retry
-(`:941`), and `FIXME: ?elem here can change system behavior` (`:1554`).
+**Partly.** Two rules out to `windows/domain/ax_events.rs` with 12 tests. The file is 1,331 lines and
+still has no in-file tests, because the AX seam is not done — see below.
 
-State: open.
+- `handling` / `is_gone` — whether a failed Accessibility request means the window is GONE. Only an
+  invalid element does. `AppBusy` (macOS's `CannotComplete`) explicitly does not: an application slow
+  to answer is the normal case during launch and under load, and retiring on it deletes live windows.
+  `docs/testing.md` records two tests that flapped on exactly this class of mistake. Broadening
+  `AppBusy` to retire fails two tests.
+- the notification codec — `encode_notification_data` / `decode_notification_data` pack a kind and a
+  window index into the single `usize` an observer callback carries. The enum's discriminants ARE the
+  wire format, and `from_tag` was a hand-written table that had to agree with them; a variant added
+  at the wrong position decoded as its neighbour. `from_tag` now derives from
+  `ALL_NOTIFICATION_KINDS` and a round-trip test walks every variant, so a new one fails rather than
+  silently decoding as something else. Also pinned: zero is not a kind, because zero is how "no
+  window" is spelled in the packed value.
+
+`AxFailure` is the point of the split: the platform side translates macOS's error codes into it in one
+place (`State::failure_of`), and the rule reads only that. The architecture test forbids macOS types
+outside `platform/`, so a domain rule needs its own vocabulary anyway.
+
+### The AX seam is still open, and it needs a decision
+
+`AXUIElement` is not just called, it is STORED: `AppWindowState.elem` holds one and
+`elem_to_wid: HashMap<AXUIElement, WindowId>` keys by one. Faking it means substituting the type
+throughout `State`, which is a choice between:
+
+- **generics** — `State<E: Element>`, zero cost, but the parameter spreads through every signature in
+  the file and into `spawn_app_thread`
+- **a trait object** — `Box<dyn Element>`, contained, but an allocation and a vtable hop per AX call
+  on the hot path, and `Element` has to be object-safe
+
+Not mine to pick mid-pass. The remaining untested weight behind it: `handle_notification` (166),
+`handle_request` (157), `handle_raise_request` (134), and the three worst TODOs in the tree — a
+window-matching heuristic known to be wrong (`:1210`), a missing frontmost-window retry (`:941`), and
+`FIXME: ?elem here can change system behavior` (`:1554`).
 
 ## 3. CI's formatting check is red — 1,126 hunks
 

@@ -26,6 +26,10 @@ use rini_core::ids::{WindowId, pid_t};
 use rini_runloop::channel as channels;
 use rustc_hash::FxHashMap as HashMap;
 
+use crate::windows::domain::ax_events::{
+    AxFailure, AxNotificationKind, Handling, decode_notification_data, encode_notification_data,
+    handling, is_gone,
+};
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::platform::ax::element::{
@@ -54,24 +58,6 @@ const kAXWindowResizedNotification: &str = "AXWindowResized";
 const kAXWindowMiniaturizedNotification: &str = "AXWindowMiniaturized";
 const kAXWindowDeminiaturizedNotification: &str = "AXWindowDeminiaturized";
 const kAXTitleChangedNotification: &str = "AXTitleChanged";
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum AxNotificationKind {
-    ApplicationActivated = 1,
-    ApplicationDeactivated,
-    ApplicationHidden,
-    ApplicationShown,
-    MainWindowChanged,
-    WindowCreated,
-    MenuOpened,
-    MenuClosed,
-    WindowDestroyed,
-    WindowMoved,
-    WindowResized,
-    WindowMiniaturized,
-    WindowDeminiaturized,
-    TitleChanged,
-}
 
 const APP_NOTIFICATIONS: &[(AxNotificationKind, &str)] = &[
     (
@@ -116,45 +102,6 @@ const WINDOW_NOTIFICATIONS: &[(AxNotificationKind, &str)] = &[
     ),
     (AxNotificationKind::TitleChanged, kAXTitleChangedNotification),
 ];
-
-impl AxNotificationKind {
-    fn from_tag(tag: u8) -> Option<Self> {
-        Some(match tag {
-            1 => Self::ApplicationActivated,
-            2 => Self::ApplicationDeactivated,
-            3 => Self::ApplicationHidden,
-            4 => Self::ApplicationShown,
-            5 => Self::MainWindowChanged,
-            6 => Self::WindowCreated,
-            7 => Self::MenuOpened,
-            8 => Self::MenuClosed,
-            9 => Self::WindowDestroyed,
-            10 => Self::WindowMoved,
-            11 => Self::WindowResized,
-            12 => Self::WindowMiniaturized,
-            13 => Self::WindowDeminiaturized,
-            14 => Self::TitleChanged,
-            _ => return None,
-        })
-    }
-}
-
-fn encode_notification_data(kind: AxNotificationKind, wid: Option<WindowId>) -> usize {
-    const KIND_BITS: usize = 8;
-    let idx = wid.map_or(0, |wid| wid.idx.get()) as usize;
-    (idx << KIND_BITS) | kind as usize
-}
-
-fn decode_notification_data(
-    pid: pid_t,
-    data: usize,
-) -> Option<(AxNotificationKind, Option<WindowId>)> {
-    const KIND_MASK: usize = (1 << 8) - 1;
-    let kind = AxNotificationKind::from_tag((data & KIND_MASK) as u8)?;
-    let idx = NonZeroU32::new((data >> 8) as u32);
-    let wid = idx.map(|idx| WindowId { pid, idx });
-    Some((kind, wid))
-}
 
 struct RaiseRequest(Vec<WindowId>, CancellationToken, u64, Quiet);
 
@@ -1351,8 +1298,19 @@ impl State {
         admissible::has_visible_peer(wsid.is_some(), hint.is_some())
     }
 
+    /// Translate an Accessibility error code into what rini makes of it. The rule itself is
+    /// `domain::ax_events::handling`; this is the only place that knows macOS's spelling of it.
+    fn failure_of(err: &AxError) -> AxFailure {
+        match err {
+            AxError::NotFound => AxFailure::Untracked,
+            AxError::Ax(AXError::InvalidUIElement) => AxFailure::ElementInvalid,
+            AxError::Ax(AXError::CannotComplete) => AxFailure::AppBusy,
+            AxError::Ax(_) => AxFailure::Other,
+        }
+    }
+
     fn handle_ax_error(&mut self, wid: WindowId, err: &AXError) -> bool {
-        if matches!(*err, AXError::InvalidUIElement) {
+        if is_gone(Self::failure_of(&AxError::Ax(*err))) {
             if self.remove_window(wid).is_some() {
                 self.send_event(Event::WindowDestroyed(wid));
                 self.on_main_window_changed(Some(wid), false);
@@ -1368,23 +1326,26 @@ impl State {
         wid: WindowId,
         result: Result<T, AxError>,
     ) -> Result<Option<T>, AxError> {
-        match result {
-            Ok(value) => Ok(Some(value)),
-            Err(AxError::Ax(code)) if code == AXError::CannotComplete => {
+        let error = match result {
+            Ok(value) => return Ok(Some(value)),
+            Err(error) => error,
+        };
+        match handling(Self::failure_of(&error)) {
+            Handling::Retire => {
+                if let AxError::Ax(code) = error {
+                    self.handle_ax_error(wid, &code);
+                }
+                Ok(None)
+            }
+            Handling::Ignore => {
                 trace!(
                     ?wid,
-                    "AX request returned CannotComplete; leaving window registered"
+                    ?error,
+                    "AX request did not answer; leaving window registered"
                 );
                 Ok(None)
             }
-            Err(AxError::Ax(code)) => {
-                if self.handle_ax_error(wid, &code) {
-                    Ok(None)
-                } else {
-                    Err(AxError::Ax(code))
-                }
-            }
-            Err(AxError::NotFound) => Ok(None),
+            Handling::Propagate => Err(error),
         }
     }
 
@@ -1394,7 +1355,9 @@ impl State {
             // `kAXWindowsAttribute` is space-filtered and cannot be used to decide
             // whether a tracked window still exists globally. Only drop state when
             // the element itself has become invalid.
-            if matches!(window.elem.role(), Err(AxError::Ax(AXError::InvalidUIElement))) {
+            if let Err(error) = window.elem.role()
+                && is_gone(Self::failure_of(&error))
+            {
                 to_remove.push(wid);
             }
         }

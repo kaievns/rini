@@ -10,6 +10,7 @@ or layout: everything else depends on it and it depends on nothing.
 |---|---|
 | **The catalogue** | `domain/catalogue.rs` — every window rini has seen, keyed by `WindowId { pid, idx }`, with its window-server id, its placement, and the native-fullscreen records that let a window come back |
 | **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`) and `domain/state.rs` (`WindowState`, manageability) |
+| **The AX boundary's rules** | `domain/ax_events.rs` — whether a failed Accessibility request means the window is gone, and the codec for the one `usize` an observer callback carries |
 | **What rini takes on** | `domain/admissible.rs` — the four reasons an Accessibility window is turned away before anything else knows it exists |
 | **App rules** | `domain/rules.rs` — matching config rules against a window. Resolving a match against workspaces is `workspaces::domain::app_rules` |
 | **Focus** | `domain/focus.rs` — `MainWindowTracker`, the raise-echo rule, and the activation-focus rule that stops cmd-tab moving a display |
