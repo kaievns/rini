@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -55,10 +56,15 @@ impl Record {
         self.file.as_mut()
     }
 
-    pub(super) fn start(&mut self, config: &Config, layout: &LayoutEngine) {
+    pub(super) fn start(
+        &mut self,
+        config: &Config,
+        layout: &LayoutEngine,
+        memory: &DisplayMemory,
+    ) {
         let Some(file) = self.file() else { return };
         let config = ron::ser::to_string(&config).unwrap();
-        let layout = layout.serialize_to_string();
+        let layout = layout.serialize_to_string(memory);
         write!(file, "{config}\n{layout}\n").unwrap();
     }
 
@@ -81,9 +87,12 @@ pub fn replay(
     DESERIALIZE_THREAD_HANDLE.with(|h| h.borrow_mut().replace(handle));
     let mut lines = file.lines();
     let config = ron::de::from_str(&lines.next().expect("Empty restore file")?)?;
-    let layout = LayoutEngine::deserialize_from_str(&lines.next().expect("Expected layout line")?)?;
+    let loaded = LayoutEngine::deserialize_file(&lines.next().expect("Expected layout line")?)?;
+    let memory = loaded.memory;
+    let layout = loaded.layout?;
     let (broadcast_tx, _) = channels::channel();
-    let mut reactor = Reactor::new(config, layout, Record::new(None), broadcast_tx, None, false);
+    let mut reactor =
+        Reactor::new(config, layout, memory, Record::new(None), broadcast_tx, None, false);
     std::thread::spawn(move || {
         while let Some((span, request)) = rx.blocking_recv() {
             let _ = span.enter();

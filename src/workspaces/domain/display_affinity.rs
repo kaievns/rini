@@ -55,6 +55,14 @@ pub enum ColumnWidth {
 }
 
 impl DisplayAffinity {
+    /// Nothing has been recorded. Used to tell a schema-5 file's nested section from a schema-4
+    /// file's top-level one: a file has one shape or the other, never both.
+    pub fn is_empty(&self) -> bool {
+        self.display_space.is_empty()
+            && self.window_home.is_empty()
+            && self.display_strip.is_empty()
+            && self.window_width.is_empty()
+    }
     /// Record that `display` currently owns `space`, evicting any other claimant: a native space
     /// has one display, and two claimants make the affinity pass move windows forever.
     pub fn set_display_space(&mut self, display: &str, space: SpaceId) {

@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGRect;
 
 use super::reconcile::ReconcileOutcome;
@@ -36,7 +37,8 @@ struct RestorePlan {
 impl RestorePlan {
     fn source_space(
         snapshot: &LayoutEngine,
-        engine: &LayoutEngine,
+        saved_memory: &DisplayMemory,
+        memory: &DisplayMemory,
         request: RestoreRequest,
     ) -> anyhow::Result<SpaceId> {
         let saved_spaces = snapshot.workspace_layouts.spaces();
@@ -56,9 +58,10 @@ impl RestorePlan {
                     // The saved file can still contain the previous launch's SpaceIds even
                     // though startup already repaired the live engine. Display identity bridges
                     // that interval until the next full save.
-                    engine
-                        .display_uuid_for_space(request.active_space)
-                        .and_then(|display| snapshot.display_affinity.space_for_display(&display))
+                    memory
+                        .affinity
+                        .display_for_space(request.active_space)
+                        .and_then(|display| saved_memory.affinity.space_for_display(display))
                         .filter(|space| saved_spaces.contains(space))
                 }),
         };
@@ -81,10 +84,12 @@ impl RestorePlan {
     fn build(
         mut snapshot: LayoutEngine,
         engine: &LayoutEngine,
+        saved_memory: &DisplayMemory,
+        memory: &DisplayMemory,
         window_store: &WindowStore,
         request: RestoreRequest,
     ) -> anyhow::Result<Self> {
-        let source_space = Self::source_space(&snapshot, engine, request)?;
+        let source_space = Self::source_space(&snapshot, saved_memory, memory, request)?;
         let source_active = snapshot.virtual_workspace_manager.active_workspace(source_space);
         let mappings = match request.scope {
             RestoreScope::Space => {
@@ -291,6 +296,7 @@ impl RestorePlan {
         self,
         engine: &mut LayoutEngine,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         live_windows: HashMap<WindowId, WindowFingerprint>,
     ) -> RestoreReport {
         let live_ids = live_windows.keys().copied().collect::<HashSet<_>>();
@@ -415,7 +421,7 @@ impl RestorePlan {
                 continue;
             }
             let ReconcileOutcome { matched, duplicates_removed } =
-                engine.reconcile_restored_window(window_store, live_space, live, &fingerprint);
+                engine.reconcile_restored_window(window_store, memory, live_space, live, &fingerprint);
             report.matched += usize::from(matched);
             report.duplicates_removed += duplicates_removed;
             if !matched {
@@ -446,7 +452,7 @@ impl RestorePlan {
             // Reassert the projection for both matched and unmatched live windows. For matched
             // floating windows this rebuilds the runtime-only active-floating index; for tiled
             // windows the operation is idempotent when reconciliation already replaced the node.
-            engine.add_window_to_layout(window_store, live_space, live);
+            engine.add_window_to_layout(window_store, memory, live_space, live);
             if engine.focused_window == Some(live)
                 && let Some(workspace) = engine.virtual_workspace_manager.workspace_for_window(
                     window_store,
@@ -566,10 +572,14 @@ impl LayoutEngine {
         path: PathBuf,
         request: RestoreRequest,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         _virtual_workspace_config: &VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
     ) -> anyhow::Result<RestoreReport> {
-        let (mut snapshot, schema_version) = Self::load_with_schema_version(&path)?;
+        let loaded = Self::load_file(&path)?;
+        let schema_version = loaded.schema_version;
+        let saved_memory = loaded.memory;
+        let mut snapshot = loaded.layout?;
         tracing::info!(
             path = %path.display(),
             schema_version,
@@ -583,8 +593,9 @@ impl LayoutEngine {
         snapshot.set_layout_settings(layout_settings);
         self.refresh_window_fingerprints(window_store);
         let live_windows = self.persistence.live_fingerprints();
-        let plan = RestorePlan::build(snapshot, self, window_store, request)?;
-        let report = plan.apply(self, window_store, live_windows);
+        let plan =
+            RestorePlan::build(snapshot, self, &saved_memory, memory, window_store, request)?;
+        let report = plan.apply(self, window_store, memory, live_windows);
         tracing::info!(
             path = %path.display(),
             schema_version,
@@ -605,6 +616,7 @@ impl LayoutEngine {
         scope: RestoreScope,
         active_space: SpaceId,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         virtual_workspace_config: &VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
     ) -> anyhow::Result<usize> {
@@ -612,6 +624,7 @@ impl LayoutEngine {
             path,
             RestoreRequest::new(scope, active_space),
             window_store,
+            memory,
             virtual_workspace_config,
             layout_settings,
         )
@@ -665,19 +678,31 @@ mod tests {
         LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default())
     }
 
-    /// An engine that has seen `spaces`, each on the display named `uuid-<space>`.
-    fn engine_with(spaces: &[u64]) -> LayoutEngine {
+    /// An engine that has seen `spaces`, each on the display named `uuid-<space>`, and the display
+    /// memory that records which display owns which. The two come back together because the space is
+    /// the layout's and the display is the machine's.
+    fn engine_with(spaces: &[u64]) -> (LayoutEngine, DisplayMemory) {
         let mut engine = engine();
+        let mut memory = DisplayMemory::default();
         let mut store = WindowStore::default();
         for &space in spaces {
             let space = SpaceId::new(space);
             let _ = engine.handle_event(
                 &mut store,
+                &mut memory,
                 LayoutEvent::SpaceExposed(space, CGSize::new(1000.0, 800.0)),
             );
-            engine.update_space_display(space, Some(format!("uuid-{}", space.get())));
+            engine.update_space_display(
+                &mut memory,
+                space,
+                Some(format!("uuid-{}", space.get())),
+            );
         }
-        engine
+        (engine, memory)
+    }
+
+    fn nothing_remembered() -> DisplayMemory {
+        DisplayMemory::default()
     }
 
     fn request(active: u64, source: RestoreSource) -> RestoreRequest {
@@ -686,25 +711,40 @@ mod tests {
 
     #[test]
     fn a_saved_active_space_is_restored_from_when_the_snapshot_recorded_one() {
-        let mut snapshot = engine_with(&[10, 20]);
+        let (mut snapshot, saved) = engine_with(&[10, 20]);
         snapshot.persistence.set_saved_active_space(Some(SpaceId::new(20)));
-        let got = RestorePlan::source_space(&snapshot, &engine(), request(10, RestoreSource::SavedActiveSpace));
+        let got = RestorePlan::source_space(
+            &snapshot,
+            &saved,
+            &nothing_remembered(),
+            request(10, RestoreSource::SavedActiveSpace),
+        );
         assert_eq!(got.unwrap(), SpaceId::new(20));
     }
 
     // A recorded active space the snapshot no longer holds is stale; the live space is used instead.
     #[test]
     fn a_recorded_space_missing_from_the_snapshot_falls_back_to_the_live_one() {
-        let mut snapshot = engine_with(&[10, 20]);
+        let (mut snapshot, saved) = engine_with(&[10, 20]);
         snapshot.persistence.set_saved_active_space(Some(SpaceId::new(99)));
-        let got = RestorePlan::source_space(&snapshot, &engine(), request(10, RestoreSource::SavedActiveSpace));
+        let got = RestorePlan::source_space(
+            &snapshot,
+            &saved,
+            &nothing_remembered(),
+            request(10, RestoreSource::SavedActiveSpace),
+        );
         assert_eq!(got.unwrap(), SpaceId::new(10));
     }
 
     #[test]
     fn restoring_the_current_space_prefers_the_saved_entry_with_the_same_id() {
-        let snapshot = engine_with(&[10, 20]);
-        let got = RestorePlan::source_space(&snapshot, &engine(), request(20, RestoreSource::CurrentSpace));
+        let (snapshot, saved) = engine_with(&[10, 20]);
+        let got = RestorePlan::source_space(
+            &snapshot,
+            &saved,
+            &nothing_remembered(),
+            request(20, RestoreSource::CurrentSpace),
+        );
         assert_eq!(got.unwrap(), SpaceId::new(20));
     }
 
@@ -714,32 +754,49 @@ mod tests {
     #[test]
     fn a_renumbered_space_is_bridged_by_the_display_it_belongs_to() {
         // Saved under space 10 on uuid-10; the live session calls that same display's space 55.
-        let snapshot = engine_with(&[10]);
+        let (snapshot, saved) = engine_with(&[10]);
         let mut live = engine();
+        let mut memory = DisplayMemory::default();
         let mut store = WindowStore::default();
         let renumbered = SpaceId::new(55);
         let _ = live.handle_event(
             &mut store,
+            &mut memory,
             LayoutEvent::SpaceExposed(renumbered, CGSize::new(1000.0, 800.0)),
         );
-        live.update_space_display(renumbered, Some("uuid-10".to_string()));
+        live.update_space_display(&mut memory, renumbered, Some("uuid-10".to_string()));
 
-        let got = RestorePlan::source_space(&snapshot, &live, request(55, RestoreSource::CurrentSpace));
+        let got = RestorePlan::source_space(
+            &snapshot,
+            &saved,
+            &memory,
+            request(55, RestoreSource::CurrentSpace),
+        );
         assert_eq!(got.unwrap(), SpaceId::new(10), "the display, not the space id, identifies it");
     }
 
     #[test]
     fn a_snapshot_holding_one_space_is_unambiguous_however_it_is_numbered() {
-        let snapshot = engine_with(&[10]);
-        let got = RestorePlan::source_space(&snapshot, &engine(), request(77, RestoreSource::CurrentSpace));
+        let (snapshot, saved) = engine_with(&[10]);
+        let got = RestorePlan::source_space(
+            &snapshot,
+            &saved,
+            &nothing_remembered(),
+            request(77, RestoreSource::CurrentSpace),
+        );
         assert_eq!(got.unwrap(), SpaceId::new(10));
     }
 
     #[test]
     fn a_snapshot_with_no_spaces_cannot_be_restored_from() {
-        let err = RestorePlan::source_space(&engine(), &engine(), request(10, RestoreSource::CurrentSpace))
-            .unwrap_err()
-            .to_string();
+        let err = RestorePlan::source_space(
+            &engine(),
+            &nothing_remembered(),
+            &nothing_remembered(),
+            request(10, RestoreSource::CurrentSpace),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("no macOS spaces"), "{err}");
     }
 
@@ -747,10 +804,15 @@ mod tests {
     // whole display-identity scheme exists to avoid. Refusing and saying why is the right answer.
     #[test]
     fn several_saved_spaces_with_nothing_to_choose_between_them_is_refused() {
-        let snapshot = engine_with(&[10, 20]);
-        let err = RestorePlan::source_space(&snapshot, &engine(), request(77, RestoreSource::CurrentSpace))
-            .unwrap_err()
-            .to_string();
+        let (snapshot, saved) = engine_with(&[10, 20]);
+        let err = RestorePlan::source_space(
+            &snapshot,
+            &saved,
+            &nothing_remembered(),
+            request(77, RestoreSource::CurrentSpace),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("cannot choose a source from 2"), "{err}");
         assert!(err.contains("save the layout again"), "the message has to say what to do: {err}");
     }

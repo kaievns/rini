@@ -47,8 +47,16 @@ because collapsing those two erased remembered widths on the next autosave.
 - [`launch-memory.md`](launch-memory.md) — how an application's arrangement survives
   the application not running
 
-## Known debt
+## What is layout and what is the machine
 
-`LayoutEngine` has thirteen fields and not all of them sound like layout.
-`display_affinity` and `launch_memory` are load-bearing in `layout.ron`, so moving them
-is a schema change; tracked in [`docs/implementation-audit.md`](../../../docs/implementation-audit.md).
+`domain/display_affinity.rs` and `domain/launch_memory.rs` describe the MACHINE, not a
+layout: which monitor owns which space, which monitor a window belongs to, where an
+application's windows go when it comes back. They are one `DisplayMemory`
+(`domain/display_memory.rs`), owned by `app::reactor::RiniState` beside the window store
+and passed into engine methods the same way.
+
+They used to be two `LayoutEngine` fields written into the same `layout.ron` section as the
+layouts, behind the same validation. That made one lifetime out of two: a layout that could
+not be trusted discarded the display memory with it, and then every window was re-homed
+from scratch on the next display change. `LoadedLayout` now reads the memory before the
+layout is validated, so a refusal costs only the strip.

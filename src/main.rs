@@ -5,6 +5,7 @@ use std::process;
 use clap::{Parser, Subcommand};
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
+use rini::workspaces::domain::display_memory::DisplayMemory;
 use rini::app::config::actor::ConfigActor;
 use rini::app::config::watcher::ConfigWatcher;
 use rini::input::platform::input_tap::InputTap;
@@ -185,21 +186,22 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
     // windows lay out fresh on a live display and return to their own display when it
     // is plugged back in.
     let want_restore = rini::app::boot::wants_restore(opt.restore, opt.no_restore);
-    let mut layout = if want_restore {
+    let fresh = || LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout);
+    let (mut layout, display_memory) = if want_restore {
         let path = restore_file();
         match LayoutEngine::load_for_startup_restore(path.clone()) {
-            Ok(layout) => layout,
+            Ok(loaded) => loaded,
             Err(error) => {
                 eprintln!(
                     "Could not restore the saved layout file at {}; starting with a fresh \
                      layout: {error}",
                     path.display()
                 );
-                LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout)
+                (fresh(), DisplayMemory::default())
             }
         }
     } else {
-        LayoutEngine::new(&config.virtual_workspaces, &config.settings.layout)
+        (fresh(), DisplayMemory::default())
     };
     layout.finish_loading(&config.virtual_workspaces, &config.settings.layout);
     let (event_tap_tx, event_tap_rx) = rini::app::channels::channel();
@@ -211,6 +213,7 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
     let reactor = Reactor::spawn(
         config.clone(),
         layout,
+        display_memory,
         reactor::Record::new(opt.record.as_deref()),
         event_tap_tx.clone(),
         broadcast_tx.clone(),

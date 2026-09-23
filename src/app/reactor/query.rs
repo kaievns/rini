@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 
 use objc2_core_foundation::CGRect;
@@ -181,6 +182,7 @@ impl Reactor {
         StateView {
             windows: &self.state.windows,
             engine: &self.layout_manager.layout_engine,
+            memory: &self.state.display_memory,
             spaces: &self.space_state,
             apps: &self.app_manager.apps,
             settings: &self.config.settings,
@@ -283,6 +285,7 @@ impl Reactor {
 pub(crate) struct StateView<'a> {
     pub(crate) windows: &'a WindowStore,
     pub(crate) engine: &'a LayoutEngine,
+    pub(crate) memory: &'a DisplayMemory,
     pub(crate) spaces: &'a ForwardedSpaceState,
     pub(crate) apps: &'a HashMap<pid_t, AppState>,
     pub(crate) settings: &'a Settings,
@@ -550,7 +553,10 @@ impl StateView<'_> {
                     is_parked: !is_floating && visible_width <= 3.0,
                     is_floating,
                     is_focused: self.main_window == Some(window_id),
-                    home_display: self.engine.window_display_home(window_id)
+                    home_display: self
+                        .memory
+                        .affinity
+                        .window_home(window_id)
                         .map(str::to_owned),
                 });
             }
@@ -604,7 +610,7 @@ impl StateView<'_> {
         let orphaned_workspaces = self.engine.virtual_workspace_manager()
             .workspaces_with_windows_outside(&self.windows, &live_spaces);
 
-        let stale_homes = self.engine.display_affinity()
+        let stale_homes = self.memory.affinity
             .homed_windows()
             .into_iter()
             .filter(|window| !self.windows.contains_window(*window))
@@ -622,7 +628,7 @@ impl StateView<'_> {
             let Some(display_uuid) = screen.display_uuid_owned() else {
                 continue;
             };
-            let homed = self.engine.display_affinity()
+            let homed = self.memory.affinity
                 .windows_homed_to(&display_uuid)
                 .into_iter()
                 .filter(|window| self.windows.contains_window(*window))
@@ -780,7 +786,7 @@ impl StateView<'_> {
     }
 
     pub(crate) fn serialize_state(&self) -> Result<String, serde_json::Error> {
-        let layout_engine_ron = self.engine.serialize_to_string();
+        let layout_engine_ron = self.engine.serialize_to_string(self.memory);
         let stats = self.engine.virtual_workspace_manager()
             .get_stats(&self.windows);
         let mut workspace_window_counts = serde_json::Map::new();
@@ -1026,6 +1032,7 @@ mod tests {
     struct Fixture {
         windows: WindowStore,
         engine: LayoutEngine,
+        memory: DisplayMemory,
         spaces: ForwardedSpaceState,
         apps: FxHashMap<pid_t, AppState>,
         config: crate::app::config::Config,
@@ -1035,16 +1042,19 @@ mod tests {
     impl Fixture {
         fn new(space_ids: &[u64], pids: &[pid_t]) -> Self {
             let mut engine = engine();
+            let mut memory = DisplayMemory::default();
             let mut windows = WindowStore::default();
             for &space in space_ids {
                 let _ = engine.handle_event(
                     &mut windows,
+                    &mut memory,
                     LayoutEvent::SpaceExposed(SpaceId::new(space), CGSize::new(1000.0, 800.0)),
                 );
             }
             Fixture {
                 windows,
                 engine,
+                memory,
                 spaces: screens(space_ids),
                 apps: apps(pids),
                 config: crate::app::config::Config::default(),
@@ -1065,6 +1075,7 @@ mod tests {
             StateView {
                 windows: &self.windows,
                 engine: &self.engine,
+                memory: &self.memory,
                 spaces: &self.spaces,
                 apps: &self.apps,
                 settings: &self.config.settings,

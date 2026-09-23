@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use super::matcher::{RestoreCandidate, choose_match};
 use super::*;
 
@@ -205,6 +206,7 @@ impl LayoutEngine {
     pub(super) fn reconcile_restored_window(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         live_space: SpaceId,
         live: WindowId,
         fingerprint: &WindowFingerprint,
@@ -252,7 +254,7 @@ impl LayoutEngine {
             self.restored_location_for_window_preferring(old, preferred_location);
         self.persistence.pending_windows.remove(&old);
         if old != live {
-            self.transfer_persistent_window_identity(old, live);
+            self.transfer_persistent_window_identity(memory, old, live);
             self.persistence.forget_window(old);
         }
         if let Some((space, workspace)) = restored_location {

@@ -78,6 +78,7 @@ impl Reactor {
             path,
             request,
             &mut self.state.windows,
+            &mut self.state.display_memory,
             &self.config.virtual_workspaces,
             &self.config.settings.layout,
         );

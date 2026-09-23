@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use tracing::debug;
 
@@ -24,7 +25,7 @@ impl Reactor {
         config.settings.animate = false;
         let record = Record::new_for_test(tempfile::NamedTempFile::new().unwrap());
         let (broadcast_tx, _) = channels::channel();
-        Reactor::new(config, layout, record, broadcast_tx, None, false)
+        Reactor::new(config, layout, DisplayMemory::default(), record, broadcast_tx, None, false)
     }
 
     pub fn handle_events(&mut self, events: Vec<Event>) {
@@ -134,6 +135,7 @@ impl Reactor {
     pub fn handle_test_workspace_command(&mut self, space: SpaceId, command: &LayoutCommand) {
         let _ = self.layout_manager.layout_engine.handle_virtual_workspace_command(
             &mut self.state.windows,
+            &mut self.state.display_memory,
             space,
             command,
         );

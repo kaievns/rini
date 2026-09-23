@@ -126,7 +126,12 @@ fn sync_window_server_id_mapping(
         {
             layout
                 .layout_engine
-                .rekey_window_identity(&mut state.windows, previous_wid, wid);
+                .rekey_window_identity(
+                    &mut state.windows,
+                    &mut state.display_memory,
+                    previous_wid,
+                    wid,
+                );
             outcome =
                 outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(previous_wid));
             state.windows.remove_window(previous_wid);
@@ -508,7 +513,13 @@ pub(crate) fn emit_layout_events(
         for &wid in windows_for_space {
             assignment_results.insert(
                 (space, wid),
-                layout.layout_engine.assign_window_by_rules(&mut state.windows, wid, space, app_info.as_ref()),
+                layout.layout_engine.assign_window_by_rules(
+                    &mut state.windows,
+                    &mut state.display_memory,
+                    wid,
+                    space,
+                    app_info.as_ref(),
+                ),
             );
         }
     }
@@ -520,7 +531,13 @@ pub(crate) fn emit_layout_events(
         if !windows_for_space.is_empty() {
             for &wid in &windows_for_space {
                 let assign_result = assignment_results.remove(&(space, wid)).unwrap_or_else(|| {
-                    layout.layout_engine.assign_window_by_rules(&mut state.windows, wid, space, app_info.as_ref())
+                    layout.layout_engine.assign_window_by_rules(
+                        &mut state.windows,
+                        &mut state.display_memory,
+                        wid,
+                        space,
+                        app_info.as_ref(),
+                    )
                 });
                 // Discovery re-lists every window below, so only the removal matters here.
                 let before = layout.layout_engine.before_rules(&state.windows, space, wid);

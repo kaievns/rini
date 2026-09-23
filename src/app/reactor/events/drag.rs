@@ -34,6 +34,7 @@ pub fn handle_mouse_up(
         if state.windows.contains_window(dragged) && state.windows.contains_window(target) {
             let response = layout.layout_engine.handle_command(
                 &mut state.windows,
+                &mut state.display_memory,
                 payload.swap_space,
                 &payload.visible_spaces,
                 &payload.visible_space_centers,
@@ -87,7 +88,11 @@ pub fn handle_mouse_up(
                 // Dragging a window to another display is the user choosing where it
                 // lives, so it becomes the window's home. Without this a later replug
                 // would repatriate it back to the display it was dragged off.
-                layout.layout_engine.set_window_display_home(window, space);
+                layout.layout_engine.set_window_display_home(
+                    &mut state.display_memory,
+                    window,
+                    space,
+                );
                 outcome = outcome.with_layout_event(LayoutEvent::WindowAdded(space, window));
             }
             drag.skip_layout_for_window = Some(window);

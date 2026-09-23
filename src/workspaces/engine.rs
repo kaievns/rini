@@ -16,9 +16,10 @@ use crate::layout::WindowLayoutConstraints;
 use crate::workspaces::domain::app_rules::{AfterRules, AppRuleOutcome, AppRuleResize, AppRuleWorkspaceFocus, BeforeRules};
 use crate::windows::domain::state::WindowState;
 use crate::workspaces::broadcast::{BroadcastEvent, protocol_workspace_id};
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::display_affinity::ColumnWidth;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
-use crate::workspaces::{AppRuleEffects, AppRuleResult, DisplayAffinity, FloatingPositionStore, WindowStore};
+use crate::workspaces::{AppRuleEffects, AppRuleResult, FloatingPositionStore, WindowStore};
 use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
 use rini_core::ids::SpaceId;
 
@@ -130,13 +131,6 @@ pub struct LayoutEngine {
     /// announce" unanswerable without standing up a channel. `RefCell` because several of the
     /// places that announce only hold `&self`.
     outbox: std::cell::RefCell<Vec<BroadcastEvent>>,
-    /// Durable display identity: which native space each physical display owns, and which
-    /// display each window belongs to. Replaces the former `space_display_map` /
-    /// `display_last_space` pair, which could disagree with each other.
-    display_affinity: DisplayAffinity,
-    /// Where each application's windows belong, under a key that survives the application. See
-    /// `src/workspaces/docs/launch-memory.md` (in this crate).
-    launch_memory: crate::workspaces::domain::launch_memory::LaunchMemory,
     /// Display UUIDs currently attached. Runtime only: it describes the machine right now, not the
     /// layout, and it is what the launch memory is keyed by.
     connected_displays: Vec<String>,
@@ -733,6 +727,7 @@ impl LayoutEngine {
     fn remove_window_internal(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         wid: WindowId,
         preserve_floating: bool,
     ) {
@@ -747,7 +742,7 @@ impl LayoutEngine {
         if !preserve_floating {
             self.virtual_workspace_manager.remove_window(window_store, wid);
             self.floating_positions.remove_window(wid);
-            self.forget_persisted_window(wid);
+            self.forget_persisted_window(memory, wid);
         }
 
         if self.focused_window == Some(wid) {
@@ -789,6 +784,7 @@ impl LayoutEngine {
     fn add_window_to_layout(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         wid: WindowId,
     ) -> bool {
@@ -805,7 +801,7 @@ impl LayoutEngine {
                 let state = window_store.window(wid)?;
                 let app_id = state.info.bundle_id.clone()?;
                 let title = state.info.title.clone();
-                self.launch_slot_for_new_window(window_store, wid, &app_id, Some(title.as_str()))
+                self.launch_slot_for_new_window(window_store, memory, wid, &app_id, Some(title.as_str()))
             })
             .flatten();
         if let Some(slot) = &remembered {
@@ -815,9 +811,9 @@ impl LayoutEngine {
                 self.virtual_workspace_manager
                     .assign_window_to_workspace(window_store, space, wid, workspace_id);
             }
-            self.display_affinity.set_window_home_if_absent(wid, &slot.display_uuid);
+            memory.affinity.set_window_home_if_absent(wid, &slot.display_uuid);
             if let Some(width) = slot.width {
-                self.display_affinity.set_window_width(&slot.display_uuid, wid, width);
+                memory.affinity.set_window_width(&slot.display_uuid, wid, width);
             }
         }
 
@@ -842,7 +838,7 @@ impl LayoutEngine {
         // Establish a home for a window Rini has not placed before. Absent-only, so the
         // reassignment that follows an unplug cannot overwrite the home a window already
         // has — that record is what brings it back when its display returns.
-        self.note_window_display_home(wid, space);
+        self.note_window_display_home(memory, wid, space);
 
         let should_be_floating = self.floating.is_floating(wid);
 
@@ -856,7 +852,7 @@ impl LayoutEngine {
                 // window last had here. Without this a relaunched window was recorded and looked up
                 // correctly and still opened at the default: the width reached the affinity record and
                 // never reached the layout, which is the thing that decides how wide the column is.
-                self.apply_remembered_column_width(space, assigned_workspace, layout, wid);
+                self.apply_remembered_column_width(memory, space, assigned_workspace, layout, wid);
             }
         } else {
             warn!(
@@ -919,6 +915,7 @@ impl LayoutEngine {
     fn sync_tiled_windows_for_app(
         &mut self,
         window_store: &WindowStore,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         pid: pid_t,
         tiled_by_workspace: &HashMap<crate::workspaces::VirtualWorkspaceId, Vec<WindowId>>,
@@ -995,7 +992,7 @@ impl LayoutEngine {
                 desired.iter().copied().filter(|wid| !current.contains(wid)).collect();
             self.workspace_tree_mut(ws_id).set_windows_for_app(layout, pid, desired);
             for wid in arriving {
-                self.apply_remembered_column_width(space, ws_id, layout, wid);
+                self.apply_remembered_column_width(memory, space, ws_id, layout, wid);
             }
             if let Some(selected_window) = selected_window
                 && self.workspace_tree(ws_id).contains_window(layout, selected_window)
@@ -1008,28 +1005,15 @@ impl LayoutEngine {
         changed_layouts
     }
 
-    pub fn update_space_display(&mut self, space: SpaceId, display_uuid: Option<String>) {
+    pub fn update_space_display(
+        &mut self,
+        memory: &mut DisplayMemory,
+        space: SpaceId,
+        display_uuid: Option<String>,
+    ) {
         if let Some(uuid) = display_uuid {
-            self.display_affinity.set_display_space(&uuid, space);
+            memory.affinity.set_display_space(&uuid, space);
         }
-    }
-
-    /// The last space seen on this display. macOS recreates spaces after sleep or a replug, and
-    /// this is what lets layout state migrate onto the new id.
-    pub fn last_space_for_display_uuid(&self, display_uuid: &str) -> Option<SpaceId> {
-        self.display_affinity.space_for_display(display_uuid)
-    }
-
-    pub fn display_seen_before(&self, display_uuid: &str) -> bool {
-        self.display_affinity.knows_display(display_uuid)
-    }
-
-    fn display_uuid_for_space(&self, space: SpaceId) -> Option<String> {
-        self.display_affinity.display_for_space(space).map(str::to_owned)
-    }
-
-    pub fn display_affinity(&self) -> &DisplayAffinity {
-        &self.display_affinity
     }
 
     /// Record that `window` belongs to the display currently owning `space`.
@@ -1038,10 +1022,15 @@ impl LayoutEngine {
     /// time a window is seen. The forced reassignment that follows a display change must
     /// NOT call it: an unplug evacuates windows onto the remaining display, and recording
     /// that as their home destroys the record needed to bring them back on replug.
-    pub fn set_window_display_home(&mut self, window: WindowId, space: SpaceId) {
-        if let Some(display) = self.display_affinity.display_for_space(space) {
+    pub fn set_window_display_home(
+        &mut self,
+        memory: &mut DisplayMemory,
+        window: WindowId,
+        space: SpaceId,
+    ) {
+        if let Some(display) = memory.affinity.display_for_space(space) {
             let display = display.to_owned();
-            self.display_affinity.set_window_home(window, &display);
+            memory.affinity.set_window_home(window, &display);
         }
     }
 
@@ -1053,7 +1042,12 @@ impl LayoutEngine {
     ///
     /// `connected` is the display UUIDs currently attached, which is the topology the answer is filed
     /// under. Nothing is recorded without it, since an answer with no topology cannot be looked up.
-    pub fn remember_launch_slots(&mut self, window_store: &WindowStore, connected: &[String]) {
+    pub fn remember_launch_slots(
+        &mut self,
+        window_store: &WindowStore,
+        memory: &mut DisplayMemory,
+        connected: &[String],
+    ) {
         use crate::workspaces::domain::launch_memory::{
             ProjectedSlot, ProjectedWidth, topology_key,
         };
@@ -1087,10 +1081,10 @@ impl LayoutEngine {
                         .workspace_info_for_window_any(window_store, window_id)?;
                     // Its recorded home, or the display its space is on. A home is written once, only if
                     // the space's display was known then, so a window may have none.
-                    let display = self
-                        .display_affinity
+                    let display = memory
+                        .affinity
                         .window_home(window_id)
-                        .or_else(|| self.display_affinity.display_for_space(info.space))?
+                        .or_else(|| memory.affinity.display_for_space(info.space))?
                         .to_owned();
                     let index = self
                         .virtual_workspace_manager
@@ -1109,7 +1103,7 @@ impl LayoutEngine {
                         window_id,
                     ) {
                         Some(width) => ProjectedWidth::Known(width),
-                        None => match self.display_affinity.window_width(&display, window_id) {
+                        None => match memory.affinity.window_width(&display, window_id) {
                             Some(width) => ProjectedWidth::Known(Some(width)),
                             None => ProjectedWidth::Unknown,
                         },
@@ -1123,7 +1117,7 @@ impl LayoutEngine {
                     })
                 })
                 .collect();
-            self.launch_memory.remember(&app_id, &topology, slots);
+            memory.launch.remember(&app_id, &topology, slots);
         }
     }
 
@@ -1170,6 +1164,7 @@ impl LayoutEngine {
     fn launch_slot_for_new_window(
         &self,
         window_store: &WindowStore,
+        memory: &DisplayMemory,
         window: WindowId,
         app_id: &str,
         title: Option<&str>,
@@ -1192,7 +1187,7 @@ impl LayoutEngine {
             return None;
         }
         let topology = topology_key(&self.connected_displays);
-        let slots = self.launch_memory.slots(app_id, &topology);
+        let slots = memory.launch.slots(app_id, &topology);
         if slots.is_empty() {
             debug!(
                 idx = window.idx.get(),
@@ -1209,7 +1204,7 @@ impl LayoutEngine {
             .filter(|(other, state)| {
                 *other != window
                     && state.info.bundle_id.as_deref() == Some(app_id)
-                    && self.display_affinity.window_home(*other).is_some()
+                    && memory.affinity.window_home(*other).is_some()
             })
             .map(|(other, _)| (other.idx.get(), other))
             .collect();
@@ -1244,10 +1239,15 @@ impl LayoutEngine {
         slots.get(index).cloned()
     }
 
-    pub fn note_window_display_home(&mut self, window: WindowId, space: SpaceId) {
-        if let Some(display) = self.display_affinity.display_for_space(space) {
+    pub fn note_window_display_home(
+        &mut self,
+        memory: &mut DisplayMemory,
+        window: WindowId,
+        space: SpaceId,
+    ) {
+        if let Some(display) = memory.affinity.display_for_space(space) {
             let display = display.to_owned();
-            self.display_affinity.set_window_home_if_absent(window, &display);
+            memory.affinity.set_window_home_if_absent(window, &display);
         }
     }
 
@@ -1270,11 +1270,12 @@ impl LayoutEngine {
     /// spares the attached case too, which is the one that was moving.
     pub fn sync_display_affinity(
         &mut self,
+        memory: &mut DisplayMemory,
         display_uuid: &str,
         live_windows: &[WindowId],
     ) {
         for window in live_windows {
-            self.display_affinity.set_window_home_if_absent(*window, display_uuid);
+            memory.affinity.set_window_home_if_absent(*window, display_uuid);
         }
 
         // The strip is the arrangement to rebuild on replug, so it must reflect only the
@@ -1283,14 +1284,9 @@ impl LayoutEngine {
         let strip: Vec<WindowId> = live_windows
             .iter()
             .copied()
-            .filter(|window| self.display_affinity.window_home(*window) == Some(display_uuid))
+            .filter(|window| memory.affinity.window_home(*window) == Some(display_uuid))
             .collect();
-        self.display_affinity.set_display_strip(display_uuid, strip);
-    }
-
-    /// Windows homed to `display_uuid`, in the order last seen on it.
-    pub fn windows_homed_to_display(&self, display_uuid: &str) -> Vec<WindowId> {
-        self.display_affinity.windows_homed_to(display_uuid)
+        memory.affinity.set_display_strip(display_uuid, strip);
     }
 
     /// The active workspace's tiled windows on `space`, in layout order.
@@ -1305,10 +1301,6 @@ impl LayoutEngine {
         self.workspace_tree(workspace_id).all_windows_in_layout(layout)
     }
 
-    pub fn window_display_home(&self, window: WindowId) -> Option<&str> {
-        self.display_affinity.window_home(window)
-    }
-
     /// Record the width `window` now occupies on the display owning `space`.
     ///
     /// Called after any command that deliberately sets a width. Width is remembered per
@@ -1316,23 +1308,24 @@ impl LayoutEngine {
     /// `DisplayAffinity::window_width` for why the layout tree is the wrong home for it.
     fn remember_column_width(
         &mut self,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         workspace_id: VirtualWorkspaceId,
         layout: LayoutId,
         window: WindowId,
     ) {
-        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned)
+        let Some(display) = memory.affinity.display_for_space(space).map(str::to_owned)
         else {
             return;
         };
         let tree = self.workspace_tree(workspace_id);
         if tree.is_window_full_width(layout, window) {
-            self.display_affinity.set_window_width(&display, window, ColumnWidth::FullWidth);
+            memory.affinity.set_window_width(&display, window, ColumnWidth::FullWidth);
             return;
         }
         match tree.column_width_offset(layout, window) {
             Some(offset) => {
-                self.display_affinity.set_window_width(
+                memory.affinity.set_window_width(
                     &display,
                     window,
                     ColumnWidth::Offset(offset),
@@ -1340,7 +1333,7 @@ impl LayoutEngine {
             }
             // Toggled back to the default. Forget rather than pin, so the window follows
             // each display's configured ratio again.
-            None => self.display_affinity.clear_window_width(&display, window),
+            None => memory.affinity.clear_window_width(&display, window),
         }
     }
 
@@ -1350,6 +1343,7 @@ impl LayoutEngine {
     /// be looked up rather than taken from a return value.
     fn remember_selected_column_width(
         &mut self,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         workspace_id: VirtualWorkspaceId,
         layout: LayoutId,
@@ -1357,7 +1351,7 @@ impl LayoutEngine {
         let Some(window) = self.workspace_tree(workspace_id).selected_window(layout) else {
             return;
         };
-        self.remember_column_width(space, workspace_id, layout, window);
+        self.remember_column_width(memory, space, workspace_id, layout, window);
     }
 
     /// Re-apply the width `window` last had on the display owning `space`.
@@ -1367,12 +1361,13 @@ impl LayoutEngine {
     /// built-in lost that size the moment it changed workspace.
     fn apply_remembered_column_width(
         &mut self,
+        memory: &DisplayMemory,
         space: SpaceId,
         workspace_id: VirtualWorkspaceId,
         layout: LayoutId,
         window: WindowId,
     ) {
-        let Some(display) = self.display_affinity.display_for_space(space).map(str::to_owned)
+        let Some(display) = memory.affinity.display_for_space(space).map(str::to_owned)
         else {
             debug!(
                 idx = window.idx.get(),
@@ -1381,7 +1376,7 @@ impl LayoutEngine {
             );
             return;
         };
-        let found = self.display_affinity.window_width(&display, window);
+        let found = memory.affinity.window_width(&display, window);
         let on_display = display.clone();
         debug!(idx = window.idx.get(), on_display, width = ?found, "applying a remembered width");
         let Some(width) = found else {
@@ -1407,10 +1402,11 @@ impl LayoutEngine {
     pub fn windows_to_repatriate(
         &self,
         window_store: &WindowStore,
+        memory: &DisplayMemory,
         display_uuid: &str,
         target_space: SpaceId,
     ) -> Vec<WindowId> {
-        self.display_affinity
+        memory.affinity
             .windows_homed_to(display_uuid)
             .into_iter()
             .filter(|window| {
@@ -1423,15 +1419,19 @@ impl LayoutEngine {
 
     /// Drop affinity for windows that no longer exist. Called on every settled topology; the
     /// removal paths alone missed windows closed while their display was unplugged.
-    pub fn forget_affinity_for_dead_windows(&mut self, window_store: &WindowStore) {
-        let stale: Vec<WindowId> = self
-            .display_affinity
+    pub fn forget_affinity_for_dead_windows(
+        &mut self,
+        window_store: &WindowStore,
+        memory: &mut DisplayMemory,
+    ) {
+        let stale: Vec<WindowId> = memory
+            .affinity
             .homed_windows()
             .into_iter()
             .filter(|window| !window_store.contains_window(*window))
             .collect();
         for window in stale {
-            self.display_affinity.forget_window(window);
+            memory.affinity.forget_window(window);
         }
     }
 
@@ -1439,6 +1439,7 @@ impl LayoutEngine {
     pub fn remap_space(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         old_space: SpaceId,
         new_space: SpaceId,
     ) {
@@ -1450,7 +1451,7 @@ impl LayoutEngine {
         self.floating.remap_space(old_space, new_space);
         self.floating_positions.remap_space(old_space, new_space);
         self.virtual_workspace_manager.remap_space(window_store, old_space, new_space);
-        self.display_affinity.remap_space(old_space, new_space);
+        memory.affinity.remap_space(old_space, new_space);
     }
 
     pub fn new(
@@ -1470,8 +1471,6 @@ impl LayoutEngine {
             virtual_workspace_manager,
             layout_settings: layout_settings.clone(),
             outbox: Default::default(),
-            display_affinity: DisplayAffinity::default(),
-            launch_memory: crate::workspaces::domain::launch_memory::LaunchMemory::default(),
             connected_displays: Vec::new(),
             persistence: PersistenceState::default(),
             startup_restore_pending: false,
@@ -1571,10 +1570,11 @@ impl LayoutEngine {
     pub fn handle_event(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         event: LayoutEvent,
     ) -> LayoutEventOutcome {
         let mut app_rules = AppRuleOutcome::default();
-        let response = self.handle_event_inner(window_store, event, &mut app_rules);
+        let response = self.handle_event_inner(window_store, memory, event, &mut app_rules);
         LayoutEventOutcome { response, app_rules }
     }
 
@@ -1586,6 +1586,7 @@ impl LayoutEngine {
     fn on_windows_on_screen_updated(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         pid: pid_t,
         windows_with_titles: Vec<OnScreenEntry>,
@@ -1621,6 +1622,7 @@ impl LayoutEngine {
                 {
                     self.observe_window_for_persistence(
                         window_store,
+                        memory,
                         space,
                         wid,
                         title_opt.as_deref(),
@@ -1659,6 +1661,7 @@ impl LayoutEngine {
                     let was_floating = self.floating.is_floating(wid);
                     let outcome = match self.assign_window_with_app_info(
                         window_store,
+                        memory,
                         wid,
                         space,
                         app_bundle_id,
@@ -1710,7 +1713,7 @@ impl LayoutEngine {
                 // `windows_by_workspace` already excludes floating windows.
                 let tiled_by_workspace = windows_by_workspace;
                 let changed_layouts =
-                    self.sync_tiled_windows_for_app(window_store, space, pid, &tiled_by_workspace);
+                    self.sync_tiled_windows_for_app(window_store, memory, space, pid, &tiled_by_workspace);
                 if !changed_layouts.is_empty() {
                     self.broadcast_windows_changed(window_store, space);
                 }
@@ -1755,6 +1758,7 @@ impl LayoutEngine {
     fn handle_event_inner(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         event: LayoutEvent,
         app_rule_outcome: &mut AppRuleOutcome,
     ) -> EventResponse {
@@ -1773,6 +1777,7 @@ impl LayoutEngine {
             LayoutEvent::WindowsOnScreenUpdated(space, pid, windows_with_titles, app_info) => {
                 return self.on_windows_on_screen_updated(
                     window_store,
+                    memory,
                     space,
                     pid,
                     windows_with_titles,
@@ -1801,22 +1806,22 @@ impl LayoutEngine {
                 }
                 self.floating.remove_all_for_pid(pid);
                 self.window_layout_constraints.retain(|wid, _| wid.pid != pid);
-                self.forget_persisted_app(pid);
+                self.forget_persisted_app(memory, pid);
 
                 self.virtual_workspace_manager.remove_windows_for_app(window_store, pid);
                 self.floating_positions.remove_app(pid);
             }
             LayoutEvent::WindowAdded(space, wid) => {
                 self.debug_tree(space);
-                if self.add_window_to_layout(window_store, space, wid) {
+                if self.add_window_to_layout(window_store, memory, space, wid) {
                     self.broadcast_windows_changed(window_store, space);
                 }
             }
             LayoutEvent::WindowRemoved(wid) => {
-                self.remove_window_internal(window_store, wid, false);
+                self.remove_window_internal(window_store, memory, wid, false);
             }
             LayoutEvent::WindowRemovedPreserveFloating(wid) => {
-                self.remove_window_internal(window_store, wid, true);
+                self.remove_window_internal(window_store, memory, wid, true);
             }
             LayoutEvent::WindowFocused(space, wid) => {
                 if self.floating.is_floating(wid) {
@@ -2031,6 +2036,7 @@ impl LayoutEngine {
     pub fn handle_command(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         space: Option<SpaceId>,
         visible_spaces: &[SpaceId],
         visible_space_centers: &HashMap<SpaceId, CGPoint>,
@@ -2186,7 +2192,7 @@ impl LayoutEngine {
                     .workspace_tree_mut(workspace_id)
                     .toggle_fullscreen_within_gaps_of_selection(layout);
                 for window in &raise_windows {
-                    self.remember_column_width(space, workspace_id, layout, *window);
+                    self.remember_column_width(memory, space, workspace_id, layout, *window);
                 }
                 if raise_windows.is_empty() {
                     EventResponse::default()
@@ -2230,7 +2236,7 @@ impl LayoutEngine {
                     resize_amount,
                     orientation,
                 );
-                self.remember_selected_column_width(space, workspace_id, layout);
+                self.remember_selected_column_width(memory, space, workspace_id, layout);
                 EventResponse::default()
             }
             LayoutCommand::ResizeWindowShrink(orientation) => {
@@ -2245,7 +2251,7 @@ impl LayoutEngine {
                     resize_amount,
                     orientation,
                 );
-                self.remember_selected_column_width(space, workspace_id, layout);
+                self.remember_selected_column_width(memory, space, workspace_id, layout);
                 EventResponse::default()
             }
             LayoutCommand::ResizeWindowBy { amount } => {
@@ -2259,7 +2265,7 @@ impl LayoutEngine {
                     amount,
                     ResizeOrientation::Horizontal,
                 );
-                self.remember_selected_column_width(space, workspace_id, layout);
+                self.remember_selected_column_width(memory, space, workspace_id, layout);
                 EventResponse::default()
             }
             LayoutCommand::ScrollStrip { delta } => {
@@ -2283,7 +2289,7 @@ impl LayoutEngine {
                 let raised =
                     self.workspace_tree_mut(workspace_id).cycle_preset_column_width(layout);
                 for window in &raised {
-                    self.remember_column_width(space, workspace_id, layout, *window);
+                    self.remember_column_width(memory, space, workspace_id, layout, *window);
                 }
                 Self::response_for_raised_windows(raised)
             }
@@ -2595,6 +2601,7 @@ impl LayoutEngine {
     fn move_window_to_workspace(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         workspace: &WorkspaceSelector,
         follow: bool,
@@ -2661,7 +2668,7 @@ impl LayoutEngine {
                     && let Some(layout) =
                         self.workspace_layouts.active(op_space, current_workspace_id)
                 {
-                    self.remember_column_width(
+                    self.remember_column_width(memory, 
                         op_space,
                         current_workspace_id,
                         layout,
@@ -2701,7 +2708,7 @@ impl LayoutEngine {
                         .add_window_after_selection(target_layout, focused_window);
                     // A fresh column starts at the display's default ratio, so re-apply
                     // whatever this window last had on THIS display.
-                    self.apply_remembered_column_width(
+                    self.apply_remembered_column_width(memory, 
                         op_space,
                         target_workspace_id,
                         target_layout,
@@ -2771,6 +2778,7 @@ impl LayoutEngine {
     pub fn handle_virtual_workspace_command(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         command: &LayoutCommand,
     ) -> EventResponse {
@@ -2815,7 +2823,7 @@ impl LayoutEngine {
                 workspace,
                 follow,
                 window_id: maybe_id,
-            } => self.move_window_to_workspace(window_store, space, workspace, *follow, maybe_id),
+            } => self.move_window_to_workspace(window_store, memory, space, workspace, *follow, maybe_id),
             LayoutCommand::CreateWorkspace => {
                 match self.virtual_workspace_manager.create_workspace(space, None) {
                     Ok(_workspace_id) => {
@@ -2868,6 +2876,7 @@ impl LayoutEngine {
     pub fn assign_window_by_rules(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         window_id: WindowId,
         space: SpaceId,
         app_info: Option<&AppInfo>,
@@ -2881,6 +2890,7 @@ impl LayoutEngine {
         let is_modal = window.info.is_modal;
         self.assign_window_with_app_info(
             window_store,
+            memory,
             window_id,
             space,
             app_info.and_then(|a| a.bundle_id.as_deref()),
@@ -2931,6 +2941,7 @@ impl LayoutEngine {
     pub fn assign_window_with_app_info(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         window_id: WindowId,
         space: SpaceId,
         app_bundle_id: Option<&str>,
@@ -2959,7 +2970,7 @@ impl LayoutEngine {
                 .is_none()
             && let Some(app_id) = app_bundle_id
             && let Some(slot) =
-                self.launch_slot_for_new_window(window_store, window_id, app_id, window_title)
+                self.launch_slot_for_new_window(window_store, memory, window_id, app_id, window_title)
             && let Some(workspace_id) = self
                 .virtual_workspace_manager
                 .list_workspaces(space)
@@ -2972,9 +2983,9 @@ impl LayoutEngine {
                 window_id,
                 workspace_id,
             ) {
-                self.display_affinity.set_window_home_if_absent(window_id, &slot.display_uuid);
+                memory.affinity.set_window_home_if_absent(window_id, &slot.display_uuid);
                 if let Some(width) = slot.width {
-                    self.display_affinity.set_window_width(&slot.display_uuid, window_id, width);
+                    memory.affinity.set_window_width(&slot.display_uuid, window_id, width);
                 }
                 debug!(
                     idx = window_id.idx.get(),
@@ -3034,6 +3045,7 @@ impl LayoutEngine {
     pub fn move_window_to_space(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         source_space: SpaceId,
         target_space: SpaceId,
         target_screen_size: CGSize,
@@ -3132,7 +3144,7 @@ impl LayoutEngine {
             // on a 1728pt laptop panel, so carrying the source width across would be wrong;
             // the whole point of keying widths by display is that each has its own answer.
             // A window that has never been here keeps the display's configured default.
-            self.apply_remembered_column_width(
+            self.apply_remembered_column_width(memory, 
                 target_space,
                 target_workspace_id,
                 target_layout,
@@ -3238,14 +3250,20 @@ impl LayoutEngine {
     pub fn rekey_window_identity(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         from: WindowId,
         to: WindowId,
     ) {
         window_store.transfer_persistent_window_metadata(from, to);
-        self.transfer_persistent_window_identity(from, to);
+        self.transfer_persistent_window_identity(memory, from, to);
     }
 
-    pub fn transfer_persistent_window_identity(&mut self, from: WindowId, to: WindowId) {
+    pub fn transfer_persistent_window_identity(
+        &mut self,
+        memory: &mut DisplayMemory,
+        from: WindowId,
+        to: WindowId,
+    ) {
         if from == to {
             return;
         }
@@ -3260,7 +3278,7 @@ impl LayoutEngine {
         self.virtual_workspace_manager.transfer_window_identity(from, to);
         self.floating_positions.transfer_window_identity(from, to);
         self.floating.transfer_window_identity(from, to);
-        self.transfer_persisted_window_identity(from, to);
+        self.transfer_persisted_window_identity(memory, from, to);
         if let Some(constraints) = self.window_layout_constraints.remove(&from) {
             self.window_layout_constraints.insert(to, constraints);
         }
@@ -3291,12 +3309,11 @@ impl LayoutEngine {
         if let Some((active_workspace_id, active_workspace_name)) =
             self.active_workspace_id_and_name(space_id)
         {
-            let display_uuid = self.display_uuid_for_space(space_id);
             self.announce(BroadcastEvent::WorkspaceChanged {
                 workspace_id: protocol_workspace_id(active_workspace_id),
                 workspace_name: active_workspace_name.clone(),
                 space_id: space_id.get(),
-                display_uuid,
+                display_uuid: None,
             });
         }
     }
@@ -3318,13 +3335,12 @@ impl LayoutEngine {
                 .iter()
                 .map(|window_id| window_id.to_debug_string())
                 .collect();
-            let display_uuid = self.display_uuid_for_space(space_id);
             self.announce(BroadcastEvent::WindowsChanged {
                 workspace_id: protocol_workspace_id(workspace_id),
                 workspace_name,
                 windows,
                 space_id: space_id.get(),
-                display_uuid,
+                display_uuid: None,
             });
         }
     }
@@ -3422,6 +3438,7 @@ mod tests {
     #[test]
     fn next_space_for_direction_respects_physical_layout() {
         let engine = test_engine();
+        let _memory = DisplayMemory::default();
         let (visible_spaces, centers, left, middle, right) = build_three_spaces();
 
         assert_eq!(
@@ -3442,13 +3459,13 @@ mod tests {
     fn handle_command_does_not_panic_before_layout_initialization() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(42);
         let visible_spaces = vec![space];
         let visible_space_centers = HashMap::default();
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            engine.handle_command(
-                &mut window_store,
+            engine.handle_command(&mut window_store, &mut memory,
                 Some(space),
                 &visible_spaces,
                 &visible_space_centers,
@@ -3469,16 +3486,15 @@ mod tests {
         let settings = VirtualWorkspaceSettings::default();
         assert!(settings.float_modal_windows);
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
+        let mut memory = DisplayMemory::default();
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(91);
         let (plain, modal) = (WindowId::new(7, 1), WindowId::new(7, 2));
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
         );
         let info = |wid, is_modal| (wid, None, None, None, is_modal, true, CGSize::new(300.0, 200.0), None, None);
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 7,
@@ -3492,13 +3508,12 @@ mod tests {
         let mut off = VirtualWorkspaceSettings::default();
         off.float_modal_windows = false;
         let mut engine = LayoutEngine::new(&off, &LayoutSettings::default());
+        let mut memory = DisplayMemory::default();
         let mut window_store = WindowStore::default();
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space, 7, vec![info(modal, true)], None),
         );
         assert!(!engine.is_window_floating(modal), "with the setting off a modal is tiled");
@@ -3523,14 +3538,14 @@ mod tests {
             modal: None,
         }];
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
+        let mut memory = DisplayMemory::default();
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(90);
         let window = WindowId::new(7, 1);
         let screen = CGSize::new(1200.0, 800.0);
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen));
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen));
 
-        let layout_outcome = engine.handle_event(
-            &mut window_store,
+        let layout_outcome = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 window.pid,
@@ -3613,14 +3628,14 @@ mod tests {
         let mut layout_settings = LayoutSettings::default();
         layout_settings.scrolling.min_column_width_ratio = 0.1;
         let mut engine = LayoutEngine::new(&settings, &layout_settings);
+        let mut memory = DisplayMemory::default();
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(91);
         let window = WindowId::new(8, 1);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1200.0, 800.0));
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let layout_outcome = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let layout_outcome = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 window.pid,
@@ -3661,8 +3676,7 @@ mod tests {
         assert_eq!(frame.size.width, 234.0);
 
         let user_frame = CGRect::new(new_frame.origin, CGSize::new(400.0, new_frame.size.height));
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowResized {
                 wid: window,
                 old_frame: new_frame,
@@ -3683,6 +3697,7 @@ mod tests {
     fn tiled_membership_sync_does_not_rebalance_other_spaces() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space_a = SpaceId::new(101);
         let space_b = SpaceId::new(202);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0));
@@ -3693,12 +3708,10 @@ mod tests {
         let window_c = WindowId::new(2, 1);
         let window_info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(space_a, screen.size),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space_a,
                 1,
@@ -3706,8 +3719,7 @@ mod tests {
                 None,
             ),
         );
-        let _ = engine.handle_command(
-            &mut window_store,
+        let _ = engine.handle_command(&mut window_store, &mut memory,
             Some(space_a),
             &visible_spaces,
             &visible_space_centers,
@@ -3720,12 +3732,10 @@ mod tests {
             &LayoutSettings::default().gaps,
         );
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(space_b, screen.size),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space_b, 2, vec![window_info(window_c)], None),
         );
 
@@ -3744,6 +3754,7 @@ mod tests {
     fn window_removed_preserve_floating_keeps_workspace_assignment() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(303);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0));
         let pid: pid_t = 42;
@@ -3751,9 +3762,8 @@ mod tests {
         let window_info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![window_info(wid)], None),
         );
 
@@ -3762,8 +3772,7 @@ mod tests {
             .workspace_for_window(&window_store, space, wid)
             .expect("window should have a workspace assignment");
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowRemovedPreserveFloating(wid),
         );
 
@@ -3775,7 +3784,7 @@ mod tests {
             "temporary layout removal must not clear workspace ownership"
         );
 
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, wid));
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, wid));
 
         assert_eq!(
             engine
@@ -3790,6 +3799,7 @@ mod tests {
     fn moving_floating_window_to_space_clears_source_floating_state() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let source_space = SpaceId::new(304);
         let target_space = SpaceId::new(305);
         let source_screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0));
@@ -3799,16 +3809,13 @@ mod tests {
         let source_position = CGRect::new(CGPoint::new(120.0, 140.0), CGSize::new(260.0, 220.0));
         let window_info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(source_space, source_screen.size),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(target_space, target_screen.size),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(source_space, pid, vec![window_info(wid)], None),
         );
 
@@ -3826,8 +3833,7 @@ mod tests {
         engine.floating.add_active(source_space, pid, wid);
         engine.store_floating_position(source_space, source_workspace, wid, source_position);
 
-        let response = engine.move_window_to_space(
-            &mut window_store,
+        let response = engine.move_window_to_space(&mut window_store, &mut memory,
             source_space,
             target_space,
             target_screen.size,
@@ -3869,6 +3875,7 @@ mod tests {
     fn horizontal_focus_escapes_the_floating_layer_into_the_strip() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(410);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1200.0, 800.0));
         let pid: pid_t = 71;
@@ -3878,9 +3885,8 @@ mod tests {
         let info = |wid| (wid, None, None, None, false, true, CGSize::new(0.0, 0.0), None, None);
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
@@ -3905,8 +3911,7 @@ mod tests {
         engine.focused_window = Some(float_a);
         let mut reached_tiled = false;
         for _ in 0..6 {
-            let response = engine.handle_command(
-                &mut window_store,
+            let response = engine.handle_command(&mut window_store, &mut memory,
                 Some(space),
                 &visible_spaces,
                 &centers,
@@ -3935,6 +3940,7 @@ mod tests {
         for isolate in [false, true] {
             let mut window_store = WindowStore::default();
             let mut engine = test_engine();
+            let mut memory = DisplayMemory::default();
             let mut settings = LayoutSettings::default();
             settings.scrolling.isolate_displays = isolate;
             engine.set_layout_settings(&settings);
@@ -3949,9 +3955,8 @@ mod tests {
 
             for (space, wid) in [(left, on_left), (right, on_right)] {
                 let _ =
-                    engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
-                let _ = engine.handle_event(
-                    &mut window_store,
+                    engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
+                let _ = engine.handle_event(&mut window_store, &mut memory,
                     LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(wid)], None),
                 );
             }
@@ -3965,8 +3970,7 @@ mod tests {
             // no further column on this display, so the adjacent display is the
             // only place focus could go.
             engine.focused_window = Some(on_left);
-            let response = engine.handle_command(
-                &mut window_store,
+            let response = engine.handle_command(&mut window_store, &mut memory,
                 Some(left),
                 &visible_spaces,
                 &centers,
@@ -3994,8 +3998,7 @@ mod tests {
             }
             // Up at the top of a one-window column is not a strip edge.
             engine.focused_window = Some(on_left);
-            let up = engine.handle_command(
-                &mut window_store,
+            let up = engine.handle_command(&mut window_store, &mut memory,
                 Some(left),
                 &visible_spaces,
                 &centers,
@@ -4009,6 +4012,7 @@ mod tests {
     fn move_focus_to_uninitialized_adjacent_space_does_not_panic() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let current_space = SpaceId::new(50);
         let adjacent_space = SpaceId::new(51);
         let screen_size = CGSize::new(1920.0, 1080.0);
@@ -4017,14 +4021,12 @@ mod tests {
         visible_space_centers.insert(current_space, CGPoint::new(0.0, 0.0));
         visible_space_centers.insert(adjacent_space, CGPoint::new(1920.0, 0.0));
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(current_space, screen_size),
         );
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            engine.handle_command(
-                &mut window_store,
+            engine.handle_command(&mut window_store, &mut memory,
                 Some(current_space),
                 &visible_spaces,
                 &visible_space_centers,
@@ -4042,6 +4044,7 @@ mod tests {
     fn workspace_switch_response_reports_whether_workspace_changed() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(81);
 
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
@@ -4051,22 +4054,19 @@ mod tests {
                 .set_active_workspace(space, workspaces[0].0)
         );
 
-        let already_active = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let already_active = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::SwitchToWorkspace(0),
         );
         assert!(!already_active.changed);
 
-        let missing = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let missing = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::SwitchToWorkspace(usize::MAX),
         );
         assert!(!missing.changed);
 
-        let switched = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let switched = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::SwitchToWorkspace(1),
         );
@@ -4080,6 +4080,7 @@ mod tests {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.prevent_wrapping = true;
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
+        let mut memory = DisplayMemory::default();
 
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
         assert!(
@@ -4087,8 +4088,7 @@ mod tests {
                 .virtual_workspace_manager_mut()
                 .set_active_workspace(space, workspaces.last().unwrap().0)
         );
-        let prevented_wrap = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let prevented_wrap = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::NextWorkspace(None),
         );
@@ -4100,15 +4100,13 @@ mod tests {
                 .virtual_workspace_manager_mut()
                 .set_active_workspace(space, workspaces[0].0)
         );
-        let no_eligible_workspace = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let no_eligible_workspace = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::NextWorkspace(Some(true)),
         );
         assert!(!no_eligible_workspace.changed);
         assert_eq!(no_eligible_workspace.edge_hit, Some(Direction::Down), "nothing further to skip to");
-        let top = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let top = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::PrevWorkspace(None),
         );
@@ -4120,14 +4118,14 @@ mod tests {
             &VirtualWorkspaceSettings::default(),
             &LayoutSettings::default(),
     );
+        let mut memory = DisplayMemory::default();
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
         assert!(
             engine
                 .virtual_workspace_manager_mut()
                 .set_active_workspace(space, workspaces.last().unwrap().0)
         );
-        let wrapped = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let wrapped = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::NextWorkspace(None),
         );
@@ -4139,6 +4137,7 @@ mod tests {
     fn partial_windows_on_screen_update_preserves_assigned_tiled_windows() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(94);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
         let pid: pid_t = 5153;
@@ -4159,14 +4158,12 @@ mod tests {
         };
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(w1), info(w2)], None),
         );
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowFocused(space, w1));
-        let _ = engine.handle_command(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowFocused(space, w1));
+        let _ = engine.handle_command(&mut window_store, &mut memory,
             Some(space),
             &[space],
             &HashMap::default(),
@@ -4181,8 +4178,7 @@ mod tests {
         );
 
         // Simulate a discovery snapshot that temporarily omitted w2.
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(w1)], None),
         );
 
@@ -4201,6 +4197,7 @@ mod tests {
     fn removing_a_window_does_not_rebalance_other_workspaces() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space_a = SpaceId::new(95);
         let space_b = SpaceId::new(96);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
@@ -4221,21 +4218,17 @@ mod tests {
         let a2 = WindowId::new(5154, 2);
         let b1 = WindowId::new(5155, 1);
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(space_a, screen.size),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::SpaceExposed(space_b, screen.size),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space_a, a1.pid, vec![info(a1), info(a2)], None),
         );
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowFocused(space_a, a1));
-        let _ = engine.handle_command(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowFocused(space_a, a1));
+        let _ = engine.handle_command(&mut window_store, &mut memory,
             Some(space_a),
             &[space_a, space_b],
             &HashMap::default(),
@@ -4249,12 +4242,11 @@ mod tests {
             &gaps,
         );
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space_b, b1.pid, vec![info(b1)], None),
         );
         let _ = window_store.remove_window_assignment(b1);
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowRemoved(b1));
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowRemoved(b1));
 
         assert_eq!(
             engine.calculate_layout(
@@ -4271,6 +4263,7 @@ mod tests {
     fn removing_unknown_window_does_not_rebalance_layout() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(92);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
         let pid: pid_t = 5151;
@@ -4312,19 +4305,16 @@ mod tests {
         ];
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space, pid, windows, None),
         );
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowFocused(space, WindowId::new(pid, 1)),
         );
         let gaps = engine.layout_settings.gaps.clone();
 
-        let _ = engine.handle_command(
-            &mut window_store,
+        let _ = engine.handle_command(&mut window_store, &mut memory,
             Some(space),
             &[space],
             &HashMap::default(),
@@ -4337,8 +4327,7 @@ mod tests {
             &gaps,
         );
 
-        let _ = engine.handle_event(
-            &mut window_store,
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowRemoved(WindowId::new(9999, 1)),
         );
 
@@ -4356,15 +4345,15 @@ mod tests {
     fn duplicate_window_added_is_treated_as_noop_for_active_layout() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(93);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
         let pid: pid_t = 5152;
         let wid = WindowId::new(pid, 1);
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
@@ -4389,7 +4378,7 @@ mod tests {
             &gaps,
         );
 
-        assert!(!engine.add_window_to_layout(&mut window_store, space, wid));
+        assert!(!engine.add_window_to_layout(&mut window_store, &mut memory, space, wid));
         assert_eq!(
             engine.calculate_layout(
                 space,
@@ -4404,6 +4393,7 @@ mod tests {
     fn workspace_switch_only_commits_focus_after_authoritative_commit() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(94);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
         let pid: pid_t = 5153;
@@ -4411,9 +4401,8 @@ mod tests {
         let wid2 = WindowId::new(pid, 2);
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
@@ -4444,18 +4433,16 @@ mod tests {
                 None,
             ),
         );
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowFocused(space, wid1));
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowFocused(space, wid1));
 
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let _ = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::CreateWorkspace,
         );
         let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
         let workspace_two = workspaces[1].0;
 
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let _ = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::MoveWindowToWorkspace {
                 workspace: WorkspaceSelector::Index(1),
@@ -4464,8 +4451,7 @@ mod tests {
             },
         );
 
-        let response = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let response = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::SwitchToWorkspace(1),
         );
@@ -4487,15 +4473,15 @@ mod tests {
     fn move_window_to_workspace_updates_authoritative_workspace_membership() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(95);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
         let pid: pid_t = 6001;
         let wid = WindowId::new(pid, 1);
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
@@ -4514,8 +4500,7 @@ mod tests {
             ),
         );
 
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let _ = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::CreateWorkspace,
         );
@@ -4523,8 +4508,7 @@ mod tests {
         let ws1 = workspaces[0].0;
         let ws2 = workspaces[1].0;
 
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let _ = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::MoveWindowToWorkspace {
                 workspace: WorkspaceSelector::Index(1),
@@ -4550,8 +4534,7 @@ mod tests {
         );
 
         for (target, expected) in [("next", workspaces[2].0), ("prev", ws2)] {
-            let _ = engine.handle_virtual_workspace_command(
-                &mut window_store,
+            let _ = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
                 space,
                 &LayoutCommand::MoveWindowToWorkspace {
                     workspace: WorkspaceSelector::Name(target.into()),
@@ -4570,15 +4553,15 @@ mod tests {
     fn move_window_to_workspace_can_follow_the_window() {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
         let space = SpaceId::new(96);
         let screen = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 1000.0));
         let pid: pid_t = 6002;
         let wid = WindowId::new(pid, 1);
 
         let _ =
-            engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, screen.size));
-        let _ = engine.handle_event(
-            &mut window_store,
+            engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, screen.size));
+        let _ = engine.handle_event(&mut window_store, &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(
                 space,
                 pid,
@@ -4596,15 +4579,13 @@ mod tests {
                 None,
             ),
         );
-        let _ = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let _ = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::CreateWorkspace,
         );
         let target_workspace = engine.virtual_workspace_manager_mut().list_workspaces(space)[1].0;
 
-        let response = engine.handle_virtual_workspace_command(
-            &mut window_store,
+        let response = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
             space,
             &LayoutCommand::MoveWindowToWorkspace {
                 workspace: WorkspaceSelector::Name("next".into()),

@@ -91,6 +91,7 @@ pub fn handle_command_layout(
             if let Some(space) = workspace_space {
                 layout.layout_engine.handle_virtual_workspace_command(
                     &mut state.windows,
+                    &mut state.display_memory,
                     space,
                     &cmd,
                 )
@@ -102,6 +103,7 @@ pub fn handle_command_layout(
             if let Some(space) = command_space {
                 layout.layout_engine.handle_virtual_workspace_command(
                     &mut state.windows,
+                    &mut state.display_memory,
                     space,
                     &cmd,
                 )
@@ -116,6 +118,7 @@ pub fn handle_command_layout(
             }
             layout.layout_engine.handle_command(
                 &mut state.windows,
+                &mut state.display_memory,
                 command_space,
                 &visible_spaces,
                 &visible_space_centers,
@@ -244,7 +247,12 @@ fn save_layout(
     path: std::path::PathBuf,
     active_space: Option<SpaceId>,
 ) -> std::io::Result<()> {
-    layout.layout_engine.save_current_layout(path, &state.windows, active_space)
+    layout.layout_engine.save_current_layout(
+        path,
+        &state.windows,
+        &state.display_memory,
+        active_space,
+    )
 }
 
 pub fn handle_command_reactor_save_layout(
@@ -391,6 +399,7 @@ pub fn handle_command_reactor_move_window_to_display(
 
     let response = layout.layout_engine.move_window_to_space(
         &mut state.windows,
+        &mut state.display_memory,
         payload.source_space,
         payload.target_space,
         payload.target_screen.size,
@@ -401,7 +410,7 @@ pub fn handle_command_reactor_move_window_to_display(
     // will evacuate the window elsewhere, and this is the record that brings it back.
     layout
         .layout_engine
-        .set_window_display_home(payload.window, payload.target_space);
+        .set_window_display_home(&mut state.display_memory, payload.window, payload.target_space);
 
     if state
         .windows

@@ -3,6 +3,7 @@
 pub mod app_rules;
 pub mod assignment;
 pub mod display_affinity;
+pub mod display_memory;
 pub mod floating;
 pub mod floating_position_store;
 pub mod hidden_window_placement;

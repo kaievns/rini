@@ -427,6 +427,7 @@ fn autosave_preserves_floating_restore_frame() {
     let _ = reactor.layout_manager.layout_engine.autosave_current_layout(
         path.clone(),
         &reactor.state.windows,
+        &reactor.state.display_memory,
         active,
     );
     reactor.handle_test_layout_command(LayoutCommand::ToggleFullscreenWithinGaps);

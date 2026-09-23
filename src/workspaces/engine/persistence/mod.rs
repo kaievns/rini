@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -218,6 +219,7 @@ impl LayoutEngine {
     pub(super) fn observe_window_for_persistence(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         space: SpaceId,
         window: WindowId,
         title: Option<&str>,
@@ -234,26 +236,31 @@ impl LayoutEngine {
             height: size.height,
             app_id: app_id.filter(|app_id| !app_id.trim().is_empty()).map(str::to_owned),
         };
-        self.reconcile_restored_window(window_store, space, window, &fingerprint);
+        self.reconcile_restored_window(window_store, memory, space, window, &fingerprint);
         self.persistence.record(window, fingerprint);
         // First sighting establishes a home; a window seen again keeps the display it was
         // last deliberately placed on, even when macOS has currently parked it elsewhere.
-        self.note_window_display_home(window, space);
+        self.note_window_display_home(memory, window, space);
     }
 
-    pub(super) fn forget_persisted_window(&mut self, window: WindowId) {
+    pub(super) fn forget_persisted_window(&mut self, memory: &mut DisplayMemory, window: WindowId) {
         self.persistence.forget_window(window);
-        self.display_affinity.forget_window(window);
+        memory.affinity.forget_window(window);
     }
 
-    pub(super) fn forget_persisted_app(&mut self, pid: pid_t) {
+    pub(super) fn forget_persisted_app(&mut self, memory: &mut DisplayMemory, pid: pid_t) {
         self.persistence.forget_app(pid);
-        self.display_affinity.forget_app(pid);
+        memory.affinity.forget_app(pid);
     }
 
-    pub(super) fn transfer_persisted_window_identity(&mut self, from: WindowId, to: WindowId) {
+    pub(super) fn transfer_persisted_window_identity(
+        &mut self,
+        memory: &mut DisplayMemory,
+        from: WindowId,
+        to: WindowId,
+    ) {
         self.persistence.rekey(from, to);
-        self.display_affinity.rekey_window(from, to);
+        memory.affinity.rekey_window(from, to);
     }
 }
 

@@ -280,7 +280,11 @@ impl LayoutManager {
             reactor
                 .layout_manager
                 .layout_engine
-                .update_space_display(space, display_uuid_opt.clone());
+                .update_space_display(
+                    &mut reactor.state.display_memory,
+                    space,
+                    display_uuid_opt.clone(),
+                );
             let mut layout =
                 reactor.layout_manager.layout_engine.calculate_layout_with_virtual_workspaces(
                     &reactor.state.windows,

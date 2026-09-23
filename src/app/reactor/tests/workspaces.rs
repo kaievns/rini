@@ -930,6 +930,7 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
 
     reactor.layout_manager.layout_engine.remap_space(
         &mut reactor.state.windows,
+        &mut reactor.state.display_memory,
         old_space,
         new_space,
     );

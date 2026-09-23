@@ -1,8 +1,9 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use super::*;
 
 /// 4 dropped the `LayoutSystemKind` wrapper. Version 3 files tag every layout `scrolling((...))`
 /// for an enum that no longer exists, so they are refused rather than half-read.
-pub(super) const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub(super) const CURRENT_SCHEMA_VERSION: u32 = 5;
 
 fn legacy_schema_version() -> u32 {
     0
@@ -20,6 +21,12 @@ pub(super) struct PersistedLayout {
     pub(super) floating: FloatingManager,
     pub(super) floating_positions: FloatingPositionStore,
     pub(super) virtual_workspace_manager: WorkspaceStore,
+    /// What rini remembers about the machine, in its own section since schema 5. Validated on its
+    /// own, so a refused layout does not take it down: see `display_memory.rs`.
+    #[serde(default)]
+    pub(super) display_memory: DisplayMemory,
+    /// Schema 4 and earlier wrote these two at the top level. Folded into `display_memory` on load;
+    /// never written.
     #[serde(default)]
     pub(super) display_affinity: DisplayAffinity,
     #[serde(default)]
@@ -42,8 +49,7 @@ struct PersistedLayoutRef<'a> {
     floating: &'a FloatingManager,
     floating_positions: &'a FloatingPositionStore,
     virtual_workspace_manager: &'a WorkspaceStore,
-    display_affinity: &'a DisplayAffinity,
-    launch_memory: &'a crate::workspaces::domain::launch_memory::LaunchMemory,
+    display_memory: &'a DisplayMemory,
     #[serde(flatten)]
     persistence: &'a PersistenceState,
 }
@@ -53,30 +59,47 @@ impl PersistedLayout {
         ron::from_str(buf)
     }
 
-    pub(super) fn serialize_engine(engine: &LayoutEngine) -> String {
+    pub(super) fn serialize_engine(engine: &LayoutEngine, memory: &DisplayMemory) -> String {
         ron::ser::to_string(&PersistedLayoutRef {
             schema_version: CURRENT_SCHEMA_VERSION,
             workspace_layouts: &engine.workspace_layouts,
             floating: &engine.floating,
             floating_positions: &engine.floating_positions,
             virtual_workspace_manager: &engine.virtual_workspace_manager,
-            display_affinity: &engine.display_affinity,
-            launch_memory: &engine.launch_memory,
+            display_memory: memory,
             persistence: &engine.persistence,
         })
         .expect("persisted layout serialization must support all engine layout state")
     }
 
-    pub(super) fn into_engine(mut self) -> LayoutEngine {
-        // A v2 file carried two separate display maps that could disagree. Fold them into
-        // the registry so an upgrade keeps its display identities instead of coming back
-        // as if every display had never been seen.
+    /// The display memory this file carries, whatever schema wrote it.
+    ///
+    /// Read separately from the layout, and before it is validated, so a layout that cannot be
+    /// trusted does not also cost the machine's memory of which monitor each window lives on.
+    pub(super) fn take_display_memory(&mut self) -> DisplayMemory {
+        // A v2 file carried two separate display maps that could disagree. Fold them into the
+        // registry so an upgrade keeps its display identities instead of coming back as if every
+        // display had never been seen.
         if !self.space_display_map.is_empty() || !self.display_last_space.is_empty() {
             self.display_affinity.absorb_legacy(
                 std::mem::take(&mut self.space_display_map),
                 std::mem::take(&mut self.display_last_space),
             );
         }
+        // Schema 4 and earlier wrote the two halves at the top level; 5 nests them. A file has one
+        // shape or the other, so whichever is non-empty is the one to use.
+        let legacy = std::mem::take(&mut self.display_affinity);
+        if !legacy.is_empty() {
+            self.display_memory.affinity = legacy;
+        }
+        let legacy = std::mem::take(&mut self.launch_memory);
+        if !legacy.is_empty() {
+            self.display_memory.launch = legacy;
+        }
+        std::mem::take(&mut self.display_memory)
+    }
+
+    pub(super) fn into_engine(self) -> LayoutEngine {
         LayoutEngine {
             workspace_layouts: self.workspace_layouts,
             floating: self.floating,
@@ -87,8 +110,6 @@ impl PersistedLayout {
             virtual_workspace_manager: self.virtual_workspace_manager,
             layout_settings: LayoutSettings::default(),
             outbox: Default::default(),
-            display_affinity: self.display_affinity,
-            launch_memory: self.launch_memory,
             connected_displays: Vec::new(),
             persistence: self.persistence,
             startup_restore_pending: false,

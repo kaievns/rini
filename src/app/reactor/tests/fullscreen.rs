@@ -358,7 +358,7 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
 
     reactor.handle_event(space_state_event_from_screens(screens_for(user_space)));
     assert_eq!(
-        reactor.layout_manager.layout_engine.last_space_for_display_uuid(&display_uuid),
+        reactor.state.display_memory.affinity.space_for_display(&display_uuid),
         Some(user_space)
     );
 
@@ -373,14 +373,14 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
             .collect(),
     ));
     assert_eq!(
-        reactor.layout_manager.layout_engine.last_space_for_display_uuid(&display_uuid),
+        reactor.state.display_memory.affinity.space_for_display(&display_uuid),
         Some(user_space),
         "fullscreen spaces should not replace display->user-space history"
     );
 
     reactor.handle_event(space_state_event_from_screens(screens_for(user_space)));
     assert_eq!(
-        reactor.layout_manager.layout_engine.last_space_for_display_uuid(&display_uuid),
+        reactor.state.display_memory.affinity.space_for_display(&display_uuid),
         Some(user_space)
     );
 }

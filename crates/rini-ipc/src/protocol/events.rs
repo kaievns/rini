@@ -101,6 +101,23 @@ impl RiniEvent {
             | Self::FocusedWindowChanged { display_uuid, .. } => display_uuid.as_deref(),
         }
     }
+
+    /// Name the display this event happened on, if it is not named already.
+    ///
+    /// Which display owns a space is not something the layout engine knows — the record lives with
+    /// the application — so an event leaves the engine with the display unnamed and is filled in on
+    /// the way to the wire. An event that already names one keeps it.
+    pub fn name_display(&mut self, uuid: impl FnOnce() -> Option<String>) {
+        let slot = match self {
+            Self::WorkspaceChanged { display_uuid, .. }
+            | Self::WindowsChanged { display_uuid, .. }
+            | Self::WindowTitleChanged { display_uuid, .. }
+            | Self::FocusedWindowChanged { display_uuid, .. } => display_uuid,
+        };
+        if slot.is_none() {
+            *slot = uuid();
+        }
+    }
 }
 
 /// The serialized identity of a virtual workspace.

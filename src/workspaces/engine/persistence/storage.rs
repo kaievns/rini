@@ -1,15 +1,34 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use super::snapshot::{CURRENT_SCHEMA_VERSION, PersistedLayout};
 use super::*;
 
+/// A saved file, read.
+///
+/// The layout is a `Result` on purpose. Whether the saved strip can be trusted and whether the
+/// machine's memory can are two different questions, and the file answers them separately: a layout
+/// that fails validation, or one written by a newer schema, is refused without also forgetting which
+/// monitor each window lives on. Re-homing every window from scratch and landing every relaunched
+/// application in a default slot is a worse outcome than laying out the strip fresh.
+pub struct LoadedLayout {
+    /// The saved layout, or why it was refused.
+    pub layout: anyhow::Result<LayoutEngine>,
+    /// What the file remembered about the machine, whatever happened to the layout.
+    pub memory: DisplayMemory,
+    pub schema_version: u32,
+}
+
 impl LayoutEngine {
     pub fn load(path: PathBuf) -> anyhow::Result<Self> {
-        Self::load_with_schema_version(&path).map(|(engine, _)| engine)
+        Self::load_file(&path)?.layout
     }
 
     /// Load the saved snapshot used for process startup and report its persisted coverage.
     /// Validation and menu previews continue to use `load` without emitting restore logs.
-    pub fn load_for_startup_restore(path: PathBuf) -> anyhow::Result<Self> {
-        let (mut engine, schema_version) = Self::load_with_schema_version(&path)?;
+    pub fn load_for_startup_restore(path: PathBuf) -> anyhow::Result<(Self, DisplayMemory)> {
+        let loaded = Self::load_file(&path)?;
+        let schema_version = loaded.schema_version;
+        let memory = loaded.memory;
+        let mut engine = loaded.layout?;
         engine.startup_restore_pending = true;
         let unavailable_windows = engine.discard_unmatchable_startup_candidates(
             |window, id| {
@@ -30,20 +49,22 @@ impl LayoutEngine {
             unavailable_windows_ignored = unavailable_windows,
             "Loaded persisted layout for startup restore"
         );
-        Ok(engine)
+        Ok((engine, memory))
     }
 
-    pub(super) fn load_with_schema_version(path: &Path) -> anyhow::Result<(Self, u32)> {
+    pub(super) fn load_file(path: &Path) -> anyhow::Result<LoadedLayout> {
         let mut buf = String::new();
         File::open(path)?.read_to_string(&mut buf)?;
-        Self::deserialize_from_str_with_schema_version(&buf)
+        Self::deserialize_file(&buf)
     }
 
     pub fn deserialize_from_str(buf: &str) -> anyhow::Result<Self> {
-        Self::deserialize_from_str_with_schema_version(buf).map(|(engine, _)| engine)
+        Self::deserialize_file(buf)?.layout
     }
 
-    fn deserialize_from_str_with_schema_version(buf: &str) -> anyhow::Result<(Self, u32)> {
+    /// Parse a saved file. An `Err` here means the bytes could not be read at all, so there is
+    /// nothing to keep; a refused LAYOUT comes back inside `LoadedLayout`.
+    pub fn deserialize_file(buf: &str) -> anyhow::Result<LoadedLayout> {
         // Checked before parsing, because parsing is what fails: schema 4 dropped the
         // `LayoutSystemKind` wrapper, so every earlier file tags its layouts `scrolling((...))`
         // for an enum that no longer exists and RON reports a shape mismatch deep inside the tree.
@@ -55,28 +76,36 @@ impl LayoutEngine {
                 CURRENT_SCHEMA_VERSION,
             ));
         }
-        let persisted = PersistedLayout::deserialize(buf)?;
-        if persisted.schema_version > CURRENT_SCHEMA_VERSION {
-            return Err(anyhow::anyhow!(
-                "layout schema version {} is newer than supported version {}",
-                persisted.schema_version,
-                CURRENT_SCHEMA_VERSION,
-            ));
-        }
-        persisted
-            .virtual_workspace_manager
-            .validate_persisted_topology()
-            .map_err(|error| anyhow::anyhow!("invalid workspace topology: {error}"))?;
-        persisted
-            .workspace_layouts
-            .validate_persisted(&persisted.virtual_workspace_manager)
-            .map_err(|error| anyhow::anyhow!("invalid workspace layouts: {error}"))?;
-        persisted
-            .floating_positions
-            .validate_persisted(&persisted.virtual_workspace_manager)
-            .map_err(|error| anyhow::anyhow!("invalid floating positions: {error}"))?;
-        persisted.persistence.validate()?;
+        let mut persisted = PersistedLayout::deserialize(buf)?;
         let schema_version = persisted.schema_version;
+        // Taken before anything is validated. This is the whole reason the memory is its own record:
+        // every refusal below is about the LAYOUT, and none of them is a reason to forget the machine.
+        let memory = persisted.take_display_memory();
+        let refuse = |error| LoadedLayout { layout: Err(error), memory: memory.clone(), schema_version };
+
+        if schema_version > CURRENT_SCHEMA_VERSION {
+            return Ok(refuse(anyhow::anyhow!(
+                "layout schema version {} is newer than supported version {}",
+                schema_version,
+                CURRENT_SCHEMA_VERSION,
+            )));
+        }
+        if let Err(error) = persisted.virtual_workspace_manager.validate_persisted_topology() {
+            return Ok(refuse(anyhow::anyhow!("invalid workspace topology: {error}")));
+        }
+        if let Err(error) =
+            persisted.workspace_layouts.validate_persisted(&persisted.virtual_workspace_manager)
+        {
+            return Ok(refuse(anyhow::anyhow!("invalid workspace layouts: {error}")));
+        }
+        if let Err(error) =
+            persisted.floating_positions.validate_persisted(&persisted.virtual_workspace_manager)
+        {
+            return Ok(refuse(anyhow::anyhow!("invalid floating positions: {error}")));
+        }
+        if let Err(error) = persisted.persistence.validate() {
+            return Ok(refuse(anyhow::anyhow!("{error}")));
+        }
         let mut engine = persisted.into_engine();
         engine.normalize_loaded_floating_state();
         engine.normalize_loaded_workspace_focus();
@@ -115,10 +144,10 @@ impl LayoutEngine {
             .filter(|window| engine.restored_location_for_window(*window).is_some())
             .collect::<Vec<_>>();
         engine.persistence.replace_pending(pending);
-        Ok((engine, schema_version))
+        Ok(LoadedLayout { layout: Ok(engine), memory, schema_version })
     }
 
-    pub fn save(&self, path: PathBuf) -> std::io::Result<()> {
+    pub fn save(&self, memory: &DisplayMemory, path: PathBuf) -> std::io::Result<()> {
         self.virtual_workspace_manager
             .validate_persisted_topology()
             .and_then(|_| {
@@ -138,7 +167,7 @@ impl LayoutEngine {
         if let Some(parent) = &parent {
             fs::create_dir_all(parent)?;
         }
-        let serialized = self.serialize_to_string();
+        let serialized = self.serialize_to_string(memory);
         let (temporary, mut file) = loop {
             let sequence = SAVE_TEMP_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
             let temporary_extension = path
@@ -198,13 +227,14 @@ impl LayoutEngine {
         &mut self,
         path: PathBuf,
         window_store: &WindowStore,
+        memory: &DisplayMemory,
         active_space: Option<SpaceId>,
     ) -> std::io::Result<()> {
         self.refresh_window_fingerprints(window_store);
         self.persistence.set_saved_active_space(
             active_space.filter(|space| self.workspace_layouts.spaces().contains(space)),
         );
-        self.save(path)
+        self.save(memory, path)
     }
 
     /// Capture live fingerprint and floating-frame inputs, then atomically save one coherent
@@ -213,6 +243,7 @@ impl LayoutEngine {
         &mut self,
         path: PathBuf,
         window_store: &WindowStore,
+        memory: &DisplayMemory,
         active_space: Option<SpaceId>,
     ) -> std::io::Result<()> {
         self.refresh_window_fingerprints(window_store);
@@ -254,7 +285,7 @@ impl LayoutEngine {
                 }
             }
         }
-        self.save(path)
+        self.save(memory, path)
     }
 
     /// Heal old snapshots that represent one window as both tiled and floating, or where a
@@ -297,6 +328,7 @@ impl LayoutEngine {
     pub fn reconcile_startup_spaces(
         &mut self,
         window_store: &mut WindowStore,
+        memory: &mut DisplayMemory,
         current_spaces: &[(SpaceId, String)],
         expected_display_count: usize,
     ) {
@@ -324,7 +356,7 @@ impl LayoutEngine {
         let saved_spaces = self.workspace_layouts.spaces();
         let mut remaps = Vec::new();
         for (current, display_uuid) in current_spaces {
-            let Some(saved) = self.display_affinity.space_for_display(display_uuid) else {
+            let Some(saved) = memory.affinity.space_for_display(display_uuid) else {
                 continue;
             };
             if saved != *current
@@ -348,21 +380,25 @@ impl LayoutEngine {
             .map(|(old, new)| {
                 let temporary = SpaceId::new(next_temporary);
                 next_temporary = next_temporary.saturating_add(1);
-                self.remap_space(window_store, old, temporary);
+                self.remap_space(window_store, memory, old, temporary);
                 (temporary, new)
             })
             .collect::<Vec<_>>();
         for (temporary, new) in staged {
-            self.remap_space(window_store, temporary, new);
+            self.remap_space(window_store, memory, temporary, new);
         }
 
-        self.release_windows_saved_on_absent_displays(current_spaces);
+        self.release_windows_saved_on_absent_displays(memory, current_spaces);
     }
 
     /// Release the saved slots of a display that is not attached, keeping only which display they
     /// belonged to. Restoring them strands windows at a missing display's coordinates; see
     /// "Restore must not strand windows" in `src/workspaces/docs/workspaces-and-displays.md`.
-    fn release_windows_saved_on_absent_displays(&mut self, current_spaces: &[(SpaceId, String)]) {
+    fn release_windows_saved_on_absent_displays(
+        &mut self,
+        memory: &mut DisplayMemory,
+        current_spaces: &[(SpaceId, String)],
+    ) {
         let live_displays: HashSet<&str> =
             current_spaces.iter().map(|(_, display)| display.as_str()).collect();
 
@@ -371,7 +407,7 @@ impl LayoutEngine {
             .spaces()
             .into_iter()
             .filter_map(|space| {
-                let uuid = self.display_affinity.display_for_space(space)?;
+                let uuid = memory.affinity.display_for_space(space)?;
                 (!live_displays.contains(uuid)).then(|| (space, uuid.to_owned()))
             })
             .collect();
@@ -406,7 +442,7 @@ impl LayoutEngine {
             // sends these windows back when their display returns. discard_candidates drops
             // the saved slot but not the home, so recording it here is enough.
             for window in &windows {
-                self.display_affinity.set_window_home(*window, &uuid);
+                memory.affinity.set_window_home(*window, &uuid);
             }
             released.extend(windows);
         }
@@ -414,8 +450,8 @@ impl LayoutEngine {
         self.discard_candidates(released);
     }
 
-    pub fn serialize_to_string(&self) -> String {
-        PersistedLayout::serialize_engine(self)
+    pub fn serialize_to_string(&self, memory: &DisplayMemory) -> String {
+        PersistedLayout::serialize_engine(self, memory)
     }
 
     pub fn finish_loading(

@@ -1299,10 +1299,7 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The engine must know which display owns that space.
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .last_space_for_display_uuid("test-display-1"),
+        reactor.state.display_memory.affinity.space_for_display("test-display-1"),
         Some(external_space),
         "the external display's space must be recorded before unplugging"
     );
@@ -1316,10 +1313,7 @@ fn reconnected_display_regains_its_layout_under_the_new_space_id() {
 
     // The mapping must SURVIVE the unplug — this is what prune_display_state destroyed.
     assert_eq!(
-        reactor
-            .layout_manager
-            .layout_engine
-            .last_space_for_display_uuid("test-display-1"),
+        reactor.state.display_memory.affinity.space_for_display("test-display-1"),
         Some(external_space),
         "unplugging must not forget which space belonged to the display"
     );
@@ -1540,7 +1534,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
         Some(external_space),
     ]));
     assert_eq!(
-        reactor.layout_manager.layout_engine.window_display_home(exile),
+        reactor.state.display_memory.affinity.window_home(exile),
         Some("test-display-1")
     );
 
@@ -1555,7 +1549,7 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     reactor.handle_event(space_state_event(vec![builtin], vec![Some(builtin_space)]));
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.window_display_home(exile),
+        reactor.state.display_memory.affinity.window_home(exile),
         Some("test-display-1"),
         "an evacuated window must keep its own display's home, otherwise the replug has \
          nothing left to bring it back with"
@@ -1699,7 +1693,7 @@ fn closed_windows_do_not_keep_their_display_affinity() {
         Some(external_space),
     ]));
     assert_eq!(
-        reactor.layout_manager.layout_engine.window_display_home(doomed),
+        reactor.state.display_memory.affinity.window_home(doomed),
         Some("test-display-1"),
         "test setup must home both windows to the external"
     );
@@ -1717,21 +1711,18 @@ fn closed_windows_do_not_keep_their_display_affinity() {
     ]));
 
     assert_eq!(
-        reactor.layout_manager.layout_engine.window_display_home(doomed),
+        reactor.state.display_memory.affinity.window_home(doomed),
         None,
         "a closed window must not keep a home; stale entries make a replug look like it \
          has windows to bring back when it does not"
     );
     assert!(
-        !reactor
-            .layout_manager
-            .layout_engine
-            .windows_homed_to_display("test-display-1")
+        !reactor.state.display_memory.affinity.windows_homed_to("test-display-1")
             .contains(&doomed),
         "and it must be gone from the display's affinity list"
     );
     assert_eq!(
-        reactor.layout_manager.layout_engine.window_display_home(survivor),
+        reactor.state.display_memory.affinity.window_home(survivor),
         Some("test-display-1"),
         "the window that is still open keeps its home"
     );
@@ -1888,19 +1879,21 @@ fn redistribute_returns_windows_to_their_home_display_only() {
     reactor.add_test_window(displaced, WindowServerId::new(901), Some(builtin_space), builtin);
     assert!(reactor.assign_test_window_to_workspace(builtin_space, displaced, workspaces[2]));
     reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, displaced));
-    reactor
-        .layout_manager
-        .layout_engine
-        .set_window_display_home(displaced, external_space);
+    reactor.layout_manager.layout_engine.set_window_display_home(
+        &mut reactor.state.display_memory,
+        displaced,
+        external_space,
+    );
 
     // `settled` is already where it belongs.
     reactor.add_test_window(settled, WindowServerId::new(902), Some(builtin_space), builtin);
     assert!(reactor.assign_test_window_to_workspace(builtin_space, settled, workspaces[0]));
     reactor.send_layout_event(LayoutEvent::WindowAdded(builtin_space, settled));
-    reactor
-        .layout_manager
-        .layout_engine
-        .set_window_display_home(settled, builtin_space);
+    reactor.layout_manager.layout_engine.set_window_display_home(
+        &mut reactor.state.display_memory,
+        settled,
+        builtin_space,
+    );
 
     reactor.handle_event(Event::Command(Command::Reactor(
         ReactorCommand::RedistributeWindows,

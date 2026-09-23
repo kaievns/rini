@@ -6,12 +6,16 @@ came from. Ranked within each section by what it costs to leave alone.
 
 Measured at commit `118e35d`: **54,751 non-test code lines**, 1101 tests.
 
-**Status: worked through in `45adc4b`..`02c1f6e`, taking the tests to 1144.** Ten of
-the entries below are closed, three are partly closed and one is not started; the
-reasons are in each section and summarised in `docs/audit-progress.md`. The findings
-are left as written rather than edited into the past tense, because what they say
-about how the code got that way is the part worth keeping. What changed since is
-marked `DONE`, `PARTLY` or `OPEN` at the head of each entry.
+**Status: worked through in `45adc4b`..`HEAD`, taking the tests from 1101 to 1241.** Every
+entry below is closed or partly closed; the reasons are in each section and summarised in
+`docs/audit-progress.md`. The findings are left as written rather than edited into the past
+tense, because what they say about how the code got that way is the part worth keeping. What
+changed since is marked `DONE`, `PARTLY` or `OPEN` at the head of each entry.
+
+Three of them turned out to be bugs rather than untidiness, and each has a test that fails
+if it comes back: the raise list's order was reversed by its own batching (3.2.1), the spaces
+actor's tests ran different code than ships (4.4), and a refused layout discarded the display
+memory (3.1).
 
 Method: normalised function bodies hashed for exact duplicates (1794 functions,
 7 groups), `difflib` similarity over 918 production functions ≥10 lines for near
@@ -180,7 +184,9 @@ INSIDE two production predicates, so the tests ran different code than ships —
 
 ### 3.1 `LayoutEngine` owns fourteen unrelated things
 
-**PARTLY — the IPC channel is out, replaced by an outbox the application drains (`a4ad095`). `display_affinity` and `launch_memory` stay: both are load-bearing in `layout.ron`, so moving them is a schema change.**
+**DONE — fourteen fields down to twelve. The IPC channel is an outbox the application drains
+(`a4ad095`); `display_affinity` and `launch_memory` are now one `DisplayMemory` owned by
+`RiniState`, beside `WindowStore`, and passed in the same way.**
 
 `src/workspaces/engine.rs`, 2,876 code lines, 20 tests (144 lines per test). Its
 fields:
@@ -195,6 +201,18 @@ persistence  startup_restore_pending
 A type called `LayoutEngine` owns the IPC broadcast channel, the display-affinity
 registry, the launch memory, and the persistence journal. `broadcast_tx` is
 already named in `docs/architecture.md` as belonging to `app/api/`.
+
+What the two display records cost, which is what made this worth doing rather than tidy:
+they shared a `layout.ron` section and a single validation with the workspace layouts, so
+ONE refusal of the layout discarded both. A layout from a newer schema, or one that failed
+validation, took the record of which monitor each window lives on with it — and then every
+window is re-homed from scratch on the next display change and every relaunched
+application lands in a default slot. Two tests pin it, and both fail if the refusal drops
+the memory again.
+
+Schema 5 nests the memory under its own key and `LoadedLayout` reads it BEFORE anything is
+validated. The migration was checked against a real 19-window schema-4 file: every home
+came across, so the bump cost nothing.
 
 Its largest methods: `handle_command` (261), `calculate_layout_with_virtual_workspaces`
 (203), `move_window_to_workspace` (175), `on_windows_on_screen_updated` (168).

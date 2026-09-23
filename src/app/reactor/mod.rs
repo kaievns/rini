@@ -59,6 +59,7 @@ use events::{
     window as window_workflow,
 };
 use crate::displays::domain::topology::display_set_delta;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order;
@@ -478,6 +479,7 @@ impl Reactor {
     pub fn spawn(
         config: Config,
         layout_engine: LayoutEngine,
+        display_memory: DisplayMemory,
         record: Record,
         event_tap_tx: event_tap::Sender,
         broadcast_tx: BroadcastSender,
@@ -492,6 +494,7 @@ impl Reactor {
         let mut reactor = Reactor::new(
             config,
             layout_engine,
+            display_memory,
             record,
             broadcast_tx,
             window_notify,
@@ -515,6 +518,7 @@ impl Reactor {
     pub fn new(
         config: Config,
         layout_engine: LayoutEngine,
+        display_memory: DisplayMemory,
         mut record: Record,
         broadcast_tx: BroadcastSender,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
@@ -523,7 +527,7 @@ impl Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
-        record.start(&config, &layout_engine);
+        record.start(&config, &layout_engine, &display_memory);
         let (raise_manager_tx, _rx) = channels::channel();
         let (window_notify_tx, window_tx_store) = match window_notify {
             Some((tx, store)) => (Some(tx), store),
@@ -534,7 +538,7 @@ impl Reactor {
             one_space,
             app_manager: managers::AppManager::new(),
             layout_manager: managers::LayoutManager { layout_engine },
-            state: RiniState::default(),
+            state: RiniState { display_memory, ..Default::default() },
             space_state: ForwardedSpaceState::default(),
             last_strip_offset: HashMap::default(),
             space_activation_policy: SpaceActivationPolicy::new(),
@@ -1871,6 +1875,7 @@ impl Reactor {
 
                     let response = self.layout_manager.layout_engine.move_window_to_space(
                         &mut self.state.windows,
+                        &mut self.state.display_memory,
                         source_space,
                         target_space,
                         target_screen_size,
@@ -2083,6 +2088,7 @@ impl Reactor {
             .collect::<Vec<_>>();
         self.layout_manager.layout_engine.reconcile_startup_spaces(
             &mut self.state.windows,
+            &mut self.state.display_memory,
             &current_display_spaces,
             screens.len(),
         );
@@ -2135,7 +2141,7 @@ impl Reactor {
         // the windows that were there, rather than whichever windows now occupy those slots.
         for display_uuid in &display_set.departed {
             let Some(departing_space) =
-                self.layout_manager.layout_engine.last_space_for_display_uuid(display_uuid)
+                self.state.display_memory.affinity.space_for_display(display_uuid)
             else {
                 continue;
             };
@@ -2158,7 +2164,11 @@ impl Reactor {
             for window in residents {
                 self.layout_manager
                     .layout_engine
-                    .set_window_display_home(window, departing_space);
+                    .set_window_display_home(
+                        &mut self.state.display_memory,
+                        window,
+                        departing_space,
+                    );
             }
         }
         self.space_state.screens = screens;
@@ -2186,6 +2196,7 @@ impl Reactor {
         for (previous_space, space) in space_remaps {
             self.layout_manager.layout_engine.remap_space(
                 &mut self.state.windows,
+                &mut self.state.display_memory,
                 previous_space,
                 space,
             );
@@ -2216,7 +2227,11 @@ impl Reactor {
             };
             self.layout_manager
                 .layout_engine
-                .update_space_display(space, Some(display_uuid.to_string()));
+                .update_space_display(
+                    &mut self.state.display_memory,
+                    space,
+                    Some(display_uuid.to_string()),
+                );
         }
         // Re-observe where windows are, and in what order, whenever the topology is settled.
         //
@@ -2577,7 +2592,10 @@ impl Reactor {
         // live window was homed to the built-in, so a replug had nothing to move back.
         self.layout_manager
             .layout_engine
-            .forget_affinity_for_dead_windows(&self.state.windows);
+            .forget_affinity_for_dead_windows(
+                &self.state.windows,
+                &mut self.state.display_memory,
+            );
         let observations: Vec<(String, Vec<WindowId>)> = self
             .space_state
             .screens
@@ -2598,7 +2616,7 @@ impl Reactor {
             }
             self.layout_manager
                 .layout_engine
-                .sync_display_affinity(&uuid, &windows);
+                .sync_display_affinity(&mut self.state.display_memory, &uuid, &windows);
         }
     }
 
@@ -2720,6 +2738,7 @@ impl Reactor {
         for (display_uuid, target_space) in &attached {
             let windows = self.layout_manager.layout_engine.windows_to_repatriate(
                 &self.state.windows,
+                &self.state.display_memory,
                 display_uuid,
                 *target_space,
             );
@@ -2793,6 +2812,7 @@ impl Reactor {
 
         let windows = self.layout_manager.layout_engine.windows_to_repatriate(
             &self.state.windows,
+            &self.state.display_memory,
             display_uuid,
             target_space,
         );
@@ -2849,6 +2869,7 @@ impl Reactor {
             }
             let response = self.layout_manager.layout_engine.move_window_to_space(
                 &mut self.state.windows,
+                &mut self.state.display_memory,
                 source_space,
                 target_space,
                 target_screen.frame.size,
@@ -3718,7 +3739,11 @@ impl Reactor {
         );
         let event_clone = event.clone();
         let layout_outcome =
-            self.layout_manager.layout_engine.handle_event(&mut self.state.windows, event);
+            self.layout_manager.layout_engine.handle_event(
+                &mut self.state.windows,
+                &mut self.state.display_memory,
+                event,
+            );
         let mut response = layout_outcome.response;
         let (placements, resizes, workspace_focus) = layout_outcome.app_rules.into_parts();
         self.apply_app_rule_placements(placements);
@@ -3919,6 +3944,7 @@ impl Reactor {
                 let before = engine.before_rules(&self.state.windows, space, wid);
                 let result = engine.assign_window_by_rules(
                     &mut self.state.windows,
+                    &mut self.state.display_memory,
                     wid,
                     space,
                     Some(&app_info),
@@ -4148,7 +4174,11 @@ impl Reactor {
     }
 
     fn flush_engine_broadcasts(&mut self) {
-        for event in self.layout_manager.layout_engine.drain_broadcasts() {
+        for mut event in self.layout_manager.layout_engine.drain_broadcasts() {
+            // The engine does not know which display owns a space; the record is here.
+            let space = SpaceId::new(event.space_id());
+            let memory = &self.state.display_memory;
+            event.name_display(|| memory.affinity.display_for_space(space).map(str::to_owned));
             let _ = self.communication_manager.event_broadcaster.send(event);
         }
     }
@@ -4223,6 +4253,7 @@ impl Reactor {
                 if let Some(space) = space {
                     let resp = self.layout_manager.layout_engine.handle_virtual_workspace_command(
                         &mut self.state.windows,
+                        &mut self.state.display_memory,
                         space,
                         &cmd,
                     );
@@ -5123,7 +5154,11 @@ impl Reactor {
             .collect();
         self.layout_manager
             .layout_engine
-            .remember_launch_slots(&self.state.windows, &connected);
+            .remember_launch_slots(
+                &self.state.windows,
+                &mut self.state.display_memory,
+                &connected,
+            );
         // autosave_current_layout, NOT save_current_layout: the latter also
         // normalizes floating-versus-tiled ownership and rewrites stored floating
         // frames, which are mutations to live state. Running them on every layout
@@ -5132,6 +5167,7 @@ impl Reactor {
         if let Err(e) = self.layout_manager.layout_engine.autosave_current_layout(
             path.clone(),
             &self.state.windows,
+            &self.state.display_memory,
             active_space,
         ) {
             // Not fatal: a failed autosave costs the last few seconds of

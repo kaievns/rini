@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use super::*;
@@ -18,17 +19,17 @@ fn test_engine() -> LayoutEngine {
 fn identity_transfer_preserves_window_tree_position_and_fingerprint() {
     let mut window_store = WindowStore::default();
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let space = SpaceId::new(77);
     let old = WindowId::new(10, 1);
     let sibling = WindowId::new(10, 2);
     let replacement = WindowId::new(20, 9);
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, old));
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, sibling));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, old));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, sibling));
     engine.persistence.windows.insert(
         old,
         WindowFingerprint {
@@ -56,7 +57,7 @@ fn identity_transfer_preserves_window_tree_position_and_fingerprint() {
         .add_window_after_selection(other_layout, replacement);
     let before = engine.workspace_tree(workspace).visible_windows_in_layout(layout);
 
-    engine.transfer_persistent_window_identity(old, replacement);
+    engine.transfer_persistent_window_identity(&mut memory, old, replacement);
 
     let after = engine.workspace_tree(workspace).visible_windows_in_layout(layout);
     assert_eq!(
@@ -84,14 +85,14 @@ fn identity_transfer_preserves_window_tree_position_and_fingerprint() {
 #[test]
 fn save_and_load_arms_fingerprint_reconciliation() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let window = WindowId::new(42, 7);
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(123);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, window));
     engine.persistence.windows.insert(
         window,
         WindowFingerprint {
@@ -108,7 +109,7 @@ fn save_and_load_arms_fingerprint_reconciliation() {
         window.idx.get()
     ));
 
-    engine.save(path.clone()).unwrap();
+    engine.save(&mut memory, path.clone()).unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -120,6 +121,7 @@ fn save_and_load_arms_fingerprint_reconciliation() {
 #[test]
 fn full_save_records_floating_window_in_its_inactive_workspace() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(122);
     let size = CGSize::new(1200.0, 800.0);
@@ -128,7 +130,7 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
         CGSize::new(640.0, 480.0),
     );
     let window = WindowId::new(41, 6);
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
     let active_workspace = engine.active_workspace(space).unwrap();
     let inactive_workspace = engine
         .virtual_workspace_manager
@@ -174,7 +176,7 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
         space.get(),
     ));
 
-    engine.save_current_layout(path.clone(), &window_store, Some(space)).unwrap();
+    engine.save_current_layout(path.clone(), &window_store, &mut memory, Some(space)).unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -192,6 +194,7 @@ fn full_save_records_floating_window_in_its_inactive_workspace() {
 #[test]
 fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(124);
     let size = CGSize::new(1200.0, 800.0);
@@ -200,7 +203,7 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
         CGSize::new(700.0, 500.0),
     );
     let window = WindowId::new(41, 7);
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
     let workspace = engine.active_workspace(space).unwrap();
     window_store.insert_window(
         window,
@@ -232,7 +235,7 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
         window,
         workspace,
     ));
-    engine.add_window_to_layout(&mut window_store, space, window);
+    engine.add_window_to_layout(&mut window_store, &mut memory, space, window);
     // Model stale state left behind by an earlier floating-to-tiled transition.
     engine.floating_positions.store(space, workspace, window, frame);
     let path = std::env::temp_dir().join(format!(
@@ -241,7 +244,7 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
         space.get(),
     ));
 
-    engine.save_current_layout(path.clone(), &window_store, Some(space)).unwrap();
+    engine.save_current_layout(path.clone(), &window_store, &mut memory, Some(space)).unwrap();
     let loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -256,11 +259,11 @@ fn full_save_removes_stale_floating_frame_from_a_tiled_window() {
 #[test]
 fn load_does_not_arm_locationless_fingerprints() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let orphan = WindowId::new(42, 8);
     let space = SpaceId::new(122);
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let workspace = engine.active_workspace(space).unwrap();
@@ -278,7 +281,7 @@ fn load_does_not_arm_locationless_fingerprints() {
         .virtual_workspace_manager
         .set_last_focused_window(space, workspace, Some(orphan));
 
-    let loaded = LayoutEngine::deserialize_from_str(&engine.serialize_to_string()).unwrap();
+    let loaded = LayoutEngine::deserialize_from_str(&engine.serialize_to_string(&memory)).unwrap();
 
     assert!(loaded.persistence.windows.contains_key(&orphan));
     assert!(!loaded.persistence.pending_windows.contains(&orphan));
@@ -291,14 +294,14 @@ fn load_does_not_arm_locationless_fingerprints() {
 #[test]
 fn load_removes_serialized_window_state_without_a_fingerprint() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(123);
     let ghost = WindowId::new(42, 9);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, ghost));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, ghost));
     let workspace = engine.active_workspace(space).unwrap();
     engine.floating.add_floating(ghost);
     engine.floating_positions.store(
@@ -315,7 +318,7 @@ fn load_removes_serialized_window_state_without_a_fingerprint() {
         .set_last_focused_window(space, workspace, Some(ghost));
     assert!(!engine.persistence.windows.contains_key(&ghost));
 
-    let loaded = LayoutEngine::deserialize_from_str(&engine.serialize_to_string()).unwrap();
+    let loaded = LayoutEngine::deserialize_from_str(&engine.serialize_to_string(&memory)).unwrap();
     let layout = loaded.workspace_layouts.active(space, workspace).unwrap();
 
     assert!(!loaded.workspace_tree(workspace).contains_window(layout, ghost));
@@ -332,17 +335,17 @@ fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
     // Also the answer to a FIXME that sat in `Reactor::new` asking for restored state to drop apps
     // that are no longer running: `closed` below is exactly that case, and it is discarded here.
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(129);
     let closed = WindowId::new(33419, 82684);
     let still_open = WindowId::new(1430, 97361);
     let restarted_app = WindowId::new(40000, 70000);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     for window in [closed, still_open, restarted_app] {
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, window));
         engine.persistence.windows.insert(
             window,
             WindowFingerprint {
@@ -375,13 +378,14 @@ fn startup_validation_preserves_stale_ids_when_the_app_can_still_fuzzy_match() {
 #[test]
 fn workspace_restore_discards_unmatched_scoped_windows_and_floating_state() {
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
     let space = SpaceId::new(124);
     let tiled = WindowId::new(10, 1);
     let floating = WindowId::new(10, 2);
     let out_of_scope = WindowId::new(10, 3);
     let size = CGSize::new(1200.0, 800.0);
-    let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, size));
     let workspaces = snapshot.virtual_workspace_manager.list_workspaces(space);
     let source_workspace = workspaces[0].0;
     let other_workspace = workspaces[1].0;
@@ -418,20 +422,17 @@ fn workspace_restore_discards_unmatched_scoped_windows_and_floating_state() {
         std::process::id(),
         space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(space, size));
     let target_workspace = engine.active_workspace(space).unwrap();
     let report = engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Workspace, space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -461,8 +462,9 @@ fn workspace_restore_keeps_current_windows_absent_from_snapshot() {
     let live_floating = WindowId::new(72, 1);
 
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, size));
     let snapshot_workspace = snapshot.active_workspace(space).unwrap();
     let snapshot_layout = snapshot.workspace_layouts.active(space, snapshot_workspace).unwrap();
     snapshot
@@ -483,11 +485,14 @@ fn workspace_restore_keeps_current_windows_absent_from_snapshot() {
         std::process::id(),
         space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(space, size));
     let target_workspace = engine.active_workspace(space).unwrap();
     let live_state = |title: &str, bundle_id: &str, window_server_id: u32| WindowState {
         info: WindowInfo {
@@ -523,19 +528,13 @@ fn workspace_restore_keeps_current_windows_absent_from_snapshot() {
             target_workspace,
         ));
     }
-    engine.add_window_to_layout(&mut window_store, space, live);
+    engine.add_window_to_layout(&mut window_store, &mut engine_memory, space, live);
     engine.floating.add_floating(live_floating);
     engine.floating_positions.store(space, target_workspace, live_floating, frame);
     engine.focused_window = Some(live);
 
     engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Workspace, space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -570,11 +569,9 @@ fn scoped_restore_does_not_consume_same_id_live_window_on_another_space() {
     let reused_id = WindowId::new(73, 1);
 
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(
-        &mut snapshot_store,
-        LayoutEvent::SpaceExposed(target_space, size),
-    );
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(target_space, size));
     let snapshot_workspace = snapshot.active_workspace(target_space).unwrap();
     let snapshot_layout =
         snapshot.workspace_layouts.active(target_space, snapshot_workspace).unwrap();
@@ -596,12 +593,15 @@ fn scoped_restore_does_not_consume_same_id_live_window_on_another_space() {
         std::process::id(),
         target_space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     for space in [target_space, external_space] {
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+        let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(space, size));
     }
     let external_workspace = engine.active_workspace(external_space).unwrap();
     let external_layout =
@@ -643,13 +643,7 @@ fn scoped_restore_does_not_consume_same_id_live_window_on_another_space() {
     engine.floating.add_active(external_space, reused_id.pid, reused_id);
 
     engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, target_space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Workspace, target_space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -687,11 +681,9 @@ fn space_restore_uses_workspace_assignment_over_stale_window_server_space() {
     let window_server_id = WindowServerId::new(7700);
 
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(
-        &mut snapshot_store,
-        LayoutEvent::SpaceExposed(target_space, size),
-    );
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(target_space, size));
     let source_workspace = snapshot.active_workspace(target_space).unwrap();
     let source_layout = snapshot.workspace_layouts.active(target_space, source_workspace).unwrap();
     snapshot
@@ -712,12 +704,15 @@ fn space_restore_uses_workspace_assignment_over_stale_window_server_space() {
         std::process::id(),
         target_space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     for space in [target_space, external_space] {
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+        let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(space, size));
     }
     let external_workspace = engine.active_workspace(external_space).unwrap();
     let external_layout =
@@ -759,13 +754,7 @@ fn space_restore_uses_workspace_assignment_over_stale_window_server_space() {
     window_store.set_window_server_space(window_server_id, Some(target_space));
 
     let report = engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Space, target_space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Space, target_space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -794,8 +783,9 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
     let live = WindowId::new(75, 1);
 
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, size));
     let source_workspace = snapshot.active_workspace(space).unwrap();
     let source_layout = snapshot.workspace_layouts.active(space, source_workspace).unwrap();
     snapshot
@@ -816,11 +806,14 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
         std::process::id(),
         space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(space, size));
     let target_workspace = engine.active_workspace(space).unwrap();
     let sibling_workspace = engine
         .virtual_workspace_manager
@@ -865,13 +858,7 @@ fn workspace_restore_does_not_consume_live_window_from_sibling_workspace() {
         .add_window_after_selection(sibling_layout, live);
 
     let report = engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Workspace, space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -898,8 +885,9 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
     let reused = WindowId::new(76, 1);
 
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, size));
     let source_workspace = snapshot.active_workspace(space).unwrap();
     let source_layout = snapshot.workspace_layouts.active(space, source_workspace).unwrap();
     snapshot
@@ -920,11 +908,14 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
         std::process::id(),
         space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(space, size));
     let target_workspace = engine.active_workspace(space).unwrap();
     window_store.insert_window(
         reused,
@@ -956,16 +947,10 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
         reused,
         target_workspace,
     ));
-    engine.add_window_to_layout(&mut window_store, space, reused);
+    engine.add_window_to_layout(&mut window_store, &mut engine_memory, space, reused);
 
     let report = engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Workspace, space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -987,16 +972,16 @@ fn workspace_restore_preserves_live_window_when_saved_process_local_id_is_reused
 #[test]
 fn completed_app_discovery_discards_unmatched_startup_ghosts() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(126);
     let ghost = WindowId::new(55, 1);
     let inactive_space = SpaceId::new(128);
     let inactive_ghost = WindowId::new(55, 2);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, ghost));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, ghost));
     engine.persistence.windows.insert(
         ghost,
         WindowFingerprint {
@@ -1008,12 +993,10 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
         },
     );
     engine.persistence.pending_windows.insert(ghost);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(inactive_space, CGSize::new(1200.0, 800.0)),
     );
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::WindowAdded(inactive_space, inactive_ghost),
     );
     engine.persistence.windows.insert(
@@ -1037,8 +1020,7 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
     engine.floating.set_last_focus(Some(ghost));
     assert!(engine.workspace_tree(workspace).contains_window(layout, ghost));
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::WindowDiscoveryCompleted(ghost.pid, None, vec![space]),
     );
 
@@ -1059,13 +1041,14 @@ fn completed_app_discovery_discards_unmatched_startup_ghosts() {
 #[test]
 fn persisted_layout_schema_is_versioned_and_legacy_files_still_load() {
     let engine = test_engine();
-    let serialized = engine.serialize_to_string();
-    assert!(serialized.contains("\"schema_version\":4"), "{serialized}");
+    let memory = DisplayMemory::default();
+    let serialized = engine.serialize_to_string(&memory);
+    assert!(serialized.contains("\"schema_version\":5"), "{serialized}");
 
-    let legacy = serialized.replacen("\"schema_version\":4,", "", 1);
+    let legacy = serialized.replacen("\"schema_version\":5,", "", 1);
     LayoutEngine::deserialize_from_str(&legacy).unwrap();
 
-    let future = serialized.replacen("\"schema_version\":4", "\"schema_version\":5", 1);
+    let future = serialized.replacen("\"schema_version\":5", "\"schema_version\":6", 1);
     let error = match LayoutEngine::deserialize_from_str(&future) {
         Ok(_) => panic!("future schema version should be rejected"),
         Err(error) => error,
@@ -1078,45 +1061,58 @@ fn persisted_layout_schema_is_versioned_and_legacy_files_still_load() {
 #[test]
 fn schema_v2_display_maps_are_folded_into_the_affinity_registry() {
     let engine = test_engine();
+    let empty = DisplayMemory::default();
     let v2 = engine
-        .serialize_to_string()
-        .replacen("\"schema_version\":4", "\"schema_version\":2", 1)
+        .serialize_to_string(&empty)
+        .replacen("\"schema_version\":5", "\"schema_version\":2", 1)
         .replacen(
-            "\"display_affinity\":(display_space:{},window_home:{},display_strip:{},window_width:{})",
+            "\"display_memory\":(affinity:(display_space:{},window_home:{},display_strip:{},\
+             window_width:{}),launch:(apps:{}))",
             "\"space_display_map\":{(7):Some(\"external-uuid\")},\
              \"display_last_space\":{\"builtin-uuid\":(1)}",
             1,
         );
     assert!(v2.contains("space_display_map"), "{v2}");
 
-    let upgraded = LayoutEngine::deserialize_from_str(&v2).expect("v2 file must load");
+    let loaded = LayoutEngine::deserialize_file(&v2).expect("v2 file must load");
+    let memory = loaded.memory;
 
     assert_eq!(
-        upgraded.last_space_for_display_uuid("external-uuid"),
+        memory.affinity.space_for_display("external-uuid"),
         Some(SpaceId::new(7)),
         "the space -> display map must carry over"
     );
     assert_eq!(
-        upgraded.last_space_for_display_uuid("builtin-uuid"),
+        memory.affinity.space_for_display("builtin-uuid"),
         Some(SpaceId::new(1)),
         "the display -> space map must carry over"
     );
+    let upgraded = loaded.layout.expect("the layout itself is fine");
+    let rewritten = upgraded.serialize_to_string(&memory);
     assert!(
-        !upgraded.serialize_to_string().contains("space_display_map"),
+        !rewritten.contains("space_display_map"),
         "the upgraded file must be written in the new shape only"
+    );
+    assert!(
+        rewritten.contains("\"display_memory\":(affinity:(display_space:{"),
+        "and the memory must be nested under its own key: {rewritten}"
+    );
+    assert!(
+        rewritten.contains("\"external-uuid\":(7)") && rewritten.contains("\"builtin-uuid\":(1)"),
+        "with both displays inside it: {rewritten}"
     );
 }
 
 #[test]
 fn malformed_active_layout_configuration_is_rejected_at_load_boundary() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(600);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let mut serialized = engine.serialize_to_string();
+    let mut serialized = engine.serialize_to_string(&memory);
     let active_size = serialized.find("active_size").unwrap_or_else(|| {
         panic!("serialized workspace must contain an active size: {serialized}")
     });
@@ -1140,6 +1136,7 @@ fn malformed_active_layout_configuration_is_rejected_at_load_boundary() {
 #[test]
 fn invalid_persisted_window_geometry_is_rejected() {
     let mut engine = test_engine();
+    let memory = DisplayMemory::default();
     let window = WindowId::new(60, 1);
     engine.persistence.windows.insert(
         window,
@@ -1152,7 +1149,7 @@ fn invalid_persisted_window_geometry_is_rejected() {
         },
     );
 
-    let error = match LayoutEngine::deserialize_from_str(&engine.serialize_to_string()) {
+    let error = match LayoutEngine::deserialize_from_str(&engine.serialize_to_string(&memory)) {
         Ok(_) => panic!("invalid persisted window geometry should be rejected"),
         Err(error) => error,
     };
@@ -1163,11 +1160,11 @@ fn invalid_persisted_window_geometry_is_rejected() {
 #[test]
 fn invalid_persisted_floating_frame_is_rejected() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(601);
     let window = WindowId::new(60, 2);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let workspace = engine.active_workspace(space).unwrap();
@@ -1181,7 +1178,7 @@ fn invalid_persisted_floating_frame_is_rejected() {
         ),
     );
 
-    let error = match LayoutEngine::deserialize_from_str(&engine.serialize_to_string()) {
+    let error = match LayoutEngine::deserialize_from_str(&engine.serialize_to_string(&memory)) {
         Ok(_) => panic!("invalid persisted floating frame should be rejected"),
         Err(error) => error,
     };
@@ -1196,9 +1193,10 @@ fn portable_restore_rejects_ambiguous_legacy_multi_space_files() {
     let target_space = SpaceId::new(605);
     let size = CGSize::new(1200.0, 800.0);
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
     for space in [source_a, source_b] {
-        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+        let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, size));
     }
     // A direct snapshot models a legacy file, which has no saved-active-space hint.
     let path = std::env::temp_dir().join(format!(
@@ -1206,11 +1204,14 @@ fn portable_restore_rejects_ambiguous_legacy_multi_space_files() {
         std::process::id(),
         target_space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(target_space, size));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(target_space, size));
     let target_workspace = engine.active_workspace(target_space).unwrap();
     let before_name = engine
         .virtual_workspace_manager
@@ -1220,13 +1221,7 @@ fn portable_restore_rejects_ambiguous_legacy_multi_space_files() {
         .clone();
 
     let error = engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, target_space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Workspace, target_space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap_err();
     let _ = std::fs::remove_file(path);
 
@@ -1250,9 +1245,10 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     let target_space = source_a;
     let size = CGSize::new(1200.0, 800.0);
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
     for space in [source_a, source_b] {
-        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+        let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, size));
     }
     let source_a_workspace = snapshot.active_workspace(source_a).unwrap();
     let source_b_workspace = snapshot.active_workspace(source_b).unwrap();
@@ -1275,12 +1271,15 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
         target_space.get(),
     ));
     snapshot
-        .save_current_layout(path.clone(), &snapshot_store, Some(source_b))
+        .save_current_layout(path.clone(), &snapshot_store, &mut snapshot_memory, Some(source_b))
         .unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(target_space, size));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(target_space, size));
     let target_workspace = engine.active_workspace(target_space).unwrap();
     let target_name = engine
         .virtual_workspace_manager
@@ -1289,13 +1288,7 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
         .name
         .clone();
     engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Workspace, target_space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Workspace, target_space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
 
     assert_eq!(
@@ -1308,18 +1301,13 @@ fn portable_restore_uses_the_space_that_was_active_when_saved() {
     );
 
     let mut saved_target = test_engine();
+    let mut saved_target_memory = DisplayMemory::default();
     let mut saved_store = WindowStore::default();
     let _ = saved_target
-        .handle_event(&mut saved_store, LayoutEvent::SpaceExposed(target_space, size));
+        .handle_event(&mut saved_store, &mut saved_target_memory, LayoutEvent::SpaceExposed(target_space, size));
     let saved_workspace = saved_target.active_workspace(target_space).unwrap();
     saved_target
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::from_saved_file(RestoreScope::Workspace, target_space),
-            &mut saved_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::from_saved_file(RestoreScope::Workspace, target_space), &mut saved_store, &mut saved_target_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
     assert_eq!(
@@ -1343,8 +1331,9 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
     let space = SpaceId::new(609);
     let size = CGSize::new(1200.0, 800.0);
     let mut snapshot = LayoutEngine::new(&workspace_settings, &layout_settings);
+    let mut memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
     let saved_workspaces = snapshot.virtual_workspace_manager.existing_workspaces(space);
     let saved_t = saved_workspaces[3].0;
     let saved_s = saved_workspaces[5].0;
@@ -1367,23 +1356,19 @@ fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
         space.get(),
     ));
     snapshot
-        .save_current_layout(path.clone(), &snapshot_store, Some(space))
+        .save_current_layout(path.clone(), &snapshot_store, &mut memory, Some(space))
         .unwrap();
 
     let mut engine = LayoutEngine::new(&workspace_settings, &layout_settings);
+
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
     let target_s = engine.virtual_workspace_manager.existing_workspaces(space)[5].0;
     assert!(engine.virtual_workspace_manager.set_active_workspace(space, target_s));
 
     engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::from_saved_file(RestoreScope::Workspace, space),
-            &mut window_store,
-            &workspace_settings,
-            &layout_settings,
-        )
+        .restore_layout(path.clone(), RestoreRequest::from_saved_file(RestoreScope::Workspace, space), &mut window_store, &mut memory, &workspace_settings, &layout_settings)
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -1398,10 +1383,11 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
     let current_a = SpaceId::new(632);
     let size = CGSize::new(1200.0, 800.0);
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
     for (space, display) in [(saved_a, "display-a"), (saved_b, "display-b")] {
-        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
-        snapshot.update_space_display(space, Some(display.into()));
+        let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, size));
+        snapshot.update_space_display(&mut snapshot_memory, space, Some(display.into()));
         let workspace = snapshot.active_workspace(space).unwrap();
         assert!(snapshot.virtual_workspace_manager.rename_workspace(
             space,
@@ -1414,21 +1400,18 @@ fn master_restore_resolves_old_space_id_by_display_identity() {
         std::process::id(),
     ));
     snapshot
-        .save_current_layout(path.clone(), &snapshot_store, Some(saved_b))
+        .save_current_layout(path.clone(), &snapshot_store, &mut snapshot_memory, Some(saved_b))
         .unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(current_a, size));
-    engine.update_space_display(current_a, Some("display-a".into()));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(current_a, size));
+    engine.update_space_display(&mut engine_memory, current_a, Some("display-a".into()));
     engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::from_saved_file(RestoreScope::Workspace, current_a),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::from_saved_file(RestoreScope::Workspace, current_a), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -1442,12 +1425,12 @@ fn startup_restore_reapplies_configured_workspace_names() {
     let layout_settings = LayoutSettings::default();
     let space = SpaceId::new(608);
     let mut snapshot = LayoutEngine::new(&saved_settings, &layout_settings);
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = snapshot.handle_event(
-        &mut window_store,
+    let _ = snapshot.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let mut restored = LayoutEngine::deserialize_from_str(&snapshot.serialize_to_string()).unwrap();
+    let mut restored = LayoutEngine::deserialize_from_str(&snapshot.serialize_to_string(&memory)).unwrap();
     let mut current_settings = saved_settings;
     current_settings.workspace_names = vec!["A".into(), "S".into()];
 
@@ -1470,29 +1453,31 @@ fn startup_restore_remaps_saved_space_by_display_identity_once() {
     let size = CGSize::new(1200.0, 800.0);
     let display = "display-a".to_string();
     let mut snapshot = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
     let _ =
-        snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(saved_space, size));
-    snapshot.update_space_display(saved_space, Some(display.clone()));
+        snapshot.handle_event(&mut snapshot_store, &mut memory, LayoutEvent::SpaceExposed(saved_space, size));
+    snapshot.update_space_display(&mut memory, saved_space, Some(display.clone()));
     let path = std::env::temp_dir().join(format!(
         "rini-startup-space-remap-test-{}-{}.ron",
         std::process::id(),
         saved_space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut memory, path.clone()).unwrap();
 
-    let mut restored = LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
+    let (mut restored, _restored_memory) =
+        LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
     // An incomplete first topology snapshot must not consume the one-shot reconciliation.
-    restored.reconcile_startup_spaces(&mut window_store, &[], 1);
-    restored.reconcile_startup_spaces(&mut window_store, &[(current_space, display.clone())], 1);
+    restored.reconcile_startup_spaces(&mut window_store, &mut memory, &[], 1);
+    restored.reconcile_startup_spaces(&mut window_store, &mut memory, &[(current_space, display.clone())], 1);
 
     assert!(!restored.workspace_layouts.spaces().contains(&saved_space));
     assert!(restored.workspace_layouts.spaces().contains(&current_space));
 
     // The repair is startup-only. A later ordinary native-space switch must not migrate state.
-    restored.reconcile_startup_spaces(&mut window_store, &[(later_space, display)], 1);
+    restored.reconcile_startup_spaces(&mut window_store, &mut memory, &[(later_space, display)], 1);
     assert!(restored.workspace_layouts.spaces().contains(&current_space));
     assert!(!restored.workspace_layouts.spaces().contains(&later_space));
 }
@@ -1513,11 +1498,12 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
     let on_b = WindowId::new(11, 1);
 
     let mut snapshot = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
     for (space, display, window) in [(space_a, "display-a", on_a), (space_b, "display-b", on_b)] {
-        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
-        snapshot.update_space_display(space, Some(display.into()));
-        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::WindowAdded(space, window));
+        let _ = snapshot.handle_event(&mut snapshot_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
+        snapshot.update_space_display(&mut memory, space, Some(display.into()));
+        let _ = snapshot.handle_event(&mut snapshot_store, &mut memory, LayoutEvent::WindowAdded(space, window));
         snapshot.persistence.windows.insert(
             window,
             WindowFingerprint {
@@ -1542,25 +1528,25 @@ fn startup_restore_handles_space_id_swaps_between_displays() {
         "rini-startup-space-swap-test-{}.ron",
         std::process::id(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut memory, path.clone()).unwrap();
 
-    let mut restored = LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
+    let (mut restored, _restored_memory) =
+        LayoutEngine::load_for_startup_restore(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
     let mut window_store = WindowStore::default();
     // display-a comes back as space_b and vice versa.
-    restored.reconcile_startup_spaces(
-        &mut window_store,
+    restored.reconcile_startup_spaces(&mut window_store, &mut memory,
         &[(space_b, "display-a".into()), (space_a, "display-b".into())],
         2,
     );
 
     assert_eq!(
-        restored.last_space_for_display_uuid("display-a"),
+        memory.affinity.space_for_display("display-a"),
         Some(space_b),
         "display-a must now be recorded on the space id it came back as"
     );
     assert_eq!(
-        restored.last_space_for_display_uuid("display-b"),
+        memory.affinity.space_for_display("display-b"),
         Some(space_a),
         "and display-b on the other, without the two being confused"
     );
@@ -1782,16 +1768,16 @@ fn fuzzy_match_requires_window_specific_evidence() {
 #[test]
 fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(503);
     let ghost = WindowId::new(42, 7);
     let live = WindowId::new(99, 8);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     for window in [ghost, live] {
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, window));
     }
     engine.persistence.windows.insert(
         ghost,
@@ -1805,8 +1791,7 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
     );
     engine.persistence.pending_windows.insert(ghost);
 
-    let outcome = engine.reconcile_restored_window(
-        &mut window_store,
+    let outcome = engine.reconcile_restored_window(&mut window_store, &mut memory,
         space,
         live,
         &WindowFingerprint {
@@ -1820,8 +1805,7 @@ fn rejected_fuzzy_candidate_is_removed_when_discovery_finishes() {
     assert!(!outcome.matched);
     assert!(engine.persistence.pending_windows.contains(&ghost));
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::WindowDiscoveryCompleted(
             live.pid,
             Some("com.example.app".into()),
@@ -1841,21 +1825,23 @@ fn space_restore_rejects_workspace_count_mismatch_before_mutating_layouts() {
     let space = SpaceId::new(125);
     let size = CGSize::new(1200.0, 800.0);
     let mut snapshot = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
     let path = std::env::temp_dir().join(format!(
         "rini-space-count-restore-test-{}-{}.ron",
         std::process::id(),
         space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut memory, path.clone()).unwrap();
 
     let mut target_settings = VirtualWorkspaceSettings::default();
     target_settings.default_workspace_count = 3;
     let mut engine = LayoutEngine::new(&target_settings, &LayoutSettings::default());
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let sentinel = WindowId::new(11, 1);
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
     let target_workspace = engine.active_workspace(space).unwrap();
     let target_layout = engine.workspace_layouts.active(space, target_workspace).unwrap();
     engine
@@ -1863,14 +1849,7 @@ fn space_restore_rejects_workspace_count_mismatch_before_mutating_layouts() {
         .add_window_after_selection(target_layout, sentinel);
 
     let error = engine
-        .restore_saved_layout(
-            path.clone(),
-            RestoreScope::Space,
-            space,
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_saved_layout(path.clone(), RestoreScope::Space, space, &mut window_store, &mut memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap_err();
     let _ = std::fs::remove_file(path);
 
@@ -1888,8 +1867,9 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
     let large = CGSize::new(1600.0, 1000.0);
     let ghost = WindowId::new(33419, 82684);
     let mut snapshot = test_engine();
+    let mut snapshot_memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
-    let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, large));
+    let _ = snapshot.handle_event(&mut snapshot_store, &mut snapshot_memory, LayoutEvent::SpaceExposed(space, large));
     let workspace = snapshot.active_workspace(space).unwrap();
     let large_layout = snapshot.workspace_layouts.active(space, workspace).unwrap();
     let small_layout = snapshot.virtual_workspace_manager.workspaces[workspace]
@@ -1920,19 +1900,16 @@ fn runtime_restore_cleans_unmatched_windows_from_inactive_size_configurations() 
         std::process::id(),
         space.get(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut snapshot_memory, path.clone()).unwrap();
 
     let mut engine = test_engine();
+    let mut engine_memory = DisplayMemory::default();
+
+    let _memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, large));
+    let _ = engine.handle_event(&mut window_store, &mut engine_memory, LayoutEvent::SpaceExposed(space, large));
     let report = engine
-        .restore_layout(
-            path.clone(),
-            RestoreRequest::new(RestoreScope::Space, space),
-            &mut window_store,
-            &VirtualWorkspaceSettings::default(),
-            &LayoutSettings::default(),
-        )
+        .restore_layout(path.clone(), RestoreRequest::new(RestoreScope::Space, space), &mut window_store, &mut engine_memory, &VirtualWorkspaceSettings::default(), &LayoutSettings::default())
         .unwrap();
     let _ = std::fs::remove_file(path);
 
@@ -1974,16 +1951,16 @@ fn layout_system_round_trips_through_ron() {
 fn restored_window_server_id_cannot_cross_known_application_identity() {
     let mut window_store = WindowStore::default();
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let space = SpaceId::new(88);
     let titled_match = WindowId::new(1, 1);
     let id_match = WindowId::new(1, 2);
     let live = WindowId::new(99, 1);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, titled_match));
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, id_match));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, titled_match));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, id_match));
     engine.persistence.windows.insert(
         titled_match,
         WindowFingerprint {
@@ -2006,8 +1983,7 @@ fn restored_window_server_id_cannot_cross_known_application_identity() {
     );
     engine.persistence.pending_windows.extend([titled_match, id_match]);
 
-    engine.reconcile_restored_window(
-        &mut window_store,
+    engine.reconcile_restored_window(&mut window_store, &mut memory,
         space,
         live,
         &WindowFingerprint {
@@ -2032,12 +2008,12 @@ fn restored_window_server_id_cannot_cross_known_application_identity() {
 fn duplicate_window_server_fingerprints_choose_live_assignment_and_are_healed() {
     let mut window_store = WindowStore::default();
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let space = SpaceId::new(91);
     let stale = WindowId::new(1, 1);
     let preferred = WindowId::new(1, 2);
     let live = WindowId::new(99, 1);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let workspaces = engine.virtual_workspace_manager.list_workspaces(space);
@@ -2068,7 +2044,7 @@ fn duplicate_window_server_fingerprints_choose_live_assignment_and_are_healed() 
     engine.persistence.windows.insert(preferred, fingerprint("preferred"));
     engine.persistence.pending_windows.extend([stale, preferred]);
 
-    engine.reconcile_restored_window(&mut window_store, space, live, &fingerprint("live"));
+    engine.reconcile_restored_window(&mut window_store, &mut memory, space, live, &fingerprint("live"));
 
     assert_eq!(
         window_store.workspace_for_window(space, live),
@@ -2087,11 +2063,11 @@ fn duplicate_window_server_fingerprints_choose_live_assignment_and_are_healed() 
 fn duplicate_restored_identity_prefers_live_workspace_assignment() {
     let mut window_store = WindowStore::default();
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let space = SpaceId::new(90);
     let live = WindowId::new(99, 7);
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let workspaces = engine.virtual_workspace_manager.list_workspaces(space);
@@ -2122,7 +2098,7 @@ fn duplicate_restored_identity_prefers_live_workspace_assignment() {
     engine.persistence.windows.insert(live, fingerprint.clone());
     engine.persistence.pending_windows.insert(live);
 
-    engine.reconcile_restored_window(&mut window_store, space, live, &fingerprint);
+    engine.reconcile_restored_window(&mut window_store, &mut memory, space, live, &fingerprint);
 
     assert_eq!(
         window_store.workspace_for_window(space, live),
@@ -2140,17 +2116,16 @@ fn duplicate_restored_identity_prefers_live_workspace_assignment() {
 fn restore_fallback_requires_title_and_size_within_known_app() {
     let mut window_store = WindowStore::default();
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let space = SpaceId::new(89);
     let title_match = WindowId::new(1, 1);
     let size_and_app_match = WindowId::new(1, 2);
     let live = WindowId::new(99, 1);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, title_match));
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, title_match));
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::WindowAdded(space, size_and_app_match),
     );
     engine.persistence.windows.insert(
@@ -2175,8 +2150,7 @@ fn restore_fallback_requires_title_and_size_within_known_app() {
     );
     engine.persistence.pending_windows.extend([title_match, size_and_app_match]);
 
-    engine.reconcile_restored_window(
-        &mut window_store,
+    engine.reconcile_restored_window(&mut window_store, &mut memory,
         space,
         live,
         &WindowFingerprint {
@@ -2199,15 +2173,16 @@ fn restore_fallback_requires_title_and_size_within_known_app() {
 #[test]
 fn load_heals_disagreeing_tiled_and_floating_ownership() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(125);
     let size = CGSize::new(1200.0, 800.0);
     let marked_without_frame = WindowId::new(42, 10);
     let agreed_floating = WindowId::new(42, 11);
     let frame_without_marker = WindowId::new(42, 12);
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::SpaceExposed(space, size));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
     for window in [marked_without_frame, agreed_floating, frame_without_marker] {
-        let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+        let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, window));
         engine.persistence.windows.insert(
             window,
             WindowFingerprint {
@@ -2233,7 +2208,7 @@ fn load_heals_disagreeing_tiled_and_floating_ownership() {
     engine.floating_positions.store(space, active, frame_without_marker, frame);
     engine.floating.set_last_focus(Some(frame_without_marker));
 
-    let loaded = LayoutEngine::deserialize_from_str(&engine.serialize_to_string()).unwrap();
+    let loaded = LayoutEngine::deserialize_from_str(&engine.serialize_to_string(&memory)).unwrap();
 
     assert!(!loaded.floating.is_floating(marked_without_frame));
     assert!(loaded.restored_location_for_window(marked_without_frame).is_some());
@@ -2260,6 +2235,7 @@ fn load_heals_disagreeing_tiled_and_floating_ownership() {
 #[test]
 fn app_close_removes_saved_fingerprints() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let window = WindowId::new(42, 7);
     engine.persistence.windows.insert(
@@ -2274,7 +2250,7 @@ fn app_close_removes_saved_fingerprints() {
     );
     engine.persistence.pending_windows.insert(window);
 
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::AppClosed(window.pid));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::AppClosed(window.pid));
 
     assert!(!engine.persistence.windows.contains_key(&window));
     assert!(!engine.persistence.pending_windows.contains(&window));
@@ -2296,6 +2272,7 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
     let external = "display-external".to_string();
 
     let mut snapshot = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut snapshot_store = WindowStore::default();
     let on_builtin = WindowId::new(10, 1);
     let on_external = WindowId::new(10, 2);
@@ -2303,9 +2280,9 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
         (builtin_space, &builtin, on_builtin, 5001u32),
         (external_space, &external, on_external, 5002u32),
     ] {
-        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::SpaceExposed(space, size));
-        snapshot.update_space_display(space, Some(display.clone()));
-        let _ = snapshot.handle_event(&mut snapshot_store, LayoutEvent::WindowAdded(space, window));
+        let _ = snapshot.handle_event(&mut snapshot_store, &mut memory, LayoutEvent::SpaceExposed(space, size));
+        snapshot.update_space_display(&mut memory, space, Some(display.clone()));
+        let _ = snapshot.handle_event(&mut snapshot_store, &mut memory, LayoutEvent::WindowAdded(space, window));
         snapshot.persistence.windows.insert(
             window,
             WindowFingerprint {
@@ -2321,7 +2298,7 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
         "rini-absent-display-release-test-{}.ron",
         std::process::id(),
     ));
-    snapshot.save(path.clone()).unwrap();
+    snapshot.save(&mut memory, path.clone()).unwrap();
 
     let mut restored = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
@@ -2336,13 +2313,13 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
     // the home from the saved space's display. Without this the assertion below would pass
     // on affinity that had merely been carried over from the save.
     for window in [on_builtin, on_external] {
-        restored.display_affinity.forget_window(window);
+        memory.affinity.forget_window(window);
     }
-    assert_eq!(restored.window_display_home(on_external), None);
+    assert_eq!(memory.affinity.window_home(on_external), None);
 
     // Boot with ONLY the built-in attached, as after undocking.
     let mut window_store = WindowStore::default();
-    restored.reconcile_startup_spaces(&mut window_store, &[(builtin_space, builtin.clone())], 1);
+    restored.reconcile_startup_spaces(&mut window_store, &mut memory, &[(builtin_space, builtin.clone())], 1);
 
     assert!(
         restored.restored_location_for_window(on_external).is_none(),
@@ -2350,7 +2327,7 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
          restoring it strands the window off-screen with no display to show it"
     );
     assert_eq!(
-        restored.window_display_home(on_external),
+        memory.affinity.window_home(on_external),
         Some(external.as_str()),
         "its display affinity must survive, so plugging the display back in returns it"
     );
@@ -2359,7 +2336,7 @@ fn startup_restore_releases_windows_saved_on_an_absent_display() {
         "a window on the display that IS attached must keep its saved size and position"
     );
     assert_eq!(
-        restored.window_display_home(on_builtin),
+        memory.affinity.window_home(on_builtin),
         None,
         "a window on an attached display keeps its saved slot, so the release path must \
          leave it alone entirely"
@@ -2373,10 +2350,13 @@ fn launch_memory_survives_a_save_and_load() {
     use crate::workspaces::domain::display_affinity::ColumnWidth;
     use crate::workspaces::domain::launch_memory::{Slot, topology_key};
 
-    let mut engine = test_engine();
+    let engine = test_engine();
+    let _memory = DisplayMemory::default();
+
+    let mut memory = DisplayMemory::default();
     let docked = topology_key(&["built-in".into(), "external".into()]);
     let alone = topology_key(&["built-in".into()]);
-    engine.launch_memory.remember(
+    memory.launch.remember(
         "com.mitchellh.ghostty",
         &docked,
         vec![Slot {
@@ -2386,7 +2366,7 @@ fn launch_memory_survives_a_save_and_load() {
             width: Some(ColumnWidth::Offset(0.25)),
         }.into()],
     );
-    engine.launch_memory.remember(
+    memory.launch.remember(
         "com.mitchellh.ghostty",
         &alone,
         vec![Slot {
@@ -2399,17 +2379,17 @@ fn launch_memory_survives_a_save_and_load() {
 
     let path = std::env::temp_dir()
         .join(format!("rini-launch-memory-test-{}.ron", std::process::id()));
-    engine.save(path.clone()).unwrap();
-    let loaded = LayoutEngine::load(path.clone()).unwrap();
+    engine.save(&mut memory, path.clone()).unwrap();
+    let _loaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(path);
 
-    let docked_slots = loaded.launch_memory.slots("com.mitchellh.ghostty", &docked);
+    let docked_slots = memory.launch.slots("com.mitchellh.ghostty", &docked);
     assert_eq!(docked_slots.len(), 1);
     assert_eq!(docked_slots[0].display_uuid, "external");
     assert_eq!(docked_slots[0].workspace_index, 2);
     assert_eq!(docked_slots[0].width, Some(ColumnWidth::Offset(0.25)));
 
-    let alone_slots = loaded.launch_memory.slots("com.mitchellh.ghostty", &alone);
+    let alone_slots = memory.launch.slots("com.mitchellh.ghostty", &alone);
     assert_eq!(alone_slots[0].display_uuid, "built-in");
     assert_eq!(alone_slots[0].width, Some(ColumnWidth::FullWidth));
 }
@@ -2418,25 +2398,26 @@ fn launch_memory_survives_a_save_and_load() {
 #[test]
 fn a_file_without_launch_memory_still_loads() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(5);
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
     );
     let path = std::env::temp_dir()
         .join(format!("rini-launch-memory-legacy-{}.ron", std::process::id()));
-    engine.save(path.clone()).unwrap();
+    engine.save(&mut memory, path.clone()).unwrap();
 
-    // Strip the field back out, as a file from before this change would be.
+    // Strip the record back out, as a file from before it existed would be.
     let written = std::fs::read_to_string(&path).unwrap();
-    let stripped = written.replace(r#""launch_memory":(apps:{}),"#, "");
-    assert_ne!(stripped, written, "the field is written, so this test is checking something");
+    let stripped = written.replace(",launch:(apps:{})", "");
+    assert_ne!(stripped, written, "the record is written, so this test is checking something");
     std::fs::write(&path, stripped).unwrap();
 
-    let loaded = LayoutEngine::load(path.clone()).unwrap();
+    let loaded = LayoutEngine::load_file(&path).unwrap();
     let _ = std::fs::remove_file(path);
-    assert!(loaded.launch_memory.is_empty());
+    assert!(loaded.layout.is_ok(), "a missing record is a default, not a refusal");
+    assert!(loaded.memory.launch.is_empty());
 }
 
 /// The whole feature, end to end: a window is placed, moved, sized, and remembered; then the application
@@ -2448,16 +2429,16 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(11);
     let before_quit = WindowId::new(500, 1);
     let after_relaunch = WindowId::new(900, 7);
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let insert = |store: &mut WindowStore, window: WindowId| {
@@ -2491,7 +2472,7 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
     // The window as it was before the application quit: moved off the active workspace and made full
     // width, which are the two things that used to be forgotten.
     insert(&mut window_store, before_quit);
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, before_quit));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, before_quit));
     let workspaces: Vec<_> = engine
         .virtual_workspace_manager
         .list_workspaces(space)
@@ -2505,15 +2486,15 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
         before_quit,
         elsewhere,
     ));
-    engine.display_affinity.set_window_width(DISPLAY, before_quit, ColumnWidth::FullWidth);
+    memory.affinity.set_window_width(DISPLAY, before_quit, ColumnWidth::FullWidth);
 
-    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
     // The application quits and comes back with a different pid and window server id.
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowRemoved(before_quit));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowRemoved(before_quit));
 
     insert(&mut window_store, after_relaunch);
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, after_relaunch));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, after_relaunch));
 
     assert_eq!(
         engine.virtual_workspace_manager.workspace_for_window_any(&window_store, after_relaunch),
@@ -2521,12 +2502,12 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
         "back in the workspace it was in, not the active one"
     );
     assert_eq!(
-        engine.display_affinity.window_home(after_relaunch),
+        memory.affinity.window_home(after_relaunch),
         Some(DISPLAY),
         "and on the display it belonged to"
     );
     assert_eq!(
-        engine.display_affinity.window_width(DISPLAY, after_relaunch),
+        memory.affinity.window_width(DISPLAY, after_relaunch),
         Some(ColumnWidth::FullWidth),
         "at the width it had there"
     );
@@ -2551,15 +2532,15 @@ fn a_relaunched_window_returns_to_its_remembered_workspace_and_width() {
 fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(21);
     let window = WindowId::new(600, 3);
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
@@ -2587,14 +2568,13 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
             ignore_app_rule: false,
         },
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, window));
 
     // Park it in a workspace that is not the active one, through the command the user runs, so its tree
     // membership really moves. Reassigning it in the store alone leaves it in the active workspace's tree,
     // where the old lookup could still find it and the test would prove nothing.
     let parked_index = 2usize;
-    let _ = engine.handle_virtual_workspace_command(
-        &mut window_store,
+    let _ = engine.handle_virtual_workspace_command(&mut window_store, &mut memory,
         space,
         &crate::workspaces::LayoutCommand::MoveWindowToWorkspace {
             workspace: rini_ipc::protocol::WorkspaceSelector::Index(parked_index),
@@ -2611,10 +2591,10 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
     let active = engine.virtual_workspace_manager.active_workspace(space).unwrap();
     assert_ne!(workspaces[parked_index], active, "parked away from the active workspace");
 
-    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
     let topology = crate::workspaces::domain::launch_memory::topology_key(&[DISPLAY.to_owned()]);
-    let slots = engine.launch_memory.slots("com.apple.TextEdit", &topology);
+    let slots = memory.launch.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "a parked window still has a slot");
     assert_eq!(slots[0].workspace_index, parked_index, "and it names the workspace it is parked in");
 }
@@ -2627,15 +2607,15 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
 fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(31);
     let window = WindowId::new(700, 4);
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
@@ -2663,16 +2643,16 @@ fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {
             ignore_app_rule: false,
         },
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, window));
 
     // Exactly the state seen live: tracked, assigned, no home.
-    engine.display_affinity.forget_window(window);
-    assert_eq!(engine.display_affinity.window_home(window), None);
+    memory.affinity.forget_window(window);
+    assert_eq!(memory.affinity.window_home(window), None);
 
-    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
     let topology = crate::workspaces::domain::launch_memory::topology_key(&[DISPLAY.to_owned()]);
-    let slots = engine.launch_memory.slots("com.apple.TextEdit", &topology);
+    let slots = memory.launch.slots("com.apple.TextEdit", &topology);
     assert_eq!(slots.len(), 1, "remembered even with no home of its own");
     assert_eq!(slots[0].display_uuid, DISPLAY, "against the display its space is on");
 }
@@ -2691,15 +2671,15 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(41);
     let window = WindowId::new(800, 5);
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
@@ -2729,7 +2709,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
     );
 
     let topology = topology_key(&[DISPLAY.to_owned()]);
-    engine.launch_memory.remember(
+    memory.launch.remember(
         "com.apple.TextEdit",
         &topology,
         vec![Slot {
@@ -2741,8 +2721,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
     );
 
     let result = engine
-        .assign_window_with_app_info(
-            &mut window_store,
+        .assign_window_with_app_info(&mut window_store, &mut memory,
             window,
             space,
             Some("com.apple.TextEdit"),
@@ -2767,7 +2746,7 @@ fn a_launching_window_is_placed_from_the_identity_the_rules_were_given() {
         other => panic!("expected a managed placement, got {other:?}"),
     }
     assert_eq!(
-        engine.display_affinity.window_width(DISPLAY, window),
+        memory.affinity.window_width(DISPLAY, window),
         Some(ColumnWidth::FullWidth),
         "and given the width it had there"
     );
@@ -2784,15 +2763,15 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
 
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
     let space = SpaceId::new(51);
     let window = WindowId::new(900, 2);
 
-    let _ = engine.handle_event(
-        &mut window_store,
+    let _ = engine.handle_event(&mut window_store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(800.0, 600.0));
@@ -2820,7 +2799,7 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
             ignore_app_rule: false,
         },
     );
-    let _ = engine.handle_event(&mut window_store, LayoutEvent::WindowAdded(space, window));
+    let _ = engine.handle_event(&mut window_store, &mut memory, LayoutEvent::WindowAdded(space, window));
 
     // Full width in the LAYOUT with nothing in the affinity map, which is the state the file was actually
     // in: `window_width:{}` and every slot recording no width at all.
@@ -2828,12 +2807,12 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
     let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
     engine.workspace_tree_mut(ws_id).set_window_full_width(layout, window, true);
     assert!(engine.workspace_tree(ws_id).is_window_full_width(layout, window), "setup");
-    assert_eq!(engine.display_affinity.window_width(DISPLAY, window), None, "setup");
+    assert_eq!(memory.affinity.window_width(DISPLAY, window), None, "setup");
 
-    engine.remember_launch_slots(&window_store, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&window_store, &mut memory, &[DISPLAY.to_owned()]);
 
     let topology = topology_key(&[DISPLAY.to_owned()]);
-    let slots = engine.launch_memory.slots("app.zen-browser.zen", &topology);
+    let slots = memory.launch.slots("app.zen-browser.zen", &topology);
     assert_eq!(slots.len(), 1);
     assert_eq!(
         slots[0].width,
@@ -2887,56 +2866,56 @@ fn a_save_that_cannot_read_the_width_does_not_erase_a_remembered_full_width() {
     };
 
     let mut engine = test_engine();
+    let _memory = DisplayMemory::default();
+
+    let mut memory = DisplayMemory::default();
     let mut store = WindowStore::default();
     let before_quit = WindowId::new(500, 1);
-    let _ = engine.handle_event(
-        &mut store,
+    let _ = engine.handle_event(&mut store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
     insert(&mut store, before_quit);
-    let _ = engine.handle_event(&mut store, LayoutEvent::WindowAdded(space, before_quit));
+    let _ = engine.handle_event(&mut store, &mut memory, LayoutEvent::WindowAdded(space, before_quit));
 
     engine.focused_window = Some(before_quit);
-    let _ = engine.handle_command(
-        &mut store,
+    let _ = engine.handle_command(&mut store, &mut memory,
         Some(space),
         &[space],
         &HashMap::default(),
         LayoutCommand::ToggleFullscreenWithinGaps,
     );
-    engine.remember_launch_slots(&store, &[DISPLAY.to_owned()]);
+    engine.remember_launch_slots(&store, &mut memory, &[DISPLAY.to_owned()]);
 
     let topology = crate::workspaces::domain::launch_memory::topology_key(&[DISPLAY.to_owned()]);
     assert_eq!(
-        engine.launch_memory.slots(APP, &topology)[0].width,
+        memory.launch.slots(APP, &topology)[0].width,
         Some(ColumnWidth::FullWidth),
         "ctrl-F is what gets remembered"
     );
 
     // rini restarts, and the window is discovered before the topology is known.
     let path = std::env::temp_dir().join(format!("full_width_{}.ron", std::process::id()));
-    engine.save(path.clone()).unwrap();
+    engine.save(&mut memory, path.clone()).unwrap();
     let mut reloaded = LayoutEngine::load(path.clone()).unwrap();
     let _ = std::fs::remove_file(&path);
 
     let mut store = WindowStore::default();
     let after_relaunch = WindowId::new(900, 7);
-    let _ = reloaded.handle_event(
-        &mut store,
+    let _ = reloaded.handle_event(&mut store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    reloaded.update_space_display(space, Some(DISPLAY.to_owned()));
+    reloaded.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     reloaded.set_connected_displays(vec![DISPLAY.to_owned()]);
     insert(&mut store, after_relaunch);
-    let _ = reloaded.handle_event(&mut store, LayoutEvent::WindowAdded(space, after_relaunch));
+    let _ = reloaded.handle_event(&mut store, &mut memory, LayoutEvent::WindowAdded(space, after_relaunch));
 
     // The autosave fires while the width still cannot be read. This is the step that used to
     // destroy the record, and after it the window can never come back full width again.
-    reloaded.remember_launch_slots(&store, &[DISPLAY.to_owned()]);
+    reloaded.remember_launch_slots(&store, &mut memory, &[DISPLAY.to_owned()]);
     assert_eq!(
-        reloaded.launch_memory.slots(APP, &topology)[0].width,
+        memory.launch.slots(APP, &topology)[0].width,
         Some(ColumnWidth::FullWidth),
         "a save that could not read the width must leave the remembered one standing"
     );
@@ -2952,12 +2931,12 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
     const DISPLAY: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
     let space = SpaceId::new(11);
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut store = WindowStore::default();
-    let _ = engine.handle_event(
-        &mut store,
+    let _ = engine.handle_event(&mut store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
-    engine.update_space_display(space, Some(DISPLAY.to_owned()));
+    engine.update_space_display(&mut memory, space, Some(DISPLAY.to_owned()));
     engine.set_connected_displays(vec![DISPLAY.to_owned()]);
 
     let stacked = [WindowId::new(500, 1), WindowId::new(500, 2)];
@@ -2987,19 +2966,17 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
                 ignore_app_rule: false,
             },
         );
-        let _ = engine.handle_event(&mut store, LayoutEvent::WindowAdded(space, window));
+        let _ = engine.handle_event(&mut store, &mut memory, LayoutEvent::WindowAdded(space, window));
     }
     engine.focused_window = Some(stacked[1]);
-    let _ = engine.handle_command(
-        &mut store,
+    let _ = engine.handle_command(&mut store, &mut memory,
         Some(space),
         &[space],
         &HashMap::default(),
         LayoutCommand::ToggleFold(crate::layout::Direction::Left),
     );
 
-    let response = engine.handle_command(
-        &mut store,
+    let response = engine.handle_command(&mut store, &mut memory,
         Some(space),
         &[space],
         &HashMap::default(),
@@ -3016,16 +2993,16 @@ fn maximizing_reports_a_geometry_change_so_the_move_is_animated() {
 #[test]
 fn a_layout_file_wrapped_in_the_old_layout_system_tag_is_refused_by_name() {
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut store = WindowStore::default();
-    let _ = engine.handle_event(
-        &mut store,
+    let _ = engine.handle_event(&mut store, &mut memory,
         LayoutEvent::SpaceExposed(SpaceId::new(9), CGSize::new(1728.0, 1085.0)),
     );
-    let current = engine.serialize_to_string();
+    let current = engine.serialize_to_string(&memory);
     assert!(current.contains("layout_system"), "the fixture needs a workspace: {current}");
     assert!(
         !current.contains("scrolling("),
-        "schema 4 must not write the tag itself: {current}"
+        "schema 5 must not write the tag itself: {current}"
     );
 
     // A schema-3 file, as the previous build wrote them.
@@ -3037,7 +3014,7 @@ fn a_layout_file_wrapped_in_the_old_layout_system_tag_is_refused_by_name() {
         Err(error) => error.to_string(),
     };
     assert!(
-        message.contains("predates schema 4") && message.contains("laid out fresh"),
+        message.contains("predates schema 5") && message.contains("laid out fresh"),
         "the error has to say what happened and what follows: {message}"
     );
 }
@@ -3051,9 +3028,9 @@ fn switching_workspace_announces_the_switch_and_its_windows() {
 
     let space = SpaceId::new(31);
     let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
     let mut store = WindowStore::default();
-    let _ = engine.handle_event(
-        &mut store,
+    let _ = engine.handle_event(&mut store, &mut memory,
         LayoutEvent::SpaceExposed(space, CGSize::new(1728.0, 1085.0)),
     );
     // Whatever exposing a space announced is not what this test is about.
@@ -3077,4 +3054,139 @@ fn switching_workspace_announces_the_switch_and_its_windows() {
         engine.drain_broadcasts().is_empty(),
         "draining takes them, so the application cannot send the same event twice"
     );
+}
+
+/// The reason the display memory is its own record.
+///
+/// A layout written by a NEWER schema cannot be trusted, and rini refuses it. That refusal used to
+/// take the machine's memory with it, because both lived in the same struct behind the same
+/// validation: every window was then re-homed from scratch on the next display change and every
+/// relaunched application landed in a default slot. Which monitor a window lives on is not a fact the
+/// layout's version has any bearing on.
+#[test]
+fn a_layout_from_a_newer_schema_is_refused_without_forgetting_the_displays() {
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(31);
+    let window = WindowId::new(4, 1);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+    );
+    engine.update_space_display(&mut memory, space, Some("studio-display".to_string()));
+    memory.affinity.set_window_home(window, "studio-display");
+
+    let written = engine.serialize_to_string(&memory);
+    let from_the_future = written.replacen(r#""schema_version":5"#, r#""schema_version":99"#, 1);
+    assert_ne!(from_the_future, written);
+
+    let loaded = LayoutEngine::deserialize_file(&from_the_future).expect("the bytes still parse");
+
+    let error = match loaded.layout {
+        Ok(_) => panic!("a newer schema is refused"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("newer than supported"), "{error}");
+    assert_eq!(
+        loaded.memory.affinity.window_home(window),
+        Some("studio-display"),
+        "the refusal is about the layout, not about which monitor the window lives on"
+    );
+    assert_eq!(
+        loaded.memory.affinity.space_for_display("studio-display"),
+        Some(space),
+        "and the display still owns its space, so a replug has something to match"
+    );
+}
+
+/// The same for a layout that fails validation rather than versioning.
+#[test]
+fn an_invalid_layout_is_refused_without_forgetting_the_displays() {
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(32);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+    );
+    engine.update_space_display(&mut memory, space, Some("studio-display".to_string()));
+
+    // A workspace order naming a workspace the file does not carry: invalid topology.
+    let written = engine.serialize_to_string(&memory);
+    let broken = written.replacen("workspace_order:[(idx:1,version:1)", "workspace_order:[(idx:97,version:1)", 1);
+    assert_ne!(broken, written, "the fixture has to actually carry a workspace order");
+
+    let loaded = LayoutEngine::deserialize_file(&broken).expect("the bytes still parse");
+
+    assert!(loaded.layout.is_err(), "an invalid topology is refused");
+    assert_eq!(
+        loaded.memory.affinity.space_for_display("studio-display"),
+        Some(space),
+        "the display memory is read before the layout is validated"
+    );
+}
+
+
+/// A schema-4 file kept its display memory at the top level. Schema 5 nests it, and an upgrade must
+/// carry it across: a user's file is where the record of which monitor each window lives on actually
+/// is, and losing it on upgrade is the same outcome as never having had it.
+///
+/// Verified against a real 19-window file from `~/.rini/layout.ron` at the time of the change; the
+/// fixture here is built the same way so the check runs everywhere.
+#[test]
+fn a_schema_four_file_moves_its_display_memory_into_the_nested_record() {
+    let mut engine = test_engine();
+    let mut memory = DisplayMemory::default();
+    let mut window_store = WindowStore::default();
+    let space = SpaceId::new(4615);
+    let window = WindowId::new(8, 1);
+    let _ = engine.handle_event(
+        &mut window_store,
+        &mut memory,
+        LayoutEvent::SpaceExposed(space, CGSize::new(1200.0, 800.0)),
+    );
+    engine.update_space_display(&mut memory, space, Some("studio-display".to_string()));
+    memory.affinity.set_window_home(window, "studio-display");
+
+    // The schema-4 shape: both records at the top level, no nested one.
+    let v5 = engine.serialize_to_string(&memory);
+    let nested_start = v5.find(r#","display_memory":("#).expect("the v5 shape");
+    let nested_end = v5.find(r#","persisted_windows":"#).expect("the v5 shape");
+    let affinity = v5[nested_start..nested_end]
+        .trim_start_matches(r#","display_memory":(affinity:"#)
+        .rsplit_once(",launch:")
+        .expect("affinity then launch")
+        .0
+        .to_owned();
+    let v4 = format!(
+        "{}\"display_affinity\":{},\"launch_memory\":(apps:{{}}){}",
+        &v5[..nested_start + 1],
+        affinity,
+        &v5[nested_end..]
+    )
+    .replacen(r#""schema_version":5"#, r#""schema_version":4"#, 1);
+    assert!(v4.contains(r#""display_affinity":"#), "the fixture is in the old shape: {v4}");
+    assert!(!v4.contains(r#""display_memory":"#), "and only the old shape: {v4}");
+
+    let loaded = LayoutEngine::deserialize_file(&v4).expect("a schema-4 file must parse");
+    assert!(loaded.layout.is_ok(), "and its layout must validate");
+    assert_eq!(
+        loaded.memory.affinity.window_home(window),
+        Some("studio-display"),
+        "the window's display comes across"
+    );
+    assert_eq!(
+        loaded.memory.affinity.space_for_display("studio-display"),
+        Some(space),
+        "and so does the display's space"
+    );
+
+    let rewritten = loaded.layout.unwrap().serialize_to_string(&loaded.memory);
+    assert!(rewritten.contains(r#""schema_version":5"#));
+    assert!(rewritten.contains(r#""display_memory":("#), "written in the nested shape");
+    assert!(!rewritten.contains(r#""display_affinity":"#), "and not the old one");
 }

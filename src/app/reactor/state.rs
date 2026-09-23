@@ -1,3 +1,4 @@
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use objc2_core_foundation::CGRect;
 pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
@@ -16,6 +17,10 @@ use rini_core::ids::SpaceId;
 #[derive(Debug, Default)]
 pub struct RiniState {
     pub windows: WindowStore,
+    /// What rini remembers about the machine: which display owns which space, which display each
+    /// window belongs to, and where each application's windows belong. Separate from the layout
+    /// because it outlives one: a layout can be discarded without forgetting the hardware.
+    pub display_memory: DisplayMemory,
 }
 
 
