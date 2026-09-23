@@ -4,9 +4,9 @@
 //! but the two DECISIONS in it are not, and both have a recorded history behind them. They were
 //! reachable only by running the binary, so neither was tested.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::app::config::Config;
+use crate::app::config::{Config, Settings};
 
 /// Whether to restore the saved layout.
 ///
@@ -42,6 +42,28 @@ pub fn config_or_default(path: &Path) -> (Config, Option<String>) {
             )),
         ),
     }
+}
+
+/// Where the config is, given whatever `--config` said.
+///
+/// A named path is taken as given, including one that does not exist: `config_or_default` reports a
+/// missing file as "use the defaults", and second-guessing the user's path here would hide a typo in
+/// it behind a silent fallback to their real config.
+pub fn config_path(explicit: Option<PathBuf>) -> PathBuf {
+    explicit.unwrap_or_else(rini_core::paths::config_file)
+}
+
+/// Apply the two command-line flags that override the config.
+///
+/// Both are one-directional, and deliberately so. `--no-animate` can only turn animation OFF and
+/// `--default-disable` can only turn the disabled start ON; neither can undo what the config says in
+/// the other direction, because there is no `--animate` or `--no-default-disable` to do that with.
+///
+/// So the flags are for a one-off run that differs from the config — starting without animation to
+/// see whether animation is what is wrong — rather than a second place to configure rini.
+pub fn apply_flag_overrides(settings: &mut Settings, no_animate: bool, default_disable: bool) {
+    settings.animate &= !no_animate;
+    settings.default_disable |= default_disable;
 }
 
 #[cfg(test)]
@@ -124,5 +146,76 @@ mod tests {
 
         assert_eq!(complaint, None);
         assert!(!config.settings.animate);
+    }
+
+    #[test]
+    fn a_named_config_path_is_taken_as_given() {
+        let named = PathBuf::from("/tmp/somewhere/rini.toml");
+        assert_eq!(config_path(Some(named.clone())), named);
+    }
+
+    #[test]
+    fn no_named_path_means_the_default_location() {
+        assert_eq!(config_path(None), rini_core::paths::config_file());
+    }
+
+    /// A path that does not exist is still the path: `config_or_default` reports a missing file as
+    /// "use the defaults", and falling back to the real config here would hide a typo in `--config`
+    /// behind the user's actual settings.
+    #[test]
+    fn a_named_path_that_does_not_exist_is_not_second_guessed() {
+        let absent = PathBuf::from("/tmp/rini-does-not-exist-9e7c.toml");
+        assert_eq!(config_path(Some(absent.clone())), absent);
+        assert_ne!(config_path(Some(absent)), rini_core::paths::config_file());
+    }
+
+    fn settings(animate: bool, default_disable: bool) -> Settings {
+        let mut settings = Config::default().settings;
+        settings.animate = animate;
+        settings.default_disable = default_disable;
+        settings
+    }
+
+    #[test]
+    fn no_flags_leave_the_config_alone() {
+        let mut on = settings(true, false);
+        apply_flag_overrides(&mut on, false, false);
+        assert!(on.animate);
+        assert!(!on.default_disable);
+    }
+
+    #[test]
+    fn the_flags_override_the_config_in_their_own_direction() {
+        let mut settings = settings(true, false);
+        apply_flag_overrides(&mut settings, true, true);
+        assert!(!settings.animate, "--no-animate turns animation off");
+        assert!(settings.default_disable, "--default-disable starts disabled");
+    }
+
+    /// The asymmetry, stated. Each flag pushes one way only, because there is no `--animate` or
+    /// `--no-default-disable` to push back with, so the flags are for a one-off run that differs from
+    /// the config rather than a second place to configure rini.
+    #[test]
+    fn neither_flag_can_undo_the_config_in_the_other_direction() {
+        let mut animation_off_in_config = settings(false, true);
+        apply_flag_overrides(&mut animation_off_in_config, false, false);
+        assert!(
+            !animation_off_in_config.animate,
+            "no flag turns animation back on"
+        );
+        assert!(
+            animation_off_in_config.default_disable,
+            "no flag undoes a disabled start"
+        );
+    }
+
+    #[test]
+    fn a_flag_applied_twice_says_the_same_thing() {
+        let mut once = settings(true, false);
+        apply_flag_overrides(&mut once, true, true);
+        let mut twice = once.clone();
+        apply_flag_overrides(&mut twice, true, true);
+        assert_eq!(twice.animate, once.animate);
+        assert_eq!(twice.default_disable, once.default_disable);
     }
 }

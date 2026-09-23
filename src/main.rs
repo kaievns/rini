@@ -25,7 +25,7 @@ use rini::windows::platform::lifecycle::ProcessActor;
 use rini::windows::platform::sub_level::init_window_sub_level_server_port;
 use rini::workspaces::LayoutEngine;
 use rini::workspaces::domain::display_memory::DisplayMemory;
-use rini_core::paths::{config_file, restore_file};
+use rini_core::paths::restore_file;
 use rini_ipc as ipc;
 use rini_runloop::executor::Executor;
 use rini_skylight_sys::{
@@ -97,23 +97,15 @@ async fn supervise(name: &'static str, fut: impl Future<Output = ()>) {
     panic!("{name} exited");
 }
 
-fn main() {
-    sigpipe::reset();
-    let opt = Cli::parse();
-
-    if let Some(Commands::Service { service }) = &opt.command {
-        match handle_service_command(service) {
-            Ok(msg) => {
-                println!("{}", msg);
-                process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("{}", e);
-                process::exit(1);
-            }
-        }
-    }
-
+/// Everything that has to be true of the process before rini does anything.
+///
+/// Backtraces on by default, because the one crash report that matters is the one from a user who did
+/// not know to set the variable. Accessory activation policy so rini has no Dock icon and no menu bar
+/// of its own. `finishLaunching` before any window is touched, or AppKit refuses the first one.
+///
+/// `SLSWindowManagementBridgeSetDelegate(null)` detaches the window server's own management bridge.
+/// Without it macOS applies its own tiling to windows rini is moving and the two fight.
+fn prepare_process() -> MainThreadMarker {
     if std::env::var_os("RUST_BACKTRACE").is_none() {
         // SAFETY: We are single threaded at this point.
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
@@ -131,7 +123,15 @@ fn main() {
     }
 
     unsafe { SLSWindowManagementBridgeSetDelegate(std::ptr::null_mut()) };
+    mtm
+}
 
+/// The three things rini cannot run without. Each either blocks until granted or exits saying why.
+///
+/// "Displays have separate Spaces" is a hard requirement rather than a degraded mode: with it off,
+/// macOS gives every display one shared space, so a per-display strip has nowhere to live and every
+/// space query answers about the wrong screen.
+fn preflight() {
     ensure_accessibility_permission();
     init_window_sub_level_server_port();
 
@@ -143,16 +143,40 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
         );
         std::process::exit(1);
     }
+}
 
-    let config_path = opt.config.clone().unwrap_or_else(|| config_file());
+fn main() {
+    sigpipe::reset();
+    let opt = Cli::parse();
+
+    if let Some(Commands::Service { service }) = &opt.command {
+        match handle_service_command(service) {
+            Ok(msg) => {
+                println!("{}", msg);
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
+    }
+
+    let mtm = prepare_process();
+    preflight();
+
+    let config_path = rini::app::boot::config_path(opt.config.clone());
     // The fallback rule and its history are `app::boot::config_or_default`, which is also where its
     // tests are: this path is only reachable by running the binary.
     let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
     if let Some(complaint) = complaint {
         eprintln!("{complaint}");
     }
-    config.settings.animate &= !opt.no_animate;
-    config.settings.default_disable |= opt.default_disable;
+    rini::app::boot::apply_flag_overrides(
+        &mut config.settings,
+        opt.no_animate,
+        opt.default_disable,
+    );
 
     if opt.validate {
         let path = restore_file();

@@ -10,7 +10,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 1 | the `?elem` FIXME in `trace` | formatting an `AXUIElement` is an AX round-trip; obeyed on the hot path, ignored on the error path | **done** |
 | 2 | `animation/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | **done** — 25 tests |
 | 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | **done** — 35 tests |
-| 4 | `main.rs` | 300-line `main`, no test | open |
+| 4 | `main.rs` | 300-line `main`, no test | **done** — 300 -> 276, 2 rules out |
 | 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | open |
 | 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | open |
 | 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | open |
@@ -94,3 +94,29 @@ Generic modifiers multiply: `Ctrl + Shift + A` is 9 registrations and three gene
 which is the cost of not naming a side. And `expand_modifier_combination` only expands a LEADING
 alias followed by ` + `, so `"hyper"` alone does not expand; that is a real limit rather than an
 oversight, and it now says so in a test.
+
+## 4. `main.rs`
+
+Two decisions out to `boot.rs`, where `wants_restore` and `config_or_default` already live, with 7
+tests. Two phases named. `main` is 300 lines down to 276, and the rest does not want extracting.
+
+- `config_path` — a named `--config` path is taken as given, **including one that does not exist**.
+  `config_or_default` reports a missing file as "use the defaults", so falling back to the real config
+  here would hide a typo in `--config` behind the user's actual settings.
+- `apply_flag_overrides` — and the asymmetry it encodes, which nothing said: `--no-animate` can only
+  turn animation OFF and `--default-disable` can only turn the disabled start ON. Neither can undo the
+  config in the other direction, because there is no `--animate` or `--no-default-disable`. The flags
+  are for a one-off run that differs from the config, not a second place to configure rini. Making
+  `--no-animate` two-directional fails `neither_flag_can_undo_the_config_in_the_other_direction`.
+- `prepare_process` and `preflight` are named, and the reasons they do what they do are now written
+  down: backtraces default on because the crash report that matters comes from someone who did not
+  know to set the variable; the accessory activation policy is why rini has no Dock icon;
+  `SLSWindowManagementBridgeSetDelegate(null)` detaches the window server's own management bridge,
+  without which macOS tiles the windows rini is moving and the two fight; and "Displays have separate
+  Spaces" is a hard requirement rather than a degraded mode, because with it off every display shares
+  one space and a per-display strip has nowhere to live.
+
+**The remaining 276 lines do not want splitting.** They are nine actors, their channels, and the
+wiring between them. A `spawn_actors` function would take about fifteen parameters and read worse than
+the sequence it replaced. Length is the wrong measure for a composition root; what mattered was
+getting the two DECISIONS out of it, and those are now tested.
