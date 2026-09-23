@@ -13,7 +13,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 4 | `main.rs` | 300-line `main`, no test | **done** — 300 -> 276, 2 rules out |
 | 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | **done** — 261 -> 229, 24 tests |
 | 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | **done** — 9 -> 21 tests, 3 rules out |
-| 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | open |
+| 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | **done** — 9 -> 23 tests, and a prune bug |
 | 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | open |
 | 9 | `EventOutcome` | 32 fields, 51 references | open |
 | 10 | `engine/persistence/tests.rs` | 3,302 lines, 55 tests, one file | open |
@@ -173,3 +173,31 @@ workspaces. It lists all of them: `ordered_workspace_ids` ignores its space argu
 workspace is per space. The test now pins that distinction, which is more useful than what I first
 wrote, and notes that the reactor-level `querying_an_unknown_space_creates_nothing` passes only
 because a fresh reactor has no workspaces at all yet.
+
+## 7. `windows/domain/catalogue.rs`
+
+9 tests to 23, and a real defect in the prune predicates.
+
+**`prune_window_record` checked four of `WindowRecord`'s nine fields.** The five it ignored included
+`pending_operation`, so a record holding only a pending frame write was pruned and the write
+forgotten, and `native_space`, so a record holding only a native-space observation lost it.
+
+Both predicates are now exhaustive destructures with no `..`, which makes the COMPILER the guard
+rather than a test: adding a field to `WindowRecord` fails with
+
+```
+error[E0027]: pattern does not mention field `a_new_field`
+```
+
+until someone decides whether the new field counts as something to remember. A test cannot catch a
+field that does not exist yet; a destructure can. Verified by adding one.
+
+The 1,392 existing tests all still pass with the stricter predicate, so nothing depended on the looser
+one — it was discarding state nobody had noticed.
+
+**A test corrected my reading a third time.** `set_visible_windows` only ADDS; it does not hide the
+windows it omits. That is why `update_complete_window_server_info` clears first and
+`update_partial_window_server_info` does not — a complete snapshot means "these and no others", a
+partial one means "at least these". The hazard is silent: a caller treating a partial snapshot as
+complete leaves a closed window marked visible, and the reactor treats visibility as authoritative.
+Both halves are now pinned.

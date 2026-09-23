@@ -54,6 +54,38 @@ pub struct WindowRecord {
 }
 
 impl WindowRecord {
+    /// Whether this record holds nothing worth keeping, so the catalogue can forget it.
+    ///
+    /// Destructured exhaustively and deliberately: adding a field to `WindowRecord` breaks this
+    /// function until someone decides whether the new field counts as something to remember. A
+    /// predicate that lists only some fields is how a record either leaks forever or gets dropped
+    /// while still holding something, and neither shows up until much later.
+    ///
+    /// It used to list four of the nine. `native_space` and `pending_operation` were not among them,
+    /// so a record holding only a pending frame write was pruned and the write forgotten.
+    fn remembers_nothing(&self) -> bool {
+        let Self {
+            state,
+            window_server_id,
+            native_space,
+            visibility,
+            placement,
+            pending_operation,
+            operation_generation,
+            rule_floating,
+            last_rule_decision,
+        } = self;
+        state.is_none()
+            && window_server_id.is_none()
+            && native_space.is_none()
+            && *visibility == WindowVisibility::default()
+            && *placement == WindowPlacement::default()
+            && pending_operation.is_none()
+            && *operation_generation == 0
+            && !*rule_floating
+            && !*last_rule_decision
+    }
+
     /// Last frame observed from Accessibility/WindowServer.
     pub fn observed_frame(&self) -> Option<objc2_core_foundation::CGRect> {
         self.state.as_ref().map(|state| state.info.frame)
@@ -142,6 +174,29 @@ struct WindowServerRecord {
     info: Option<WindowServerInfo>,
     recent_at: Option<Instant>,
     pending_native_fullscreen: Option<PendingNativeFullscreenState>,
+}
+
+impl WindowServerRecord {
+    /// Whether this record holds nothing worth keeping. Exhaustive for the same reason as
+    /// [`WindowRecord::remembers_nothing`]: a new field must be considered rather than ignored.
+    fn remembers_nothing(&self) -> bool {
+        let Self {
+            window_id,
+            visible,
+            observed,
+            space,
+            info,
+            recent_at,
+            pending_native_fullscreen,
+        } = self;
+        window_id.is_none()
+            && !*visible
+            && !*observed
+            && space.is_none()
+            && info.is_none()
+            && recent_at.is_none()
+            && pending_native_fullscreen.is_none()
+    }
 }
 
 /// Every window the application has met, by rini id and by window-server id.
@@ -278,12 +333,8 @@ impl WindowCatalogue {
     /// Drops a record that no longer says anything. The workspaces context calls this after it
     /// removes an assignment, since an assignment used to be one of the things that kept a record.
     pub fn prune_window_record(&mut self, window_id: WindowId) {
-        let should_remove = self.windows.get(&window_id).is_some_and(|record| {
-            record.state.is_none()
-                && record.window_server_id.is_none()
-                && !record.rule_floating
-                && !record.last_rule_decision
-        });
+        let should_remove =
+            self.windows.get(&window_id).is_some_and(WindowRecord::remembers_nothing);
         if should_remove {
             self.windows.remove(&window_id);
             if let Some(windows) = self.app_windows.get_mut(&window_id.pid) {
@@ -296,15 +347,10 @@ impl WindowCatalogue {
     }
 
     fn prune_window_server_record(&mut self, wsid: WindowServerId) {
-        let should_remove = self.window_servers.get(&wsid).is_some_and(|record| {
-            record.window_id.is_none()
-                && !record.visible
-                && !record.observed
-                && record.space.is_none()
-                && record.info.is_none()
-                && record.recent_at.is_none()
-                && record.pending_native_fullscreen.is_none()
-        });
+        let should_remove = self
+            .window_servers
+            .get(&wsid)
+            .is_some_and(WindowServerRecord::remembers_nothing);
         if should_remove {
             self.window_servers.remove(&wsid);
         }
@@ -1156,5 +1202,237 @@ mod tests {
             None
         );
         store.debug_assert_invariants();
+    }
+
+    // --- what counts as an empty record ------------------------------------------------------
+
+    /// A default record remembers nothing, which is the whole premise: a record that has had nothing
+    /// done to it is a record the catalogue can forget.
+    #[test]
+    fn a_default_window_record_remembers_nothing() {
+        assert!(WindowRecord::default().remembers_nothing());
+        assert!(WindowServerRecord::default().remembers_nothing());
+    }
+
+    /// Every field, one at a time. The predicate listed four of the nine, and the five it missed were
+    /// silently discarded on prune.
+    #[test]
+    fn any_single_field_is_enough_to_keep_a_window_record() {
+        let holding: [(&str, fn(&mut WindowRecord)); 7] = [
+            ("window_server_id", |r| {
+                r.window_server_id = Some(WindowServerId::new(1))
+            }),
+            ("native_space", |r| r.native_space = Some(SpaceId::new(1))),
+            ("visibility", |r| r.visibility = WindowVisibility::Visible),
+            ("placement", |r| r.placement = WindowPlacement::Floating),
+            ("pending_operation", |r| {
+                r.pending_operation = Some(PendingWindowOperation {
+                    generation: 1,
+                    requested_frame: None,
+                    requested_space: None,
+                })
+            }),
+            ("rule_floating", |r| r.rule_floating = true),
+            ("last_rule_decision", |r| r.last_rule_decision = true),
+        ];
+        for (name, set) in holding {
+            let mut record = WindowRecord::default();
+            set(&mut record);
+            assert!(!record.remembers_nothing(), "{name} alone must keep the record");
+        }
+    }
+
+    /// `operation_generation` is a counter, so a non-zero one means an operation happened. It was not
+    /// in the old predicate either.
+    #[test]
+    fn a_bumped_operation_generation_keeps_a_window_record() {
+        let mut record = WindowRecord::default();
+        record.operation_generation = 1;
+        assert!(!record.remembers_nothing());
+    }
+
+    #[test]
+    fn any_single_field_is_enough_to_keep_a_window_server_record() {
+        let holding: [(&str, fn(&mut WindowServerRecord)); 5] = [
+            ("window_id", |r| r.window_id = Some(WindowId::new(1, 1))),
+            ("visible", |r| r.visible = true),
+            ("observed", |r| r.observed = true),
+            ("space", |r| r.space = Some(SpaceId::new(1))),
+            ("recent_at", |r| r.recent_at = Some(Instant::now())),
+        ];
+        for (name, set) in holding {
+            let mut record = WindowServerRecord::default();
+            set(&mut record);
+            assert!(!record.remembers_nothing(), "{name} alone must keep the record");
+        }
+    }
+
+    /// The consequence the old predicate had: a record holding only a pending frame write was pruned
+    /// and the write forgotten.
+    #[test]
+    fn a_record_holding_only_a_pending_operation_survives_a_prune() {
+        let mut catalogue = WindowCatalogue::default();
+        let window = WindowId::new(3, 1);
+        catalogue.windows.entry(window).or_default().pending_operation =
+            Some(PendingWindowOperation {
+                generation: 7,
+                requested_frame: None,
+                requested_space: None,
+            });
+
+        catalogue.prune_window_record(window);
+
+        assert!(
+            catalogue.record(window).is_some(),
+            "a pending frame write is something to remember"
+        );
+    }
+
+    /// And the case that must still prune, or the catalogue grows without bound.
+    #[test]
+    fn a_record_holding_nothing_is_pruned() {
+        let mut catalogue = WindowCatalogue::default();
+        let window = WindowId::new(3, 2);
+        catalogue.windows.entry(window).or_default();
+        assert!(catalogue.record(window).is_some());
+
+        catalogue.prune_window_record(window);
+
+        assert!(catalogue.record(window).is_none());
+        assert!(
+            !catalogue.app_windows.contains_key(&window.pid),
+            "and the app index too"
+        );
+    }
+
+    // --- identity ------------------------------------------------------------------------------
+
+    /// A window-server id is recycled by macOS, so tracking it for a new window has to detach it from
+    /// the old one. Leaving both pointing at it makes one window answer for two.
+    #[test]
+    fn tracking_a_recycled_server_id_detaches_it_from_the_window_that_had_it() {
+        let mut catalogue = WindowCatalogue::default();
+        let wsid = WindowServerId::new(50);
+        let (old, new) = (WindowId::new(1, 1), WindowId::new(2, 1));
+
+        catalogue.track_window_server_id(wsid, old);
+        let displaced = catalogue.track_window_server_id(wsid, new);
+
+        assert_eq!(displaced, Some(old), "the call reports who had it");
+        assert_eq!(catalogue.tracked_window_id(wsid), Some(new));
+        assert_eq!(
+            catalogue.record(old).and_then(|r| r.window_server_id()),
+            None,
+            "the old window no longer claims it"
+        );
+    }
+
+    /// The reverse: giving a window a new server id releases the one it had, so the old id does not
+    /// keep pointing at it.
+    #[test]
+    fn giving_a_window_a_new_server_id_releases_its_old_one() {
+        let mut catalogue = WindowCatalogue::default();
+        let window = WindowId::new(1, 1);
+        let (first, second) = (WindowServerId::new(60), WindowServerId::new(61));
+
+        catalogue.track_window_server_id(first, window);
+        catalogue.track_window_server_id(second, window);
+
+        assert_eq!(catalogue.tracked_window_id(second), Some(window));
+        assert_eq!(catalogue.tracked_window_id(first), None);
+        assert_eq!(
+            catalogue.record(window).and_then(|r| r.window_server_id()),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn tracking_the_same_pair_again_changes_nothing() {
+        let mut catalogue = WindowCatalogue::default();
+        let wsid = WindowServerId::new(70);
+        let window = WindowId::new(1, 1);
+
+        catalogue.track_window_server_id(wsid, window);
+        let displaced = catalogue.track_window_server_id(wsid, window);
+
+        assert_eq!(displaced, Some(window));
+        assert_eq!(catalogue.tracked_window_id(wsid), Some(window));
+        assert_eq!(
+            catalogue.record(window).and_then(|r| r.window_server_id()),
+            Some(wsid)
+        );
+    }
+
+    // --- visibility ----------------------------------------------------------------------------
+
+    /// Visibility is reported per window-server id, and marking one visible is idempotent: the return
+    /// value says whether anything CHANGED, which the caller uses to decide whether to act.
+    #[test]
+    fn marking_a_window_visible_reports_only_the_first_time() {
+        let mut catalogue = WindowCatalogue::default();
+        let wsid = WindowServerId::new(80);
+
+        assert!(catalogue.mark_window_visible(wsid), "newly visible");
+        assert!(!catalogue.mark_window_visible(wsid), "already visible");
+        assert!(catalogue.is_window_visible(wsid));
+    }
+
+    #[test]
+    fn marking_a_window_hidden_reports_only_the_first_time() {
+        let mut catalogue = WindowCatalogue::default();
+        let wsid = WindowServerId::new(81);
+        catalogue.mark_window_visible(wsid);
+
+        assert!(catalogue.mark_window_hidden(wsid), "was visible");
+        assert!(!catalogue.mark_window_hidden(wsid), "already hidden");
+        assert!(!catalogue.is_window_visible(wsid));
+    }
+
+    /// `set_visible_windows` only ADDS. It does not hide the windows it omits, which is why
+    /// `update_complete_window_server_info` clears first and `update_partial_window_server_info` does
+    /// not: a complete snapshot means "these and no others", a partial one means "at least these".
+    ///
+    /// Worth pinning because the hazard is silent. A caller treating a partial snapshot as complete
+    /// leaves a closed window marked visible, and the reactor treats visibility as authoritative.
+    #[test]
+    fn setting_the_visible_set_adds_and_does_not_hide_what_it_omits() {
+        let mut catalogue = WindowCatalogue::default();
+        let (named, omitted) = (WindowServerId::new(90), WindowServerId::new(91));
+        catalogue.mark_window_visible(omitted);
+
+        catalogue.set_visible_windows([named]);
+
+        assert!(catalogue.is_window_visible(named));
+        assert!(
+            catalogue.is_window_visible(omitted),
+            "omitting a window does not hide it; clearing first is the caller's job"
+        );
+    }
+
+    /// The pair that makes a complete snapshot complete.
+    #[test]
+    fn clearing_then_setting_leaves_only_the_named_windows_visible() {
+        let mut catalogue = WindowCatalogue::default();
+        let (kept, dropped) = (WindowServerId::new(92), WindowServerId::new(93));
+        catalogue.mark_window_visible(kept);
+        catalogue.mark_window_visible(dropped);
+
+        catalogue.clear_visible_windows();
+        catalogue.set_visible_windows([kept]);
+
+        assert!(catalogue.is_window_visible(kept));
+        assert!(!catalogue.is_window_visible(dropped));
+    }
+
+    #[test]
+    fn clearing_the_visible_set_hides_everything() {
+        let mut catalogue = WindowCatalogue::default();
+        let wsid = WindowServerId::new(95);
+        catalogue.mark_window_visible(wsid);
+
+        catalogue.clear_visible_windows();
+
+        assert!(!catalogue.is_window_visible(wsid));
+        assert_eq!(catalogue.visible_window_server_count(), 0);
     }
 }
