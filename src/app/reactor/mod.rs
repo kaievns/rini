@@ -6,6 +6,7 @@
 
 mod animation;
 mod commands;
+mod diagnostics;
 mod events;
 mod managers;
 mod observations;

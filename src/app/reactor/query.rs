@@ -1,3 +1,4 @@
+use super::diagnostics;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use std::sync::mpsc::{RecvError, SyncSender, sync_channel};
 
@@ -198,9 +199,11 @@ impl Reactor {
     }
 
     fn default_query_space(&self) -> Option<SpaceId> {
-        self.workspace_command_space()
-            .or_else(|| self.active_display_space())
-            .or_else(|| self.raw_command_space())
+        diagnostics::default_query_space(
+            self.workspace_command_space(),
+            self.active_display_space(),
+            self.raw_command_space(),
+        )
     }
 
     pub fn query_workspaces(&self, space_id: Option<SpaceId>) -> Vec<RuntimeWorkspaceData> {
@@ -546,12 +549,13 @@ impl StateView<'_> {
             // Owned but absent from the layout tree. Such a window is cmd-tab reachable
             // while being unreachable by scrolling, which is what "a second invisible
             // strip" actually looks like.
-            let orphaned_windows: Vec<rini_ipc::protocol::WindowId> = owned
-                .iter()
-                .copied()
-                .filter(|window_id| {
-                    !self.engine.is_window_floating(*window_id) && !ordered.contains(window_id)
-                })
+            let orphaned_windows: Vec<rini_ipc::protocol::WindowId> =
+                diagnostics::orphaned_windows(
+                    &owned,
+                    |window| self.engine.is_window_floating(window),
+                    |window| ordered.contains(&window),
+                )
+                .into_iter()
                 .map(Into::into)
                 .collect();
 
@@ -591,12 +595,11 @@ impl StateView<'_> {
             .virtual_workspace_manager()
             .workspaces_with_windows_outside(&self.windows, &live_spaces);
 
-        let stale_homes = self
-            .memory
-            .affinity
-            .homed_windows()
+        let stale_homes =
+            diagnostics::stale_display_homes(&self.memory.affinity.homed_windows(), |window| {
+                self.windows.contains_window(window)
+            })
             .into_iter()
-            .filter(|window| !self.windows.contains_window(*window))
             .map(Into::into)
             .collect();
 
@@ -1176,5 +1179,158 @@ mod tests {
         let mut bundles: Vec<_> = apps.iter().filter_map(|a| a.bundle_id.clone()).collect();
         bundles.sort();
         assert_eq!(bundles, vec!["com.test.1".to_string(), "com.test.2".to_string()]);
+    }
+
+    /// A query with no space answers about the default one rather than refusing. The three-tier
+    /// precedence is `diagnostics::default_query_space`; this pins that the handlers USE it.
+    #[test]
+    fn a_workspace_query_with_no_space_answers_about_the_default_one() {
+        let f = Fixture::new(&[10, 20], &[1]);
+        let defaulted = f.view().handle_workspace_query(None);
+        let explicit = f.view().handle_workspace_query(Some(SpaceId::new(10)));
+        assert!(!defaulted.is_empty(), "a default space was resolved");
+        assert_eq!(defaulted.len(), explicit.len(), "and it is the first screen's");
+    }
+
+    /// The trap that `query diagnostics` exists for: with two displays, a windows query naming no
+    /// space answers about ONE of them, so windows on the other read as absent.
+    #[test]
+    fn a_windows_query_with_no_space_answers_about_one_space_only() {
+        let mut f = Fixture::new(&[10, 20], &[1]);
+        let _ = f.add_window(1, 1, true);
+        let answered = f.view().handle_windows_query(None);
+        let named_other = f.view().handle_windows_query(Some(SpaceId::new(20)));
+        assert!(
+            answered.len() <= 1,
+            "one space's worth, not both displays: {answered:?}"
+        );
+        assert!(named_other.is_empty(), "the other space is answered separately");
+    }
+
+    #[test]
+    fn the_active_workspace_of_a_space_rini_has_seen_is_reported() {
+        let f = Fixture::new(&[10], &[1]);
+        assert!(f.view().handle_active_workspace_query(Some(SpaceId::new(10))).is_some());
+    }
+
+    /// The workspace ORDER is global and the ACTIVE workspace is per space, which is why a space rini
+    /// has never seen still lists the same workspaces but has none of them active.
+    ///
+    /// `ordered_workspace_ids` ignores its space argument on purpose — index 2 is the same workspace
+    /// on every display — so "no workspaces for this space" is not a thing that can be observed, and a
+    /// test asserting it would be asserting the opposite of the design.
+    #[test]
+    fn an_unknown_space_lists_the_same_workspaces_but_has_none_active() {
+        let f = Fixture::new(&[10], &[1]);
+        let unknown = SpaceId::new(4242);
+
+        let known = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None);
+        let listed = f.view().handle_workspace_layouts_query(Some(unknown), None);
+        assert_eq!(listed.len(), known.len(), "the workspace order is global");
+
+        assert_eq!(f.view().handle_active_workspace_query(Some(unknown)), None);
+        assert!(
+            listed.iter().all(|workspace| !workspace.is_active),
+            "none of them is active on a space rini has never seen"
+        );
+        assert!(
+            known.iter().any(|workspace| workspace.is_active),
+            "but one is on a space it has"
+        );
+    }
+
+    /// Layout state is per space and answers nothing for one rini has never seen.
+    #[test]
+    fn layout_state_for_an_unknown_space_answers_nothing() {
+        let f = Fixture::new(&[10], &[1]);
+        assert!(f.view().handle_layout_state_query(Some(4242), None).is_none());
+    }
+
+    #[test]
+    fn workspace_layouts_are_reported_for_a_space_rini_has_seen() {
+        let f = Fixture::new(&[10], &[1]);
+        assert!(!f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None).is_empty());
+    }
+
+    /// Naming a workspace narrows the answer to that one rather than returning all of them.
+    #[test]
+    fn naming_a_workspace_narrows_the_layout_answer_to_it() {
+        let f = Fixture::new(&[10], &[1]);
+        let all = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), None);
+        let one = f.view().handle_workspace_layouts_query(Some(SpaceId::new(10)), Some(0));
+        assert!(
+            all.len() > one.len() || all.len() == 1,
+            "all={} one={}",
+            all.len(),
+            one.len()
+        );
+        assert_eq!(one.len(), 1);
+    }
+
+    /// A workspace index the space does not have answers nothing rather than the nearest one.
+    #[test]
+    fn a_workspace_index_that_does_not_exist_answers_nothing() {
+        let f = Fixture::new(&[10], &[1]);
+        assert!(
+            f.view()
+                .handle_workspace_layouts_query(Some(SpaceId::new(10)), Some(99))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn layout_state_is_reported_for_a_space_rini_has_seen() {
+        let f = Fixture::new(&[10], &[1]);
+        assert!(f.view().handle_layout_state_query(Some(10), None).is_some());
+    }
+
+    /// Metrics answer with an object even when nothing has happened, so a caller can always read the
+    /// shape rather than having to handle an absent one.
+    #[test]
+    fn metrics_answer_with_an_object_on_a_fresh_reactor() {
+        let f = Fixture::new(&[10], &[1]);
+        assert!(f.view().handle_metrics_query().is_object());
+    }
+
+    /// The whole-state dump serializes on a fresh reactor. It is what `rini debug` prints and what a
+    /// bug report carries, so it failing is the one case where nobody can tell you what went wrong.
+    #[test]
+    fn the_state_dump_serializes_on_a_fresh_reactor() {
+        let f = Fixture::new(&[10, 20], &[1]);
+        let dumped = f.view().serialize_state().expect("state serializes");
+        assert!(
+            dumped.contains("\"layout_engine\"") || dumped.contains("layout"),
+            "{dumped:.200}"
+        );
+    }
+
+    /// A window owned by a space but absent from its layout tree is reported as orphaned rather than
+    /// silently dropped: it is cmd-tab reachable and unreachable by scrolling, and this is the only
+    /// query that says so.
+    #[test]
+    fn diagnostics_reports_an_owned_window_that_the_layout_tree_does_not_hold() {
+        let mut f = Fixture::new(&[10], &[1]);
+        let wid = f.add_window(1, 1, true);
+        let space = SpaceId::new(10);
+        let workspace = f
+            .engine
+            .virtual_workspace_manager()
+            .active_workspace(space)
+            .expect("a workspace");
+        f.windows.assign_window_to_workspace(
+            wid,
+            crate::workspaces::domain::assignment::WindowWorkspaceInfo {
+                space,
+                workspace_id: workspace,
+            },
+        );
+
+        let diagnostics = f.view().handle_diagnostics_query();
+        let reported = diagnostics.spaces.iter().find(|s| s.space_id == 10).expect("the space");
+        assert!(
+            reported.orphaned_windows.iter().any(|w| *w == wid.into()),
+            "owned but not in the tree: {:?}",
+            reported.orphaned_windows
+        );
     }
 }

@@ -12,7 +12,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | **done** — 35 tests |
 | 4 | `main.rs` | 300-line `main`, no test | **done** — 300 -> 276, 2 rules out |
 | 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | **done** — 261 -> 229, 24 tests |
-| 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | open |
+| 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | **done** — 9 -> 21 tests, 3 rules out |
 | 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | open |
 | 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | open |
 | 9 | `EventOutcome` | 32 fields, 51 references | open |
@@ -149,3 +149,27 @@ because macOS reports 0 for an unconstrained window and reading it literally wou
 a minimum beats a contradicting maximum, because clipped at the edge is recoverable and too small to
 use is not; and the gap comes out of the columns rather than from between them, which is what makes two
 half-width columns plus their gap add up to exactly the viewport.
+
+## 6. `app/reactor/query.rs`
+
+Three rules out to `app/reactor/diagnostics.rs` with 12 tests, and query.rs's own tests go 9 to 21 —
+every handler that had none now has one.
+
+- `default_query_space` — the three-tier precedence a query falls back on. Its cost is already
+  recorded on `query_diagnostics`: a `query windows` naming no space answers about ONE space, so
+  windows on the other display read as absent, which produced three wrong conclusions in a row.
+  Reordering the tiers fails.
+- `orphaned_windows` — owned, tiled, and absent from the layout tree: cmd-tab reachable and
+  unreachable by scrolling, which is what "a second invisible strip" looks like from the user's side.
+  Floating windows are excluded because being outside the tree is what floating MEANS, and counting
+  them would make every space with one look broken. Dropping that exclusion fails.
+- `stale_display_homes` — a home recorded for a window that no longer exists. Harmless singly, but the
+  count growing across a session is evidence that some path removes a window without going through
+  `forget_window`.
+
+**A test corrected my reading again.** I asserted that a space rini has never seen lists no
+workspaces. It lists all of them: `ordered_workspace_ids` ignores its space argument on purpose —
+"index 2 is the same workspace on every display" — so the workspace ORDER is global while the ACTIVE
+workspace is per space. The test now pins that distinction, which is more useful than what I first
+wrote, and notes that the reactor-level `querying_an_unknown_space_creates_nothing` passes only
+because a fresh reactor has no workspaces at all yet.
