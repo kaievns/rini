@@ -107,70 +107,43 @@ still has no in-file tests, because the AX seam is not done — see below.
 place (`State::failure_of`), and the rule reads only that. The architecture test forbids macOS types
 outside `platform/`, so a domain rule needs its own vocabulary anyway.
 
-### The AX seam: GENERICS, agreed 2026-09-23
+### The AX seam: done, generics
 
-`AXUIElement` is not just called, it is STORED: `AppWindowState.elem` holds one and
-`elem_to_wid: HashMap<AXUIElement, WindowId>` keys by one. Faking it means substituting the type
-throughout `State`, which is a choice between:
+`State<W: AxWorld>`. `AXUIElement` mentions in the actor went from 22 to 7, and the only live one
+left is `AXUIElement::application(pid)` in `spawn_app_thread`, which is where the thread is composed.
+`MacAx` is the calls the actor used to make inline; `FakeAx`'s elements are plain numbers.
 
-Generics it is: `State<E: Element>`, zero cost at runtime, with the parameter spreading through the
-file's signatures and into `spawn_app_thread`. A boxed trait was the alternative and was rejected for
-the allocation and vtable hop per AX call on the hot path.
+Landed in three commits so the risky one had a green fallback: the trait (`c5c215f`), the
+behaviour-preserving conversion (`f9edb7c`), then the fake and the first tests this file has ever had.
 
-The remaining untested weight behind it: `handle_notification` (166),
-`handle_request` (157), `handle_raise_request` (134), and the three worst TODOs in the tree — a
-window-matching heuristic known to be wrong (`:1210`), a missing frontmost-window retry (`:941`), and
-`FIXME: ?elem here can change system behavior` (`:1554`).
+Three things moved rather than translated, because they are questions about the application and the
+world is what answers those: the enhanced-UI refcount, notification registration (`watch`/`unwatch`,
+so the observer is no longer a `State` field), and `isTerminated` (`app_has_quit`, which also removed
+`running_app` from `State` and is what made a test `State` constructible at all).
 
-## 3. CI's formatting check is red — 1,126 hunks
+**The test the seam was worth building for.** A frame write is `set_size`, `set_position`,
+`set_size` — sized twice. It looks redundant enough that a tidy-up would drop one, and nothing
+pinned it, because this file had no tests. AppKit clamps a size against the window's CURRENT
+position, so a window near a screen edge cannot grow until it has moved; the first size is what lets
+the move succeed for a window that has to grow and shift at once. Dropping either one now fails.
 
-`cargo +nightly fmt --all --check` is what `.github/workflows/rust.yml:27` runs. The repo had
-never been through it: module declarations unsorted, imports ungrouped.
+Each of the five was checked by breaking what it guards:
 
-**Done.** 144 files, 0 hunks remaining under CI's exact command, 1,249 tests still passing and
-0 warnings. Nothing but whitespace and import order moved.
+| test | broken by | reports |
+|---|---|---|
+| frame write order | dropping the first `set_size` | "sized twice, before and after the move" |
+| sweep keeps a busy app | `AppBusy => Retire` | "a busy application has not lost its windows" |
+| registration subscribes | skipping `watch` | "AXUIElementDestroyed was never subscribed" |
+| sweep retires a dead element | — | pins that only an invalid element retires, and exactly one event is sent |
+| title element | — | pins `needs_title_element_to_be_standard` end to end |
 
-Worth knowing for next time: `cargo fmt` prints `can't set brace_style = PreferSameLine, unstable
-features are only available in nightly channel` even under `rustup run nightly`. That warning comes
-from cargo's own read of `rustfmt.toml`, not from the rustfmt it shells out to — the unstable options
-did apply. Check the output, not the warning.
+One trap for whoever writes the next test: `admissible::has_visible_peer` refuses a window that has
+a window-server id but no window-server RECORD, because an id the server will not report back means
+the window is not on screen. So `register_window` needs a `WindowServerInfo` hint, which is what the
+`peer()` helper in the test module is for.
 
-## 4. `animation/platform/overlay.rs` — 1,080 lines, 16 tests (67 lines/test)
-
-**Done, and the ratio was measuring the wrong thing.** The file is a Core Animation driver. Its 16
-tests already cover every pure helper in it — `whole`, `tile_shadow_style`, `bar_frame`,
-`dressing_piece_indices`, the z-order, `motion_timing` — and what is left untested is
-`install_tile`, `ensure_container`, `retarget`, `animate_tile_*` and `apply_edge_dressing`, all of
-which manipulate live `CALayer` objects. Those need a compositor, not a better test.
-
-Two pure rules were still in there and are out, with 7 tests, both in
-`animation/domain/motion/plan.rs`:
-
-- `Member::start_frame` — a `Rigid` member rides its container, so `rel` is both its start and its
-  end; every other variant starts at `from`. It matters when a window is reparented mid-flight: the
-  layer installs at the frame the animation is about to run FROM, and reading `to` would land it at
-  its destination and animate nowhere.
-- `stale_overlay_layers` — which tiles to stop drawing and which containers are then empty. The
-  order between the two stages is the content: a container is judged by the tiles that REMAIN.
-  Judging against the original set keeps a container whose only tile just left, and an empty
-  container is a layer the compositor keeps compositing. Proven by reverting the order — the test
-  reports `[]` where it must report `[8]`.
-
-## 5. Small duplicates
-
-**Done**, and only one of the three was duplication.
-
-- `ax/permission.rs` — two bodies differing only in `kCFBooleanFalse` versus `kCFBooleanTrue`,
-  which is the difference between asking quietly and interrupting the user with a system dialog.
-  One `ax_trusted(Prompt)` now, with the choice named rather than copied.
-- `input/platform/tap.rs` — not duplication but a delegation ladder, and four of its six rungs had
-  no callers: `new_listen_only`, `new_at_location_listen_only`, and then `new_with_options` and
-  `new_at_location_with_options` once the first two were gone. All `pub`, so `dead_code` never saw
-  them. Two public constructors remain, both of which the tree actually calls. Two log lines that
-  named `new_at_location_with_options` from inside `create` were stale and now say `create`.
-- `windows/platform/app.rs:197` / `:211` — **kept.** The 0.88 is a shared two-step lookup; the
-  middles differ, and every difference is deliberate. A vanished process still gets the
-  activation-policy callback, because rini already has the answer and the caller must hear back; it
-  gets no finished-launching callback, because a process that is gone will never finish launching and
-  reporting one would announce a launch that did not happen. Neither had a doc comment saying so,
-  which was the real gap. Merging them behind a flag would hide exactly those decisions.
+Still untested in there: `handle_notification` (166), `handle_request`'s other arms, and
+`handle_raise_request` (134), which is async and drives activation waits. The three worst TODOs are
+also still live — the window-matching heuristic (`:1210`), the missing frontmost retry (`:941`), and
+`FIXME: ?elem here can change system behavior` (`:1554`). The seam is what makes any of them
+testable; none of them is done.

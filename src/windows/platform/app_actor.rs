@@ -10,7 +10,6 @@ use std::sync::LazyLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use objc2::rc::Retained;
 use objc2_app_kit::NSRunningApplication;
 use objc2_application_services::AXError;
 use objc2_core_foundation::CFRunLoop;
@@ -120,7 +119,6 @@ pub fn spawn_app_thread(
 struct State<W: AxWorld> {
     pid: pid_t,
     bundle_id: Option<String>,
-    running_app: Retained<NSRunningApplication>,
     /// Everything this thread asks of Accessibility. Production installs `MacAx`; a test installs a
     /// fake whose elements are plain numbers. See `platform/ax/world.rs`.
     ax: W,
@@ -308,7 +306,7 @@ impl<W: AxWorld> State<W> {
                 }
                 Ok(false) => (),
                 #[allow(non_upper_case_globals)]
-                Err(AxError::Ax(AXError::CannotComplete)) if state.running_app.isTerminated() => {
+                Err(AxError::Ax(AXError::CannotComplete)) if state.ax.app_has_quit() => {
                     warn!(?state.bundle_id, ?state.pid, "Application terminated without notification");
                     state.send_event(Event::ApplicationThreadTerminated(state.pid));
                     should_terminate = true;
@@ -1478,9 +1476,8 @@ fn app_thread_main(
 
     let state = State {
         pid,
-        running_app,
         bundle_id: info.bundle_id.clone(),
-        ax: MacAx::new(app.clone(), observer),
+        ax: MacAx::new(app.clone(), running_app.clone(), observer),
         events_tx,
         windows: HashMap::default(),
         elem_to_wid: HashMap::default(),
@@ -1525,4 +1522,211 @@ fn trace<T, E: std::fmt::Debug>(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
+    use super::*;
+    use crate::windows::platform::ax::world::FakeAx;
+
+    /// Collects what the actor told the reactor.
+    #[derive(Clone, Default)]
+    struct Sink(Rc<RefCell<Vec<Event>>>);
+
+    // The actor's thread owns its sink; a test drives it on one thread and never sends it anywhere.
+    unsafe impl Send for Sink {}
+
+    impl EventSink for Sink {
+        fn send(&self, event: Event) {
+            self.0.borrow_mut().push(event);
+        }
+    }
+
+    const PID: pid_t = 501;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    /// The window server's own record of a window, which the real path reads before registering.
+    /// Without one `admissible::has_visible_peer` refuses a window that HAS a server id, because an
+    /// id the server does not report back means the window is not on screen.
+    fn peer(window: u32, frame: CGRect) -> Option<WindowServerInfo> {
+        Some(WindowServerInfo {
+            id: WindowServerId::new(window),
+            pid: PID,
+            layer: 0,
+            frame,
+            min_frame: CGSize::ZERO,
+            max_frame: CGSize::ZERO,
+        })
+    }
+
+    fn state_with(ax: FakeAx) -> (State<FakeAx>, Sink) {
+        let sink = Sink::default();
+        let (raises_tx, _raises_rx) = channels::channel();
+        let state = State {
+            pid: PID,
+            bundle_id: Some("com.example.app".to_owned()),
+            ax,
+            events_tx: Box::new(sink.clone()),
+            windows: HashMap::default(),
+            elem_to_wid: HashMap::default(),
+            last_window_idx: 0,
+            main_window: None,
+            last_activated: None,
+            pending_activation_quiet: None,
+            is_hidden: false,
+            is_frontmost: false,
+            raises_tx,
+            tx_store: None,
+        };
+        (state, sink)
+    }
+
+    /// A frame write is size, then position, then size AGAIN.
+    ///
+    /// Not a typo and not belt-and-braces. AppKit clamps a size against the window's CURRENT position
+    /// — a window near the right edge of a screen cannot grow until it has moved — so sizing before
+    /// the move can be refused, and sizing after it is what actually lands. The first size is what
+    /// lets the move succeed for a window that has to grow and shift at once.
+    ///
+    /// Nothing pinned this order before: the file had no tests, and the three lines look redundant
+    /// enough that a tidy-up would drop one.
+    #[test]
+    fn a_frame_write_sizes_then_moves_then_sizes_again() {
+        let window = 7;
+        let (mut state, _sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
+        let wid = state
+            .register_window(window, peer(window, rect(0., 0., 100., 100.)))
+            .expect("the window registers")
+            .1;
+        state.ax.positions.borrow_mut().clear();
+        state.ax.sizes.borrow_mut().clear();
+
+        let desired = rect(500., 300., 800., 600.);
+        state
+            .handle_request(Request::SetWindowFrame(
+                wid,
+                desired,
+                TransactionId::default(),
+                false,
+            ))
+            .expect("the write succeeds");
+
+        assert_eq!(
+            state.ax.sizes.borrow().as_slice(),
+            &[(window, desired.size), (window, desired.size)],
+            "sized twice, before and after the move"
+        );
+        assert_eq!(
+            state.ax.positions.borrow().as_slice(),
+            &[(window, desired.origin)],
+            "moved once, between the two sizings"
+        );
+    }
+
+    /// The sweep retires a window whose element has died, and only that.
+    #[test]
+    fn the_sweep_retires_a_window_whose_element_died() {
+        let (kept, died) = (7, 8);
+        let mut ax = FakeAx::with_one_window(kept, rect(0., 0., 100., 100.));
+        ax.windows.push(died);
+        ax.describe_standard_window(died, rect(200., 0., 100., 100.));
+        let (mut state, sink) = state_with(ax);
+
+        let kept_wid = state
+            .register_window(kept, peer(kept, rect(0., 0., 100., 100.)))
+            .expect("registers")
+            .1;
+        let died_wid = state
+            .register_window(died, peer(died, rect(200., 0., 100., 100.)))
+            .expect("registers")
+            .1;
+
+        // The element goes: every read about it now fails the way Accessibility reports a dead one.
+        state.ax.frames.remove(&died);
+        state.ax.roles.remove(&died);
+        sink.0.borrow_mut().clear();
+
+        state.remove_stale_windows();
+
+        assert!(state.windows.contains_key(&kept_wid), "the live window stays");
+        assert!(!state.windows.contains_key(&died_wid), "the dead one goes");
+        let announced = sink.0.borrow();
+        assert_eq!(announced.len(), 1, "told exactly once: {announced:?}");
+        assert!(
+            matches!(announced[0], Event::WindowDestroyed(w) if w == died_wid),
+            "{announced:?}"
+        );
+    }
+
+    /// A busy application is not a dead one. Every read failing with "could not complete" must leave
+    /// the window registered, because that is what an application under load looks like.
+    #[test]
+    fn the_sweep_keeps_a_window_whose_application_is_merely_busy() {
+        let window = 7;
+        let (mut state, sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
+        let wid = state
+            .register_window(window, peer(window, rect(0., 0., 100., 100.)))
+            .expect("registers")
+            .1;
+        sink.0.borrow_mut().clear();
+
+        // The application goes under load AFTER the window is known: every read now fails with
+        // "could not complete", which is what a wedged or busy application looks like.
+        state.ax.busy = true;
+        state.remove_stale_windows();
+
+        assert!(
+            state.windows.contains_key(&wid),
+            "a busy application has not lost its windows"
+        );
+        assert!(sink.0.borrow().is_empty(), "and nothing is announced");
+    }
+
+    /// The rule `admissible::needs_title_element_to_be_standard` names, end to end: for the
+    /// applications it lists, a window whose `AXTitleUIElement` cannot be read is not standard.
+    #[test]
+    fn a_window_without_a_readable_title_element_is_not_standard() {
+        let window = 7;
+        let mut ax = FakeAx::with_one_window(window, rect(0., 0., 100., 100.));
+        ax.without_title_element.push(window);
+        let (mut state, _sink) = state_with(ax);
+        state.bundle_id = Some("com.googlecode.iterm2".to_owned());
+
+        let (info, _, _) = state
+            .register_window(window, peer(window, rect(0., 0., 100., 100.)))
+            .expect("registers");
+
+        assert!(!info.is_standard, "no readable title element means not standard");
+    }
+
+    /// Registering a window subscribes to its notifications. Without that the actor never hears the
+    /// window move, resize or close again.
+    #[test]
+    fn registering_a_window_subscribes_to_its_notifications() {
+        let window = 7;
+        let (mut state, _sink) =
+            state_with(FakeAx::with_one_window(window, rect(0., 0., 100., 100.)));
+
+        state
+            .register_window(window, peer(window, rect(0., 0., 100., 100.)))
+            .expect("registers");
+
+        let watched = state.ax.watched.borrow();
+        for &(_, notif) in WINDOW_NOTIFICATIONS {
+            assert!(
+                watched.iter().any(|(elem, n)| *elem == window && *n == notif),
+                "{notif} was never subscribed"
+            );
+        }
+    }
 }

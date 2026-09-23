@@ -20,6 +20,9 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use rini_core::ids::WindowServerId;
 
+use objc2::rc::Retained;
+use objc2_app_kit::NSRunningApplication;
+
 use crate::windows::domain::info::{WindowInfo, WindowServerInfo};
 
 use super::element::{AXUIElement, Error as AxError};
@@ -49,6 +52,13 @@ pub trait AxWorld {
 
     fn main_window(&self, app: &Self::Element) -> Result<Self::Element, AxError>;
     fn frontmost(&self, app: &Self::Element) -> Result<bool, AxError>;
+
+    /// Whether the application has quit.
+    ///
+    /// Asked when a request fails with "could not complete": from a live application that means busy
+    /// and is ignored, and from a dead one it means the thread should stop. The two are
+    /// indistinguishable from the error alone.
+    fn app_has_quit(&self) -> bool;
 
     fn frame(&self, elem: &Self::Element) -> Result<CGRect, AxError>;
     fn set_position(&self, elem: &Self::Element, position: CGPoint) -> Result<(), AxError>;
@@ -119,14 +129,20 @@ pub trait AxWorld {
 /// process.
 pub struct MacAx {
     app: AXUIElement,
+    running_app: Retained<NSRunningApplication>,
     observer: Observer,
     enhanced_ui: EnhancedUi,
 }
 
 impl MacAx {
-    pub fn new(app: AXUIElement, observer: Observer) -> Self {
+    pub fn new(
+        app: AXUIElement,
+        running_app: Retained<NSRunningApplication>,
+        observer: Observer,
+    ) -> Self {
         Self {
             app,
+            running_app,
             observer,
             enhanced_ui: EnhancedUi::default(),
         }
@@ -154,6 +170,10 @@ impl AxWorld for MacAx {
 
     fn frontmost(&self, app: &AXUIElement) -> Result<bool, AxError> {
         app.frontmost()
+    }
+
+    fn app_has_quit(&self) -> bool {
+        self.running_app.isTerminated()
     }
 
     fn frame(&self, elem: &AXUIElement) -> Result<CGRect, AxError> {
@@ -242,5 +262,235 @@ impl AxWorld for MacAx {
     fn restore_enhanced_ui_if_needed(&mut self) {
         let app = self.app.clone();
         self.enhanced_ui.restore_if_needed(&app);
+    }
+}
+
+/// A world a test writes the answers for.
+///
+/// Elements are plain numbers, so a test can name one without a running application. Every answer
+/// comes from a map the test filled; an element with nothing recorded answers
+/// `AXError::Ax(InvalidUIElement)`, which is how Accessibility reports an element that has gone, so
+/// the default for "a window the test never set up" is the same as for one that died.
+///
+/// Writes are recorded rather than performed. `positions` and `sizes` are what the actor asked for,
+/// which is the only thing a test can check: whether a frame write happened, and with what.
+#[cfg(test)]
+#[derive(Debug, Default)]
+pub struct FakeAx {
+    /// The application element. Windows are any other number.
+    pub app: u32,
+    pub windows: Vec<u32>,
+    pub frames: std::collections::HashMap<u32, CGRect>,
+    pub roles: std::collections::HashMap<u32, String>,
+    pub subroles: std::collections::HashMap<u32, String>,
+    pub titles: std::collections::HashMap<u32, String>,
+    pub minimized: std::collections::HashMap<u32, bool>,
+    pub server_ids: std::collections::HashMap<u32, WindowServerId>,
+    pub main_window: Option<u32>,
+    pub frontmost: bool,
+    /// Elements whose `AXTitleUIElement` cannot be read.
+    pub without_title_element: Vec<u32>,
+    /// What the actor asked for, in order.
+    pub positions: std::cell::RefCell<Vec<(u32, CGPoint)>>,
+    pub sizes: std::cell::RefCell<Vec<(u32, CGSize)>>,
+    pub raised: std::cell::RefCell<Vec<u32>>,
+    pub watched: std::cell::RefCell<Vec<(u32, &'static str)>>,
+    pub unwatched: std::cell::RefCell<Vec<(u32, &'static str)>>,
+    pub enhanced_ui_depth: i32,
+    /// The application has quit.
+    pub has_quit: bool,
+    /// Every read fails with "could not complete", which is an application under load.
+    pub busy: bool,
+}
+
+#[cfg(test)]
+impl FakeAx {
+    /// A world with one application and one standard window at `frame`.
+    pub fn with_one_window(window: u32, frame: CGRect) -> Self {
+        let mut ax = Self {
+            app: 1,
+            windows: vec![window],
+            frontmost: true,
+            ..Self::default()
+        };
+        ax.describe_standard_window(window, frame);
+        ax
+    }
+
+    /// Record the attributes that make `window` a standard, non-minimized window.
+    pub fn describe_standard_window(&mut self, window: u32, frame: CGRect) {
+        self.frames.insert(window, frame);
+        self.roles.insert(window, super::element::AX_WINDOW_ROLE.to_owned());
+        self.subroles
+            .insert(window, super::element::AX_STANDARD_WINDOW_SUBROLE.to_owned());
+        self.titles.insert(window, format!("window {window}"));
+        self.minimized.insert(window, false);
+        self.server_ids.insert(window, WindowServerId::new(window));
+    }
+
+    fn gone<T>() -> Result<T, AxError> {
+        Err(AxError::Ax(
+            objc2_application_services::AXError::InvalidUIElement,
+        ))
+    }
+
+    fn busy<T>() -> Result<T, AxError> {
+        Err(AxError::Ax(objc2_application_services::AXError::CannotComplete))
+    }
+
+    fn read<T: Clone>(
+        &self,
+        map: &std::collections::HashMap<u32, T>,
+        elem: &u32,
+    ) -> Result<T, AxError> {
+        if self.busy {
+            return Self::busy();
+        }
+        map.get(elem).cloned().ok_or(AxError::Ax(
+            objc2_application_services::AXError::InvalidUIElement,
+        ))
+    }
+}
+
+#[cfg(test)]
+impl AxWorld for FakeAx {
+    type Element = u32;
+
+    fn app(&self) -> u32 {
+        self.app
+    }
+
+    fn windows(&self, _app: &u32) -> Result<Vec<u32>, AxError> {
+        Ok(self.windows.clone())
+    }
+
+    fn main_window(&self, _app: &u32) -> Result<u32, AxError> {
+        self.main_window.ok_or(AxError::NotFound)
+    }
+
+    fn frontmost(&self, _app: &u32) -> Result<bool, AxError> {
+        Ok(self.frontmost)
+    }
+
+    fn app_has_quit(&self) -> bool {
+        self.has_quit
+    }
+
+    fn frame(&self, elem: &u32) -> Result<CGRect, AxError> {
+        self.read(&self.frames, elem)
+    }
+
+    fn set_position(&self, elem: &u32, position: CGPoint) -> Result<(), AxError> {
+        if !self.frames.contains_key(elem) {
+            return Self::gone();
+        }
+        self.positions.borrow_mut().push((*elem, position));
+        Ok(())
+    }
+
+    fn set_size(&self, elem: &u32, size: CGSize) -> Result<(), AxError> {
+        if !self.frames.contains_key(elem) {
+            return Self::gone();
+        }
+        self.sizes.borrow_mut().push((*elem, size));
+        Ok(())
+    }
+
+    fn role(&self, elem: &u32) -> Result<String, AxError> {
+        self.read(&self.roles, elem)
+    }
+
+    fn subrole(&self, elem: &u32) -> Result<String, AxError> {
+        self.read(&self.subroles, elem)
+    }
+
+    fn title(&self, elem: &u32) -> Result<String, AxError> {
+        self.read(&self.titles, elem)
+    }
+
+    fn minimized(&self, elem: &u32) -> Result<bool, AxError> {
+        self.read(&self.minimized, elem)
+    }
+
+    fn parent(&self, _elem: &u32) -> Result<Option<u32>, AxError> {
+        Ok(Some(self.app))
+    }
+
+    fn raise(&self, elem: &u32) -> Result<(), AxError> {
+        if !self.frames.contains_key(elem) {
+            return Self::gone();
+        }
+        self.raised.borrow_mut().push(*elem);
+        Ok(())
+    }
+
+    fn can_resize(&self, _elem: &u32) -> Result<bool, AxError> {
+        Ok(true)
+    }
+
+    fn modal(&self, _elem: &u32) -> Result<bool, AxError> {
+        Ok(false)
+    }
+
+    fn window_info(
+        &self,
+        elem: &u32,
+        hint: Option<WindowServerInfo>,
+    ) -> Result<(WindowInfo, Option<WindowServerInfo>), AxError> {
+        let role = self.role(elem)?;
+        let subrole = self.subrole(elem)?;
+        let info = WindowInfo {
+            is_standard: role == super::element::AX_WINDOW_ROLE
+                && subrole == super::element::AX_STANDARD_WINDOW_SUBROLE,
+            is_root: true,
+            is_minimized: self.minimized(elem).unwrap_or(false),
+            is_resizable: true,
+            min_size: None,
+            max_size: None,
+            title: self.title(elem).unwrap_or_default(),
+            frame: self.frame(elem)?,
+            sys_id: self.window_server_id(elem),
+            bundle_id: None,
+            path: None,
+            ax_role: Some(role),
+            ax_subrole: Some(subrole),
+            is_modal: false,
+        };
+        Ok((info, hint))
+    }
+
+    fn window_server_id(&self, elem: &u32) -> Option<WindowServerId> {
+        self.server_ids.get(elem).copied()
+    }
+
+    fn watch(&self, elem: &u32, notification: &'static str, _data: usize) -> Result<(), AxError> {
+        if !self.frames.contains_key(elem) && *elem != self.app {
+            return Self::gone();
+        }
+        self.watched.borrow_mut().push((*elem, notification));
+        Ok(())
+    }
+
+    fn unwatch(&self, elem: &u32, notification: &'static str) {
+        self.unwatched.borrow_mut().push((*elem, notification));
+    }
+
+    fn read_attribute(&self, elem: &u32, name: &'static str) -> Result<(), AxError> {
+        if name == "AXTitleUIElement" && self.without_title_element.contains(elem) {
+            return Self::gone();
+        }
+        Ok(())
+    }
+
+    fn suppress_enhanced_ui(&mut self) {
+        self.enhanced_ui_depth += 1;
+    }
+
+    fn restore_enhanced_ui(&mut self) {
+        self.enhanced_ui_depth -= 1;
+    }
+
+    fn restore_enhanced_ui_if_needed(&mut self) {
+        self.enhanced_ui_depth = 0;
     }
 }
