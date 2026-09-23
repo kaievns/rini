@@ -11,7 +11,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 2 | `animation/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | **done** — 25 tests |
 | 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | **done** — 35 tests |
 | 4 | `main.rs` | 300-line `main`, no test | **done** — 300 -> 276, 2 rules out |
-| 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | open |
+| 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | **done** — 261 -> 229, 24 tests |
 | 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | open |
 | 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | open |
 | 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | open |
@@ -120,3 +120,32 @@ tests. Two phases named. `main` is 300 lines down to 276, and the rest does not 
 wiring between them. A `spawn_actors` function would take about fifteen parameters and read worse than
 the sequence it replaced. Length is the wrong measure for a composition root; what mattered was
 getting the two DECISIONS out of it, and those are now tested.
+
+## 5. `calculate_layout`
+
+The first 75 lines were one coherent thing: how wide each column is. Out to
+`layout/domain/constraints.rs` as `column_limits` and `column_width`, with 24 tests. 261 lines down
+to 229; the rest assigns frames from the widths and is not separable from the strip it walks.
+
+Three probes, each caught:
+
+| broken | caught by |
+|---|---|
+| smallest lock instead of largest | `two_locks_in_one_column_take_the_larger` |
+| a maximum allowed to beat a minimum | the contradiction test, 300 where 700 was required |
+| the viewport clamp | `no_column_is_ever_wider_than_the_viewport` |
+
+**A test corrected my reading of the design.** I asserted that a lock pins a column in both
+directions. It does not: `normalized` never derives a maximum from a lock, so a lock raises the
+column's FLOOR and leaves it free to be wider. Capping is the maximum's job, and the window itself is
+held to its lock separately by `clamp_to_constraints` — which is the better behaviour, because a
+non-resizable window in a wide column sits at its own size with space beside it rather than shrinking
+the column and dragging its neighbours along. The test now says that, and a second one covers a window
+reporting a lock and a maximum together, which does pin the column.
+
+Four rules are now stated that were only implied by the arithmetic: a column's windows agree
+pessimistically (largest minimum, smallest maximum, larger lock); a zero maximum means NO maximum,
+because macOS reports 0 for an unconstrained window and reading it literally would collapse the column;
+a minimum beats a contradicting maximum, because clipped at the edge is recoverable and too small to
+use is not; and the gap comes out of the columns rather than from between them, which is what makes two
+half-width columns plus their gap add up to exactly the viewport.

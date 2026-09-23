@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
-    AxisConstraints, clamp_to_constraints, solve_axis_lengths,
+    AxisConstraints, clamp_to_constraints, column_limits, column_width, solve_axis_lengths,
 };
-use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, gap_share, reveal_offset};
+use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, reveal_offset};
 use crate::layout::settings::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
@@ -923,42 +923,9 @@ impl ScrollingLayoutSystem {
             } else {
                 self.clamp_ratio(base_ratio + col.width_offset)
             };
-            let base_width = (tiling.size.width * ratio).max(1.0);
-            let mut min_w: f64 = 1.0;
-            let mut fixed_w: Option<f64> = None;
-            let mut max_w: Option<f64> = None;
-            for wid in &col.windows {
-                if let Some(c) = constraints.get(wid).copied() {
-                    let c = c.normalized();
-                    min_w = min_w.max(c.min_for_axis(true));
-                    if let Some(locked) = c.fixed_for_axis(true) {
-                        fixed_w = Some(match fixed_w {
-                            Some(current) => current.max(locked),
-                            None => locked,
-                        });
-                    }
-                    if c.max_for_axis(true) > 0.0 {
-                        max_w = Some(match max_w {
-                            Some(current) => current.min(c.max_for_axis(true)),
-                            None => c.max_for_axis(true),
-                        });
-                    }
-                }
-            }
-            let required_w = fixed_w.unwrap_or(min_w).max(min_w);
-            let mut width = base_width.max(required_w);
-            if let Some(max_w) = max_w {
-                width = width.min(max_w).max(required_w);
-            }
-            // Keep scrolling columns bounded to the tiling viewport. This layout
-            // scrolls between column starts; it does not pan within a single
-            // oversized column.
-            width = width.min(tiling.size.width.max(1.0));
-
-            let shrunk = width - gap_share(ratio, gap_x);
-            if shrunk >= 1.0 {
-                width = shrunk;
-            }
+            let limits =
+                column_limits(col.windows.iter().filter_map(|wid| constraints.get(wid).copied()));
+            let width = column_width(ratio, tiling.size.width, gap_x, limits);
             column_widths.push(width);
             column_ratios.push(if tiling.size.width > 0.0 {
                 (width / tiling.size.width).max(0.0)

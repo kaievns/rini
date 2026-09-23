@@ -1,3 +1,5 @@
+use crate::layout::WindowLayoutConstraints;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AxisConstraints {
     pub min: f64,
@@ -9,6 +11,60 @@ pub struct AxisConstraints {
 
 fn sanitize(v: f64) -> f64 {
     if v.is_finite() { v.max(0.0) } else { 0.0 }
+}
+
+/// The horizontal limits a column's windows impose TOGETHER.
+///
+/// A column is one width, so the windows in it have to agree on one. They agree pessimistically: the
+/// largest minimum, the largest lock, and the smallest maximum. A column holding a window that cannot
+/// go below 400pt and one that cannot go above 600pt is between 400 and 600, and a column whose
+/// windows lock to different widths takes the larger, because the smaller one can be clipped but the
+/// larger one cannot be conjured.
+pub fn column_limits(
+    windows: impl IntoIterator<Item = WindowLayoutConstraints>,
+) -> AxisConstraints {
+    let mut limits = AxisConstraints {
+        min: 1.0,
+        ..AxisConstraints::default()
+    };
+    for window in windows {
+        let window = window.normalized();
+        limits.min = limits.min.max(window.min_for_axis(true));
+        if let Some(locked) = window.fixed_for_axis(true) {
+            limits.fixed = Some(limits.fixed.map_or(locked, |current: f64| current.max(locked)));
+        }
+        let max = window.max_for_axis(true);
+        if max > 0.0 {
+            limits.max = Some(limits.max.map_or(max, |current: f64| current.min(max)));
+        }
+    }
+    limits
+}
+
+/// How wide one column of the strip is.
+///
+/// `ratio` of the viewport, then widened to whatever the windows in it require, then narrowed to what
+/// they accept — in that order, because a minimum beats a maximum. A column whose windows demand more
+/// than they allow is given the minimum: a window clipped at the edge is recoverable, a window too
+/// small to use is not.
+///
+/// Clamped to the viewport last of all. This layout scrolls BETWEEN column starts and does not pan
+/// within one column, so a column wider than the screen has a region nothing can ever scroll to.
+///
+/// The gap comes out of the column rather than out of the space between columns, which is what keeps
+/// two columns at ratio 0.5 adding up to the viewport instead of overflowing it by one gap. It is
+/// skipped when it would take the column below a pixel.
+pub fn column_width(ratio: f64, viewport_width: f64, gap: f64, limits: AxisConstraints) -> f64 {
+    let required = limits.fixed.unwrap_or(limits.min).max(limits.min);
+    let mut width = (viewport_width * ratio).max(1.0).max(required);
+    if let Some(max) = limits.max {
+        width = width.min(max).max(required);
+    }
+
+    width = width.min(viewport_width.max(1.0));
+
+    let shrunk = width - crate::layout::domain::strip::gap_share(ratio, gap);
+    if shrunk >= 1.0 { shrunk } else { width }
 }
 
 /// `size` reduced to what the window will actually accept, never grown.
@@ -364,5 +420,200 @@ mod clamp_tests {
         };
         let got = clamp_to_constraints(CGSize::new(500.0, 500.0), junk);
         assert!(got.width >= 0.0 && got.height >= 0.0, "got {got:?}");
+    }
+}
+
+#[cfg(test)]
+mod column_tests {
+    use super::{AxisConstraints, column_limits, column_width};
+    use crate::layout::WindowLayoutConstraints;
+
+    fn window(min: f64, max: f64, locked: f64) -> WindowLayoutConstraints {
+        WindowLayoutConstraints {
+            is_resizable: locked <= 0.0,
+            locked_width: locked,
+            locked_height: 0.0,
+            min_width: min,
+            min_height: 0.0,
+            max_width: max,
+            max_height: 0.0,
+        }
+    }
+
+    // --- column_limits ------------------------------------------------------------------------
+
+    #[test]
+    fn a_column_with_no_constrained_windows_has_only_the_one_pixel_floor() {
+        let limits = column_limits(std::iter::empty());
+        assert_eq!(limits.min, 1.0);
+        assert_eq!(limits.fixed, None);
+        assert_eq!(limits.max, None);
+    }
+
+    /// A column is one width, so its windows agree pessimistically: the largest minimum and the
+    /// smallest maximum. Taking either the other way round hands a window a size it refuses.
+    #[test]
+    fn a_column_takes_the_largest_minimum_and_the_smallest_maximum() {
+        let limits = column_limits([window(400., 900., 0.), window(250., 600., 0.)]);
+        assert_eq!(limits.min, 400.0);
+        assert_eq!(limits.max, Some(600.0));
+    }
+
+    /// Two windows locked to different widths take the LARGER. A window given less than its lock is
+    /// clipped, which the user can see and scroll; one given more than it can fill leaves a hole.
+    #[test]
+    fn two_locks_in_one_column_take_the_larger() {
+        let limits = column_limits([window(0., 0., 500.), window(0., 0., 700.)]);
+        assert_eq!(limits.fixed, Some(700.0));
+    }
+
+    /// A zero maximum is "no maximum", not "zero wide". macOS reports 0 for a window with no limit,
+    /// and reading it literally would collapse every column holding one.
+    #[test]
+    fn a_zero_maximum_means_no_maximum() {
+        let limits = column_limits([window(100., 0., 0.)]);
+        assert_eq!(limits.max, None);
+        assert_eq!(limits.min, 100.0);
+    }
+
+    // --- column_width -------------------------------------------------------------------------
+
+    fn free() -> AxisConstraints {
+        AxisConstraints {
+            min: 1.0,
+            ..AxisConstraints::default()
+        }
+    }
+
+    #[test]
+    fn a_column_is_its_ratio_of_the_viewport_less_its_share_of_the_gap() {
+        // Half of 1000 is 500; half the 20pt gap comes out of the column.
+        assert_eq!(column_width(0.5, 1000., 20., free()), 490.0);
+    }
+
+    /// The gap comes out of the columns, which is what makes two half-width columns add up to the
+    /// viewport instead of overflowing it by one gap.
+    #[test]
+    fn two_half_columns_and_the_gap_between_them_fit_the_viewport() {
+        let each = column_width(0.5, 1000., 20., free());
+        assert_eq!(each * 2.0 + 20.0, 1000.0);
+    }
+
+    #[test]
+    fn a_minimum_widens_a_column_past_its_ratio() {
+        let limits = AxisConstraints {
+            min: 800.,
+            ..AxisConstraints::default()
+        };
+        assert!(column_width(0.3, 1000., 0., limits) >= 800.0);
+    }
+
+    #[test]
+    fn a_maximum_narrows_a_column_below_its_ratio() {
+        let limits = AxisConstraints {
+            min: 1.,
+            max: Some(200.),
+            ..AxisConstraints::default()
+        };
+        assert!(column_width(0.9, 1000., 0., limits) <= 200.0);
+    }
+
+    /// A window demanding more than it allows gets the MINIMUM. Clipped at the edge is recoverable;
+    /// too small to use is not.
+    #[test]
+    fn a_minimum_beats_a_maximum_that_contradicts_it() {
+        let limits = AxisConstraints {
+            min: 700.,
+            max: Some(300.),
+            ..AxisConstraints::default()
+        };
+        assert_eq!(column_width(0.5, 1000., 0., limits), 700.0);
+    }
+
+    /// A lock raises the column's FLOOR and does not cap it.
+    ///
+    /// `normalized` does not derive a maximum from a lock, so a column holding a window locked to
+    /// 650pt is at least 650 wide and may be wider. Capping is the maximum's job, and the window
+    /// itself is held to its lock separately by `clamp_to_constraints` — so a non-resizable window in
+    /// a wide column sits at its own size with space beside it, rather than the column shrinking to
+    /// fit it and dragging its neighbours along.
+    #[test]
+    fn a_lock_raises_the_column_floor_without_capping_it() {
+        let locked = AxisConstraints {
+            min: 1.,
+            fixed: Some(650.),
+            ..AxisConstraints::default()
+        };
+        assert_eq!(
+            column_width(0.1, 1000., 0., locked),
+            650.0,
+            "widened to the lock"
+        );
+        assert_eq!(
+            column_width(0.9, 1000., 0., locked),
+            900.0,
+            "but not narrowed to it"
+        );
+    }
+
+    /// A lock AND a maximum together do pin the column, which is what a window reporting both gets.
+    #[test]
+    fn a_lock_with_a_maximum_pins_the_column() {
+        let pinned = AxisConstraints {
+            min: 1.,
+            fixed: Some(650.),
+            max: Some(650.),
+            ..AxisConstraints::default()
+        };
+        assert_eq!(column_width(0.9, 1000., 0., pinned), 650.0);
+    }
+
+    /// The strip scrolls BETWEEN column starts and never pans within one column, so a column wider
+    /// than the viewport has a region nothing can scroll to. The clamp is what prevents that.
+    #[test]
+    fn no_column_is_ever_wider_than_the_viewport() {
+        let huge = AxisConstraints {
+            min: 5000.,
+            ..AxisConstraints::default()
+        };
+        assert!(column_width(1.0, 1000., 0., huge) <= 1000.0);
+        assert!(column_width(4.0, 1000., 0., free()) <= 1000.0);
+    }
+
+    /// A full-width column is ratio 1.0 and takes the whole viewport, gap and all: the gap share of a
+    /// full-width column is the whole gap, and subtracting it would leave a strip of background down
+    /// the side of a maximized window.
+    #[test]
+    fn a_full_width_column_fills_the_viewport() {
+        let width = column_width(1.0, 1000., 20., free());
+        assert!(
+            width > 900.0,
+            "a maximized window does not leave a band of background: {width}"
+        );
+    }
+
+    /// Never zero and never negative, whatever it is asked for. A zero-width column is a window the
+    /// user cannot see or click, and the layout has no way back from one.
+    #[test]
+    fn a_column_is_always_at_least_one_pixel() {
+        for (ratio, viewport, gap) in [
+            (0.0, 1000., 0.),
+            (0.0001, 10., 100.),
+            (0.5, 0., 0.),
+            (1.0, 1., 500.),
+        ] {
+            let width = column_width(ratio, viewport, gap, free());
+            assert!(
+                width >= 1.0,
+                "ratio {ratio} viewport {viewport} gap {gap} gave {width}"
+            );
+        }
+    }
+
+    /// The gap is skipped rather than applied when taking it would push the column under a pixel.
+    #[test]
+    fn a_gap_larger_than_the_column_is_not_taken() {
+        let width = column_width(0.5, 10., 1000., free());
+        assert!(width >= 1.0);
     }
 }
