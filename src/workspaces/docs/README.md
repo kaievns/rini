@@ -8,7 +8,8 @@ a restart. Sits above `windows`, `displays` and `layout`.
 
 | | |
 |---|---|
-| `engine.rs` | `LayoutEngine`: the orchestrator. Holds the workspaces, the per-display layouts, floating state, app rules, display affinity, launch memory and the persistence journal |
+| `engine.rs` | `LayoutEngine`: the orchestrator. Holds the workspaces, the per-display layouts, floating state, app rules and the persistence journal. Display affinity and launch memory left for `domain/display_memory.rs`, owned by the reactor |
+| `engine/commands/` | One module per family of `LayoutCommand`: `focus`, `arrange`, `resize`, `strip`, `floating`. `commands.rs` holds `resolve_target`, which is the space, active workspace and active layout every arm needs |
 | `domain/virtual_workspace.rs` | `WorkspaceStore`, `VirtualWorkspace`: one global workspace list, each display showing one independently |
 | `domain/assignment.rs` | `WorkspaceAssignments`: window → workspace and workspace → windows, one index kept both ways so they cannot disagree |
 | `domain/display_affinity.rs` | What belongs to a display and survives a replug: home, column width, strip order. Keyed by display UUID |
@@ -38,7 +39,8 @@ because collapsing those two erased remembered widths on the next autosave.
 
 ## Reading order
 
-`domain/virtual_workspace.rs` → `domain/assignment.rs` → `engine.rs::handle_command`
+`domain/virtual_workspace.rs` → `domain/assignment.rs` → `engine.rs::handle_command`, which
+resolves a target and hands off to `engine/commands/`
 → `engine/persistence/` when you need the file format.
 
 ## Detail

@@ -313,3 +313,27 @@ see is pure cost.
 
 `actual_start` became `live_frame`, which is the window-server read it always was — a zero-sized frame
 is macOS saying it has not laid the window out yet, which is not a position to animate from.
+
+## 12. `workspaces/engine.rs` — the command split
+
+Agreed after the round-2 assessment named it the last thing genuinely sticking out.
+
+`handle_command` was 272 lines: a 50-line prelude then seventeen match arms. Now 93, and `engine.rs`
+is 2,933 down to 2,759. The arms live in `engine/commands/{focus,arrange,resize,strip,floating}.rs`,
+each an `impl LayoutEngine` block — the pattern `engine/persistence/` already used.
+
+`resolve_target` is the rule that fell out, with 4 tests. The prelude resolved three things every arm
+needs and could fail at each step, and each failure means something different: no space is ordinary,
+a hotkey pressed before the first topology snapshot has arrived, while no active workspace or no
+active layout for a space rini IS tracking means something upstream never set one up. Only the second
+two are warned about, which is now a named rule rather than an inline `warn!`.
+
+**Each family takes only the parameters it uses.** A first pass gave all five a uniform seven-argument
+signature so one closure could dispatch to any of them; that produced 14 unused-variable warnings,
+which is the compiler pointing out the design was wrong. The signatures now say what each family
+touches: `strip` needs a target and nothing else, `resize` needs the display memory, `focus` and
+`arrange` need the window store and the visible spaces.
+
+Three commands are still answered before a target is resolved, and that is deliberate:
+`ToggleWindowFloating` and `ToggleFullscreenWithinGaps`-while-floating are about a window having no
+layout to resolve against.

@@ -28,6 +28,7 @@ use rini_core::ids::{WindowId, pid_t};
 use rini_ipc::protocol::WorkspaceSelector;
 use rustc_hash::FxHashMap as HashMap;
 
+mod commands;
 mod persistence;
 
 use persistence::PersistenceState;
@@ -2027,33 +2028,27 @@ impl LayoutEngine {
         let is_floating = self.focused_window.is_some_and(|focus| self.floating.is_floating(focus));
         debug!(?self.focused_window, last_floating_focus=?self.floating.last_focus(), ?is_floating);
 
+        // Answered before a target is resolved, because a floating window has no layout to resolve
+        // one against and these two are about it being floating.
         if let LayoutCommand::ToggleWindowFloating = &command {
             return self.toggle_window_floating(window_store, space, is_floating);
         }
-
         if let LayoutCommand::ToggleFullscreenWithinGaps = &command
             && is_floating
         {
             return self.toggle_floating_maximized(window_store, space);
         }
 
-        let Some(space) = space else {
-            return EventResponse::default();
-        };
-        let workspace_id = match self.virtual_workspace_manager.active_workspace(space) {
-            Some(id) => id,
-            None => {
-                warn!("No active virtual workspace for space {:?}", space);
-                return EventResponse::default();
-            }
-        };
-        let layout = match self.workspace_layouts.active(space, workspace_id) {
-            Some(id) => id,
-            None => {
-                warn!(
-                    "No active layout for workspace {:?} on space {:?}; command ignored",
-                    workspace_id, space
-                );
+        let target = match commands::resolve_target(
+            space,
+            |space| self.virtual_workspace_manager.active_workspace(space),
+            |space, workspace| self.workspace_layouts.active(space, workspace),
+        ) {
+            Ok(target) => target,
+            Err(reason) => {
+                if reason.is_worth_warning_about() {
+                    warn!(?space, ?reason, "layout command has nothing to act on");
+                }
                 return EventResponse::default();
             }
         };
@@ -2061,229 +2056,56 @@ impl LayoutEngine {
         if let LayoutCommand::ToggleFocusFloating = &command {
             return self.toggle_focus_floating(
                 window_store,
-                space,
-                workspace_id,
-                layout,
+                target.space,
+                target.workspace,
+                target.layout,
                 is_floating,
             );
         }
 
-        match command {
-            LayoutCommand::ToggleWindowFloating => unreachable!(),
-            LayoutCommand::ToggleFocusFloating => unreachable!(),
-
-            LayoutCommand::SwapWindows(a, b) => {
-                let a = rini_core::ids::WindowId::new(a.pid, a.idx);
-                let b = rini_core::ids::WindowId::new(b.pid, b.idx);
-                let _ = self.workspace_tree_mut(workspace_id).swap_windows(layout, a, b);
-
-                EventResponse::default()
+        match &command {
+            LayoutCommand::ToggleWindowFloating | LayoutCommand::ToggleFocusFloating => {
+                unreachable!("answered above")
             }
-            LayoutCommand::NextWindow | LayoutCommand::PrevWindow => {
-                let forward = matches!(command, LayoutCommand::NextWindow);
-                let windows = if is_floating {
-                    self.active_floating_windows_in_workspace(window_store, space)
-                } else {
-                    self.filter_active_workspace_windows(
-                        window_store,
-                        space,
-                        self.workspace_tree(workspace_id).visible_windows_in_layout(layout),
-                    )
-                };
-                let step =
-                    windows.iter().position(|&w| Some(w) == self.focused_window).and_then(|idx| {
-                        workspace_focus::cycle_step(
-                            idx,
-                            windows.len(),
-                            if forward {
-                                workspace_focus::Cycle::Forward
-                            } else {
-                                workspace_focus::Cycle::Backward
-                            },
-                        )
-                    });
-                if let Some(next) = step {
-                    let response = EventResponse {
-                        changed: true,
-                        focus_window: Some(windows[next]),
-                        raise_windows: vec![windows[next]],
-                        boundary_hit: None,
-                        edge_hit: None,
-                    };
-                    self.apply_focus_response(window_store, space, workspace_id, layout, &response);
-                    return response;
-                } else {
-                    let focus_window = self
-                        .workspace_tree(workspace_id)
-                        .selected_window(layout)
-                        .filter(|wid| windows.contains(wid))
-                        .or_else(|| windows.first().copied());
-                    let raise_windows = focus_window.into_iter().collect();
-                    let response = EventResponse {
-                        changed: true,
-                        focus_window,
-                        raise_windows,
-                        boundary_hit: None,
-                        edge_hit: None,
-                    };
-                    self.apply_focus_response(window_store, space, workspace_id, layout, &response);
-                    return response;
-                }
-            }
-            LayoutCommand::MoveFocus(direction) => {
-                debug!(
-                    "MoveFocus command received, direction: {:?}, is_floating: {}",
-                    direction, is_floating
-                );
-                return self.move_focus_internal(
+            LayoutCommand::NextWindow | LayoutCommand::PrevWindow | LayoutCommand::MoveFocus(_) => {
+                self.handle_focus_command(
                     window_store,
-                    space,
                     visible_spaces,
                     visible_space_centers,
-                    direction,
+                    target,
                     is_floating,
-                );
+                    command,
+                )
             }
-            LayoutCommand::MoveNode(direction) => {
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                if !self.workspace_tree_mut(workspace_id).move_selection(layout, direction) {
-                    if let Some(new_space) = self.next_space_for_direction(
-                        space,
-                        direction,
-                        visible_spaces,
-                        visible_space_centers,
-                    ) {
-                        let Some((new_ws_id, new_layout)) = self.workspace_and_layout(new_space)
-                        else {
-                            debug!(
-                                "No active workspace/layout for adjacent space {:?}; skipping cross-space move",
-                                new_space
-                            );
-                            return EventResponse::default();
-                        };
-                        let windows = self
-                            .workspace_tree(workspace_id)
-                            .visible_windows_under_selection(layout);
-                        for wid in windows {
-                            self.workspace_tree_mut(workspace_id).remove_window(wid);
-                            self.workspace_tree_mut(new_ws_id)
-                                .add_window_after_selection(new_layout, wid);
-                            self.virtual_workspace_manager.assign_window_to_workspace(
-                                window_store,
-                                new_space,
-                                wid,
-                                new_ws_id,
-                            );
-                        }
-                    }
-                }
-                EventResponse::default()
+            LayoutCommand::SwapWindows(..)
+            | LayoutCommand::MoveNode(_)
+            | LayoutCommand::ToggleFold(_)
+            | LayoutCommand::ToggleStack => self.handle_arrange_command(
+                window_store,
+                visible_spaces,
+                visible_space_centers,
+                target,
+                command,
+            ),
+            LayoutCommand::ResizeWindowGrow(_)
+            | LayoutCommand::ResizeWindowShrink(_)
+            | LayoutCommand::ResizeWindowBy { .. }
+            | LayoutCommand::CyclePresetColumnWidth => {
+                self.handle_resize_command(memory, target, is_floating, command)
             }
+            LayoutCommand::ScrollStrip { .. }
+            | LayoutCommand::SnapStrip
+            | LayoutCommand::CenterSelection => self.handle_strip_command(target, command),
             LayoutCommand::ToggleFullscreenWithinGaps => {
-                let raise_windows = self
-                    .workspace_tree_mut(workspace_id)
-                    .toggle_fullscreen_within_gaps_of_selection(layout);
-                for window in &raise_windows {
-                    self.remember_column_width(memory, space, workspace_id, layout, *window);
-                }
-                if raise_windows.is_empty() {
-                    EventResponse::default()
-                } else {
-                    EventResponse {
-                        changed: true,
-                        raise_windows,
-                        focus_window: None,
-                        boundary_hit: None,
-                        edge_hit: None,
-                    }
-                }
+                self.handle_floating_command(memory, target, command)
             }
-            // handled by upper reactor
+            // The workspace commands are the reactor's: it owns which workspace is active.
             LayoutCommand::NextWorkspace(_)
             | LayoutCommand::PrevWorkspace(_)
             | LayoutCommand::SwitchToWorkspace(_)
             | LayoutCommand::MoveWindowToWorkspace { .. }
             | LayoutCommand::CreateWorkspace
             | LayoutCommand::SwitchToLastWorkspace => EventResponse::default(),
-            LayoutCommand::ToggleFold(side) => {
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                let raise_windows =
-                    self.workspace_tree_mut(workspace_id).toggle_fold_of_selection(layout, side);
-                Self::response_for_raised_windows(raise_windows)
-            }
-            LayoutCommand::ToggleStack => {
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                self.toggle_stack_for_workspace(workspace_id, layout)
-            }
-            LayoutCommand::ResizeWindowGrow(orientation) => {
-                if is_floating {
-                    return EventResponse::default();
-                }
-
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                let resize_amount = 0.05;
-                self.workspace_tree_mut(workspace_id).resize_selection_by(
-                    layout,
-                    resize_amount,
-                    orientation,
-                );
-                self.remember_selected_column_width(memory, space, workspace_id, layout);
-                EventResponse::default()
-            }
-            LayoutCommand::ResizeWindowShrink(orientation) => {
-                if is_floating {
-                    return EventResponse::default();
-                }
-
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                let resize_amount = -0.05;
-                self.workspace_tree_mut(workspace_id).resize_selection_by(
-                    layout,
-                    resize_amount,
-                    orientation,
-                );
-                self.remember_selected_column_width(memory, space, workspace_id, layout);
-                EventResponse::default()
-            }
-            LayoutCommand::ResizeWindowBy { amount } => {
-                if is_floating {
-                    return EventResponse::default();
-                }
-
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                self.workspace_tree_mut(workspace_id).resize_selection_by(
-                    layout,
-                    amount,
-                    ResizeOrientation::Horizontal,
-                );
-                self.remember_selected_column_width(memory, space, workspace_id, layout);
-                EventResponse::default()
-            }
-            LayoutCommand::ScrollStrip { delta } => {
-                let mut resp = EventResponse::default();
-                let system = self.workspace_tree_mut(workspace_id);
-                resp.boundary_hit = system.scroll_by_delta(layout, delta);
-                resp
-            }
-            LayoutCommand::SnapStrip => {
-                let system = self.workspace_tree_mut(workspace_id);
-                system.snap_to_nearest_column(layout);
-                EventResponse::default()
-            }
-            LayoutCommand::CenterSelection => {
-                let system = self.workspace_tree_mut(workspace_id);
-                system.center_selected_column(layout);
-                EventResponse::default()
-            }
-            LayoutCommand::CyclePresetColumnWidth => {
-                self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
-                let raised =
-                    self.workspace_tree_mut(workspace_id).cycle_preset_column_width(layout);
-                for window in &raised {
-                    self.remember_column_width(memory, space, workspace_id, layout, *window);
-                }
-                Self::response_for_raised_windows(raised)
-            }
         }
     }
 
