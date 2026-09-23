@@ -97,9 +97,24 @@ did apply. Check the output, not the warning.
 
 ## 4. `animation/platform/overlay.rs` — 1,080 lines, 16 tests (67 lines/test)
 
-`retarget` is 109 lines.
+**Done, and the ratio was measuring the wrong thing.** The file is a Core Animation driver. Its 16
+tests already cover every pure helper in it — `whole`, `tile_shadow_style`, `bar_frame`,
+`dressing_piece_indices`, the z-order, `motion_timing` — and what is left untested is
+`install_tile`, `ensure_container`, `retarget`, `animate_tile_*` and `apply_edge_dressing`, all of
+which manipulate live `CALayer` objects. Those need a compositor, not a better test.
 
-State: open.
+Two pure rules were still in there and are out, with 7 tests, both in
+`animation/domain/motion/plan.rs`:
+
+- `Member::start_frame` — a `Rigid` member rides its container, so `rel` is both its start and its
+  end; every other variant starts at `from`. It matters when a window is reparented mid-flight: the
+  layer installs at the frame the animation is about to run FROM, and reading `to` would land it at
+  its destination and animate nowhere.
+- `stale_overlay_layers` — which tiles to stop drawing and which containers are then empty. The
+  order between the two stages is the content: a container is judged by the tiles that REMAIN.
+  Judging against the original set keeps a container whose only tile just left, and an empty
+  container is a layer the compositor keeps compositing. Proven by reverting the order — the test
+  reports `[]` where it must report `[8]`.
 
 ## 5. Small duplicates
 

@@ -77,6 +77,26 @@ pub enum Member {
     Floating { from: CGRect, to: CGRect },
 }
 
+impl Member {
+    /// The frame this member starts at, inside its container.
+    ///
+    /// A `Rigid` member is not moving relative to its container — the container moves and carries it
+    /// — so it has no separate `from` and its `rel` is both start and end. Every other variant is
+    /// animated in its own right and starts where `from` says.
+    ///
+    /// The distinction matters when a window is REPARENTED into a different container mid-flight:
+    /// the layer has to be installed at the frame the animation is about to run from, and reading
+    /// `to` there would land it at its destination and animate nowhere.
+    pub fn start_frame(&self) -> CGRect {
+        match self {
+            Self::Rigid { rel, .. } => *rel,
+            Self::Changing { from, .. }
+            | Self::Entrance { from, .. }
+            | Self::Floating { from, .. } => *from,
+        }
+    }
+}
+
 /// A pass, described as rigid pieces. Pure output of [`reflow_plan`] / [`strip_plan`].
 /// Every rect is in overlay space.
 #[derive(Clone, Debug, PartialEq)]
@@ -822,6 +842,32 @@ pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
     out
 }
 
+/// What an overlay pass should stop drawing: the tiles no longer in the plan, and the containers
+/// left with nothing in them.
+///
+/// Two stages, and the order between them is the point. A container is judged empty by the tiles
+/// that REMAIN, so the tiles have to go first. Judging containers against the original set keeps a
+/// container whose only tile just left, and an empty container is a layer the compositor keeps
+/// compositing.
+pub fn stale_overlay_layers<K: Copy + PartialEq>(
+    tiles: &[(WindowId, Option<K>)],
+    keep: &[WindowId],
+    containers: &[K],
+) -> (Vec<WindowId>, Vec<K>) {
+    let stale_tiles: Vec<WindowId> = tiles
+        .iter()
+        .map(|(window, _)| *window)
+        .filter(|window| !keep.contains(window))
+        .collect();
+    let occupied: Vec<K> = tiles
+        .iter()
+        .filter(|(window, _)| !stale_tiles.contains(window))
+        .filter_map(|(_, key)| *key)
+        .collect();
+    let empty: Vec<K> = containers.iter().copied().filter(|key| !occupied.contains(key)).collect();
+    (stale_tiles, empty)
+}
+
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::CGSize;
@@ -1000,5 +1046,86 @@ mod tests {
         assert_eq!(edge_bounce_overshoot(Direction::Down), CGPoint::new(0.0, -o));
         assert_eq!(edge_bounce_overshoot(Direction::Up), CGPoint::new(0.0, o));
         assert!(o < 100.0, "a nudge, not a scroll");
+    }
+
+    #[test]
+    fn a_tile_the_plan_still_names_is_kept() {
+        let tiles = [
+            (WindowId::new(1, 1), Some(7u8)),
+            (WindowId::new(1, 2), Some(7)),
+        ];
+        let keep = [WindowId::new(1, 1), WindowId::new(1, 2)];
+        let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
+        assert!(stale.is_empty());
+        assert!(empty.is_empty(), "the container still has both tiles");
+    }
+
+    #[test]
+    fn a_tile_the_plan_dropped_is_stale() {
+        let tiles = [
+            (WindowId::new(1, 1), Some(7u8)),
+            (WindowId::new(1, 2), Some(7)),
+        ];
+        let keep = [WindowId::new(1, 1)];
+        let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
+        assert_eq!(stale, [WindowId::new(1, 2)]);
+        assert!(empty.is_empty(), "window 1 is still in the container");
+    }
+
+    /// The reason the two stages are ordered. A container is judged by the tiles that REMAIN, so
+    /// removing the tiles has to come first. Judging against the original set keeps a container whose
+    /// only tile just left, and an empty container is a layer the compositor keeps compositing.
+    #[test]
+    fn a_container_whose_last_tile_left_is_empty() {
+        let tiles = [
+            (WindowId::new(1, 1), Some(7u8)),
+            (WindowId::new(1, 2), Some(8)),
+        ];
+        let keep = [WindowId::new(1, 1)];
+        let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7, 8]);
+        assert_eq!(stale, [WindowId::new(1, 2)]);
+        assert_eq!(empty, [8], "container 8 lost its only tile");
+    }
+
+    #[test]
+    fn a_container_no_tile_ever_claimed_is_empty() {
+        let tiles = [(WindowId::new(1, 1), Some(7u8))];
+        let keep = [WindowId::new(1, 1)];
+        let (_, empty) = stale_overlay_layers(&tiles, &keep, &[7, 9]);
+        assert_eq!(empty, [9]);
+    }
+
+    /// A tile with no container of its own keeps none alive.
+    #[test]
+    fn a_tile_outside_every_container_holds_nothing_open() {
+        let tiles = [(WindowId::new(1, 1), None::<u8>)];
+        let keep = [WindowId::new(1, 1)];
+        let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
+        assert!(stale.is_empty());
+        assert_eq!(empty, [7]);
+    }
+
+    /// A rigid member rides its container, so it is not moving on its own and `rel` is both its
+    /// start and its end. Reading `to` for a reparented one would install the layer at its
+    /// destination and animate nowhere.
+    #[test]
+    fn a_rigid_member_starts_where_it_sits() {
+        let rel = CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(100.0, 50.0));
+        let member = Member::Rigid { key: GroupKey::STILL, rel };
+        assert_eq!(member.start_frame(), rel);
+    }
+
+    #[test]
+    fn every_animated_member_starts_at_its_from() {
+        let from = CGRect::new(CGPoint::new(1.0, 2.0), CGSize::new(3.0, 4.0));
+        let to = CGRect::new(CGPoint::new(90.0, 90.0), CGSize::new(3.0, 4.0));
+        for member in [
+            Member::Changing { from, to },
+            Member::Entrance { from, to },
+            Member::Floating { from, to },
+        ] {
+            assert_eq!(member.start_frame(), from, "{member:?}");
+            assert_ne!(member.start_frame(), to);
+        }
     }
 }

@@ -27,7 +27,7 @@ pub(crate) use crate::animation::domain::motion::plan::{
     AnimationTarget, animation_targets, bounce_carries,
 };
 use crate::animation::domain::motion::plan::{
-    Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
+    Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative, stale_overlay_layers,
 };
 pub use crate::animation::domain::motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
@@ -681,18 +681,18 @@ impl TileOverlay {
 
     /// Drops every tile not in `keep`, and every container left with no tile.
     fn remove_stale(&mut self, keep: &[WindowId]) {
-        let stale: Vec<WindowId> =
-            self.tile_layers.keys().copied().filter(|w| !keep.contains(w)).collect();
-        for window in stale {
+        let tiles: Vec<(WindowId, Option<GroupKey>)> =
+            self.tile_layers.iter().map(|(window, tile)| (*window, tile.key)).collect();
+        let containers: Vec<GroupKey> = self.containers.keys().copied().collect();
+        let (stale_tiles, empty_containers) = stale_overlay_layers(&tiles, keep, &containers);
+
+        for window in stale_tiles {
             if let Some(entry) = self.tile_layers.remove(&window) {
                 entry.picture.removeFromSuperlayer();
                 entry.shadow.removeFromSuperlayer();
             }
         }
-        let occupied: Vec<GroupKey> = self.tile_layers.values().filter_map(|t| t.key).collect();
-        let empty: Vec<GroupKey> =
-            self.containers.keys().copied().filter(|k| !occupied.contains(k)).collect();
-        for key in empty {
+        for key in empty_containers {
             if let Some(layer) = self.containers.remove(&key) {
                 layer.removeFromSuperlayer();
             }
@@ -912,12 +912,8 @@ impl TileOverlay {
 
         let mut placed: Vec<WindowId> = Vec::new();
         for &(window, _, to_key) in &delta.reparented {
-            let frame = match plan.member(window) {
-                Some(Member::Rigid { rel, .. }) => rel,
-                Some(Member::Changing { from, .. })
-                | Some(Member::Entrance { from, .. })
-                | Some(Member::Floating { from, .. }) => from,
-                None => continue,
+            let Some(frame) = plan.member(window).map(|member| member.start_frame()) else {
+                continue;
             };
             let container = self.ensure_container(
                 to_key,
