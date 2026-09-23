@@ -1,6 +1,8 @@
-# Cleanup progress
+# Cleanup, round 1
 
-Working file for the six items agreed after `8274c0b`. Deleted when they are all closed.
+The six items agreed after `8274c0b`, all closed in `5d6e86e`..`9ea1079`. Kept because the
+reasoning about what NOT to change is the part worth keeping; round 2 is in
+`docs/cleanup-round-2.md`.
 
 Baseline at `8274c0b`: **55,915 non-test code lines, 1,242 tests, 0 warnings**.
 
