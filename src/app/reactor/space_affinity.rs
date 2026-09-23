@@ -2,17 +2,17 @@
 //! window-server read, a frame rini is in the middle of sending, the workspace it is assigned
 //! to, or its geometry. Read-only over the reactor's stores; the reactor hands out a view.
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rini_geometry::CGRectExt;
 use rustc_hash::FxHashSet as HashSet;
 
-use rini_core::ids::SpaceId;
+use super::space_resolution::{self as resolve, Candidates};
 use crate::displays::domain::topology::ForwardedSpaceState;
-use rini_geometry::CGRectExt;
-use rini_core::ids::{WindowId, WindowServerId};
+use crate::displays::platform::spaces::SpaceKinds;
 use crate::windows::domain::state::WindowState;
 use crate::windows::domain::transaction::TransactionManager;
 use crate::windows::platform::window_server;
 use crate::workspaces::{LayoutEngine, WindowStore};
-use super::space_resolution::{self as resolve, Candidates};
 
 pub(crate) struct SpaceAffinity<'a> {
     pub(crate) windows: &'a WindowStore,
@@ -20,6 +20,7 @@ pub(crate) struct SpaceAffinity<'a> {
     pub(crate) engine: &'a LayoutEngine,
     pub(crate) transactions: &'a TransactionManager,
     pub(crate) active_spaces: &'a HashSet<SpaceId>,
+    pub(crate) space_kinds: SpaceKinds,
 }
 
 impl SpaceAffinity<'_> {
@@ -52,8 +53,7 @@ impl SpaceAffinity<'_> {
 
     fn candidates_for_window(&self, wid: WindowId) -> Option<Candidates> {
         let window = self.windows.window(wid)?;
-        let mut candidates =
-            self.candidates_for_frame(&window.frame_monotonic, window.info.sys_id);
+        let mut candidates = self.candidates_for_frame(&window.frame_monotonic, window.info.sys_id);
         // A tracked window's assignment is known without going through its server id, which it may
         // not have yet.
         candidates.assignment = self.assigned_space_for_window_id(wid);
@@ -70,18 +70,21 @@ impl SpaceAffinity<'_> {
 
     pub(crate) fn best_space_for_frame(&self, frame: &CGRect) -> Option<SpaceId> {
         let center = frame.mid();
-        self.spaces.screen_for_point(center).and_then(|screen| screen.space).or_else(|| {
-            self.spaces
-                .screens
-                .iter()
-                .filter_map(|screen| {
-                    let space = screen.space?;
-                    let area = screen.frame.intersection(frame).area() as i64;
-                    if area > 0 { Some((area, space)) } else { None }
-                })
-                .max_by_key(|(area, _)| *area)
-                .map(|(_, space)| space)
-        })
+        self.spaces
+            .screen_for_point(center)
+            .and_then(|screen| screen.space)
+            .or_else(|| {
+                self.spaces
+                    .screens
+                    .iter()
+                    .filter_map(|screen| {
+                        let space = screen.space?;
+                        let area = screen.frame.intersection(frame).area() as i64;
+                        if area > 0 { Some((area, space)) } else { None }
+                    })
+                    .max_by_key(|(area, _)| *area)
+                    .map(|(_, space)| space)
+            })
     }
 
     pub(crate) fn best_space_for_window_state(&self, window: &WindowState) -> Option<SpaceId> {
@@ -117,7 +120,10 @@ impl SpaceAffinity<'_> {
             .map(|info| info.space)
     }
 
-    pub(crate) fn pending_target_space_for_window_server_id(&self, wsid: WindowServerId) -> Option<SpaceId> {
+    pub(crate) fn pending_target_space_for_window_server_id(
+        &self,
+        wsid: WindowServerId,
+    ) -> Option<SpaceId> {
         let wid = self.windows.tracked_window_id(wsid)?;
         let target_frame = self.transactions.get_target_frame(wsid)?;
         let assigned_space = self.assigned_space_for_window_id(wid)?;
@@ -148,7 +154,7 @@ impl SpaceAffinity<'_> {
         let live = window_server::window_space(wsid);
         let prior = self.windows.window_server_space(wsid);
 
-        match (observation, pending) {
+        let resolved = match (observation, pending) {
             (Some(observed), Some(target)) if observed != target => {
                 if live == Some(observed) {
                     Some(observed)
@@ -158,7 +164,13 @@ impl SpaceAffinity<'_> {
             }
             (Some(observed), _) => Some(observed),
             (None, _) => live.or(pending).or(prior),
-        }
+        };
+        // A login or system space is not somewhere a window can belong. The window server will
+        // report one — a window is genuinely on the login space while the screen is locked — and
+        // taking that answer strands the window somewhere the user cannot reach and no layout pass
+        // will touch. "Nothing to say" is the right answer, so the rules fall back to the
+        // assignment, which is where the window was before macOS moved it.
+        resolved.filter(|space| self.space_kinds.is_user(*space))
     }
 
     pub(crate) fn best_space_for_window_id(&self, wid: WindowId) -> Option<SpaceId> {
@@ -205,13 +217,15 @@ impl SpaceAffinity<'_> {
             return false;
         };
         let frame = window.frame_monotonic;
-        let Some(screen) =
-            self.spaces.screen_for_point(frame.mid()).map(|screen| screen.frame).or_else(|| {
+        let Some(screen) = self
+            .spaces
+            .screen_for_point(frame.mid())
+            .map(|screen| screen.frame)
+            .or_else(|| {
                 // A fully parked window's midpoint is outside every display, so fall
                 // back to whichever screen its own space belongs to.
-                self.best_space_for_window_id(wid).and_then(|space| {
-                    self.spaces.screen_by_space(space).map(|screen| screen.frame)
-                })
+                self.best_space_for_window_id(wid)
+                    .and_then(|space| self.spaces.screen_by_space(space).map(|screen| screen.frame))
             })
         else {
             return false;
@@ -227,9 +241,12 @@ impl SpaceAffinity<'_> {
         self.spaces.screen_for_point(window_center).map(|_| window_center)
     }
 
-    pub(crate) fn window_in_non_active_workspace(&self, space: SpaceId, window_id: WindowId) -> bool {
-        let Some(active_workspace) = self.engine.active_workspace(space)
-        else {
+    pub(crate) fn window_in_non_active_workspace(
+        &self,
+        space: SpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        let Some(active_workspace) = self.engine.active_workspace(space) else {
             return false;
         };
         self.engine
@@ -243,10 +260,10 @@ impl SpaceAffinity<'_> {
 mod tests {
     use objc2_core_foundation::CGSize;
     use rini_core::ids::ScreenId;
-    use crate::displays::domain::screen::ScreenInfo;
-    use crate::windows::domain::transaction::WindowTxStore;
 
     use super::*;
+    use crate::displays::domain::screen::ScreenInfo;
+    use crate::windows::domain::transaction::WindowTxStore;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -283,6 +300,7 @@ mod tests {
             engine: &engine,
             transactions: &transactions,
             active_spaces: &active_spaces,
+            space_kinds: SpaceKinds::for_tests(),
         })
     }
 
@@ -290,8 +308,14 @@ mod tests {
     fn a_frame_belongs_to_the_screen_under_its_centre() {
         let s = spaces(&[rect(0., 0., 1000., 1000.), rect(1000., 0., 1000., 1000.)]);
         with_view(&s, |view| {
-            assert_eq!(view.best_space_for_frame(&rect(900., 0., 400., 400.)), Some(SpaceId::new(2)));
-            assert_eq!(view.best_space_for_frame(&rect(100., 0., 400., 400.)), Some(SpaceId::new(1)));
+            assert_eq!(
+                view.best_space_for_frame(&rect(900., 0., 400., 400.)),
+                Some(SpaceId::new(2))
+            );
+            assert_eq!(
+                view.best_space_for_frame(&rect(100., 0., 400., 400.)),
+                Some(SpaceId::new(1))
+            );
         });
     }
 
@@ -300,7 +324,10 @@ mod tests {
         let s = spaces(&[rect(0., 0., 1000., 1000.), rect(1000., 0., 1000., 1000.)]);
         with_view(&s, |view| {
             // Centre at y = 1200, below both screens; 300pt of it hangs into screen 2.
-            assert_eq!(view.best_space_for_frame(&rect(1100., 700., 400., 1000.)), Some(SpaceId::new(2)));
+            assert_eq!(
+                view.best_space_for_frame(&rect(1100., 700., 400., 1000.)),
+                Some(SpaceId::new(2))
+            );
             assert_eq!(view.best_space_for_frame(&rect(5000., 5000., 10., 10.)), None);
         });
     }
@@ -311,7 +338,10 @@ mod tests {
         with_view(&s, |view| {
             let frame = rect(100., 100., 200., 200.);
             assert_eq!(view.best_space_for_window(&frame, None), Some(SpaceId::new(1)));
-            assert_eq!(view.geometry_space_for_window(&frame, None), Some(SpaceId::new(1)));
+            assert_eq!(
+                view.geometry_space_for_window(&frame, None),
+                Some(SpaceId::new(1))
+            );
             assert_eq!(view.best_space_for_window_id(WindowId::new(1, 1)), None);
         });
     }

@@ -1,22 +1,20 @@
-use crate::workspaces::domain::display_memory::DisplayMemory;
+use std::collections::BTreeMap;
+
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
+use rini_geometry::SameAs;
 use tracing::debug;
 
 use super::{Event, EventOutcome, Reactor, Record, ScreenInfo, TransactionId};
-use crate::windows::domain::transaction::Requested;
 use crate::app::channels;
-use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
-use rini_core::ids::WindowId;
-use crate::displays::domain::topology::ForwardedSpaceState;
-use std::collections::BTreeMap;
 use crate::app::config::Config;
+use crate::displays::domain::topology::ForwardedSpaceState;
+use crate::displays::platform::spaces::SpaceKinds;
+use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
+use crate::windows::domain::request::{AppThreadHandle, Quiet, Request};
+use crate::windows::domain::transaction::Requested;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{LayoutCommand, LayoutEngine};
-use crate::windows::domain::info::{AppInfo, WindowInfo};
-use rini_core::ids::pid_t;
-use rini_geometry::SameAs;
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowServerId;
-use crate::windows::domain::info::WindowServerInfo;
 
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {
@@ -25,7 +23,20 @@ impl Reactor {
         config.settings.animate = false;
         let record = Record::new_for_test(tempfile::NamedTempFile::new().unwrap());
         let (broadcast_tx, _) = channels::channel();
-        Reactor::new(config, layout, DisplayMemory::default(), record, broadcast_tx, None, false)
+        let mut reactor = Reactor::new(
+            config,
+            layout,
+            DisplayMemory::default(),
+            record,
+            broadcast_tx,
+            None,
+            false,
+        );
+        // Never let the suite write to the real layout file. Almost every test drives
+        // `update_layout`, which autosaves; a test that wants to exercise autosave sets a temp path.
+        reactor.autosave_path = None;
+        reactor.space_kinds = SpaceKinds::for_tests();
+        reactor
     }
 
     pub fn handle_events(&mut self, events: Vec<Event>) {
@@ -147,12 +158,16 @@ impl Reactor {
     }
 
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
-        self.handle_event(Event::Command(crate::app::reactor::state::Command::Layout(command)));
+        self.handle_event(Event::Command(crate::app::reactor::state::Command::Layout(
+            command,
+        )));
     }
 
     pub(crate) fn dispatch_test_layout_command(&mut self, command: LayoutCommand) -> EventOutcome {
-        self.dispatch_workflow(Event::Command(crate::app::reactor::state::Command::Layout(command)))
-            .expect("test layout command should dispatch")
+        self.dispatch_workflow(Event::Command(crate::app::reactor::state::Command::Layout(
+            command,
+        )))
+        .expect("test layout command should dispatch")
     }
 
     pub fn mark_test_window_visible_in_space(&mut self, wsid: WindowServerId, space: SpaceId) {
@@ -175,16 +190,13 @@ impl Reactor {
 
     pub fn add_test_app_with_info(&mut self, pid: pid_t, bundle_id: &str, name: &str) {
         let (app_tx, _app_rx) = channels::channel();
-        self.app_manager.apps.insert(
-            pid,
-            super::AppState {
-                info: AppInfo {
-                    bundle_id: Some(bundle_id.to_string()),
-                    localized_name: Some(name.to_string()),
-                },
-                handle: AppThreadHandle::from_sender(app_tx),
+        self.app_manager.apps.insert(pid, super::AppState {
+            info: AppInfo {
+                bundle_id: Some(bundle_id.to_string()),
+                localized_name: Some(name.to_string()),
             },
-        );
+            handle: AppThreadHandle::from_sender(app_tx),
+        });
     }
 
     pub fn add_test_window(
@@ -246,9 +258,9 @@ impl Reactor {
         sys_id: Option<WindowServerId>,
         is_manageable: bool,
     ) {
-        self.state.windows.insert_window(
-            wid,
-            crate::windows::domain::state::WindowState {
+        self.state
+            .windows
+            .insert_window(wid, crate::windows::domain::state::WindowState {
                 info: WindowInfo {
                     is_standard: true,
                     is_root: true,
@@ -268,8 +280,7 @@ impl Reactor {
                 frame_monotonic: frame,
                 is_manageable,
                 ignore_app_rule: false,
-            },
-        );
+            });
     }
 }
 
@@ -436,9 +447,7 @@ pub fn make_window_info(
     }
 }
 
-pub fn make_windows(count: usize) -> Vec<WindowInfo> {
-    (1..=count).map(make_window).collect()
-}
+pub fn make_windows(count: usize) -> Vec<WindowInfo> { (1..=count).map(make_window).collect() }
 
 pub struct Apps {
     tx: channels::Sender<Request>,
@@ -490,13 +499,10 @@ impl Apps {
             .collect();
 
         for (id, info) in (1..).map(|idx| WindowId::new(pid, idx)).zip(&windows) {
-            self.windows.insert(
-                id,
-                TestWindowState {
-                    frame: info.frame,
-                    ..Default::default()
-                },
-            );
+            self.windows.insert(id, TestWindowState {
+                frame: info.frame,
+                ..Default::default()
+            });
         }
         let handle = AppThreadHandle::from_sender(self.tx.clone());
         vec![Event::ApplicationLaunched {
@@ -658,9 +664,7 @@ impl Apps {
     }
 }
 
-pub fn test_context() -> (Apps, Reactor) {
-    (Apps::new(), test_reactor())
-}
+pub fn test_context() -> (Apps, Reactor) { (Apps::new(), test_reactor()) }
 
 pub fn test_context_with_workspace_count(count: usize) -> (Apps, Reactor) {
     let mut settings = crate::app::config::VirtualWorkspaceSettings::default();

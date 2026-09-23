@@ -394,6 +394,25 @@ Also consolidated: `should_buffer_topology_updates` and
 `should_quarantine_window_space_event` had different names and byte-identical bodies. Now
 `AuthorityState::must_buffer`.
 
+### 4.4.1 The same branch in the reactor hid a rule that was not enforced
+
+**DONE — fixed at the source, with two tests.**
+
+`reactor/mod.rs:869` had the same `#[cfg(test)] { true }` body for `space_is_user`. It guarded a
+rule: a window that vanished from the active space follows macOS to wherever it went, but not onto a
+login or fullscreen space, because those are transient native state and a window assigned to one is
+somewhere the user cannot reach.
+
+The rule was not enforced. A probe showed the guard running and correctly declining, and then
+`reconcile_windows_with_authoritative_spaces` — one line later in the same function — assigning the
+window to that space anyway. It asks `space_resolution::authoritative`, which refuses
+`native_fullscreen` but had no notion of a user space.
+
+Fixed where the answer comes from rather than at one of its readers:
+`SpaceAffinity::resolve_native_space` filters through the classifier, so a non-user space becomes
+`None` — "the window server had nothing to say" — and all five rules over `Candidates` fall back to
+the assignment. The guard was then provably redundant and is deleted.
+
 ### 4.5 The 317-line `main`
 
 `src/main.rs:100`. Flags, AX permission, the "separate Spaces" check, config read

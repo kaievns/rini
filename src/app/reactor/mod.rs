@@ -59,6 +59,7 @@ use events::{
     window as window_workflow,
 };
 use crate::displays::domain::topology::display_set_delta;
+use crate::displays::platform::spaces::SpaceKinds;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
@@ -471,8 +472,11 @@ pub struct Reactor {
     /// A field rather than a call to `config::restore_file()` at the write site because
     /// autosave fires from `update_layout_or_warn_with`, which almost every test drives.
     /// Resolving the real path there meant the suite overwrote the user's own
-    /// ~/.rini/layout.ron with test fixtures.
+    /// ~/.rini/layout.ron with test fixtures. `Reactor::new_for_test` sets it to `None`.
     autosave_path: Option<PathBuf>,
+    /// How a space id is classified. Injected rather than called, so a test can say what a
+    /// non-user space is; see `displays::platform::spaces::SpaceKinds`.
+    space_kinds: SpaceKinds,
 }
 
 impl Reactor {
@@ -602,12 +606,8 @@ impl Reactor {
             active_spaces: HashSet::default(),
             last_autosave: None,
             autosave_pending: false,
-            #[cfg(not(test))]
             autosave_path: Some(rini_core::paths::restore_file()),
-            // Tests drive update_layout, which autosaves. Never let the suite write to the
-            // real layout file; a test that wants to exercise autosave sets a temp path.
-            #[cfg(test)]
-            autosave_path: None,
+            space_kinds: SpaceKinds::from_window_server(),
         };
         reactor
     }
@@ -627,6 +627,7 @@ impl Reactor {
             engine: &self.layout_manager.layout_engine,
             transactions: &self.transaction_manager,
             active_spaces: &self.active_spaces,
+            space_kinds: self.space_kinds,
         }
     }
 
@@ -865,17 +866,6 @@ impl Reactor {
             let inactive_target = self
                 .affinity().resolve_native_space(wsid, None)
                 .filter(|current_space| *current_space != space)
-                .filter(|current_space| {
-                    #[cfg(test)]
-                    {
-                        let _ = current_space;
-                        true
-                    }
-                    #[cfg(not(test))]
-                    {
-                        crate::displays::platform::space_query::space_is_user(current_space.get())
-                    }
-                })
                 .filter(|current_space| !self.is_space_active(*current_space));
             if let Some(current_space) = inactive_target {
                 self.state.windows.set_window_server_space(wsid, Some(current_space));

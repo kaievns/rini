@@ -7,6 +7,7 @@ use test_log::test;
 use super::fixtures::*;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
+use crate::displays::platform::spaces::SpaceKinds;
 use crate::workspaces::LayoutCommand;
 
 #[test]
@@ -489,4 +490,65 @@ fn native_space_resolution_policy_table() {
     for (case, resolved, expected) in cases {
         assert_eq!(resolved, expected, "resolver case: {case}");
     }
+}
+
+/// The id `NON_USER_SPACE` is a login or system space: `SLSSpaceGetType != 0`.
+const NON_USER_SPACE: u64 = 4242;
+
+fn classifier_with_a_non_user_space() -> SpaceKinds {
+    SpaceKinds {
+        is_fullscreen: |_| false,
+        is_user: |space| space.get() != NON_USER_SPACE,
+    }
+}
+
+/// A window that vanished from the active space follows macOS to wherever it went — but only if
+/// that is a real space. A login or fullscreen space is transient native state, and assigning a
+/// window to one strands it somewhere the user cannot reach.
+///
+/// This rule was unreachable from a test until the classifier became injectable: the branch here
+/// read `#[cfg(test)] { true }`, so under test there was no such thing as a non-user space.
+#[test]
+fn a_window_is_not_followed_onto_a_non_user_space() {
+    let (mut reactor, wid, wsid, active_space, _other, _frame) = reactor_with_window_on_space1();
+    reactor.space_kinds = classifier_with_a_non_user_space();
+    let login_space = SpaceId::new(NON_USER_SPACE);
+
+    // macOS now reports the window on a login space, and it is gone from the active snapshot.
+    reactor.state.windows.set_window_server_space(wsid, Some(login_space));
+    reactor.reconcile_authoritative_active_window_snapshot(vec![], true);
+
+    assert_ne!(
+        reactor.affinity().assigned_space_for_window_id(wid),
+        Some(login_space),
+        "a login space is not somewhere a window can be assigned"
+    );
+    assert_eq!(
+        reactor.affinity().assigned_space_for_window_id(wid),
+        Some(active_space),
+        "so it keeps the space it had"
+    );
+}
+
+/// The same setup with an ordinary space, which is what makes the test above a test of the rule
+/// rather than of the snapshot plumbing: here the window DOES follow.
+#[test]
+fn a_window_is_followed_onto_an_inactive_user_space() {
+    let (mut reactor, wid, wsid, active_space, other_space, _frame) =
+        reactor_with_window_on_space1();
+    reactor.space_kinds = classifier_with_a_non_user_space();
+    assert_ne!(other_space, SpaceId::new(NON_USER_SPACE));
+
+    reactor.state.windows.set_window_server_space(wsid, Some(other_space));
+    reactor.reconcile_authoritative_active_window_snapshot(vec![], true);
+
+    assert_eq!(
+        reactor.affinity().assigned_space_for_window_id(wid),
+        Some(other_space),
+        "an ordinary inactive space is somewhere the window can go"
+    );
+    assert_ne!(
+        reactor.affinity().assigned_space_for_window_id(wid),
+        Some(active_space)
+    );
 }
