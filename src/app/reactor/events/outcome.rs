@@ -127,55 +127,92 @@ impl EventOutcome {
 
     /// Combines follow-up work produced by nested reducers while preserving
     /// reducer order for every queued operation.
-    pub(crate) fn absorb(&mut self, mut other: Self) {
-        self.window_server_updates.append(&mut other.window_server_updates);
-        self.discoveries.append(&mut other.discoveries);
-        self.recompute_active_spaces |= other.recompute_active_spaces;
-        self.repair_spaces_after_mission_control |= other.repair_spaces_after_mission_control;
-        self.refresh_after_mission_control |= other.refresh_after_mission_control;
-        self.force_refresh_all_windows |= other.force_refresh_all_windows;
-        self.switch_native_space = other.switch_native_space.or(self.switch_native_space);
-        self.wm_events.append(&mut other.wm_events);
-        self.app_requests.append(&mut other.app_requests);
-        self.topology_reassignments.append(&mut other.topology_reassignments);
-        self.forgotten_windows.append(&mut other.forgotten_windows);
-        self.confirmed_window_spaces.append(&mut other.confirmed_window_spaces);
-        self.fullscreen_restorations.append(&mut other.fullscreen_restorations);
-        self.raise_requests.append(&mut other.raise_requests);
-        self.make_key_windows.append(&mut other.make_key_windows);
-        self.mouse_warps.append(&mut other.mouse_warps);
-        self.pre_layout_window_frame_writes
-            .append(&mut other.pre_layout_window_frame_writes);
-        self.drag_swap_evaluations.append(&mut other.drag_swap_evaluations);
-        self.dispatch_mouse_up |= other.dispatch_mouse_up;
-        self.close_window = other.close_window.or(self.close_window);
-        self.service_config_update =
-            other.service_config_update.or(self.service_config_update.take());
-        self.stdout_lines.append(&mut other.stdout_lines);
-        self.reapply_app_rules.append(&mut other.reapply_app_rules);
-        self.finalize_created_windows.append(&mut other.finalize_created_windows);
-        self.window_title_broadcasts.append(&mut other.window_title_broadcasts);
-        self.focused_window_broadcast =
-            other.focused_window_broadcast.or(self.focused_window_broadcast);
-        self.layout_events.append(&mut other.layout_events);
-        self.layout_responses.append(&mut other.layout_responses);
-        if other.arrange.requested {
+    pub(crate) fn absorb(&mut self, other: Self) {
+        // Destructured exhaustively and deliberately. This is the one function that has to see every
+        // field, and a field left out of it is follow-up work a nested workflow asked for and silently
+        // did not get. Adding a field to `EventOutcome` breaks this until someone says how two of them
+        // combine — a question with no safe default, since appending, OR-ing and last-one-wins are each
+        // right for different fields here.
+        let Self {
+            mut window_server_updates,
+            mut discoveries,
+            recompute_active_spaces,
+            repair_spaces_after_mission_control,
+            refresh_after_mission_control,
+            force_refresh_all_windows,
+            switch_native_space,
+            mut wm_events,
+            mut app_requests,
+            mut topology_reassignments,
+            mut forgotten_windows,
+            mut confirmed_window_spaces,
+            mut fullscreen_restorations,
+            mut raise_requests,
+            mut make_key_windows,
+            mut mouse_warps,
+            mut pre_layout_window_frame_writes,
+            mut drag_swap_evaluations,
+            dispatch_mouse_up,
+            close_window,
+            service_config_update,
+            mut stdout_lines,
+            mut reapply_app_rules,
+            mut finalize_created_windows,
+            mut window_title_broadcasts,
+            focused_window_broadcast,
+            mut layout_events,
+            mut layout_responses,
+            arrange,
+            focused_window,
+            refresh_window_notifications,
+            refresh_focus_follows_mouse,
+        } = other;
+
+        self.window_server_updates.append(&mut window_server_updates);
+        self.discoveries.append(&mut discoveries);
+        self.recompute_active_spaces |= recompute_active_spaces;
+        self.repair_spaces_after_mission_control |= repair_spaces_after_mission_control;
+        self.refresh_after_mission_control |= refresh_after_mission_control;
+        self.force_refresh_all_windows |= force_refresh_all_windows;
+        self.switch_native_space = switch_native_space.or(self.switch_native_space);
+        self.wm_events.append(&mut wm_events);
+        self.app_requests.append(&mut app_requests);
+        self.topology_reassignments.append(&mut topology_reassignments);
+        self.forgotten_windows.append(&mut forgotten_windows);
+        self.confirmed_window_spaces.append(&mut confirmed_window_spaces);
+        self.fullscreen_restorations.append(&mut fullscreen_restorations);
+        self.raise_requests.append(&mut raise_requests);
+        self.make_key_windows.append(&mut make_key_windows);
+        self.mouse_warps.append(&mut mouse_warps);
+        self.pre_layout_window_frame_writes.append(&mut pre_layout_window_frame_writes);
+        self.drag_swap_evaluations.append(&mut drag_swap_evaluations);
+        self.dispatch_mouse_up |= dispatch_mouse_up;
+        self.close_window = close_window.or(self.close_window);
+        self.service_config_update = service_config_update.or(self.service_config_update.take());
+        self.stdout_lines.append(&mut stdout_lines);
+        self.reapply_app_rules.append(&mut reapply_app_rules);
+        self.finalize_created_windows.append(&mut finalize_created_windows);
+        self.window_title_broadcasts.append(&mut window_title_broadcasts);
+        self.focused_window_broadcast = focused_window_broadcast.or(self.focused_window_broadcast);
+        self.layout_events.append(&mut layout_events);
+        self.layout_responses.append(&mut layout_responses);
+        if arrange.requested {
             self.arrange.space_scope = if self.arrange.requested {
-                match (self.arrange.space_scope, other.arrange.space_scope) {
-                    (Some(existing), Some(other)) if existing == other => Some(existing),
+                match (self.arrange.space_scope, arrange.space_scope) {
+                    (Some(existing), Some(incoming)) if existing == incoming => Some(existing),
                     _ => None,
                 }
             } else {
-                other.arrange.space_scope
+                arrange.space_scope
             };
             self.arrange.requested = true;
-            self.arrange.passes = self.arrange.passes.saturating_add(other.arrange.passes).max(1);
-            self.arrange.is_resize |= other.arrange.is_resize;
-            self.arrange.window_was_destroyed |= other.arrange.window_was_destroyed;
+            self.arrange.passes = self.arrange.passes.saturating_add(arrange.passes).max(1);
+            self.arrange.is_resize |= arrange.is_resize;
+            self.arrange.window_was_destroyed |= arrange.window_was_destroyed;
         }
-        self.focused_window = other.focused_window.or(self.focused_window);
-        self.refresh_window_notifications |= other.refresh_window_notifications;
-        self.refresh_focus_follows_mouse |= other.refresh_focus_follows_mouse;
+        self.focused_window = focused_window.or(self.focused_window);
+        self.refresh_window_notifications |= refresh_window_notifications;
+        self.refresh_focus_follows_mouse |= refresh_focus_follows_mouse;
     }
 
     /// The event changed geometry or layout state and requires one arrange pass.
@@ -564,5 +601,147 @@ mod tests {
     #[test]
     fn nothing_happening_is_not_focus_landing() {
         assert!(!EventOutcome::no_change().focus_landed());
+    }
+
+    // --- absorb: how two outcomes combine ------------------------------------------------------
+
+    /// Queued work appends in order. A nested workflow's requests come AFTER the outer one's, because
+    /// the outer workflow mutated the model first and its follow-ups assume that order.
+    #[test]
+    fn queued_work_from_a_nested_outcome_comes_after_the_outers() {
+        let mut outer = EventOutcome::default();
+        outer.stdout_lines.push("outer".into());
+        let mut inner = EventOutcome::default();
+        inner.stdout_lines.push("inner".into());
+
+        outer.absorb(inner);
+
+        assert_eq!(outer.stdout_lines, ["outer", "inner"]);
+    }
+
+    /// A flag is a request, so either side asking is enough. Overwriting instead of OR-ing would let a
+    /// nested outcome that asked for nothing cancel what the outer one asked for.
+    #[test]
+    fn a_flag_either_side_set_stays_set() {
+        for (outer_flag, inner_flag) in [(true, false), (false, true), (true, true)] {
+            let mut outer = EventOutcome::default();
+            outer.recompute_active_spaces = outer_flag;
+            let mut inner = EventOutcome::default();
+            inner.recompute_active_spaces = inner_flag;
+
+            outer.absorb(inner);
+
+            assert!(outer.recompute_active_spaces, "{outer_flag} + {inner_flag}");
+        }
+    }
+
+    #[test]
+    fn a_flag_neither_side_set_stays_unset() {
+        let mut outer = EventOutcome::default();
+        outer.absorb(EventOutcome::default());
+        assert!(!outer.recompute_active_spaces);
+        assert!(!outer.refresh_window_notifications);
+        assert!(!outer.dispatch_mouse_up);
+    }
+
+    /// For a single-valued request the INNER one wins, because it was decided later and with the outer
+    /// one's model changes already applied.
+    #[test]
+    fn a_nested_outcome_overrides_a_single_valued_request() {
+        let outer_window = WindowId::new(1, 1);
+        let inner_window = WindowId::new(2, 1);
+        let mut outer = EventOutcome::focus_changed(Some(outer_window), false);
+        let inner = EventOutcome::focus_changed(Some(inner_window), false);
+
+        outer.absorb(inner);
+
+        assert_eq!(outer.focused_window, Some(inner_window));
+    }
+
+    /// But a nested outcome that says NOTHING does not erase what the outer one said.
+    #[test]
+    fn a_nested_outcome_with_nothing_to_say_does_not_erase_the_outers_choice() {
+        let window = WindowId::new(1, 1);
+        let mut outer = EventOutcome::focus_changed(Some(window), false);
+
+        outer.absorb(EventOutcome::default());
+
+        assert_eq!(outer.focused_window, Some(window));
+    }
+
+    // --- absorb: the arrange request -----------------------------------------------------------
+
+    #[test]
+    fn absorbing_an_arrange_request_asks_for_one() {
+        let mut outer = EventOutcome::default();
+        outer.absorb(EventOutcome::layout_changed(false));
+        assert!(outer.arrange.requested);
+        assert_eq!(outer.arrange.passes_to_run(false), Some(1));
+    }
+
+    /// Two arrange requests add their passes rather than taking the larger, because each was asked for
+    /// by a workflow that changed something and wants its own pass.
+    #[test]
+    fn two_arrange_requests_add_their_passes() {
+        let mut outer = EventOutcome::default().with_arrange_passes(2);
+        outer.absorb(EventOutcome::default().with_arrange_passes(3));
+        assert_eq!(outer.arrange.passes, 5);
+    }
+
+    /// A resize anywhere makes the combined pass a resize: the arrange has to be told, or it animates
+    /// a resize as a move and the window stretches on the way.
+    #[test]
+    fn a_resize_on_either_side_makes_the_combined_pass_a_resize() {
+        let mut outer = EventOutcome::layout_changed(false);
+        outer.absorb(EventOutcome::layout_changed(true));
+        assert!(outer.arrange.is_resize);
+    }
+
+    /// Two requests scoped to the SAME space keep the scope: a narrower pass is cheaper and the answer
+    /// is the same.
+    #[test]
+    fn two_requests_for_one_space_keep_that_scope() {
+        let space = SpaceId::new(7);
+        let mut outer = EventOutcome::default()
+            .with_arrange_passes(1)
+            .with_arrange_space_scope(Some(space));
+        let inner = EventOutcome::default()
+            .with_arrange_passes(1)
+            .with_arrange_space_scope(Some(space));
+
+        outer.absorb(inner);
+
+        assert_eq!(outer.arrange.space_scope, Some(space));
+    }
+
+    /// Two requests for DIFFERENT spaces widen to every space. Keeping either one would leave the other
+    /// space unarranged, and arranging one space twice is cheaper than a window left in the wrong place.
+    #[test]
+    fn requests_for_two_different_spaces_widen_to_all_of_them() {
+        let mut outer = EventOutcome::default()
+            .with_arrange_passes(1)
+            .with_arrange_space_scope(Some(SpaceId::new(1)));
+        let inner = EventOutcome::default()
+            .with_arrange_passes(1)
+            .with_arrange_space_scope(Some(SpaceId::new(2)));
+
+        outer.absorb(inner);
+
+        assert_eq!(outer.arrange.space_scope, None, "None means every space");
+    }
+
+    /// An outcome that did not ask for an arrange contributes no scope, so absorbing one into a scoped
+    /// request must not widen it to everything.
+    #[test]
+    fn absorbing_no_arrange_request_leaves_the_scope_alone() {
+        let space = SpaceId::new(7);
+        let mut outer = EventOutcome::default()
+            .with_arrange_passes(1)
+            .with_arrange_space_scope(Some(space));
+
+        outer.absorb(EventOutcome::default());
+
+        assert_eq!(outer.arrange.space_scope, Some(space));
+        assert_eq!(outer.arrange.passes, 1, "and adds no passes");
     }
 }

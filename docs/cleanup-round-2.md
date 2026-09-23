@@ -15,7 +15,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | **done** — 9 -> 21 tests, 3 rules out |
 | 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | **done** — 9 -> 23 tests, and a prune bug |
 | 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | **done** — `HeldKeys` out, 12 tests |
-| 9 | `EventOutcome` | 32 fields, 51 references | open |
+| 9 | `EventOutcome` | 32 fields, 51 references | **done** — `absorb` is compiler-checked, 12 -> 23 tests |
 | 10 | `engine/persistence/tests.rs` | 3,302 lines, 55 tests, one file | open |
 | 11 | `animation/platform/engine.rs` | `start` 294, `begin_group` 253 | open |
 
@@ -231,3 +231,38 @@ Three rules are now stated that the code only implied: the family mask alone doe
 (so a `CtrlLeft` binding does not fire on right Ctrl), reconciling must not drop ordinary keys because
 the flags say nothing about them, and the lock keys are held by their flag alone because macOS reports
 them as flags and never as edges.
+
+## 9. `EventOutcome`
+
+32 fields is the count, but grouping them would churn 51 call sites to make one struct look smaller.
+The thing that actually matters about 32 fields is `absorb`: it is the one function that has to see
+every one, and a field left out of it is follow-up work a nested workflow asked for and silently did
+not get.
+
+It covered all 32 today — I checked before changing anything, so this is not a bug fix. It is a guard
+against the next field. `absorb` is now an exhaustive destructure with no `..`, so adding a field
+fails with
+
+```
+error[E0027]: pattern does not mention field `a_new_follow_up`
+```
+
+until someone says how two of them combine. That question has no safe default: appending, OR-ing and
+last-one-wins are each right for different fields here, and a wrong guess is silent.
+
+I tried a version with a shadow struct first and threw it away — it was more ceremony than the problem
+deserved. The destructure plus the same 32 assignments reading local bindings is the whole change.
+
+12 tests to 23, covering what `absorb` DECIDES rather than that it compiles:
+
+| rule | why |
+|---|---|
+| queued work appends, inner after outer | the outer workflow mutated the model first and its follow-ups assume that order |
+| a flag either side set stays set | overwriting would let a nested outcome that asked for nothing cancel what the outer one asked for |
+| a single-valued request takes the inner one | it was decided later, with the outer one's changes already applied |
+| unless the inner one says nothing | which must not erase the outer choice |
+| two arrange requests ADD their passes | each was asked for by a workflow that changed something |
+| two scopes for different spaces widen to all | keeping either leaves the other space unarranged, and arranging one space twice is cheaper than a window in the wrong place |
+
+Probes: overwriting a flag instead of OR-ing fails, and keeping one scope when two spaces disagree
+fails.
