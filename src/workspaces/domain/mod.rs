@@ -10,4 +10,5 @@ pub mod hidden_window_placement;
 pub mod launch_memory;
 pub mod virtual_workspace;
 pub mod window_store;
+pub mod workspace_focus;
 pub mod workspaces;

@@ -55,10 +55,23 @@ next person meets it before writing one.
 
 ## 1. `workspaces/engine.rs` — 2,898 lines, 20 tests (144 lines/test)
 
-Worst ratio of any large production file by 2x. `handle_command` is 262 lines. Most of its
-behaviour is reached only through reactor integration tests.
+**Partly.** Three rules out, 14 tests. The file's own ratio barely moved, and the honest reason is
+that the tests left with the rules: `domain/workspace_focus.rs` holds 11 and
+`layout/domain/boundary.rs` gained 3, none of which existed before. Counting lines per in-file test
+rewards keeping logic where it cannot be tested, which is the opposite of what this pass is for.
 
-State: open.
+| rule | was | why it is worth naming |
+|---|---|---|
+| `workspace_focus::preferred` | 56 lines of `if focus_window.is_none()` | six tiers, and the one that matters is invisible in the original: every tiled candidate outranks every floating one, because a floating window sits on top of the strip and focusing one on each switch buries the columns the user switched to see |
+| `workspace_focus::cycle_step` | `(idx + len - 1) % len` inline | the indices are unsigned, so stepping back from 0 underflows unless the length is added first |
+| `boundary::focus_stays_on_this_display` | two conditions inline | applies to the horizontal axis only; up and down move through the workspace stack, so applying it to all four directions would silently disable vertical navigation between displays |
+
+`handle_command` stays 265 lines for the same reason `dispatch_workflow` does: it is a match on a
+command enum where the arms delegate. Its 40-line prelude resolving `(space, workspace_id, layout)`
+is the part that is not a dispatch, and it is shared by every arm.
+
+Still open: `calculate_layout_with_virtual_workspaces` (201), `move_window_to_workspace` (177),
+`on_windows_on_screen_updated` (171), `move_window_to_space` (145).
 
 ## 2. `windows/platform/app_actor.rs` — 1,369 lines, 0 tests
 

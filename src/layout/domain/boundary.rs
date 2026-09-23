@@ -28,6 +28,18 @@ pub fn workspace_step_at_boundary(
     }
 }
 
+/// Whether focus stops at the end of this display's strip instead of continuing onto the next one.
+///
+/// `isolate_displays` makes each display its own scrollable strip, which is what a user with two
+/// monitors usually wants: moving focus right from the rightmost column should stop, not jump.
+///
+/// It applies to the horizontal axis only. Up and down are not strip axes — they move through the
+/// workspace stack — so there is no strip to isolate and the setting has nothing to say. Applying it
+/// to all four directions would silently disable vertical navigation between displays.
+pub fn focus_stays_on_this_display(isolate_displays: bool, direction: Direction) -> bool {
+    isolate_displays && matches!(direction, Direction::Left | Direction::Right)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,6 +94,33 @@ mod tests {
             let right = workspace_step_at_boundary(Direction::Right, invert, false);
             assert!(left.is_some() && right.is_some());
             assert_ne!(left, right, "invert_horizontal = {invert}");
+        }
+    }
+
+    #[test]
+    fn isolating_displays_stops_horizontal_focus_at_the_strip_s_end() {
+        assert!(focus_stays_on_this_display(true, Direction::Left));
+        assert!(focus_stays_on_this_display(true, Direction::Right));
+    }
+
+    /// Up and down move through the workspace stack, not along a strip, so there is nothing to
+    /// isolate. Applying the setting to all four directions would disable vertical navigation
+    /// between displays without anybody asking for that.
+    #[test]
+    fn isolating_displays_never_stops_vertical_focus() {
+        assert!(!focus_stays_on_this_display(true, Direction::Up));
+        assert!(!focus_stays_on_this_display(true, Direction::Down));
+    }
+
+    #[test]
+    fn focus_crosses_freely_when_displays_are_not_isolated() {
+        for direction in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
+            assert!(!focus_stays_on_this_display(false, direction));
         }
     }
 }

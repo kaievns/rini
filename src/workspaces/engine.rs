@@ -9,6 +9,7 @@ use super::{
     WorkspaceLayouts,
 };
 use crate::layout::WindowLayoutConstraints;
+use crate::layout::domain::boundary::focus_stays_on_this_display;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
@@ -20,6 +21,7 @@ use crate::workspaces::domain::app_rules::{
 use crate::workspaces::domain::display_affinity::ColumnWidth;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::domain::virtual_workspace::{VirtualWorkspaceId, WorkspaceStore};
+use crate::workspaces::domain::workspace_focus;
 use crate::workspaces::{AppRuleEffects, AppRuleResult, FloatingPositionStore, WindowStore};
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, pid_t};
@@ -289,54 +291,31 @@ impl LayoutEngine {
         workspace_id: VirtualWorkspaceId,
         preferred_focus_window: Option<WindowId>,
     ) -> Option<WindowId> {
-        let mut focus_window = preferred_focus_window.filter(|wid| {
+        let in_workspace = |wid: &WindowId| {
             self.virtual_workspace_manager.workspace_for_window(window_store, space, *wid)
                 == Some(workspace_id)
-        });
+        };
+        let layout = self.workspace_layouts.active(space, workspace_id);
+        let floating = self.active_floating_windows_in_workspace(window_store, space);
 
-        if focus_window.is_none() {
-            focus_window = self
+        workspace_focus::preferred(&workspace_focus::FocusCandidates {
+            requested: preferred_focus_window.filter(in_workspace),
+            last_focused: self
                 .virtual_workspace_manager
                 .last_focused_window(space, workspace_id)
-                .filter(|wid| {
-                    self.virtual_workspace_manager.workspace_for_window(window_store, space, *wid)
-                        == Some(workspace_id)
-                });
-        }
-
-        if focus_window.is_none() {
-            if let Some(layout) = self.workspace_layouts.active(space, workspace_id) {
-                let selected =
-                    self.workspace_tree(workspace_id).selected_window(layout).filter(|wid| {
-                        self.virtual_workspace_manager.workspace_for_window(
-                            window_store,
-                            space,
-                            *wid,
-                        ) == Some(workspace_id)
-                    });
-                let visible = self
-                    .workspace_tree(workspace_id)
+                .filter(in_workspace),
+            selected: layout
+                .and_then(|layout| self.workspace_tree(workspace_id).selected_window(layout))
+                .filter(in_workspace),
+            first_visible: layout.and_then(|layout| {
+                self.workspace_tree(workspace_id)
                     .visible_windows_in_layout(layout)
                     .into_iter()
-                    .find(|wid| {
-                        self.virtual_workspace_manager.workspace_for_window(
-                            window_store,
-                            space,
-                            *wid,
-                        ) == Some(workspace_id)
-                    });
-                focus_window = selected.or(visible);
-            }
-        }
-
-        if focus_window.is_none() {
-            let floating_windows = self.active_floating_windows_in_workspace(window_store, space);
-            let floating_focus =
-                self.floating.last_focus().filter(|wid| floating_windows.contains(wid));
-            focus_window = floating_focus.or_else(|| floating_windows.first().copied());
-        }
-
-        focus_window
+                    .find(in_workspace)
+            }),
+            last_floating: self.floating.last_focus().filter(|wid| floating.contains(wid)),
+            first_floating: floating.first().copied(),
+        })
     }
 
     pub fn commit_workspace_focus(
@@ -566,14 +545,10 @@ impl LayoutEngine {
             if let Some(prev_wid) = previous_selection {
                 let _ = self.workspace_tree_mut(ws_id).select_window(layout, prev_wid);
             }
-            // With isolate_displays set, horizontal focus stops at the ends of this
-            // display's strip instead of continuing onto the neighbouring display,
-            // so each display behaves as its own scrollable strip.
-            //
-            // Vertical navigation still crosses: up/down is not a strip axis, so
-            // there is nothing to isolate there.
-            let isolate_horizontal = self.layout_settings.scrolling.isolate_displays
-                && matches!(direction, Direction::Left | Direction::Right);
+            let isolate_horizontal = focus_stays_on_this_display(
+                self.layout_settings.scrolling.isolate_displays,
+                direction,
+            );
 
             let adjacent_space = if isolate_horizontal {
                 None
@@ -2115,12 +2090,19 @@ impl LayoutEngine {
                         self.workspace_tree(workspace_id).visible_windows_in_layout(layout),
                     )
                 };
-                if let Some(idx) = windows.iter().position(|&w| Some(w) == self.focused_window) {
-                    let next = if forward {
-                        (idx + 1) % windows.len()
-                    } else {
-                        (idx + windows.len() - 1) % windows.len()
-                    };
+                let step =
+                    windows.iter().position(|&w| Some(w) == self.focused_window).and_then(|idx| {
+                        workspace_focus::cycle_step(
+                            idx,
+                            windows.len(),
+                            if forward {
+                                workspace_focus::Cycle::Forward
+                            } else {
+                                workspace_focus::Cycle::Backward
+                            },
+                        )
+                    });
+                if let Some(next) = step {
                     let response = EventResponse {
                         changed: true,
                         focus_window: Some(windows[next]),

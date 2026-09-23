@@ -12,6 +12,7 @@ a restart. Sits above `windows`, `displays` and `layout`.
 | `domain/virtual_workspace.rs` | `WorkspaceStore`, `VirtualWorkspace`: one global workspace list, each display showing one independently |
 | `domain/assignment.rs` | `WorkspaceAssignments`: window → workspace and workspace → windows, one index kept both ways so they cannot disagree |
 | `domain/display_affinity.rs` | What belongs to a display and survives a replug: home, column width, strip order. Keyed by display UUID |
+| `domain/workspace_focus.rs` | Who takes focus when a workspace becomes active, and where a cycle step lands |
 | `domain/launch_memory.rs` | Where an application's windows belong, under a key that outlives the process |
 | `domain/floating.rs`, `floating_position_store.rs` | Which windows float and where they sit |
 | `domain/hidden_window_placement.rs` | Where off-workspace windows park |
