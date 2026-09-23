@@ -583,18 +583,9 @@ mod tests {
 
     #[test]
     fn arrow_words_and_single_letters_are_canonicalised() {
-        assert_eq!(
-            normalize_spec("Alt + Shift + Down"),
-            "Alt + Shift + ArrowDown"
-        );
+        assert_eq!(normalize_spec("Alt + Shift + Down"), "Alt + Shift + ArrowDown");
         assert_eq!(normalize_spec("Ctrl + Up"), "Ctrl + ArrowUp");
-        assert_eq!(
-            normalize_spec("Shift + Left"),
-            "Shift + ArrowLeft"
-        );
-        assert_eq!(
-            normalize_spec("Meta + Right"),
-            "Meta + ArrowRight"
-        );
+        assert_eq!(normalize_spec("Shift + Left"), "Shift + ArrowLeft");
+        assert_eq!(normalize_spec("Meta + Right"), "Meta + ArrowRight");
     }
 }

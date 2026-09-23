@@ -107,9 +107,10 @@ fn it_retains_windows_without_server_ids_after_login_visibility_failure() {
     // Simulate a native fullscreen transition: space temporarily becomes a fullscreen
     // space id (reactor suppresses it to None), then returns to the original space.
     let fullscreen_space = SpaceId::new(0x400000000 + space.get());
-    reactor.handle_event(space_state_event(vec![full_screen], vec![Some(
-        fullscreen_space,
-    )]));
+    reactor.handle_event(space_state_event(
+        vec![full_screen],
+        vec![Some(fullscreen_space)],
+    ));
 
     reactor.handle_event(space_state_event(vec![full_screen], vec![Some(space)]));
 

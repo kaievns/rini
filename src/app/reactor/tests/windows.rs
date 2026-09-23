@@ -185,11 +185,14 @@ fn stale_cleanup_uses_ordered_state_instead_of_cached_visibility() {
         mission_control_active: false,
         drag_active: false,
         inactive_windows: Default::default(),
-        server_observations: [(wsid, window_discovery::StaleWindowObservation {
-            info: Some(info),
-            suitable,
-            ordered_in,
-        })]
+        server_observations: [(
+            wsid,
+            window_discovery::StaleWindowObservation {
+                info: Some(info),
+                suitable,
+                ordered_in,
+            },
+        )]
         .into_iter()
         .collect(),
     };

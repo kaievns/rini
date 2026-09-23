@@ -12,9 +12,9 @@ use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
 use serde_json;
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::input::platform::gesture_tap;
 use crate::app::config::actor as config;
 pub use crate::input::domain::binding::{ExecCmd, WmCmd, WmCommand};
+use crate::input::platform::gesture_tap;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::pid_t;
 
@@ -22,13 +22,12 @@ pub type Sender = channels::Sender<WmEvent>;
 
 type Receiver = channels::Receiver<WmEvent>;
 
-use crate::windows::domain::info::AppInfo;
 use crate::app::channels;
 use crate::app::reactor;
 use crate::input::platform::input_tap as event_tap;
+use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::WindowTxStore;
 use rini_runloop::dispatch::DispatchExt;
-
 
 #[derive(Debug)]
 pub enum WmEvent {
@@ -132,7 +131,6 @@ impl WmController {
         use self::WmCommand::*;
         use self::WmEvent::*;
 
-
         match event {
             Displays(event) => self.events_tx.send(Event::from(event)),
             Input(crate::input::event::Event::Command(cmd)) => self.handle_event(Command(cmd)),
@@ -186,7 +184,8 @@ impl WmController {
 
                 self.config.config = new_cfg;
 
-                let input_settings = crate::input::settings::InputSettings::from(&self.config.config);
+                let input_settings =
+                    crate::input::settings::InputSettings::from(&self.config.config);
                 _ = self
                     .event_tap_tx
                     .send(event_tap::Request::SettingsUpdated(input_settings.clone()));
@@ -224,19 +223,21 @@ impl WmController {
             }
             // Every binding alias is a translation; `lower` is that translation and is tested on
             // its own. What is left here is the two things only the controller can carry out.
-            Command(Wm(cmd)) => match lower::lower(cmd, &self.config.config.virtual_workspaces.workspace_names) {
-                lower::Lowered::Command(cmd) => {
-                    self.events_tx.send(reactor::Event::Command(cmd));
+            Command(Wm(cmd)) => {
+                match lower::lower(cmd, &self.config.config.virtual_workspaces.workspace_names) {
+                    lower::Lowered::Command(cmd) => {
+                        self.events_tx.send(reactor::Event::Command(cmd));
+                    }
+                    lower::Lowered::Exec(cmd) => self.exec_cmd(cmd),
+                    lower::Lowered::ReloadConfig => self.reload_config(),
+                    lower::Lowered::UnknownWorkspace(selector) => {
+                        warn!(
+                            ?selector,
+                            "a binding asked for a workspace that is not configured; ignoring"
+                        );
+                    }
                 }
-                lower::Lowered::Exec(cmd) => self.exec_cmd(cmd),
-                lower::Lowered::ReloadConfig => self.reload_config(),
-                lower::Lowered::UnknownWorkspace(selector) => {
-                    warn!(
-                        ?selector,
-                        "a binding asked for a workspace that is not configured; ignoring"
-                    );
-                }
-            },
+            }
             Command(ReactorCommand(cmd)) => {
                 self.events_tx.send(reactor::Event::Command(cmd));
             }
@@ -339,4 +340,3 @@ impl WmController {
         });
     }
 }
-

@@ -76,7 +76,9 @@ pub fn group_by_app_and_space<S: Eq + Hash + Copy>(
 mod tests {
     use super::*;
 
-    fn window(pid: pid_t, idx: u32) -> WindowId { WindowId::new(pid, idx) }
+    fn window(pid: pid_t, idx: u32) -> WindowId {
+        WindowId::new(pid, idx)
+    }
 
     #[test]
     fn parked_windows_are_dropped() {

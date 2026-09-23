@@ -1,11 +1,11 @@
 use tracing::debug;
 
-use rini_core::ids::WindowId;
-use crate::windows::domain::raise as raise_manager;
+use crate::app::hotkeys::Sender as WmSender;
 use crate::app::reactor::MenuState;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::{CommunicationManager, MenuManager};
-use crate::app::hotkeys::Sender as WmSender;
+use crate::windows::domain::raise as raise_manager;
+use rini_core::ids::WindowId;
 
 pub fn handle_menu_opened(
     menu: &mut MenuManager,

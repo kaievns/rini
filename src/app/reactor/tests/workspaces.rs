@@ -128,10 +128,10 @@ fn workspace_commands_follow_active_display_space_across_active_displays() {
         (target, WindowServerId::new(202), right_space, right),
     ];
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space),
-        Some(right_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space), Some(right_space)],
+    ));
 
     reactor.add_test_app(1);
 
@@ -186,10 +186,10 @@ fn workspace_switch_arrange_is_scoped_to_its_command_space() {
     let left_space = SpaceId::new(1);
     let right_space = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(left_space),
-        Some(right_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space), Some(right_space)],
+    ));
 
     let switch = reactor.dispatch_test_layout_command(LayoutCommand::NextWorkspace(None));
     assert_eq!(switch.arrange.space_scope, Some(left_space));
@@ -224,10 +224,10 @@ fn workspace_queries_are_isolated_per_macos_space() {
     let space1 = SpaceId::new(1);
     let space2 = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
 
     reactor.handle_test_workspace_command(space1, &LayoutCommand::SwitchToWorkspace(0));
     reactor.handle_test_workspace_command(space2, &LayoutCommand::SwitchToWorkspace(1));
@@ -614,9 +614,10 @@ fn windows_discovered_does_not_reintroduce_inactive_workspace_window() {
 
     reactor.discover_test_windows(1, vec![], vec![WindowId::new(1, 1), WindowId::new(1, 2)]);
 
-    assert_eq!(reactor.test_active_workspace_windows(space), vec![
-        WindowId::new(1, 2)
-    ]);
+    assert_eq!(
+        reactor.test_active_workspace_windows(space),
+        vec![WindowId::new(1, 2)]
+    );
 }
 
 #[test]
@@ -875,10 +876,10 @@ fn displays_share_workspaces_but_switch_between_them_independently() {
     let external_space = SpaceId::new(479);
 
     set_space_membership(&[(builtin_space, &[]), (external_space, &[])]);
-    reactor.handle_event(space_state_event(vec![builtin, external], vec![
-        Some(builtin_space),
-        Some(external_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
 
     let builtin_workspaces = reactor.test_workspace_ids(builtin_space);
     let external_workspaces = reactor.test_workspace_ids(external_space);
@@ -888,10 +889,10 @@ fn displays_share_workspaces_but_switch_between_them_independently() {
     );
 
     // Move only the external to workspace 3.
-    reactor.handle_event(space_state_event(vec![builtin, external], vec![
-        Some(builtin_space),
-        Some(external_space),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
     assert!(reactor.set_test_active_workspace(external_space, external_workspaces[3]));
 
     assert_eq!(

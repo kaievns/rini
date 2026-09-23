@@ -72,12 +72,11 @@ use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{CGError, CGEvent};
 use tracing::{debug, info};
 
-use serde::{Deserialize, Serialize};
 use rini_geometry::CGRectExt;
 use rini_runloop::channel;
+use serde::{Deserialize, Serialize};
 
 use crate::displays::domain::screen::ScreenInfo;
-
 
 /// Which side of a side-by-side pair is the upper one when the pair is stacked. Settings vocabulary.
 /// Which side of the desk the logically-upper display sits on; macOS cannot tell us. Semantics in
@@ -224,8 +223,7 @@ impl CursorWarp {
             return;
         }
         let Some(cursor) = cursor_position() else { return };
-        let Some(target) =
-            warp_target(&self.screens, cursor, self.upper_side, self.lower_top_at)
+        let Some(target) = warp_target(&self.screens, cursor, self.upper_side, self.lower_top_at)
         else {
             return;
         };
@@ -302,7 +300,11 @@ fn warp_target(
 
     // The upper display is the one the pointer is travelling toward when going up, and the one it is
     // leaving otherwise.
-    let (upper, lower) = if going_up { (target, here) } else { (here, target) };
+    let (upper, lower) = if going_up {
+        (target, here)
+    } else {
+        (here, target)
+    };
     let y = mapped_y(here, target, upper, lower, cursor.y, lower_top_at)
         .max(target_frame.origin.y + 1.0)
         .min(target_frame.max().y - 1.0);
@@ -457,7 +459,11 @@ pub fn screens_of(screens: &[ScreenInfo]) -> Vec<WarpScreen> {
 fn physical_height_mm(screen: &ScreenInfo) -> f64 {
     // SAFETY: plain-value FFI into CoreGraphics with a display id.
     let size = unsafe { rini_skylight_sys::CGDisplayScreenSize(screen.id.as_u32()) };
-    if size.height.is_finite() && size.height > 0.0 { size.height } else { 0.0 }
+    if size.height.is_finite() && size.height > 0.0 {
+        size.height
+    } else {
+        0.0
+    }
 }
 
 #[cfg(test)]
@@ -473,10 +479,16 @@ mod tests {
     /// The real arrangement, read from `rini-cli query displays` and `CGDisplayScreenSize`:
     /// the 31.6" external logically ABOVE the 16.1" built-in, while physically sitting to its LEFT.
     fn built_in() -> WarpScreen {
-        WarpScreen { frame: rect(0.0, 32.0, 1728.0, 1085.0), physical_height_mm: 223.0 }
+        WarpScreen {
+            frame: rect(0.0, 32.0, 1728.0, 1085.0),
+            physical_height_mm: 223.0,
+        }
     }
     fn external() -> WarpScreen {
-        WarpScreen { frame: rect(-670.0, -1692.0, 3008.0, 1692.0), physical_height_mm: 391.0 }
+        WarpScreen {
+            frame: rect(-670.0, -1692.0, 3008.0, 1692.0),
+            physical_height_mm: 391.0,
+        }
     }
 
     /// The measured arrangement: laptop's top edge 40% up the external's height.
@@ -516,16 +528,18 @@ mod tests {
     fn pushing_away_from_the_upper_display_does_not_warp() {
         let screens = vec![built_in(), external()];
         let cursor = CGPoint::new(built_in().frame.max().x - 1.0, 500.0);
-        assert!(warp(&screens, cursor).is_none(), "nothing lies right of the built-in");
+        assert!(
+            warp(&screens, cursor).is_none(),
+            "nothing lies right of the built-in"
+        );
     }
 
     #[test]
     fn with_the_upper_display_on_the_right_the_pairing_mirrors() {
         let screens = vec![built_in(), external()];
         let pushing_right = CGPoint::new(built_in().frame.max().x - 1.0, 500.0);
-        let target =
-            warp_target(&screens, pushing_right, StackedUpperSide::Right, LOWER_TOP_AT)
-                .expect("should warp toward the upper display");
+        let target = warp_target(&screens, pushing_right, StackedUpperSide::Right, LOWER_TOP_AT)
+            .expect("should warp toward the upper display");
         assert_eq!(target.x, external().frame.origin.x + ENTRY_INSET);
 
         let pushing_left = CGPoint::new(built_in().frame.origin.x + 1.0, 500.0);
@@ -610,11 +624,19 @@ mod tests {
     /// proportional behaviour rather than dividing by zero or flinging the pointer somewhere.
     #[test]
     fn unknown_physical_size_falls_back_to_proportional() {
-        let lap = WarpScreen { frame: rect(0.0, 32.0, 1728.0, 1085.0), physical_height_mm: 0.0 };
-        let ext =
-            WarpScreen { frame: rect(-670.0, -1692.0, 3008.0, 1692.0), physical_height_mm: 0.0 };
+        let lap = WarpScreen {
+            frame: rect(0.0, 32.0, 1728.0, 1085.0),
+            physical_height_mm: 0.0,
+        };
+        let ext = WarpScreen {
+            frame: rect(-670.0, -1692.0, 3008.0, 1692.0),
+            physical_height_mm: 0.0,
+        };
         let screens = vec![lap, ext];
-        let cursor = CGPoint::new(lap.frame.origin.x + 1.0, lap.frame.origin.y + lap.frame.size.height / 2.0);
+        let cursor = CGPoint::new(
+            lap.frame.origin.x + 1.0,
+            lap.frame.origin.y + lap.frame.size.height / 2.0,
+        );
 
         let target = warp(&screens, cursor).expect("should warp");
         let fraction_down = (target.y - ext.frame.origin.y) / ext.frame.size.height;
@@ -632,7 +654,10 @@ mod tests {
         let cursor = CGPoint::new(built_in().frame.origin.x + 1.0, 500.0);
 
         let first = warp(&screens, cursor).expect("should warp");
-        assert!(warp(&screens, first).is_none(), "landing point {first:?} re-triggered a warp");
+        assert!(
+            warp(&screens, first).is_none(),
+            "landing point {first:?} re-triggered a warp"
+        );
     }
 
     /// The landing point must be inside the destination, never on its boundary, or the pointer can
@@ -646,16 +671,27 @@ mod tests {
 
         let target = warp(&screens, cursor).expect("should warp");
         let lap = built_in().frame;
-        assert!(target.y > lap.origin.y, "landed on or above the top edge: {target:?}");
-        assert!(target.y < lap.max().y, "landed on or below the bottom edge: {target:?}");
+        assert!(
+            target.y > lap.origin.y,
+            "landed on or above the top edge: {target:?}"
+        );
+        assert!(
+            target.y < lap.max().y,
+            "landed on or below the bottom edge: {target:?}"
+        );
     }
 
     /// Side-by-side displays must be left entirely alone: macOS crosses them natively.
     #[test]
     fn adjacent_displays_are_left_to_macos() {
-        let left = WarpScreen { frame: rect(0.0, 0.0, 1000.0, 1000.0), physical_height_mm: 200.0 };
-        let right =
-            WarpScreen { frame: rect(1000.0, 0.0, 1000.0, 1000.0), physical_height_mm: 200.0 };
+        let left = WarpScreen {
+            frame: rect(0.0, 0.0, 1000.0, 1000.0),
+            physical_height_mm: 200.0,
+        };
+        let right = WarpScreen {
+            frame: rect(1000.0, 0.0, 1000.0, 1000.0),
+            physical_height_mm: 200.0,
+        };
         let screens = vec![left, right];
 
         assert!(warp(&screens, CGPoint::new(999.0, 500.0)).is_none());
@@ -679,16 +715,22 @@ mod tests {
     /// horizontally, not merely the first one found above.
     #[test]
     fn the_most_overlapping_neighbour_wins() {
-        let middle =
-            WarpScreen { frame: rect(0.0, 0.0, 1000.0, 500.0), physical_height_mm: 200.0 };
-        let barely =
-            WarpScreen { frame: rect(980.0, -500.0, 1000.0, 500.0), physical_height_mm: 200.0 };
-        let mostly =
-            WarpScreen { frame: rect(-100.0, -500.0, 1000.0, 500.0), physical_height_mm: 200.0 };
+        let middle = WarpScreen {
+            frame: rect(0.0, 0.0, 1000.0, 500.0),
+            physical_height_mm: 200.0,
+        };
+        let barely = WarpScreen {
+            frame: rect(980.0, -500.0, 1000.0, 500.0),
+            physical_height_mm: 200.0,
+        };
+        let mostly = WarpScreen {
+            frame: rect(-100.0, -500.0, 1000.0, 500.0),
+            physical_height_mm: 200.0,
+        };
         let screens = vec![middle, barely, mostly];
 
-        let target = warp(&screens, CGPoint::new(middle.frame.origin.x + 1.0, 250.0))
-            .expect("should warp");
+        let target =
+            warp(&screens, CGPoint::new(middle.frame.origin.x + 1.0, 250.0)).expect("should warp");
         assert_eq!(
             target.x,
             mostly.frame.max().x - ENTRY_INSET,

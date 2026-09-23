@@ -2,12 +2,12 @@ use objc2_core_foundation::CGRect;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use rini_core::ids::WindowId;
-use rustc_hash::FxHashMap as HashMap;
 use crate::workspaces::{VirtualWorkspaceId, WorkspaceStore};
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
 use rini_core::ids::pid_t;
 use rini_geometry::CGRectDef;
-use rini_core::ids::SpaceId;
+use rustc_hash::FxHashMap as HashMap;
 
 /// Saved floating frames. This is layout persistence, not workspace catalog
 /// state; callers must remove entries as part of the corresponding window
@@ -54,10 +54,7 @@ impl FloatingPositionStore {
         windows
     }
 
-    pub fn locations_for_window(
-        &self,
-        window: WindowId,
-    ) -> Vec<(SpaceId, VirtualWorkspaceId)> {
+    pub fn locations_for_window(&self, window: WindowId) -> Vec<(SpaceId, VirtualWorkspaceId)> {
         let mut locations = self
             .positions
             .keys()

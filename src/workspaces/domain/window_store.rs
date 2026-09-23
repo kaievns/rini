@@ -4,18 +4,20 @@
 //! the two can never disagree.
 use std::ops::{Deref, DerefMut};
 
-use rini_core::ids::SpaceId;
-use crate::windows::domain::catalogue::{NativeFullscreenRecord, NativeFullscreenTransition, WindowCatalogue};
-use rini_core::ids::{WindowId, WindowServerId, pid_t};
+use crate::windows::domain::catalogue::{
+    NativeFullscreenRecord, NativeFullscreenTransition, WindowCatalogue,
+};
 use crate::windows::domain::state::WindowState;
+use rini_core::ids::SpaceId;
+use rini_core::ids::{WindowId, WindowServerId, pid_t};
 
 pub use crate::windows::domain::catalogue::{
     PendingNativeFullscreenRecord, PendingWindowOperation, WindowPlacement, WindowRecord,
     WindowVisibility,
 };
 
-pub use crate::workspaces::domain::assignment::{WindowWorkspaceInfo, WorkspaceAssignments};
 use crate::workspaces::VirtualWorkspaceId;
+pub use crate::workspaces::domain::assignment::{WindowWorkspaceInfo, WorkspaceAssignments};
 
 #[derive(Debug, Default)]
 pub struct WindowStore {
@@ -49,7 +51,8 @@ impl WindowStore {
         assignment: WindowWorkspaceInfo,
     ) -> Option<WindowWorkspaceInfo> {
         let old = self.assignments.assign(window_id, assignment);
-        self.catalogue.note_native_fullscreen_assigned_space(window_id, assignment.space);
+        self.catalogue
+            .note_native_fullscreen_assigned_space(window_id, assignment.space);
         old
     }
 
@@ -72,7 +75,10 @@ impl WindowStore {
     }
 
     pub fn workspaces_for_window(&self, window_id: WindowId) -> Vec<VirtualWorkspaceId> {
-        self.assignments.info_for_window(window_id).map(|a| vec![a.workspace_id]).unwrap_or_default()
+        self.assignments
+            .info_for_window(window_id)
+            .map(|a| vec![a.workspace_id])
+            .unwrap_or_default()
     }
 
     pub fn workspace_windows(
@@ -83,7 +89,11 @@ impl WindowStore {
         self.assignments.windows(space, workspace_id)
     }
 
-    pub fn workspace_window_count(&self, space: SpaceId, workspace_id: VirtualWorkspaceId) -> usize {
+    pub fn workspace_window_count(
+        &self,
+        space: SpaceId,
+        workspace_id: VirtualWorkspaceId,
+    ) -> usize {
         self.assignments.window_count(space, workspace_id)
     }
 
@@ -173,7 +183,8 @@ impl WindowStore {
     /// half learned of the window first.
     fn sync_native_fullscreen_assignment(&mut self, window_id: WindowId) {
         if let Some(assignment) = self.assignments.info_for_window(window_id) {
-            self.catalogue.note_native_fullscreen_assigned_space(window_id, assignment.space);
+            self.catalogue
+                .note_native_fullscreen_assigned_space(window_id, assignment.space);
         }
     }
 
@@ -187,8 +198,8 @@ impl WindowStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspaces::domain::virtual_workspace::WorkspaceStore;
     use crate::windows::domain::catalogue::NativeFullscreenTransition;
+    use crate::workspaces::domain::virtual_workspace::WorkspaceStore;
 
     #[test]
     fn transfer_persistent_metadata_replaces_existing_target_workspace_assignment() {

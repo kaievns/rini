@@ -3,14 +3,14 @@ use tracing::{debug, trace};
 
 use crate::animation::domain::motion::travel::travels_visibly;
 use crate::animation::domain::pass::{self, Move, PassPlan, PassWindow};
+use crate::animation::platform::power;
 use crate::animation::platform::window_snapshot::is_a_resize;
-use crate::windows::domain::request::Request;
-use rini_core::ids::{WindowId, pid_t};
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::Present;
-use rustc_hash::FxHashMap as HashMap;
-use crate::animation::platform::power;
+use crate::windows::domain::request::Request;
 use rini_core::ids::SpaceId;
+use rini_core::ids::{WindowId, pid_t};
+use rustc_hash::FxHashMap as HashMap;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places
 /// the real windows when it does not. A namespace; it holds no state. The sorting of a pass is
@@ -32,7 +32,8 @@ impl AnimationManager {
         let active_ws = engine.active_workspace(space);
         let in_active = |wid| {
             active_ws.is_some()
-                && engine.virtual_workspace_manager().workspace_for_window(windows, space, wid) == active_ws
+                && engine.virtual_workspace_manager().workspace_for_window(windows, space, wid)
+                    == active_ws
         };
         layout
             .iter()
@@ -46,7 +47,8 @@ impl AnimationManager {
                     return None;
                 };
                 let server_id = window.info.sys_id;
-                let app_alive = !app_liveness_matters || reactor.app_manager.apps.contains_key(&wid.pid);
+                let app_alive =
+                    !app_liveness_matters || reactor.app_manager.apps.contains_key(&wid.pid);
                 if app_liveness_matters && !app_alive {
                     debug!(?wid, "Skipping for window - app no longer exists");
                 }
@@ -55,7 +57,8 @@ impl AnimationManager {
                     server_id,
                     current: window.frame_monotonic,
                     target,
-                    pending: server_id.and_then(|wsid| reactor.transaction_manager.get_target_frame(wsid)),
+                    pending: server_id
+                        .and_then(|wsid| reactor.transaction_manager.get_target_frame(wsid)),
                     in_active_workspace: in_active(wid),
                     floating: engine.is_window_floating(wid),
                     app_alive,
@@ -68,8 +71,12 @@ impl AnimationManager {
     ///
     /// The narrow borrows are `present::Present`, which is also where the batching rule and its
     /// tests live.
-    fn commit(reactor: &mut Reactor, m: &Move) -> crate::windows::domain::transaction::TransactionId {
-        Present::new(&mut reactor.state.windows, &reactor.transaction_manager).commit(m.window, m.to)
+    fn commit(
+        reactor: &mut Reactor,
+        m: &Move,
+    ) -> crate::windows::domain::transaction::TransactionId {
+        Present::new(&mut reactor.state.windows, &reactor.transaction_manager)
+            .commit(m.window, m.to)
     }
 
     pub fn animate_layout(
@@ -88,7 +95,9 @@ impl AnimationManager {
         let mut placements = Vec::new();
         for m in &plan.moves {
             let txid = Self::commit(reactor, m);
-            let Some(handle) = reactor.app_manager.apps.get(&m.window.pid).map(|a| a.handle.clone()) else {
+            let Some(handle) =
+                reactor.app_manager.apps.get(&m.window.pid).map(|a| a.handle.clone())
+            else {
                 continue;
             };
             if m.in_active_workspace {
@@ -107,7 +116,12 @@ impl AnimationManager {
         }
 
         let mut overlay_requests = plan.overlay_requests();
-        let PassPlan { unmoved, warm, any_frame_changed, .. } = plan;
+        let PassPlan {
+            unmoved,
+            warm,
+            any_frame_changed,
+            ..
+        } = plan;
         let low_power = power::is_low_power_mode_enabled();
         let layout_animate = reactor.config.settings.animate;
         // `is_resize` means a window REPORTED a size change, which happens both when the user is
@@ -248,7 +262,10 @@ impl AnimationManager {
                 hidden = !m.in_active_workspace,
                 "Instant workspace positioning"
             );
-            per_app.entry(m.window.pid).or_default().push((m.window, m.to, m.size_unchanged()));
+            per_app
+                .entry(m.window.pid)
+                .or_default()
+                .push((m.window, m.to, m.size_unchanged()));
         }
 
         for (pid, frames) in per_app {
@@ -262,7 +279,11 @@ impl AnimationManager {
                 .commit_app_batch(&destinations);
             for request in pass::instant_requests(frames, txid, position_only) {
                 if let Err(e) = handle.send(request) {
-                    debug!(?pid, ?e, "Failed to send instant layout request - app may have quit");
+                    debug!(
+                        ?pid,
+                        ?e,
+                        "Failed to send instant layout request - app may have quit"
+                    );
                     break;
                 }
             }

@@ -10,8 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use rustc_hash::FxHashMap as HashMap;
 use crate::workspaces::domain::display_affinity::ColumnWidth;
+use rustc_hash::FxHashMap as HashMap;
 
 /// The set of displays connected, as a name that can key a map.
 ///
@@ -89,9 +89,7 @@ pub fn resolve_width(
         ProjectedWidth::Unknown => projected
             .title
             .as_deref()
-            .and_then(|title| {
-                remembered.iter().find(|old| old.title.as_deref() == Some(title))
-            })
+            .and_then(|title| remembered.iter().find(|old| old.title.as_deref() == Some(title)))
             .or_else(|| remembered.get(index))
             .and_then(|old| old.width),
     }
@@ -218,22 +216,28 @@ mod tests {
         memory.remember(
             "com.mitchellh.ghostty",
             &docked,
-            vec![Slot {
-                title: None,
-                display_uuid: EXTERNAL.to_owned(),
-                workspace_index: 2,
-                width: Some(ColumnWidth::Offset(0.0)),
-            }.into()],
+            vec![
+                Slot {
+                    title: None,
+                    display_uuid: EXTERNAL.to_owned(),
+                    workspace_index: 2,
+                    width: Some(ColumnWidth::Offset(0.0)),
+                }
+                .into(),
+            ],
         );
         memory.remember(
             "com.mitchellh.ghostty",
             &alone,
-            vec![Slot {
-                title: None,
-                display_uuid: BUILT_IN.to_owned(),
-                workspace_index: 0,
-                width: Some(ColumnWidth::FullWidth),
-            }.into()],
+            vec![
+                Slot {
+                    title: None,
+                    display_uuid: BUILT_IN.to_owned(),
+                    workspace_index: 0,
+                    width: Some(ColumnWidth::FullWidth),
+                }
+                .into(),
+            ],
         );
 
         let docked_slots = memory.slots("com.mitchellh.ghostty", &docked);
@@ -270,8 +274,14 @@ mod tests {
     #[test]
     fn a_window_with_an_unrecognised_title_falls_back_to_its_ordinal() {
         let slots = vec![slot("Inbox", BUILT_IN, 0), slot("Some ticket", BUILT_IN, 2)];
-        assert_eq!(slot_for_window(&slots, Some("A page nobody saved"), 0, &[]), Some(0));
-        assert_eq!(slot_for_window(&slots, Some("Another new page"), 1, &[]), Some(1));
+        assert_eq!(
+            slot_for_window(&slots, Some("A page nobody saved"), 0, &[]),
+            Some(0)
+        );
+        assert_eq!(
+            slot_for_window(&slots, Some("Another new page"), 1, &[]),
+            Some(1)
+        );
     }
 
     #[test]
@@ -286,8 +296,16 @@ mod tests {
     #[test]
     fn a_claimed_slot_is_not_handed_out_twice() {
         let slots = vec![slot("Inbox", BUILT_IN, 0), slot("Drafts", BUILT_IN, 2)];
-        assert_eq!(slot_for_window(&slots, Some("Inbox"), 0, &[0]), None, "ordinal 0 is taken too");
-        assert_eq!(slot_for_window(&slots, Some("Inbox"), 1, &[0]), Some(1), "so it takes its ordinal");
+        assert_eq!(
+            slot_for_window(&slots, Some("Inbox"), 0, &[0]),
+            None,
+            "ordinal 0 is taken too"
+        );
+        assert_eq!(
+            slot_for_window(&slots, Some("Inbox"), 1, &[0]),
+            Some(1),
+            "so it takes its ordinal"
+        );
     }
 
     #[test]
@@ -302,7 +320,11 @@ mod tests {
     #[test]
     fn remembering_replaces_rather_than_accumulates() {
         let mut memory = LaunchMemory::default();
-        memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into(), slot("b", BUILT_IN, 1).into()]);
+        memory.remember(
+            "app",
+            "one",
+            vec![slot("a", BUILT_IN, 0).into(), slot("b", BUILT_IN, 1).into()],
+        );
         memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into()]);
         assert_eq!(memory.slots("app", "one").len(), 1);
     }
@@ -314,7 +336,11 @@ mod tests {
         let mut memory = LaunchMemory::default();
         memory.remember("app", "one", vec![slot("a", BUILT_IN, 0).into()]);
         memory.remember("app", "one", Vec::new());
-        assert_eq!(memory.slots("app", "one").len(), 1, "the entry survives an empty projection");
+        assert_eq!(
+            memory.slots("app", "one").len(),
+            1,
+            "the entry survives an empty projection"
+        );
     }
 
     fn projected(title: Option<&str>, width: ProjectedWidth) -> ProjectedSlot {
@@ -339,7 +365,10 @@ mod tests {
     // `Unknown`; treating that as "no width" is what sent a full-width window back at half size.
     #[test]
     fn a_width_that_could_not_be_read_keeps_the_one_remembered() {
-        let old = [remembered(Some("~/projects/rini"), Some(ColumnWidth::FullWidth))];
+        let old = [remembered(
+            Some("~/projects/rini"),
+            Some(ColumnWidth::FullWidth),
+        )];
         let new = projected(Some("~/projects/rini"), ProjectedWidth::Unknown);
         assert_eq!(resolve_width(&new, 0, &old), Some(ColumnWidth::FullWidth));
     }
@@ -389,10 +418,17 @@ mod tests {
         memory.remember(
             "app",
             "one",
-            vec![projected(Some("term"), ProjectedWidth::Known(Some(ColumnWidth::FullWidth)))],
+            vec![projected(
+                Some("term"),
+                ProjectedWidth::Known(Some(ColumnWidth::FullWidth)),
+            )],
         );
         for _ in 0..5 {
-            memory.remember("app", "one", vec![projected(Some("term"), ProjectedWidth::Unknown)]);
+            memory.remember(
+                "app",
+                "one",
+                vec![projected(Some("term"), ProjectedWidth::Unknown)],
+            );
             assert_eq!(
                 memory.slots("app", "one")[0].width,
                 Some(ColumnWidth::FullWidth),

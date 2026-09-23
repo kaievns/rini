@@ -23,9 +23,7 @@ pub enum ContentMode {
 /// Crop for a resize, and for any picture that no longer matches the frame it starts in; stretched
 /// only when picture and frames agree, where stretching is exact.
 pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMode {
-    if is_a_resize(from, to)
-        || !fits_frame(covered, (from.width, from.height))
-    {
+    if is_a_resize(from, to) || !fits_frame(covered, (from.width, from.height)) {
         placeholder_mode(covered, to)
     } else {
         ContentMode::Stretch
@@ -152,7 +150,10 @@ pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
     let l = |a: f64, b: f64| a + (b - a) * t;
     CGRect::new(
         CGPoint::new(l(from.origin.x, to.origin.x), l(from.origin.y, to.origin.y)),
-        CGSize::new(l(from.size.width, to.size.width), l(from.size.height, to.size.height)),
+        CGSize::new(
+            l(from.size.width, to.size.width),
+            l(from.size.height, to.size.height),
+        ),
     )
 }
 
@@ -173,12 +174,19 @@ mod tests {
     #[test]
     fn a_mismatched_dressing_is_deferred_while_a_resize_is_in_flight() {
         let action = dressing_rebuild_allowed(true, false);
-        assert_eq!(action, DressingAction::Defer, "hairline rebuilt mid-resize: {action:?}");
+        assert_eq!(
+            action,
+            DressingAction::Defer,
+            "hairline rebuilt mid-resize: {action:?}"
+        );
     }
 
     #[test]
     fn dressing_rebuild_allowed_full_table() {
-        assert_eq!(dressing_rebuild_allowed(false, true), DressingAction::SwapInPlace);
+        assert_eq!(
+            dressing_rebuild_allowed(false, true),
+            DressingAction::SwapInPlace
+        );
         assert_eq!(dressing_rebuild_allowed(true, true), DressingAction::SwapInPlace);
         assert_eq!(dressing_rebuild_allowed(false, false), DressingAction::Rebuild);
         assert_eq!(dressing_rebuild_allowed(true, false), DressingAction::Defer);
@@ -189,7 +197,10 @@ mod tests {
         let now = Instant::now();
         assert!(resize_in_flight(Some(now + Duration::from_millis(100)), now));
         assert!(!resize_in_flight(Some(now - Duration::from_millis(1)), now));
-        assert!(!resize_in_flight(Some(now), now), "the end instant itself is over");
+        assert!(
+            !resize_in_flight(Some(now), now),
+            "the end instant itself is over"
+        );
         assert!(!resize_in_flight(None, now));
     }
 
@@ -259,7 +270,11 @@ mod tests {
 
     #[test]
     fn lerp_midpoint_is_halfway_on_every_axis() {
-        let got = lerp_rect(rect(0.0, 0.0, 100.0, 100.0), rect(100.0, 200.0, 200.0, 300.0), 0.5);
+        let got = lerp_rect(
+            rect(0.0, 0.0, 100.0, 100.0),
+            rect(100.0, 200.0, 200.0, 300.0),
+            0.5,
+        );
         assert_eq!(got, rect(50.0, 100.0, 150.0, 200.0));
     }
 
@@ -267,7 +282,11 @@ mod tests {
     fn lerp_handles_a_negative_origin() {
         // Off-strip windows legitimately sit at negative x, so this is the common case rather than
         // an edge case: the measured strip had columns at x = -1680.
-        let got = lerp_rect(rect(-1680.0, 32.0, 859.0, 1081.0), rect(0.0, 32.0, 859.0, 1081.0), 0.5);
+        let got = lerp_rect(
+            rect(-1680.0, 32.0, 859.0, 1081.0),
+            rect(0.0, 32.0, 859.0, 1081.0),
+            0.5,
+        );
         assert_eq!(got.origin.x, -840.0);
         assert_eq!(got.origin.y, 32.0);
     }
@@ -278,7 +297,11 @@ mod tests {
         let picture = (859.0, 1081.0);
         assert_eq!(content_mode(picture, col, col), ContentMode::Stretch);
         assert_eq!(
-            content_mode((918.0, 1081.0), CGSize::new(918.0, 1081.0), CGSize::new(917.0, 1081.0)),
+            content_mode(
+                (918.0, 1081.0),
+                CGSize::new(918.0, 1081.0),
+                CGSize::new(917.0, 1081.0)
+            ),
             ContentMode::Stretch
         );
         // A horizontal grow past the picture is the placeholder: it stretches until the reveal
@@ -287,10 +310,17 @@ mod tests {
             content_mode(picture, col, CGSize::new(1720.0, 1081.0)),
             ContentMode::Stretch
         );
-        assert_eq!(content_mode(picture, col, CGSize::new(859.0, 540.0)), ContentMode::Crop);
+        assert_eq!(
+            content_mode(picture, col, CGSize::new(859.0, 540.0)),
+            ContentMode::Crop
+        );
         // A stale narrow picture in a wider frame is the placeholder case too: the reveal fills it.
         assert_eq!(content_mode((572.0, 1081.0), col, col), ContentMode::Stretch);
-        assert_eq!(content_mode((918.0, 1081.0), col, col), ContentMode::Crop, "a wider one crops");
+        assert_eq!(
+            content_mode((918.0, 1081.0), col, col),
+            ContentMode::Crop,
+            "a wider one crops"
+        );
     }
 
     /// A picture that cannot cover its destination is stretched over it; one that covers it takes
@@ -298,10 +328,22 @@ mod tests {
     #[test]
     fn a_placeholder_never_shows_backdrop() {
         let picture = (859.0, 1081.0);
-        assert_eq!(placeholder_mode(picture, CGSize::new(1147.0, 1081.0)), ContentMode::Stretch);
-        assert_eq!(placeholder_mode(picture, CGSize::new(859.0, 1300.0)), ContentMode::Stretch);
-        assert_eq!(placeholder_mode(picture, CGSize::new(859.0, 1081.0)), ContentMode::Crop);
-        assert_eq!(placeholder_mode(picture, CGSize::new(572.0, 1081.0)), ContentMode::Crop);
+        assert_eq!(
+            placeholder_mode(picture, CGSize::new(1147.0, 1081.0)),
+            ContentMode::Stretch
+        );
+        assert_eq!(
+            placeholder_mode(picture, CGSize::new(859.0, 1300.0)),
+            ContentMode::Stretch
+        );
+        assert_eq!(
+            placeholder_mode(picture, CGSize::new(859.0, 1081.0)),
+            ContentMode::Crop
+        );
+        assert_eq!(
+            placeholder_mode(picture, CGSize::new(572.0, 1081.0)),
+            ContentMode::Crop
+        );
         // Both modes fill the frame: the match is exhaustive, so a mode that left part of the
         // frame undrawn would have to be added here to compile.
         for w in (1..=40).map(|i| i as f64 * 50.0) {
@@ -365,14 +407,17 @@ mod tests {
         // The body shows everything up to the trailing band and no further.
         assert!((body.contents.origin.x).abs() < 1e-9);
         assert!((body.contents.size.width * picture.width - (859.0 - 40.0)).abs() < 1e-9);
-        assert_eq!(body.frame.size.width, 1720.0 - 40.0, "stretched across the grown lead");
+        assert_eq!(
+            body.frame.size.width,
+            1720.0 - 40.0,
+            "stretched across the grown lead"
+        );
         // The trailing band is still the picture's own trailing 40pt at 1:1.
         let band = &pieces[1];
         assert!((band.contents.size.width * picture.width - 40.0).abs() < 1e-9);
         assert_eq!(band.frame.size.width, 40.0);
         // And the pieces still tile the frame exactly.
-        let area: f64 =
-            pieces.iter().map(|p| p.frame.size.width * p.frame.size.height).sum();
+        let area: f64 = pieces.iter().map(|p| p.frame.size.width * p.frame.size.height).sum();
         assert!((area - frame.width * frame.height).abs() < 1e-6);
     }
 
@@ -398,14 +443,22 @@ mod tests {
         let pieces = crop_pieces(picture, frame);
         let title = &pieces[0];
         assert_eq!(title.frame.origin.y, 0.0, "title band pinned to the top");
-        assert!((title.contents.origin.y).abs() < 1e-9, "showing the picture's top");
+        assert!(
+            (title.contents.origin.y).abs() < 1e-9,
+            "showing the picture's top"
+        );
         assert_eq!(title.frame.size.height, 40.0);
         let body = &pieces[2];
-        assert_eq!(body.frame.origin.y, 40.0, "body starts at the seam below the title");
+        assert_eq!(
+            body.frame.origin.y, 40.0,
+            "body starts at the seam below the title"
+        );
         // Bottom-anchored: the contents reach the picture's bottom edge exactly.
-        let content_bottom =
-            (body.contents.origin.y + body.contents.size.height) * picture.height;
-        assert!((content_bottom - 1081.0).abs() < 1e-9, "contents reach the picture's bottom");
+        let content_bottom = (body.contents.origin.y + body.contents.size.height) * picture.height;
+        assert!(
+            (content_bottom - 1081.0).abs() < 1e-9,
+            "contents reach the picture's bottom"
+        );
         assert_eq!(body.frame.size.height, 540.0 - 40.0);
     }
 

@@ -3,16 +3,18 @@ use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU64, Ordering};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use serde::{Deserialize, Serialize};
 
-use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::layout::WindowLayoutConstraints;
+use crate::layout::domain::area::compute_tiling_area;
+use crate::layout::domain::constraints::{
+    AxisConstraints, clamp_to_constraints, solve_axis_lengths,
+};
+use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, gap_share, reveal_offset};
 use crate::layout::settings::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
 };
-use crate::layout::domain::constraints::{AxisConstraints, clamp_to_constraints, solve_axis_lengths};
-use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, gap_share, reveal_offset};
-use crate::layout::WindowLayoutConstraints;
-use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
+use rini_core::ids::{WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 /// Where a maximized window sat in its column stack, so a second press can put it back.
 ///
@@ -130,9 +132,15 @@ impl LayoutState {
         }
         // Read before the removal, while the neighbours are still where they were.
         let origin = if row_idx > 0 {
-            StackOrigin { anchor: self.columns[col_idx].windows[row_idx - 1], below: true }
+            StackOrigin {
+                anchor: self.columns[col_idx].windows[row_idx - 1],
+                below: true,
+            }
         } else {
-            StackOrigin { anchor: self.columns[col_idx].windows[row_idx + 1], below: false }
+            StackOrigin {
+                anchor: self.columns[col_idx].windows[row_idx + 1],
+                below: false,
+            }
         };
         self.columns[col_idx].ensure_height_weights();
         self.columns[col_idx].windows.remove(row_idx);
@@ -183,7 +191,11 @@ impl LayoutState {
         let Some((anchor_col, anchor_row)) = self.locate(origin.anchor) else {
             return false;
         };
-        let at = if origin.below { anchor_row + 1 } else { anchor_row };
+        let at = if origin.below {
+            anchor_row + 1
+        } else {
+            anchor_row
+        };
         let column = &mut self.columns[anchor_col];
         column.ensure_height_weights();
         let at = at.min(column.windows.len());
@@ -331,7 +343,7 @@ impl LayoutState {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0],
-        height_overridden: false,
+            height_overridden: false,
         };
         let insert_at = (index + 1).min(self.columns.len());
         self.columns.insert(insert_at, column);
@@ -345,7 +357,7 @@ impl LayoutState {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0],
-        height_overridden: false,
+            height_overridden: false,
         });
         self.selected = Some(wid);
         self.align_scroll_to_selected();
@@ -374,7 +386,7 @@ impl LayoutState {
                     width_offset: 0.0,
                     width_overridden: false,
                     height_weights: vec![1.0],
-                height_overridden: false,
+                    height_overridden: false,
                 });
             } else {
                 self.columns[target].ensure_height_weights();
@@ -759,7 +771,7 @@ impl ScrollingLayoutSystem {
                     width_offset: 0.0,
                     width_overridden: false,
                     height_weights: vec![weight],
-                height_overridden: false,
+                    height_overridden: false,
                 },
             );
             state.selected = Some(wid);
@@ -1016,8 +1028,14 @@ impl ScrollingLayoutSystem {
                     _ => None,
                 };
                 if let Some(reveal) = reveal
-                    && let Some(corrected) =
-                        reveal_offset(reveal, tiling, anchor_x, selected_start, selected_width, offset)
+                    && let Some(corrected) = reveal_offset(
+                        reveal,
+                        tiling,
+                        anchor_x,
+                        selected_start,
+                        selected_width,
+                        offset,
+                    )
                 {
                     offset = corrected;
                 }
@@ -1158,7 +1176,6 @@ impl ScrollingLayoutSystem {
         };
         state.columns[col_idx].windows.clone()
     }
-
 
     pub fn move_focus(
         &mut self,
@@ -1598,7 +1615,6 @@ impl ScrollingLayoutSystem {
         moved
     }
 
-
     /// Fold the selection into the column on `side`, or back out of the column it is in.
     ///
     /// `side` names the column this key works with, so one binding per side gives symmetric control.
@@ -1661,7 +1677,10 @@ impl ScrollingLayoutSystem {
         vec![selected]
     }
 
-    pub fn toggle_fullscreen_within_gaps_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
+    pub fn toggle_fullscreen_within_gaps_of_selection(
+        &mut self,
+        layout: LayoutId,
+    ) -> Vec<WindowId> {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1759,7 +1778,6 @@ impl ScrollingLayoutSystem {
 
         vec![selected]
     }
-
 
     pub fn apply_stacking_to_parent_of_selection(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let Some(state) = self.layout_state_mut(layout) else {
@@ -1905,7 +1923,6 @@ impl ScrollingLayoutSystem {
             state.align_scroll_to_selected();
         }
     }
-
 }
 
 #[cfg(test)]
@@ -1915,12 +1932,12 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     use super::{Column, ScrollingLayoutSystem};
-    use rini_core::ids::{WindowId, pid_t};
-    use rustc_hash::FxHashMap as HashMap;
-    use crate::layout::settings::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
+    use crate::layout::settings::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
     use crate::layout::{Direction, LayoutId, ResizeOrientation};
+    use rini_core::ids::{WindowId, pid_t};
+    use rustc_hash::FxHashMap as HashMap;
 
     fn wid(pid: pid_t, idx: u32) -> WindowId {
         WindowId {
@@ -1940,12 +1957,7 @@ mod tests {
         gaps: &GapSettings,
     ) -> Vec<(WindowId, CGRect)> {
         let constraints = HashMap::default();
-        system.calculate_layout(
-            layout,
-            screen,
-            &constraints,
-            gaps,
-        )
+        system.calculate_layout(layout, screen, &constraints, gaps)
     }
 
     fn constraints_none() -> HashMap<WindowId, WindowLayoutConstraints> {
@@ -2031,7 +2043,7 @@ mod tests {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0, 1.0],
-        height_overridden: false,
+            height_overridden: false,
         }];
         state.selected = Some(w1);
 
@@ -2108,7 +2120,7 @@ mod tests {
             width_offset: 0.0,
             width_overridden: false,
             height_weights: vec![1.0, 1.0],
-        height_overridden: false,
+            height_overridden: false,
         }];
         state.selected = Some(locked);
 
@@ -2178,12 +2190,7 @@ mod tests {
         let screen = screen(1200.0, 700.0);
         let gaps = GapSettings::default();
         let tiling = compute_tiling_area(screen, &gaps);
-        let frames = system.calculate_layout(
-            layout,
-            screen,
-            &constraints,
-            &gaps,
-        );
+        let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
         let frame = frame_for(&frames, window);
         assert!(frame.size.width <= tiling.size.width);
         assert!(frame.origin.x >= tiling.origin.x);
@@ -3299,7 +3306,9 @@ mod tests {
             .collect()
     }
 
-    fn stacked_three(settings: ScrollingLayoutSettings) -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
+    fn stacked_three(
+        settings: ScrollingLayoutSettings,
+    ) -> (ScrollingLayoutSystem, LayoutId, [WindowId; 3]) {
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let w = [wid(1, 1), wid(1, 2), wid(1, 3)];
@@ -3311,7 +3320,11 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
         assert!(system.select_window(layout, w[2]));
         system.toggle_fold_of_selection(layout, Direction::Left);
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]], "fixture is one stack");
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[1], w[2]]],
+            "fixture is one stack"
+        );
         (system, layout, w)
     }
 
@@ -3340,7 +3353,11 @@ mod tests {
         system.toggle_fullscreen_within_gaps_of_selection(layout);
         system.toggle_fullscreen_within_gaps_of_selection(layout);
 
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]], "back in its old row");
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[1], w[2]]],
+            "back in its old row"
+        );
         assert!(!system.is_window_full_width(layout, w[1]));
     }
 
@@ -3355,7 +3372,11 @@ mod tests {
         assert_eq!(shape(&system, layout), vec![vec![w[1], w[2]], vec![w[0]]]);
 
         system.toggle_fullscreen_within_gaps_of_selection(layout);
-        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]], "back on top, not below");
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[1], w[2]]],
+            "back on top, not below"
+        );
     }
 
     /// The "if available" half. Every window it could go back beside has closed, so it stays the
@@ -3371,7 +3392,10 @@ mod tests {
 
         system.toggle_fullscreen_within_gaps_of_selection(layout);
         assert_eq!(shape(&system, layout), vec![vec![w[1]]]);
-        assert!(!system.is_window_full_width(layout, w[1]), "it still stops being maximized");
+        assert!(
+            !system.is_window_full_width(layout, w[1]),
+            "it still stops being maximized"
+        );
     }
 
     // The anchor closing must not leave an origin pointing at it: restoring into a window that is
@@ -3386,7 +3410,11 @@ mod tests {
         system.remove_window(w[0]);
 
         system.toggle_fullscreen_within_gaps_of_selection(layout);
-        assert_eq!(shape(&system, layout), vec![vec![w[2]], vec![w[1]]], "no stack to rejoin");
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[2]], vec![w[1]]],
+            "no stack to rejoin"
+        );
     }
 
     // A window alone in its column has nothing to be pulled out of, which is the common case and
@@ -3423,7 +3451,11 @@ mod tests {
         let mut constraints = HashMap::default();
         constraints.insert(
             narrow,
-            WindowLayoutConstraints { is_resizable: true, max_width: 400.0, ..Default::default() },
+            WindowLayoutConstraints {
+                is_resizable: true,
+                max_width: 400.0,
+                ..Default::default()
+            },
         );
         let screen = screen(1000.0, 800.0);
         let gaps = GapSettings::default();
@@ -3457,7 +3489,11 @@ mod tests {
         let mut constraints = HashMap::default();
         constraints.insert(
             top,
-            WindowLayoutConstraints { is_resizable: true, min_height: 100.0, ..Default::default() },
+            WindowLayoutConstraints {
+                is_resizable: true,
+                min_height: 100.0,
+                ..Default::default()
+            },
         );
         let screen = screen(1000.0, 800.0);
         let gaps = GapSettings::default();
@@ -3484,7 +3520,10 @@ mod tests {
         let gaps = GapSettings::default();
         let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
-        assert!((a.size.height - b.size.height).abs() < 2.0, "top {a:?} bottom {b:?}");
+        assert!(
+            (a.size.height - b.size.height).abs() < 2.0,
+            "top {a:?} bottom {b:?}"
+        );
     }
 
     /// A deliberate vertical resize still wins, and still survives a re-render. Equalising
@@ -3506,7 +3545,10 @@ mod tests {
         let gaps = GapSettings::default();
         let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
-        assert!(a.size.height > b.size.height + 10.0, "resize lost: top {a:?} bottom {b:?}");
+        assert!(
+            a.size.height > b.size.height + 10.0,
+            "resize lost: top {a:?} bottom {b:?}"
+        );
     }
 
     /// Folding a third window in re-equalises: the column was not deliberately split, so the new
@@ -3530,7 +3572,10 @@ mod tests {
         let heights: Vec<f64> = w.iter().map(|id| frame_for(&frames, *id).size.height).collect();
         let spread = heights.iter().cloned().fold(f64::MIN, f64::max)
             - heights.iter().cloned().fold(f64::MAX, f64::min);
-        assert!(spread < 2.0, "three folded windows must share the height, got {heights:?}");
+        assert!(
+            spread < 2.0,
+            "three folded windows must share the height, got {heights:?}"
+        );
     }
     /// A window whose minimum width is wider than the configured column gets the width it needs,
     /// and its neighbour starts after it. Without this the window was drawn at the default 50% and
@@ -3548,7 +3593,11 @@ mod tests {
         let mut constraints = HashMap::default();
         constraints.insert(
             acme,
-            WindowLayoutConstraints { is_resizable: true, min_width: 600.0, ..Default::default() },
+            WindowLayoutConstraints {
+                is_resizable: true,
+                min_width: 600.0,
+                ..Default::default()
+            },
         );
         let screen = screen(1000.0, 800.0);
         let gaps = GapSettings::default();
@@ -3601,7 +3650,11 @@ mod tests {
         assert_eq!(shape(&system, layout), vec![vec![left, right]]);
 
         system.toggle_fold_of_selection(layout, Direction::Left);
-        assert_eq!(shape(&system, layout), vec![vec![left], vec![right]], "and out again");
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![left], vec![right]],
+            "and out again"
+        );
     }
 
     /// The first column has nothing to its left, and the left key does NOT quietly fold right
@@ -3642,7 +3695,11 @@ mod tests {
 
         // Out again, to the left of that column, which is where it started.
         system.toggle_fold_of_selection(layout, Direction::Right);
-        assert_eq!(shape(&system, layout), vec![vec![left], vec![right]], "and back out");
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![left], vec![right]],
+            "and back out"
+        );
     }
 
     /// The other key also unfolds, but sends the window out its own way: each key is the inverse of
@@ -3702,7 +3759,11 @@ mod tests {
             let before = shape(&system, layout);
             system.toggle_fold_of_selection(layout, side);
             system.toggle_fold_of_selection(layout, side);
-            assert_eq!(shape(&system, layout), before, "{side:?} from a stack, window {selected:?}");
+            assert_eq!(
+                shape(&system, layout),
+                before,
+                "{side:?} from a stack, window {selected:?}"
+            );
 
             // Starting as its own column, with a neighbour on each side to fold into.
             let mut system = ScrollingLayoutSystem::new(&ScrollingLayoutSettings::default());
@@ -3714,7 +3775,11 @@ mod tests {
             assert!(system.select_window(layout, w[1]));
             let before = shape(&system, layout);
             system.toggle_fold_of_selection(layout, side);
-            assert_ne!(shape(&system, layout), before, "{side:?} should have folded it in");
+            assert_ne!(
+                shape(&system, layout),
+                before,
+                "{side:?} should have folded it in"
+            );
             system.toggle_fold_of_selection(layout, side);
             assert_eq!(shape(&system, layout), before, "{side:?} from a lone column");
         }
@@ -3735,7 +3800,11 @@ mod tests {
             vec![vec![w[0], w[1]], vec![w[2]]],
             "the bottom window is the one that left"
         );
-        assert_eq!(system.selected_window(layout), Some(w[2]), "and it keeps the selection");
+        assert_eq!(
+            system.selected_window(layout),
+            Some(w[2]),
+            "and it keeps the selection"
+        );
     }
 
     #[test]
@@ -3746,7 +3815,11 @@ mod tests {
         system.clear_selection_for_test(layout);
         system.toggle_fold_of_selection(layout, Direction::Left);
 
-        assert_eq!(shape(&system, layout), before, "no selection is not a licence to move w0");
+        assert_eq!(
+            shape(&system, layout),
+            before,
+            "no selection is not a licence to move w0"
+        );
         let _ = w;
     }
 }

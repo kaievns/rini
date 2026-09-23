@@ -18,7 +18,6 @@ impl Direction {
             Self::Down => Self::Up,
         }
     }
-
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

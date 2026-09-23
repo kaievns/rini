@@ -7,7 +7,6 @@ use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use rini_core::ids::pid_t;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, DefinedClass, define_class, exception, msg_send};
@@ -15,12 +14,13 @@ use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication, NSWorks
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString, ns_string};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+pub use rini_core::ids::pid_t;
 
-use rini_core::ids::WindowServerId;
 use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
+use rini_core::ids::WindowServerId;
 
 const NS_KEY_VALUE_OBSERVING_OPTION_NEW: usize = 1 << 0;
 const NS_KEY_VALUE_OBSERVING_OPTION_INITIAL: usize = 1 << 2;

@@ -25,8 +25,8 @@ use crate::input::domain::gesture::{
 };
 use crate::input::event::{Event, EventSink};
 use crate::input::platform::haptics::{self, HapticPattern};
-use crate::input::settings::InputSettings;
 use crate::input::platform::tap;
+use crate::input::settings::InputSettings;
 const K_CGS_EVENT_TYPE_FIELD: CGEventField = CGEventField(55);
 const K_CGS_EVENT_DOCK_CONTROL: i64 = 30;
 const K_GESTURE_HID_TYPE_FIELD: CGEventField = CGEventField(110);
@@ -250,7 +250,9 @@ impl GestureTap {
         }
     }
 
-    fn build_gesture_handlers(settings: &InputSettings) -> (Option<SwipeHandler>, Option<ScrollHandler>) {
+    fn build_gesture_handlers(
+        settings: &InputSettings,
+    ) -> (Option<SwipeHandler>, Option<ScrollHandler>) {
         let swipe_cfg = SwipeConfig::from_settings(settings);
         let swipe = if swipe_cfg.enabled {
             Some(SwipeHandler {
@@ -394,7 +396,8 @@ impl GestureTap {
         }
 
         if is_physical_horizontal_dock_swipe(event_type, event) {
-            let consume = scroll_handler.as_ref().is_some_and(|handler| handler.cfg.consume_dock_swipe);
+            let consume =
+                scroll_handler.as_ref().is_some_and(|handler| handler.cfg.consume_dock_swipe);
             return !consume;
         }
 
@@ -495,7 +498,13 @@ impl GestureTap {
         let delta = (centroid.0 - st.last_x, centroid.1 - st.last_y);
         st.last_x = centroid.0;
         st.last_y = centroid.1;
-        match scroll_step(delta, st.accum_dx, cfg.vertical_tolerance, cfg.distance_pct, cfg.invert_horizontal) {
+        match scroll_step(
+            delta,
+            st.accum_dx,
+            cfg.vertical_tolerance,
+            cfg.distance_pct,
+            cfg.invert_horizontal,
+        ) {
             ScrollStep::OffAxis => None,
             ScrollStep::Accumulating { accumulated } => {
                 st.consuming = true;
@@ -512,7 +521,8 @@ impl GestureTap {
 
     fn send_scroll(&self, delta: f64) {
         let cmd = LC::ScrollStrip { delta };
-        self.events.send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
+        self.events
+            .send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
     }
 
     /// Returns whether this event belongs to a horizontal scrolling gesture

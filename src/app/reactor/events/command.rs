@@ -1,25 +1,25 @@
 use tracing::{error, info, warn};
 
 use super::super::ScreenInfo;
-use crate::windows::domain::request::{AppThreadHandle, Quiet};
-use rini_core::ids::WindowId;
-use crate::windows::domain::raise as raise_manager;
+use crate::app::config::Config;
+use crate::app::logging::{MetricsCommand, handle_command as handle_metrics_command};
 use crate::app::reactor::WorkspaceSwitchOrigin;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::{
     AppManager, DragManager, LayoutManager, WorkspaceSwitchManager,
 };
-use crate::displays::domain::topology::ForwardedSpaceState;
-use rustc_hash::FxHashMap as HashMap;
-use crate::app::config::Config;
-use crate::app::logging::{MetricsCommand, handle_command as handle_metrics_command};
-use crate::workspaces::{EventResponse, LayoutCommand, LayoutEvent};
 use crate::app::reactor::state::RiniState;
 use crate::displays::domain::space_activation::{
     SpaceActivationConfig, SpaceActivationPolicy, ToggleSpaceContext,
 };
+use crate::displays::domain::topology::ForwardedSpaceState;
+use crate::windows::domain::raise as raise_manager;
+use crate::windows::domain::request::{AppThreadHandle, Quiet};
+use crate::workspaces::{EventResponse, LayoutCommand, LayoutEvent};
 use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
 use rini_core::ids::WindowServerId;
+use rustc_hash::FxHashMap as HashMap;
 
 #[derive(Debug, Clone)]
 pub struct LayoutCommandPayload {
@@ -180,7 +180,6 @@ pub fn handle_switch_native_space(
     Ok(EventOutcome::no_change().with_native_space_switch(direction))
 }
 
-
 pub fn handle_close_window(
     window_server_id: Option<WindowServerId>,
 ) -> anyhow::Result<EventOutcome> {
@@ -233,8 +232,7 @@ pub fn handle_command_reactor_save_and_exit(
         // A quit request is conditional on a durable canonical save. Keep Rini running when the
         // snapshot cannot be committed so the user can fix the filesystem problem or retry
         // without losing the only complete in-memory layout.
-        return Ok(EventOutcome::no_change()
-            .with_stdout_line(format!(
+        return Ok(EventOutcome::no_change().with_stdout_line(format!(
             "Could not save the layout file; Rini is still running: {e}"
         )));
     }
@@ -408,9 +406,11 @@ pub fn handle_command_reactor_move_window_to_display(
 
     // The user asked for this display, so it becomes the window's home. A later unplug
     // will evacuate the window elsewhere, and this is the record that brings it back.
-    layout
-        .layout_engine
-        .set_window_display_home(&mut state.display_memory, payload.window, payload.target_space);
+    layout.layout_engine.set_window_display_home(
+        &mut state.display_memory,
+        payload.window,
+        payload.target_space,
+    );
 
     if state
         .windows
@@ -455,8 +455,16 @@ mod tests {
         }
     }
 
-    fn display_payload(space: Option<SpaceId>, active: bool, focus: Option<WindowId>) -> DisplayFocusPayload {
-        DisplayFocusPayload { screen: Some(screen(space)), target_is_active: active, focus_window: focus }
+    fn display_payload(
+        space: Option<SpaceId>,
+        active: bool,
+        focus: Option<WindowId>,
+    ) -> DisplayFocusPayload {
+        DisplayFocusPayload {
+            screen: Some(screen(space)),
+            target_is_active: active,
+            focus_window: focus,
+        }
     }
 
     fn focused_window(outcome: &EventOutcome) -> Option<(SpaceId, WindowId)> {
@@ -468,7 +476,11 @@ mod tests {
 
     #[test]
     fn a_selector_naming_no_display_does_nothing() {
-        let none = DisplayFocusPayload { screen: None, target_is_active: true, focus_window: None };
+        let none = DisplayFocusPayload {
+            screen: None,
+            target_is_active: true,
+            focus_window: None,
+        };
         for outcome in [
             handle_move_mouse_to_display(none.clone()).unwrap(),
             handle_focus_display(none).unwrap(),
@@ -503,13 +515,18 @@ mod tests {
         assert_eq!(focused_window(&moved), Some((SpaceId::new(2), wid())));
 
         let focused = handle_focus_display(payload).unwrap();
-        assert_eq!(focused.mouse_warps, Vec::new(), "the window takes focus, the cursor stays put");
+        assert_eq!(
+            focused.mouse_warps,
+            Vec::new(),
+            "the window takes focus, the cursor stays put"
+        );
         assert_eq!(focused_window(&focused), Some((SpaceId::new(2), wid())));
     }
 
     #[test]
     fn focusing_a_display_with_no_window_on_it_warps_the_cursor_instead() {
-        let outcome = handle_focus_display(display_payload(Some(SpaceId::new(2)), true, None)).unwrap();
+        let outcome =
+            handle_focus_display(display_payload(Some(SpaceId::new(2)), true, None)).unwrap();
         assert_eq!(outcome.mouse_warps, vec![screen(None).frame.mid()]);
         assert_eq!(focused_window(&outcome), None);
     }

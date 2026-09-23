@@ -136,7 +136,6 @@ pub fn spans_display(covered: (f64, f64), display: (f64, f64)) -> bool {
         && (covered.1 - display.1).abs() <= BACKDROP_SIZE_TOLERANCE
 }
 
-
 /// How old a fitting picture may grow before a warm re-captures it anyway.
 ///
 /// One flight of staleness at most under continuous use, without re-capturing everything on
@@ -182,7 +181,10 @@ mod tests {
     fn a_picture_of_this_display_spans_it_including_a_point_of_rounding() {
         assert!(spans_display((1728.0, 1117.0), (1728.0, 1117.0)));
         assert!(spans_display((1729.0, 1116.0), (1728.0, 1117.0)));
-        assert!(!spans_display((1725.0, 1117.0), (1728.0, 1117.0)), "3pt short is not the display");
+        assert!(
+            !spans_display((1725.0, 1117.0), (1728.0, 1117.0)),
+            "3pt short is not the display"
+        );
     }
 
     /// The measured case. A strip re-fit took a window from 918pt to 917pt, and treating that one
@@ -190,25 +192,46 @@ mod tests {
     /// window separately and lets the strip come apart.
     #[test]
     fn a_point_of_rounding_is_not_a_resize() {
-        assert!(!is_a_resize(CGSize::new(918.0, 1081.0), CGSize::new(917.0, 1081.0)));
-        assert!(!is_a_resize(CGSize::new(1720.0, 1081.0), CGSize::new(1719.0, 1081.0)));
-        assert!(!is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(859.0, 1081.0)));
+        assert!(!is_a_resize(
+            CGSize::new(918.0, 1081.0),
+            CGSize::new(917.0, 1081.0)
+        ));
+        assert!(!is_a_resize(
+            CGSize::new(1720.0, 1081.0),
+            CGSize::new(1719.0, 1081.0)
+        ));
+        assert!(!is_a_resize(
+            CGSize::new(859.0, 1081.0),
+            CGSize::new(859.0, 1081.0)
+        ));
     }
 
     /// A real resize is drawn anchored and cropped rather than stretched, so the overlay has to
     /// know which one it is looking at.
     #[test]
     fn a_column_changing_width_is_a_resize() {
-        assert!(is_a_resize(CGSize::new(1440.0, 1081.0), CGSize::new(859.0, 1081.0)));
-        assert!(is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(1720.0, 1081.0)));
-        assert!(is_a_resize(CGSize::new(859.0, 1081.0), CGSize::new(859.0, 540.0)));
+        assert!(is_a_resize(
+            CGSize::new(1440.0, 1081.0),
+            CGSize::new(859.0, 1081.0)
+        ));
+        assert!(is_a_resize(
+            CGSize::new(859.0, 1081.0),
+            CGSize::new(1720.0, 1081.0)
+        ));
+        assert!(is_a_resize(
+            CGSize::new(859.0, 1081.0),
+            CGSize::new(859.0, 540.0)
+        ));
     }
 
     /// The tolerance is proportional, so a point means more on a small window than a large one. That
     /// is the right way round: a point of stretch is invisible across 918pt and obvious across 40pt.
     #[test]
     fn the_tolerance_scales_with_the_window() {
-        assert!(!is_a_resize(CGSize::new(400.0, 400.0), CGSize::new(401.0, 400.0)));
+        assert!(!is_a_resize(
+            CGSize::new(400.0, 400.0),
+            CGSize::new(401.0, 400.0)
+        ));
         assert!(is_a_resize(CGSize::new(40.0, 400.0), CGSize::new(41.0, 400.0)));
     }
 
@@ -244,7 +267,10 @@ mod tests {
     #[test]
     fn a_resized_window_needs_a_new_picture_even_though_the_old_one_is_usable() {
         let old = coverage((859.0, 1081.0), (859.0, 1081.0));
-        assert!(old.is_usable(), "the old picture is perfectly good for the old size");
+        assert!(
+            old.is_usable(),
+            "the old picture is perfectly good for the old size"
+        );
         assert!(needs_capture(Some(old), (1147.0, 1081.0)));
     }
 
@@ -320,37 +346,72 @@ mod tests {
     /// drew as a black screen for the whole animation.
     #[test]
     fn a_desktop_capture_missing_its_wallpaper_is_rejected() {
-        assert!(!is_backdrop_worth_drawing(true, false, (1728.0, 1117.0), (1728.0, 1117.0)));
+        assert!(!is_backdrop_worth_drawing(
+            true,
+            false,
+            (1728.0, 1117.0),
+            (1728.0, 1117.0)
+        ));
     }
 
     #[test]
     fn a_desktop_capture_with_its_wallpaper_is_drawn() {
-        assert!(is_backdrop_worth_drawing(true, true, (1728.0, 1117.0), (1728.0, 1117.0)));
+        assert!(is_backdrop_worth_drawing(
+            true,
+            true,
+            (1728.0, 1117.0),
+            (1728.0, 1117.0)
+        ));
     }
 
     #[test]
     fn a_wallpaperless_capture_is_still_drawn_when_there_is_nothing_to_keep() {
         // Rejecting it would leave the bare black window, which is worse than a desktop with no photo.
-        assert!(is_backdrop_worth_drawing(false, false, (1728.0, 1117.0), (1728.0, 1117.0)));
+        assert!(is_backdrop_worth_drawing(
+            false,
+            false,
+            (1728.0, 1117.0),
+            (1728.0, 1117.0)
+        ));
     }
 
     #[test]
     fn a_desktop_capture_shorter_than_the_display_is_rejected() {
         // Drawn from the top-left at its own size, so the rest of the screen stays black and the
         // captured bar strip lands partway up the display.
-        assert!(!is_backdrop_worth_drawing(true, true, (1728.0, 1085.0), (1728.0, 1117.0)));
-        assert!(!is_backdrop_worth_drawing(false, true, (1728.0, 1085.0), (1728.0, 1117.0)));
+        assert!(!is_backdrop_worth_drawing(
+            true,
+            true,
+            (1728.0, 1085.0),
+            (1728.0, 1117.0)
+        ));
+        assert!(!is_backdrop_worth_drawing(
+            false,
+            true,
+            (1728.0, 1085.0),
+            (1728.0, 1117.0)
+        ));
     }
 
     #[test]
     fn a_desktop_capture_spanning_more_than_the_display_is_rejected() {
         // What a composite of two displays' desktops measures, which cannot be drawn as one backdrop.
-        assert!(!is_backdrop_worth_drawing(true, true, (3456.0, 1117.0), (1728.0, 1117.0)));
+        assert!(!is_backdrop_worth_drawing(
+            true,
+            true,
+            (3456.0, 1117.0),
+            (1728.0, 1117.0)
+        ));
     }
 
     #[test]
     fn a_desktop_capture_a_rounding_error_short_is_still_drawn() {
-        assert!(is_backdrop_worth_drawing(true, true, (1727.5, 1116.5), (1728.0, 1117.0)));
+        assert!(is_backdrop_worth_drawing(
+            true,
+            true,
+            (1727.5, 1116.5),
+            (1728.0, 1117.0)
+        ));
     }
 
     /// The measured failure: a full-width capture drawn into a half-width frame, squashed to fill.
@@ -389,7 +450,9 @@ mod tests {
     fn a_usable_capture_can_still_not_fit_the_frame_it_is_drawn_into() {
         let full_width = coverage((1720.0, 1081.0), (1720.0, 1081.0));
         assert!(full_width.is_usable(), "it covers the window it was taken from");
-        assert!(!fits_frame(full_width.covered, (859.0, 1081.0)), "but not the frame it goes into");
+        assert!(
+            !fits_frame(full_width.covered, (859.0, 1081.0)),
+            "but not the frame it goes into"
+        );
     }
-
 }

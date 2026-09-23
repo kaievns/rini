@@ -16,7 +16,8 @@ pub fn on_screen_fraction(frame: CGRect, display: CGRect) -> f64 {
     }
     let overlap_w = (frame.origin.x + frame.size.width).min(display.origin.x + display.size.width)
         - frame.origin.x.max(display.origin.x);
-    let overlap_h = (frame.origin.y + frame.size.height).min(display.origin.y + display.size.height)
+    let overlap_h = (frame.origin.y + frame.size.height)
+        .min(display.origin.y + display.size.height)
         - frame.origin.y.max(display.origin.y);
     if overlap_w <= 0.0 || overlap_h <= 0.0 {
         return 0.0;
@@ -37,7 +38,7 @@ pub fn resolve_start(
     display: CGRect,
     travel: Option<CGPoint>,
 ) -> CGRect {
-        // A park is judged from both frames, before the synthetic test: apps clamp the real frame past
+    // A park is judged from both frames, before the synthetic test: apps clamp the real frame past
     // the park threshold, and the server may already report the slot. See src/animation/docs/animation-smoothness.md.
     let parked_real = real.is_some_and(|real| is_off_screen(display, real));
     let parked_from = is_off_screen(display, from);
@@ -45,7 +46,11 @@ pub fn resolve_start(
         return match travel {
             Some(d) => translated(to, CGPoint::new(-d.x, -d.y)),
             None => {
-                let park = if parked_real { real.unwrap_or(from) } else { from };
+                let park = if parked_real {
+                    real.unwrap_or(from)
+                } else {
+                    from
+                };
                 park_entry_frame(park, to, display)
             }
         };
@@ -62,7 +67,7 @@ pub fn resolve_start(
 /// moving neighbour it exits past the display edge on the park's side. See "Layout changes" in
 /// `src/animation/docs/animation-smoothness.md`.
 pub fn resolve_end(start: CGRect, to: CGRect, display: CGRect, travel: Option<CGPoint>) -> CGRect {
-        if is_off_screen(display, to) && !is_off_screen(display, start) {
+    if is_off_screen(display, to) && !is_off_screen(display, start) {
         return match travel {
             Some(d) => translated(start, d),
             None => park_entry_frame(to, start, display),
@@ -84,12 +89,10 @@ pub fn neighbour_travel(
     others: &[(CGRect, CGRect, bool)],
     display: CGRect,
 ) -> Option<CGPoint> {
-        others
+    others
         .iter()
         .filter(|(_, _, floating)| !floating)
-        .filter(|(from, to, _)| {
-            !is_off_screen(display, *from) && !is_off_screen(display, *to)
-        })
+        .filter(|(from, to, _)| !is_off_screen(display, *from) && !is_off_screen(display, *to))
         // Moving by origin, not `is_moving`: a neighbour that only resizes has no travel to lend.
         .filter(|(from, to, _)| {
             (to.origin.x - from.origin.x).abs() >= 0.5 || (to.origin.y - from.origin.y).abs() >= 0.5
@@ -104,7 +107,10 @@ pub fn neighbour_travel(
 
 /// `frame` moved by `by`, same size.
 pub fn translated(frame: CGRect, by: CGPoint) -> CGRect {
-    CGRect::new(CGPoint::new(frame.origin.x + by.x, frame.origin.y + by.y), frame.size)
+    CGRect::new(
+        CGPoint::new(frame.origin.x + by.x, frame.origin.y + by.y),
+        frame.size,
+    )
 }
 
 /// The subject frame `neighbour_travel` measures from for one request: the slot it leaves when
@@ -206,7 +212,6 @@ pub fn travels_visibly(requests: &[AnimationRequest]) -> bool {
     requests.iter().any(|request| travel(request) >= MIN_VISIBLE_TRAVEL)
 }
 
-
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::CGSize;
@@ -222,7 +227,6 @@ mod tests {
         size: CGSize { width: 1728.0, height: 1117.0 },
     };
     const RUNS: usize = 200;
-
 
     /// A small deterministic generator, so a failure names its seed and replays.
     struct Gen(u64);
@@ -277,7 +281,12 @@ mod tests {
             rect(4.0, 1149.0, 1720.0, 1081.0), // the row below, mid-jump
         ];
         for frame in frames {
-            let (from, to) = crate::animation::domain::motion::surface::surface_travel(frame, from_offset, to_offset, false);
+            let (from, to) = crate::animation::domain::motion::surface::surface_travel(
+                frame,
+                from_offset,
+                to_offset,
+                false,
+            );
             assert_eq!(from, frame, "at rest the viewport offset is zero");
             assert_eq!(to.origin.x - from.origin.x, 861.0);
             assert_eq!(to.origin.y - from.origin.y, -1117.0);
@@ -290,7 +299,12 @@ mod tests {
     #[test]
     fn a_pinned_window_stands_still() {
         let frame = rect(224.0, 95.0, 1280.0, 960.0);
-        let (from, to) = crate::animation::domain::motion::surface::surface_travel(frame, CGPoint::new(100.0, 0.0), CGPoint::new(-4000.0, 0.0), true);
+        let (from, to) = crate::animation::domain::motion::surface::surface_travel(
+            frame,
+            CGPoint::new(100.0, 0.0),
+            CGPoint::new(-4000.0, 0.0),
+            true,
+        );
         assert_eq!(from, frame);
         assert_eq!(to, frame);
     }
@@ -359,7 +373,10 @@ mod tests {
     #[test]
     fn a_still_window_earns_its_tile_with_any_part_on_screen() {
         assert!(min_on_screen(false) < min_on_screen(true));
-        assert!(min_on_screen(false) > 0.0, "entirely off screen is still not worth drawing");
+        assert!(
+            min_on_screen(false) > 0.0,
+            "entirely off screen is still not worth drawing"
+        );
         assert_eq!(min_on_screen(true), 0.25);
     }
 
@@ -456,7 +473,12 @@ mod tests {
                 let clamp = rng.pt(0.0, 60.0);
                 let real = match rng.below(3) {
                     0 => Some(from),
-                    1 => Some(rect(from.origin.x, from.origin.y - clamp, to.size.width, to.size.height)),
+                    1 => Some(rect(
+                        from.origin.x,
+                        from.origin.y - clamp,
+                        to.size.width,
+                        to.size.height,
+                    )),
                     _ => Some(to),
                 };
                 let got = resolve_start(real, from, to, DISPLAY, None);
@@ -468,7 +490,10 @@ mod tests {
                 };
                 assert_eq!(got.origin.y, to.origin.y, "seed 52: row of {to:?}, got {got:?}");
                 assert_eq!(got.size, to.size, "seed 52: size of {to:?}, got {got:?}");
-                assert_eq!(got.origin.x, expected_x, "seed 52: park {from:?} real {real:?}, got {got:?}");
+                assert_eq!(
+                    got.origin.x, expected_x,
+                    "seed 52: park {from:?} real {real:?}, got {got:?}"
+                );
             }
         }
     }
@@ -552,7 +577,10 @@ mod tests {
                 } else {
                     DISPLAY.max().x
                 };
-                assert_eq!(got.origin.y, start.origin.y, "seed 53: row of {start:?}, got {got:?}");
+                assert_eq!(
+                    got.origin.y, start.origin.y,
+                    "seed 53: row of {start:?}, got {got:?}"
+                );
                 assert_eq!(got.size, start.size, "seed 53: size of {start:?}, got {got:?}");
                 assert_eq!(got.origin.x, expected_x, "seed 53: park {park:?}, got {got:?}");
             }
@@ -568,9 +596,15 @@ mod tests {
                 let park = rng.park(slot.size);
                 let exit = resolve_end(slot, park, DISPLAY, None);
                 let entry = resolve_start(Some(exit), park, slot, DISPLAY, None);
-                assert_eq!(entry.origin.y, slot.origin.y, "seed 54: slot {slot:?}, got {entry:?}");
+                assert_eq!(
+                    entry.origin.y, slot.origin.y,
+                    "seed 54: slot {slot:?}, got {entry:?}"
+                );
                 assert_eq!(entry.size, slot.size, "seed 54: slot {slot:?}, got {entry:?}");
-                assert_eq!(entry.origin.x, exit.origin.x, "seed 54: exit {exit:?}, entry {entry:?}");
+                assert_eq!(
+                    entry.origin.x, exit.origin.x,
+                    "seed 54: exit {exit:?}, entry {entry:?}"
+                );
             }
         }
     }
@@ -597,7 +631,6 @@ mod tests {
             size: CGSize { width: W, height: 1081.0 },
         };
 
-
         fn moved(frame: CGRect, dx: f64) -> CGRect {
             translated(frame, CGPoint::new(dx, 0.0))
         }
@@ -622,7 +655,10 @@ mod tests {
         #[test]
         fn leaving_travels_by_the_neighbours_vector() {
             // A opens a column: A is pushed right by W, B is pushed off to the park.
-            let requests = [(SLOT_A, moved(SLOT_A, W), false), (SLOT_B, RIGHT_PARK, false)];
+            let requests = [
+                (SLOT_A, moved(SLOT_A, W), false),
+                (SLOT_B, RIGHT_PARK, false),
+            ];
             let (start, to) = tile_for(1, &requests);
             assert_eq!(start, SLOT_B);
             assert_eq!(to, moved(SLOT_B, W), "not the corner, not the edge");
@@ -631,7 +667,10 @@ mod tests {
         #[test]
         fn returning_travels_by_the_neighbours_vector() {
             // A column closes: A comes back left by W, B returns from the park to its slot.
-            let requests = [(moved(SLOT_A, W), SLOT_A, false), (RIGHT_PARK, SLOT_B, false)];
+            let requests = [
+                (moved(SLOT_A, W), SLOT_A, false),
+                (RIGHT_PARK, SLOT_B, false),
+            ];
             let (from, to) = tile_for(1, &requests);
             assert_eq!(to, SLOT_B);
             assert_eq!(from, moved(SLOT_B, W), "enters from where the strip was");
@@ -649,7 +688,10 @@ mod tests {
 
         #[test]
         fn a_floating_neighbour_lends_no_travel() {
-            let requests = [(SLOT_A, moved(SLOT_A, 300.0), true), (SLOT_B, RIGHT_PARK, false)];
+            let requests = [
+                (SLOT_A, moved(SLOT_A, 300.0), true),
+                (SLOT_B, RIGHT_PARK, false),
+            ];
             let (_, to) = tile_for(1, &requests);
             assert_eq!(to, park_entry_frame(RIGHT_PARK, SLOT_B, DISPLAY));
         }
@@ -664,7 +706,10 @@ mod tests {
         #[test]
         fn a_parked_neighbour_lends_no_travel() {
             let left_park = rect(-W + 1.0, 1116.0, W, 1081.0);
-            let others = [(left_park, SLOT_A, false), (RIGHT_PARK, moved(RIGHT_PARK, -5.0), false)];
+            let others = [
+                (left_park, SLOT_A, false),
+                (RIGHT_PARK, moved(RIGHT_PARK, -5.0), false),
+            ];
             assert_eq!(neighbour_travel(SLOT_B, &others, DISPLAY), None);
         }
 
@@ -673,10 +718,22 @@ mod tests {
             let far = rect(4.0, 32.0, 400.0, 1081.0);
             let near = rect(1200.0, 32.0, 400.0, 1081.0);
             let subject = rect(1500.0, 32.0, 200.0, 1081.0);
-            let others = [(far, moved(far, 100.0), false), (near, moved(near, -250.0), false)];
-            assert_eq!(neighbour_travel(subject, &others, DISPLAY), Some(CGPoint::new(-250.0, 0.0)));
-            let others = [(near, moved(near, -250.0), false), (far, moved(far, 100.0), false)];
-            assert_eq!(neighbour_travel(subject, &others, DISPLAY), Some(CGPoint::new(-250.0, 0.0)));
+            let others = [
+                (far, moved(far, 100.0), false),
+                (near, moved(near, -250.0), false),
+            ];
+            assert_eq!(
+                neighbour_travel(subject, &others, DISPLAY),
+                Some(CGPoint::new(-250.0, 0.0))
+            );
+            let others = [
+                (near, moved(near, -250.0), false),
+                (far, moved(far, 100.0), false),
+            ];
+            assert_eq!(
+                neighbour_travel(subject, &others, DISPLAY),
+                Some(CGPoint::new(-250.0, 0.0))
+            );
         }
 
         /// N on-screen columns; an open at index k pushes every column from k on by +W and the

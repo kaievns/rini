@@ -6,10 +6,7 @@ use rini_core::ids::SpaceId;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct WorkspaceLayouts {
-    map: rustc_hash::FxHashMap<
-        (SpaceId, crate::workspaces::VirtualWorkspaceId),
-        SpaceLayoutInfo,
-    >,
+    map: rustc_hash::FxHashMap<(SpaceId, crate::workspaces::VirtualWorkspaceId), SpaceLayoutInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -325,7 +322,11 @@ mod tests {
         layouts.ensure_active_for_space(space, CGSize::new(1000.0, 800.0), [ws], &mut tree);
         let strip = layouts.active(space, ws).unwrap();
         layouts.ensure_active_for_space(space, CGSize::new(2000.0, 1200.0), [ws], &mut tree);
-        assert_eq!(layouts.active(space, ws), Some(strip), "a resize must not lose the windows");
+        assert_eq!(
+            layouts.active(space, ws),
+            Some(strip),
+            "a resize must not lose the windows"
+        );
         layouts.ensure_active_for_space(space, CGSize::new(1000.0, 800.0), [ws], &mut tree);
         assert_eq!(layouts.active(space, ws), Some(strip));
         assert_eq!(layouts.all_layouts().len(), 1, "no orphaned layout per size");

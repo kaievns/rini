@@ -149,9 +149,10 @@ impl From<WindowId> for WindowServerId {
     }
 }
 
-
 /// A display, keyed by its CGDirectDisplayID.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(
+    PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
 pub struct ScreenId(u32);
 
 impl ScreenId {
@@ -225,7 +226,10 @@ mod tests {
             serde_json::from_str::<WindowId>(r#""WindowId { pid: 42, idx: 7 }""#).unwrap(),
             wid()
         );
-        assert_eq!(WindowId::from_debug_string(&wid().to_debug_string()), Some(wid()));
+        assert_eq!(
+            WindowId::from_debug_string(&wid().to_debug_string()),
+            Some(wid())
+        );
         assert_eq!(WindowId::from_debug_string("Window { pid: 1, idx: 2 }"), None);
     }
 

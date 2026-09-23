@@ -210,7 +210,10 @@ mod tests {
 /// Waits for `duration` on the current run loop. `tokio::time::sleep` panics under this executor;
 /// see `docs/run-loop-executor.md`.
 pub fn sleep(duration: Duration) -> Sleep {
-    Sleep { deadline: Instant::now() + duration, timer: None }
+    Sleep {
+        deadline: Instant::now() + duration,
+        timer: None,
+    }
 }
 
 pub struct Sleep {

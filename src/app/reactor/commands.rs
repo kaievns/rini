@@ -17,9 +17,9 @@ use crate::animation::platform::engine;
 use crate::displays::domain::screen::ScreenInfo;
 use crate::workspaces as layout;
 
+use super::Reactor;
 use super::events::EventOutcome;
 use super::events::command as command_workflow;
-use super::Reactor;
 
 impl Reactor {
     /// Sends `event` to the animation actor, reporting on stdout either way.
@@ -129,8 +129,7 @@ impl Reactor {
     fn best_space_for_tracked_window(&self, window: WindowId) -> Option<rini_core::ids::SpaceId> {
         self.affinity().best_space_for_window_id(window).or_else(|| {
             let state = self.state.windows.window(window)?;
-            self.affinity()
-                .best_space_for_window(&state.frame_monotonic, state.info.sys_id)
+            self.affinity().best_space_for_window(&state.frame_monotonic, state.info.sys_id)
         })
     }
 
@@ -156,7 +155,11 @@ impl Reactor {
             .as_ref()
             .and_then(|screen| screen.space)
             .is_none_or(|space| self.is_space_active(space));
-        command_workflow::DisplayFocusPayload { screen, target_is_active, focus_window }
+        command_workflow::DisplayFocusPayload {
+            screen,
+            target_is_active,
+            focus_window,
+        }
     }
 
     pub(super) fn on_move_mouse_to_display(
@@ -219,8 +222,12 @@ impl Reactor {
     }
 
     /// The active space a window is currently on, by assignment, then by id, then by frame.
-    fn source_space_for_move(&self, window: WindowId, frame: &objc2_core_foundation::CGRect,
-        window_server_id: Option<WindowServerId>) -> Option<rini_core::ids::SpaceId> {
+    fn source_space_for_move(
+        &self,
+        window: WindowId,
+        frame: &objc2_core_foundation::CGRect,
+        window_server_id: Option<WindowServerId>,
+    ) -> Option<rini_core::ids::SpaceId> {
         self.affinity()
             .assigned_space_for_window_id(window)
             .or_else(|| self.affinity().best_space_for_window_id(window))
@@ -250,16 +257,25 @@ impl Reactor {
         let Some(source_space) =
             self.source_space_for_move(window, &window_frame, window_server_id)
         else {
-            warn!(?window, "Move window to display ignored: source space unavailable");
+            warn!(
+                ?window,
+                "Move window to display ignored: source space unavailable"
+            );
             return Ok(EventOutcome::no_change());
         };
         let Some(target_screen) = self.target_screen_for_move(&selector, source_space) else {
-            warn!(?selector, "Move window to display ignored: target display not found");
+            warn!(
+                ?selector,
+                "Move window to display ignored: target display not found"
+            );
             return Ok(EventOutcome::no_change());
         };
         let Some(target_space) = target_screen.space.filter(|space| self.is_space_active(*space))
         else {
-            warn!(?selector, "Move window to display ignored: target space unavailable");
+            warn!(
+                ?selector,
+                "Move window to display ignored: target space unavailable"
+            );
             return Ok(EventOutcome::no_change());
         };
         if source_space == target_space {

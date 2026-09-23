@@ -2,8 +2,8 @@
 //! config file fills it and hands the whole thing over as `InputSettings`.
 use serde::{Deserialize, Serialize};
 
-use crate::input::platform::haptics::HapticPattern;
 use crate::input::domain::key::HotkeySpec;
+use crate::input::platform::haptics::HapticPattern;
 
 fn yes() -> bool {
     true

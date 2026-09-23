@@ -7,17 +7,17 @@ use std::time::{Duration, Instant};
 
 use tracing::{debug, trace};
 
-use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
-use crate::windows::event::{Event as WindowsEvent, EventSink as WindowsSink};
-use rini_core::ids::{WindowId, WindowServerId};
 use crate::windows::domain::transaction::{Requested, WindowTxStore};
+use crate::windows::event::{Event as WindowsEvent, EventSink as WindowsSink};
 use crate::windows::platform::window_server::{self, WindowIterator};
+use rini_core::ids::{WindowId, WindowServerId};
+use rini_skylight_sys::{CGSEventType, KnownCGSEvent};
 use rustc_hash::FxHashSet as HashSet;
 
-use crate::displays::platform::cgs_notify;
 use crate::displays::event::{Event, EventSink};
-use rini_core::ids::SpaceId;
+use crate::displays::platform::cgs_notify;
 use crate::displays::platform::spaces;
+use rini_core::ids::SpaceId;
 
 #[derive(Debug)]
 pub enum Request {
@@ -161,12 +161,14 @@ impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
                 match event {
                     CGSEventType::Known(KnownCGSEvent::SpaceDestroyed) => {
                         if let Some(space_id) = evt.space_id {
-                            spaces_tx.send(spaces::Notification::SpaceDestroyed(SpaceId::new(space_id)));
+                            spaces_tx
+                                .send(spaces::Notification::SpaceDestroyed(SpaceId::new(space_id)));
                         }
                     }
                     CGSEventType::Known(KnownCGSEvent::SpaceCreated) => {
                         if let Some(space_id) = evt.space_id {
-                            spaces_tx.send(spaces::Notification::SpaceCreated(SpaceId::new(space_id)));
+                            spaces_tx
+                                .send(spaces::Notification::SpaceCreated(SpaceId::new(space_id)));
                         }
                     }
                     CGSEventType::Known(KnownCGSEvent::SpaceCurrentChanged) => {
@@ -249,7 +251,10 @@ impl<W: WindowsSink + Clone + 'static> WindowNotify<W> {
         Ok(())
     }
 
-    fn spawn_focus_resolver(displays_tx: impl EventSink + 'static, focus_wake_rx: mpsc::Receiver<()>) {
+    fn spawn_focus_resolver(
+        displays_tx: impl EventSink + 'static,
+        focus_wake_rx: mpsc::Receiver<()>,
+    ) {
         std::thread::Builder::new()
             .name("window-focus-resolver".to_string())
             .spawn(move || {

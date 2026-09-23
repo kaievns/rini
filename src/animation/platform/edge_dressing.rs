@@ -92,7 +92,6 @@ pub fn dressing_is_real(mean_alpha: f64) -> bool {
 /// The side of the square a [`thumbprint`] samples an image down to.
 const THUMBPRINT_SIDE: usize = 32;
 
-
 /// A small fingerprint of an image's content, for the reveal chase's settledness check.
 pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
     let side = THUMBPRINT_SIDE;
@@ -123,7 +122,9 @@ pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(side * side * 4);
     for y in 0..side {
         // SAFETY: y < side, rows within the context's own buffer.
-        out.extend_from_slice(unsafe { std::slice::from_raw_parts(data.add(y * stride), side * 4) });
+        out.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(data.add(y * stride), side * 4)
+        });
     }
     Some(out)
 }
@@ -161,7 +162,10 @@ pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<Ed
 pub fn ring_expanded(frame: CGRect) -> CGRect {
     CGRect::new(
         CGPoint::new(frame.origin.x - RING_PT, frame.origin.y - RING_PT),
-        CGSize::new(frame.size.width + 2.0 * RING_PT, frame.size.height + 2.0 * RING_PT),
+        CGSize::new(
+            frame.size.width + 2.0 * RING_PT,
+            frame.size.height + 2.0 * RING_PT,
+        ),
     )
 }
 
@@ -209,7 +213,10 @@ pub fn harvest_from_capture(framed: &CGImage, frame: CGSize, scale: f64) -> Opti
     // Layout rects are in window coordinates; the capture's origin is one ring before the window's.
     let crop = |rect: CGRect| {
         CGRect::new(
-            CGPoint::new((rect.origin.x + RING_PT) * scale, (rect.origin.y + RING_PT) * scale),
+            CGPoint::new(
+                (rect.origin.x + RING_PT) * scale,
+                (rect.origin.y + RING_PT) * scale,
+            ),
             CGSize::new(rect.size.width * scale, rect.size.height * scale),
         )
     };
@@ -232,8 +239,8 @@ pub fn harvest_from_capture(framed: &CGImage, frame: CGSize, scale: f64) -> Opti
     }
     let mut corners: [Option<CFRetained<CGImage>>; 4] = [None, None, None, None];
     for (slot, region) in corners.iter_mut().zip(layout.corners) {
-        *slot = copy_region(framed, px_w, px_h, crop(region), Some(radius_px))
-            .map(|(image, ..)| image);
+        *slot =
+            copy_region(framed, px_w, px_h, crop(region), Some(radius_px)).map(|(image, ..)| image);
     }
     Some(EdgeDressing { strips, corners })
 }
@@ -348,7 +355,11 @@ mod tests {
     #[test]
     fn layout_covers_the_perimeter_without_overlap() {
         let layout = dressing_layout(CGSize::new(100.0, 60.0), 1.0, 10.0).unwrap();
-        assert_eq!(layout.strips[0], rect(10.0, 0.0, 80.0, 1.0), "top run between the corners");
+        assert_eq!(
+            layout.strips[0],
+            rect(10.0, 0.0, 80.0, 1.0),
+            "top run between the corners"
+        );
         assert_eq!(layout.strips[1], rect(10.0, 59.0, 80.0, 1.0), "bottom run");
         assert_eq!(layout.strips[2], rect(0.0, 10.0, 1.0, 40.0), "left run");
         assert_eq!(layout.strips[3], rect(99.0, 10.0, 1.0, 40.0), "right run");
@@ -379,12 +390,20 @@ mod tests {
     #[test]
     fn the_boundary_band_straddles_the_window_edge() {
         let layout = boundary_layout(CGSize::new(100.0, 60.0)).unwrap();
-        assert_eq!(layout.strips[0], rect(10.0, -1.0, 80.0, 2.0), "top: 1pt out to 1pt in");
+        assert_eq!(
+            layout.strips[0],
+            rect(10.0, -1.0, 80.0, 2.0),
+            "top: 1pt out to 1pt in"
+        );
         assert_eq!(layout.strips[1], rect(10.0, 59.0, 80.0, 2.0), "bottom");
         assert_eq!(layout.strips[2], rect(-1.0, 10.0, 2.0, 40.0), "left");
         assert_eq!(layout.strips[3], rect(99.0, 10.0, 2.0, 40.0), "right");
         assert_eq!(layout.corners[0], rect(-1.0, -1.0, 11.0, 11.0));
-        assert_eq!(layout.corners[3], rect(90.0, 50.0, 11.0, 11.0), "10pt inside to 1pt outside");
+        assert_eq!(
+            layout.corners[3],
+            rect(90.0, 50.0, 11.0, 11.0),
+            "10pt inside to 1pt outside"
+        );
     }
 
     #[test]
@@ -439,7 +458,10 @@ mod tests {
     }
 
     fn px_size(image: &CGImage) -> (f64, f64) {
-        (CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
+        (
+            CGImage::width(Some(image)) as f64,
+            CGImage::height(Some(image)) as f64,
+        )
     }
 
     #[test]
@@ -447,8 +469,15 @@ mod tests {
         let frame = rect(100.0, 50.0, 60.0, 40.0);
         assert_eq!(ring_expanded(frame), rect(99.0, 49.0, 62.0, 42.0));
         assert_eq!(picture_within_ring(62.0, 42.0, 1.0), rect(1.0, 1.0, 60.0, 40.0));
-        assert_eq!(picture_within_ring(124.0, 84.0, 2.0), rect(2.0, 2.0, 120.0, 80.0));
-        assert_eq!(picture_within_ring(2.0, 2.0, 1.0), rect(1.0, 1.0, 0.0, 0.0), "never negative");
+        assert_eq!(
+            picture_within_ring(124.0, 84.0, 2.0),
+            rect(2.0, 2.0, 120.0, 80.0)
+        );
+        assert_eq!(
+            picture_within_ring(2.0, 2.0, 1.0),
+            rect(1.0, 1.0, 0.0, 0.0),
+            "never negative"
+        );
     }
 
     #[test]

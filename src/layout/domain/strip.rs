@@ -141,7 +141,11 @@ mod tests {
     fn niri_navigation_pins_the_strip_to_the_left_whatever_the_alignment() {
         for align in [Align::Left, Align::Center, Align::Right] {
             for idx in 0..3 {
-                assert_eq!(anchor(idx, 3, align, Nav::Niri, false), 0.0, "{align:?} col {idx}");
+                assert_eq!(
+                    anchor(idx, 3, align, Nav::Niri, false),
+                    0.0,
+                    "{align:?} col {idx}"
+                );
             }
         }
     }
@@ -153,9 +157,21 @@ mod tests {
 
     #[test]
     fn anchored_navigation_sits_the_ends_flush_and_the_middle_at_its_alignment() {
-        assert_eq!(anchor(0, 3, Align::Center, Nav::Anchored, false), 0.0, "first is flush left");
-        assert_eq!(anchor(1, 3, Align::Center, Nav::Anchored, false), 300.0, "middle is centred");
-        assert_eq!(anchor(2, 3, Align::Center, Nav::Anchored, false), 600.0, "last is flush right");
+        assert_eq!(
+            anchor(0, 3, Align::Center, Nav::Anchored, false),
+            0.0,
+            "first is flush left"
+        );
+        assert_eq!(
+            anchor(1, 3, Align::Center, Nav::Anchored, false),
+            300.0,
+            "middle is centred"
+        );
+        assert_eq!(
+            anchor(2, 3, Align::Center, Nav::Anchored, false),
+            600.0,
+            "last is flush right"
+        );
     }
 
     #[test]
@@ -185,7 +201,10 @@ mod tests {
     fn column_starts_accumulate_width_and_one_gap_each() {
         let (starts, max) = column_starts(&[400.0, 200.0, 400.0], 10.0);
         assert_eq!(starts, vec![0.0, 410.0, 620.0]);
-        assert_eq!(max, 620.0, "scrolling to the last column's start is the end of the strip");
+        assert_eq!(
+            max, 620.0,
+            "scrolling to the last column's start is the end of the strip"
+        );
     }
 
     #[test]
@@ -200,9 +219,15 @@ mod tests {
         let gap = 12.0;
         for (ratio, abreast) in [(1.0, 1.0), (0.5, 2.0), (1.0 / 3.0, 3.0), (0.25, 4.0)] {
             let share = gap_share(ratio, gap);
-            assert!((share - gap * (abreast - 1.0) / abreast).abs() < 1e-9, "ratio {ratio}");
+            assert!(
+                (share - gap * (abreast - 1.0) / abreast).abs() < 1e-9,
+                "ratio {ratio}"
+            );
             let total = (1000.0 * ratio - share) * abreast + gap * (abreast - 1.0);
-            assert!((total - 1000.0).abs() < 1e-9, "{abreast} columns must fill the viewport");
+            assert!(
+                (total - 1000.0).abs() < 1e-9,
+                "{abreast} columns must fill the viewport"
+            );
         }
     }
 
@@ -216,7 +241,11 @@ mod tests {
     #[test]
     fn a_column_already_in_view_needs_no_scroll() {
         for reveal in [Reveal::FromLeft, Reveal::FromRight, Reveal::Either] {
-            assert_eq!(reveal_offset(reveal, tiling(), 0.0, 100.0, 400.0, 0.0), None, "{reveal:?}");
+            assert_eq!(
+                reveal_offset(reveal, tiling(), 0.0, 100.0, 400.0, 0.0),
+                None,
+                "{reveal:?}"
+            );
         }
     }
 
@@ -240,8 +269,16 @@ mod tests {
     fn an_oversized_column_shows_the_edge_it_is_approached_from() {
         let wide = 1400.0;
         let from_right = reveal_offset(Reveal::FromRight, tiling(), 0.0, 0.0, wide, 100.0);
-        assert_eq!(from_right, Some(0.0), "coming from the right, correct the left edge");
+        assert_eq!(
+            from_right,
+            Some(0.0),
+            "coming from the right, correct the left edge"
+        );
         let from_left = reveal_offset(Reveal::FromLeft, tiling(), 0.0, 0.0, wide, 100.0);
-        assert_eq!(from_left, Some(400.0), "coming from the left, correct the right edge");
+        assert_eq!(
+            from_left,
+            Some(400.0),
+            "coming from the left, correct the right edge"
+        );
     }
 }

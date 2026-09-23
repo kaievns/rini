@@ -39,7 +39,10 @@ pub(in crate::animation) enum Admitted {
 }
 
 /// The merge decision for one tile.
-pub(in crate::animation) fn merge_action(current_to: Option<CGRect>, incoming_to: CGRect) -> Admitted {
+pub(in crate::animation) fn merge_action(
+    current_to: Option<CGRect>,
+    incoming_to: CGRect,
+) -> Admitted {
     match current_to {
         Some(to) if to.same_as(incoming_to) => Admitted::Redundant,
         Some(_) => Admitted::Retargeted,
@@ -155,6 +158,10 @@ pub(in crate::animation) fn frame_zero_work(
             chase_set.push(*entry);
         }
     }
-    let now_frames = if holding { final_frames.to_vec() } else { entrance_frames.to_vec() };
+    let now_frames = if holding {
+        final_frames.to_vec()
+    } else {
+        entrance_frames.to_vec()
+    };
     (holding, chase_set, now_frames)
 }

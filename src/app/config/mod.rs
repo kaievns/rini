@@ -4,32 +4,29 @@
 use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::bail;
-pub use rini_ipc::protocol::{ConfigCommand, WorkspaceSelector};
-pub use crate::windows::domain::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
 pub use crate::displays::platform::cursor_warp::StackedUpperSide;
-pub use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 pub use crate::layout::settings::{
     BaseLayoutSettings, GapOverride, GapSettings, InnerGaps, LayoutSettings, OuterGaps,
     ScrollingAlignment, ScrollingFocusNavigationStyle, ScrollingGestureSettings,
     ScrollingLayoutSettings, WindowInsertionPoint,
 };
+pub use crate::windows::domain::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
+pub use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
+use anyhow::bail;
+pub use rini_ipc::protocol::{ConfigCommand, WorkspaceSelector};
 use serde::{Deserialize, Serialize};
 
-use rustc_hash::FxHashMap as HashMap;
 use crate::input::domain::key::{Hotkey, HotkeySpec};
+use rustc_hash::FxHashMap as HashMap;
 
 pub mod actor;
 pub mod watcher;
 
 pub use crate::input::domain::binding::{Command, ExecCmd, WmCmd, WmCommand};
 pub use crate::input::platform::haptics::HapticPattern;
-pub use crate::input::settings::{GestureSettings, InputSettings, ScrollGestureSettings, WindowSnappingSettings};
-
-
-
-
-
+pub use crate::input::settings::{
+    GestureSettings, InputSettings, ScrollGestureSettings, WindowSnappingSettings,
+};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -123,7 +120,6 @@ impl<'de> Deserialize<'de> for Config {
 unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
-
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
@@ -170,27 +166,6 @@ pub struct Settings {
     pub hot_reload: bool,
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 impl Settings {
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
@@ -202,7 +177,6 @@ impl Settings {
             ));
         }
 
-
         issues.extend(self.layout.validate());
 
         issues.extend(self.gestures.validate());
@@ -211,20 +185,13 @@ impl Settings {
     }
 }
 
-
-
-
-
-
 fn yes() -> bool {
     true
 }
 
-
 fn default_animation_duration() -> f64 {
     0.35
 }
-
 
 #[allow(dead_code)]
 pub fn default_stacked_lower_top_at() -> f64 {
@@ -237,11 +204,8 @@ fn no() -> bool {
     false
 }
 
-
-
 // Interpreted as normalized fraction when <= 1.0. If > 1.0 and <= 100.0,
 // it is treated as a percentage (e.g. 40.0 -> 0.40).
-
 
 impl Config {
     pub fn read(path: &Path) -> anyhow::Result<Config> {
@@ -288,8 +252,6 @@ impl Config {
 
         issues
     }
-
-
 
     /// no need to pull in a dep for just this
     fn levenshtein(a: &str, b: &str) -> usize {
@@ -440,8 +402,10 @@ impl Config {
                 let mut keys = Vec::new();
                 let mut key_specs = Vec::new();
                 for (key, cmd) in c.keys {
-                    let expanded_key =
-                        crate::input::domain::key::expand_modifier_combination(&key, &c.modifier_combinations);
+                    let expanded_key = crate::input::domain::key::expand_modifier_combination(
+                        &key,
+                        &c.modifier_combinations,
+                    );
                     let normalized_key = crate::input::domain::key::normalize_spec(&expanded_key);
                     let Ok(hotkey) = Hotkey::from_str(&normalized_key) else {
                         bail!("Could not parse hotkey: {key}");
@@ -475,11 +439,13 @@ impl Config {
         let keys = document.get("keys")?.as_table()?;
         keys.values()
             .filter_map(toml::Value::as_str)
-            .find(|command| serde_json::from_value::<WmCommand>(serde_json::Value::String(command.to_string())).is_err())
+            .find(|command| {
+                serde_json::from_value::<WmCommand>(serde_json::Value::String(command.to_string()))
+                    .is_err()
+            })
             .map(str::to_owned)
     }
 }
-
 
 impl From<&Config> for InputSettings {
     fn from(config: &Config) -> Self {
@@ -694,8 +660,7 @@ mod tests {
 
     #[test]
     fn test_levenshtein_suggests() {
-        let err =
-            "unknown variant `toggle_stak`, expected one of `toggle_stack`, `unjoin_windows`";
+        let err = "unknown variant `toggle_stak`, expected one of `toggle_stack`, `unjoin_windows`";
         let token = Config::extract_unknown_variant(err).unwrap();
         assert_eq!(token, "toggle_stak||toggle_stack,unjoin_windows");
         let suggestion = Config::suggest_similar_command(&token);
@@ -762,14 +727,11 @@ mod tests {
 
     #[test]
     fn a_misspelt_command_gets_a_suggestion() {
-        let err = Config::parse(
-            "[settings]\n[keys]\n\"Alt + Z\" = \"toggle_space_activate\"\n",
-        )
-        .unwrap_err()
-        .to_string();
+        let err = Config::parse("[settings]\n[keys]\n\"Alt + Z\" = \"toggle_space_activate\"\n")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("Did you mean `toggle_space_activated`"), "{err}");
     }
-
 
     #[test]
     fn input_settings_are_assembled_from_both_the_input_and_the_tiling_tables() {

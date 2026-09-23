@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use std::process::{self};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse};
 use rini_core::ids::WindowId as InternalWindowId;
-use rini_ipc::protocol::{self as reactor, DisplaySelector};
-use rini_ipc::protocol::WorkspaceSelector;
-use rini_ipc::RiniMachClient;
 use rini_core::ids::WindowServerId;
+use rini_ipc::RiniMachClient;
+use rini_ipc::protocol::WorkspaceSelector;
+use rini_ipc::protocol::{self as reactor, DisplaySelector};
+use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -382,7 +382,6 @@ enum ConfigCommands {
     Reload,
 }
 
-
 #[derive(Subcommand)]
 enum DisplayCommands {
     /// Focus a display by direction, index, or UUID.
@@ -599,9 +598,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
                 )
             } else {
                 (
-                    absolute_layout_path(
-                        file.path.expect("clap requires either PATH or --saved"),
-                    )?,
+                    absolute_layout_path(file.path.expect("clap requires either PATH or --saved"))?,
                     rini_ipc::protocol::RestoreSource::SavedActiveSpace,
                 )
             };
@@ -619,13 +616,11 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::DebugWarmSnapshots => CliCommand::Reactor(reactor::Command::Reactor(
             reactor::ReactorCommand::DebugWarmSnapshots,
         )),
-        ExecuteCommands::DebugOverlaySlide { dx, dy, duration_ms } => CliCommand::Reactor(
-            reactor::Command::Reactor(reactor::ReactorCommand::DebugOverlaySlide {
-                dx,
-                dy,
-                duration_ms,
-            }),
-        ),
+        ExecuteCommands::DebugOverlaySlide { dx, dy, duration_ms } => {
+            CliCommand::Reactor(reactor::Command::Reactor(
+                reactor::ReactorCommand::DebugOverlaySlide { dx, dy, duration_ms },
+            ))
+        }
         ExecuteCommands::Serialize => {
             CliCommand::Reactor(reactor::Command::Reactor(reactor::ReactorCommand::Serialize))
         }
@@ -657,18 +652,18 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
 
 fn into_protocol_command(command: CliCommand) -> Result<rini_ipc::protocol::RiniCommand, String> {
     match command {
-        CliCommand::Config(command) => {
-            Ok(rini_ipc::protocol::RiniCommand::Config(decode_protocol(command)?))
-        }
-        CliCommand::Reactor(reactor::Command::Layout(command)) => {
-            Ok(rini_ipc::protocol::RiniCommand::Layout(decode_protocol(command)?))
-        }
-        CliCommand::Reactor(reactor::Command::Metrics(command)) => {
-            Ok(rini_ipc::protocol::RiniCommand::Metrics(decode_protocol(command)?))
-        }
-        CliCommand::Reactor(reactor::Command::Reactor(command)) => {
-            Ok(rini_ipc::protocol::RiniCommand::Reactor(decode_protocol(command)?))
-        }
+        CliCommand::Config(command) => Ok(rini_ipc::protocol::RiniCommand::Config(
+            decode_protocol(command)?,
+        )),
+        CliCommand::Reactor(reactor::Command::Layout(command)) => Ok(
+            rini_ipc::protocol::RiniCommand::Layout(decode_protocol(command)?),
+        ),
+        CliCommand::Reactor(reactor::Command::Metrics(command)) => Ok(
+            rini_ipc::protocol::RiniCommand::Metrics(decode_protocol(command)?),
+        ),
+        CliCommand::Reactor(reactor::Command::Reactor(command)) => Ok(
+            rini_ipc::protocol::RiniCommand::Reactor(decode_protocol(command)?),
+        ),
     }
 }
 
@@ -778,7 +773,9 @@ fn parse_window_id(input: &str) -> Result<InternalWindowId, String> {
     ))
 }
 
-fn protocol_window_id(window_id: &InternalWindowId) -> Result<rini_ipc::protocol::WindowId, String> {
+fn protocol_window_id(
+    window_id: &InternalWindowId,
+) -> Result<rini_ipc::protocol::WindowId, String> {
     rini_ipc::protocol::WindowId::new(window_id.pid, window_id.idx.get())
         .ok_or_else(|| "window id index must be non-zero".to_string())
 }
@@ -796,7 +793,6 @@ fn parse_event_kind(input: &str) -> Result<EventKind, String> {
         )),
     }
 }
-
 
 fn map_workspace_command(cmd: WorkspaceCommands) -> Result<CliCommand, String> {
     use rini_ipc::protocol::LayoutCommand as LC;
@@ -907,7 +903,6 @@ fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
 
     Ok(CliCommand::Config(cfg_cmd))
 }
-
 
 fn map_space_command(cmd: SpaceCommands) -> Result<CliCommand, String> {
     let command = match cmd {
@@ -1072,15 +1067,25 @@ mod tests {
                 },
             ),
             ("toggle-float", WindowCommands::ToggleFloat),
-            ("toggle-fullscreen-within-gaps", WindowCommands::ToggleFullscreenWithinGaps),
-            ("toggle-fold", WindowCommands::ToggleFold { direction: "left".into() }),
+            (
+                "toggle-fullscreen-within-gaps",
+                WindowCommands::ToggleFullscreenWithinGaps,
+            ),
+            (
+                "toggle-fold",
+                WindowCommands::ToggleFold { direction: "left".into() },
+            ),
             (
                 "resize-grow",
-                WindowCommands::ResizeGrow { orientation: CliResizeOrientation::Horizontal },
+                WindowCommands::ResizeGrow {
+                    orientation: CliResizeOrientation::Horizontal,
+                },
             ),
             (
                 "resize-shrink",
-                WindowCommands::ResizeShrink { orientation: CliResizeOrientation::Horizontal },
+                WindowCommands::ResizeShrink {
+                    orientation: CliResizeOrientation::Horizontal,
+                },
             ),
             ("resize-by", WindowCommands::ResizeBy { amount: 0.05 }),
         ];
@@ -1116,7 +1121,10 @@ mod tests {
     #[test]
     fn a_direction_is_read_case_and_space_insensitively() {
         for text in ["left", "LEFT", " Left "] {
-            assert_eq!(parse_direction(text).unwrap(), rini_ipc::protocol::Direction::Left);
+            assert_eq!(
+                parse_direction(text).unwrap(),
+                rini_ipc::protocol::Direction::Left
+            );
         }
         assert!(parse_direction("sideways").is_err());
         assert!(parse_direction("").is_err());
@@ -1136,7 +1144,10 @@ mod tests {
                 .and_then(into_protocol_command)
                 .unwrap();
             let wire = serde_json::to_value(&mapped).unwrap();
-            assert!(!seen.contains(&wire), "an orientation duplicates another: {wire}");
+            assert!(
+                !seen.contains(&wire),
+                "an orientation duplicates another: {wire}"
+            );
             seen.push(wire);
         }
     }
@@ -1144,7 +1155,8 @@ mod tests {
     #[test]
     fn a_window_subcommand_with_a_bad_direction_fails_rather_than_defaulting() {
         assert!(
-            map_window_command(WindowCommands::ToggleFold { direction: "sideways".into() }).is_err(),
+            map_window_command(WindowCommands::ToggleFold { direction: "sideways".into() })
+                .is_err(),
             "a typo must not silently become one of the two real directions"
         );
     }

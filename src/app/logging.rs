@@ -67,4 +67,3 @@ fn print_histograms(timing_layer: &TimingLayer) {
         println!();
     });
 }
-

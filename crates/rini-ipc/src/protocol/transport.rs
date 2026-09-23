@@ -129,7 +129,6 @@ mod tests {
         assert_eq!(response.into_result().unwrap()[0].name, "main");
     }
 
-
     #[test]
     fn legacy_window_id_strings_still_decode() {
         let request: RiniRequest = serde_json::from_value(serde_json::json!({

@@ -10,10 +10,10 @@ use objc2_core_foundation::{CFArray, CFRetained, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
-use rini_core::ids::WindowId;
-use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 use crate::animation::platform::edge_dressing::dressing_after_insert;
+use rini_core::ids::WindowId;
 use rini_core::ids::WindowServerId;
+use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 
 pub use crate::animation::domain::motion::fit::{
     Coverage, fits_frame, is_a_resize, is_backdrop_worth_drawing, needs_capture, outgrows,
@@ -92,9 +92,8 @@ fn capture_list_via_skylight(
     }
     let cid = unsafe { SLSMainConnectionID() };
     let ids: Vec<u32> = windows.iter().map(|w| w.as_u32()).collect();
-    let array: *mut CFArray<CGImage> = unsafe {
-        SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS)
-    };
+    let array: *mut CFArray<CGImage> =
+        unsafe { SLSHWCaptureWindowList(cid, ids.as_ptr(), ids.len() as c_int, CAPTURE_OPTIONS) };
     if array.is_null() {
         return None;
     }
@@ -106,7 +105,10 @@ fn capture_list_via_skylight(
     let px_h = CGImage::height(Some(&image)) as f64;
     Some(WindowSnapshot {
         image: SnapshotImage::Bitmap(image),
-        coverage: Coverage { covered: (px_w / scale, px_h / scale), window: covers },
+        coverage: Coverage {
+            covered: (px_w / scale, px_h / scale),
+            window: covers,
+        },
         source: SnapshotSource::SkyLight,
         dressing: None,
         taken: std::time::Instant::now(),
@@ -343,7 +345,10 @@ mod tests {
     use super::*;
 
     fn wid(idx: u32) -> WindowId {
-        WindowId { pid: 1, idx: NonZeroU32::new(idx).unwrap() }
+        WindowId {
+            pid: 1,
+            idx: NonZeroU32::new(idx).unwrap(),
+        }
     }
 
     fn coverage(covered: (f64, f64), window: (f64, f64)) -> Coverage {
@@ -369,13 +374,17 @@ mod tests {
 
     impl CarriesOver for Dressed {
         fn inherit(&mut self, previous: &Self) {
-            self.dressing =
-                crate::animation::platform::edge_dressing::dressing_after_insert(previous.dressing, self.dressing);
+            self.dressing = crate::animation::platform::edge_dressing::dressing_after_insert(
+                previous.dressing,
+                self.dressing,
+            );
         }
 
         fn absorb(&mut self, refused: Self) {
-            self.dressing =
-                crate::animation::platform::edge_dressing::dressing_after_insert(self.dressing, refused.dressing);
+            self.dressing = crate::animation::platform::edge_dressing::dressing_after_insert(
+                self.dressing,
+                refused.dressing,
+            );
         }
     }
 
@@ -384,8 +393,20 @@ mod tests {
         let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
         let good = coverage((859.0, 1081.0), (859.0, 1081.0));
         let sliver = coverage((40.0, 1081.0), (859.0, 1081.0));
-        cache.insert(wid(1), Dressed { coverage: good, dressing: Some(1) });
-        cache.insert(wid(1), Dressed { coverage: sliver, dressing: Some(2) });
+        cache.insert(
+            wid(1),
+            Dressed {
+                coverage: good,
+                dressing: Some(1),
+            },
+        );
+        cache.insert(
+            wid(1),
+            Dressed {
+                coverage: sliver,
+                dressing: Some(2),
+            },
+        );
         let held = cache.get(wid(1)).unwrap();
         assert_eq!(held.coverage.covered.0, 859.0, "the pixels were refused");
         assert_eq!(held.dressing, Some(2), "but the fresher ring was kept");
@@ -395,7 +416,13 @@ mod tests {
     fn an_accepted_capture_without_a_harvest_inherits_the_worn_dressing() {
         let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
         let good = coverage((859.0, 1081.0), (859.0, 1081.0));
-        cache.insert(wid(1), Dressed { coverage: good, dressing: Some(1) });
+        cache.insert(
+            wid(1),
+            Dressed {
+                coverage: good,
+                dressing: Some(1),
+            },
+        );
         cache.insert(wid(1), Dressed { coverage: good, dressing: None });
         assert_eq!(cache.get(wid(1)).unwrap().dressing, Some(1));
     }

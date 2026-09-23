@@ -13,5 +13,9 @@ pub mod window_server;
 
 #[inline(always)]
 pub(crate) fn cg_ok(err: objc2_core_graphics::CGError) -> Result<(), objc2_core_graphics::CGError> {
-    if err == objc2_core_graphics::CGError::Success { Ok(()) } else { Err(err) }
+    if err == objc2_core_graphics::CGError::Success {
+        Ok(())
+    } else {
+        Err(err)
+    }
 }

@@ -1,18 +1,18 @@
 use tracing::{debug, trace};
 
 use super::window;
-use crate::windows::domain::info::{AppInfo, WindowInfo};
-use rini_core::ids::{WindowId, pid_t};
 use crate::app::reactor::LayoutEvent;
+use crate::windows::domain::info::{AppInfo, WindowInfo};
+use crate::windows::domain::state::{WindowFilter, WindowState};
 use crate::windows::domain::transaction::TransactionManager;
 use crate::windows::platform::window_server::{compute_window_manageability, looks_gone};
-use crate::windows::domain::state::{WindowFilter, WindowState};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use std::collections::BTreeMap;
 use crate::workspaces::domain::app_rules::AfterRules;
 use crate::workspaces::engine::{OnScreenEntry, on_screen_entry};
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowServerId;
+use rini_core::ids::{WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::BTreeMap;
 
 /// Handler for window discovery events, responsible for processing newly discovered windows
 /// and managing the lifecycle of window state in the reactor.
@@ -124,14 +124,12 @@ fn sync_window_server_id_mapping(
         if let Some(previous_wid) = state.windows.track_window_server_id(new_wsid, wid)
             && previous_wid != wid
         {
-            layout
-                .layout_engine
-                .rekey_window_identity(
-                    &mut state.windows,
-                    &mut state.display_memory,
-                    previous_wid,
-                    wid,
-                );
+            layout.layout_engine.rekey_window_identity(
+                &mut state.windows,
+                &mut state.display_memory,
+                previous_wid,
+                wid,
+            );
             outcome =
                 outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(previous_wid));
             state.windows.remove_window(previous_wid);
@@ -174,7 +172,6 @@ pub(crate) fn identify_stale_windows(
     known_visible: &[WindowId],
     snapshot: &StaleCleanupSnapshot,
 ) -> (Vec<WindowId>, bool) {
-
     let known_visible_set: HashSet<WindowId> = known_visible.iter().cloned().collect();
     let pending_refresh = snapshot.pending_refresh;
 
@@ -541,8 +538,13 @@ pub(crate) fn emit_layout_events(
                 });
                 // Discovery re-lists every window below, so only the removal matters here.
                 let before = layout.layout_engine.before_rules(&state.windows, space, wid);
-                if layout.layout_engine.settle_app_rule(&mut state.windows, wid, space, before, &assign_result)
-                    == AfterRules::RemoveFromLayout
+                if layout.layout_engine.settle_app_rule(
+                    &mut state.windows,
+                    wid,
+                    space,
+                    before,
+                    &assign_result,
+                ) == AfterRules::RemoveFromLayout
                 {
                     outcome = outcome.with_layout_event(LayoutEvent::WindowRemoved(wid));
                 }
@@ -633,17 +635,24 @@ mod tests {
 
     /// The server answers, and its answer is that the window is neither suitable nor on screen.
     fn gone(wsid: u32) -> StaleWindowObservation {
-        StaleWindowObservation { suitable: Some(false), ordered_in: Some(false), ..present(wsid) }
+        StaleWindowObservation {
+            suitable: Some(false),
+            ordered_in: Some(false),
+            ..present(wsid)
+        }
     }
 
     /// The server did not answer. Not the same as answering "gone".
     fn unanswered(wsid: u32) -> StaleWindowObservation {
-        StaleWindowObservation { info: None, suitable: None, ordered_in: None, ..present(wsid) }
+        StaleWindowObservation {
+            info: None,
+            suitable: None,
+            ordered_in: None,
+            ..present(wsid)
+        }
     }
 
-    fn snapshot(
-        observations: Vec<(u32, StaleWindowObservation)>,
-    ) -> StaleCleanupSnapshot {
+    fn snapshot(observations: Vec<(u32, StaleWindowObservation)>) -> StaleCleanupSnapshot {
         StaleCleanupSnapshot {
             pending_refresh: false,
             suppressed: false,
@@ -700,7 +709,11 @@ mod tests {
         state.windows.track_window_server_id(wsid, wid(2, 9));
         let snap = snapshot(vec![(1, gone(1)), (9, gone(9))]);
         let (stale, _) = identify_stale_windows(&state, 1, &[], &snap);
-        assert_eq!(stale, vec![wid(1, 1)], "pid 2's window is not this app's business");
+        assert_eq!(
+            stale,
+            vec![wid(1, 1)],
+            "pid 2's window is not this app's business"
+        );
     }
 
     #[test]
@@ -767,6 +780,9 @@ mod tests {
         state.windows.insert_window(wid(1, 1), WindowState::from(info));
         state.windows.track_window_server_id(WindowServerId::new(1), wid(1, 1));
         let (stale, _) = identify_stale_windows(&state, 1, &[], &snapshot(vec![(1, gone(1))]));
-        assert!(stale.is_empty(), "nothing visible and nothing listed teaches nothing");
+        assert!(
+            stale.is_empty(),
+            "nothing visible and nothing listed teaches nothing"
+        );
     }
 }

@@ -1,4 +1,11 @@
-#![allow(non_camel_case_types, non_upper_case_globals, non_snake_case, dead_code, improper_ctypes, unsafe_op_in_unsafe_fn)]
+#![allow(
+    non_camel_case_types,
+    non_upper_case_globals,
+    non_snake_case,
+    dead_code,
+    improper_ctypes,
+    unsafe_op_in_unsafe_fn
+)]
 #![allow(clippy::missing_safety_doc)]
 //! Raw Mach messaging: types, constants, the `mach_msg` family, bootstrap lookup, and the
 //! send/receive helpers rini builds its IPC and its SkyLight server-port queries on. No policy.
@@ -10,8 +17,6 @@ use std::os::raw::{c_char, c_int, c_void};
 use tracing::{debug, error};
 
 pub const MAX_MESSAGE_SIZE: u32 = 262_144;
-
-
 
 pub type kern_return_t = c_int;
 pub type mach_port_t = u32;
@@ -74,10 +79,6 @@ pub const fn MACH_MSGH_BITS_LOCAL(bits: u32) -> u32 {
     (bits >> 8) & 0xff
 }
 
-
-
-
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct mach_msg_header_t {
@@ -101,12 +102,6 @@ pub struct ndr_record_t {
     pub float_rep: u8,
     pub reserved2: u8,
 }
-
-
-
-
-
-
 
 #[repr(C, align(8))]
 pub struct aligned_message_t<T>(pub T);
@@ -239,23 +234,6 @@ unsafe extern "C" {
 pub const MAX_MESSAGE_SIZE_USIZE: usize = MAX_MESSAGE_SIZE as usize;
 pub type mach_message_t = mach_inline_message_t<MAX_MESSAGE_SIZE_USIZE>;
 pub type mach_buffer_t = mach_receive_buffer_t<MAX_MESSAGE_SIZE_USIZE>;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 pub unsafe fn mach_get_bs_port(bs_name: &CStr) -> mach_port_t {
     let mut bs_port: mach_port_t = 0;
@@ -597,8 +575,6 @@ pub unsafe fn mach_send_message_with_reply_port(
     receive_message_on_port(reply_port, response_buf, "mach_send_message_with_reply_port")
 }
 
-
-
 pub unsafe fn mach_receive_message_on_port(
     reply_port: mach_port_t,
     response_buf: &mut Vec<u8>,
@@ -609,11 +585,3 @@ pub unsafe fn mach_receive_message_on_port(
     }
     receive_message_on_port(reply_port, response_buf, "mach_receive_message_on_port")
 }
-
-
-
-
-
-
-
-

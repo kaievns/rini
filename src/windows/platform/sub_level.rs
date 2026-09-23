@@ -1,4 +1,10 @@
-#![allow(non_camel_case_types, non_upper_case_globals, non_snake_case, unsafe_op_in_unsafe_fn, clippy::missing_safety_doc)]
+#![allow(
+    non_camel_case_types,
+    non_upper_case_globals,
+    non_snake_case,
+    unsafe_op_in_unsafe_fn,
+    clippy::missing_safety_doc
+)]
 //! A window's sub-level, asked of SkyLight's private connection server port over Mach. The port is
 //! found by resolving a symbol out of SkyLight's Mach-O image; there is no public API for either.
 use core::mem::{size_of, zeroed};

@@ -26,23 +26,23 @@ use objc2_core_graphics::{
 };
 use tracing::{debug, error, trace, warn};
 
-use rini_runloop::channel;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use rini_core::ids::WindowServerId;
 use crate::windows::platform::mouse::{MouseState, set_mouse_state};
 use crate::windows::platform::window_server;
+use rini_core::ids::WindowServerId;
+use rini_runloop::channel;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::binding::WmCommand;
-use crate::input::platform::cursor;
-use crate::input::event::{Event, EventSink};
-use crate::input::domain::pointer;
+use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::key::{Hotkey, KeyCode, is_modifier_key};
+use crate::input::domain::pointer;
+use crate::input::event::{Event, EventSink};
+use crate::input::platform::cursor;
 use crate::input::platform::keyboard::{
     key_code_from_event, modifier_key_is_active, modifiers_from_flags_with_keys,
 };
-use crate::input::settings::InputSettings;
 use crate::input::platform::tap;
+use crate::input::settings::InputSettings;
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
 const MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER: u64 = 16_000_000; // 16ms ~= 62 Hz
 
@@ -91,7 +91,6 @@ struct State {
     pressed_keys: HashSet<KeyCode>,
     current_flags: CGEventFlags,
 }
-
 
 impl Default for State {
     fn default() -> Self {
@@ -233,8 +232,10 @@ impl InputTap {
         events: Box<dyn EventSink>,
         requests_rx: Receiver,
     ) -> Self {
-        let disable_hotkey =
-            settings.focus_follows_mouse_disable_hotkey.clone().and_then(|spec| spec.to_hotkey());
+        let disable_hotkey = settings
+            .focus_follows_mouse_disable_hotkey
+            .clone()
+            .and_then(|spec| spec.to_hotkey());
         let mut state = State::default();
         state.low_power_mode = low_power_mode;
         state.mouse_hides_on_focus = settings.mouse_hides_on_focus;
@@ -596,7 +597,6 @@ impl InputTap {
             }
         }
 
-
         // Resolve and deduplicate the window on the input thread. The application
         // only needs to see transitions; it must not receive a message for
         // every sampled point while the cursor remains in one window.
@@ -862,7 +862,6 @@ impl State {
             self.pressed_keys.contains(&key_code)
         }
     }
-
 }
 
 #[inline]
@@ -943,11 +942,19 @@ mod tests {
     #[test]
     fn keys_are_only_in_the_mask_when_something_is_bound() {
         let without = build_event_mask(false, false);
-        for ty in [CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged] {
+        for ty in [
+            CGEventType::KeyDown,
+            CGEventType::KeyUp,
+            CGEventType::FlagsChanged,
+        ] {
             assert!(!wants(without, ty), "{ty:?} should not be asked for");
         }
         let with = build_event_mask(true, false);
-        for ty in [CGEventType::KeyDown, CGEventType::KeyUp, CGEventType::FlagsChanged] {
+        for ty in [
+            CGEventType::KeyDown,
+            CGEventType::KeyUp,
+            CGEventType::FlagsChanged,
+        ] {
             assert!(wants(with, ty), "{ty:?} should be asked for");
         }
     }

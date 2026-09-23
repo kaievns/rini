@@ -71,11 +71,16 @@ State: open.
 
 ## 3. CI's formatting check is red — 1,126 hunks
 
-`cargo +nightly fmt --all --check` is what `.github/workflows/rust.yml:27` runs. The repo has
-never been through it: module declarations are unsorted and imports ungrouped. One mechanical
-commit, no behaviour change.
+`cargo +nightly fmt --all --check` is what `.github/workflows/rust.yml:27` runs. The repo had
+never been through it: module declarations unsorted, imports ungrouped.
 
-State: open.
+**Done.** 144 files, 0 hunks remaining under CI's exact command, 1,249 tests still passing and
+0 warnings. Nothing but whitespace and import order moved.
+
+Worth knowing for next time: `cargo fmt` prints `can't set brace_style = PreferSameLine, unstable
+features are only available in nightly channel` even under `rustup run nightly`. That warning comes
+from cargo's own read of `rustfmt.toml`, not from the rustfmt it shells out to — the unstable options
+did apply. Check the output, not the warning.
 
 ## 4. `animation/platform/overlay.rs` — 1,080 lines, 16 tests (67 lines/test)
 

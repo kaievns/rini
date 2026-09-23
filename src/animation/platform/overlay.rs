@@ -10,8 +10,7 @@ use objc2::rc::Retained;
 use objc2::runtime::NSObject;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSView, NSWindow,
-    NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
@@ -21,22 +20,25 @@ use objc2_quartz_core::{
     CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
 };
 
-use rini_core::ids::WindowId;
-pub use crate::animation::domain::motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE, bounce_displacement, ease};
+pub use crate::animation::domain::motion::easing::{
+    BOUNCE_TURN, CubicBezier, MOTION_CURVE, bounce_displacement, ease,
+};
+pub(crate) use crate::animation::domain::motion::plan::{
+    AnimationTarget, animation_targets, bounce_carries,
+};
+use crate::animation::domain::motion::plan::{
+    Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
+};
 pub use crate::animation::domain::motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
     lerp_rect, placeholder_mode, resize_in_flight,
 };
-pub(crate) use crate::animation::domain::motion::plan::{AnimationTarget, animation_targets, bounce_carries};
-use crate::animation::domain::motion::plan::{
-    Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative,
-};
 use crate::animation::domain::motion::z_group::{StackGroup, container_z};
-use rini_geometry::{Round, SameAs};
-use crate::displays::domain::screen::CoordinateConverter;
 use crate::animation::platform::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::animation::platform::window_snapshot::{SnapshotImage, WindowSnapshot};
-
+use crate::displays::domain::screen::CoordinateConverter;
+use rini_core::ids::WindowId;
+use rini_geometry::{Round, SameAs};
 
 /// Above every managed window (CG layer 0), below utility panels and notification banners (19+).
 /// See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
@@ -105,17 +107,6 @@ impl OverlayTile {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
 /// The shadow a real window casts, which no capture API includes. Fitted to measured falloffs;
 /// see "Shadows are never in the surface" in `src/animation/docs/capture-overlay-research.md`.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -126,11 +117,23 @@ struct ShadowStyle {
     offset_y: f64,
 }
 
-const UNFOCUSED_SHADOW: ShadowStyle = ShadowStyle { opacity: 0.4, radius: 9.0, offset_y: 5.0 };
-const FOCUSED_SHADOW: ShadowStyle = ShadowStyle { opacity: 0.65, radius: 14.0, offset_y: 12.0 };
+const UNFOCUSED_SHADOW: ShadowStyle = ShadowStyle {
+    opacity: 0.4,
+    radius: 9.0,
+    offset_y: 5.0,
+};
+const FOCUSED_SHADOW: ShadowStyle = ShadowStyle {
+    opacity: 0.65,
+    radius: 14.0,
+    offset_y: 12.0,
+};
 
 fn tile_shadow_style(focused: bool) -> ShadowStyle {
-    if focused { FOCUSED_SHADOW } else { UNFOCUSED_SHADOW }
+    if focused {
+        FOCUSED_SHADOW
+    } else {
+        UNFOCUSED_SHADOW
+    }
 }
 
 /// Room the mask leaves for the shadow: past where the focused blur (three radii plus the offset,
@@ -142,11 +145,8 @@ const BAR_Z: f64 = 10_000.0;
 
 /// Below the deepest tile the depth model can produce. See "The overlay engine" in
 /// `src/animation/docs/animation-smoothness.md`.
-const BACKDROP_Z: f64 = -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
-
-
-
-
+const BACKDROP_Z: f64 =
+    -((crate::animation::domain::motion::z_group::MAX_TILE_DEPTH + 1024) as f64);
 
 /// The window server places real windows on whole points; a layer at a fraction is resampled and
 /// pops at the lift. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
@@ -175,7 +175,10 @@ const GROUP_ANIMATION_KEY: &str = "rini.group.move";
 fn motion_timing() -> Retained<CAMediaTimingFunction> {
     let c = MOTION_CURVE;
     CAMediaTimingFunction::functionWithControlPoints(
-        c.x1 as f32, c.y1 as f32, c.x2 as f32, c.y2 as f32,
+        c.x1 as f32,
+        c.y1 as f32,
+        c.x2 as f32,
+        c.y2 as f32,
     )
 }
 
@@ -189,7 +192,10 @@ struct Timing {
 
 impl Timing {
     fn starting_now(duration: Duration) -> Self {
-        Timing { begin: objc2_quartz_core::CACurrentMediaTime(), seconds: duration.as_secs_f64() }
+        Timing {
+            begin: objc2_quartz_core::CACurrentMediaTime(),
+            seconds: duration.as_secs_f64(),
+        }
     }
 
     fn apply(&self, animation: &CABasicAnimation) {
@@ -220,9 +226,6 @@ fn position_animation(from: CGPoint, to: CGPoint, timing: Timing) -> Retained<CA
 
 /// One key per container bounce, separate from the movement's so the two compose.
 const BOUNCE_ANIMATION_KEY: &str = "rini.group.bounce";
-
-
-
 
 /// An additive position animation out to `overshoot` and back, so it rides a movement in flight
 /// and leaves the model position alone.
@@ -258,8 +261,7 @@ fn rect_animation(
     to: CGRect,
     timing: Timing,
 ) -> Retained<CABasicAnimation> {
-    let animation =
-        CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
+    let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
     // SAFETY: an NSValue holding a CGRect is the value type Core Animation expects here.
     unsafe {
         animation.setFromValue(Some(&NSValue::valueWithRect(from)));
@@ -277,8 +279,7 @@ fn path_animation(
     to: &objc2_core_graphics::CGPath,
     timing: Timing,
 ) -> Retained<CABasicAnimation> {
-    let animation =
-        CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
+    let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
     // SAFETY: a CGPath is the value type Core Animation expects for path-valued key paths, and
     // the animation retains what it is given.
     unsafe {
@@ -293,9 +294,18 @@ fn path_animation(
 
 /// Installs position-and-bounds animations carrying `layer` between two frames. Anchor points are
 /// (0,0) throughout, so position is the frame origin.
-fn animate_layer_frame(layer: &CALayer, from: CGRect, to: CGRect, timing: Timing, key_prefix: &str) {
+fn animate_layer_frame(
+    layer: &CALayer,
+    from: CGRect,
+    to: CGRect,
+    timing: Timing,
+    key_prefix: &str,
+) {
     let position = position_animation(from.origin, to.origin, timing);
-    layer.addAnimation_forKey(&position, Some(&NSString::from_str(&format!("{key_prefix}.move"))));
+    layer.addAnimation_forKey(
+        &position,
+        Some(&NSString::from_str(&format!("{key_prefix}.move"))),
+    );
     if from.size != to.size {
         let bounds = rect_animation(
             "bounds",
@@ -303,7 +313,8 @@ fn animate_layer_frame(layer: &CALayer, from: CGRect, to: CGRect, timing: Timing
             CGRect::new(CGPoint::new(0.0, 0.0), to.size),
             timing,
         );
-        layer.addAnimation_forKey(&bounds, Some(&NSString::from_str(&format!("{key_prefix}.size"))));
+        layer
+            .addAnimation_forKey(&bounds, Some(&NSString::from_str(&format!("{key_prefix}.size"))));
     }
 }
 
@@ -334,8 +345,6 @@ struct Tile {
 struct CropGrid {
     pieces: [Retained<CALayer>; 4],
 }
-
-
 
 pub struct TileOverlay {
     window: Retained<NSWindow>,
@@ -509,7 +518,9 @@ impl TileOverlay {
         remaining: Option<Duration>,
     ) {
         let scale = self.scale;
-        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let mut rekey: Option<(CGRect, CGRect, Timing)> = None;
@@ -534,7 +545,11 @@ impl TileOverlay {
                         let presented = unsafe { entry.picture.presentationLayer() }
                             .map(|p| CGRect::new(p.position(), p.bounds().size))
                             .unwrap_or(final_rect);
-                        (presented, final_rect, Timing::starting_now(remaining.unwrap_or_default()))
+                        (
+                            presented,
+                            final_rect,
+                            Timing::starting_now(remaining.unwrap_or_default()),
+                        )
                     }
                 });
             }
@@ -561,7 +576,9 @@ impl TileOverlay {
         dressing: &crate::animation::platform::edge_dressing::EdgeDressing,
     ) {
         let scale = self.scale;
-        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let size = entry.picture.bounds().size;
@@ -590,7 +607,10 @@ impl TileOverlay {
         }
         let strip_loose: Vec<(WindowId, CGRect, CGRect)> =
             plan.changing.iter().chain(&plan.entrances).copied().collect();
-        for (key, members) in [(GroupKey::Loose, &strip_loose), (GroupKey::Floating, &plan.floating)] {
+        for (key, members) in [
+            (GroupKey::Loose, &strip_loose),
+            (GroupKey::Floating, &plan.floating),
+        ] {
             if members.is_empty() {
                 continue;
             }
@@ -609,7 +629,11 @@ impl TileOverlay {
     /// Writes every container's and tile's `zPosition` from `banding`. A hard cut: z does not
     /// interpolate. Callers hold the transaction.
     pub(crate) fn rebank(&self, banding: &Banding) {
-        let focused = if banding.floating_in_front { StackGroup::Floating } else { StackGroup::Tiled };
+        let focused = if banding.floating_in_front {
+            StackGroup::Floating
+        } else {
+            StackGroup::Tiled
+        };
         for (key, layer) in &self.containers {
             let z = match key {
                 GroupKey::Floating => container_z(StackGroup::Floating, focused),
@@ -625,7 +649,9 @@ impl TileOverlay {
             layer.setZPosition(z);
         }
         for (window, tile) in &self.tile_layers {
-            let Some(&within) = banding.within.get(window) else { continue };
+            let Some(&within) = banding.within.get(window) else {
+                continue;
+            };
             let z = -(within as f64) + if tile.companion { 0.25 } else { 0.0 };
             tile.picture.setZPosition(z);
             tile.shadow.setZPosition(z - 0.5);
@@ -682,7 +708,9 @@ impl TileOverlay {
         for target in animation_targets(plan) {
             match target {
                 AnimationTarget::Container { key, from, to } => {
-                    let Some(layer) = self.containers.get(&key) else { continue };
+                    let Some(layer) = self.containers.get(&key) else {
+                        continue;
+                    };
                     let (from, to) = (whole_point(from), whole_point(to));
                     layer.setPosition(to);
                     if !duration.is_zero() {
@@ -694,10 +722,14 @@ impl TileOverlay {
                     }
                 }
                 AnimationTarget::Tile { window, from, to } => {
-                    let Some(entry) = self.tile_layers.get(&window) else { continue };
+                    let Some(entry) = self.tile_layers.get(&window) else {
+                        continue;
+                    };
                     let offset = self.container_position(entry.key);
-                    let (from, to) =
-                        (whole(group_relative(from, offset)), whole(group_relative(to, offset)));
+                    let (from, to) = (
+                        whole(group_relative(from, offset)),
+                        whole(group_relative(to, offset)),
+                    );
                     let z = entry.picture.zPosition();
                     if duration.is_zero() {
                         place_tile(entry, to, z);
@@ -742,7 +774,9 @@ impl TileOverlay {
             return CGPoint::new(0.0, 0.0);
         };
         // SAFETY: `presentationLayer` returns a read-only copy of the layer.
-        unsafe { layer.presentationLayer() }.map(|p| p.position()).unwrap_or(layer.position())
+        unsafe { layer.presentationLayer() }
+            .map(|p| p.position())
+            .unwrap_or(layer.position())
     }
 
     /// Installs one tile at `at`, in the space of the parent `key` names (the root for `None`).
@@ -752,10 +786,7 @@ impl TileOverlay {
             Some(container) => container.clone(),
             None => self.root.clone(),
         };
-        let entry = self
-            .tile_layers
-            .entry(tile.window)
-            .or_insert_with(|| new_tile(&parent));
+        let entry = self.tile_layers.entry(tile.window).or_insert_with(|| new_tile(&parent));
         reparent(&entry.picture, &parent);
         reparent(&entry.shadow, &parent);
         entry.key = key;
@@ -796,7 +827,13 @@ impl TileOverlay {
         CATransaction::setDisableActions(true);
         self.ensure_container(key, CGPoint::new(0.0, 0.0));
         self.install_tile(tile, tile.from, Some(key));
-        self.animate_tile_movement(tile.window, whole(tile.from), whole(tile.to), tile.z(), duration);
+        self.animate_tile_movement(
+            tile.window,
+            whole(tile.from),
+            whole(tile.to),
+            tile.z(),
+            duration,
+        );
         self.rebank(banding);
         commit_now();
     }
@@ -816,11 +853,13 @@ impl TileOverlay {
     /// render server runs behind the actor's clock. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
     pub fn settled(&self) -> bool {
         let close = |a: CGPoint, b: CGPoint| (a.x - b.x).abs() < 0.5 && (a.y - b.y).abs() < 0.5;
-        let same_size =
-            |a: CGSize, b: CGSize| (a.width - b.width).abs() < 0.5 && (a.height - b.height).abs() < 0.5;
+        let same_size = |a: CGSize, b: CGSize| {
+            (a.width - b.width).abs() < 0.5 && (a.height - b.height).abs() < 0.5
+        };
         // SAFETY: `presentationLayer` returns a read-only copy of the layer.
         let containers = self.containers.values().all(|layer| {
-            unsafe { layer.presentationLayer() }.is_none_or(|p| close(p.position(), layer.position()))
+            unsafe { layer.presentationLayer() }
+                .is_none_or(|p| close(p.position(), layer.position()))
         });
         let tiles = self.tile_layers.values().all(|tile| {
             unsafe { tile.picture.presentationLayer() }.is_none_or(|p| {
@@ -858,7 +897,9 @@ impl TileOverlay {
         for &(key, install) in &delta.new_groups {
             let container = self.reset_container(key);
             container.setPosition(whole_point(install));
-            let Some(group) = plan.groups.iter().find(|g| g.key == key) else { continue };
+            let Some(group) = plan.groups.iter().find(|g| g.key == key) else {
+                continue;
+            };
             for member in &group.members {
                 if delta.reparented.iter().any(|(w, _, to)| *w == member.window && *to == key) {
                     continue;
@@ -878,8 +919,13 @@ impl TileOverlay {
                 | Some(Member::Floating { from, .. }) => from,
                 None => continue,
             };
-            let container = self.ensure_container(to_key, plan.positions.get(&to_key).copied().unwrap_or(CGPoint::new(0.0, 0.0)));
-            let Some(entry) = self.tile_layers.get_mut(&window) else { continue };
+            let container = self.ensure_container(
+                to_key,
+                plan.positions.get(&to_key).copied().unwrap_or(CGPoint::new(0.0, 0.0)),
+            );
+            let Some(entry) = self.tile_layers.get_mut(&window) else {
+                continue;
+            };
             reparent(&entry.picture, &container);
             reparent(&entry.shadow, &container);
             entry.key = Some(to_key);
@@ -889,23 +935,33 @@ impl TileOverlay {
         }
 
         for &(key, to) in &delta.retargeted_groups {
-            let Some(layer) = self.containers.get(&key) else { continue };
+            let Some(layer) = self.containers.get(&key) else {
+                continue;
+            };
             let from = presented.get(&key).copied().unwrap_or(layer.position());
             let to = whole_point(to);
             layer.setPosition(to);
             if !duration.is_zero() {
                 let animation = position_animation(from, to, timing);
-                layer.addAnimation_forKey(&animation, Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+                layer.addAnimation_forKey(
+                    &animation,
+                    Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
+                );
             }
         }
         for &(key, install) in &delta.new_groups {
-            let Some(layer) = self.containers.get(&key) else { continue };
+            let Some(layer) = self.containers.get(&key) else {
+                continue;
+            };
             let to = whole_point(plan.positions.get(&key).copied().unwrap_or(install));
             let install = whole_point(install);
             layer.setPosition(to);
             if !duration.is_zero() && !install.same_as(to) {
                 let animation = position_animation(install, to, timing);
-                layer.addAnimation_forKey(&animation, Some(&NSString::from_str(GROUP_ANIMATION_KEY)));
+                layer.addAnimation_forKey(
+                    &animation,
+                    Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
+                );
             }
         }
 
@@ -928,7 +984,9 @@ impl TileOverlay {
         for &(window, to) in &delta.retargeted_tiles {
             let Some(tile) = find(window) else { continue };
             let scale = self.scale;
-            let Some(entry) = self.tile_layers.get_mut(&window) else { continue };
+            let Some(entry) = self.tile_layers.get_mut(&window) else {
+                continue;
+            };
             let from = if placed.contains(&window) {
                 entry.picture.frame()
             } else {
@@ -961,7 +1019,9 @@ impl TileOverlay {
         z: f64,
         duration: Duration,
     ) {
-        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
         place_tile(entry, to, z);
         let timing = Timing::starting_now(duration);
         // Proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move.
@@ -980,7 +1040,9 @@ impl TileOverlay {
     /// The resize: every layer of the tile rides its own pair of endpoint geometries on the shared
     /// curve. See "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
     fn animate_tile_resize(&mut self, window: WindowId, from: CGRect, to: CGRect, timing: Timing) {
-        let Some(entry) = self.tile_layers.get_mut(&window) else { return };
+        let Some(entry) = self.tile_layers.get_mut(&window) else {
+            return;
+        };
         entry.resize_until = Some(timing.ends_at());
         entry.resize_leg = Some((from, to, timing));
 
@@ -1006,8 +1068,7 @@ impl TileOverlay {
             timing,
             "rini.tile.mask",
         );
-        let mask_path =
-            path_animation("path", &ring_path(from.size), &ring_path(to.size), timing);
+        let mask_path = path_animation("path", &ring_path(from.size), &ring_path(to.size), timing);
         entry
             .shadow_mask
             .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
@@ -1028,8 +1089,13 @@ impl TileOverlay {
         if let (Some(from_layout), Some(to_layout)) =
             (boundary_layout(from.size), boundary_layout(to.size))
         {
-            let rect_at = |layout: &crate::animation::platform::edge_dressing::DressingLayout, index: usize| {
-                if index < 4 { layout.strips[index] } else { layout.corners[index - 4] }
+            let rect_at = |layout: &crate::animation::platform::edge_dressing::DressingLayout,
+                           index: usize| {
+                if index < 4 {
+                    layout.strips[index]
+                } else {
+                    layout.corners[index - 4]
+                }
             };
             for (index, layer) in &entry.dressing {
                 let a = rect_at(&from_layout, *index);
@@ -1086,7 +1152,11 @@ fn dressing_image(
     dressing: &crate::animation::platform::edge_dressing::EdgeDressing,
     index: usize,
 ) -> Option<&CFRetained<objc2_core_graphics::CGImage>> {
-    if index < 4 { dressing.strips[index].as_ref() } else { dressing.corners[index - 4].as_ref() }
+    if index < 4 {
+        dressing.strips[index].as_ref()
+    } else {
+        dressing.corners[index - 4].as_ref()
+    }
 }
 
 /// Every harvested piece, whatever `size`, so a fresh harvest swaps in place. See "Window borders
@@ -1306,7 +1376,9 @@ fn set_tile_content(
 
 /// Lays the crop grid out for the tile's current frame size.
 fn layout_crop_grid(entry: &Tile, frame: CGSize) {
-    let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) else { return };
+    let (Some(grid), Some(picture)) = (&entry.crop_grid, entry.crop_of) else {
+        return;
+    };
     for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
         layer.setFrame(piece.frame);
         layer.setContentsRect(piece.contents);
@@ -1331,9 +1403,9 @@ fn new_crop_grid(container: &CALayer) -> CropGrid {
 
 /// Moves `layer` under `container` unless it is already there.
 fn reparent(layer: &CALayer, container: &CALayer) {
-    let already = layer
-        .superlayer()
-        .is_some_and(|current| std::ptr::eq(&*current as *const CALayer, container as *const CALayer));
+    let already = layer.superlayer().is_some_and(|current| {
+        std::ptr::eq(&*current as *const CALayer, container as *const CALayer)
+    });
     if already {
         return;
     }
@@ -1372,61 +1444,64 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
-
     #[test]
     fn tiles_sit_on_whole_points_like_the_real_windows() {
         let a = rect(4.0 - 4592.6724 + 4592.0, 32.0, 859.0, 1081.0);
         let b = rect(a.origin.x + 861.0, 32.0, 861.0, 1081.0);
         assert_eq!(whole(a).origin.x, 3.0);
-        assert_eq!(whole(b).origin.x - whole(a).origin.x, 861.0, "one rounding for the strip");
+        assert_eq!(
+            whole(b).origin.x - whole(a).origin.x,
+            861.0,
+            "one rounding for the strip"
+        );
         assert_eq!(whole(a).size, a.size);
-        assert_eq!(whole_point(CGPoint::new(-861.3276, 0.4)), CGPoint::new(-861.0, 0.0));
-        assert_eq!(whole(rect(10.0, 20.0, 100.0, 50.0)), rect(10.0, 20.0, 100.0, 50.0));
+        assert_eq!(
+            whole_point(CGPoint::new(-861.3276, 0.4)),
+            CGPoint::new(-861.0, 0.0)
+        );
+        assert_eq!(
+            whole(rect(10.0, 20.0, 100.0, 50.0)),
+            rect(10.0, 20.0, 100.0, 50.0)
+        );
     }
-
-
-
-
-
-
-
-
-
-
 
     #[test]
     fn the_clock_and_the_render_server_run_one_curve() {
         for step in 0..=1000 {
             let s = step as f64 / 1000.0;
             let (x, y) = MOTION_CURVE.at(s);
-            assert!((ease(x) - y).abs() < 1e-6, "the curves diverge at s={s}: ease({x})={} y={y}", ease(x));
+            assert!(
+                (ease(x) - y).abs() < 1e-6,
+                "the curves diverge at s={s}: ease({x})={} y={y}",
+                ease(x)
+            );
         }
         // Ease-out cubic has a closed form: the thirds Bezier.
-        let cubic = CubicBezier { x1: 1.0 / 3.0, y1: 1.0, x2: 2.0 / 3.0, y2: 1.0 };
+        let cubic = CubicBezier {
+            x1: 1.0 / 3.0,
+            y1: 1.0,
+            x2: 2.0 / 3.0,
+            y2: 1.0,
+        };
         for step in 0..=100 {
             let t = step as f64 / 100.0;
             assert!((cubic.ease(t) - (1.0 - (1.0 - t).powi(3))).abs() < 1e-6, "t={t}");
         }
     }
 
-
-
-
-
-
-
-
-
-
-
-
     #[test]
     fn every_possible_tile_draws_between_the_backdrop_and_the_bar() {
         use crate::animation::domain::motion::z_group::{StackGroup, tile_depth};
         let deepest = tile_depth(None, false, StackGroup::Floating, StackGroup::Tiled);
         let shallowest = tile_depth(Some(0), true, StackGroup::Tiled, StackGroup::Tiled);
-        assert!(-(deepest as f64) > BACKDROP_Z, "the deepest tile clears the backdrop");
-        assert!(-(shallowest as f64) < BAR_Z, "the shallowest tile stays under the bar");
+        assert!(
+            -(deepest as f64) > BACKDROP_Z,
+            "the deepest tile clears the backdrop"
+        );
+        assert!(
+            -(shallowest as f64) < BAR_Z,
+            "the shallowest tile stays under the bar"
+        );
         // The shadow caster sits half a step behind its picture.
         assert!(-(deepest as f64) - 0.5 > BACKDROP_Z);
     }
@@ -1435,7 +1510,10 @@ mod tests {
     fn the_bar_is_drawn_over_every_tile_and_the_desktop_under_them() {
         let deepest_strip_tile = -64.0;
         assert!(BAR_Z > 0.0);
-        assert!(BACKDROP_Z < deepest_strip_tile, "the desktop is under every tile");
+        assert!(
+            BACKDROP_Z < deepest_strip_tile,
+            "the desktop is under every tile"
+        );
     }
 
     #[test]
@@ -1496,7 +1574,6 @@ mod tests {
         assert_eq!(placed.size.height, 32.0);
     }
 
-
     #[test]
     fn the_dressing_piece_set_does_not_depend_on_the_tile_size() {
         use crate::animation::platform::edge_dressing::EdgeDressing;
@@ -1509,7 +1586,8 @@ mod tests {
         let at_zero = dressing_piece_indices(&dressing, CGSize::new(0.0, 1081.0));
         let at_full = dressing_piece_indices(&dressing, CGSize::new(859.0, 1081.0));
         assert_eq!(
-            at_zero, at_full,
+            at_zero,
+            at_full,
             "a tile dressed at (0, h) wears {} pieces, at (w, h) {}",
             at_zero.len(),
             at_full.len()
@@ -1564,7 +1642,11 @@ mod tests {
             let w = next(1729) as f64;
             let h = 1.0 + next(1081) as f64;
             let size = CGSize::new(w, h);
-            assert_eq!(dressing_piece_indices(&dressing, size), reference, "size {size:?}");
+            assert_eq!(
+                dressing_piece_indices(&dressing, size),
+                reference,
+                "size {size:?}"
+            );
         }
     }
 }

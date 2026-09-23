@@ -10,10 +10,10 @@ use objc2_core_foundation::{
     CFArray, CFBoolean, CFData, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize, ConcreteType,
 };
 
-use rini_skylight_sys::{CGSGetWindowBounds, G_CONNECTION};
 use rini_core::ids::WindowId;
 use rini_core::ids::pid_t;
 use rini_skylight_sys::_AXUIElementCreateWithRemoteToken;
+use rini_skylight_sys::{CGSGetWindowBounds, G_CONNECTION};
 
 pub const AX_WINDOW_ROLE: &str = "AXWindow";
 pub const AX_STANDARD_WINDOW_SUBROLE: &str = "AXStandardWindow";

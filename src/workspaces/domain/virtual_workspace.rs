@@ -3,21 +3,21 @@ use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 use tracing::{error, warn};
 
-use rini_core::ids::WindowId;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::layout::ScrollingLayoutSystem;
+use crate::layout::settings::LayoutSettings;
+use crate::windows::domain::rules::AppRuleDecision;
 #[cfg(test)]
 use crate::windows::domain::rules::AppWorkspaceRule;
-use crate::layout::settings::LayoutSettings;
-use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
-use rini_ipc::protocol::WorkspaceSelector;
 use crate::workspaces::Direction;
-use crate::layout::ScrollingLayoutSystem;
-use crate::windows::domain::rules::AppRuleDecision;
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::workspaces::domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
+use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 use crate::workspaces::{WindowStore, WindowWorkspaceInfo};
-use rini_core::ids::pid_t;
 use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
+use rini_core::ids::pid_t;
+use rini_ipc::protocol::WorkspaceSelector;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 new_key_type! {
     pub struct VirtualWorkspaceId;
@@ -188,7 +188,10 @@ impl WorkspaceStore {
             active_workspace_per_space: HashMap::default(),
             workspace_counter: 1,
             #[cfg(test)]
-            test_app_rules: crate::windows::domain::rules::AppRuleEngine::new(&config.app_rules, config.float_modal_windows),
+            test_app_rules: crate::windows::domain::rules::AppRuleEngine::new(
+                &config.app_rules,
+                config.float_modal_windows,
+            ),
             max_workspaces: MAX_WORKSPACES,
             default_workspace_count: config.default_workspace_count,
             default_workspace_names: config.workspace_names.clone(),
@@ -754,11 +757,7 @@ impl WorkspaceStore {
             .collect()
     }
 
-    pub fn retain_window_focus_location(
-        &mut self,
-        window: WindowId,
-        keep: VirtualWorkspaceId,
-    ) {
+    pub fn retain_window_focus_location(&mut self, window: WindowId, keep: VirtualWorkspaceId) {
         for (workspace_id, workspace) in self.workspaces.iter_mut() {
             if workspace_id != keep {
                 workspace.forget_focused_window(window);
@@ -1038,14 +1037,15 @@ impl WorkspaceStore {
         ax_role: Option<&str>,
         ax_subrole: Option<&str>,
     ) -> Result<AppRuleResult, WorkspaceError> {
-        let decision = self.test_app_rules.evaluate(crate::windows::domain::rules::WindowRuleContext {
-            app_bundle_id,
-            app_name,
-            window_title,
-            ax_role,
-            ax_subrole,
-            is_modal: false,
-        });
+        let decision =
+            self.test_app_rules.evaluate(crate::windows::domain::rules::WindowRuleContext {
+                app_bundle_id,
+                app_name,
+                window_title,
+                ax_role,
+                ax_subrole,
+                is_modal: false,
+            });
         self.apply_app_rule_decision(window_store, window_id, space, decision)
     }
 
@@ -1154,8 +1154,8 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
-    use rini_core::ids::WindowId;
     use rini_core::ids::SpaceId;
+    use rini_core::ids::WindowId;
 
     fn expect_managed(result: Result<AppRuleResult, WorkspaceError>) -> AppRuleEffects {
         match result {

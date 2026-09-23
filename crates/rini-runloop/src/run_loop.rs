@@ -159,7 +159,11 @@ impl RepeatingTimer {
         };
         run_loop.add_timer(Some(&timer), unsafe { kCFRunLoopCommonModes });
 
-        Some(Self { timer, run_loop, handler: handler_ptr })
+        Some(Self {
+            timer,
+            run_loop,
+            handler: handler_ptr,
+        })
     }
 }
 

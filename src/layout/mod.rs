@@ -108,12 +108,11 @@ impl WindowLayoutConstraints {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{ScrollingLayoutSystem, WindowLayoutConstraints};
-    use rini_core::ids::WindowId;
     use crate::layout::settings::{ScrollingLayoutSettings, WindowInsertionPoint};
+    use rini_core::ids::WindowId;
 
     fn w(idx: u32) -> WindowId {
         WindowId::new(1, idx)
@@ -245,9 +244,11 @@ mod tests {
         scrolling.add_window_after_selection(layout, w(2));
         let tree = scrolling.container_tree(layout);
         assert_eq!(tree.node_type, rini_ipc::protocol::ContainerNodeType::Container);
-        assert!(tree.children.iter().all(|node| {
-            node.layout_kind == Some(rini_ipc::protocol::LayoutKind::Vertical)
-        }));
+        assert!(
+            tree.children
+                .iter()
+                .all(|node| { node.layout_kind == Some(rini_ipc::protocol::LayoutKind::Vertical) })
+        );
         assert_eq!(window_nodes(&tree).len(), 2);
         assert_eq!(
             window_nodes(&tree).iter().filter(|node| node.is_selected).count(),
@@ -264,8 +265,11 @@ mod constrains_layout_tests {
     fn a_window_that_reports_nothing_constrains_nothing() {
         assert!(!WindowLayoutConstraints::default().constrains_layout());
         assert!(
-            !WindowLayoutConstraints { is_resizable: true, ..Default::default() }
-                .constrains_layout(),
+            !WindowLayoutConstraints {
+                is_resizable: true,
+                ..Default::default()
+            }
+            .constrains_layout(),
             "being resizable is not a limit on its own"
         );
     }
@@ -285,10 +289,22 @@ mod constrains_layout_tests {
     #[test]
     fn a_locked_or_maximum_size_constrains_the_layout() {
         for c in [
-            WindowLayoutConstraints { locked_width: 300.0, ..Default::default() },
-            WindowLayoutConstraints { locked_height: 200.0, ..Default::default() },
-            WindowLayoutConstraints { max_width: 900.0, ..Default::default() },
-            WindowLayoutConstraints { min_height: 120.0, ..Default::default() },
+            WindowLayoutConstraints {
+                locked_width: 300.0,
+                ..Default::default()
+            },
+            WindowLayoutConstraints {
+                locked_height: 200.0,
+                ..Default::default()
+            },
+            WindowLayoutConstraints {
+                max_width: 900.0,
+                ..Default::default()
+            },
+            WindowLayoutConstraints {
+                min_height: 120.0,
+                ..Default::default()
+            },
         ] {
             assert!(c.constrains_layout(), "{c:?}");
         }

@@ -6,7 +6,6 @@
 
 use std::time::{Duration, Instant};
 
-
 use super::flight::FlightKind;
 
 /// Tick interval. Nothing is drawn on ticks; this only paces the mid-flight orchestration.
@@ -68,7 +67,10 @@ pub(in crate::animation) fn reveal_hold_limit(duration: Duration) -> Duration {
 }
 
 /// Time a holding flight still waits before flying the placeholder; `None` once past the deadline.
-pub(in crate::animation) fn hold_wait(hold_deadline: Option<Instant>, now: Instant) -> Option<Duration> {
+pub(in crate::animation) fn hold_wait(
+    hold_deadline: Option<Instant>,
+    now: Instant,
+) -> Option<Duration> {
     let deadline = hold_deadline?;
     (now < deadline).then(|| (deadline - now).max(Duration::from_millis(10)))
 }
@@ -93,13 +95,22 @@ pub(in crate::animation) const SETTLE_BEFORE_CAPTURES: Duration = Duration::from
 pub(in crate::animation) const LIFT_GRACE: Duration = Duration::from_millis(350);
 
 /// The flight's clock once a bounce joins it: long enough for the return leg, never shorter.
-pub(in crate::animation) fn clock_for_bounce(started: Option<Instant>, duration: Duration, bounce: Duration) -> Duration {
+pub(in crate::animation) fn clock_for_bounce(
+    started: Option<Instant>,
+    duration: Duration,
+    bounce: Duration,
+) -> Duration {
     let needed = started.map_or(bounce, |s| s.elapsed() + bounce);
     duration.max(needed)
 }
 
 /// Whether the overlay lifts now: clock done AND (presented and landed, or `LIFT_GRACE` overdue).
-pub(in crate::animation) fn lift_now(clock_done: bool, settled: bool, landed: bool, overdue: bool) -> bool {
+pub(in crate::animation) fn lift_now(
+    clock_done: bool,
+    settled: bool,
+    landed: bool,
+    overdue: bool,
+) -> bool {
     clock_done && ((settled && landed) || overdue)
 }
 

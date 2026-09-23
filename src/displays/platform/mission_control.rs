@@ -95,7 +95,6 @@ impl NativeMissionControl {
         self.observer = Some(observer);
         self.app_elem = Some(elem);
     }
-
 }
 
 impl State {

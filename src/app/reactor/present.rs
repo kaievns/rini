@@ -10,11 +10,11 @@
 
 use objc2_core_foundation::CGRect;
 
-use rini_core::ids::{WindowId, WindowServerId};
-use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 #[cfg(test)]
 use crate::windows::domain::transaction::WindowTxStore;
+use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::workspaces::WindowStore;
+use rini_core::ids::{WindowId, WindowServerId};
 
 /// The frame-writing capability: record a destination, and number the write.
 pub(crate) struct Present<'a> {
@@ -137,7 +137,10 @@ mod tests {
         let txid = present.commit(window, frame(500.0));
 
         assert_eq!(store.window(window).unwrap().frame_monotonic, frame(500.0));
-        assert_eq!(transactions.get_target_frame(WindowServerId::new(1)), Some(frame(500.0)));
+        assert_eq!(
+            transactions.get_target_frame(WindowServerId::new(1)),
+            Some(frame(500.0))
+        );
         assert_eq!(transactions.get_last_sent_txid(WindowServerId::new(1)), txid);
     }
 
@@ -160,8 +163,16 @@ mod tests {
     /// them together. A per-window id would have each report matched against a different write.
     #[test]
     fn every_window_in_an_app_batch_shares_one_transaction_id() {
-        let windows = [WindowId::new(10, 1), WindowId::new(10, 2), WindowId::new(10, 3)];
-        let ids = [WindowServerId::new(1), WindowServerId::new(2), WindowServerId::new(3)];
+        let windows = [
+            WindowId::new(10, 1),
+            WindowId::new(10, 2),
+            WindowId::new(10, 3),
+        ];
+        let ids = [
+            WindowServerId::new(1),
+            WindowServerId::new(2),
+            WindowServerId::new(3),
+        ];
         let mut store = store_with(&[
             (windows[0], Some(ids[0])),
             (windows[1], Some(ids[1])),
@@ -170,11 +181,18 @@ mod tests {
         let transactions = TransactionManager::new(WindowTxStore::new());
         let mut present = Present::new(&mut store, &transactions);
 
-        let txid = present
-            .commit_app_batch(&[(windows[0], frame(0.0)), (windows[1], frame(100.0)), (windows[2], frame(200.0))]);
+        let txid = present.commit_app_batch(&[
+            (windows[0], frame(0.0)),
+            (windows[1], frame(100.0)),
+            (windows[2], frame(200.0)),
+        ]);
 
         for id in ids {
-            assert_eq!(transactions.get_last_sent_txid(id), txid, "{id:?} is out of the batch");
+            assert_eq!(
+                transactions.get_last_sent_txid(id),
+                txid,
+                "{id:?} is out of the batch"
+            );
         }
         assert_eq!(transactions.get_target_frame(ids[1]), Some(frame(100.0)));
         assert_eq!(transactions.get_target_frame(ids[2]), Some(frame(200.0)));
@@ -183,12 +201,15 @@ mod tests {
     #[test]
     fn a_batch_records_every_frame_even_for_windows_without_a_server_id() {
         let windows = [WindowId::new(10, 1), WindowId::new(10, 2)];
-        let mut store =
-            store_with(&[(windows[0], None), (windows[1], Some(WindowServerId::new(2)))]);
+        let mut store = store_with(&[
+            (windows[0], None),
+            (windows[1], Some(WindowServerId::new(2))),
+        ]);
         let transactions = TransactionManager::new(WindowTxStore::new());
         let mut present = Present::new(&mut store, &transactions);
 
-        let txid = present.commit_app_batch(&[(windows[0], frame(10.0)), (windows[1], frame(20.0))]);
+        let txid =
+            present.commit_app_batch(&[(windows[0], frame(10.0)), (windows[1], frame(20.0))]);
 
         assert_eq!(store.window(windows[0]).unwrap().frame_monotonic, frame(10.0));
         assert_eq!(store.window(windows[1]).unwrap().frame_monotonic, frame(20.0));

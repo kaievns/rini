@@ -26,8 +26,10 @@ use objc2_screen_capture_kit::{
 
 use tracing::{debug, warn};
 
+use crate::animation::platform::window_snapshot::{
+    Coverage, SnapshotImage, SnapshotSource, WindowSnapshot,
+};
 use rini_core::ids::WindowId;
-use crate::animation::platform::window_snapshot::{Coverage, SnapshotImage, SnapshotSource, WindowSnapshot};
 
 /// Concurrent captures. ScreenCaptureKit serialises internally, so wall clock stops improving past
 /// four. See "Capture cost" in `src/animation/docs/capture-overlay-research.md`.
@@ -138,7 +140,11 @@ fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
         let src = source.base_address().as_ptr() as *const u8;
         let dst = copy.base_address().as_ptr() as *mut u8;
         for row in 0..height {
-            std::ptr::copy_nonoverlapping(src.add(row * stride), dst.add(row * copy_stride), row_bytes);
+            std::ptr::copy_nonoverlapping(
+                src.add(row * stride),
+                dst.add(row * copy_stride),
+                row_bytes,
+            );
         }
         copy.unlock(IOSurfaceLockOptions::empty(), std::ptr::null_mut());
         source.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
@@ -243,7 +249,10 @@ impl SnapshotService {
         let scale = self.scale();
         let block = RcBlock::new(move |content: *mut SCShareableContent, _error: *mut NSError| {
             let Some(content) = NonNull::new(content) else {
-                debug!(count = targets.len(), "ScreenCaptureKit enumeration returned nothing");
+                debug!(
+                    count = targets.len(),
+                    "ScreenCaptureKit enumeration returned nothing"
+                );
                 service.abandon(&targets);
                 return;
             };
@@ -297,7 +306,13 @@ impl SnapshotService {
                     // resolution paints a quarter of the buffer" in src/animation/docs/capture-overlay-research.md.
                     config.setCaptureResolution(SCCaptureResolutionType::Best);
                 }
-                queued.push(PendingCapture { target: *target, size, filter, config, revision });
+                queued.push(PendingCapture {
+                    target: *target,
+                    size,
+                    filter,
+                    config,
+                    revision,
+                });
             }
             service.enqueue(queued);
         });
@@ -376,12 +391,13 @@ impl SnapshotService {
             }
 
             let service = service.clone();
-            let completion = RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
-                let surface = NonNull::new(sample)
-                    .and_then(|sample| unsafe { sample.as_ref().image_buffer() })
-                    .and_then(|buffer| CVPixelBufferGetIOSurface(Some(&buffer)));
-                service.finish_desktop(revision, scale, size, surface);
-            });
+            let completion =
+                RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
+                    let surface = NonNull::new(sample)
+                        .and_then(|sample| unsafe { sample.as_ref().image_buffer() })
+                        .and_then(|buffer| CVPixelBufferGetIOSurface(Some(&buffer)));
+                    service.finish_desktop(revision, scale, size, surface);
+                });
             unsafe {
                 SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
                     &filter,
@@ -563,8 +579,8 @@ mod tests {
     fn a_captures_copy_is_its_own_surface_with_the_same_pixels() {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
         use objc2_io_surface::{
-            IOSurfaceLockOptions, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfacePixelFormat,
-            kIOSurfaceWidth,
+            IOSurfaceLockOptions, kIOSurfaceBytesPerElement, kIOSurfaceHeight,
+            kIOSurfacePixelFormat, kIOSurfaceWidth,
         };
         let keys: [&CFString; 4] = [
             unsafe { kIOSurfaceWidth },
@@ -579,11 +595,15 @@ mod tests {
             CFNumber::new_i64(u32::from_be_bytes(*b"BGRA") as i64),
         ];
         let value_refs: [&CFNumber; 4] = std::array::from_fn(|i| &*values[i]);
-        let source = unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
-            .expect("a source surface");
+        let source =
+            unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
+                .expect("a source surface");
         let stride = source.bytes_per_row();
         unsafe {
-            assert_eq!(source.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()), 0);
+            assert_eq!(
+                source.lock(IOSurfaceLockOptions::empty(), std::ptr::null_mut()),
+                0
+            );
             let base = source.base_address().as_ptr() as *mut u8;
             for y in 0..5 {
                 for x in 0..7 * 4 {
@@ -598,7 +618,10 @@ mod tests {
         assert_eq!((copy.width(), copy.height()), (7, 5));
         assert_eq!(copy.pixel_format(), source.pixel_format());
         unsafe {
-            assert_eq!(copy.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()), 0);
+            assert_eq!(
+                copy.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut()),
+                0
+            );
             let base = copy.base_address().as_ptr() as *const u8;
             let copy_stride = copy.bytes_per_row();
             for y in 0..5 {
@@ -611,7 +634,10 @@ mod tests {
     }
 
     fn wid(idx: u32) -> WindowId {
-        WindowId { pid: 1, idx: NonZeroU32::new(idx).unwrap() }
+        WindowId {
+            pid: 1,
+            idx: NonZeroU32::new(idx).unwrap(),
+        }
     }
 
     fn target(idx: u32) -> SnapshotTarget {
@@ -668,7 +694,10 @@ mod tests {
                 wid(7),
                 WindowSnapshot {
                     image: SnapshotImage::Bitmap(tiny_bitmap()),
-                    coverage: Coverage { covered: (859.0, 1081.0), window: (859.0, 1081.0) },
+                    coverage: Coverage {
+                        covered: (859.0, 1081.0),
+                        window: (859.0, 1081.0),
+                    },
                     source: SnapshotSource::ScreenCaptureKit,
                     dressing: None,
                     taken: std::time::Instant::now(),
@@ -676,17 +705,22 @@ mod tests {
             );
         }
         assert_eq!(service.collect().len(), 1);
-        assert!(service.collect().is_empty(), "a second collect must not repeat results");
+        assert!(
+            service.collect().is_empty(),
+            "a second collect must not repeat results"
+        );
     }
 
     #[test]
     fn notify_fires_only_when_a_capture_actually_produced_pixels() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
-        let service =
-            SnapshotService::new(2.0, Arc::new(move || {
+        let service = SnapshotService::new(
+            2.0,
+            Arc::new(move || {
                 counter.fetch_add(1, Ordering::Relaxed);
-            }));
+            }),
+        );
         service.finish(
             target(1),
             CGSize::new(859.0, 1081.0),

@@ -7,7 +7,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FEATURES: [&str; 6] = ["windows", "displays", "layout", "workspaces", "input", "animation"];
+const FEATURES: [&str; 6] = [
+    "windows",
+    "displays",
+    "layout",
+    "workspaces",
+    "input",
+    "animation",
+];
 
 /// macOS and FFI surfaces a pure module must not reach for. `objc2_core_foundation` is absent on
 /// purpose: `CGRect`, `CGPoint` and `CGSize` are the arithmetic every layout decision is in, and
@@ -91,7 +98,10 @@ fn code_lines(path: &Path) -> Vec<(usize, String)> {
 }
 
 fn feature_files() -> Vec<PathBuf> {
-    FEATURES.iter().flat_map(|f| rust_files(Path::new("src").join(f).as_path())).collect()
+    FEATURES
+        .iter()
+        .flat_map(|f| rust_files(Path::new("src").join(f).as_path()))
+        .collect()
 }
 
 fn slash(path: &Path) -> String {
@@ -260,9 +270,7 @@ fn every_documented_path_resolves() {
             let crate_relative = source
                 .split_once("/src/")
                 .map(|(crate_root, _)| PathBuf::from(crate_root).join(candidate));
-            if Path::new(candidate).exists()
-                || crate_relative.is_some_and(|path| path.exists())
-            {
+            if Path::new(candidate).exists() || crate_relative.is_some_and(|path| path.exists()) {
                 continue;
             }
             broken.push(format!("{source}: {candidate}"));

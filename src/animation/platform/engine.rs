@@ -14,32 +14,37 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
-use rini_runloop::channel;
-use rini_core::ids::WindowId;
-use rini_geometry::SameAs;
-use rini_runloop::run_loop::RepeatingTimer;
-use rini_core::ids::WindowServerId;
-use crate::animation::platform::snapshot_service::SnapshotService;
 use crate::animation::domain::request::SnapshotTarget;
+use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
+use crate::animation::platform::snapshot_service::SnapshotService;
 use crate::animation::platform::window_snapshot::{
     SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing,
 };
-use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
+use rini_core::ids::WindowId;
+use rini_core::ids::WindowServerId;
+use rini_geometry::SameAs;
+use rini_runloop::channel;
+use rini_runloop::run_loop::RepeatingTimer;
 
 pub(crate) use crate::animation::domain::motion::plan;
+pub use crate::animation::domain::motion::surface::SurfaceWindow;
+pub(crate) use crate::animation::domain::motion::surface::{
+    pan_travel, surface_travel, to_overlay_space,
+};
 use crate::animation::domain::motion::travel::{
     is_moving, neighbour_travel, resolve_end, resolve_start, travel_subject, worth_animating,
 };
-pub use crate::animation::domain::motion::surface::SurfaceWindow;
-pub(crate) use crate::animation::domain::motion::surface::{pan_travel, surface_travel, to_overlay_space};
-
 
 /// One window's part in an animation, as the caller describes it.
 #[derive(Debug)]
 pub enum Event {
     /// Animate a set of windows. The caller must have already placed the real windows at their
     /// final frames, or arrange to do so immediately after sending this.
-    Animate { windows: Vec<AnimationRequest>, focus: Option<WindowId>, duration: Duration },
+    Animate {
+        windows: Vec<AnimationRequest>,
+        focus: Option<WindowId>,
+        duration: Duration,
+    },
     /// Display geometry for the overlay. Must be the USABLE frame, excluding the menu bar strip,
     /// so the user's bar is not covered and made to flicker.
     SetDisplay { id: u32, frame: CGRect, scale: f64 },
@@ -47,7 +52,11 @@ pub enum Event {
     ForgetWindow(WindowId),
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
     /// by eye. Does not touch any real window, so it is safe to fire at any time.
-    DebugSlide { dx: f64, dy: f64, duration: Duration },
+    DebugSlide {
+        dx: f64,
+        dy: f64,
+        duration: Duration,
+    },
     /// Move the whole strip surface by one travel, as one rigid group; a leaving window animates
     /// off screen while its real frame parks. See "Strip movements" in `src/animation/docs/animation-smoothness.md`.
     AnimateSurface {
@@ -79,10 +88,17 @@ pub enum Event {
     SnapshotsReady,
     /// A framed recapture has landed. `settled` (`chase_settled`) means the window has repainted;
     /// only settled pictures may satisfy a reveal hold or replace a resizing tile's picture.
-    PictureReady { window: WindowId, snapshot: WindowSnapshot, settled: bool },
+    PictureReady {
+        window: WindowId,
+        snapshot: WindowSnapshot,
+        settled: bool,
+    },
     /// A hairline harvest finished. Harvested off the capture service's completion queue, which
     /// the framed capture behind it would deadlock (see `snapshot_service`).
-    DressingReady { window: WindowId, dressing: crate::animation::platform::edge_dressing::EdgeDressing },
+    DressingReady {
+        window: WindowId,
+        dressing: crate::animation::platform::edge_dressing::EdgeDressing,
+    },
     /// Recapture the bar, now that nothing is animating over it. Posted by the refresh timer.
     RefreshBar,
     /// Recapture this window because focus moved to or from it: focus changes the rendering
@@ -173,7 +189,9 @@ fn bitmap_thumbprint(snapshot: &WindowSnapshot) -> Option<Vec<u8>> {
 /// rides its group all the same.
 fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
     for tile in tiles.iter_mut() {
-        let Some(member) = plan.member(tile.window) else { continue };
+        let Some(member) = plan.member(tile.window) else {
+            continue;
+        };
         tile.to = match member {
             plan::Member::Rigid { key, rel } => plan::overlay_of(rel, plan.position_of(key)),
             plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => to,
@@ -183,7 +201,6 @@ fn sync_tiles_to_plan(tiles: &mut [OverlayTile], plan: &plan::FlightPlan) {
         };
     }
 }
-
 
 /// The capture work a lift leaves for the quiet period.
 #[derive(Default)]
@@ -247,8 +264,13 @@ fn band_plan(
     let mut strip: Vec<(plan::GroupKey, bool, usize)> = Vec::new();
     for group in plan.groups.iter().filter(|g| !g.members.is_empty()) {
         let holds_focus = focus.is_some_and(|f| group.members.iter().any(|m| m.window == f));
-        let shallowest =
-            group.members.iter().filter_map(|m| within.get(&m.window)).copied().min().unwrap_or(0);
+        let shallowest = group
+            .members
+            .iter()
+            .filter_map(|m| within.get(&m.window))
+            .copied()
+            .min()
+            .unwrap_or(0);
         strip.push((group.key, holds_focus, shallowest));
     }
     if !plan.changing.is_empty() || !plan.entrances.is_empty() {
@@ -285,7 +307,8 @@ impl RunningAnimation {
 
     /// Past the clock by more than `LIFT_GRACE`: lift whether or not the tiles report settled.
     fn overdue(&self) -> bool {
-        self.started.is_some_and(|started| started.elapsed() > self.duration + LIFT_GRACE)
+        self.started
+            .is_some_and(|started| started.elapsed() > self.duration + LIFT_GRACE)
     }
 
     /// Wall-clock time left before the overlay lifts.
@@ -329,10 +352,14 @@ impl RunningAnimation {
             return TileState::NotTiled;
         };
         let fits = snapshot.fits(tile.to.size);
-        if crate::animation::platform::window_snapshot::outgrows(tile.snapshot.coverage.covered, tile.to.size) {
+        if crate::animation::platform::window_snapshot::outgrows(
+            tile.snapshot.coverage.covered,
+            tile.to.size,
+        ) {
             return TileState::Reveal { fits };
         }
-        let resizing = crate::animation::platform::window_snapshot::is_a_resize(tile.from.size, tile.to.size);
+        let resizing =
+            crate::animation::platform::window_snapshot::is_a_resize(tile.from.size, tile.to.size);
         if self.refresh_targets.contains(&window) {
             TileState::MovingRefreshTarget { fits, resizing }
         } else {
@@ -402,12 +429,20 @@ impl RunningAnimation {
         } else if let Some(tile) = self.tiles.iter_mut().find(|tile| tile.window == window) {
             tile.snapshot = snapshot.clone();
         }
-        Some(if self.awaiting.is_empty() { Claimed::Released } else { Claimed::Held })
+        Some(if self.awaiting.is_empty() {
+            Claimed::Released
+        } else {
+            Claimed::Held
+        })
     }
 
     /// Takes the first picture of a reserved entrance after the flight started moving. Returns the
     /// banded tile and what is left of the flight for it to travel.
-    fn admit(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> Option<(OverlayTile, Duration)> {
+    fn admit(
+        &mut self,
+        window: WindowId,
+        snapshot: &WindowSnapshot,
+    ) -> Option<(OverlayTile, Duration)> {
         if self.started.is_none() || !snapshot.is_usable() {
             return None;
         }
@@ -593,12 +628,14 @@ impl FlightEngine {
                 final_frames,
                 focus,
                 duration,
-            } => {
-                self.start_surface(windows, from_offset, to_offset, final_frames, focus, duration)
-            }
-            Event::Bounce { windows, overshoot, final_frames, focus, duration } => {
-                self.start_bounce(windows, overshoot, final_frames, focus, duration)
-            }
+            } => self.start_surface(windows, from_offset, to_offset, final_frames, focus, duration),
+            Event::Bounce {
+                windows,
+                overshoot,
+                final_frames,
+                focus,
+                duration,
+            } => self.start_bounce(windows, overshoot, final_frames, focus, duration),
             Event::ForgetWindow(window) => self.cache.forget(window),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.step(),
@@ -690,7 +727,10 @@ impl FlightEngine {
         let Some(running) = self.running.as_ref() else { return };
         let progress = running.progress_if_started();
         let state = running.tile_state(window, snapshot);
-        let CacheComparison { renders_like_cached, same_source } = comparison;
+        let CacheComparison {
+            renders_like_cached,
+            same_source,
+        } = comparison;
         match should_swap_mid_flight(state, settled, renders_like_cached, same_source, progress) {
             // An unsettled capture of a held window can be its unpainted surface.
             SwapDecision::Claim => {
@@ -735,14 +775,19 @@ impl FlightEngine {
                     cached.map(|snapshot| snapshot.coverage),
                     (target.size.width, target.size.height),
                 ) || cached.is_some_and(|snapshot| {
-                    crate::animation::platform::window_snapshot::picture_is_stale(snapshot.taken.elapsed())
+                    crate::animation::platform::window_snapshot::picture_is_stale(
+                        snapshot.taken.elapsed(),
+                    )
                 })
             })
             .collect();
         if wanted.is_empty() {
             return Vec::new();
         }
-        debug!(count = wanted.len(), "warming snapshots for reactor-supplied windows");
+        debug!(
+            count = wanted.len(),
+            "warming snapshots for reactor-supplied windows"
+        );
         let requested = wanted.iter().map(|target| target.window).collect();
         self.service.request(wanted);
         requested
@@ -754,7 +799,8 @@ impl FlightEngine {
             warn!("no display geometry yet; cannot warm the snapshot cache");
             return;
         };
-        let windows = crate::windows::platform::window_server::visible_windows_on_display(display_frame);
+        let windows =
+            crate::windows::platform::window_server::visible_windows_on_display(display_frame);
         let targets: Vec<SnapshotTarget> = windows
             .into_iter()
             .map(|(server_id, frame)| SnapshotTarget {
@@ -836,7 +882,9 @@ impl FlightEngine {
                 for window in windows {
                     let server_id = WindowServerId::from(window);
                     let Some(dressing) =
-                        crate::animation::platform::edge_dressing::harvest_edge_dressing(server_id, scale)
+                        crate::animation::platform::edge_dressing::harvest_edge_dressing(
+                            server_id, scale,
+                        )
                     else {
                         continue;
                     };
@@ -847,7 +895,11 @@ impl FlightEngine {
     }
 
     /// Takes a finished hairline harvest: onto the cached snapshot, and onto a tile in flight.
-    fn dressing_ready(&mut self, window: WindowId, dressing: crate::animation::platform::edge_dressing::EdgeDressing) {
+    fn dressing_ready(
+        &mut self,
+        window: WindowId,
+        dressing: crate::animation::platform::edge_dressing::EdgeDressing,
+    ) {
         if let Some(snapshot) = self.cache.get_mut(window) {
             snapshot.dressing = Some(dressing.clone());
         }
@@ -876,16 +928,28 @@ impl FlightEngine {
     fn compare_with_cached(&self, window: WindowId, incoming: &WindowSnapshot) -> CacheComparison {
         use crate::animation::platform::window_snapshot::SnapshotImage;
         let Some(cached) = self.cache.get(window) else {
-            return CacheComparison { renders_like_cached: false, same_source: true };
+            return CacheComparison {
+                renders_like_cached: false,
+                same_source: true,
+            };
         };
         let same_source = cached.source == incoming.source;
-        if !cached.fits(CGSize::new(incoming.coverage.covered.0, incoming.coverage.covered.1)) {
-            return CacheComparison { renders_like_cached: false, same_source };
+        if !cached.fits(CGSize::new(
+            incoming.coverage.covered.0,
+            incoming.coverage.covered.1,
+        )) {
+            return CacheComparison {
+                renders_like_cached: false,
+                same_source,
+            };
         }
         let (SnapshotImage::Bitmap(old), SnapshotImage::Bitmap(new)) =
             (&cached.image, &incoming.image)
         else {
-            return CacheComparison { renders_like_cached: false, same_source };
+            return CacheComparison {
+                renders_like_cached: false,
+                same_source,
+            };
         };
         let renders_like_cached = match (
             crate::animation::platform::edge_dressing::thumbprint(old),
@@ -894,7 +958,10 @@ impl FlightEngine {
             (Some(a), Some(b)) => renderings_match(&a, &b),
             _ => false,
         };
-        CacheComparison { renders_like_cached, same_source }
+        CacheComparison {
+            renders_like_cached,
+            same_source,
+        }
     }
 
     /// How much of the running flight is left, in wall-clock time.
@@ -971,8 +1038,12 @@ impl FlightEngine {
     /// Takes a landed picture for a window a holding flight is waiting on. Returns whether the
     /// hold claimed it.
     fn claim_reveal(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
-        let Some(running) = self.running.as_mut() else { return false };
-        let Some(claimed) = running.claim(window, snapshot) else { return false };
+        let Some(running) = self.running.as_mut() else {
+            return false;
+        };
+        let Some(claimed) = running.claim(window, snapshot) else {
+            return false;
+        };
         self.recompose();
         if claimed == Claimed::Released {
             debug!(
@@ -1003,24 +1074,30 @@ impl FlightEngine {
     /// Adds the tile for a reserved entrance whose first picture landed after the flight started
     /// moving. Returns whether the picture was taken.
     fn admit_entrance(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
-        let Some(running) = self.running.as_mut() else { return false };
-        let Some((tile, duration)) = running.admit(window, snapshot) else { return false };
+        let Some(running) = self.running.as_mut() else {
+            return false;
+        };
+        let Some((tile, duration)) = running.admit(window, snapshot) else {
+            return false;
+        };
         running.plan.entrances.push((tile.window, tile.from, tile.to));
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.add_tile(&tile, plan::GroupKey::Loose, &banding, duration);
         }
-        debug!(pid = window.pid, idx = window.idx.get(), "window entered mid-flight");
+        debug!(
+            pid = window.pid,
+            idx = window.idx.get(),
+            "window entered mid-flight"
+        );
         true
     }
-
 
     /// The snapshot to draw for one window: any usable cached picture, whatever its shape; a
     /// wrong-shaped one is drawn cropped. See "Resizes through the overlay" in the doc.
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
         self.cache.usable(request.window).cloned()
     }
-
 
     /// Tiles for the border windows tracing the animated windows; each anchor is the window's real
     /// frame plus its tile's from/to/depth. See "Window borders during animations" in the doc.
@@ -1038,7 +1115,10 @@ impl FlightEngine {
         let managed = managed_server_ids(
             exclude,
             self.cache.iter().map(|(window, _)| *window),
-            self.deferred_warm.iter().chain(self.after_flight.iter().flat_map(|a| a.targets.iter())).map(|t| t.window),
+            self.deferred_warm
+                .iter()
+                .chain(self.after_flight.iter().flat_map(|a| a.targets.iter()))
+                .map(|t| t.window),
         );
         let candidates: Vec<(WindowServerId, CGRect)> =
             crate::windows::platform::window_server::visible_windows_on_display(display)
@@ -1049,7 +1129,9 @@ impl FlightEngine {
         let mut tiles = Vec::new();
         let mut targets = Vec::new();
         for &(real, from, to, depth) in anchors {
-            let Some((server_id, frame)) = companion_of(real, &candidates, display) else { continue };
+            let Some((server_id, frame)) = companion_of(real, &candidates, display) else {
+                continue;
+            };
             // One border traces one window; stacked twins share a frame.
             if !claimed.insert(server_id.as_u32()) {
                 continue;
@@ -1057,10 +1139,17 @@ impl FlightEngine {
             let window = synthetic_window_id(server_id);
             debug!(
                 wsid = server_id.as_u32(),
-                anchor = format!("{:.0},{:.0} {:.0}x{:.0}", real.origin.x, real.origin.y, real.size.width, real.size.height),
+                anchor = format!(
+                    "{:.0},{:.0} {:.0}x{:.0}",
+                    real.origin.x, real.origin.y, real.size.width, real.size.height
+                ),
                 "border companion matched"
             );
-            targets.push(SnapshotTarget { window, server_id, size: frame.size });
+            targets.push(SnapshotTarget {
+                window,
+                server_id,
+                size: frame.size,
+            });
             let offset = (frame.origin.x - real.origin.x, frame.origin.y - real.origin.y);
             let follow = |rect: CGRect| {
                 CGRect::new(
@@ -1080,8 +1169,12 @@ impl FlightEngine {
                     depth,
                     companion: true,
                     focused: false,
-                    }),
-                None => needs_capture.push(SnapshotTarget { window, server_id, size: frame.size }),
+                }),
+                None => needs_capture.push(SnapshotTarget {
+                    window,
+                    server_id,
+                    size: frame.size,
+                }),
             }
         }
         (tiles, targets)
@@ -1112,7 +1205,10 @@ impl FlightEngine {
         let depths = crate::windows::platform::window_server::front_to_back_depths();
 
         let any_resize = windows.iter().any(|request| {
-            crate::animation::platform::window_snapshot::is_a_resize(request.from.size, request.to.size)
+            crate::animation::platform::window_snapshot::is_a_resize(
+                request.from.size,
+                request.to.size,
+            )
         });
         let apply_at = apply_frames_at(FlightKind::Layout, any_resize);
 
@@ -1171,11 +1267,10 @@ impl FlightEngine {
             }
             let snapshot = self.snapshot_for(request);
             // Queued now so the next switch has pixels, even if this one does not.
-            if snapshot
-                .as_ref()
-                .is_none_or(|s| s.source == crate::animation::platform::window_snapshot::SnapshotSource::SkyLight
-                    && !s.is_usable())
-            {
+            if snapshot.as_ref().is_none_or(|s| {
+                s.source == crate::animation::platform::window_snapshot::SnapshotSource::SkyLight
+                    && !s.is_usable()
+            }) {
                 needs_capture.push(SnapshotTarget {
                     window: request.window,
                     server_id: request.server_id,
@@ -1208,7 +1303,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: false,
                         focused: focus == Some(request.window),
-                            });
+                    });
                     starts.push((request.window, start));
                     resolved.push((request.window, start, end, request.floating));
                 }
@@ -1216,9 +1311,10 @@ impl FlightEngine {
                 // travels from its spawn frame" in `src/animation/docs/animation-smoothness.md`.
                 None => {
                     // Only a frame on this display counts as a spawn; capturing off screen is slow.
-                    let spawn = crate::windows::platform::window_server::get_window(request.server_id)
-                        .map(|info| info.frame)
-                        .filter(|f| !rini_geometry::is_off_screen(display_frame, *f));
+                    let spawn =
+                        crate::windows::platform::window_server::get_window(request.server_id)
+                            .map(|info| info.frame)
+                            .filter(|f| !rini_geometry::is_off_screen(display_frame, *f));
                     let budget_left = sync_captures < MAX_SYNC_ENTRANCE_CAPTURES;
                     let captured_at = Instant::now();
                     let picture = spawn
@@ -1264,7 +1360,7 @@ impl FlightEngine {
                                 depth: 0,
                                 companion: false,
                                 focused: standing && focus == Some(request.window) || !standing,
-                                            });
+                            });
                             if standing {
                                 starts.push((request.window, from));
                                 resolved.push((request.window, from, to, request.floating));
@@ -1428,7 +1524,8 @@ impl FlightEngine {
                 // See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
                 let Self { overlay, running, .. } = self;
                 let running = running.as_mut().expect("checked above");
-                let presented = overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
+                let presented =
+                    overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
                 let focus_changed = focus.is_some() && focus != focus_before;
                 // The viewport in overlay space: what a member's destination is judged against.
                 let viewport = display
@@ -1447,7 +1544,8 @@ impl FlightEngine {
                 sync_tiles_to_plan(&mut running.tiles, &running.plan);
                 if !delta.is_empty() {
                     debug!(
-                        groups = running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
+                        groups =
+                            running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
                         changing = running.plan.changing.len(),
                         entrances = running.plan.entrances.len(),
                         reparented = delta.reparented.len(),
@@ -1466,9 +1564,15 @@ impl FlightEngine {
                     }
                     for (window, from_key, to_key) in &delta.reparented {
                         let dest = running.plan.member(*window).map(|m| match m {
-                            plan::Member::Rigid { key, rel } => plan::overlay_of(rel, running.plan.position_of(key)),
-                            plan::Member::Changing { to, .. } | plan::Member::Entrance { to, .. } => to,
-                            plan::Member::Floating { to, .. } => plan::overlay_of(to, running.plan.position_of(plan::GroupKey::Floating)),
+                            plan::Member::Rigid { key, rel } => {
+                                plan::overlay_of(rel, running.plan.position_of(key))
+                            }
+                            plan::Member::Changing { to, .. }
+                            | plan::Member::Entrance { to, .. } => to,
+                            plan::Member::Floating { to, .. } => plan::overlay_of(
+                                to,
+                                running.plan.position_of(plan::GroupKey::Floating),
+                            ),
                         });
                         let from_to = running.plan.position_of(*from_key);
                         debug!(
@@ -1477,7 +1581,12 @@ impl FlightEngine {
                             from = format!("{from_key:?}"),
                             to = format!("{to_key:?}"),
                             group_destination = format!("{:.0},{:.0}", from_to.x, from_to.y),
-                            member_destination = dest.map(|d| format!("{:.0},{:.0} {:.0}x{:.0}", d.origin.x, d.origin.y, d.size.width, d.size.height)).unwrap_or_default(),
+                            member_destination = dest
+                                .map(|d| format!(
+                                    "{:.0},{:.0} {:.0}x{:.0}",
+                                    d.origin.x, d.origin.y, d.size.width, d.size.height
+                                ))
+                                .unwrap_or_default(),
                             "member reparented"
                         );
                     }
@@ -1658,7 +1767,9 @@ impl FlightEngine {
                     if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
-                    if let Some(info) = crate::windows::platform::window_server::get_window(window.server_id) {
+                    if let Some(info) =
+                        crate::windows::platform::window_server::get_window(window.server_id)
+                    {
                         starts.push((window.window, info.frame));
                     }
                     tiles.push(OverlayTile {
@@ -1671,7 +1782,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: false,
                         focused: focus == Some(window.window),
-                            });
+                    });
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
                 None => missing += 1,
@@ -1802,7 +1913,10 @@ impl FlightEngine {
         if running.started.is_some() {
             return;
         }
-        debug!(windows = running.tiles.len(), "starting the animation after coalescing");
+        debug!(
+            windows = running.tiles.len(),
+            "starting the animation after coalescing"
+        );
         running.started = Some(Instant::now());
         let tiles = std::mem::take(&mut running.tiles);
         let duration = running.duration;
@@ -1849,7 +1963,13 @@ impl FlightEngine {
                     .map(|s| s.elapsed().saturating_sub(running.duration).as_millis() as u64)
                     .unwrap_or(0);
                 let worst_pt = handover.as_ref().map_or(0.0, |r| r.worst_visible_pt);
-                debug!(settled, landed, late_ms, worst_pt = format!("{worst_pt:.2}"), "flight landed");
+                debug!(
+                    settled,
+                    landed,
+                    late_ms,
+                    worst_pt = format!("{worst_pt:.2}"),
+                    "flight landed"
+                );
             }
         }
         if refresh_now {
@@ -1907,7 +2027,12 @@ impl FlightEngine {
                 Some((*window, info.frame))
             })
             .collect();
-        Some(handover_report(&running.final_frames, &tiled, &real, display_frame))
+        Some(handover_report(
+            &running.final_frames,
+            &tiled,
+            &real,
+            display_frame,
+        ))
     }
 
     /// Asks for a fresh desktop render in the background, or defers it to `finish` while a flight
@@ -1942,7 +2067,10 @@ impl FlightEngine {
         // Size-checked: a render for the other display can land after a display change. See "A
         // render of the wrong display, drawn at its own size" in `src/animation/docs/capture-overlay-research.md`.
         if let Some(rendered) = self.pictures.desktop.clone().filter(|rendered| {
-            crate::animation::platform::window_snapshot::spans_display(rendered.coverage.covered, display_size)
+            crate::animation::platform::window_snapshot::spans_display(
+                rendered.coverage.covered,
+                display_size,
+            )
         }) {
             self.pictures.drawn_once = true;
             return Some(rendered);
@@ -2001,7 +2129,10 @@ impl FlightEngine {
                 .map(|b| format!("{:.0}x{:.0}", b.coverage.covered.0, b.coverage.covered.1))
                 .unwrap_or_else(|| "NONE".to_string()),
             strip = strip
-                .map(|r| format!("{:.0},{:.0} {:.0}x{:.0}", r.origin.x, r.origin.y, r.size.width, r.size.height))
+                .map(|r| format!(
+                    "{:.0},{:.0} {:.0}x{:.0}",
+                    r.origin.x, r.origin.y, r.size.width, r.size.height
+                ))
                 .unwrap_or_else(|| "none".to_string()),
             "overlay dressed"
         );
@@ -2010,9 +2141,13 @@ impl FlightEngine {
     /// The bar's held picture and where it sits in overlay coordinates. Only the very first call
     /// captures inline; [`Self::refresh_bar`] pays for the rest after an animation.
     fn bar_picture(&mut self) -> (Option<WindowSnapshot>, Option<CGRect>) {
-        let Some((display_frame, _)) = self.display else { return (None, None) };
+        let Some((display_frame, _)) = self.display else {
+            return (None, None);
+        };
         let strip = crate::animation::platform::backdrop::bar_strip(display_frame);
-        let Some(bounds) = strip.bounds else { return (None, None) };
+        let Some(bounds) = strip.bounds else {
+            return (None, None);
+        };
         if self.pictures.bar.is_none() {
             self.refresh_bar();
         }
@@ -2038,7 +2173,9 @@ impl FlightEngine {
     /// Recaptures the bar on its own, keeping its alpha; a no-op while the overlay covers it.
     /// See "The bar has to be captured on its own" in `src/animation/docs/capture-overlay-research.md`.
     fn refresh_bar(&mut self) {
-        let Some((display_frame, scale)) = self.display else { return };
+        let Some((display_frame, scale)) = self.display else {
+            return;
+        };
         if self.overlay.as_ref().is_some_and(TileOverlay::is_visible) {
             return;
         }
@@ -2129,14 +2266,22 @@ impl FlightEngine {
         }
         let Some(after) = self.after_flight.take() else { return };
         let animated: Vec<WindowId> = after.targets.iter().map(|target| target.window).collect();
-        let requested =
-            if after.targets.is_empty() { Vec::new() } else { self.warm_windows(after.targets) };
+        let requested = if after.targets.is_empty() {
+            Vec::new()
+        } else {
+            self.warm_windows(after.targets)
+        };
         let dressed: HashSet<WindowId> = animated
             .iter()
             .copied()
             .filter(|window| self.cache.get(*window).is_some_and(|s| s.dressing.is_some()))
             .collect();
-        self.harvest_dressings(finish_harvest_set(&animated, &after.harvested, &requested, &dressed));
+        self.harvest_dressings(finish_harvest_set(
+            &animated,
+            &after.harvested,
+            &requested,
+            &dressed,
+        ));
         let deferred = std::mem::take(&mut self.deferred_warm);
         if !deferred.is_empty() {
             self.warm_windows(deferred);
@@ -2152,7 +2297,8 @@ impl FlightEngine {
             warn!("no display geometry yet; cannot run the debug slide");
             return;
         };
-        let windows = crate::windows::platform::window_server::visible_windows_on_display(display_frame);
+        let windows =
+            crate::windows::platform::window_server::visible_windows_on_display(display_frame);
         if windows.is_empty() {
             warn!("no visible windows found for the debug slide");
             return;
@@ -2176,7 +2322,6 @@ impl FlightEngine {
     }
 }
 
-
 /// Where a window really is right now, from the window server: the reactor's `from` can be the
 /// previous pass's destination rather than where the window sits.
 fn actual_start(request: &AnimationRequest, display: CGRect, travel: Option<CGPoint>) -> CGRect {
@@ -2193,20 +2338,17 @@ fn actual_start(request: &AnimationRequest, display: CGRect, travel: Option<CGPo
 mod tests {
     use super::*;
 
-
     /// The built-in display, for tests that need a screen to judge parks against.
     const DISPLAY: CGRect = CGRect {
         origin: CGPoint { x: 0.0, y: 0.0 },
         size: CGSize { width: 1728.0, height: 1117.0 },
     };
 
-
-
-
-
     #[test]
     fn a_resize_places_the_real_windows_earlier() {
-        assert!(apply_frames_at(FlightKind::Layout, true) < apply_frames_at(FlightKind::Layout, false));
+        assert!(
+            apply_frames_at(FlightKind::Layout, true) < apply_frames_at(FlightKind::Layout, false)
+        );
         assert_eq!(apply_frames_at(FlightKind::Layout, false), APPLY_FRAMES_AT);
         assert_eq!(apply_frames_at(FlightKind::Layout, true), APPLY_FRAMES_AT_RESIZE);
     }
@@ -2220,9 +2362,6 @@ mod tests {
         assert_eq!(from.size.width, 0.0);
         assert_eq!(from.size.height, 1081.0);
     }
-
-
-
 
     /// Border geometry from the user's bordersrc: a concentric sibling window a few points larger.
     #[test]
@@ -2254,7 +2393,10 @@ mod tests {
         let owed = [WindowId::new(872, 51462)];
         let managed = managed_server_ids(&pass, cached.into_iter(), owed.into_iter());
         assert!(managed.contains(&102698) && managed.contains(&102682) && managed.contains(&51462));
-        assert!(!managed.contains(&9001), "a border seen before is still a border");
+        assert!(
+            !managed.contains(&9001),
+            "a border seen before is still a border"
+        );
         // The clamped park is not judged off screen, so geometry alone cannot exclude it.
         let park = rect(1727.0, 1076.0, 1720.0, 1081.0);
         assert!(!rini_geometry::is_off_screen(DISPLAY, park));
@@ -2263,13 +2405,20 @@ mod tests {
 
     #[test]
     fn a_parked_window_neither_traces_nor_is_traced() {
-        let park = rect(DISPLAY.size.width - 1.0, DISPLAY.size.height - 1.0, 859.0, 1081.0);
+        let park = rect(
+            DISPLAY.size.width - 1.0,
+            DISPLAY.size.height - 1.0,
+            859.0,
+            1081.0,
+        );
         assert!(rini_geometry::is_off_screen(DISPLAY, park));
         let twin = (WindowServerId::new(7), park);
         assert!(companion_of(park, &[twin], DISPLAY).is_none(), "a parked anchor");
         let on_screen = rect(4.0, 32.0, 859.0, 1081.0);
         let border = (WindowServerId::new(8), rect(1.0, 29.0, 865.0, 1087.0));
-        assert!(companion_of(on_screen, &[twin, border], DISPLAY).map(|(id, _)| id.as_u32()) == Some(8));
+        assert!(
+            companion_of(on_screen, &[twin, border], DISPLAY).map(|(id, _)| id.as_u32()) == Some(8)
+        );
     }
 
     /// The 0.1pt tolerance is `same_as`'s: the layout recomputes destinations bit-for-bit only most
@@ -2303,18 +2452,21 @@ mod tests {
         assert!(pictures.shown.is_none());
         assert!(pictures.desktop.is_none());
         assert!(pictures.bar.is_none());
-        assert!(!pictures.drawn_once, "a display we have never drawn has no backdrop to keep");
+        assert!(
+            !pictures.drawn_once,
+            "a display we have never drawn has no backdrop to keep"
+        );
     }
 
     mod refresh {
         use super::*;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 1, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 1,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
-
-
-
 
         #[test]
         fn refresh_targets_are_the_two_ends_of_a_focus_change() {
@@ -2325,7 +2477,10 @@ mod tests {
             assert!(refresh_targets(Some(wid(1)), None, &tiles).is_empty());
             assert!(refresh_targets(None, None, &tiles).is_empty());
             // A change between two tiles: both, destination first.
-            assert_eq!(refresh_targets(Some(wid(1)), Some(wid(2)), &tiles), vec![wid(2), wid(1)]);
+            assert_eq!(
+                refresh_targets(Some(wid(1)), Some(wid(2)), &tiles),
+                vec![wid(2), wid(1)]
+            );
             // Only one end is in the flight: only that one.
             assert_eq!(refresh_targets(Some(wid(9)), Some(wid(2)), &tiles), vec![wid(2)]);
             assert_eq!(refresh_targets(Some(wid(1)), Some(wid(9)), &tiles), vec![wid(1)]);
@@ -2347,7 +2502,10 @@ mod tests {
 
             let pan = refresh_targets(Some(wid(2)), Some(wid(2)), &windows);
             assert!(pan.is_empty());
-            assert!(refresh_requests(&tiles, &pan).1.is_empty(), "nothing is captured");
+            assert!(
+                refresh_requests(&tiles, &pan).1.is_empty(),
+                "nothing is captured"
+            );
 
             let change = refresh_targets(Some(wid(2)), Some(wid(3)), &windows);
             let (covered, requests) = refresh_requests(&tiles, &change);
@@ -2365,10 +2523,13 @@ mod tests {
     /// each test names the clause it pins.
     mod exploration {
         use super::*;
-                use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::animation::platform::window_snapshot::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         fn tile(
@@ -2483,7 +2644,11 @@ mod tests {
                 flight.merge_pass(pass2, Some(f)).into_iter().map(|(_, o)| o).collect();
             assert_eq!(
                 outcomes,
-                vec![Admitted::Redundant, Admitted::Retargeted, Admitted::Redundant],
+                vec![
+                    Admitted::Redundant,
+                    Admitted::Retargeted,
+                    Admitted::Redundant
+                ],
                 "S1 confirmed, S2 retargeted, F confirmed"
             );
 
@@ -2493,7 +2658,10 @@ mod tests {
                 !(d1 < df && df < d2) && !(d2 < df && df < d1),
                 "S1={d1} S2={d2} F={df}: the floating window is between two strip tiles"
             );
-            assert!(df < d1 && df < d2, "the floating focus leads, and its group with it");
+            assert!(
+                df < d1 && df < d2,
+                "the floating focus leads, and its group with it"
+            );
         }
 
         /// T5 (1.2, 1.3). Parks clamped past 40pt (Kiro 41pt, Finder 52pt) and one the server reports at
@@ -2511,7 +2679,12 @@ mod tests {
             let cases = [
                 ("41pt Kiro park", Some(kiro_real), park, slot),
                 ("52pt Finder park", Some(finder_real), finder_park, finder_slot),
-                ("park the server already reports at its slot", Some(slot), park, slot),
+                (
+                    "park the server already reports at its slot",
+                    Some(slot),
+                    park,
+                    slot,
+                ),
             ];
             let wrong: Vec<String> = cases
                 .iter()
@@ -2526,7 +2699,11 @@ mod tests {
                     })
                 })
                 .collect();
-            assert!(wrong.is_empty(), "parks not remapped to the edge:\n{}", wrong.join("\n"));
+            assert!(
+                wrong.is_empty(),
+                "parks not remapped to the edge:\n{}",
+                wrong.join("\n")
+            );
         }
 
         /// T7 (1.8).
@@ -2545,7 +2722,10 @@ mod tests {
         use super::*;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         /// T1 (1.1).
@@ -2596,7 +2776,11 @@ mod tests {
                 .filter(|(phase, kind)| capture_work_allowed(*phase, *kind))
                 .map(|(phase, kind)| format!("{phase:?}/{kind:?}"))
                 .collect();
-            assert!(allowed.is_empty(), "capture work allowed in flight: {}", allowed.join(", "));
+            assert!(
+                allowed.is_empty(),
+                "capture work allowed in flight: {}",
+                allowed.join(", ")
+            );
         }
 
         /// T4 (1.3).
@@ -2633,7 +2817,9 @@ mod tests {
             .collect();
             let report = handover_report(&final_frames, &[parked, strip], &real, display);
             assert!(
-                report.count_over == 1 && report.worst_visible_pt == 3.0 && report.worst_wsid == 200,
+                report.count_over == 1
+                    && report.worst_visible_pt == 3.0
+                    && report.worst_wsid == 200,
                 "expected count_over=1 worst=3pt wsid=200; got {report:?}"
             );
         }
@@ -2646,18 +2832,28 @@ mod tests {
             let q = vec![200u8; 64];
             let settled = chase_settled(None, &p, Some(&q));
             let wrong: Vec<String> = [
-                (limit <= HOLD_CAP, format!("reveal_hold_limit(300ms) = {limit:?}")),
+                (
+                    limit <= HOLD_CAP,
+                    format!("reveal_hold_limit(300ms) = {limit:?}"),
+                ),
                 (
                     REVEAL_CHASE_INTERVAL == Duration::from_millis(8),
                     format!("REVEAL_CHASE_INTERVAL = {REVEAL_CHASE_INTERVAL:?}"),
                 ),
-                (settled, format!("chase_settled(None, p, Some(q != p)) = {settled}")),
+                (
+                    settled,
+                    format!("chase_settled(None, p, Some(q != p)) = {settled}"),
+                ),
             ]
             .into_iter()
             .filter(|(ok, _)| !ok)
             .map(|(_, why)| why)
             .collect();
-            assert!(wrong.is_empty(), "hold is not bounded and cheap:\n{}", wrong.join("\n"));
+            assert!(
+                wrong.is_empty(),
+                "hold is not bounded and cheap:\n{}",
+                wrong.join("\n")
+            );
         }
 
         /// T10 (1.6), inverted: a holding flight sends every frame at frame zero, the newcomer's included.
@@ -2691,7 +2887,10 @@ mod tests {
         use crate::animation::platform::window_snapshot::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         pub(super) fn flight(started: Option<Instant>) -> RunningAnimation {
@@ -2786,8 +2985,13 @@ mod tests {
                     for same in [false, true] {
                         for same_source in [false, true] {
                             for progress in progresses {
-                                let got =
-                                    should_swap_mid_flight(state, settled, same, same_source, progress);
+                                let got = should_swap_mid_flight(
+                                    state,
+                                    settled,
+                                    same,
+                                    same_source,
+                                    progress,
+                                );
                                 assert_eq!(
                                     got,
                                     expected(state, settled, same, same_source, progress),
@@ -2803,7 +3007,11 @@ mod tests {
             }
             // Refresh: fits, differs, same route, 2 early progresses x 3 (settle x resizing) = 6;
             // reveal: fits, settled, 2 same x 2 routes x 2 progresses = 8.
-            assert_eq!(swaps, 6 + 8, "the table has exactly the early refresh and reveal swaps");
+            assert_eq!(
+                swaps,
+                6 + 8,
+                "the table has exactly the early refresh and reveal swaps"
+            );
         }
 
         /// 2.1, 2.4. Seed 95, 200 runs.
@@ -2832,7 +3040,10 @@ mod tests {
                         }
                         other => panic!("seed 95: swapped onto {other:?}"),
                     }
-                    assert!(progress.is_some_and(|p| p < 0.6), "seed 95: swap at {progress:?}");
+                    assert!(
+                        progress.is_some_and(|p| p < 0.6),
+                        "seed 95: swap at {progress:?}"
+                    );
                 }
                 if matches!(state, TileState::Moving { .. }) {
                     assert_eq!(decision, SwapDecision::CacheOnly, "seed 95: {state:?}");
@@ -2889,7 +3100,10 @@ mod tests {
                     should_swap_mid_flight(state, rng.coin(), rng.coin(), same_source, progress);
                 if decision == SwapDecision::Swap("refresh") {
                     swaps += 1;
-                    assert!(same_source, "seed 97: {state:?} at {progress:?} swapped across routes");
+                    assert!(
+                        same_source,
+                        "seed 97: {state:?} at {progress:?} swapped across routes"
+                    );
                 }
             }
             assert!(swaps > 0, "generator sanity: no refresh swap in {RUNS} runs");
@@ -2904,7 +3118,11 @@ mod tests {
                 (wid(3), WindowServerId::new(30), size),
             ];
             let (covered, requests) = refresh_requests(&tiles, &[wid(2), wid(1), wid(9)]);
-            assert_eq!(covered, vec![wid(2), wid(1)], "an unknown window is not a target");
+            assert_eq!(
+                covered,
+                vec![wid(2), wid(1)],
+                "an unknown window is not a target"
+            );
             let asked: Vec<(WindowId, u32)> =
                 requests.iter().map(|t| (t.window, t.server_id.as_u32())).collect();
             assert_eq!(asked, vec![(wid(2), 20), (wid(1), 10)], "one request per window");
@@ -2927,7 +3145,10 @@ mod tests {
                 .collect();
             assert_eq!(fired, vec![0.5], "refresh slots taken: {fired:?}");
             assert!(running.destination_refreshed);
-            assert!(!(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)), "spent");
+            assert!(
+                !(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)),
+                "spent"
+            );
             assert_eq!(REFRESH_DESTINATION_AT, 0.5);
             assert_eq!(REFRESH_APPLY_BEFORE, 0.6);
         }
@@ -2967,7 +3188,11 @@ mod tests {
                 running.tile_state(wid(3), &picture),
                 TileState::MovingRefreshTarget { fits: true, resizing: false }
             );
-            assert_eq!(running.tile_state(wid(4), &picture), TileState::Awaiting, "an entrance");
+            assert_eq!(
+                running.tile_state(wid(4), &picture),
+                TileState::Awaiting,
+                "an entrance"
+            );
             assert_eq!(running.tile_state(wid(5), &picture), TileState::NotTiled);
 
             // Once claimed, the grow is an ordinary resizing tile: a smaller picture no longer fits.
@@ -2984,9 +3209,12 @@ mod tests {
             );
         }
 
-
-        const PHASES: [FlightPhase; 4] =
-            [FlightPhase::Idle, FlightPhase::FrameZero, FlightPhase::Holding, FlightPhase::Moving];
+        const PHASES: [FlightPhase; 4] = [
+            FlightPhase::Idle,
+            FlightPhase::FrameZero,
+            FlightPhase::Holding,
+            FlightPhase::Moving,
+        ];
         const KINDS: [CaptureKind; 6] = [
             CaptureKind::Warm,
             CaptureKind::Desktop,
@@ -3039,7 +3267,10 @@ mod tests {
                 let phase = PHASES[rng.below(PHASES.len() as u64) as usize];
                 let kind = KINDS[rng.below(KINDS.len() as u64) as usize];
                 if phase == FlightPhase::Idle {
-                    assert!(capture_work_allowed(phase, kind), "seed 96: idle refused {kind:?}");
+                    assert!(
+                        capture_work_allowed(phase, kind),
+                        "seed 96: idle refused {kind:?}"
+                    );
                     continue;
                 }
                 if capture_work_allowed(phase, kind) {
@@ -3066,7 +3297,10 @@ mod tests {
             defer_warm(&mut deferred, vec![target(1, 1147.0), target(3, 859.0)]);
             let windows: Vec<WindowId> = deferred.iter().map(|t| t.window).collect();
             assert_eq!(windows, vec![wid(1), wid(2), wid(3)], "one entry per window");
-            assert_eq!(deferred[0].size.width, 1147.0, "the later request replaces the earlier");
+            assert_eq!(
+                deferred[0].size.width, 1147.0,
+                "the later request replaces the earlier"
+            );
 
             let drained = std::mem::take(&mut deferred);
             assert_eq!(drained.len(), 3);
@@ -3085,9 +3319,15 @@ mod tests {
             let fresh = Duration::from_millis(500);
             let stale = Duration::from_secs(3);
             assert!(desktop_render_wanted(None, display), "missing");
-            assert!(desktop_render_wanted(Some((fresh, (2560.0, 1440.0))), display), "misfit");
+            assert!(
+                desktop_render_wanted(Some((fresh, (2560.0, 1440.0))), display),
+                "misfit"
+            );
             assert!(desktop_render_wanted(Some((stale, display)), display), "stale");
-            assert!(!desktop_render_wanted(Some((fresh, display)), display), "in hand");
+            assert!(
+                !desktop_render_wanted(Some((fresh, display)), display),
+                "in hand"
+            );
         }
 
         /// 2.2.
@@ -3096,7 +3336,10 @@ mod tests {
             let animated = [wid(1), wid(2), wid(3), wid(4), wid(2)];
             let mut harvested = HashSet::new();
             assert!(harvested.insert(wid(1)), "the chase's dressing");
-            assert!(!harvested.insert(wid(1)), "a second harvest for the same window is skipped");
+            assert!(
+                !harvested.insert(wid(1)),
+                "a second harvest for the same window is skipped"
+            );
             let requested = [wid(3)];
             let dressed: HashSet<WindowId> = [wid(4)].into_iter().collect();
             assert_eq!(
@@ -3117,7 +3360,6 @@ mod tests {
             assert!(!capture_work_allowed(running.phase(), CaptureKind::Harvest));
         }
 
-
         const DISPLAY: CGRect = CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
             size: CGSize { width: 1728.0, height: 1117.0 },
@@ -3129,7 +3371,10 @@ mod tests {
             assert_eq!(apply_frames_at(FlightKind::Layout, false), 0.75);
             assert_eq!(apply_frames_at(FlightKind::Layout, true), 0.5);
             assert_eq!(apply_frames_at(FlightKind::Pan, false), APPLY_FRAMES_AT_PAN);
-            assert_eq!(APPLY_FRAMES_AT_PAN, 0.0, "a strip movement places its windows at frame zero");
+            assert_eq!(
+                APPLY_FRAMES_AT_PAN, 0.0,
+                "a strip movement places its windows at frame zero"
+            );
             assert_eq!(apply_frames_at(FlightKind::Pan, true), 0.5);
         }
 
@@ -3154,18 +3399,28 @@ mod tests {
             running.frames_applied = true;
 
             // The same tile again, the untiled window to the other park.
-            let frames_changed =
-                merge_final_frames(&mut running.final_frames, vec![(wid(1), slot), (wid(2), park_b)]);
+            let frames_changed = merge_final_frames(
+                &mut running.final_frames,
+                vec![(wid(1), slot), (wid(2), park_b)],
+            );
             let outcomes = running.merge_pass(vec![tile(wid(1), slot, slot)], None);
             let changed = outcomes.iter().any(|(_, o)| *o != Admitted::Redundant);
-            assert!(frames_changed && !changed, "the pass changes only the untiled frame");
+            assert!(
+                frames_changed && !changed,
+                "the pass changes only the untiled frame"
+            );
             running.absorb_in_flight_change(changed, frames_changed);
-            assert!(!running.frames_applied, "an untiled change left frames_applied set");
+            assert!(
+                !running.frames_applied,
+                "an untiled change left frames_applied set"
+            );
 
             // Nothing changes: the applied frames stand.
             running.frames_applied = true;
-            let frames_changed =
-                merge_final_frames(&mut running.final_frames, vec![(wid(1), slot), (wid(2), park_b)]);
+            let frames_changed = merge_final_frames(
+                &mut running.final_frames,
+                vec![(wid(1), slot), (wid(2), park_b)],
+            );
             let outcomes = running.merge_pass(vec![tile(wid(1), slot, slot)], None);
             let changed = outcomes.iter().any(|(_, o)| *o != Admitted::Redundant);
             running.absorb_in_flight_change(changed, frames_changed);
@@ -3188,7 +3443,11 @@ mod tests {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             // The park: clamped by macOS, not the flight's error.
             let clamp = [
-                (wid(108), rect(1727.0, 1116.0, 859.0, 1081.0), rect(1727.0, 1051.0, 859.0, 1081.0)),
+                (
+                    wid(108),
+                    rect(1727.0, 1116.0, 859.0, 1081.0),
+                    rect(1727.0, 1051.0, 859.0, 1081.0),
+                ),
                 (wid(200), slot, rect(870.0, 32.0, 859.0, 1081.0)),
             ];
             let (f, t, r) = measured(&clamp);
@@ -3200,8 +3459,16 @@ mod tests {
 
             // The leaving window: intended at its park past the right edge, still in its slot.
             let park_miss = [
-                (wid(1), rect(1728.0, 32.0, 1720.0, 1081.0), rect(-1718.0, 32.0, 1720.0, 1081.0)),
-                (wid(2), rect(4.0, 32.0, 1720.0, 1081.0), rect(4.0, 32.0, 1720.0, 1081.0)),
+                (
+                    wid(1),
+                    rect(1728.0, 32.0, 1720.0, 1081.0),
+                    rect(-1718.0, 32.0, 1720.0, 1081.0),
+                ),
+                (
+                    wid(2),
+                    rect(4.0, 32.0, 1720.0, 1081.0),
+                    rect(4.0, 32.0, 1720.0, 1081.0),
+                ),
             ];
             let (f, t, r) = measured(&park_miss);
             let report = handover_report(&f, &t, &r, DISPLAY);
@@ -3210,9 +3477,17 @@ mod tests {
             assert_eq!(report.worst_visible_pt, 0.0);
 
             let two = [
-                (wid(1), rect(4.0, 32.0, 859.0, 1081.0), rect(9.0, 32.0, 859.0, 1081.0)),
+                (
+                    wid(1),
+                    rect(4.0, 32.0, 859.0, 1081.0),
+                    rect(9.0, 32.0, 859.0, 1081.0),
+                ),
                 (wid(2), slot, rect(867.0, 40.0, 859.0, 1081.0)),
-                (wid(3), rect(1730.0, 32.0, 859.0, 1081.0), rect(1730.0, 32.0, 859.0, 1081.0)),
+                (
+                    wid(3),
+                    rect(1730.0, 32.0, 859.0, 1081.0),
+                    rect(1730.0, 32.0, 859.0, 1081.0),
+                ),
             ];
             let (f, t, r) = measured(&two);
             let report = handover_report(&f, &t, &r, DISPLAY);
@@ -3221,7 +3496,14 @@ mod tests {
             assert_eq!(report.worst_visible_pt, 8.0);
             assert_eq!(report.worst_wsid, 2);
 
-            let clean = [(wid(1), slot, slot), (wid(2), rect(4.0, 32.0, 859.0, 1081.0), rect(5.0, 32.0, 859.0, 1081.0))];
+            let clean = [
+                (wid(1), slot, slot),
+                (
+                    wid(2),
+                    rect(4.0, 32.0, 859.0, 1081.0),
+                    rect(5.0, 32.0, 859.0, 1081.0),
+                ),
+            ];
             let (f, t, r) = measured(&clean);
             let report = handover_report(&f, &t, &r, DISPLAY);
             assert_eq!(report.total, 2);
@@ -3255,17 +3537,14 @@ mod tests {
 
                 let visible: Vec<_> = frames
                     .iter()
-                    .filter(|(_, intended, _)| {
-                        !rini_geometry::is_off_screen(DISPLAY, *intended)
-                    })
+                    .filter(|(_, intended, _)| !rini_geometry::is_off_screen(DISPLAY, *intended))
                     .collect();
                 let error = |intended: &CGRect, actual: &CGRect| {
                     (actual.origin.x - intended.origin.x)
                         .abs()
                         .max((actual.origin.y - intended.origin.y).abs())
                 };
-                let expected_over =
-                    visible.iter().filter(|(_, i, a)| error(i, a) > 2.0).count();
+                let expected_over = visible.iter().filter(|(_, i, a)| error(i, a) > 2.0).count();
                 let expected_worst =
                     visible.iter().map(|(_, i, a)| error(i, a)).fold(0.0, f64::max);
                 assert_eq!(report.total, visible.len(), "seed 97");
@@ -3286,7 +3565,6 @@ mod tests {
             assert!(over_seen > 0, "generator sanity: no misses in {RUNS} runs");
         }
 
-
         /// The hold bound before Change D, kept here so the cap is checked against it.
         fn reveal_hold_limit_old(duration: Duration) -> Duration {
             duration.mul_f64(0.4).max(Duration::from_millis(300))
@@ -3299,9 +3577,15 @@ mod tests {
             let q = vec![200u8; 64];
             assert!(!chase_settled(None, &p, None), "nothing to compare against");
             assert!(chase_settled(Some(&p), &p, None), "two consecutive match");
-            assert!(chase_settled(None, &p, Some(&q)), "differs from the pre-resize picture");
+            assert!(
+                chase_settled(None, &p, Some(&q)),
+                "differs from the pre-resize picture"
+            );
             assert!(!chase_settled(None, &p, Some(&p)), "still the old rendering");
-            assert!(chase_settled(Some(&q), &p, Some(&q)), "a repaint settles even after a change");
+            assert!(
+                chase_settled(Some(&q), &p, Some(&q)),
+                "a repaint settles even after a change"
+            );
         }
 
         /// 2.4. See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
@@ -3314,7 +3598,10 @@ mod tests {
             }
             assert_eq!(HOLD_CAP, Duration::from_millis(300));
             assert_eq!(REVEAL_CHASE_INTERVAL, Duration::from_millis(8));
-            assert_eq!(REVEAL_CHASE_INTERVAL * REVEAL_CHASE_ATTEMPTS as u32, Duration::from_secs(1));
+            assert_eq!(
+                REVEAL_CHASE_INTERVAL * REVEAL_CHASE_ATTEMPTS as u32,
+                Duration::from_secs(1)
+            );
         }
 
         /// 2.4. Seed 98, 200 runs.
@@ -3341,7 +3628,10 @@ mod tests {
             assert!(running.awaiting.is_empty(), "the deadline cleared the hold");
 
             let reveal = test_snapshot(grown.size);
-            assert_eq!(running.tile_state(wid(1), &reveal), TileState::Reveal { fits: true });
+            assert_eq!(
+                running.tile_state(wid(1), &reveal),
+                TileState::Reveal { fits: true }
+            );
             assert_eq!(
                 running.tile_state(wid(1), &test_snapshot(small.size)),
                 TileState::Reveal { fits: false },
@@ -3391,10 +3681,18 @@ mod tests {
             let awaiting: Vec<(WindowId, CGSize)> = waiting.into_iter().collect();
             let now = Instant::now();
             let requested = running.extend_hold(&awaiting, false, Duration::from_millis(300), now);
-            assert_eq!(requested, Some(final_frames.clone()), "the slot went out with the rest");
+            assert_eq!(
+                requested,
+                Some(final_frames.clone()),
+                "the slot went out with the rest"
+            );
             assert!(running.frames_applied);
             running.started = Some(now);
-            assert_eq!(running.frames_due(running.apply_at), None, "nothing left to send");
+            assert_eq!(
+                running.frames_due(running.apply_at),
+                None,
+                "nothing left to send"
+            );
 
             // Nothing placed yet: everything goes at the apply point, once.
             let mut running = flight(Some(Instant::now()));
@@ -3415,7 +3713,11 @@ mod tests {
             running.entrances.push(entrance);
             running.awaiting.extend(waiting);
             let spawn = test_snapshot(CGSize::new(572.0, 540.0));
-            assert_eq!(running.claim(newcomer, &spawn), None, "a spawn-size picture is refused");
+            assert_eq!(
+                running.claim(newcomer, &spawn),
+                None,
+                "a spawn-size picture is refused"
+            );
             assert_eq!(running.entrances.len(), 1);
             assert_eq!(running.awaiting.len(), 1);
             assert_eq!(
@@ -3434,12 +3736,15 @@ mod tests {
     mod render_stability_preservation {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
-                use crate::animation::platform::window_snapshot::{
+        use crate::animation::platform::window_snapshot::{
             SnapshotCache, WindowSnapshot, needs_capture, outgrows, should_replace, test_snapshot,
         };
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         fn flight(started: Option<Instant>) -> RunningAnimation {
@@ -3473,14 +3778,24 @@ mod tests {
             match rng.below(4) {
                 0 => TileState::NotTiled,
                 1 => TileState::Awaiting,
-                2 => TileState::Moving { fits: rng.coin(), resizing: rng.coin() },
-                _ => TileState::MovingRefreshTarget { fits: rng.coin(), resizing: rng.coin() },
+                2 => TileState::Moving {
+                    fits: rng.coin(),
+                    resizing: rng.coin(),
+                },
+                _ => TileState::MovingRefreshTarget {
+                    fits: rng.coin(),
+                    resizing: rng.coin(),
+                },
             }
         }
 
         /// The apply point before this spec, kept here for P-3.3.
         fn apply_frames_at_old(any_resize: bool) -> f64 {
-            if any_resize { APPLY_FRAMES_AT_RESIZE } else { APPLY_FRAMES_AT }
+            if any_resize {
+                APPLY_FRAMES_AT_RESIZE
+            } else {
+                APPLY_FRAMES_AT
+            }
         }
 
         /// P-3.2.
@@ -3576,7 +3891,10 @@ mod tests {
         fn warming_and_the_desktop_render_are_allowed_once_the_flight_is_dropped() {
             assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::Warm));
             assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::Desktop));
-            assert!(capture_work_allowed(FlightPhase::Idle, CaptureKind::NeedsCapture));
+            assert!(capture_work_allowed(
+                FlightPhase::Idle,
+                CaptureKind::NeedsCapture
+            ));
 
             let mut running = flight(None);
             assert_eq!(running.phase(), FlightPhase::FrameZero);
@@ -3598,7 +3916,11 @@ mod tests {
                 let mut cache: SnapshotCache = SnapshotCache::new();
                 let size = rng.on_screen().size;
                 for _ in 0..rng.below(4) + 1 {
-                    let incoming = if rng.coin() { test_snapshot(size) } else { clipped(size) };
+                    let incoming = if rng.coin() {
+                        test_snapshot(size)
+                    } else {
+                        clipped(size)
+                    };
                     let before = cache.get(wid(1)).map(|s| s.coverage);
                     let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
                     let decision = should_swap_mid_flight(
@@ -3622,12 +3944,21 @@ mod tests {
                     }
                 }
             }
-            assert!(refused > RUNS / 8, "generator sanity: {refused} downgrades refused");
+            assert!(
+                refused > RUNS / 8,
+                "generator sanity: {refused} downgrades refused"
+            );
             let seen = |wanted: fn(&SwapDecision) -> bool| decisions.iter().any(wanted);
             assert!(seen(|d| *d == SwapDecision::Claim), "generator sanity: no Claim");
             assert!(seen(|d| *d == SwapDecision::Admit), "generator sanity: no Admit");
-            assert!(seen(|d| matches!(d, SwapDecision::Swap(_))), "generator sanity: no Swap");
-            assert!(seen(|d| *d == SwapDecision::CacheOnly), "generator sanity: no CacheOnly");
+            assert!(
+                seen(|d| matches!(d, SwapDecision::Swap(_))),
+                "generator sanity: no Swap"
+            );
+            assert!(
+                seen(|d| *d == SwapDecision::CacheOnly),
+                "generator sanity: no CacheOnly"
+            );
         }
 
         /// P-3.6. Unfixed code fired at 0.00 and 0.50; the preserved part is the one slot at the midpoint.
@@ -3642,7 +3973,9 @@ mod tests {
             assert_eq!(late, vec![0.5], "refreshes at or after the midpoint: {fired:?}");
             assert!(fired.len() <= 2, "more than the schedule allows: {fired:?}");
             assert_eq!(REFRESH_DESTINATION_AT, 0.5);
-            assert!(refresh_targets(Some(wid(1)), Some(wid(2)), &[wid(1), wid(2), wid(3)]).len() <= 2);
+            assert!(
+                refresh_targets(Some(wid(1)), Some(wid(2)), &[wid(1), wid(2), wid(3)]).len() <= 2
+            );
             assert!(capture_work_allowed(FlightPhase::Moving, CaptureKind::Refresh));
             // A second sweep on the same flight fires nothing: the slots are spent.
             assert!(!(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)));
@@ -3689,15 +4022,26 @@ mod tests {
                     None,
                     "seed 91: at the deadline the placeholder flies"
                 );
-                assert_eq!(running.claim(wid(1), &snapshot), None, "seed 91: too small to claim");
+                assert_eq!(
+                    running.claim(wid(1), &snapshot),
+                    None,
+                    "seed 91: too small to claim"
+                );
                 assert_eq!(running.awaiting, awaiting, "seed 91: the hold stands");
                 assert_eq!(
                     running.claim(wid(1), &test_snapshot(to.size)),
                     Some(Claimed::Released),
                     "seed 91: the reveal is claimed"
                 );
-                assert!(running.tiles[0].snapshot.fits(to.size), "seed 91: drawn from the reveal");
-                assert_eq!(running.phase(), FlightPhase::FrameZero, "seed 91: released, not moving");
+                assert!(
+                    running.tiles[0].snapshot.fits(to.size),
+                    "seed 91: drawn from the reveal"
+                );
+                assert_eq!(
+                    running.phase(),
+                    FlightPhase::FrameZero,
+                    "seed 91: released, not moving"
+                );
             }
             assert_eq!(hold_wait(None, Instant::now()), None, "no deadline, no wait");
         }
@@ -3716,7 +4060,8 @@ mod tests {
                 cache.insert(wid(3), test_snapshot(slot.size));
                 assert!(cache.usable(wid(3)).is_some(), "seed 95: the drawn neighbour");
 
-                let (from, to) = surface_travel(slot, CGPoint::new(0.0, 0.0), CGPoint::new(861.0, 0.0), false);
+                let (from, to) =
+                    surface_travel(slot, CGPoint::new(0.0, 0.0), CGPoint::new(861.0, 0.0), false);
                 let mut running = flight(None);
                 running.tiles.push(stacked(wid(3), from, to, Some(0), false));
                 running.final_frames = vec![(wid(1), to), (wid(2), to), (wid(3), to)];
@@ -3726,7 +4071,10 @@ mod tests {
                 let report = handover_report(&running.final_frames, &tiled, &real, DISPLAY);
                 // A destination past the edge is a park, which the report excludes (2.3).
                 let measured = usize::from(!rini_geometry::is_off_screen(DISPLAY, to));
-                assert_eq!(report.total, measured, "seed 95: only the drawn window is measured");
+                assert_eq!(
+                    report.total, measured,
+                    "seed 95: only the drawn window is measured"
+                );
                 assert_eq!(report.count_over, 0);
 
                 let size = (slot.size.width, slot.size.height);
@@ -3739,7 +4087,10 @@ mod tests {
         /// P-3.16.
         #[test]
         fn a_pan_holds_for_nothing() {
-            assert_eq!(frame_zero_work(&[], &[], &[], &[]), (false, Vec::new(), Vec::new()));
+            assert_eq!(
+                frame_zero_work(&[], &[], &[], &[]),
+                (false, Vec::new(), Vec::new())
+            );
             let mut rng = Gen(96);
             for _ in 0..RUNS {
                 let count = rng.below(4) as u32 + 1;
@@ -3752,11 +4103,17 @@ mod tests {
                     running.tiles.push(stacked(wid(i), from, to, Some(i as usize), false));
                     running.final_frames.push((wid(i), to));
                 }
-                assert!(running.awaiting.is_empty() && running.entrances.is_empty(), "seed 96");
+                assert!(
+                    running.awaiting.is_empty() && running.entrances.is_empty(),
+                    "seed 96"
+                );
                 assert_eq!(running.phase(), FlightPhase::FrameZero, "seed 96");
                 assert!(!running.frames_applied, "seed 96: nothing applied at frame zero");
                 assert_eq!(hold_wait(running.hold_deadline, Instant::now()), None, "seed 96");
-                assert_eq!(running.claim(wid(1), &test_snapshot(CGSize::new(859.0, 1081.0))), None);
+                assert_eq!(
+                    running.claim(wid(1), &test_snapshot(CGSize::new(859.0, 1081.0))),
+                    None
+                );
             }
         }
     }
@@ -3765,7 +4122,7 @@ mod tests {
     /// with no open or close.
     mod preservation {
         use super::*;
-                use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
+        use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
         use crate::animation::platform::window_snapshot::{SnapshotCache, test_snapshot};
 
         pub(super) const DISPLAY: CGRect = CGRect {
@@ -3775,7 +4132,10 @@ mod tests {
         pub(super) const RUNS: usize = 200;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         /// A small deterministic generator, so a failure names its seed and replays.
@@ -3882,7 +4242,10 @@ mod tests {
                     "seed 31: {from:?} -> {to:?}"
                 );
             }
-            assert!(checked > RUNS / 2, "generator sanity: {checked} of {RUNS} in scope");
+            assert!(
+                checked > RUNS / 2,
+                "generator sanity: {checked} of {RUNS} in scope"
+            );
             assert_eq!(apply_frames_at(FlightKind::Layout, false), APPLY_FRAMES_AT);
         }
 
@@ -3904,17 +4267,31 @@ mod tests {
                 let mut flight = running(vec![(wid(1), current)]);
                 let incoming = if rng.coin() { rng.on_screen() } else { current };
                 let action = merge_action(Some(current), incoming);
-                let expected =
-                    if current.same_as(incoming) { Admitted::Redundant } else { Admitted::Retargeted };
+                let expected = if current.same_as(incoming) {
+                    Admitted::Redundant
+                } else {
+                    Admitted::Retargeted
+                };
                 assert_eq!(action, expected);
-                let changed = merge_final_frames(&mut flight.final_frames, vec![(wid(1), incoming)]);
+                let changed =
+                    merge_final_frames(&mut flight.final_frames, vec![(wid(1), incoming)]);
                 assert_eq!(changed, action == Admitted::Retargeted);
-                assert_eq!(flight.final_frames, vec![(wid(1), incoming)], "latest frame wins");
+                assert_eq!(
+                    flight.final_frames,
+                    vec![(wid(1), incoming)],
+                    "latest frame wins"
+                );
                 for in_flight in [false, true] {
-                    assert_eq!(reapply_set(false, in_flight, changed, &flight.final_frames), None);
+                    assert_eq!(
+                        reapply_set(false, in_flight, changed, &flight.final_frames),
+                        None
+                    );
                 }
             }
-            assert_eq!(merge_action(None, rect(4.0, 32.0, 859.0, 1081.0)), Admitted::Joined);
+            assert_eq!(
+                merge_action(None, rect(4.0, 32.0, 859.0, 1081.0)),
+                Admitted::Joined
+            );
         }
 
         /// P-3.2/3.6.
@@ -3953,7 +4330,10 @@ mod tests {
                     assert_eq!(held[0].1, *size, "latest size wins");
                 }
             }
-            assert!(checked > RUNS / 2, "generator sanity: {checked} of {RUNS} in scope");
+            assert!(
+                checked > RUNS / 2,
+                "generator sanity: {checked} of {RUNS} in scope"
+            );
         }
 
         /// P-3.2.
@@ -4014,7 +4394,11 @@ mod tests {
                 restack(&mut tiles, Some(focus));
                 for tile in &tiles {
                     let in_front = tile.floating == focus_floating;
-                    let band = if in_front { 0..GROUP_STRIDE } else { GROUP_STRIDE..2 * GROUP_STRIDE };
+                    let band = if in_front {
+                        0..GROUP_STRIDE
+                    } else {
+                        GROUP_STRIDE..2 * GROUP_STRIDE
+                    };
                     assert!(
                         band.contains(&tile.depth),
                         "seed 38: {:?} floating={} depth={} focus floating={focus_floating}",
@@ -4065,16 +4449,37 @@ mod tests {
             for _ in 0..RUNS {
                 let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
                 let park = rng.park(size);
-                assert!(!worth_animating(park, entrance_from(park), DISPLAY), "park {park:?}");
-                let off = rect(DISPLAY.size.width + rng.pt(1.0, 9000.0), 32.0, size.width, size.height);
-                assert!(!worth_animating(off, entrance_from(off), DISPLAY), "off strip {off:?}");
+                assert!(
+                    !worth_animating(park, entrance_from(park), DISPLAY),
+                    "park {park:?}"
+                );
+                let off = rect(
+                    DISPLAY.size.width + rng.pt(1.0, 9000.0),
+                    32.0,
+                    size.width,
+                    size.height,
+                );
+                assert!(
+                    !worth_animating(off, entrance_from(off), DISPLAY),
+                    "off strip {off:?}"
+                );
                 let on = rng.on_screen();
-                assert!(worth_animating(on, entrance_from(on), DISPLAY), "on screen {on:?}");
+                assert!(
+                    worth_animating(on, entrance_from(on), DISPLAY),
+                    "on screen {on:?}"
+                );
             }
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            assert!(!worth_animating(rect(4.0, 32.0, 0.0, 0.0), slot, DISPLAY), "zero area");
+            assert!(
+                !worth_animating(rect(4.0, 32.0, 0.0, 0.0), slot, DISPLAY),
+                "zero area"
+            );
             // Entering from a park is still worth it: the path crosses the display.
-            assert!(worth_animating(rect(1727.0, 1116.0, 859.0, 1081.0), slot, DISPLAY));
+            assert!(worth_animating(
+                rect(1727.0, 1116.0, 859.0, 1081.0),
+                slot,
+                DISPLAY
+            ));
         }
 
         /// P-3.10.
@@ -4102,14 +4507,20 @@ mod tests {
                 let awaiting: Vec<(WindowId, CGSize)> = waiting.into_iter().collect();
                 let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
                 assert!(apply_now);
-                assert!(chase.contains(&(wid(3), to.size)), "the entrance is chased: {chase:?}");
+                assert!(
+                    chase.contains(&(wid(3), to.size)),
+                    "the entrance is chased: {chase:?}"
+                );
 
                 let awaiting = vec![(wid(1), rng.on_screen().size)];
                 let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
                 assert!(apply_now);
                 assert_eq!(chase, awaiting);
             }
-            assert_eq!(frame_zero_work(&[], &[], &[], &[]), (false, Vec::new(), Vec::new()));
+            assert_eq!(
+                frame_zero_work(&[], &[], &[], &[]),
+                (false, Vec::new(), Vec::new())
+            );
         }
     }
 
@@ -4121,7 +4532,10 @@ mod tests {
         use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         pub(super) fn flight() -> RunningAnimation {
@@ -4166,9 +4580,17 @@ mod tests {
                 ],
                 None,
             );
-            assert_eq!(depth(&flight, s1), 1, "pass 1: the strip leads, server order within");
+            assert_eq!(
+                depth(&flight, s1),
+                1,
+                "pass 1: the strip leads, server order within"
+            );
             assert_eq!(depth(&flight, s2), 3);
-            assert_eq!(depth(&flight, f), GROUP_STRIDE + 2, "the floating window behind the strip");
+            assert_eq!(
+                depth(&flight, f),
+                GROUP_STRIDE + 2,
+                "the floating window behind the strip"
+            );
 
             flight.merge_pass(
                 vec![
@@ -4180,7 +4602,11 @@ mod tests {
             );
             assert_eq!(flight.focus, Some(f), "latest focus is recorded");
             assert_eq!(depth(&flight, f), 0, "the focused floating window leads");
-            assert_eq!(depth(&flight, s1), GROUP_STRIDE + 1, "redundant tile: rebanded anyway");
+            assert_eq!(
+                depth(&flight, s1),
+                GROUP_STRIDE + 1,
+                "redundant tile: rebanded anyway"
+            );
             assert_eq!(depth(&flight, s2), GROUP_STRIDE + 3, "retargeted tile: rebanded");
         }
 
@@ -4200,7 +4626,11 @@ mod tests {
             flight.merge_pass(vec![stacked(wid(1), slot, slot, Some(1), false)], None);
             assert_eq!(flight.focus, Some(wid(2)));
             assert_eq!(depth(&flight, wid(2)), 0);
-            assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 2, "the floating focus still leads");
+            assert_eq!(
+                depth(&flight, wid(1)),
+                GROUP_STRIDE + 2,
+                "the floating focus still leads"
+            );
         }
 
         /// A redundant tile is untouched by `merge`, order included.
@@ -4227,8 +4657,16 @@ mod tests {
                 Some(wid(2)),
             );
             assert_eq!(depth(&flight, wid(2)), 0, "the floating focus leads");
-            assert_eq!(depth(&flight, wid(3)), GROUP_STRIDE + 3, "redundant: old order kept");
-            assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 5, "retargeted: the new order");
+            assert_eq!(
+                depth(&flight, wid(3)),
+                GROUP_STRIDE + 3,
+                "redundant: old order kept"
+            );
+            assert_eq!(
+                depth(&flight, wid(1)),
+                GROUP_STRIDE + 5,
+                "retargeted: the new order"
+            );
         }
 
         #[test]
@@ -4246,7 +4684,11 @@ mod tests {
             let entering = stacked(wid(5), entrance_from(slot), slot, Some(0), false);
             flight.merge_pass(vec![entering], None);
             assert_eq!(depth(&flight, wid(2)), 0, "the floating focus leads");
-            assert_eq!(depth(&flight, wid(5)), GROUP_STRIDE + 1, "the entrance leads the strip");
+            assert_eq!(
+                depth(&flight, wid(5)),
+                GROUP_STRIDE + 1,
+                "the entrance leads the strip"
+            );
             assert_eq!(depth(&flight, wid(1)), GROUP_STRIDE + 4);
         }
 
@@ -4320,9 +4762,6 @@ mod tests {
         }
     }
 
-
-
-
     /// Change 1 of `.kiro/specs/exit-entrance-animation-regressions`: an entrance is a hold.
     mod entrance_hold {
         use super::preservation::{Gen, RUNS, stacked};
@@ -4330,7 +4769,10 @@ mod tests {
         use crate::animation::platform::window_snapshot::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         fn flight(started: Option<Instant>) -> RunningAnimation {
@@ -4369,8 +4811,8 @@ mod tests {
             for frames_applied in [false, true] {
                 for in_flight in [false, true] {
                     for changed in [false, true] {
-                        let expected = (frames_applied && !in_flight && changed)
-                            .then(|| frames.clone());
+                        let expected =
+                            (frames_applied && !in_flight && changed).then(|| frames.clone());
                         assert_eq!(
                             reapply_set(frames_applied, in_flight, changed, &frames),
                             expected,
@@ -4416,14 +4858,20 @@ mod tests {
             assert!(tile.focused);
             assert_eq!(tile.depth, 0, "the entrance leads: raised on open");
             let other = flight.tiles.iter().find(|t| t.window == wid(1)).unwrap();
-            assert_eq!(other.depth, 2, "its neighbour keeps the server's order, within the band");
+            assert_eq!(
+                other.depth, 2,
+                "its neighbour keeps the server's order, within the band"
+            );
         }
 
         #[test]
         fn the_last_claim_releases_the_flight_and_a_repeat_is_not_a_hold() {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut flight = holding_for(wid(2), slot, true);
-            assert_eq!(flight.claim(wid(2), &test_snapshot(slot.size)), Some(Claimed::Released));
+            assert_eq!(
+                flight.claim(wid(2), &test_snapshot(slot.size)),
+                Some(Claimed::Released)
+            );
             assert!(flight.awaiting.is_empty());
             assert_eq!(flight.tiles.len(), 1);
             assert_eq!(
@@ -4438,10 +4886,16 @@ mod tests {
         fn a_small_picture_is_not_claimed_nor_is_a_moving_flight() {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut flight = holding_for(wid(2), slot, false);
-            assert_eq!(flight.claim(wid(2), &test_snapshot(CGSize::new(200.0, 200.0))), None);
+            assert_eq!(
+                flight.claim(wid(2), &test_snapshot(CGSize::new(200.0, 200.0))),
+                None
+            );
             assert_eq!(flight.awaiting.len(), 1, "the hold goes on");
             assert_eq!(flight.entrances.len(), 1);
-            assert!(flight.tiles.is_empty(), "nothing composed from the small picture");
+            assert!(
+                flight.tiles.is_empty(),
+                "nothing composed from the small picture"
+            );
 
             let mut flight = holding_for(wid(2), slot, false);
             flight.started = Some(Instant::now());
@@ -4459,7 +4913,10 @@ mod tests {
             tile.snapshot = test_snapshot(small.size);
             flight.tiles.push(tile);
             flight.awaiting.push((wid(1), big.size));
-            assert_eq!(flight.claim(wid(1), &test_snapshot(big.size)), Some(Claimed::Released));
+            assert_eq!(
+                flight.claim(wid(1), &test_snapshot(big.size)),
+                Some(Claimed::Released)
+            );
             assert!(flight.tiles[0].snapshot.fits(big.size));
             assert_eq!(flight.tiles.len(), 1);
         }
@@ -4469,7 +4926,10 @@ mod tests {
         fn a_late_entrance_travels_for_the_remaining_flight() {
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let mut flight = holding_for(wid(2), slot, false);
-            assert!(flight.admit(wid(2), &test_snapshot(slot.size)).is_none(), "still holding");
+            assert!(
+                flight.admit(wid(2), &test_snapshot(slot.size)).is_none(),
+                "still holding"
+            );
             assert_eq!(flight.entrances.len(), 1);
 
             // The deadline passed: `start_moving` flew with the placeholder and cleared the hold.
@@ -4480,9 +4940,15 @@ mod tests {
             assert_eq!(tile.from, entrance_from(slot));
             assert_eq!(tile.to, slot);
             assert!(travel <= remaining, "{travel:?} outlives {remaining:?}");
-            assert!(travel < flight.duration.mul_f64(0.5), "not the full duration: {travel:?}");
+            assert!(
+                travel < flight.duration.mul_f64(0.5),
+                "not the full duration: {travel:?}"
+            );
             assert!(flight.entrances.is_empty());
-            assert!(flight.admit(wid(2), &test_snapshot(slot.size)).is_none(), "taken once");
+            assert!(
+                flight.admit(wid(2), &test_snapshot(slot.size)).is_none(),
+                "taken once"
+            );
         }
 
         #[test]
@@ -4508,8 +4974,14 @@ mod tests {
                 let (_, admitted) = flight.admit(wid(2), &test_snapshot(to.size)).unwrap();
                 assert!(admitted <= flight.duration, "seed 62: {admitted:?}");
             }
-            assert_eq!(late_join_duration(Duration::from_millis(300), 1.0), Duration::ZERO);
-            assert_eq!(late_join_duration(Duration::from_millis(300), 1.5), Duration::ZERO);
+            assert_eq!(
+                late_join_duration(Duration::from_millis(300), 1.0),
+                Duration::ZERO
+            );
+            assert_eq!(
+                late_join_duration(Duration::from_millis(300), 1.5),
+                Duration::ZERO
+            );
         }
 
         #[test]
@@ -4530,7 +5002,9 @@ mod tests {
                             0 => continue,
                             1 => incoming.push((wid(i), rng.on_screen())),
                             _ => {
-                                if let Some(&(_, current)) = expected.iter().find(|(w, _)| *w == wid(i)) {
+                                if let Some(&(_, current)) =
+                                    expected.iter().find(|(w, _)| *w == wid(i))
+                                {
                                     incoming.push((wid(i), current));
                                 }
                             }
@@ -4551,20 +5025,30 @@ mod tests {
                     }
                     let changed = merge_final_frames(&mut flight.final_frames, incoming);
                     assert_eq!(changed, expected_changed, "seed 63");
-                    let reapply =
-                        reapply_set(flight.frames_applied, flight.started.is_some(), changed, &flight.final_frames);
+                    let reapply = reapply_set(
+                        flight.frames_applied,
+                        flight.started.is_some(),
+                        changed,
+                        &flight.final_frames,
+                    );
                     if changed {
                         re_requested += 1;
-                        assert_eq!(reapply, Some(expected.clone()), "seed 63: merged set, latest wins");
+                        assert_eq!(
+                            reapply,
+                            Some(expected.clone()),
+                            "seed 63: merged set, latest wins"
+                        );
                     } else {
                         assert_eq!(reapply, None, "seed 63: nothing changed, nothing re-requested");
                     }
                 }
             }
-            assert!(re_requested > RUNS / 2, "generator sanity: {re_requested} re-requests");
+            assert!(
+                re_requested > RUNS / 2,
+                "generator sanity: {re_requested} re-requests"
+            );
         }
     }
-
 
     /// Fix checking for Change 6 (bugfix.md 1.8, 2.8, 2.10): a pass flies only when something
     /// drawable moves or a flight is running.
@@ -4573,7 +5057,10 @@ mod tests {
         use super::*;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         fn moving_drawable(tiles: &[OverlayTile]) -> bool {
@@ -4592,7 +5079,10 @@ mod tests {
             let zoom = rect(224.0, 95.0, 1280.0, 960.0);
             let (entrance, waiting) = entrance_reservation(wid(3), zoom, true);
             assert_eq!(entrance.window, wid(3));
-            assert!(waiting.is_some(), "the entrance is reserved but never drawn here");
+            assert!(
+                waiting.is_some(),
+                "the entrance is reserved but never drawn here"
+            );
             assert!(!worth_flying(moving_drawable(&tiles), false));
         }
 
@@ -4601,7 +5091,8 @@ mod tests {
             let before = rect(0.0, 32.0, 1720.0, 1081.0);
             let after = rect(0.0, 32.0, 860.0, 1081.0);
             let tiles = vec![stacked(wid(1), before, after, Some(1), false)];
-            let (_, waiting) = entrance_reservation(wid(2), rect(867.0, 32.0, 859.0, 1081.0), false);
+            let (_, waiting) =
+                entrance_reservation(wid(2), rect(867.0, 32.0, 859.0, 1081.0), false);
             assert!(waiting.is_some());
             assert!(worth_flying(moving_drawable(&tiles), false));
         }
@@ -4639,7 +5130,12 @@ mod tests {
                     let to = if all_still || rng.coin() {
                         from
                     } else {
-                        rect(from.origin.x + rng.pt(1.0, 400.0), 32.0, from.size.width, from.size.height)
+                        rect(
+                            from.origin.x + rng.pt(1.0, 400.0),
+                            32.0,
+                            from.size.width,
+                            from.size.height,
+                        )
                     };
                     any_moving |= is_moving(from, to);
                     tiles.push(stacked(wid(i as u32 + 1), from, to, Some(i), rng.coin()));
@@ -4660,14 +5156,19 @@ mod tests {
         // A display inset by a 32pt menu bar: a window at y = 32 lands at y = 0 in the overlay.
         let overlay = rect(0.0, 32.0, 1728.0, 1085.0);
         let window = rect(865.0, 32.0, 859.0, 1081.0);
-        assert_eq!(to_overlay_space(window, overlay), rect(865.0, 0.0, 859.0, 1081.0));
+        assert_eq!(
+            to_overlay_space(window, overlay),
+            rect(865.0, 0.0, 859.0, 1081.0)
+        );
     }
-
 
     #[test]
     fn a_bounce_extends_the_clock_to_cover_its_return() {
         let bounce = Duration::from_millis(350);
-        assert_eq!(clock_for_bounce(None, Duration::from_millis(100), bounce), bounce);
+        assert_eq!(
+            clock_for_bounce(None, Duration::from_millis(100), bounce),
+            bounce
+        );
         assert_eq!(
             clock_for_bounce(None, Duration::from_millis(900), bounce),
             Duration::from_millis(900)
@@ -4702,12 +5203,27 @@ mod tests {
     #[test]
     fn the_overlay_lifts_when_the_clock_is_done_and_the_tiles_are_presented_there() {
         assert!(!lift_now(false, true, true, false), "the clock has not run out");
-        assert!(!lift_now(false, true, true, true), "overdue is meaningless before the clock is done");
-        assert!(!lift_now(true, false, true, false), "clock done, render server a frame behind: wait");
-        assert!(!lift_now(true, true, false, false), "clock done, a real window still travelling: wait");
+        assert!(
+            !lift_now(false, true, true, true),
+            "overdue is meaningless before the clock is done"
+        );
+        assert!(
+            !lift_now(true, false, true, false),
+            "clock done, render server a frame behind: wait"
+        );
+        assert!(
+            !lift_now(true, true, false, false),
+            "clock done, a real window still travelling: wait"
+        );
         assert!(lift_now(true, true, true, false));
-        assert!(lift_now(true, false, false, true), "the grace ran out: lift anyway");
-        assert!(LIFT_GRACE < Duration::from_millis(500), "a stall is a hold, not a hang");
+        assert!(
+            lift_now(true, false, false, true),
+            "the grace ran out: lift anyway"
+        );
+        assert!(
+            LIFT_GRACE < Duration::from_millis(500),
+            "a stall is a hold, not a hang"
+        );
     }
 
     #[test]
@@ -4786,7 +5302,10 @@ mod tests {
         use crate::animation::platform::engine::plan::*;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         /// An external display at a non-zero origin, so a retarget that forgot the conversion shows.
@@ -4840,7 +5359,12 @@ mod tests {
                     let travel = match key {
                         GroupKey::Floating => plan.floating_travel,
                         GroupKey::Loose => CGPoint::new(0.0, 0.0),
-                        key => plan.groups.iter().find(|g| g.key == *key).map(|g| g.travel).unwrap_or(CGPoint::new(0.0, 0.0)),
+                        key => plan
+                            .groups
+                            .iter()
+                            .find(|g| g.key == *key)
+                            .map(|g| g.travel)
+                            .unwrap_or(CGPoint::new(0.0, 0.0)),
                     };
                     (*key, CGPoint::new(p.x - travel.x / 2.0, p.y - travel.y / 2.0))
                 })
@@ -4849,7 +5373,12 @@ mod tests {
 
         #[test]
         fn a_later_pass_retargets_a_reserved_entrance() {
-            let slot = rect(EXTERNAL.origin.x + 867.0, EXTERNAL.origin.y + 32.0, 859.0, 1081.0);
+            let slot = rect(
+                EXTERNAL.origin.x + 867.0,
+                EXTERNAL.origin.y + 32.0,
+                859.0,
+                1081.0,
+            );
             let pan = CGPoint::new(-574.0, 0.0);
             let (newcomer, _) =
                 entrance_reservation(wid(51462), to_overlay_space(slot, EXTERNAL), false);
@@ -4859,12 +5388,19 @@ mod tests {
                 false,
             );
             let mut entrances = vec![newcomer, untouched.clone()];
-            let frames = vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0)), (wid(51462), shifted(slot, pan))];
+            let frames = vec![
+                (wid(1), rect(4.0, 32.0, 859.0, 1081.0)),
+                (wid(51462), shifted(slot, pan)),
+            ];
 
             assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 1);
             assert_eq!(entrances[0].to, to_overlay_space(shifted(slot, pan), EXTERNAL));
             assert_eq!(entrances[1].to, untouched.to, "no frame for it: left alone");
-            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 0, "already there");
+            assert_eq!(
+                retarget_entrances(&mut entrances, &frames, EXTERNAL),
+                0,
+                "already there"
+            );
         }
 
         #[test]
@@ -4882,18 +5418,41 @@ mod tests {
             let d = CGPoint::new(-574.0, 0.0);
             let pan = plan::surface_plan(
                 &[
-                    SurfaceWindow { window: wid(1), server_id: WindowServerId::new(1), frame: a, pinned: false, floating: false },
-                    SurfaceWindow { window: wid(2), server_id: WindowServerId::new(2), frame: shifted(b, CGPoint::new(859.0, 0.0)), pinned: false, floating: false },
+                    SurfaceWindow {
+                        window: wid(1),
+                        server_id: WindowServerId::new(1),
+                        frame: a,
+                        pinned: false,
+                        floating: false,
+                    },
+                    SurfaceWindow {
+                        window: wid(2),
+                        server_id: WindowServerId::new(2),
+                        frame: shifted(b, CGPoint::new(859.0, 0.0)),
+                        pinned: false,
+                        floating: false,
+                    },
                 ],
                 CGPoint::new(-574.0, 0.0),
                 CGPoint::new(0.0, 0.0),
             );
-            let (merged, delta) = merge_plans(&current, &pan, Some(d), &at_model(&current), None, DISPLAY);
+            let (merged, delta) =
+                merge_plans(&current, &pan, Some(d), &at_model(&current), None, DISPLAY);
 
             for group in before.groups.iter().filter(|g| !g.members.is_empty()) {
                 let p = merged.position_of(group.key);
-                assert_eq!(p, CGPoint::new(before.position_of(group.key).x + d.x, before.position_of(group.key).y + d.y));
-                assert!(delta.retargeted_groups.contains(&(group.key, p)), "{:?} retargeted", group.key);
+                assert_eq!(
+                    p,
+                    CGPoint::new(
+                        before.position_of(group.key).x + d.x,
+                        before.position_of(group.key).y + d.y
+                    )
+                );
+                assert!(
+                    delta.retargeted_groups.contains(&(group.key, p)),
+                    "{:?} retargeted",
+                    group.key
+                );
                 let after = merged.groups.iter().find(|g| g.key == group.key).unwrap();
                 assert_eq!(after.members, group.members, "membership and rel untouched");
             }
@@ -4901,16 +5460,24 @@ mod tests {
             assert!(delta.new_groups.is_empty(), "the pan names known windows only");
             assert_eq!(merged.entrances[0].2, shifted(slot, d));
             assert_eq!(delta.retargeted_tiles, vec![(wid(9), shifted(slot, d))]);
-            assert_eq!(dest(&merged, wid(3)), Some(shifted(c, CGPoint::new(859.0 + d.x, 0.0))), "a member the pan did not compose rides its group");
+            assert_eq!(
+                dest(&merged, wid(3)),
+                Some(shifted(c, CGPoint::new(859.0 + d.x, 0.0))),
+                "a member the pan did not compose rides its group"
+            );
         }
 
         #[test]
         fn a_redundant_pass_is_an_empty_delta() {
             let (a, b) = (column(0.0), column(1.0));
-            let requests = [(wid(1), a, a, false), (wid(2), b, shifted(b, CGPoint::new(-300.0, 0.0)), false)];
+            let requests = [
+                (wid(1), a, a, false),
+                (wid(2), b, shifted(b, CGPoint::new(-300.0, 0.0)), false),
+            ];
             let current = flight_of(&requests);
             let again = reflow_plan(&requests, DISPLAY);
-            let (merged, delta) = merge_plans(&current, &again, None, &midway(&current), None, DISPLAY);
+            let (merged, delta) =
+                merge_plans(&current, &again, None, &midway(&current), None, DISPLAY);
             assert!(delta.is_empty(), "{delta:?}");
             assert_eq!(merged, current);
         }
@@ -4919,22 +5486,45 @@ mod tests {
         fn a_pass_moving_one_member_elsewhere_reparents_it_and_keeps_the_other() {
             let (a, b) = (column(0.0), column(1.0));
             let v = CGPoint::new(-300.0, 0.0);
-            let current = flight_of(&[(wid(1), a, shifted(a, v), false), (wid(2), b, shifted(b, v), false)]);
+            let current = flight_of(&[
+                (wid(1), a, shifted(a, v), false),
+                (wid(2), b, shifted(b, v), false),
+            ]);
             let group = current.groups[1].key;
             let presented = midway(&current);
             let elsewhere = shifted(b, CGPoint::new(500.0, 0.0));
-            let pass = reflow_plan(&[(wid(1), a, shifted(a, v), false), (wid(2), b, elsewhere, false)], DISPLAY);
+            let pass = reflow_plan(
+                &[
+                    (wid(1), a, shifted(a, v), false),
+                    (wid(2), b, elsewhere, false),
+                ],
+                DISPLAY,
+            );
             let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
             assert_eq!(delta.reparented.len(), 1);
             let (window, from, to) = delta.reparented[0];
             assert_eq!((window, from), (wid(2), group));
             assert_ne!(to, group);
-            assert_eq!(key_of(&merged, wid(1)), Some(group), "the other member keeps the container");
-            assert!(delta.retargeted_groups.is_empty(), "the winning cluster confirmed the destination");
-            assert!(dest(&merged, wid(2)).unwrap().same_as(elsewhere), "{:?}", dest(&merged, wid(2)));
+            assert_eq!(
+                key_of(&merged, wid(1)),
+                Some(group),
+                "the other member keeps the container"
+            );
+            assert!(
+                delta.retargeted_groups.is_empty(),
+                "the winning cluster confirmed the destination"
+            );
+            assert!(
+                dest(&merged, wid(2)).unwrap().same_as(elsewhere),
+                "{:?}",
+                dest(&merged, wid(2))
+            );
             assert!(dest(&merged, wid(1)).unwrap().same_as(shifted(a, v)));
             assert_eq!(delta.new_groups.len(), 1, "no group had that remaining travel");
-            assert_eq!(delta.new_groups[0].1, presented[&group], "installs where the old container is drawn");
+            assert_eq!(
+                delta.new_groups[0].1, presented[&group],
+                "installs where the old container is drawn"
+            );
         }
 
         /// The 1:07 zig-zag: members parked by a later pass ride their moving container out; a still
@@ -4949,13 +5539,19 @@ mod tests {
                 (wid(3), c, shifted(c, up), false),
             ]);
             let group = key_of(&current, wid(1)).unwrap();
-            let past_right = rect(DISPLAY.size.width + 1.0, b.origin.y, b.size.width, b.size.height);
+            let past_right =
+                rect(DISPLAY.size.width + 1.0, b.origin.y, b.size.width, b.size.height);
             let past_left = rect(-c.size.width - 1.0, c.origin.y, c.size.width, c.size.height);
             let pass = reflow_plan(
-                &[(wid(1), a, shifted(a, up), false), (wid(2), b, past_right, false), (wid(3), c, past_left, false)],
+                &[
+                    (wid(1), a, shifted(a, up), false),
+                    (wid(2), b, past_right, false),
+                    (wid(3), c, past_left, false),
+                ],
                 DISPLAY,
             );
-            let (merged, delta) = merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
+            let (merged, delta) =
+                merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
             assert!(delta.is_empty(), "{delta:?}");
             assert_eq!(merged, current);
             for w in [wid(1), wid(2), wid(3)] {
@@ -4964,7 +5560,8 @@ mod tests {
 
             // A still container lends no motion: the member leaves on its own vector.
             let still = flight_of(&[(wid(1), a, a, false), (wid(2), b, b, false)]);
-            let pass = reflow_plan(&[(wid(1), a, a, false), (wid(2), b, past_right, false)], DISPLAY);
+            let pass =
+                reflow_plan(&[(wid(1), a, a, false), (wid(2), b, past_right, false)], DISPLAY);
             let (merged, delta) = merge_plans(&still, &pass, None, &midway(&still), None, DISPLAY);
             assert_eq!(delta.reparented.len(), 1, "{delta:?}");
             assert!(dest(&merged, wid(2)).unwrap().same_as(past_right));
@@ -4974,7 +5571,10 @@ mod tests {
         fn a_rigid_member_turning_into_a_resize_goes_loose() {
             let (a, b) = (column(0.0), column(1.0));
             let v = CGPoint::new(-300.0, 0.0);
-            let current = flight_of(&[(wid(1), a, shifted(a, v), false), (wid(2), b, shifted(b, v), false)]);
+            let current = flight_of(&[
+                (wid(1), a, shifted(a, v), false),
+                (wid(2), b, shifted(b, v), false),
+            ]);
             let group = current.groups[1].key;
             let presented = midway(&current);
             let grown = rect(b.origin.x + v.x, b.origin.y, b.size.width + 400.0, b.size.height);
@@ -4982,8 +5582,14 @@ mod tests {
             let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
             assert_eq!(delta.reparented, vec![(wid(2), group, GroupKey::Loose)]);
             assert_eq!(delta.retargeted_tiles, vec![(wid(2), grown)]);
-            let Some(Member::Changing { from, to }) = merged.member(wid(2)) else { panic!("loose") };
-            assert_eq!(from, overlay_of(b, presented[&group]), "leaves at the presented frame");
+            let Some(Member::Changing { from, to }) = merged.member(wid(2)) else {
+                panic!("loose")
+            };
+            assert_eq!(
+                from,
+                overlay_of(b, presented[&group]),
+                "leaves at the presented frame"
+            );
             assert_eq!(to, grown);
             assert_eq!(key_of(&merged, wid(1)), Some(group));
         }
@@ -5001,7 +5607,9 @@ mod tests {
             let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
             assert_eq!(delta.joined_tiles, vec![(wid(2), group)]);
             assert!(delta.new_groups.is_empty());
-            let Some(Member::Rigid { key, rel }) = merged.member(wid(2)) else { panic!("rigid") };
+            let Some(Member::Rigid { key, rel }) = merged.member(wid(2)) else {
+                panic!("rigid")
+            };
             assert_eq!(key, group);
             assert_eq!(rel, group_relative(b, presented[&group]));
             assert!(dest(&merged, wid(2)).unwrap().same_as(shifted(b, remaining)));
@@ -5011,8 +5619,12 @@ mod tests {
         fn a_join_with_a_new_vector_opens_a_group() {
             let (a, b) = (column(0.0), column(1.0));
             let current = flight_of(&[(wid(1), a, shifted(a, CGPoint::new(-400.0, 0.0)), false)]);
-            let pass = reflow_plan(&[(wid(2), b, shifted(b, CGPoint::new(120.0, 0.0)), false)], DISPLAY);
-            let (merged, delta) = merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
+            let pass = reflow_plan(
+                &[(wid(2), b, shifted(b, CGPoint::new(120.0, 0.0)), false)],
+                DISPLAY,
+            );
+            let (merged, delta) =
+                merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
             assert!(delta.joined_tiles.is_empty());
             assert_eq!(delta.new_groups.len(), 1);
             let (key, install) = delta.new_groups[0];
@@ -5022,11 +5634,17 @@ mod tests {
             assert_eq!(merged.next_key, current.next_key + 1);
         }
 
-
         /// The 3:27:20 case: an open with 22 survivors and one entrance, then a 574pt pan 56ms later.
         #[test]
         fn the_3_27_20_open_then_pan_ends_everything_at_the_pans_frames() {
-            let col = |i: f64| rect(EXTERNAL.origin.x + 4.0 + i * 863.0, EXTERNAL.origin.y + 32.0, 859.0, 1081.0);
+            let col = |i: f64| {
+                rect(
+                    EXTERNAL.origin.x + 4.0 + i * 863.0,
+                    EXTERNAL.origin.y + 32.0,
+                    859.0,
+                    1081.0,
+                )
+            };
             let push = CGPoint::new(859.0, 0.0);
             // The open: columns from index 1 shift right by the newcomer's width.
             let requests: Vec<(WindowId, CGRect, CGRect, bool)> = (0..22)
@@ -5052,16 +5670,26 @@ mod tests {
                     floating: false,
                 })
                 .collect();
-            let pan = plan::surface_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
-            let (merged, delta) = merge_plans(&current, &pan, Some(d), &midway(&current), None, DISPLAY);
+            let pan =
+                plan::surface_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
+            let (merged, delta) =
+                merge_plans(&current, &pan, Some(d), &midway(&current), None, DISPLAY);
 
             for (w, _, to, _) in &requests {
                 let expected = shifted(to_overlay_space(*to, EXTERNAL), d);
-                assert!(dest(&merged, *w).unwrap().same_as(expected), "{w:?}: {:?} vs {expected:?}", dest(&merged, *w));
+                assert!(
+                    dest(&merged, *w).unwrap().same_as(expected),
+                    "{w:?}: {:?} vs {expected:?}",
+                    dest(&merged, *w)
+                );
             }
             assert_eq!(merged.entrances[0].2, shifted(slot_o, d));
             assert!(delta.reparented.is_empty());
-            assert_eq!(delta.retargeted_groups.len(), 2, "the still group and the pushed group");
+            assert_eq!(
+                delta.retargeted_groups.len(),
+                2,
+                "the still group and the pushed group"
+            );
             assert!(delta.moves_anything());
         }
 
@@ -5077,11 +5705,21 @@ mod tests {
             let group = current.groups[1].key;
             // The pass composes 1 and 3 with a further 100pt; 2 has no picture.
             let further = CGPoint::new(-400.0, 0.0);
-            let pass = reflow_plan(&[(wid(1), a, shifted(a, further), false), (wid(3), c, shifted(c, further), false)], DISPLAY);
-            let (merged, delta) = merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
+            let pass = reflow_plan(
+                &[
+                    (wid(1), a, shifted(a, further), false),
+                    (wid(3), c, shifted(c, further), false),
+                ],
+                DISPLAY,
+            );
+            let (merged, delta) =
+                merge_plans(&current, &pass, None, &midway(&current), None, DISPLAY);
             assert_eq!(delta.retargeted_groups, vec![(group, further)]);
             assert!(delta.reparented.is_empty() && delta.joined_tiles.is_empty());
-            assert!(dest(&merged, wid(2)).unwrap().same_as(shifted(b, further)), "rides along");
+            assert!(
+                dest(&merged, wid(2)).unwrap().same_as(shifted(b, further)),
+                "rides along"
+            );
         }
 
         fn is_zero(p: CGPoint) -> bool {
@@ -5098,7 +5736,11 @@ mod tests {
                 let steps = 1 + rng.below(4) as usize;
                 for step in 0..steps {
                     let tag = format!("seed 149 run {run} step {step}");
-                    let presented = if rng.coin() { at_model(&plan) } else { midway(&plan) };
+                    let presented = if rng.coin() {
+                        at_model(&plan)
+                    } else {
+                        midway(&plan)
+                    };
                     let windows = plan.windows();
                     let before = plan.clone();
                     let mut pan: Option<CGPoint> = None;
@@ -5115,7 +5757,13 @@ mod tests {
                                 let Some(from) = dest(&plan, *w) else { continue };
                                 match plan.member(*w) {
                                     Some(Member::Rigid { .. }) => {
-                                        p.adopt(&super::preservation::stacked(*w, from, shifted(from, d), None, false));
+                                        p.adopt(&super::preservation::stacked(
+                                            *w,
+                                            from,
+                                            shifted(from, d),
+                                            None,
+                                            false,
+                                        ));
                                     }
                                     _ => {}
                                 }
@@ -5131,7 +5779,9 @@ mod tests {
                                 if rng.coin() {
                                     continue;
                                 }
-                                let Some(Member::Rigid { key, rel }) = plan.member(*w) else { continue };
+                                let Some(Member::Rigid { key, rel }) = plan.member(*w) else {
+                                    continue;
+                                };
                                 let from = overlay_of(rel, presented[&key]);
                                 let v = if rng.coin() { v1 } else { v2 };
                                 reqs.push((*w, from, shifted(from, v), false));
@@ -5145,18 +5795,30 @@ mod tests {
                         }
                         // A resize of a random rigid member.
                         _ => {
-                            let rigid: Vec<WindowId> = windows.iter().copied().filter(|w| matches!(plan.member(*w), Some(Member::Rigid { .. }))).collect();
+                            let rigid: Vec<WindowId> = windows
+                                .iter()
+                                .copied()
+                                .filter(|w| matches!(plan.member(*w), Some(Member::Rigid { .. })))
+                                .collect();
                             let mut reqs: Vec<(WindowId, CGRect, CGRect, bool)> = Vec::new();
                             if let Some(w) = rigid.first() {
-                                let Some(Member::Rigid { key, rel }) = plan.member(*w) else { unreachable!() };
+                                let Some(Member::Rigid { key, rel }) = plan.member(*w) else {
+                                    unreachable!()
+                                };
                                 let from = overlay_of(rel, presented[&key]);
-                                let to = rect(from.origin.x, from.origin.y, from.size.width + 300.0, from.size.height);
+                                let to = rect(
+                                    from.origin.x,
+                                    from.origin.y,
+                                    from.size.width + 300.0,
+                                    from.size.height,
+                                );
                                 reqs.push((*w, from, to, false));
                             }
                             reflow_plan(&reqs, DISPLAY)
                         }
                     };
-                    let (merged, delta) = merge_plans(&plan, &incoming, pan, &presented, None, DISPLAY);
+                    let (merged, delta) =
+                        merge_plans(&plan, &incoming, pan, &presented, None, DISPLAY);
 
                     // Partition: no window in two groups, none lost.
                     let mut named = merged.windows();
@@ -5171,17 +5833,27 @@ mod tests {
                     // P4: every named window ends within 2pt of its destination, in the key the delta says.
                     for w in incoming.windows() {
                         let want = match incoming.member(w).unwrap() {
-                            Member::Rigid { key, rel } => overlay_of(rel, incoming.groups.iter().find(|g| g.key == key).unwrap().travel),
-                            Member::Changing { to, .. } | Member::Entrance { to, .. } | Member::Floating { to, .. } => to,
+                            Member::Rigid { key, rel } => overlay_of(
+                                rel,
+                                incoming.groups.iter().find(|g| g.key == key).unwrap().travel,
+                            ),
+                            Member::Changing { to, .. }
+                            | Member::Entrance { to, .. }
+                            | Member::Floating { to, .. } => to,
                         };
-                        let got = dest(&merged, w).unwrap_or_else(|| panic!("{tag}: {w:?} unnamed after merge"));
+                        let got = dest(&merged, w)
+                            .unwrap_or_else(|| panic!("{tag}: {w:?} unnamed after merge"));
                         // The one P4 exception: a member sent off the viewport rides its moving container (`rides_out`).
                         let rode_out = pan.is_none()
                             && rini_geometry::is_off_screen(DISPLAY, want)
                             && matches!(before.member(w), Some(Member::Rigid { key, .. })
                                 if before.groups.iter().any(|g| g.key == key && !g.is_still()));
                         if rode_out {
-                            assert_eq!(key_of(&merged, w), key_of(&before, w), "{tag}: rides its container");
+                            assert_eq!(
+                                key_of(&merged, w),
+                                key_of(&before, w),
+                                "{tag}: rides its container"
+                            );
                             continue;
                         }
                         assert!(
@@ -5189,7 +5861,9 @@ mod tests {
                                 && (got.origin.y - want.origin.y).abs() <= GROUP_TOLERANCE + 0.01,
                             "{tag}: {w:?} ends at {got:?}, pass wants {want:?}"
                         );
-                        if let Some((_, _, to_key)) = delta.reparented.iter().find(|(x, _, _)| *x == w) {
+                        if let Some((_, _, to_key)) =
+                            delta.reparented.iter().find(|(x, _, _)| *x == w)
+                        {
                             assert_eq!(key_of(&merged, w), Some(*to_key), "{tag}");
                         }
                         if let Some((_, key)) = delta.joined_tiles.iter().find(|(x, _)| *x == w) {
@@ -5206,7 +5880,11 @@ mod tests {
                             let (p0, p1) = (before.position_of(g.key), merged.position_of(g.key));
                             assert_eq!((p1.x - p0.x, p1.y - p0.y), (d.x, d.y), "{tag}");
                         }
-                        assert_eq!(delta.retargeted_groups.is_empty(), is_zero(d) || before.groups.iter().all(|g| g.members.is_empty()), "{tag}");
+                        assert_eq!(
+                            delta.retargeted_groups.is_empty(),
+                            is_zero(d) || before.groups.iter().all(|g| g.members.is_empty()),
+                            "{tag}"
+                        );
                     }
                     plan = merged;
                 }
@@ -5220,14 +5898,24 @@ mod tests {
             for run in 0..RUNS {
                 let requests = random_requests(&mut rng);
                 let current = flight_of(&requests);
-                let presented = if rng.coin() { at_model(&current) } else { midway(&current) };
+                let presented = if rng.coin() {
+                    at_model(&current)
+                } else {
+                    midway(&current)
+                };
                 // The same destinations, expressed from the presented frames.
                 let mut reqs: Vec<(WindowId, CGRect, CGRect, bool)> = Vec::new();
                 for &(w, _, _, floating) in &requests {
                     let (from, to) = match current.member(w).unwrap() {
-                        Member::Rigid { key, rel } => (overlay_of(rel, presented[&key]), overlay_of(rel, current.position_of(key))),
+                        Member::Rigid { key, rel } => (
+                            overlay_of(rel, presented[&key]),
+                            overlay_of(rel, current.position_of(key)),
+                        ),
                         Member::Changing { from, to } | Member::Entrance { from, to } => (from, to),
-                        Member::Floating { from, to } => (overlay_of(from, presented[&GroupKey::Floating]), overlay_of(to, current.position_of(GroupKey::Floating))),
+                        Member::Floating { from, to } => (
+                            overlay_of(from, presented[&GroupKey::Floating]),
+                            overlay_of(to, current.position_of(GroupKey::Floating)),
+                        ),
                     };
                     reqs.push((w, from, to, floating));
                 }
@@ -5244,16 +5932,22 @@ mod tests {
     mod rigid_groups {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
+        use crate::animation::domain::motion::z_group::StackGroup;
         use crate::animation::platform::engine::plan::*;
-                use crate::animation::domain::motion::z_group::StackGroup;
         use crate::animation::platform::window_snapshot::is_a_resize;
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
-            CGRect::new(CGPoint::new(frame.origin.x + dx, frame.origin.y + dy), frame.size)
+            CGRect::new(
+                CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
+                frame.size,
+            )
         }
 
         fn column(i: f64) -> CGRect {
@@ -5261,7 +5955,10 @@ mod tests {
         }
 
         fn moving(plan: &ReflowPlan) -> Vec<&RigidGroup> {
-            plan.groups.iter().filter(|g| !g.members.is_empty() && g.key != GroupKey::STILL).collect()
+            plan.groups
+                .iter()
+                .filter(|g| !g.members.is_empty() && g.key != GroupKey::STILL)
+                .collect()
         }
 
         fn members(group: &RigidGroup) -> Vec<WindowId> {
@@ -5273,16 +5970,24 @@ mod tests {
             let a = column(0.0);
             let b = column(1.0);
             let plan = reflow_plan(
-                &[(wid(1), a, shifted(a, -859.0, 0.0), false), (wid(2), b, shifted(b, -859.0, 0.0), false)],
+                &[
+                    (wid(1), a, shifted(a, -859.0, 0.0), false),
+                    (wid(2), b, shifted(b, -859.0, 0.0), false),
+                ],
                 DISPLAY,
             );
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(groups[0].travel, CGPoint::new(-859.0, 0.0));
             assert_eq!(members(groups[0]), vec![wid(1), wid(2)]);
-            assert_eq!(groups[0].members[0].rel, a, "a container installs at (0,0), so rel is from");
+            assert_eq!(
+                groups[0].members[0].rel, a,
+                "a container installs at (0,0), so rel is from"
+            );
             assert!(plan.groups[0].members.is_empty(), "nothing stands still");
-            assert!(plan.changing.is_empty() && plan.floating.is_empty() && plan.entrances.is_empty());
+            assert!(
+                plan.changing.is_empty() && plan.floating.is_empty() && plan.entrances.is_empty()
+            );
         }
 
         #[test]
@@ -5290,14 +5995,20 @@ mod tests {
             let a = column(0.0);
             let b = column(1.0);
             let same = reflow_plan(
-                &[(wid(1), a, shifted(a, 300.0, 0.0), false), (wid(2), b, shifted(b, 302.0, 0.0), false)],
+                &[
+                    (wid(1), a, shifted(a, 300.0, 0.0), false),
+                    (wid(2), b, shifted(b, 302.0, 0.0), false),
+                ],
                 DISPLAY,
             );
             assert_eq!(moving(&same).len(), 1, "2pt apart: one group");
             assert_eq!(members(moving(&same)[0]), vec![wid(1), wid(2)]);
 
             let split = reflow_plan(
-                &[(wid(1), a, shifted(a, 300.0, 0.0), false), (wid(2), b, shifted(b, 303.0, 0.0), false)],
+                &[
+                    (wid(1), a, shifted(a, 300.0, 0.0), false),
+                    (wid(2), b, shifted(b, 303.0, 0.0), false),
+                ],
                 DISPLAY,
             );
             let groups = moving(&split);
@@ -5317,7 +6028,10 @@ mod tests {
             assert_eq!(plan.changing, vec![(wid(1), a, grown)]);
             assert!(plan.group_of(wid(1)).is_none());
             assert!(moving(&plan).is_empty());
-            assert_eq!(plan.member(wid(1)), Some(Member::Changing { from: a, to: grown }));
+            assert_eq!(
+                plan.member(wid(1)),
+                Some(Member::Changing { from: a, to: grown })
+            );
         }
 
         #[test]
@@ -5332,24 +6046,44 @@ mod tests {
                 ],
                 DISPLAY,
             );
-            assert_eq!(members(moving(&plan)[0]), vec![wid(1)], "the same vector does not pull it in");
+            assert_eq!(
+                members(moving(&plan)[0]),
+                vec![wid(1)],
+                "the same vector does not pull it in"
+            );
             assert_eq!(
                 plan.floating,
-                vec![(wid(2), settings, shifted(settings, -100.0, 0.0)), (wid(3), settings, settings)]
+                vec![
+                    (wid(2), settings, shifted(settings, -100.0, 0.0)),
+                    (wid(3), settings, settings)
+                ]
             );
             assert!(plan.group_of(wid(2)).is_none() && plan.group_of(wid(3)).is_none());
-            assert_eq!(plan.floating_travel, CGPoint::new(0.0, 0.0), "a layout pass never moves the container");
+            assert_eq!(
+                plan.floating_travel,
+                CGPoint::new(0.0, 0.0),
+                "a layout pass never moves the container"
+            );
         }
 
         #[test]
         fn the_still_window_is_in_the_still_group() {
             let a = column(0.0);
             let b = column(1.0);
-            let plan = reflow_plan(&[(wid(1), a, a, false), (wid(2), b, shifted(b, 40.0, 0.0), false)], DISPLAY);
+            let plan = reflow_plan(
+                &[
+                    (wid(1), a, a, false),
+                    (wid(2), b, shifted(b, 40.0, 0.0), false),
+                ],
+                DISPLAY,
+            );
             assert_eq!(plan.groups[0].key, GroupKey::STILL);
             assert_eq!(plan.groups[0].travel, CGPoint::new(0.0, 0.0));
             assert_eq!(members(&plan.groups[0]), vec![wid(1)]);
-            assert_eq!(plan.member(wid(1)), Some(Member::Rigid { key: GroupKey::STILL, rel: a }));
+            assert_eq!(
+                plan.member(wid(1)),
+                Some(Member::Rigid { key: GroupKey::STILL, rel: a })
+            );
             assert_eq!(members(moving(&plan)[0]), vec![wid(2)]);
         }
 
@@ -5376,14 +6110,22 @@ mod tests {
         #[test]
         fn a_window_leaving_for_a_park_alone_is_a_group_of_one() {
             let a = column(1.0);
-            let park = rect(DISPLAY.size.width - 1.0, DISPLAY.size.height - 1.0, a.size.width, a.size.height);
+            let park = rect(
+                DISPLAY.size.width - 1.0,
+                DISPLAY.size.height - 1.0,
+                a.size.width,
+                a.size.height,
+            );
             let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &[], DISPLAY);
             assert_eq!(travel, None);
             let a_end = resolve_end(a, park, DISPLAY, travel);
             assert_eq!(a_end, rini_geometry::park_entry_frame(park, a, DISPLAY));
             let still = column(0.0);
 
-            let plan = reflow_plan(&[(wid(1), a, a_end, false), (wid(2), still, still, false)], DISPLAY);
+            let plan = reflow_plan(
+                &[(wid(1), a, a_end, false), (wid(2), still, still, false)],
+                DISPLAY,
+            );
             let groups = moving(&plan);
             assert_eq!(groups.len(), 1);
             assert_eq!(members(groups[0]), vec![wid(1)]);
@@ -5392,7 +6134,13 @@ mod tests {
         }
 
         fn strip_window(idx: u32, frame: CGRect, pinned: bool, floating: bool) -> SurfaceWindow {
-            SurfaceWindow { window: wid(idx), server_id: WindowServerId::new(idx), frame, pinned, floating }
+            SurfaceWindow {
+                window: wid(idx),
+                server_id: WindowServerId::new(idx),
+                frame,
+                pinned,
+                floating,
+            }
         }
 
         /// The 3:27:20 pan: 22 survivors scrolled 574pt. One group, 22 members, one travel.
@@ -5412,7 +6160,11 @@ mod tests {
                 let (from, to) = surface_travel(window.frame, from_offset, to_offset, false);
                 assert_eq!(member.window, window.window);
                 assert_eq!(member.rel, from);
-                assert_eq!(overlay_of(member.rel, groups[0].travel), to, "rel plus travel is the destination");
+                assert_eq!(
+                    overlay_of(member.rel, groups[0].travel),
+                    to,
+                    "rel plus travel is the destination"
+                );
             }
             assert!(plan.groups[0].members.is_empty());
             assert!(plan.floating.is_empty() && plan.changing.is_empty());
@@ -5426,10 +6178,14 @@ mod tests {
                 strip_window(1, column(0.0), false, false),
                 strip_window(2, settings, true, true),
             ];
-            let plan = plan::surface_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
+            let plan =
+                plan::surface_plan(&windows, CGPoint::new(-574.0, 0.0), CGPoint::new(0.0, 0.0));
             assert_eq!(plan.floating, vec![(wid(2), settings, settings)]);
             assert_eq!(plan.floating_travel, CGPoint::new(0.0, 0.0));
-            assert_eq!(plan.member(wid(2)), Some(Member::Floating { from: settings, to: settings }));
+            assert_eq!(
+                plan.member(wid(2)),
+                Some(Member::Floating { from: settings, to: settings })
+            );
             assert_eq!(members(moving(&plan)[0]), vec![wid(1)]);
         }
 
@@ -5447,7 +6203,11 @@ mod tests {
             assert_eq!(travel, CGPoint::new(0.0, -1117.0));
             assert_eq!(moving(&plan)[0].travel, travel);
             assert_eq!(plan.floating_travel, travel);
-            assert_eq!(plan.floating, vec![(wid(2), settings, settings)], "the tile itself stands in its container");
+            assert_eq!(
+                plan.floating,
+                vec![(wid(2), settings, settings)],
+                "the tile itself stands in its container"
+            );
             let (_, to) = surface_travel(settings, from_offset, to_offset, false);
             assert_eq!(overlay_of(settings, plan.floating_travel), to);
         }
@@ -5458,7 +6218,11 @@ mod tests {
             let p = CGPoint::new(-574.0, 12.0);
             assert_eq!(overlay_of(group_relative(f, p), p), f);
             assert_eq!(group_relative(f, p), rect(1441.0, 20.0, 859.0, 1081.0));
-            assert_eq!(group_relative(f, CGPoint::new(0.0, 0.0)), f, "at install rel is from");
+            assert_eq!(
+                group_relative(f, CGPoint::new(0.0, 0.0)),
+                f,
+                "at install rel is from"
+            );
             let mut rng = Gen(3);
             for _ in 0..RUNS {
                 let f = rng.on_screen();
@@ -5471,7 +6235,13 @@ mod tests {
         #[test]
         fn a_fresh_flight_plan_positions_every_container_at_its_travel() {
             let a = column(0.0);
-            let plan = reflow_plan(&[(wid(1), a, shifted(a, -100.0, 0.0), false), (wid(2), a, a, false)], DISPLAY);
+            let plan = reflow_plan(
+                &[
+                    (wid(1), a, shifted(a, -100.0, 0.0), false),
+                    (wid(2), a, a, false),
+                ],
+                DISPLAY,
+            );
             let flight = FlightPlan::from(plan.clone());
             assert_eq!(flight.groups, plan.groups);
             assert_eq!(flight.positions[&GroupKey::STILL], CGPoint::new(0.0, 0.0));
@@ -5488,7 +6258,14 @@ mod tests {
             let mut palette: Vec<CGPoint> = Vec::new();
             let wanted = 1 + rng.below(4) as usize;
             while palette.len() < wanted {
-                let v = CGPoint::new(rng.pt(-12.0, 12.0) * 50.0, if rng.coin() { 0.0 } else { rng.pt(-6.0, 6.0) * 50.0 });
+                let v = CGPoint::new(
+                    rng.pt(-12.0, 12.0) * 50.0,
+                    if rng.coin() {
+                        0.0
+                    } else {
+                        rng.pt(-6.0, 6.0) * 50.0
+                    },
+                );
                 if (v.x == 0.0 && v.y == 0.0) || palette.contains(&v) {
                     continue;
                 }
@@ -5502,8 +6279,22 @@ mod tests {
                     match rng.below(10) {
                         0 => (window, from, from, false),
                         1 => {
-                            let to = rect(from.origin.x, from.origin.y, from.size.width + rng.pt(-300.0, 300.0), from.size.height);
-                            let to = if is_a_resize(from.size, to.size) { to } else { rect(to.origin.x, to.origin.y, from.size.width + 200.0, to.size.height) };
+                            let to = rect(
+                                from.origin.x,
+                                from.origin.y,
+                                from.size.width + rng.pt(-300.0, 300.0),
+                                from.size.height,
+                            );
+                            let to = if is_a_resize(from.size, to.size) {
+                                to
+                            } else {
+                                rect(
+                                    to.origin.x,
+                                    to.origin.y,
+                                    from.size.width + 200.0,
+                                    to.size.height,
+                                )
+                            };
                             (window, from, to, false)
                         }
                         2 => {
@@ -5526,7 +6317,11 @@ mod tests {
             let mut rng = Gen(131);
             for run in 0..RUNS {
                 let requests = random_requests(&mut rng);
-                let display = if run % 2 == 0 { DISPLAY } else { rect(1728.0, -300.0, 3008.0, 1692.0) };
+                let display = if run % 2 == 0 {
+                    DISPLAY
+                } else {
+                    rect(1728.0, -300.0, 3008.0, 1692.0)
+                };
                 let plan = reflow_plan(&requests, display);
                 let tag = format!("seed 131 run {run}");
 
@@ -5541,23 +6336,35 @@ mod tests {
                 assert_eq!(plan.groups[0].travel, CGPoint::new(0.0, 0.0), "{tag}");
                 for (i, group) in plan.groups.iter().enumerate() {
                     assert_eq!(group.key, GroupKey::Rigid(i as u16), "{tag}: keys in plan order");
-                    assert!(i == 0 || !group.members.is_empty(), "{tag}: an empty moving group");
+                    assert!(
+                        i == 0 || !group.members.is_empty(),
+                        "{tag}: an empty moving group"
+                    );
                 }
 
                 for &(window, start, end, floating) in &requests {
                     let from = to_overlay_space(start, display);
                     let to = to_overlay_space(end, display);
                     let v = CGPoint::new(to.origin.x - from.origin.x, to.origin.y - from.origin.y);
-                    match plan.member(window).unwrap_or_else(|| panic!("{tag}: {window:?} unnamed")) {
+                    match plan.member(window).unwrap_or_else(|| panic!("{tag}: {window:?} unnamed"))
+                    {
                         Member::Rigid { key, rel } => {
                             assert!(!floating, "{tag}: a floating window grouped");
                             assert!(!is_a_resize(from.size, to.size), "{tag}: a resize grouped");
                             assert_eq!(rel, from, "{tag}");
                             let group = plan.group_of(window).unwrap();
                             assert_eq!(group.key, key, "{tag}");
-                            assert!(same_vector(group.travel, v), "{tag}: {v:?} in group at {:?}", group.travel);
+                            assert!(
+                                same_vector(group.travel, v),
+                                "{tag}: {v:?} in group at {:?}",
+                                group.travel
+                            );
                             if !is_moving(from, to) {
-                                assert_eq!(key, GroupKey::STILL, "{tag}: a still window off the still group");
+                                assert_eq!(
+                                    key,
+                                    GroupKey::STILL,
+                                    "{tag}: a still window off the still group"
+                                );
                             }
                         }
                         Member::Changing { from: f, to: t } => {
@@ -5582,7 +6389,8 @@ mod tests {
                             for mb in &b.members {
                                 let (va, vb) = (vector_of(ma.window), vector_of(mb.window));
                                 assert!(
-                                    (va.x - vb.x).abs() > GROUP_TOLERANCE || (va.y - vb.y).abs() > GROUP_TOLERANCE,
+                                    (va.x - vb.x).abs() > GROUP_TOLERANCE
+                                        || (va.y - vb.y).abs() > GROUP_TOLERANCE,
                                     "{tag}: {va:?} and {vb:?} in different groups"
                                 );
                             }
@@ -5598,7 +6406,10 @@ mod tests {
             let neighbour = rect(867.0, 32.0, 859.0, 1081.0);
             let left = column(0.0);
             let plan = reflow_plan(
-                &[(wid(1), left, left, false), (wid(2), neighbour, shifted(neighbour, 859.0, 0.0), false)],
+                &[
+                    (wid(1), left, left, false),
+                    (wid(2), neighbour, shifted(neighbour, 859.0, 0.0), false),
+                ],
                 DISPLAY,
             );
             let groups = moving(&plan);
@@ -5613,7 +6424,12 @@ mod tests {
         fn a_preset_resize_changes_the_middle_and_shifts_the_right_neighbour_as_a_group() {
             let (left, middle, right) = (column(0.0), column(1.0), column(2.0));
             let dw = 300.0;
-            let grown = rect(middle.origin.x, middle.origin.y, middle.size.width + dw, middle.size.height);
+            let grown = rect(
+                middle.origin.x,
+                middle.origin.y,
+                middle.size.width + dw,
+                middle.size.height,
+            );
             let plan = reflow_plan(
                 &[
                     (wid(1), left, left, false),
@@ -5661,7 +6477,10 @@ mod tests {
                 })
                 .collect();
             let plan = reflow_plan(&survivors, DISPLAY);
-            assert!(plan.member(closed).is_none(), "nothing is drawn for the closed window");
+            assert!(
+                plan.member(closed).is_none(),
+                "nothing is drawn for the closed window"
+            );
             assert_eq!(moving(&plan).len(), 1);
             assert_eq!(members(moving(&plan)[0]), vec![wid(3), wid(4)]);
             assert!(!worth_flying(false, false));
@@ -5672,10 +6491,16 @@ mod tests {
         #[test]
         fn a_floating_only_pass_has_no_groups_and_one_floating_member() {
             let settings = rect(500.0, 300.0, 700.0, 500.0);
-            let plan = reflow_plan(&[(wid(1), settings, shifted(settings, 40.0, 20.0), true)], DISPLAY);
+            let plan = reflow_plan(
+                &[(wid(1), settings, shifted(settings, 40.0, 20.0), true)],
+                DISPLAY,
+            );
             assert!(moving(&plan).is_empty());
             assert!(plan.groups[0].members.is_empty());
-            assert_eq!(plan.floating, vec![(wid(1), settings, shifted(settings, 40.0, 20.0))]);
+            assert_eq!(
+                plan.floating,
+                vec![(wid(1), settings, shifted(settings, 40.0, 20.0))]
+            );
             let flight = FlightPlan::from(plan);
             let targets = crate::animation::platform::overlay::animation_targets(&flight);
             assert_eq!(targets.len(), 1, "the floating tile flies on its own");
@@ -5705,10 +6530,19 @@ mod tests {
                 plan: FlightPlan::empty(),
                 _clock: None,
             };
-            let frames = running.extend_hold(&[(wid(1), grown.size)], false, running.duration, Instant::now());
+            let frames = running.extend_hold(
+                &[(wid(1), grown.size)],
+                false,
+                running.duration,
+                Instant::now(),
+            );
             assert_eq!(running.awaiting, vec![(wid(1), grown.size)]);
             assert!(running.hold_deadline.is_some());
-            assert_eq!(frames, Some(vec![(wid(1), grown)]), "the held frames go out under the overlay");
+            assert_eq!(
+                frames,
+                Some(vec![(wid(1), grown)]),
+                "the held frames go out under the overlay"
+            );
         }
 
         #[test]
@@ -5719,13 +6553,22 @@ mod tests {
                 entrance_plan(Some(spawn), slot, true, true),
                 EntranceDecision::Travel { from: spawn, to: slot }
             );
-            assert_eq!(entrance_plan(None, slot, true, true), EntranceDecision::Reserve("no server frame"));
+            assert_eq!(
+                entrance_plan(None, slot, true, true),
+                EntranceDecision::Reserve("no server frame")
+            );
             assert_eq!(
                 entrance_plan(Some(rect(300.0, 200.0, 0.0, 0.0)), slot, true, true),
                 EntranceDecision::Reserve("zero server frame")
             );
-            assert_eq!(entrance_plan(Some(spawn), slot, false, true), EntranceDecision::Reserve("capture unusable"));
-            assert_eq!(entrance_plan(Some(spawn), slot, true, false), EntranceDecision::Reserve("capture budget"));
+            assert_eq!(
+                entrance_plan(Some(spawn), slot, false, true),
+                EntranceDecision::Reserve("capture unusable")
+            );
+            assert_eq!(
+                entrance_plan(Some(spawn), slot, true, false),
+                EntranceDecision::Reserve("capture budget")
+            );
         }
 
         #[test]
@@ -5740,13 +6583,20 @@ mod tests {
                 &[(wid(2), slot)],
             );
             assert!(holding);
-            assert_eq!(now, final_frames, "holding: every frame goes out under the overlay");
+            assert_eq!(
+                now, final_frames,
+                "holding: every frame goes out under the overlay"
+            );
             assert_eq!(chase_set, vec![(wid(1), grown.size), (wid(2), slot.size)]);
 
             let (holding, chase_set, now) =
                 frame_zero_work(&[], &[(wid(2), slot.size)], &final_frames, &[(wid(2), slot)]);
             assert!(!holding);
-            assert_eq!(now, vec![(wid(2), slot)], "not holding: the newcomer's slot alone");
+            assert_eq!(
+                now,
+                vec![(wid(2), slot)],
+                "not holding: the newcomer's slot alone"
+            );
             assert_eq!(chase_set, vec![(wid(2), slot.size)]);
 
             let (holding, chase_set, now) = frame_zero_work(&[], &[], &final_frames, &[]);
@@ -5758,7 +6608,9 @@ mod tests {
             use crate::animation::platform::window_snapshot::test_snapshot;
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let spawn = rect(300.0, 200.0, 400.0, 300.0);
-            let EntranceDecision::Travel { from, to } = entrance_plan(Some(spawn), slot, true, true) else {
+            let EntranceDecision::Travel { from, to } =
+                entrance_plan(Some(spawn), slot, true, true)
+            else {
                 panic!("travels");
             };
             let tile = OverlayTile {
@@ -5773,8 +6625,12 @@ mod tests {
                 focused: true,
             };
             let awaiting: Vec<(WindowId, CGSize)> = Vec::new();
-            let (holding, chase_set, now) =
-                frame_zero_work(&awaiting, &[(wid(9), slot.size)], &[(wid(9), slot)], &[(wid(9), slot)]);
+            let (holding, chase_set, now) = frame_zero_work(
+                &awaiting,
+                &[(wid(9), slot.size)],
+                &[(wid(9), slot)],
+                &[(wid(9), slot)],
+            );
             assert!(!holding);
             assert_eq!(now, vec![(wid(9), slot)]);
             let running = RunningAnimation {
@@ -5786,7 +6642,8 @@ mod tests {
                 apply_at: 0.0,
                 entrances: Vec::new(),
                 awaiting: awaiting.clone(),
-                hold_deadline: holding.then(|| Instant::now() + reveal_hold_limit(Duration::from_millis(350))),
+                hold_deadline: holding
+                    .then(|| Instant::now() + reveal_hold_limit(Duration::from_millis(350))),
                 destination_refreshed: false,
                 refresh_targets: Vec::new(),
                 harvested: HashSet::new(),
@@ -5803,12 +6660,16 @@ mod tests {
                 TileState::Reveal { fits: false },
                 "the spawn picture does not cover the slot"
             );
-            assert_eq!(running.tile_state(wid(9), &test_snapshot(slot.size)), TileState::Reveal { fits: true });
+            assert_eq!(
+                running.tile_state(wid(9), &test_snapshot(slot.size)),
+                TileState::Reveal { fits: true }
+            );
             // The plan calls it an entrance; the tile is a loose resize from spawn to slot.
             let mut plan = ReflowPlan::empty();
             plan.entrances.push((wid(9), from, to));
             assert_eq!(plan.member(wid(9)), Some(Member::Entrance { from, to }));
-            let targets = crate::animation::platform::overlay::animation_targets(&FlightPlan::from(plan));
+            let targets =
+                crate::animation::platform::overlay::animation_targets(&FlightPlan::from(plan));
             assert_eq!(targets.len(), 1);
         }
 
@@ -5835,10 +6696,21 @@ mod tests {
                 _clock: None,
             };
             running.tiles[0].snapshot = test_snapshot(spawn.size);
-            assert_eq!(running.claim(wid(9), &test_snapshot(spawn.size)), None, "still spawn-sized");
-            assert_eq!(running.claim(wid(9), &test_snapshot(slot.size)), Some(Claimed::Refreshed));
+            assert_eq!(
+                running.claim(wid(9), &test_snapshot(spawn.size)),
+                None,
+                "still spawn-sized"
+            );
+            assert_eq!(
+                running.claim(wid(9), &test_snapshot(slot.size)),
+                Some(Claimed::Refreshed)
+            );
             assert!(running.tiles[0].snapshot.fits(slot.size));
-            assert_eq!(running.claim(wid(77), &test_snapshot(slot.size)), None, "no such tile");
+            assert_eq!(
+                running.claim(wid(77), &test_snapshot(slot.size)),
+                None,
+                "no such tile"
+            );
         }
 
         /// Property (seed 157, 200 runs).
@@ -5849,13 +6721,20 @@ mod tests {
                 let slot = rng.on_screen();
                 let spawn = match rng.below(4) {
                     0 => None,
-                    1 => Some(rect(rng.pt(0.0, 1000.0), rng.pt(0.0, 800.0), 0.0, rng.pt(0.0, 500.0))),
+                    1 => Some(rect(
+                        rng.pt(0.0, 1000.0),
+                        rng.pt(0.0, 800.0),
+                        0.0,
+                        rng.pt(0.0, 500.0),
+                    )),
                     _ => Some(rng.on_screen()),
                 };
                 let usable = rng.coin();
                 let budget = rng.coin();
                 let decision = entrance_plan(spawn, slot, usable, budget);
-                let can = spawn.is_some_and(|f| f.size.width > 0.0 && f.size.height > 0.0) && usable && budget;
+                let can = spawn.is_some_and(|f| f.size.width > 0.0 && f.size.height > 0.0)
+                    && usable
+                    && budget;
                 match decision {
                     EntranceDecision::Travel { from, to } => {
                         assert!(can, "seed 157 run {run}");
@@ -5893,18 +6772,40 @@ mod tests {
 
             let banding = band_plan(&plan, &tiles, Some(wid(90)));
             assert!(!banding.floating_in_front);
-            assert_eq!(banding.group_order, vec![still, moving], "the focused group first");
-            assert_eq!(banding.within[&wid(90)], 0, "the focused window leads its container");
-            assert_eq!(banding.within[&wid(89)], tile_depth(Some(2), false, StackGroup::Tiled, StackGroup::Tiled));
-            assert_eq!(banding.within[&wid(5830)], tile_depth(Some(1), false, StackGroup::Floating, StackGroup::Floating));
+            assert_eq!(
+                banding.group_order,
+                vec![still, moving],
+                "the focused group first"
+            );
+            assert_eq!(
+                banding.within[&wid(90)],
+                0,
+                "the focused window leads its container"
+            );
+            assert_eq!(
+                banding.within[&wid(89)],
+                tile_depth(Some(2), false, StackGroup::Tiled, StackGroup::Tiled)
+            );
+            assert_eq!(
+                banding.within[&wid(5830)],
+                tile_depth(Some(1), false, StackGroup::Floating, StackGroup::Floating)
+            );
             let anchor = tiles.iter().find(|t| t.window == wid(90)).unwrap().depth;
-            assert_eq!(banding.within[&wid(900)], anchor % GROUP_STRIDE, "a companion takes its window's depth");
+            assert_eq!(
+                banding.within[&wid(900)],
+                anchor % GROUP_STRIDE,
+                "a companion takes its window's depth"
+            );
 
             restack(&mut tiles, Some(wid(5830)));
             let banding = band_plan(&plan, &tiles, Some(wid(5830)));
             assert!(banding.floating_in_front);
             assert_eq!(banding.within[&wid(5830)], 0);
-            assert_eq!(banding.group_order, vec![still, moving], "no strip group holds focus: shallowest first");
+            assert_eq!(
+                banding.group_order,
+                vec![still, moving],
+                "no strip group holds focus: shallowest first"
+            );
         }
 
         /// Property P3 (seed 163, 200 runs): `container_z - within` is `-tile_depth` exactly.
@@ -5917,16 +6818,29 @@ mod tests {
                 let mut tiles: Vec<OverlayTile> = (0..count)
                     .map(|i| {
                         let f = rng.on_screen();
-                        let order = if rng.below(6) == 0 { None } else { Some(rng.below(40) as usize) };
+                        let order = if rng.below(6) == 0 {
+                            None
+                        } else {
+                            Some(rng.below(40) as usize)
+                        };
                         stacked(wid(i as u32 + 1), f, f, order, rng.coin())
                     })
                     .collect();
-                let focus = if rng.coin() { Some(wid(1 + rng.below(count as u64) as u32)) } else { None };
+                let focus = if rng.coin() {
+                    Some(wid(1 + rng.below(count as u64) as u32))
+                } else {
+                    None
+                };
                 restack(&mut tiles, focus);
                 let plan = FlightPlan::from(plan_from_tiles(&tiles));
                 let banding = band_plan(&plan, &tiles, focus);
-                let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
-                assert_eq!(banding.floating_in_front, focused_group == StackGroup::Floating, "seed 163 run {run}");
+                let focused_group =
+                    focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
+                assert_eq!(
+                    banding.floating_in_front,
+                    focused_group == StackGroup::Floating,
+                    "seed 163 run {run}"
+                );
                 let tag = format!("seed 163 run {run}");
                 let mut strip_total: Vec<f64> = Vec::new();
                 let mut floating_total: Vec<f64> = Vec::new();
@@ -5934,10 +6848,19 @@ mod tests {
                     let group = group_of(tile.floating);
                     let within = banding.within[&tile.window];
                     let total = container_z(group, focused_group) - within as f64;
-                    let expected = -(tile_depth(tile.server_order, focus == Some(tile.window), group, focused_group) as f64);
+                    let expected = -(tile_depth(
+                        tile.server_order,
+                        focus == Some(tile.window),
+                        group,
+                        focused_group,
+                    ) as f64);
                     assert_eq!(total, expected, "{tag}: {:?}", tile.window);
                     assert_eq!(total, -(tile.depth as f64), "{tag}: restack agrees");
-                    if tile.floating { floating_total.push(total) } else { strip_total.push(total) }
+                    if tile.floating {
+                        floating_total.push(total)
+                    } else {
+                        strip_total.push(total)
+                    }
                 }
                 for f in &floating_total {
                     for s in &strip_total {
@@ -5955,7 +6878,11 @@ mod tests {
                 assert_eq!(order.len(), banding.group_order.len(), "{tag}");
                 assert!(!banding.group_order.contains(&GroupKey::Floating), "{tag}");
                 for g in plan.groups.iter().filter(|g| !g.members.is_empty()) {
-                    assert!(banding.group_order.contains(&g.key), "{tag}: {:?} unordered", g.key);
+                    assert!(
+                        banding.group_order.contains(&g.key),
+                        "{tag}: {:?} unordered",
+                        g.key
+                    );
                 }
             }
         }
@@ -5969,7 +6896,13 @@ mod tests {
                 let tiles: Vec<OverlayTile> = requests
                     .iter()
                     .map(|&(window, start, end, floating)| {
-                        stacked(window, to_overlay_space(start, DISPLAY), to_overlay_space(end, DISPLAY), None, floating)
+                        stacked(
+                            window,
+                            to_overlay_space(start, DISPLAY),
+                            to_overlay_space(end, DISPLAY),
+                            None,
+                            floating,
+                        )
                     })
                     .collect();
                 let rebuilt = plan_from_tiles(&tiles);
@@ -6009,9 +6942,16 @@ mod tests {
                                 GroupKey::Floating => plan.floating_travel,
                                 key => plan.groups.iter().find(|g| g.key == key).unwrap().travel,
                             };
-                            assert_eq!(from, CGPoint::new(0.0, 0.0), "{tag}: a fresh flight installs at the origin");
+                            assert_eq!(
+                                from,
+                                CGPoint::new(0.0, 0.0),
+                                "{tag}: a fresh flight installs at the origin"
+                            );
                             assert_eq!(to, travel, "{tag}");
-                            assert!(travel.x != 0.0 || travel.y != 0.0, "{tag}: a zero-travel container");
+                            assert!(
+                                travel.x != 0.0 || travel.y != 0.0,
+                                "{tag}: a zero-travel container"
+                            );
                         }
                         AnimationTarget::Tile { window, .. } => {
                             assert!(!tiles.contains(&window), "{tag}: {window:?} named twice");
@@ -6021,7 +6961,11 @@ mod tests {
                 }
                 for group in &plan.groups {
                     for member in &group.members {
-                        assert!(!tiles.contains(&member.window), "{tag}: rigid {:?} as a tile", member.window);
+                        assert!(
+                            !tiles.contains(&member.window),
+                            "{tag}: rigid {:?} as a tile",
+                            member.window
+                        );
                     }
                     assert_eq!(
                         containers.contains(&group.key),
@@ -6037,7 +6981,9 @@ mod tests {
                     .iter()
                     .chain(&plan.entrances)
                     .map(|(w, _, _)| *w)
-                    .chain(plan.floating.iter().filter(|(_, f, t)| !f.same_as(*t)).map(|(w, _, _)| *w))
+                    .chain(
+                        plan.floating.iter().filter(|(_, f, t)| !f.same_as(*t)).map(|(w, _, _)| *w),
+                    )
                     .collect();
                 expected.sort();
                 tiles.sort();

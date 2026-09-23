@@ -8,8 +8,8 @@ fn yes() -> bool {
 fn no() -> bool {
     false
 }
-use rini_ipc::protocol::WorkspaceSelector;
 use crate::windows::domain::rules::AppWorkspaceRule;
+use rini_ipc::protocol::WorkspaceSelector;
 
 pub const MAX_WORKSPACES: usize = 128;
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]

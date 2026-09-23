@@ -1,7 +1,7 @@
 use objc2_core_graphics::CGError;
 
-use rini_core::ids::pid_t;
 use crate::windows::platform::cg_ok;
+use rini_core::ids::pid_t;
 
 pub struct ProcessInfo {
     pub is_xpc: bool,

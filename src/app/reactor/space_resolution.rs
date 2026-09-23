@@ -107,37 +107,72 @@ mod tests {
     /// has been moved by something else since it was parked, and that move is the newer fact.
     #[test]
     fn a_parked_window_reported_somewhere_else_is_where_the_server_says() {
-        let c = Candidates { reported: space(2), parked_assignment: space(1), ..Default::default() };
+        let c = Candidates {
+            reported: space(2),
+            parked_assignment: space(1),
+            ..Default::default()
+        };
         assert_eq!(authoritative(&c), space(2));
     }
 
     #[test]
     fn a_parked_window_the_server_cannot_place_stays_where_it_was_parked() {
-        let c = Candidates { reported: None, parked_assignment: space(1), ..Default::default() };
+        let c = Candidates {
+            reported: None,
+            parked_assignment: space(1),
+            ..Default::default()
+        };
         assert_eq!(authoritative(&c), space(1));
     }
 
     #[test]
     fn an_unparked_window_prefers_the_server_then_its_assignment() {
-        let c = Candidates { reported: space(3), assignment: space(9), ..Default::default() };
+        let c = Candidates {
+            reported: space(3),
+            assignment: space(9),
+            ..Default::default()
+        };
         assert_eq!(authoritative(&c), space(3));
-        let c = Candidates { reported: None, assignment: space(9), ..Default::default() };
-        assert_eq!(authoritative(&c), space(9), "a window never seen on screen keeps its workspace");
+        let c = Candidates {
+            reported: None,
+            assignment: space(9),
+            ..Default::default()
+        };
+        assert_eq!(
+            authoritative(&c),
+            space(9),
+            "a window never seen on screen keeps its workspace"
+        );
     }
 
     // Geometry is deliberately absent from `authoritative`: a parked frame is off screen on purpose.
     #[test]
     fn authoritative_never_falls_back_to_geometry() {
-        let c = Candidates { geometry: space(5), geometry_is_active: true, ..Default::default() };
+        let c = Candidates {
+            geometry: space(5),
+            geometry_is_active: true,
+            ..Default::default()
+        };
         assert_eq!(authoritative(&c), None);
     }
 
     #[test]
     fn placement_uses_geometry_only_when_nothing_better_answers() {
-        let c = Candidates { geometry: space(5), ..Default::default() };
+        let c = Candidates {
+            geometry: space(5),
+            ..Default::default()
+        };
         assert_eq!(placement(&c), space(5));
-        let c = Candidates { parked_assignment: space(1), geometry: space(5), ..Default::default() };
-        assert_eq!(placement(&c), space(1), "a park outranks the frame it was parked at");
+        let c = Candidates {
+            parked_assignment: space(1),
+            geometry: space(5),
+            ..Default::default()
+        };
+        assert_eq!(
+            placement(&c),
+            space(1),
+            "a park outranks the frame it was parked at"
+        );
         let c = Candidates {
             reported: space(2),
             parked_assignment: space(1),
@@ -149,9 +184,17 @@ mod tests {
 
     #[test]
     fn geometry_only_skips_the_window_server_answer() {
-        let c = Candidates { reported: space(2), geometry: space(5), ..Default::default() };
+        let c = Candidates {
+            reported: space(2),
+            geometry: space(5),
+            ..Default::default()
+        };
         assert_eq!(geometry_only(&c), space(5));
-        assert_eq!(placement(&c), space(2), "which is the only difference between the two");
+        assert_eq!(
+            placement(&c),
+            space(2),
+            "which is the only difference between the two"
+        );
     }
 
     /// A window in front of the user beats an assignment restored from a file.
@@ -163,16 +206,32 @@ mod tests {
             geometry_is_active: true,
             ..Default::default()
         };
-        assert_eq!(discovery(&c), space(7), "an assignment IS authoritative, so it still wins");
+        assert_eq!(
+            discovery(&c),
+            space(7),
+            "an assignment IS authoritative, so it still wins"
+        );
 
-        let c = Candidates { geometry: space(5), geometry_is_active: true, ..Default::default() };
+        let c = Candidates {
+            geometry: space(5),
+            geometry_is_active: true,
+            ..Default::default()
+        };
         assert_eq!(discovery(&c), space(5));
     }
 
     #[test]
     fn discovery_ignores_geometry_that_lands_on_a_space_nobody_is_showing() {
-        let c = Candidates { geometry: space(5), geometry_is_active: false, ..Default::default() };
-        assert_eq!(discovery(&c), space(5), "it still falls through to best, which allows it");
+        let c = Candidates {
+            geometry: space(5),
+            geometry_is_active: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            discovery(&c),
+            space(5),
+            "it still falls through to best, which allows it"
+        );
     }
 
     /// Every rule refuses a window macOS has taken fullscreen. It is on its own space and rini does
@@ -198,7 +257,13 @@ mod tests {
     #[test]
     fn nothing_known_is_nowhere() {
         let c = Candidates::default();
-        for got in [authoritative(&c), placement(&c), geometry_only(&c), best(&c), discovery(&c)] {
+        for got in [
+            authoritative(&c),
+            placement(&c),
+            geometry_only(&c),
+            best(&c),
+            discovery(&c),
+        ] {
             assert_eq!(got, None);
         }
     }

@@ -700,7 +700,10 @@ mod tests {
     #[test]
     fn a_generic_modifier_expands_to_left_right_and_both() {
         assert_eq!(Modifiers::ALT.expand_to_specific().len(), 3);
-        assert_eq!(Modifiers::ALT_LEFT.expand_to_specific(), vec![Modifiers::ALT_LEFT]);
+        assert_eq!(
+            Modifiers::ALT_LEFT.expand_to_specific(),
+            vec![Modifiers::ALT_LEFT]
+        );
         let mut alt_shift = Modifiers::ALT;
         alt_shift.insert(Modifiers::SHIFT);
         assert_eq!(alt_shift.expand_to_specific().len(), 9);
@@ -718,8 +721,6 @@ mod tests {
         assert!(matches!(full, HotkeySpec::Hotkey(_)));
         assert!(serde_json::from_str::<HotkeySpec>(r#""""#).is_err());
     }
-
-
 }
 
 #[cfg(test)]
@@ -736,7 +737,11 @@ mod mask_tests {
             ("Shift", CGEventFlags::MaskShift),
             ("Meta", CGEventFlags::MaskCommand),
         ];
-        assert_eq!(MOD_FAMILIES.len(), expected.len(), "a family was added without a mask check");
+        assert_eq!(
+            MOD_FAMILIES.len(),
+            expected.len(),
+            "a family was added without a mask check"
+        );
         for (name, flags) in expected {
             let family = MOD_FAMILIES
                 .iter()

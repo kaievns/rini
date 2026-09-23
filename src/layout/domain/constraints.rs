@@ -23,7 +23,10 @@ pub fn clamp_to_constraints(
 ) -> objc2_core_foundation::CGSize {
     let c = constraints.normalized();
     let axis = |available: f64, horizontal: bool| {
-        let desired = c.fixed_for_axis(horizontal).unwrap_or(available).max(c.min_for_axis(horizontal));
+        let desired = c
+            .fixed_for_axis(horizontal)
+            .unwrap_or(available)
+            .max(c.min_for_axis(horizontal));
         let capped = if c.max_for_axis(horizontal) > 0.0 {
             desired.min(c.max_for_axis(horizontal))
         } else {
@@ -302,7 +305,11 @@ mod clamp_tests {
     use crate::layout::WindowLayoutConstraints;
 
     fn max_width(width: f64) -> WindowLayoutConstraints {
-        WindowLayoutConstraints { is_resizable: true, max_width: width, ..Default::default() }
+        WindowLayoutConstraints {
+            is_resizable: true,
+            max_width: width,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -316,7 +323,10 @@ mod clamp_tests {
     #[test]
     fn a_maximum_caps_the_size_offered() {
         let got = clamp_to_constraints(CGSize::new(3008.0, 1692.0), max_width(800.0));
-        assert_eq!(got.width, 800.0, "a window that cannot be 3008 wide must not be told it is");
+        assert_eq!(
+            got.width, 800.0,
+            "a window that cannot be 3008 wide must not be told it is"
+        );
         assert_eq!(got.height, 1692.0, "the other axis is unconstrained");
     }
 

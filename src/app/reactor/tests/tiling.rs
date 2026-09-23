@@ -425,10 +425,13 @@ fn discovery_minimize_transition_removes_window_from_layout() {
 
     reactor.discover_test_windows(
         1,
-        vec![(wid, WindowInfo {
-            is_minimized: true,
-            ..make_window(1)
-        })],
+        vec![(
+            wid,
+            WindowInfo {
+                is_minimized: true,
+                ..make_window(1)
+            },
+        )],
         vec![],
     );
 
@@ -455,10 +458,13 @@ fn discovery_manageability_loss_removes_window_from_layout() {
 
     reactor.discover_test_windows(
         1,
-        vec![(wid, WindowInfo {
-            is_root: false,
-            ..make_window(1)
-        })],
+        vec![(
+            wid,
+            WindowInfo {
+                is_root: false,
+                ..make_window(1)
+            },
+        )],
         vec![wid],
     );
 
@@ -503,11 +509,11 @@ fn repeated_ordered_out_ax_replacement_does_not_accumulate_layout_ghosts() {
 
         reactor.track_test_window_server_info(wsid, pid, middle_info.frame);
         reactor.mark_test_window_visible_in_space(wsid, space);
-        reactor.discover_test_windows(pid, vec![(middle, middle_info.clone())], vec![
-            WindowId::new(pid, 1),
-            middle,
-            WindowId::new(pid, 3),
-        ]);
+        reactor.discover_test_windows(
+            pid,
+            vec![(middle, middle_info.clone())],
+            vec![WindowId::new(pid, 1), middle, WindowId::new(pid, 3)],
+        );
         assert_eq!(
             test_layout(&mut reactor, space, screen).len(),
             3,
@@ -1031,10 +1037,10 @@ mod strip_regroup {
         crate::windows::platform::window_server::set_front_to_back_override(None);
 
         let request = raise_request(&mut raise_rx).expect("a raise request");
-        assert_eq!(request.raise_windows, vec![vec![
-            WindowId::new(1, 2),
-            WindowId::new(1, 1)
-        ]]);
+        assert_eq!(
+            request.raise_windows,
+            vec![vec![WindowId::new(1, 2), WindowId::new(1, 1)]]
+        );
         assert_eq!(request.focus_window.map(|(w, _)| w), Some(WindowId::new(1, 1)));
         assert_eq!(
             request.focus_quiet,

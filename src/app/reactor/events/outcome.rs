@@ -108,7 +108,9 @@ impl ArrangeRequest {
 
 impl EventOutcome {
     /// The event was observed, but it does not require any follow-up work.
-    pub(crate) fn no_change() -> Self { Self::default() }
+    pub(crate) fn no_change() -> Self {
+        Self::default()
+    }
 
     /// Whether focus came to rest somewhere as a result of this event.
     ///

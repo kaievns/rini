@@ -70,7 +70,10 @@ mod tests {
         let path = std::env::temp_dir().join(format!("rini-absent-{}.toml", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let (_, complaint) = config_or_default(&path);
-        assert_eq!(complaint, None, "no file means the defaults, which is not a failure");
+        assert_eq!(
+            complaint, None,
+            "no file means the defaults, which is not a failure"
+        );
     }
 
     /// The history this exists for: one mistyped keybinding used to take the window manager down at
@@ -78,11 +81,7 @@ mod tests {
     #[test]
     fn an_unparseable_config_falls_back_to_the_defaults_and_says_so() {
         let path = std::env::temp_dir().join(format!("rini-broken-{}.toml", std::process::id()));
-        std::fs::write(
-            &path,
-            "[settings]\nanimate = \"not a bool\"\n\n[keys]\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "[settings]\nanimate = \"not a bool\"\n\n[keys]\n").unwrap();
 
         let (config, complaint) = config_or_default(&path);
         let _ = std::fs::remove_file(&path);
@@ -107,7 +106,10 @@ mod tests {
         let (_, complaint) = config_or_default(&path);
         let _ = std::fs::remove_file(&path);
 
-        assert!(complaint.is_some(), "an unknown command is a refusal, not a silent ignore");
+        assert!(
+            complaint.is_some(),
+            "an unknown command is a refusal, not a silent ignore"
+        );
     }
 
     #[test]

@@ -9,7 +9,6 @@ use rini_ipc::protocol::WorkspaceSelector;
 use serde::{Deserialize, Serialize};
 use strum::VariantNames;
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum WmCommand {
@@ -124,7 +123,10 @@ mod tests {
     #[test]
     fn a_bare_string_that_is_not_a_wm_command_falls_through_to_the_reactor_commands() {
         let parsed: WmCommand = serde_json::from_str(r#""next_window""#).unwrap();
-        assert_eq!(parsed, WmCommand::ReactorCommand(Command::Layout(LayoutCommand::NextWindow)));
+        assert_eq!(
+            parsed,
+            WmCommand::ReactorCommand(Command::Layout(LayoutCommand::NextWindow))
+        );
         assert!(serde_json::from_str::<WmCommand>(r#""no_such_command""#).is_err());
     }
 

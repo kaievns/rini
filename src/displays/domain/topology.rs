@@ -54,7 +54,9 @@ impl ForwardedSpaceState {
         self.screens.iter().filter_map(|screen| screen.space)
     }
 
-    pub fn first_known_space(&self) -> Option<SpaceId> { self.iter_known_spaces().next() }
+    pub fn first_known_space(&self) -> Option<SpaceId> {
+        self.iter_known_spaces().next()
+    }
 
     pub fn screen_for_point(&self, point: CGPoint) -> Option<&ScreenInfo> {
         self.screens.iter().find(|screen| screen.frame.contains(point))
@@ -378,17 +380,18 @@ mod tests {
         }
     }
 
-    fn rect(x: f64, y: f64) -> CGRect { CGRect::new(CGPoint::new(x, y), CGSize::new(1000., 1000.)) }
+    fn rect(x: f64, y: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(1000., 1000.))
+    }
 
     #[test]
     fn index_selector_orders_screens_left_to_right_then_top_to_bottom() {
         let s = state(&[rect(2000., 0.), rect(0., 1000.), rect(0., 0.)]);
         let ordered: Vec<_> = s.screens_in_physical_order().iter().map(|sc| sc.id).collect();
-        assert_eq!(ordered, vec![
-            ScreenId::new(3),
-            ScreenId::new(2),
-            ScreenId::new(1)
-        ]);
+        assert_eq!(
+            ordered,
+            vec![ScreenId::new(3), ScreenId::new(2), ScreenId::new(1)]
+        );
         assert_eq!(
             s.screen_for_selector(&DisplaySelector::Index(1), None).map(|sc| sc.id),
             Some(ScreenId::new(2))
@@ -495,7 +498,9 @@ mod tests {
         assert!(!a.command_space_only_update, "the effective active set changed");
     }
 
-    fn uuids(list: &[&str]) -> Vec<String> { list.iter().map(|uuid| uuid.to_string()).collect() }
+    fn uuids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|uuid| uuid.to_string()).collect()
+    }
 
     #[test]
     fn nothing_attached_or_detached_is_no_delta() {
@@ -607,7 +612,9 @@ mod tests {
         assert_eq!(buffered_snapshot(Some(0), Some(0)), BufferedSnapshot::Merge);
     }
 
-    fn never_fullscreen(_: SpaceId) -> bool { false }
+    fn never_fullscreen(_: SpaceId) -> bool {
+        false
+    }
 
     /// One user space on two screens at once is what macOS reports mid-transition. Committing it
     /// assigns one space's windows to two displays.

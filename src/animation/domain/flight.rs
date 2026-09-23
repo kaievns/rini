@@ -10,10 +10,10 @@ use std::collections::{HashMap, HashSet};
 
 use rini_core::ids::{WindowId, WindowServerId};
 
-use crate::animation::domain::request::SnapshotTarget;
 use super::timing::{
     COMPANION_CENTER_SLACK, COMPANION_EXPANSION, HANDOVER_THRESHOLD_PT, REFRESH_APPLY_BEFORE,
 };
+use crate::animation::domain::request::SnapshotTarget;
 
 /// Which of `tiles` to recapture mid-flight: the two ends of a focus change, and nothing else.
 /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
@@ -51,9 +51,7 @@ pub(in crate::animation) fn companion_of(
     if rini_geometry::is_off_screen(display, frame) {
         return None;
     }
-    let center = |r: CGRect| {
-        (r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0)
-    };
+    let center = |r: CGRect| (r.origin.x + r.size.width / 2.0, r.origin.y + r.size.height / 2.0);
     let (cx, cy) = center(frame);
     candidates
         .iter()
@@ -129,9 +127,7 @@ pub(in crate::animation) fn should_swap_mid_flight(
     progress: Option<f64>,
 ) -> SwapDecision {
     match state {
-        TileState::Awaiting | TileState::Reveal { .. } if progress.is_none() => {
-            SwapDecision::Claim
-        }
+        TileState::Awaiting | TileState::Reveal { .. } if progress.is_none() => SwapDecision::Claim,
         TileState::Awaiting => SwapDecision::Admit,
         TileState::Reveal { fits: true }
             if settled && progress.is_some_and(|p| p < REFRESH_APPLY_BEFORE) =>
@@ -147,9 +143,9 @@ pub(in crate::animation) fn should_swap_mid_flight(
         {
             SwapDecision::Swap("refresh")
         }
-        TileState::NotTiled
-        | TileState::Moving { .. }
-        | TileState::MovingRefreshTarget { .. } => SwapDecision::CacheOnly,
+        TileState::NotTiled | TileState::Moving { .. } | TileState::MovingRefreshTarget { .. } => {
+            SwapDecision::CacheOnly
+        }
     }
 }
 
@@ -195,7 +191,10 @@ pub(in crate::animation) fn capture_work_allowed(phase: FlightPhase, kind: Captu
 }
 
 /// Parks warm targets asked for mid-flight, one per window; the latest request wins.
-pub(in crate::animation) fn defer_warm(deferred: &mut Vec<SnapshotTarget>, targets: Vec<SnapshotTarget>) {
+pub(in crate::animation) fn defer_warm(
+    deferred: &mut Vec<SnapshotTarget>,
+    targets: Vec<SnapshotTarget>,
+) {
     for target in targets {
         match deferred.iter_mut().find(|held| held.window == target.window) {
             Some(held) => *held = target,
@@ -216,14 +215,20 @@ pub(in crate::animation) fn finish_harvest_set(
         .iter()
         .copied()
         .filter(|w| {
-            !harvested.contains(w) && !requested.contains(w) && !dressed.contains(w) && seen.insert(*w)
+            !harvested.contains(w)
+                && !requested.contains(w)
+                && !dressed.contains(w)
+                && seen.insert(*w)
         })
         .collect()
 }
 
 /// Whether an in-flight merge leaves the already-applied frames stale. A parked window has no
 /// tile, so `frames_changed` counts too. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn mark_stale_on_untiled_change(changed: bool, frames_changed: bool) -> bool {
+pub(in crate::animation) fn mark_stale_on_untiled_change(
+    changed: bool,
+    frames_changed: bool,
+) -> bool {
     changed || frames_changed
 }
 
@@ -247,8 +252,12 @@ pub(in crate::animation) fn handover_report(
     real: &HashMap<WindowId, CGRect>,
     display: CGRect,
 ) -> HandoverReport {
-    let mut report =
-        HandoverReport { total: 0, count_over: 0, worst_visible_pt: 0.0, worst_wsid: 0 };
+    let mut report = HandoverReport {
+        total: 0,
+        count_over: 0,
+        worst_visible_pt: 0.0,
+        worst_wsid: 0,
+    };
     for (window, intended) in final_frames {
         if !tiled.contains(window) {
             continue;
@@ -292,7 +301,11 @@ pub(in crate::animation) fn renderings_match(a: &[u8], b: &[u8]) -> bool {
 
 /// Whether a chase capture counts as the window's settled rendering.
 /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn chase_settled(prev: Option<&[u8]>, print: &[u8], pre_resize: Option<&[u8]>) -> bool {
+pub(in crate::animation) fn chase_settled(
+    prev: Option<&[u8]>,
+    print: &[u8],
+    pre_resize: Option<&[u8]>,
+) -> bool {
     prev.is_some_and(|previous| renderings_match(previous, print))
         || pre_resize.is_some_and(|before| !renderings_match(before, print))
 }
@@ -327,7 +340,9 @@ pub(in crate::animation) fn managed_server_ids(
 }
 
 /// Which group a window belongs to.
-pub(in crate::animation) fn group_of(floating: bool) -> crate::animation::domain::motion::z_group::StackGroup {
+pub(in crate::animation) fn group_of(
+    floating: bool,
+) -> crate::animation::domain::motion::z_group::StackGroup {
     if floating {
         crate::animation::domain::motion::z_group::StackGroup::Floating
     } else {
@@ -340,7 +355,9 @@ pub(in crate::animation) fn focus_group(
     focus: Option<WindowId>,
     mut windows: impl Iterator<Item = (WindowId, bool)>,
 ) -> crate::animation::domain::motion::z_group::StackGroup {
-    let Some(focus) = focus else { return crate::animation::domain::motion::z_group::StackGroup::Tiled };
+    let Some(focus) = focus else {
+        return crate::animation::domain::motion::z_group::StackGroup::Tiled;
+    };
     windows
         .find(|(window, _)| *window == focus)
         .map(|(_, floating)| group_of(floating))
@@ -349,7 +366,10 @@ pub(in crate::animation) fn focus_group(
 
 /// A stable [`WindowId`] derived from a window server id. Pid 0 keeps it clear of real ids.
 pub(in crate::animation) fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
-    WindowId { pid: 0, idx: std::num::NonZeroU32::new(server_id.as_u32().max(1)).unwrap() }
+    WindowId {
+        pid: 0,
+        idx: std::num::NonZeroU32::new(server_id.as_u32().max(1)).unwrap(),
+    }
 }
 
 #[cfg(test)]

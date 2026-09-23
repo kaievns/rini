@@ -24,7 +24,11 @@ pub struct ScreenInfo {
 
 impl ScreenInfo {
     pub fn display_uuid_opt(&self) -> Option<&str> {
-        if self.display_uuid.is_empty() { None } else { Some(self.display_uuid.as_str()) }
+        if self.display_uuid.is_empty() {
+            None
+        } else {
+            Some(self.display_uuid.as_str())
+        }
     }
 
     pub fn display_uuid_owned(&self) -> Option<String> {
@@ -120,7 +124,11 @@ impl CoordinateConverter {
     }
 
     pub fn screen_height(&self) -> Option<f64> {
-        if self.screen_height.is_nan() { None } else { Some(self.screen_height) }
+        if self.screen_height.is_nan() {
+            None
+        } else {
+            Some(self.screen_height)
+        }
     }
 
     pub fn convert_point(&self, point: CGPoint) -> Option<CGPoint> {
@@ -225,7 +233,11 @@ mod tests {
         let converter = CoordinateConverter::default();
         assert_eq!(converter.screen_height(), None);
         assert!(converter.convert_point(CGPoint::new(1.0, 1.0)).is_none());
-        assert!(converter.convert_rect(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0))).is_none());
+        assert!(
+            converter
+                .convert_rect(CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)))
+                .is_none()
+        );
     }
 
     #[test]

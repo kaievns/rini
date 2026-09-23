@@ -10,9 +10,9 @@ use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
-use std::collections::{HashMap, HashSet};
 use crate::protocol::RiniEvent as BroadcastEvent;
 use rini_mach_sys::{mach_release_send_right, mach_retain_send_right, mach_try_send_message};
+use std::collections::{HashMap, HashSet};
 
 pub type ClientPort = u32;
 
@@ -322,9 +322,21 @@ mod tests {
     #[test]
     fn cli_subscriptions_dedupe_on_command_and_args_and_unsubscribe_by_event() {
         let state = ServerState::new();
-        state.subscribe_cli("workspace_changed".into(), "sh".into(), vec!["-c".into(), "x".into()]);
-        state.subscribe_cli("workspace_changed".into(), "sh".into(), vec!["-c".into(), "x".into()]);
-        state.subscribe_cli("workspace_changed".into(), "sh".into(), vec!["-c".into(), "y".into()]);
+        state.subscribe_cli(
+            "workspace_changed".into(),
+            "sh".into(),
+            vec!["-c".into(), "x".into()],
+        );
+        state.subscribe_cli(
+            "workspace_changed".into(),
+            "sh".into(),
+            vec!["-c".into(), "x".into()],
+        );
+        state.subscribe_cli(
+            "workspace_changed".into(),
+            "sh".into(),
+            vec!["-c".into(), "y".into()],
+        );
         state.subscribe_cli("*".into(), "log".into(), vec![]);
         let listed = state.list_cli_subscriptions();
         assert_eq!(listed["total_count"], 3);

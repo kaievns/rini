@@ -2,12 +2,12 @@
 //! live configuration. Ids cross this boundary as wire types; the conversion happens here.
 use std::time::Duration;
 
-use r#continue::continuation;
 use crate::app::config::actor as config_actor;
+use r#continue::continuation;
 use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
 use rini_ipc::protocol::{self, ConfigCommand};
 use rini_runloop::dispatch::block_on;
-use rini_core::ids::WindowId;
 
 use crate::app::reactor::{Event, ReactorHandle};
 
@@ -49,10 +49,16 @@ impl rini_ipc::Backend for IpcBackend {
             .collect()
     }
     fn windows(&self, space: Option<u64>) -> Vec<protocol::WindowData> {
-        self.reactor.query_windows(space.map(SpaceId::new)).into_iter().map(Into::into).collect()
+        self.reactor
+            .query_windows(space.map(SpaceId::new))
+            .into_iter()
+            .map(Into::into)
+            .collect()
     }
     fn window(&self, window: protocol::WindowId) -> Option<protocol::WindowData> {
-        self.reactor.query_window_info(WindowId::new(window.pid, window.idx)).map(Into::into)
+        self.reactor
+            .query_window_info(WindowId::new(window.pid, window.idx))
+            .map(Into::into)
     }
     fn displays(&self) -> Vec<protocol::DisplayData> {
         self.reactor.query_displays().into_iter().map(Into::into).collect()

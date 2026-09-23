@@ -58,10 +58,10 @@ fn forwarded_space_snapshot_respects_one_space_policy() {
     let space1 = SpaceId::new(1);
     let space2 = SpaceId::new(2);
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
 
     assert!(reactor.is_space_active(space1));
     assert!(
@@ -397,10 +397,10 @@ fn authoritative_active_space_membership_queries_each_active_space_independently
         Some(vec![space2.get()]),
     );
 
-    reactor.handle_event(space_state_event(vec![left, right], vec![
-        Some(space1),
-        Some(space2),
-    ]));
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(space1), Some(space2)],
+    ));
     let mut snapshot = reactor.authoritative_active_space_windows();
 
     crate::windows::platform::window_server::set_space_window_list_for_space_override(
@@ -473,10 +473,10 @@ fn native_space_resolution_policy_table() {
         let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
         let right = CGRect::new(CGPoint::new(1000., 0.), CGSize::new(1000., 1000.));
         let space2 = SpaceId::new(2);
-        reactor.handle_event(space_state_event(vec![left, right], vec![
-            Some(SpaceId::new(1)),
-            Some(space2),
-        ]));
+        reactor.handle_event(space_state_event(
+            vec![left, right],
+            vec![Some(SpaceId::new(1)), Some(space2)],
+        ));
         let frame = CGRect::new(CGPoint::new(1200., 100.), CGSize::new(400., 400.));
         cases.push((
             "geometry fallback",

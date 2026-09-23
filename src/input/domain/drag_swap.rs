@@ -2,8 +2,8 @@ use std::cmp::Ordering;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use rini_core::ids::WindowId;
 use crate::input::settings::WindowSnappingSettings;
+use rini_core::ids::WindowId;
 use rini_geometry::CGRectExt;
 
 // less overlap once activated for a sticky

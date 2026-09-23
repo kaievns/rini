@@ -67,7 +67,11 @@ pub fn activation_focus_target(
 /// from each of its events; anything else is not a focus edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FocusEvent {
-    ApplicationLaunched { pid: pid_t, is_frontmost: bool, main_window: Option<WindowId> },
+    ApplicationLaunched {
+        pid: pid_t,
+        is_frontmost: bool,
+        main_window: Option<WindowId>,
+    },
     ApplicationThreadTerminated(pid_t),
     WindowDestroyed(WindowId),
     ApplicationActivated(pid_t, Quiet),
@@ -252,7 +256,6 @@ impl MainWindowTracker {
         }
         remembered
     }
-
 }
 
 #[cfg(test)]
@@ -335,7 +338,10 @@ mod tests {
     fn a_parked_pick_defers_to_the_window_the_app_was_in() {
         let parked = WindowId::new(954, 11333);
         let visible = WindowId::new(954, 9607);
-        assert_eq!(activation_focus_target(parked, false, Some(visible), true), Some(visible));
+        assert_eq!(
+            activation_focus_target(parked, false, Some(visible), true),
+            Some(visible)
+        );
     }
 
     #[test]
@@ -353,7 +359,10 @@ mod tests {
     fn a_parked_remembered_window_is_not_worth_a_switch() {
         let parked = WindowId::new(954, 11333);
         let also_parked = WindowId::new(954, 9607);
-        assert_eq!(activation_focus_target(parked, false, Some(also_parked), false), None);
+        assert_eq!(
+            activation_focus_target(parked, false, Some(also_parked), false),
+            None
+        );
     }
 
     #[test]
@@ -367,14 +376,21 @@ mod tests {
     fn an_activation_target_is_offered_once_and_only_to_its_own_app() {
         let mut tracker = MainWindowTracker::default();
         let window = WindowId::new(954, 9607);
-        tracker.apps.insert(954, AppState {
-            is_frontmost: false,
-            frontmost_is_quiet: Quiet::No,
-            main_window: None,
-        });
+        tracker.apps.insert(
+            954,
+            AppState {
+                is_frontmost: false,
+                frontmost_is_quiet: Quiet::No,
+                main_window: None,
+            },
+        );
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
         let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
-        assert_eq!(tracker.take_activation_target(1073), None, "another app's focus change");
+        assert_eq!(
+            tracker.take_activation_target(1073),
+            None,
+            "another app's focus change"
+        );
         assert_eq!(tracker.take_activation_target(954), Some(window));
         assert_eq!(tracker.take_activation_target(954), None, "consumed");
     }
@@ -395,11 +411,14 @@ mod tests {
     fn a_quiet_activation_drops_the_pending_target() {
         let mut tracker = MainWindowTracker::default();
         let window = WindowId::new(954, 9607);
-        tracker.apps.insert(954, AppState {
-            is_frontmost: false,
-            frontmost_is_quiet: Quiet::No,
-            main_window: None,
-        });
+        tracker.apps.insert(
+            954,
+            AppState {
+                is_frontmost: false,
+                frontmost_is_quiet: Quiet::No,
+                main_window: None,
+            },
+        );
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(window));
         let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
         let _ = tracker.handle_event(FocusEvent::ApplicationActivated(954, Quiet::Yes));
@@ -413,11 +432,14 @@ mod tests {
         let mut tracker = MainWindowTracker::default();
         let was_in = WindowId::new(954, 9607);
         let picked = WindowId::new(954, 11333);
-        tracker.apps.insert(954, AppState {
-            is_frontmost: false,
-            frontmost_is_quiet: Quiet::No,
-            main_window: None,
-        });
+        tracker.apps.insert(
+            954,
+            AppState {
+                is_frontmost: false,
+                frontmost_is_quiet: Quiet::No,
+                main_window: None,
+            },
+        );
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(was_in));
         let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(954));
         let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(picked));

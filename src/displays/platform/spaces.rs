@@ -115,9 +115,13 @@ impl SpaceKinds {
         }
     }
 
-    pub(crate) fn is_fullscreen(&self, space: SpaceId) -> bool { (self.is_fullscreen)(space) }
+    pub(crate) fn is_fullscreen(&self, space: SpaceId) -> bool {
+        (self.is_fullscreen)(space)
+    }
 
-    pub(crate) fn is_user(&self, space: SpaceId) -> bool { (self.is_user)(space) }
+    pub(crate) fn is_user(&self, space: SpaceId) -> bool {
+        (self.is_user)(space)
+    }
 
     pub(crate) fn classify(&self, space: SpaceId) -> Option<SpaceEventKind> {
         if self.is_fullscreen(space) {

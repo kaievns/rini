@@ -1,6 +1,6 @@
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-use rini_core::ids::{ScreenId, SpaceId};
 use crate::displays::domain::screen::ScreenInfo;
+use rini_core::ids::{ScreenId, SpaceId};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 /// this is how we decide which macos spaces (and/or displays) are considered active.
 ///

@@ -4,8 +4,8 @@
 pub use rini_ipc::protocol::RiniEvent as BroadcastEvent;
 use slotmap::Key;
 
-use rini_core::ids::WindowId;
 use crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId;
+use rini_core::ids::WindowId;
 
 pub type BroadcastSender = rini_runloop::channel::Sender<BroadcastEvent>;
 pub type BroadcastReceiver = rini_runloop::channel::Receiver<BroadcastEvent>;

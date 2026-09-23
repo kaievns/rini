@@ -16,11 +16,11 @@ use objc2_foundation::{
 };
 use tracing::{debug, info_span, trace, warn};
 
-use crate::displays::platform::spaces;
+use crate::animation::platform::power::{init_power_state, set_low_power_mode_state};
 use crate::app::hotkeys::{self as wm_controller, WmEvent};
+use crate::displays::platform::spaces;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_runloop::dispatch::DispatchExt;
-use crate::animation::platform::power::{init_power_state, set_low_power_mode_state};
 use rini_skylight_sys::{CGDisplayRegisterReconfigurationCallback, DisplayReconfigFlags};
 
 #[repr(C)]
@@ -291,7 +291,10 @@ impl NotificationCenterInner {
             (handler_ptr, display_id, parsed),
             |(handler_ptr, display_id, flags)| unsafe {
                 let handler = &*handler_ptr;
-                handler.send_space_event(spaces::Notification::DisplayReconfigured { display_id, flags });
+                handler.send_space_event(spaces::Notification::DisplayReconfigured {
+                    display_id,
+                    flags,
+                });
             },
         );
     }

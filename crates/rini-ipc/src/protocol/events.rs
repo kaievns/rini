@@ -133,7 +133,6 @@ impl fmt::Display for WorkspaceId {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

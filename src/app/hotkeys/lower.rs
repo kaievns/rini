@@ -41,14 +41,18 @@ pub(crate) fn lower(cmd: WmCmd, workspace_names: &[String]) -> Lowered {
             Lowered::Command(Reactor(reactor::ReactorCommand::ToggleSpaceActivated))
         }
         // No window server id: a hotkey means the focused window, and the reactor resolves that.
-        WmCmd::CloseWindow => {
-            Lowered::Command(Reactor(reactor::ReactorCommand::CloseWindow { window_server_id: None }))
-        }
+        WmCmd::CloseWindow => Lowered::Command(Reactor(reactor::ReactorCommand::CloseWindow {
+            window_server_id: None,
+        })),
         WmCmd::CycleAppWindows => {
-            Lowered::Command(Reactor(reactor::ReactorCommand::CycleAppWindows { backward: false }))
+            Lowered::Command(Reactor(reactor::ReactorCommand::CycleAppWindows {
+                backward: false,
+            }))
         }
         WmCmd::CycleAppWindowsBackward => {
-            Lowered::Command(Reactor(reactor::ReactorCommand::CycleAppWindows { backward: true }))
+            Lowered::Command(Reactor(reactor::ReactorCommand::CycleAppWindows {
+                backward: true,
+            }))
         }
         WmCmd::NextWorkspace => layout(LayoutCommand::NextWorkspace(None)),
         WmCmd::PrevWorkspace => layout(LayoutCommand::PrevWorkspace(None)),
@@ -94,7 +98,9 @@ mod tests {
     #[test]
     fn a_workspace_name_becomes_its_position_in_the_configured_order() {
         assert_eq!(
-            lowered(WmCmd::SwitchToWorkspace(WorkspaceSelector::Name("Communication".into()))),
+            lowered(WmCmd::SwitchToWorkspace(WorkspaceSelector::Name(
+                "Communication".into()
+            ))),
             Lowered::Command(reactor::Command::Layout(LayoutCommand::SwitchToWorkspace(2)))
         );
     }
@@ -178,7 +184,10 @@ mod tests {
         let mut seen: Vec<Lowered> = Vec::new();
         for alias in aliases {
             let got = lower(alias.clone(), &names());
-            assert!(!seen.contains(&got), "{alias:?} duplicates another alias: {got:?}");
+            assert!(
+                !seen.contains(&got),
+                "{alias:?} duplicates another alias: {got:?}"
+            );
             seen.push(got);
         }
     }

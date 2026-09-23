@@ -15,6 +15,10 @@ use objc2_core_graphics::{CGDisplayBounds, CGError, CGGetActiveDisplayList, CGMa
 use objc2_foundation::{MainThreadMarker, NSArray, NSNumber, ns_string};
 use tracing::{debug, warn};
 
+use crate::displays::domain::screen::{
+    CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, usable_frame,
+};
+use rini_core::ids::{ScreenId, SpaceId};
 use rini_skylight_sys::{
     CFRelease, CFUUIDCreateFromString, CFUUIDCreateString, CGDisplayCreateUUIDFromDisplayID,
     CGDisplayGetDisplayIDFromUUID, CGSCopyBestManagedDisplayForRect, CGSCopyManagedDisplaySpaces,
@@ -24,10 +28,6 @@ use rini_skylight_sys::{
     SLSGetMenuBarAutohideEnabled, SLSGetSpaceManagementMode, SLSMainConnectionID,
 };
 use rustc_hash::FxHashMap as HashMap;
-use rini_core::ids::{ScreenId, SpaceId};
-use crate::displays::domain::screen::{
-    CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, usable_frame,
-};
 
 #[derive(Debug, Clone)]
 struct ScreenState {
@@ -97,7 +97,13 @@ impl<S: System> ScreenCache<S> {
                         CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
                     )
                 })
-                .map(|id| if id == 0 { None } else { Some(SpaceId::new(id)) })
+                .map(|id| {
+                    if id == 0 {
+                        None
+                    } else {
+                        Some(SpaceId::new(id))
+                    }
+                })
                 .collect();
 
             if let Some(state) = self.state.clone() {
@@ -188,7 +194,13 @@ impl<S: System> ScreenCache<S> {
                     CFRetained::<objc2_core_foundation::CFString>::as_ptr(screen).as_ptr(),
                 )
             })
-            .map(|id| if id == 0 { None } else { Some(SpaceId::new(id)) })
+            .map(|id| {
+                if id == 0 {
+                    None
+                } else {
+                    Some(SpaceId::new(id))
+                }
+            })
             .collect();
 
         self.uuids = uuids;
@@ -346,7 +358,9 @@ impl System for Actual {
 
     fn display_uuid(&self, screen: &CGScreenInfo) -> CFRetained<CFString> {
         unsafe {
-            if let Some(uuid) = NonNull::new(CGDisplayCreateUUIDFromDisplayID(screen.cg_id.as_u32())) {
+            if let Some(uuid) =
+                NonNull::new(CGDisplayCreateUUIDFromDisplayID(screen.cg_id.as_u32()))
+            {
                 let uuid_str = CFUUIDCreateString(std::ptr::null_mut(), uuid.as_ptr());
                 CFRelease(uuid.as_ptr());
                 if let Some(uuid_str) = NonNull::new(uuid_str) {
@@ -410,9 +424,6 @@ impl System for Actual {
         0.0
     }
 }
-
-
-
 
 pub trait NSScreenExt {
     fn get_number(&self) -> Result<ScreenId, ()>;
@@ -710,7 +721,13 @@ mod test {
         let visible_frame = CGRect::new(CGPoint::new(0.0, 22.0), CGSize::new(1440.0, 878.0));
 
         let system = SequenceSystem::new(
-            vec![vec![CGScreenInfo { cg_id: ScreenId::new(1), bounds }], vec![]],
+            vec![
+                vec![CGScreenInfo {
+                    cg_id: ScreenId::new(1),
+                    bounds,
+                }],
+                vec![],
+            ],
             vec![
                 vec![NSScreenInfo {
                     cg_id: ScreenId::new(1),
@@ -735,21 +752,16 @@ mod test {
         assert!(cache.uuids.is_empty());
         assert!(converter.convert_point(CGPoint::new(0.0, 0.0)).is_none());
     }
-
-
-
-
-
 }
 
 /// Make a display's desktop window key, so the display holds focus with no app window on it.
 #[cfg(not(test))]
 pub fn focus_desktop_window(screen: &ScreenInfo) -> bool {
+    use crate::windows::platform::window_server::{get_window, make_key_window};
     use objc2_core_foundation::{CFArray, CFRetained};
+    use rini_core::ids::WindowServerId;
     use rini_geometry::CGRectExt;
     use rini_skylight_sys::{G_CONNECTION, SLSManagedDisplaysCopyRoleWindows};
-    use rini_core::ids::WindowServerId;
-    use crate::windows::platform::window_server::{get_window, make_key_window};
     use std::ptr::NonNull;
     let Some(display_uuid) = screen.display_uuid_opt() else {
         return false;

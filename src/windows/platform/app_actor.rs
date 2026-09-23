@@ -19,26 +19,26 @@ use tokio::{join, select};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Span, debug, info, instrument, trace, warn};
 
-use rini_runloop::channel as channels;
 use crate::windows::domain::transaction::{Requested, TransactionId, WindowTxStore};
 use crate::windows::event::{Event, EventSink};
-use rustc_hash::FxHashMap as HashMap;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::{WindowId, pid_t};
+use rini_runloop::channel as channels;
+use rustc_hash::FxHashMap as HashMap;
 
+use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
 use crate::windows::platform::ax::enhanced_ui::EnhancedUi;
-use crate::windows::platform::mouse;
-use rini_runloop::executor::Executor;
 use crate::windows::platform::ax::observer::Observer;
+use crate::windows::platform::mouse;
 use crate::windows::platform::process::ProcessInfo;
-use rini_runloop::timer::Timer;
+use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
-use crate::windows::platform::window_server::self;
-use crate::windows::domain::info::WindowServerInfo;
+use rini_runloop::executor::Executor;
+use rini_runloop::timer::Timer;
 
 const kAXApplicationActivatedNotification: &str = "AXApplicationActivated";
 const kAXApplicationDeactivatedNotification: &str = "AXApplicationDeactivated";
@@ -117,7 +117,6 @@ const WINDOW_NOTIFICATIONS: &[(AxNotificationKind, &str)] = &[
     (AxNotificationKind::TitleChanged, kAXTitleChangedNotification),
 ];
 
-
 impl AxNotificationKind {
     fn from_tag(tag: u8) -> Option<Self> {
         Some(match tag {
@@ -138,7 +137,6 @@ impl AxNotificationKind {
             _ => return None,
         })
     }
-
 }
 
 fn encode_notification_data(kind: AxNotificationKind, wid: Option<WindowId>) -> usize {
@@ -310,7 +308,11 @@ impl State {
     async fn handle_incoming(
         this: &RefCell<Self>,
         mut requests_rx: channels::Receiver<Request>,
-        mut notifications_rx: channels::Receiver<(AXUIElement, AxNotificationKind, Option<WindowId>)>,
+        mut notifications_rx: channels::Receiver<(
+            AXUIElement,
+            AxNotificationKind,
+            Option<WindowId>,
+        )>,
     ) {
         loop {
             let batch = select! {
@@ -371,7 +373,6 @@ impl State {
                 }
             }
         }
-
 
         if disable_enhanced_ui {
             let mut state = this.borrow_mut();
@@ -717,9 +718,7 @@ impl State {
 
                 let mouse_state = mouse::get_mouse_state();
                 let txid = match self.window(wid) {
-                    Ok(window) => {
-                        self.txid_for_window_state(window)
-                    }
+                    Ok(window) => self.txid_for_window_state(window),
                     Err(err) => {
                         match err {
                             AxError::Ax(code) => {

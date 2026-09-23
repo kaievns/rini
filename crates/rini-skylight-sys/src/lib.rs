@@ -6,8 +6,8 @@
 // https://github.com/koekeishiya/yabai/blob/d55a647913ab72d8d8b348bee2d3e59e52ce4a5d/src/misc/extern.h.
 
 use std::ffi::{c_int, c_uint, c_void};
-use std::num::NonZeroU32;
 use std::fmt;
+use std::num::NonZeroU32;
 
 use bitflags::bitflags;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -19,7 +19,6 @@ use objc2_core_graphics::{CGError, CGEventSourceStateID, CGImage, CGWindowID};
 use objc2_foundation::NSArray;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-
 
 pub static G_CONNECTION: Lazy<cid_t> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 

@@ -7,7 +7,6 @@
 //!
 //! See `docs/architecture.md`.
 
-
 pub mod domain;
 pub mod event;
 pub mod platform;

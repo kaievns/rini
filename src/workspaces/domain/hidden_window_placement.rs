@@ -99,9 +99,18 @@ mod tests {
     #[test]
     fn a_strip_position_far_along_the_strip_is_off_screen() {
         let screen = rect(0.0, 0.0, 1728.0, 1117.0);
-        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-12396.0, 32.0, 859.0, 1081.0)));
-        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(15848.0, 32.0, 1720.0, 1081.0)));
-        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-859.0, 32.0, 859.0, 1081.0)));
+        assert!(HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(-12396.0, 32.0, 859.0, 1081.0)
+        ));
+        assert!(HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(15848.0, 32.0, 1720.0, 1081.0)
+        ));
+        assert!(HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(-859.0, 32.0, 859.0, 1081.0)
+        ));
     }
 
     /// A column peeking in at the edge is meant to be seen, so it keeps the position the layout gave it.
@@ -109,18 +118,39 @@ mod tests {
     fn a_corner_park_with_a_sliver_showing_is_off_screen() {
         let screen = rect(0.0, 0.0, 1728.0, 1117.0);
         // Corner parks and the live y=1085 parks must both read as off screen (`src/layout/docs/strip.md`).
-        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1116.0, 859.0, 1081.0)));
-        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-858.0, 1116.0, 859.0, 1081.0)));
-        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(1727.0, 1085.0, 1720.0, 1081.0)));
-        assert!(HiddenWindowPlacement::is_off_screen(screen, rect(-858.0, 1085.0, 859.0, 1081.0)));
+        assert!(HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(1727.0, 1116.0, 859.0, 1081.0)
+        ));
+        assert!(HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(-858.0, 1116.0, 859.0, 1081.0)
+        ));
+        assert!(HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(1727.0, 1085.0, 1720.0, 1081.0)
+        ));
+        assert!(HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(-858.0, 1085.0, 859.0, 1081.0)
+        ));
     }
 
     #[test]
     fn a_column_with_any_part_on_screen_is_left_alone() {
         let screen = rect(0.0, 0.0, 1728.0, 1117.0);
-        assert!(!HiddenWindowPlacement::is_off_screen(screen, rect(-800.0, 32.0, 859.0, 1081.0)));
-        assert!(!HiddenWindowPlacement::is_off_screen(screen, rect(1700.0, 32.0, 859.0, 1081.0)));
-        assert!(!HiddenWindowPlacement::is_off_screen(screen, rect(4.0, 32.0, 859.0, 1081.0)));
+        assert!(!HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(-800.0, 32.0, 859.0, 1081.0)
+        ));
+        assert!(!HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(1700.0, 32.0, 859.0, 1081.0)
+        ));
+        assert!(!HiddenWindowPlacement::is_off_screen(
+            screen,
+            rect(4.0, 32.0, 859.0, 1081.0)
+        ));
     }
 
     /// Parked windows come back the way they left. Without this the window flies up from the bottom corner,
@@ -132,7 +162,10 @@ mod tests {
         let destination = rect(4.0, 32.0, 859.0, 1081.0);
         let entry = HiddenWindowPlacement::entry_frame(park, destination, display);
         assert_eq!(entry.origin.x, -859.0, "just past the left edge");
-        assert_eq!(entry.origin.y, 32.0, "on its destination's row, not at the bottom");
+        assert_eq!(
+            entry.origin.y, 32.0,
+            "on its destination's row, not at the bottom"
+        );
         assert_eq!(entry.size, destination.size);
     }
 

@@ -243,7 +243,6 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::thread;
 
-
         let timer_fired = Arc::new(AtomicBool::new(false));
         let timer_fired_clone = Arc::clone(&timer_fired);
 

@@ -1,13 +1,15 @@
 //! The desktop and the bar as the window server lists them: what the overlay draws behind and over
 //! the tiles. See "The wallpaper is not reliably a window" and "The bar has to be captured on its
 //! own" in `src/animation/docs/capture-overlay-research.md`.
+use crate::windows::platform::window_server::{
+    bounds_from_dict, get_num, get_windows_raw, overlaps,
+};
 use objc2_core_foundation::{CFDictionary, CFString, CFType, CGRect};
 use objc2_core_graphics::{
     CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName,
     kCGWindowNumber, kCGWindowOwnerName,
 };
 use rini_core::ids::WindowServerId;
-use crate::windows::platform::window_server::{bounds_from_dict, get_num, get_windows_raw, overlaps};
 
 fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
     Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
@@ -22,7 +24,6 @@ pub struct DesktopBackdrop {
 /// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
 /// See "The wallpaper is not reliably a window" in `src/animation/docs/capture-overlay-research.md`.
 pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
-
     let mut windows = Vec::new();
     let mut has_wallpaper = false;
     for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
@@ -51,10 +52,11 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
             continue;
         };
         // Owner "Wallpaper" (wallpaper agent) or owner "Dock" with name "Wallpaper-<uuid>".
-        let names_wallpaper = |key| {
-            get_string(&window, key).is_some_and(|value: String| value.contains("Wallpaper"))
-        };
-        if names_wallpaper(unsafe { kCGWindowOwnerName }) || names_wallpaper(unsafe { kCGWindowName }) {
+        let names_wallpaper =
+            |key| get_string(&window, key).is_some_and(|value: String| value.contains("Wallpaper"));
+        if names_wallpaper(unsafe { kCGWindowOwnerName })
+            || names_wallpaper(unsafe { kCGWindowName })
+        {
             has_wallpaper = true;
         }
         windows.push(WindowServerId::new(id as u32));
@@ -165,13 +167,29 @@ mod tests {
     /// a window counted twice is composited twice.
     #[test]
     fn no_level_is_both_desktop_and_bar() {
-        for layer in [-2147483626, -2147483624, -2147483603, -2147483600, -2147483599, -20, -1, 0, 101] {
-            assert!(!(is_desktop_layer(layer) && is_bar_layer(layer)), "layer {layer} counted twice");
+        for layer in [
+            -2147483626,
+            -2147483624,
+            -2147483603,
+            -2147483600,
+            -2147483599,
+            -20,
+            -1,
+            0,
+            101,
+        ] {
+            assert!(
+                !(is_desktop_layer(layer) && is_bar_layer(layer)),
+                "layer {layer} counted twice"
+            );
         }
     }
     #[test]
     fn the_bar_range_excludes_both_of_its_own_edges() {
-        assert!(!is_bar_layer(-2147483600), "the desktop ceiling itself is backdrop");
+        assert!(
+            !is_bar_layer(-2147483600),
+            "the desktop ceiling itself is backdrop"
+        );
         assert!(is_bar_layer(-2147483599));
         assert!(is_bar_layer(-1));
     }

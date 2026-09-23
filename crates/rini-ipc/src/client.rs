@@ -3,8 +3,6 @@
 //! The client talks to the same bootstrap service as `rini-cli` and includes
 //! the public request and response wire types.
 
-
-
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::mem::{size_of, zeroed};
 use std::ptr::copy_nonoverlapping;

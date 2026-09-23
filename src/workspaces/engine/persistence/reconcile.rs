@@ -1,6 +1,6 @@
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use super::matcher::{RestoreCandidate, choose_match};
 use super::*;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ReconcileOutcome {

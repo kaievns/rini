@@ -176,7 +176,11 @@ pub fn is_off_screen(display: ic::CGRect, window: ic::CGRect) -> bool {
 
 /// Where a window parked at `park` should start an animation towards `destination`: the same row,
 /// just past the display edge on the park's side, so it enters from the side it left by.
-pub fn park_entry_frame(park: ic::CGRect, destination: ic::CGRect, display: ic::CGRect) -> ic::CGRect {
+pub fn park_entry_frame(
+    park: ic::CGRect,
+    destination: ic::CGRect,
+    display: ic::CGRect,
+) -> ic::CGRect {
     let from_the_left = park.mid().x < display.mid().x;
     let x = if from_the_left {
         display.origin.x - destination.size.width
@@ -254,11 +258,26 @@ mod tests {
     #[test]
     fn a_park_sliver_is_off_screen_but_a_peeking_column_is_not() {
         let display = rect(0.0, 0.0, 1728.0, 1117.0);
-        assert!(is_off_screen(display, rect(1727.0, 1116.0, 800.0, 600.0)), "1pt corner park");
-        assert!(is_off_screen(display, rect(-1719.0, 1116.0, 1720.0, 600.0)), "1pt corner park, left");
-        assert!(is_off_screen(display, rect(-3000.0, 0.0, 800.0, 600.0)), "no intersection");
-        assert!(!is_off_screen(display, rect(1600.0, 0.0, 800.0, 1117.0)), "column peeking in 128pt");
-        assert!(!is_off_screen(display, rect(-770.0, 0.0, 800.0, 1117.0)), "30pt wide but full height");
+        assert!(
+            is_off_screen(display, rect(1727.0, 1116.0, 800.0, 600.0)),
+            "1pt corner park"
+        );
+        assert!(
+            is_off_screen(display, rect(-1719.0, 1116.0, 1720.0, 600.0)),
+            "1pt corner park, left"
+        );
+        assert!(
+            is_off_screen(display, rect(-3000.0, 0.0, 800.0, 600.0)),
+            "no intersection"
+        );
+        assert!(
+            !is_off_screen(display, rect(1600.0, 0.0, 800.0, 1117.0)),
+            "column peeking in 128pt"
+        );
+        assert!(
+            !is_off_screen(display, rect(-770.0, 0.0, 800.0, 1117.0)),
+            "30pt wide but full height"
+        );
     }
 
     #[test]
@@ -286,7 +305,10 @@ mod tests {
         for origin in [(-9000.0, -9000.0), (9000.0, 9000.0)] {
             let frame = rect(origin.0, origin.1, 100.0, 100.0);
             let centered = centered_in(frame, container);
-            assert!(container.contains_rect(centered), "{centered:?} escaped {container:?}");
+            assert!(
+                container.contains_rect(centered),
+                "{centered:?} escaped {container:?}"
+            );
         }
     }
 

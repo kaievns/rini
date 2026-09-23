@@ -1,19 +1,19 @@
 use tracing::{debug, trace};
 
-use crate::windows::domain::request::Request;
-use rini_core::ids::WindowId;
+use crate::app::hotkeys::WmEvent;
 use crate::app::reactor::events::{EventOutcome, window};
 use crate::app::reactor::managers::{DragManager, MissionControlManager};
+use crate::app::reactor::state::RiniState;
 use crate::app::reactor::{DragState, LayoutEvent, MissionControlState};
 use crate::displays::domain::space_activation::SpaceActivationPolicy;
 use crate::displays::domain::topology::SpaceEventKind;
-use crate::app::hotkeys::WmEvent;
-use rustc_hash::FxHashSet as HashSet;
-use crate::app::reactor::state::RiniState;
 use crate::windows::domain::catalogue::NativeFullscreenTransition;
 use crate::windows::domain::info::AppInfo;
+use crate::windows::domain::request::Request;
 use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
 use rini_core::ids::WindowServerId;
+use rustc_hash::FxHashSet as HashSet;
 
 // spacewindowappeared/destroyed happen a lot when a display is connected/disconnected
 // since they are literally when a window enters or leaves a space and each display has its own space(s)
@@ -296,9 +296,11 @@ pub fn handle_window_server_appeared(
                     {
                         outcome = outcome.with_app_request(pid, Request::GetVisibleWindows);
                     }
-                    if let Some((wid, from_space)) =
-                        fullscreen_departure(tracked_window_id, assigned_space, last_known_user_space)
-                    {
+                    if let Some((wid, from_space)) = fullscreen_departure(
+                        tracked_window_id,
+                        assigned_space,
+                        last_known_user_space,
+                    ) {
                         outcome = outcome
                             .with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
                         layout_changed =
@@ -503,7 +505,10 @@ mod workflow_tests {
     #[test]
     fn a_fullscreen_window_leaves_the_strip_with_no_user_space_ever_observed() {
         let window = WindowId::new(7, 1);
-        assert_eq!(fullscreen_departure(Some(window), None, None), Some((window, None)));
+        assert_eq!(
+            fullscreen_departure(Some(window), None, None),
+            Some((window, None))
+        );
     }
 
     #[test]
@@ -519,7 +524,10 @@ mod workflow_tests {
     /// A window rini does not track has nothing to remove from the strip.
     #[test]
     fn an_untracked_fullscreen_window_departs_nothing() {
-        assert_eq!(fullscreen_departure(None, Some(SpaceId::new(3)), Some(SpaceId::new(3))), None);
+        assert_eq!(
+            fullscreen_departure(None, Some(SpaceId::new(3)), Some(SpaceId::new(3))),
+            None
+        );
     }
 
     #[test]

@@ -3,12 +3,12 @@
 //! imports the reactor.
 use objc2_core_foundation::CGRect;
 
+use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::domain::request::{AppThreadHandle, Quiet};
-use rini_core::ids::{WindowId, pid_t};
-use crate::windows::platform::mouse::MouseState;
 use crate::windows::domain::transaction::{Requested, TransactionId};
-use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::platform::mouse::MouseState;
+use rini_core::ids::{WindowId, pid_t};
 
 #[derive(Debug)]
 pub enum Event {
@@ -31,18 +31,34 @@ pub enum Event {
         new: Vec<(WindowId, WindowInfo)>,
         known_visible: Vec<WindowId>,
     },
-    WindowCreated(WindowId, WindowInfo, Option<WindowServerInfo>, Option<MouseState>),
+    WindowCreated(
+        WindowId,
+        WindowInfo,
+        Option<WindowServerInfo>,
+        Option<MouseState>,
+    ),
     WindowDestroyed(WindowId),
     WindowMinimized(WindowId),
     WindowDeminiaturized(WindowId),
     /// `Requested` says whether the frame is the echo of a frame rini asked for.
-    WindowFrameChanged(WindowId, CGRect, Option<TransactionId>, Requested, Option<MouseState>),
+    WindowFrameChanged(
+        WindowId,
+        CGRect,
+        Option<TransactionId>,
+        Requested,
+        Option<MouseState>,
+    ),
     WindowTitleChanged(WindowId, String),
     MenuOpened(pid_t),
     MenuClosed(pid_t),
-    RaiseCompleted { window_id: WindowId, sequence_id: u64 },
+    RaiseCompleted {
+        window_id: WindowId,
+        sequence_id: u64,
+    },
     /// A raise sequence ran past the raise manager's deadline; its pending raises are dropped.
-    RaiseTimeout { sequence_id: u64 },
+    RaiseTimeout {
+        sequence_id: u64,
+    },
 }
 
 /// Where the per-app actor delivers its events. Implemented for any channel whose message type

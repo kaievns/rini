@@ -7,19 +7,11 @@ use objc2_core_graphics::{
 
 use crate::input::platform::cg_ok;
 use objc2_core_foundation::{CFBoolean, CFRetained, CFString, CFType, Type, kCFBooleanTrue};
-use rini_skylight_sys::{CGSSetConnectionProperty, SLSMainConnectionID};
 use rini_skylight_sys::{
     CFRelease, CGEventSourceCreate, CGEventSourceSetLocalEventsSuppressionInterval,
     CGWarpMouseCursorPosition,
 };
-
-
-
-
-
-
-
-
+use rini_skylight_sys::{CGSSetConnectionProperty, SLSMainConnectionID};
 
 pub fn warp_mouse(point: CGPoint) -> Result<(), CGError> {
     let src = unsafe { CGEventSourceCreate(CGEventSourceStateID::CombinedSessionState) };

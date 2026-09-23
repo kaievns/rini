@@ -5,29 +5,29 @@ use std::process;
 use clap::{Parser, Subcommand};
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
-use rini::workspaces::domain::display_memory::DisplayMemory;
 use rini::app::config::actor::ConfigActor;
 use rini::app::config::watcher::ConfigWatcher;
-use rini::input::platform::input_tap::InputTap;
-use rini::input::platform::gesture_tap::GestureTap;
-use rini::displays::platform::mission_control::NativeMissionControl;
+use rini::app::hotkeys::{self as wm_controller, WmController};
+use rini::app::launch_agent::{ServiceCommands, handle_service_command};
+use rini::app::logging as log;
 use rini::app::notifications::NotificationCenter;
-use rini::windows::platform::lifecycle::ProcessActor;
 use rini::app::reactor::{self, Reactor};
+use rini::app::startup::execute_startup_commands;
+use rini::displays::platform::mission_control::NativeMissionControl;
 use rini::displays::platform::spaces::SpacesActor;
 use rini::displays::platform::window_notify as window_notify_actor;
-use rini::app::hotkeys::{self as wm_controller, WmController};
-use rini_core::paths::{config_file, restore_file};
-use rini::app::logging as log;
-use rini::app::startup::execute_startup_commands;
-use rini_ipc as ipc;
-use rini::workspaces::LayoutEngine;
+use rini::displays::screen::displays_have_separate_spaces;
+use rini::input::platform::gesture_tap::GestureTap;
+use rini::input::platform::input_tap::InputTap;
 use rini::windows::domain::transaction::WindowTxStore;
 use rini::windows::platform::ax::permission::ensure_accessibility_permission;
-use rini_runloop::executor::Executor;
+use rini::windows::platform::lifecycle::ProcessActor;
 use rini::windows::platform::sub_level::init_window_sub_level_server_port;
-use rini::displays::screen::displays_have_separate_spaces;
-use rini::app::launch_agent::{ServiceCommands, handle_service_command};
+use rini::workspaces::LayoutEngine;
+use rini::workspaces::domain::display_memory::DisplayMemory;
+use rini_core::paths::{config_file, restore_file};
+use rini_ipc as ipc;
+use rini_runloop::executor::Executor;
 use rini_skylight_sys::{
     CGEnableEventStateCombining, CGSEventType, CGSetLocalEventsSuppressionInterval, KnownCGSEvent,
     SLSWindowManagementBridgeSetDelegate,
@@ -159,7 +159,10 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
         match LayoutEngine::load(path.clone()) {
             Ok(_) => println!("Saved layout file is valid: {}", path.display()),
             Err(error) => {
-                eprintln!("Could not load the saved layout file at {}: {error}", path.display());
+                eprintln!(
+                    "Could not load the saved layout file at {}: {error}",
+                    path.display()
+                );
                 process::exit(1);
             }
         }
@@ -236,7 +239,10 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
 
     ConfigWatcher::spawn(config_tx.clone(), config.clone(), config_path.clone());
 
-    let server_state = match ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(reactor.clone(), config_tx.clone())) {
+    let server_state = match ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
+        reactor.clone(),
+        config_tx.clone(),
+    )) {
         Ok(state) => state,
         Err(err) => {
             eprintln!("{}", err);
@@ -322,8 +328,11 @@ Enable it in System Settings > Desktop & Dock (Mission Control) and restart Rini
         Box::new(wm_controller_sender.clone()),
         event_tap_rx,
     );
-    let gesture_tap =
-        GestureTap::new(input_settings, Box::new(wm_controller_sender.clone()), gesture_tap_rx);
+    let gesture_tap = GestureTap::new(
+        input_settings,
+        Box::new(wm_controller_sender.clone()),
+        gesture_tap_rx,
+    );
 
     // Warping needs no main-thread access and no permissions, so it is just another
     // actor. It stays parked until the reactor sends it geometry for two or more displays.

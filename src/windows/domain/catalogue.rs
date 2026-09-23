@@ -3,12 +3,12 @@
 //! workspace a window belongs to is not here; that index is `crate::workspaces::domain::assignment`.
 use std::time::Instant;
 
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_core::ids::SpaceId;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use rini_core::ids::{WindowId, WindowServerId};
-use crate::windows::domain::state::WindowState;
 use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::domain::state::WindowState;
+use rini_core::ids::{WindowId, WindowServerId};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WindowVisibility {
@@ -84,7 +84,6 @@ impl WindowRecord {
         self.native_space
     }
 
-
     pub fn visibility(&self) -> WindowVisibility {
         self.visibility
     }
@@ -144,7 +143,6 @@ struct WindowServerRecord {
     recent_at: Option<Instant>,
     pending_native_fullscreen: Option<PendingNativeFullscreenState>,
 }
-
 
 /// Every window the application has met, by rini id and by window-server id.
 #[derive(Debug, Default)]
@@ -206,8 +204,6 @@ impl WindowCatalogue {
         }
         Some(record)
     }
-
-
 
     pub fn window(&self, window_id: WindowId) -> Option<&WindowState> {
         self.windows.get(&window_id).and_then(|record| record.state.as_ref())
@@ -510,7 +506,8 @@ impl WindowCatalogue {
             current_window_id: window_id,
             window_server_id: window_server_id
                 .or_else(|| existing.and_then(|record| record.window_server_id)),
-            assigned_space: assigned_space.or_else(|| existing.and_then(|record| record.assigned_space)),
+            assigned_space: assigned_space
+                .or_else(|| existing.and_then(|record| record.assigned_space)),
             last_known_user_space: assigned_space
                 .or(fallback_last_known_user_space)
                 .or_else(|| existing.and_then(|record| record.last_known_user_space)),
@@ -660,14 +657,6 @@ impl WindowCatalogue {
             .map(|record| record.pid)
     }
 
-
-
-
-
-
-
-
-
     /// Move rule metadata and placement from an old AX window id to a new one when
     /// macOS rekeys the same WindowServer window across sleep/wake or similar
     /// churn. The caller remains responsible for replacing any layout/window
@@ -679,16 +668,16 @@ impl WindowCatalogue {
 
         let (rule_floating, last_rule_decision, placement, visibility, pending, generation) =
             match self.windows.get(&from) {
-            Some(record) => (
-                record.rule_floating,
-                record.last_rule_decision,
-                record.placement,
-                record.visibility,
-                record.pending_operation,
-                record.operation_generation,
-            ),
-            None => return,
-        };
+                Some(record) => (
+                    record.rule_floating,
+                    record.last_rule_decision,
+                    record.placement,
+                    record.visibility,
+                    record.pending_operation,
+                    record.operation_generation,
+                ),
+                None => return,
+            };
 
         let target = self.windows.entry(to).or_default();
         target.rule_floating |= rule_floating;
@@ -805,9 +794,6 @@ impl WindowCatalogue {
             self.prune_window_server_record(wsid);
         }
     }
-
-
-
 
     pub fn remap_space(&mut self, old_space: SpaceId, new_space: SpaceId) {
         if old_space == new_space {

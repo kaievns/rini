@@ -140,7 +140,9 @@ impl WindowIterator {
     }
 
     #[inline]
-    pub fn count(&self) -> i32 { unsafe { SLSWindowIteratorGetCount(self.iter) } }
+    pub fn count(&self) -> i32 {
+        unsafe { SLSWindowIteratorGetCount(self.iter) }
+    }
 
     #[inline]
     pub fn advance<'a>(&'a self) -> Option<&'a Self> {
@@ -152,30 +154,46 @@ impl WindowIterator {
     }
 
     #[inline]
-    pub fn window_id(&self) -> u32 { unsafe { SLSWindowIteratorGetWindowID(self.iter) } }
+    pub fn window_id(&self) -> u32 {
+        unsafe { SLSWindowIteratorGetWindowID(self.iter) }
+    }
 
     #[inline]
-    pub fn level(&self) -> i32 { unsafe { SLSWindowIteratorGetLevel(self.iter) } }
+    pub fn level(&self) -> i32 {
+        unsafe { SLSWindowIteratorGetLevel(self.iter) }
+    }
 
     #[inline]
-    pub fn pid(&self) -> i32 { unsafe { SLSWindowIteratorGetPID(self.iter) } }
+    pub fn pid(&self) -> i32 {
+        unsafe { SLSWindowIteratorGetPID(self.iter) }
+    }
 
     #[inline]
-    pub fn parent_id(&self) -> u32 { unsafe { SLSWindowIteratorGetParentID(self.iter) } }
+    pub fn parent_id(&self) -> u32 {
+        unsafe { SLSWindowIteratorGetParentID(self.iter) }
+    }
 
     #[inline]
-    pub fn bounds(&self) -> CGRect { unsafe { SLSWindowIteratorGetBounds(self.iter) } }
+    pub fn bounds(&self) -> CGRect {
+        unsafe { SLSWindowIteratorGetBounds(self.iter) }
+    }
 
     #[inline]
-    pub fn alpha(&self) -> f32 { unsafe { SLSWindowIteratorGetAlpha(self.iter) } }
+    pub fn alpha(&self) -> f32 {
+        unsafe { SLSWindowIteratorGetAlpha(self.iter) }
+    }
 
     #[inline]
     #[allow(dead_code)]
-    pub fn tags(&self) -> u64 { unsafe { SLSWindowIteratorGetTags(self.iter) } }
+    pub fn tags(&self) -> u64 {
+        unsafe { SLSWindowIteratorGetTags(self.iter) }
+    }
 
     #[inline]
     #[allow(dead_code)]
-    pub fn attributes(&self) -> u64 { unsafe { SLSWindowIteratorGetAttributes(self.iter) } }
+    pub fn attributes(&self) -> u64 {
+        unsafe { SLSWindowIteratorGetAttributes(self.iter) }
+    }
 
     #[inline]
     pub fn constraints(&self) -> (CGSize, CGSize) {
@@ -201,7 +219,9 @@ impl WindowIterator {
 }
 
 impl Drop for WindowIterator {
-    fn drop(&mut self) { unsafe { CFRelease(self.iter) } }
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.iter) }
+    }
 }
 
 /// Server-side filter for `SLSWindowQueryRun`.
@@ -408,7 +428,9 @@ pub fn window_ordered_in(id: WindowServerId) -> Option<bool> {
     None
 }
 
-pub fn window_is_ordered_in(id: WindowServerId) -> bool { window_ordered_in(id).unwrap_or(false) }
+pub fn window_is_ordered_in(id: WindowServerId) -> bool {
+    window_ordered_in(id).unwrap_or(false)
+}
 
 pub fn get_windows_raw<T: Type>(
     options: CGWindowListOption,
@@ -616,7 +638,9 @@ fn find_window_at_point(point: &mut CGPoint, below_window_id: Option<u32>) -> Op
     (wid != 0).then_some((wid, wcid))
 }
 
-fn is_own_window(cid: i32) -> bool { *G_CONNECTION == cid }
+fn is_own_window(cid: i32) -> bool {
+    *G_CONNECTION == cid
+}
 
 pub fn get_window_at_point(mut point: CGPoint) -> Option<WindowServerId> {
     let (mut wid, cid) = find_window_at_point(&mut point, None)?;
@@ -662,7 +686,9 @@ pub fn window_under_cursor() -> Option<WindowServerId> {
 }
 
 #[cfg(test)]
-pub fn window_level(_wid: u32) -> Option<NSWindowLevel> { Some(0) }
+pub fn window_level(_wid: u32) -> Option<NSWindowLevel> {
+    Some(0)
+}
 
 #[cfg(not(test))]
 pub fn window_level(wid: u32) -> Option<NSWindowLevel> {
@@ -857,7 +883,9 @@ pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>)
 /// `None` means unanswerable, which is no evidence either way, while `Some(false)` retires the window. A
 /// test gets `None`. See "A unit test must not read the live window server" in `docs/testing.md`.
 #[cfg(test)]
-pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> { None }
+pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> {
+    None
+}
 
 #[cfg(not(test))]
 pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
@@ -1087,29 +1115,23 @@ mod stack_tests {
     #[test]
     fn a_peer_wholly_inside_at_the_same_level_covers() {
         let candidate = place(0.0, 1000.0, Some(0), 0);
-        assert!(covered_by_peer_above(candidate, [place(
-            100.0,
-            200.0,
-            Some(0),
-            0
-        )]));
+        assert!(covered_by_peer_above(
+            candidate,
+            [place(100.0, 200.0, Some(0), 0)]
+        ));
     }
 
     #[test]
     fn a_peer_at_another_level_or_sub_level_or_overhanging_does_not() {
         let candidate = place(0.0, 1000.0, Some(0), 0);
-        assert!(!covered_by_peer_above(candidate, [place(
-            100.0,
-            200.0,
-            Some(3),
-            0
-        )]));
-        assert!(!covered_by_peer_above(candidate, [place(
-            100.0,
-            200.0,
-            Some(0),
-            1
-        )]));
+        assert!(!covered_by_peer_above(
+            candidate,
+            [place(100.0, 200.0, Some(3), 0)]
+        ));
+        assert!(!covered_by_peer_above(
+            candidate,
+            [place(100.0, 200.0, Some(0), 1)]
+        ));
         assert!(
             !covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), 0)]),
             "overhangs the edge"

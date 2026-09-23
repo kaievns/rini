@@ -59,7 +59,11 @@ pub struct SwipeStep {
 pub fn swipe_step(delta: (f64, f64), tolerance: f64, distance: f64, invert: bool) -> SwipeStep {
     let (horizontal, vertical) = (delta.0.abs(), delta.1.abs());
     let within_tolerance = vertical <= tolerance;
-    let mut toward = if delta.0 < 0.0 { SwipeToward::Next } else { SwipeToward::Prev };
+    let mut toward = if delta.0 < 0.0 {
+        SwipeToward::Next
+    } else {
+        SwipeToward::Prev
+    };
     if invert {
         toward = match toward {
             SwipeToward::Next => SwipeToward::Prev,
@@ -101,7 +105,9 @@ pub fn scroll_step(
     if accumulated.abs() < step {
         return ScrollStep::Accumulating { accumulated };
     }
-    ScrollStep::Scroll { delta: if invert { -accumulated } else { accumulated } }
+    ScrollStep::Scroll {
+        delta: if invert { -accumulated } else { accumulated },
+    }
 }
 
 /// Where a swipe is between the fingers landing and the workspace switching.
@@ -175,14 +181,20 @@ impl SwipeTrack {
                 if step.commit.is_some() {
                     self.phase = SwipePhase::Committed;
                 }
-                SwipeOutcome { consume: self.consuming, commit: step.commit }
+                SwipeOutcome {
+                    consume: self.consuming,
+                    commit: step.commit,
+                }
             }
             SwipePhase::Committed => {
                 // One command per gesture. The fingers lifting is what arms the next one.
                 if fingers_down == 0 {
                     self.reset();
                 }
-                SwipeOutcome { consume: self.consuming, commit: None }
+                SwipeOutcome {
+                    consume: self.consuming,
+                    commit: None,
+                }
             }
         }
     }
@@ -199,7 +211,11 @@ mod tests {
         assert_eq!(normalized_fraction(0.4), 0.4);
         assert_eq!(normalized_fraction(40.0), 0.4);
         assert_eq!(normalized_fraction(0.0), 0.0);
-        assert_eq!(normalized_fraction(1.0), 1.0, "1.0 is a whole pad, not one percent");
+        assert_eq!(
+            normalized_fraction(1.0),
+            1.0,
+            "1.0 is a whole pad, not one percent"
+        );
         assert_eq!(normalized_fraction(100.0), 1.0);
     }
 
@@ -232,8 +248,14 @@ mod tests {
 
     #[test]
     fn inverting_swaps_which_way_a_swipe_means() {
-        assert_eq!(swipe_step((-0.3, 0.0), 0.1, 0.2, true).commit, Some(SwipeToward::Prev));
-        assert_eq!(swipe_step((0.3, 0.0), 0.1, 0.2, true).commit, Some(SwipeToward::Next));
+        assert_eq!(
+            swipe_step((-0.3, 0.0), 0.1, 0.2, true).commit,
+            Some(SwipeToward::Prev)
+        );
+        assert_eq!(
+            swipe_step((0.3, 0.0), 0.1, 0.2, true).commit,
+            Some(SwipeToward::Next)
+        );
     }
 
     #[test]
@@ -256,7 +278,10 @@ mod tests {
     #[test]
     fn an_exactly_diagonal_swipe_commits_without_being_consumed() {
         let step = swipe_step((0.3, 0.3), 0.5, 0.2, false);
-        assert!(!step.consuming, "the consuming test needs horizontal strictly greater");
+        assert!(
+            !step.consuming,
+            "the consuming test needs horizontal strictly greater"
+        );
         assert_eq!(step.commit, Some(SwipeToward::Prev));
     }
 
@@ -279,7 +304,10 @@ mod tests {
 
     #[test]
     fn a_scroll_carries_its_accumulator_through_an_off_axis_frame() {
-        assert_eq!(scroll_step((0.01, 0.9), 0.04, 0.1, 0.05, false), ScrollStep::OffAxis);
+        assert_eq!(
+            scroll_step((0.01, 0.9), 0.04, 0.1, 0.05, false),
+            ScrollStep::OffAxis
+        );
         assert!(
             scrolled(scroll_step((0.02, 0.0), 0.04, 0.1, 0.05, false)).is_within(1e-9, 0.06),
             "the frame that was dropped did not reset the accumulator"
@@ -288,7 +316,10 @@ mod tests {
 
     #[test]
     fn a_scroll_no_more_horizontal_than_vertical_is_off_axis() {
-        assert_eq!(scroll_step((0.2, 0.2), 0.0, 0.5, 0.05, false), ScrollStep::OffAxis);
+        assert_eq!(
+            scroll_step((0.2, 0.2), 0.0, 0.5, 0.05, false),
+            ScrollStep::OffAxis
+        );
         assert!(matches!(
             scroll_step((0.2, 0.19), 0.0, 0.5, 0.05, false),
             ScrollStep::Scroll { .. }
@@ -322,7 +353,10 @@ mod tests {
         assert_eq!(track.phase, SwipePhase::Committed);
 
         let again = track.advance((0.0, 0.5), 3, 0.1, 0.2, false);
-        assert_eq!(again.commit, None, "one command per gesture, however far it keeps going");
+        assert_eq!(
+            again.commit, None,
+            "one command per gesture, however far it keeps going"
+        );
     }
 
     // Sticky on purpose: releasing a claimed gesture mid-swipe hands half of it to the Dock.
@@ -330,7 +364,10 @@ mod tests {
     fn a_gesture_stays_consumed_once_it_has_been_claimed() {
         let mut track = SwipeTrack::default();
         track.advance((0.5, 0.5), 3, 0.1, 0.2, false);
-        assert!(track.advance((0.4, 0.5), 3, 0.1, 0.2, false).consume, "claimed here");
+        assert!(
+            track.advance((0.4, 0.5), 3, 0.1, 0.2, false).consume,
+            "claimed here"
+        );
         // A frame that wanders off-axis would not claim on its own.
         assert!(
             track.advance((0.4, 0.9), 3, 0.1, 0.2, false).consume,

@@ -174,7 +174,8 @@ impl Reactor {
             .tracked_window_id(wsid)
             .and_then(|wid| {
                 let assignment = self.state.windows.workspace_info_for_window(wid)?;
-                let showing = self.layout_manager.layout_engine.active_workspace(assignment.space)?;
+                let showing =
+                    self.layout_manager.layout_engine.active_workspace(assignment.space)?;
                 if assignment.workspace_id == showing {
                     return Some(false);
                 }
@@ -312,7 +313,9 @@ impl Reactor {
                 .space_state
                 .screens
                 .iter()
-                .filter_map(|screen| Some((screen.space?, screen.frame, screen.display_uuid_owned())))
+                .filter_map(|screen| {
+                    Some((screen.space?, screen.frame, screen.display_uuid_owned()))
+                })
                 .collect(),
         };
         let mut outcome = window_workflow::handle_window_frame_changed(

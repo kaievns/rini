@@ -8,7 +8,12 @@
 /// Ease-out cubic (`(1/3, 1, 2/3, 1)`) was tried first and felt sluggish at the same duration:
 /// it spends the whole second half of the flight on the last 12.5% of the distance. Derivation and
 /// the numbers in "The curve" in `src/animation/docs/animation-smoothness.md`.
-pub const MOTION_CURVE: CubicBezier = CubicBezier { x1: 0.16, y1: 1.0, x2: 0.3, y2: 1.0 };
+pub const MOTION_CURVE: CubicBezier = CubicBezier {
+    x1: 0.16,
+    y1: 1.0,
+    x2: 0.3,
+    y2: 1.0,
+};
 
 /// A CSS-style cubic Bezier timing curve from `(0,0)` to `(1,1)`, evaluated as progress in terms
 /// of time. Core Animation takes the same four numbers (`CAMediaTimingFunction`), so what the
@@ -29,7 +34,10 @@ impl CubicBezier {
 
     /// `(x, y)` at parameter `s`.
     pub fn at(&self, s: f64) -> (f64, f64) {
-        (Self::coordinate(s, self.x1, self.x2), Self::coordinate(s, self.y1, self.y2))
+        (
+            Self::coordinate(s, self.x1, self.x2),
+            Self::coordinate(s, self.y1, self.y2),
+        )
     }
 
     /// Progress at time `t` in `[0, 1]`: the `y` where the curve's `x` is `t`. Newton's method from
@@ -43,7 +51,9 @@ impl CubicBezier {
         let x = |s: f64| Self::coordinate(s, self.x1, self.x2);
         let dx = |s: f64| {
             let inv = 1.0 - s;
-            3.0 * inv * inv * self.x1 + 6.0 * inv * s * (self.x2 - self.x1) + 3.0 * s * s * (1.0 - self.x2)
+            3.0 * inv * inv * self.x1
+                + 6.0 * inv * s * (self.x2 - self.x1)
+                + 3.0 * s * s * (1.0 - self.x2)
         };
         let mut s = t;
         for _ in 0..8 {
@@ -63,7 +73,11 @@ impl CubicBezier {
         let (mut lo, mut hi) = (0.0, 1.0);
         for _ in 0..64 {
             s = (lo + hi) / 2.0;
-            if x(s) < t { lo = s } else { hi = s }
+            if x(s) < t {
+                lo = s
+            } else {
+                hi = s
+            }
             if hi - lo < 1e-9 {
                 break;
             }
@@ -92,7 +106,11 @@ pub fn bounce_displacement(t: f64) -> f64 {
     } else {
         let u = (t - BOUNCE_TURN) / (1.0 - BOUNCE_TURN);
         // ease-in-out cubic, from 1 down to 0
-        let s = if u < 0.5 { 4.0 * u * u * u } else { 1.0 - (-2.0 * u + 2.0).powi(3) / 2.0 };
+        let s = if u < 0.5 {
+            4.0 * u * u * u
+        } else {
+            1.0 - (-2.0 * u + 2.0).powi(3) / 2.0
+        };
         1.0 - s
     }
 }

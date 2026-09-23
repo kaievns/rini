@@ -448,7 +448,10 @@ mod tests {
     #[test]
     fn the_plist_quotes_attributes_without_backslashes() {
         let plist = plist_xml("/Users/x/.local/bin/rini", "/usr/bin", "x");
-        assert!(!plist.contains('\\'), "no backslash belongs anywhere in this document");
+        assert!(
+            !plist.contains('\\'),
+            "no backslash belongs anywhere in this document"
+        );
         assert!(plist.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
         assert!(plist.contains("<plist version=\"1.0\">"));
     }

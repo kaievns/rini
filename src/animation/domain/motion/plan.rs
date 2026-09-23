@@ -1,16 +1,17 @@
 //! A pass as rigid pieces: the pure half of the container model.
 //! See "The overlay engine" and "Layout changes" in `src/animation/docs/animation-smoothness.md`.
 
-
 use std::collections::HashMap;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use crate::animation::domain::motion::surface::{SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space};
-use rini_ipc::protocol::Direction;
+use crate::animation::domain::motion::fit::is_a_resize;
+use crate::animation::domain::motion::surface::{
+    SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space,
+};
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
-use crate::animation::domain::motion::fit::is_a_resize;
+use rini_ipc::protocol::Direction;
 
 /// Two translation vectors this close on both axes ride one container.
 pub const GROUP_TOLERANCE: f64 = 2.0;
@@ -41,7 +42,11 @@ pub struct RigidGroup {
 
 impl RigidGroup {
     fn new(key: GroupKey, travel: CGPoint) -> Self {
-        RigidGroup { key, travel, members: Vec::new() }
+        RigidGroup {
+            key,
+            travel,
+            members: Vec::new(),
+        }
     }
 
     pub fn is_still(&self) -> bool {
@@ -99,7 +104,11 @@ impl ReflowPlan {
     /// Puts a rigid member starting at `from` (overlay space) into the group travelling by `vector`,
     /// opening one when none is within `GROUP_TOLERANCE`. Containers install at `(0,0)`, so `rel == from`.
     fn place(&mut self, window: WindowId, from: CGRect, vector: CGPoint) -> GroupKey {
-        let member = GroupMember { window, rel: from, companion: false };
+        let member = GroupMember {
+            window,
+            rel: from,
+            companion: false,
+        };
         if let Some(group) = self.groups.iter_mut().find(|g| same_vector(g.travel, vector)) {
             group.members.push(member);
             return group.key;
@@ -145,7 +154,13 @@ impl ReflowPlan {
 
     /// How `window` takes part, or `None` when the plan does not name it.
     pub fn member(&self, window: WindowId) -> Option<Member> {
-        member_in(&self.groups, &self.changing, &self.entrances, &self.floating, window)
+        member_in(
+            &self.groups,
+            &self.changing,
+            &self.entrances,
+            &self.floating,
+            window,
+        )
     }
 
     /// Every window the plan names, in plan order: groups, changing, entrances, floating.
@@ -220,7 +235,13 @@ impl FlightPlan {
 
     /// How `window` takes part. Floating frames are in the floating container's space.
     pub fn member(&self, window: WindowId) -> Option<Member> {
-        member_in(&self.groups, &self.changing, &self.entrances, &self.floating, window)
+        member_in(
+            &self.groups,
+            &self.changing,
+            &self.entrances,
+            &self.floating,
+            window,
+        )
     }
 
     /// Every window the flight names, companions left out.
@@ -311,7 +332,8 @@ impl FlightPlan {
                 return Located::Group(group.key, m.rel);
             }
         }
-        let index = |list: &[(WindowId, CGRect, CGRect)]| list.iter().position(|(w, _, _)| *w == window);
+        let index =
+            |list: &[(WindowId, CGRect, CGRect)]| list.iter().position(|(w, _, _)| *w == window);
         if let Some(i) = index(&self.changing) {
             return Located::Changing(i);
         }
@@ -389,7 +411,6 @@ fn is_zero(p: CGPoint) -> bool {
     p.x == 0.0 && p.y == 0.0
 }
 
-
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at presented frames, a pan adds its travel to every group. `presented` is each
 /// container's presented position, read by the overlay just before. See "Mid-flight passes" in
@@ -460,7 +481,11 @@ pub fn merge_plans(
                     retarget_loose(&mut next.floating, i, to_rel, &mut delta);
                 }
                 Located::Absent => {
-                    let member = GroupMember { window: m.window, rel: m.rel, companion: m.companion };
+                    let member = GroupMember {
+                        window: m.window,
+                        rel: m.rel,
+                        companion: m.companion,
+                    };
                     joins.push((member, group.travel));
                 }
             }
@@ -658,7 +683,10 @@ pub fn group_relative(frame: CGRect, position: CGPoint) -> CGRect {
 
 /// The inverse of [`group_relative`]: a group-relative frame back in overlay space.
 pub fn overlay_of(rel: CGRect, position: CGPoint) -> CGRect {
-    CGRect::new(CGPoint::new(rel.origin.x + position.x, rel.origin.y + position.y), rel.size)
+    CGRect::new(
+        CGPoint::new(rel.origin.x + position.x, rel.origin.y + position.y),
+        rel.size,
+    )
 }
 
 /// A layout pass as rigid pieces. `requests` are display-space `(window, start, end, floating)`
@@ -691,7 +719,11 @@ pub fn plan_from_tiles<T: TileGeometry>(tiles: &[T]) -> ReflowPlan {
 
 /// A strip movement as one rigid piece. `strip_travel` already yields overlay space.
 /// Pinned windows stand in the floating container; unpinned floating windows ride it by the strip's travel.
-pub fn surface_plan(windows: &[SurfaceWindow], from_offset: CGPoint, to_offset: CGPoint) -> ReflowPlan {
+pub fn surface_plan(
+    windows: &[SurfaceWindow],
+    from_offset: CGPoint,
+    to_offset: CGPoint,
+) -> ReflowPlan {
     let travel = pan_travel(from_offset, to_offset);
     let mut plan = ReflowPlan::empty();
     // A pan pins its floating windows; a switch pins none. Both in one pass would need the floating
@@ -745,8 +777,16 @@ pub fn edge_bounce_overshoot(direction: Direction) -> CGPoint {
 /// Pure output of [`animation_targets`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AnimationTarget {
-    Container { key: GroupKey, from: CGPoint, to: CGPoint },
-    Tile { window: WindowId, from: CGRect, to: CGRect },
+    Container {
+        key: GroupKey,
+        from: CGPoint,
+        to: CGPoint,
+    },
+    Tile {
+        window: WindowId,
+        from: CGRect,
+        to: CGRect,
+    },
 }
 
 /// What a flight animates, and nothing else: one `Container` per strip group with travel, the
@@ -754,9 +794,8 @@ pub enum AnimationTarget {
 /// member. Rigid members are never named. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
     let mut out = Vec::new();
-    let position = |key: GroupKey, travel: CGPoint| {
-        plan.positions.get(&key).copied().unwrap_or(travel)
-    };
+    let position =
+        |key: GroupKey, travel: CGPoint| plan.positions.get(&key).copied().unwrap_or(travel);
     for group in plan.groups.iter().filter(|g| !g.is_still()) {
         let to = position(group.key, group.travel);
         let from = CGPoint::new(to.x - group.travel.x, to.y - group.travel.y);
@@ -766,7 +805,11 @@ pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
     if ft.x != 0.0 || ft.y != 0.0 {
         let to = position(GroupKey::Floating, ft);
         let from = CGPoint::new(to.x - ft.x, to.y - ft.y);
-        out.push(AnimationTarget::Container { key: GroupKey::Floating, from, to });
+        out.push(AnimationTarget::Container {
+            key: GroupKey::Floating,
+            from,
+            to,
+        });
     }
     for &(window, from, to) in plan.changing.iter().chain(&plan.entrances) {
         out.push(AnimationTarget::Tile { window, from, to });
@@ -801,7 +844,10 @@ mod tests {
         };
 
         fn wid(idx: u32) -> WindowId {
-            WindowId { pid: 7, idx: std::num::NonZeroU32::new(idx).unwrap() }
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
         }
 
         fn column(i: f64) -> CGRect {
@@ -863,7 +909,10 @@ mod tests {
                 (wid(3), c, shifted(c, -300.0), false),
             ]);
             let targets = animation_targets(&plan);
-            assert_eq!(containers(&targets), vec![GroupKey::Rigid(1), GroupKey::Rigid(2)]);
+            assert_eq!(
+                containers(&targets),
+                vec![GroupKey::Rigid(1), GroupKey::Rigid(2)]
+            );
             assert!(tiles(&targets).is_empty(), "no rigid member is a tile target");
         }
 
@@ -878,14 +927,21 @@ mod tests {
             let targets = animation_targets(&plan);
             assert_eq!(tiles(&targets), vec![wid(1)]);
             assert_eq!(containers(&targets), vec![GroupKey::Rigid(1)]);
-            assert!(targets.contains(&AnimationTarget::Tile { window: wid(1), from: a, to: grown }));
+            assert!(targets.contains(&AnimationTarget::Tile {
+                window: wid(1),
+                from: a,
+                to: grown
+            }));
         }
 
         #[test]
         fn the_floating_container_is_a_target_iff_it_travels() {
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let mut plan = flight(&[(wid(1), settings, settings, true)]);
-            assert!(animation_targets(&plan).is_empty(), "a standing floating window: nothing flies");
+            assert!(
+                animation_targets(&plan).is_empty(),
+                "a standing floating window: nothing flies"
+            );
 
             plan.floating_travel = CGPoint::new(0.0, -1117.0);
             plan.positions.insert(GroupKey::Floating, plan.floating_travel);
@@ -902,7 +958,11 @@ mod tests {
             let plan = flight(&[(wid(1), settings, moved, true)]);
             assert_eq!(
                 animation_targets(&plan),
-                vec![AnimationTarget::Tile { window: wid(1), from: settings, to: moved }],
+                vec![AnimationTarget::Tile {
+                    window: wid(1),
+                    from: settings,
+                    to: moved
+                }],
                 "a floating window moving on its own is a tile target, not a container"
             );
         }
@@ -914,7 +974,6 @@ mod tests {
             assert!(animation_targets(&plan).is_empty());
             assert_eq!(plan.groups.len(), 1, "everything standing is the still group");
         }
-
     }
 
     /// Strip containers always bounce; the floating container only with the stack (vertical),

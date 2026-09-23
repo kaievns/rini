@@ -103,7 +103,10 @@ mod tests {
         let window = rect(4.0, 32.0, 859.0, 1081.0);
         assert_eq!(strip_frame(window, origin(), 0, PITCH).origin.y, 32.0);
         assert_eq!(strip_frame(window, origin(), 1, PITCH).origin.y, 32.0 + PITCH);
-        assert_eq!(strip_frame(window, origin(), 3, PITCH).origin.y, 32.0 + 3.0 * PITCH);
+        assert_eq!(
+            strip_frame(window, origin(), 3, PITCH).origin.y,
+            32.0 + 3.0 * PITCH
+        );
     }
 
     /// The pitch is the FULL display height, not the usable height, which is what leaves a gap the size
@@ -146,7 +149,10 @@ mod tests {
         let placed = strip_frame(hanging, origin(), 1, PITCH);
         assert_eq!(placed.origin.x, 1400.0);
         assert_eq!(placed.size.width, 859.0);
-        assert!(placed.origin.x + placed.size.width > 1728.0, "still hangs off the right");
+        assert!(
+            placed.origin.x + placed.size.width > 1728.0,
+            "still hangs off the right"
+        );
     }
 
     #[test]
@@ -185,9 +191,18 @@ mod tests {
     /// the whole reason the strip surface holds all of them. Distance must therefore scale with the gap.
     #[test]
     fn a_longer_jump_travels_proportionally_further() {
-        assert_eq!((travel(0, 1, PITCH).to.y - travel(0, 1, PITCH).from.y).abs(), PITCH);
-        assert_eq!((travel(0, 2, PITCH).to.y - travel(0, 2, PITCH).from.y).abs(), 2.0 * PITCH);
-        assert_eq!((travel(0, 3, PITCH).to.y - travel(0, 3, PITCH).from.y).abs(), 3.0 * PITCH);
+        assert_eq!(
+            (travel(0, 1, PITCH).to.y - travel(0, 1, PITCH).from.y).abs(),
+            PITCH
+        );
+        assert_eq!(
+            (travel(0, 2, PITCH).to.y - travel(0, 2, PITCH).from.y).abs(),
+            2.0 * PITCH
+        );
+        assert_eq!(
+            (travel(0, 3, PITCH).to.y - travel(0, 3, PITCH).from.y).abs(),
+            3.0 * PITCH
+        );
     }
 
     #[test]
@@ -210,7 +225,10 @@ mod tests {
 
     #[test]
     fn duration_does_not_depend_on_direction() {
-        assert_eq!(travel(0, 3, PITCH).duration_stretch, travel(3, 0, PITCH).duration_stretch);
+        assert_eq!(
+            travel(0, 3, PITCH).duration_stretch,
+            travel(3, 0, PITCH).duration_stretch
+        );
     }
 
     #[test]

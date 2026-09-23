@@ -61,7 +61,10 @@ extern "C-unwind" fn trampoline_callback(
         // until reboot. The owner decides through [`ReEnableGovernor`]. See "A revoked
         // screen-recording grant froze all input" in docs/permissions-and-the-launch-agent.md.
         let reason = if ety == -2 { "timeout" } else { "user input" };
-        warn!(reason, "Event tap was disabled; deferring to the owner's governor");
+        warn!(
+            reason,
+            "Event tap was disabled; deferring to the owner's governor"
+        );
         if let Some(callback) = ctx.disabled_callback {
             unsafe { callback(ctx.original_user_info) };
         }
@@ -124,7 +127,9 @@ impl Default for ReEnableGovernor {
 
 impl ReEnableGovernor {
     pub fn new() -> Self {
-        Self { disables: std::collections::VecDeque::new() }
+        Self {
+            disables: std::collections::VecDeque::new(),
+        }
     }
 
     /// Records a disable at `now` and decides how to respond.
@@ -165,7 +170,10 @@ pub enum Recovered {
     /// Re-arm this generation now.
     ReArm(u64),
     /// Leave the tap down for `wait`, then re-arm. Input keeps flowing without it meanwhile.
-    StandDown { generation: u64, wait: std::time::Duration },
+    StandDown {
+        generation: u64,
+        wait: std::time::Duration,
+    },
     /// Build a new tap; this one's port is gone.
     Rebuild(u64),
     /// A message about a tap that has already been replaced. Doing anything would re-arm a dead
@@ -435,7 +443,10 @@ mod tests {
         let mut governor = ReEnableGovernor::new();
         let start = Instant::now();
         assert_eq!(governor.on_disabled(start), ReEnableDecision::Now);
-        assert_eq!(governor.on_disabled(start + Duration::from_secs(2)), ReEnableDecision::Now);
+        assert_eq!(
+            governor.on_disabled(start + Duration::from_secs(2)),
+            ReEnableDecision::Now
+        );
         assert_eq!(
             governor.on_disabled(start + Duration::from_secs(4)),
             ReEnableDecision::After(REENABLE_COOLDOWN)
@@ -498,7 +509,10 @@ mod recovery_tests {
     #[test]
     fn a_disable_of_the_live_tap_re_arms_it() {
         let mut governor = ReEnableGovernor::new();
-        assert_eq!(decide(Recovery::TapDisabled(7), 7, &mut governor), Recovered::ReArm(7));
+        assert_eq!(
+            decide(Recovery::TapDisabled(7), 7, &mut governor),
+            Recovered::ReArm(7)
+        );
     }
 
     /// The rule that kept a replaced tap from coming back. A message about an old generation must
@@ -507,15 +521,24 @@ mod recovery_tests {
     #[test]
     fn a_disable_of_a_replaced_tap_is_ignored() {
         let mut governor = ReEnableGovernor::new();
-        assert_eq!(decide(Recovery::TapDisabled(6), 7, &mut governor), Recovered::Ignore);
-        assert_eq!(decide(Recovery::CooldownElapsed(6), 7, &mut governor), Recovered::Ignore);
+        assert_eq!(
+            decide(Recovery::TapDisabled(6), 7, &mut governor),
+            Recovered::Ignore
+        );
+        assert_eq!(
+            decide(Recovery::CooldownElapsed(6), 7, &mut governor),
+            Recovered::Ignore
+        );
     }
 
     #[test]
     fn a_stale_disable_does_not_count_against_the_burst_limit() {
         let mut governor = ReEnableGovernor::new();
         for _ in 0..5 {
-            assert_eq!(decide(Recovery::TapDisabled(1), 9, &mut governor), Recovered::Ignore);
+            assert_eq!(
+                decide(Recovery::TapDisabled(1), 9, &mut governor),
+                Recovered::Ignore
+            );
         }
         assert_eq!(
             decide(Recovery::TapDisabled(9), 9, &mut governor),
@@ -530,17 +553,32 @@ mod recovery_tests {
     fn a_burst_of_disables_stands_the_tap_down() {
         let mut governor = ReEnableGovernor::new();
         let now = Instant::now();
-        assert_eq!(on_recovery(Recovery::TapDisabled(1), 1, &mut governor, now), Recovered::ReArm(1));
         assert_eq!(
-            on_recovery(Recovery::TapDisabled(1), 1, &mut governor, now + Duration::from_secs(1)),
+            on_recovery(Recovery::TapDisabled(1), 1, &mut governor, now),
             Recovered::ReArm(1)
         );
-        let third =
-            on_recovery(Recovery::TapDisabled(1), 1, &mut governor, now + Duration::from_secs(2));
+        assert_eq!(
+            on_recovery(
+                Recovery::TapDisabled(1),
+                1,
+                &mut governor,
+                now + Duration::from_secs(1)
+            ),
+            Recovered::ReArm(1)
+        );
+        let third = on_recovery(
+            Recovery::TapDisabled(1),
+            1,
+            &mut governor,
+            now + Duration::from_secs(2),
+        );
         match third {
             Recovered::StandDown { generation, wait } => {
                 assert_eq!(generation, 1);
-                assert!(wait >= Duration::from_secs(1), "a stand-down has to actually wait");
+                assert!(
+                    wait >= Duration::from_secs(1),
+                    "a stand-down has to actually wait"
+                );
             }
             other => panic!("expected a stand-down, got {other:?}"),
         }
@@ -549,7 +587,10 @@ mod recovery_tests {
     #[test]
     fn a_cooldown_elapsing_on_the_live_tap_re_arms_it() {
         let mut governor = ReEnableGovernor::new();
-        assert_eq!(decide(Recovery::CooldownElapsed(4), 4, &mut governor), Recovered::ReArm(4));
+        assert_eq!(
+            decide(Recovery::CooldownElapsed(4), 4, &mut governor),
+            Recovered::ReArm(4)
+        );
     }
 
     /// An invalidated port is NOT generation-checked: it cannot be re-enabled at all, so whichever
@@ -557,6 +598,9 @@ mod recovery_tests {
     #[test]
     fn an_invalidated_port_is_rebuilt_whatever_generation_reported_it() {
         let mut governor = ReEnableGovernor::new();
-        assert_eq!(decide(Recovery::TapInvalidated(2), 9, &mut governor), Recovered::Rebuild(2));
+        assert_eq!(
+            decide(Recovery::TapInvalidated(2), 9, &mut governor),
+            Recovered::Rebuild(2)
+        );
     }
 }

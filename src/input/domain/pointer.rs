@@ -143,7 +143,10 @@ mod tests {
     /// pointer can cross windows without one appearing, so the cache cannot be trusted.
     #[test]
     fn an_absent_hint_needs_a_lookup_even_with_a_valid_cache() {
-        assert_eq!(pointer_window(cached(7, Some(42)), None), PointerWindow::NeedsLookup);
+        assert_eq!(
+            pointer_window(cached(7, Some(42)), None),
+            PointerWindow::NeedsLookup
+        );
     }
 
     #[test]
@@ -157,15 +160,24 @@ mod tests {
     /// The rule that keeps rini out of the keyboard path when nothing is bound.
     #[test]
     fn keyboard_events_are_only_wanted_when_something_would_act_on_them() {
-        assert!(!wants_keyboard_events(false, 0), "no bindings, no reason to see keys");
+        assert!(
+            !wants_keyboard_events(false, 0),
+            "no bindings, no reason to see keys"
+        );
         assert!(wants_keyboard_events(false, 1));
-        assert!(wants_keyboard_events(true, 0), "the disable hotkey is reason enough");
+        assert!(
+            wants_keyboard_events(true, 0),
+            "the disable hotkey is reason enough"
+        );
     }
 
     #[test]
     fn mouse_moves_need_the_setting_and_the_runtime_flag_and_processing() {
         assert!(wants_mouse_move_events(true, true, true));
-        assert!(!wants_mouse_move_events(false, true, true), "processing off overrules both");
+        assert!(
+            !wants_mouse_move_events(false, true, true),
+            "processing off overrules both"
+        );
         assert!(!wants_mouse_move_events(true, false, true), "not configured");
         assert!(
             !wants_mouse_move_events(true, true, false),

@@ -17,7 +17,6 @@ impl TransactionId {
 }
 
 /// Manages window transaction IDs and their associated target frames.
-
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -152,7 +151,6 @@ mod tests {
         assert_eq!(record.target, None);
     }
 }
-
 
 /// A per-window counter that tracks the last time the reactor sent a request to
 /// change the window frame.

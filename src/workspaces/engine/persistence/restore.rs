@@ -3,8 +3,8 @@ use objc2_core_foundation::CGRect;
 
 use super::reconcile::ReconcileOutcome;
 use super::*;
-use crate::workspaces::domain::workspaces::WorkspaceLayoutSnapshot;
 use crate::workspaces::VirtualWorkspace;
+use crate::workspaces::domain::workspaces::WorkspaceLayoutSnapshot;
 
 #[derive(Clone, Copy)]
 struct WorkspaceMapping {
@@ -420,8 +420,8 @@ impl RestorePlan {
             if !live_is_in_scope {
                 continue;
             }
-            let ReconcileOutcome { matched, duplicates_removed } =
-                engine.reconcile_restored_window(window_store, memory, live_space, live, &fingerprint);
+            let ReconcileOutcome { matched, duplicates_removed } = engine
+                .reconcile_restored_window(window_store, memory, live_space, live, &fingerprint);
             report.matched += usize::from(matched);
             report.duplicates_removed += duplicates_removed;
             if !matched {
@@ -492,7 +492,10 @@ impl LayoutEngine {
     ) {
         for &(space, workspace) in targets {
             let expected_assignment =
-                crate::workspaces::domain::window_store::WindowWorkspaceInfo { space, workspace_id: workspace };
+                crate::workspaces::domain::window_store::WindowWorkspaceInfo {
+                    space,
+                    workspace_id: workspace,
+                };
             // Only this display's strips of the workspace. A workspace spans every display,
             // so its layout ids must be filtered to the target space before anything is
             // removed — and the removal itself must be layout-scoped, because
@@ -669,8 +672,8 @@ mod tests {
     use objc2_core_foundation::CGSize;
 
     use crate::layout::settings::LayoutSettings;
-    use crate::workspaces::settings::VirtualWorkspaceSettings;
     use crate::workspaces::LayoutEvent;
+    use crate::workspaces::settings::VirtualWorkspaceSettings;
 
     use super::*;
 
@@ -692,11 +695,7 @@ mod tests {
                 &mut memory,
                 LayoutEvent::SpaceExposed(space, CGSize::new(1000.0, 800.0)),
             );
-            engine.update_space_display(
-                &mut memory,
-                space,
-                Some(format!("uuid-{}", space.get())),
-            );
+            engine.update_space_display(&mut memory, space, Some(format!("uuid-{}", space.get())));
         }
         (engine, memory)
     }
@@ -706,7 +705,11 @@ mod tests {
     }
 
     fn request(active: u64, source: RestoreSource) -> RestoreRequest {
-        RestoreRequest { scope: RestoreScope::Space, active_space: SpaceId::new(active), source }
+        RestoreRequest {
+            scope: RestoreScope::Space,
+            active_space: SpaceId::new(active),
+            source,
+        }
     }
 
     #[test]
@@ -772,7 +775,11 @@ mod tests {
             &memory,
             request(55, RestoreSource::CurrentSpace),
         );
-        assert_eq!(got.unwrap(), SpaceId::new(10), "the display, not the space id, identifies it");
+        assert_eq!(
+            got.unwrap(),
+            SpaceId::new(10),
+            "the display, not the space id, identifies it"
+        );
     }
 
     #[test]
@@ -814,6 +821,9 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("cannot choose a source from 2"), "{err}");
-        assert!(err.contains("save the layout again"), "the message has to say what to do: {err}");
+        assert!(
+            err.contains("save the layout again"),
+            "the message has to say what to do: {err}"
+        );
     }
 }

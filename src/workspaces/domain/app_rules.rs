@@ -1,9 +1,9 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use rini_core::ids::WindowId;
 use crate::windows::domain::rules::{AppRulePosition, AppRuleSize};
 use crate::workspaces::VirtualWorkspaceId;
 use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
 
 /// Complete result of applying a managed app rule to workspace policy.
 ///
@@ -24,11 +24,7 @@ impl AppRuleEffects {
         self.floating || (!self.prev_rule_decision && was_floating)
     }
 
-    pub fn floating_placement(
-        self,
-        window: WindowId,
-        space: SpaceId,
-    ) -> Option<AppRulePlacement> {
+    pub fn floating_placement(self, window: WindowId, space: SpaceId) -> Option<AppRulePlacement> {
         (self.floating && (self.position.is_some() || self.size.is_some())).then_some(
             AppRulePlacement {
                 window,
@@ -191,10 +187,18 @@ impl AfterRules {
                 }
             }
             Ok(AppRuleResult::Unmanaged) => {
-                if in_layout_now { Self::RemoveFromLayout } else { Self::Settled }
+                if in_layout_now {
+                    Self::RemoveFromLayout
+                } else {
+                    Self::Settled
+                }
             }
             Err(()) => {
-                if !before.assigned || before.ignored { Self::RefreshLayout } else { Self::Settled }
+                if !before.assigned || before.ignored {
+                    Self::RefreshLayout
+                } else {
+                    Self::Settled
+                }
             }
         }
     }
@@ -242,34 +246,80 @@ mod tests {
 
     #[test]
     fn a_managed_verdict_refreshes_when_the_windows_place_changes() {
-        let settled = BeforeRules { assigned: true, floating: false, ignored: false };
-        assert_eq!(AfterRules::for_result(settled, Ok(&effects(false, true)), true), AfterRules::Settled);
-        assert_eq!(AfterRules::for_result(settled, Ok(&effects(true, true)), true), AfterRules::RefreshLayout);
+        let settled = BeforeRules {
+            assigned: true,
+            floating: false,
+            ignored: false,
+        };
+        assert_eq!(
+            AfterRules::for_result(settled, Ok(&effects(false, true)), true),
+            AfterRules::Settled
+        );
+        assert_eq!(
+            AfterRules::for_result(settled, Ok(&effects(true, true)), true),
+            AfterRules::RefreshLayout
+        );
         let unassigned = BeforeRules { assigned: false, ..settled };
-        assert_eq!(AfterRules::for_result(unassigned, Ok(&effects(false, true)), true), AfterRules::RefreshLayout);
+        assert_eq!(
+            AfterRules::for_result(unassigned, Ok(&effects(false, true)), true),
+            AfterRules::RefreshLayout
+        );
         let ignored = BeforeRules { ignored: true, ..settled };
-        assert_eq!(AfterRules::for_result(ignored, Ok(&effects(false, true)), true), AfterRules::RefreshLayout);
+        assert_eq!(
+            AfterRules::for_result(ignored, Ok(&effects(false, true)), true),
+            AfterRules::RefreshLayout
+        );
     }
 
     #[test]
     fn a_rule_that_says_nothing_about_floating_keeps_the_windows_current_state() {
-        let floating = BeforeRules { assigned: true, floating: true, ignored: false };
-        assert_eq!(AfterRules::for_result(floating, Ok(&effects(false, false)), true), AfterRules::Settled);
-        assert_eq!(AfterRules::for_result(floating, Ok(&effects(false, true)), true), AfterRules::RefreshLayout);
+        let floating = BeforeRules {
+            assigned: true,
+            floating: true,
+            ignored: false,
+        };
+        assert_eq!(
+            AfterRules::for_result(floating, Ok(&effects(false, false)), true),
+            AfterRules::Settled
+        );
+        assert_eq!(
+            AfterRules::for_result(floating, Ok(&effects(false, true)), true),
+            AfterRules::RefreshLayout
+        );
     }
 
     #[test]
     fn an_unmanaged_verdict_removes_only_what_the_layout_still_holds() {
-        let before = BeforeRules { assigned: true, floating: false, ignored: false };
-        assert_eq!(AfterRules::for_result(before, Ok(&AppRuleResult::Unmanaged), true), AfterRules::RemoveFromLayout);
-        assert_eq!(AfterRules::for_result(before, Ok(&AppRuleResult::Unmanaged), false), AfterRules::Settled);
+        let before = BeforeRules {
+            assigned: true,
+            floating: false,
+            ignored: false,
+        };
+        assert_eq!(
+            AfterRules::for_result(before, Ok(&AppRuleResult::Unmanaged), true),
+            AfterRules::RemoveFromLayout
+        );
+        assert_eq!(
+            AfterRules::for_result(before, Ok(&AppRuleResult::Unmanaged), false),
+            AfterRules::Settled
+        );
     }
 
     #[test]
     fn a_failed_evaluation_refreshes_a_window_the_layout_did_not_have() {
-        let held = BeforeRules { assigned: true, floating: false, ignored: false };
+        let held = BeforeRules {
+            assigned: true,
+            floating: false,
+            ignored: false,
+        };
         assert_eq!(AfterRules::for_result(held, Err(()), true), AfterRules::Settled);
-        assert_eq!(AfterRules::for_result(BeforeRules { assigned: false, ..held }, Err(()), true), AfterRules::RefreshLayout);
-        assert_eq!(AfterRules::for_result(BeforeRules { ignored: true, ..held }, Err(()), true), AfterRules::RefreshLayout);
+        assert_eq!(
+            AfterRules::for_result(BeforeRules { assigned: false, ..held }, Err(()), true),
+            AfterRules::RefreshLayout
+        );
+        assert_eq!(
+            AfterRules::for_result(BeforeRules { ignored: true, ..held }, Err(()), true),
+            AfterRules::RefreshLayout
+        );
     }
 }

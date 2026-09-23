@@ -4,9 +4,9 @@ pub use rini_ipc::protocol::{DisplaySelector, ReactorCommand};
 
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::request::AppThreadHandle;
-use rini_core::ids::{WindowId, pid_t};
 use crate::workspaces::WindowStore;
 use rini_core::ids::SpaceId;
+use rini_core::ids::{WindowId, pid_t};
 
 /// All mutable domain state is owned by the reactor thread.
 ///
@@ -22,7 +22,6 @@ pub struct RiniState {
     /// because it outlives one: a layout can be discarded without forgetting the hardware.
     pub display_memory: DisplayMemory,
 }
-
 
 pub use rini_ipc::protocol::Command;
 
@@ -72,7 +71,6 @@ pub enum WorkspaceSwitchOrigin {
     Auto,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StaleCleanupState {
     Enabled,
@@ -99,7 +97,9 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ReactorError {
     #[error("App communication failed: {0}")]
-    AppCommunicationFailed(#[from] tokio::sync::mpsc::error::SendError<crate::windows::domain::request::Request>),
+    AppCommunicationFailed(
+        #[from] tokio::sync::mpsc::error::SendError<crate::windows::domain::request::Request>,
+    ),
     #[error("Raise manager communication failed: {0}")]
     RaiseManagerCommunicationFailed(
         #[from] tokio::sync::mpsc::error::SendError<crate::windows::domain::raise::Event>,

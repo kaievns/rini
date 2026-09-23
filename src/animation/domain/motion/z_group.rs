@@ -38,7 +38,11 @@ pub const MAX_TILE_DEPTH: usize = 2 * GROUP_STRIDE - 1;
 /// `container_z - within` is `-tile_depth`, so containers band the way tiles did. See "The
 /// overlay engine" in `src/animation/docs/animation-smoothness.md`.
 pub fn container_z(group: StackGroup, focused_group: StackGroup) -> f64 {
-    if group == focused_group { 0.0 } else { -(GROUP_STRIDE as f64) }
+    if group == focused_group {
+        0.0
+    } else {
+        -(GROUP_STRIDE as f64)
+    }
 }
 
 /// Front-to-back position for a tile, 0 being frontmost.
@@ -64,7 +68,11 @@ pub fn tile_depth(
         .map(|order| order.saturating_add(1))
         .unwrap_or(GROUP_STRIDE - 1)
         .min(GROUP_STRIDE - 1);
-    if group == focused_group { within } else { GROUP_STRIDE + within }
+    if group == focused_group {
+        within
+    } else {
+        GROUP_STRIDE + within
+    }
 }
 
 /// Whether the real window order breaks the rule, given the groups front to back.
@@ -161,7 +169,10 @@ mod tests {
         let partner = tile_depth(Some(3), false, Tiled, Tiled);
         let settings = tile_depth(Some(1), false, Floating, Tiled);
         assert!(focused < partner, "the focused window leads its group");
-        assert!(partner < settings, "and its partner still beats the floating window");
+        assert!(
+            partner < settings,
+            "and its partner still beats the floating window"
+        );
     }
 
     /// The converse, which macOS already does: a floating window that takes focus goes in front of the
@@ -172,15 +183,23 @@ mod tests {
         let nearest_column = tile_depth(Some(1), false, Tiled, Floating);
         let far_column = tile_depth(Some(9), false, Tiled, Floating);
         assert!(settings < nearest_column);
-        assert!(nearest_column < far_column, "the strip keeps its own order behind it");
+        assert!(
+            nearest_column < far_column,
+            "the strip keeps its own order behind it"
+        );
     }
 
     #[test]
     fn within_a_group_the_window_servers_order_is_kept() {
-        assert!(tile_depth(Some(0), false, Tiled, Tiled) < tile_depth(Some(1), false, Tiled, Tiled));
-        assert!(tile_depth(Some(1), false, Tiled, Tiled) < tile_depth(Some(17), false, Tiled, Tiled));
         assert!(
-            tile_depth(Some(0), false, Floating, Tiled) < tile_depth(Some(1), false, Floating, Tiled)
+            tile_depth(Some(0), false, Tiled, Tiled) < tile_depth(Some(1), false, Tiled, Tiled)
+        );
+        assert!(
+            tile_depth(Some(1), false, Tiled, Tiled) < tile_depth(Some(17), false, Tiled, Tiled)
+        );
+        assert!(
+            tile_depth(Some(0), false, Floating, Tiled)
+                < tile_depth(Some(1), false, Floating, Tiled)
         );
     }
 
@@ -191,8 +210,14 @@ mod tests {
         let unknown_strip = tile_depth(None, false, Tiled, Tiled);
         let known_strip = tile_depth(Some(50), false, Tiled, Tiled);
         let nearest_floating = tile_depth(Some(0), false, Floating, Tiled);
-        assert!(known_strip < unknown_strip, "behind the windows the server did report");
-        assert!(unknown_strip < nearest_floating, "but still in front of the other group");
+        assert!(
+            known_strip < unknown_strip,
+            "behind the windows the server did report"
+        );
+        assert!(
+            unknown_strip < nearest_floating,
+            "but still in front of the other group"
+        );
     }
 
     /// The stride has to outrun any plausible window count, or a deep window in the front group would wrap

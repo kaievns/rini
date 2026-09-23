@@ -1,14 +1,14 @@
 use tracing::debug;
 
-use crate::windows::domain::info::AppInfo;
-use crate::windows::domain::request::{AppThreadHandle, Quiet};
-use rini_core::ids::WindowId;
 use crate::app::reactor::AppState;
 use crate::app::reactor::events::{EventOutcome, WindowDiscoveryRequest};
 use crate::app::reactor::managers::AppManager;
-use crate::workspaces::LayoutEvent;
+use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::info::WindowInfo;
 use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::domain::request::{AppThreadHandle, Quiet};
+use crate::workspaces::LayoutEvent;
+use rini_core::ids::WindowId;
 
 #[derive(Debug)]
 pub struct ApplicationLaunchedPayload {
@@ -42,7 +42,8 @@ pub fn handle_application_launched(
 }
 
 pub fn handle_application_terminated(pid: i32) -> anyhow::Result<EventOutcome> {
-    Ok(EventOutcome::no_change().with_app_request(pid, crate::windows::domain::request::Request::Terminate))
+    Ok(EventOutcome::no_change()
+        .with_app_request(pid, crate::windows::domain::request::Request::Terminate))
 }
 
 pub fn handle_application_thread_terminated(

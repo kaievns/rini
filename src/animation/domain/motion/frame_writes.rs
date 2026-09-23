@@ -1,8 +1,8 @@
 //! Which final-frame writes go out to the apps, and in what order. See "Real windows land before
 //! lift" in `src/animation/docs/animation-smoothness.md`.
 use objc2_core_foundation::CGRect;
-use rini_geometry::{CGRectExt, is_off_screen};
 use rini_core::ids::WindowId;
+use rini_geometry::{CGRectExt, is_off_screen};
 
 /// The order the overlay's final frames go out to the apps: on-screen destinations first, parks
 /// last, each class in the order given. See "Real windows land before lift" in
@@ -28,9 +28,8 @@ pub fn frame_send_order(
 /// the bottom edge, and the pass that follows is what moves that band into the corner. Skipping
 /// that write left the band on screen and let the windows drift into the active workspace.
 pub fn is_park_to_park(current: CGRect, target: CGRect, display: CGRect) -> bool {
-    let is_park = |frame: CGRect| {
-        is_off_screen(display, frame) && frame.intersection(&display).area() > 0.0
-    };
+    let is_park =
+        |frame: CGRect| is_off_screen(display, frame) && frame.intersection(&display).area() > 0.0;
     is_park(current) && is_park(target)
 }
 
@@ -54,12 +53,9 @@ mod tests {
         CGRect::new(CGPoint::new(origin_x, origin_y), CGSize::new(width, height))
     }
 
-
-
     fn display() -> CGRect {
         CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0))
     }
-
 
     fn ids(order: &[(WindowId, CGRect)]) -> Vec<WindowId> {
         order.iter().map(|(w, _)| *w).collect()
@@ -77,7 +73,11 @@ mod tests {
         let slot = rect(4.0, 32.0, 1720.0, 1081.0);
         let order = frame_send_order(vec![(leaving, park), (arriving, slot)], display());
         let ids: Vec<WindowId> = order.iter().map(|(w, _)| *w).collect();
-        assert_eq!(ids, vec![arriving, leaving], "park sent before the on-screen slot: {ids:?}");
+        assert_eq!(
+            ids,
+            vec![arriving, leaving],
+            "park sent before the on-screen slot: {ids:?}"
+        );
     }
 
     /// 2.3 of `flight-render-stability`. Mixed frames: every on-screen destination first, then
@@ -88,9 +88,18 @@ mod tests {
     #[test]
     fn only_a_park_to_park_move_is_skipped() {
         let d = display();
-        let left_park = CGRect::new(CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
-        let right_park = CGRect::new(CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
-        let slot = CGRect::new(CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0), CGSize::new(859.0, 1081.0));
+        let left_park = CGRect::new(
+            CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0),
+            CGSize::new(859.0, 1081.0),
+        );
+        let right_park = CGRect::new(
+            CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0),
+            CGSize::new(859.0, 1081.0),
+        );
+        let slot = CGRect::new(
+            CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0),
+            CGSize::new(859.0, 1081.0),
+        );
         assert!(is_park_to_park(left_park, right_park, d));
         assert!(is_park_to_park(right_park, right_park, d));
         assert!(!is_park_to_park(right_park, slot, d), "arriving");
@@ -98,8 +107,14 @@ mod tests {
         assert!(!is_park_to_park(slot, slot, d));
         // A switch's departing row sits a display height below, wholly off the display; macOS
         // clamps it to a band along the bottom edge, so the write that parks it must go out.
-        let row_below = CGRect::new(CGPoint::new(slot.origin.x, d.origin.y + d.size.height + 32.0), slot.size);
-        assert!(!is_park_to_park(row_below, right_park, d), "a stacked row is not a park");
+        let row_below = CGRect::new(
+            CGPoint::new(slot.origin.x, d.origin.y + d.size.height + 32.0),
+            slot.size,
+        );
+        assert!(
+            !is_park_to_park(row_below, right_park, d),
+            "a stacked row is not a park"
+        );
         assert!(!is_park_to_park(right_park, row_below, d));
     }
 
@@ -110,14 +125,35 @@ mod tests {
     #[test]
     fn park_write_is_judged_from_the_real_frame_not_the_model() {
         let d = display();
-        let right_park = CGRect::new(CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
-        let left_park = CGRect::new(CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0), CGSize::new(859.0, 1081.0));
-        let slot = CGRect::new(CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0), CGSize::new(859.0, 1081.0));
+        let right_park = CGRect::new(
+            CGPoint::new(d.origin.x + d.size.width - 1.0, d.origin.y + 1116.0),
+            CGSize::new(859.0, 1081.0),
+        );
+        let left_park = CGRect::new(
+            CGPoint::new(d.origin.x - 859.0 + 1.0, d.origin.y + 1116.0),
+            CGSize::new(859.0, 1081.0),
+        );
+        let slot = CGRect::new(
+            CGPoint::new(d.origin.x + 4.0, d.origin.y + 32.0),
+            CGSize::new(859.0, 1081.0),
+        );
         // Model would say left_park -> right_park (skip); the server says the window is in a slot.
-        assert!(frame_write_needed(Some(slot), right_park, d), "on-screen window must be parked");
-        assert!(!frame_write_needed(Some(left_park), right_park, d), "true park-to-park is skipped");
-        assert!(frame_write_needed(None, right_park, d), "unknown real frame never suppresses");
-        assert!(frame_write_needed(Some(right_park), slot, d), "arrivals always go out");
+        assert!(
+            frame_write_needed(Some(slot), right_park, d),
+            "on-screen window must be parked"
+        );
+        assert!(
+            !frame_write_needed(Some(left_park), right_park, d),
+            "true park-to-park is skipped"
+        );
+        assert!(
+            frame_write_needed(None, right_park, d),
+            "unknown real frame never suppresses"
+        );
+        assert!(
+            frame_write_needed(Some(right_park), slot, d),
+            "arrivals always go out"
+        );
     }
 
     #[test]
@@ -128,7 +164,12 @@ mod tests {
         let park_right = rect(1727.0, 1116.0, 859.0, 1081.0);
         let park_left = rect(-858.0, 1116.0, 859.0, 1081.0);
 
-        let mixed = vec![(w(1), park_right), (w(2), slot_a), (w(3), park_left), (w(4), slot_b)];
+        let mixed = vec![
+            (w(1), park_right),
+            (w(2), slot_a),
+            (w(3), park_left),
+            (w(4), slot_b),
+        ];
         let order = frame_send_order(mixed, display());
         assert_eq!(ids(&order), vec![w(2), w(4), w(1), w(3)]);
 
@@ -151,8 +192,7 @@ mod tests {
             (seed >> 33) % n
         };
         let display = display();
-        let is_park =
-            |frame: &CGRect| is_off_screen(display, *frame);
+        let is_park = |frame: &CGRect| is_off_screen(display, *frame);
         let mut mixed_runs = 0usize;
         for _ in 0..200 {
             let count = next(8) as usize;
@@ -177,7 +217,10 @@ mod tests {
             let first_park = order.iter().position(|(_, f)| is_park(f));
             let last_visible = order.iter().rposition(|(_, f)| !is_park(f));
             if let (Some(park), Some(visible)) = (first_park, last_visible) {
-                assert!(visible < park, "seed 98: a park before an on-screen frame: {order:?}");
+                assert!(
+                    visible < park,
+                    "seed 98: a park before an on-screen frame: {order:?}"
+                );
                 mixed_runs += 1;
             }
             let given_visible: Vec<_> = frames.iter().filter(|(_, f)| !is_park(f)).collect();

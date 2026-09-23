@@ -1,4 +1,10 @@
-#![allow(non_camel_case_types, non_upper_case_globals, non_snake_case, unsafe_op_in_unsafe_fn, clippy::missing_safety_doc)]
+#![allow(
+    non_camel_case_types,
+    non_upper_case_globals,
+    non_snake_case,
+    unsafe_op_in_unsafe_fn,
+    clippy::missing_safety_doc
+)]
 //! rini's Mach service: the bootstrap name, the receive port on a CFRunLoop, request dispatch and
 //! replies. Built on `rini_mach_sys`.
 use core::mem::{size_of, zeroed};

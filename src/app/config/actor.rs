@@ -32,17 +32,12 @@ pub struct ConfigActor {
 }
 
 impl ConfigActor {
-
     pub fn spawn_with_path(config: Config, on_change: OnChange, config_path: PathBuf) -> Sender {
         let (tx, rx) = channels::channel();
         std::thread::Builder::new()
             .name("config".to_string())
             .spawn(move || {
-                let actor = ConfigActor {
-                    config,
-                    on_change,
-                    config_path,
-                };
+                let actor = ConfigActor { config, on_change, config_path };
                 rini_runloop::executor::Executor::run(actor.run(rx));
             })
             .unwrap();
@@ -257,9 +252,7 @@ impl ConfigActor {
         Ok(())
     }
 
-    fn load_config_from_file(
-        &mut self,
-    ) -> Result<Config, Box<dyn std::error::Error>> {
+    fn load_config_from_file(&mut self) -> Result<Config, Box<dyn std::error::Error>> {
         let config_path = &self.config_path;
 
         if config_path.exists() {

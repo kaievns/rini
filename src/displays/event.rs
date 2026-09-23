@@ -2,16 +2,19 @@
 //! event type; this crate never imports the reactor.
 use rini_core::ids::WindowServerId;
 
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowId;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::domain::topology::{ForwardedSpaceState, SpaceEventKind};
+use rini_core::ids::SpaceId;
+use rini_core::ids::WindowId;
 
 #[derive(Debug)]
 pub enum Event {
     /// The authoritative screens/spaces snapshot. Sent after every accepted topology change.
     SpaceStateUpdated(ForwardedSpaceState, CoordinateConverter),
-    ActiveDisplayChanged { menu_bar_space: Option<SpaceId>, command_space: Option<SpaceId> },
+    ActiveDisplayChanged {
+        menu_bar_space: Option<SpaceId>,
+        command_space: Option<SpaceId>,
+    },
     SpaceCreated(SpaceId),
     SpaceDestroyed(SpaceId),
     WindowServerAppeared(WindowServerId, SpaceId, SpaceEventKind),

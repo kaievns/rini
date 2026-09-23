@@ -2,8 +2,8 @@
 //! "which workspace owns this window" and "which windows does this workspace hold" are one lookup
 //! each and can never disagree. See "One workspace list" in `src/workspaces/docs/workspaces-and-displays.md`.
 use rini_core::ids::SpaceId;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_core::ids::{WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::workspaces::VirtualWorkspaceId;
@@ -68,14 +68,20 @@ impl WorkspaceAssignments {
         space: SpaceId,
         window: WindowId,
     ) -> Option<VirtualWorkspaceId> {
-        self.info_for_window(window).filter(|a| a.space == space).map(|a| a.workspace_id)
+        self.info_for_window(window)
+            .filter(|a| a.space == space)
+            .map(|a| a.workspace_id)
     }
 
     /// The windows on `workspace_id` on `space`, in a stable order (by pid, then index).
     pub fn windows(&self, space: SpaceId, workspace_id: VirtualWorkspaceId) -> Vec<WindowId> {
         let key = WindowWorkspaceInfo { space, workspace_id };
-        let mut windows: Vec<_> =
-            self.by_workspace.get(&key).into_iter().flat_map(|w| w.iter().copied()).collect();
+        let mut windows: Vec<_> = self
+            .by_workspace
+            .get(&key)
+            .into_iter()
+            .flat_map(|w| w.iter().copied())
+            .collect();
         windows.sort_unstable_by_key(|wid| (wid.pid, wid.idx.get()));
         windows
     }
@@ -114,15 +120,14 @@ impl WorkspaceAssignments {
         if old_space == new_space {
             return;
         }
-        let moved: Vec<_> = self
-            .by_workspace
-            .keys()
-            .copied()
-            .filter(|key| key.space == old_space)
-            .collect();
+        let moved: Vec<_> =
+            self.by_workspace.keys().copied().filter(|key| key.space == old_space).collect();
         for old_key in moved {
             if let Some(windows) = self.by_workspace.remove(&old_key) {
-                let new_key = WindowWorkspaceInfo { space: new_space, workspace_id: old_key.workspace_id };
+                let new_key = WindowWorkspaceInfo {
+                    space: new_space,
+                    workspace_id: old_key.workspace_id,
+                };
                 self.by_workspace.entry(new_key).or_default().extend(windows);
             }
         }
@@ -177,7 +182,10 @@ mod tests {
         let (a, b) = two_workspaces(space);
         let mut idx = WorkspaceAssignments::default();
         let w = WindowId::new(1, 1);
-        assert_eq!(idx.assign(w, WindowWorkspaceInfo { space, workspace_id: a }), None);
+        assert_eq!(
+            idx.assign(w, WindowWorkspaceInfo { space, workspace_id: a }),
+            None
+        );
         assert_eq!(idx.windows(space, a), vec![w]);
         let old = idx.assign(w, WindowWorkspaceInfo { space, workspace_id: b });
         assert_eq!(old.map(|o| o.workspace_id), Some(a));
@@ -193,12 +201,20 @@ mod tests {
         let space = SpaceId::new(1);
         let (a, _) = two_workspaces(space);
         let mut idx = WorkspaceAssignments::default();
-        for w in [WindowId::new(2, 1), WindowId::new(1, 2), WindowId::new(1, 1)] {
+        for w in [
+            WindowId::new(2, 1),
+            WindowId::new(1, 2),
+            WindowId::new(1, 1),
+        ] {
             idx.assign(w, WindowWorkspaceInfo { space, workspace_id: a });
         }
         assert_eq!(
             idx.windows(space, a),
-            vec![WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(2, 1)]
+            vec![
+                WindowId::new(1, 1),
+                WindowId::new(1, 2),
+                WindowId::new(2, 1)
+            ]
         );
         assert_eq!(idx.window_count(space, a), 3);
     }
@@ -225,10 +241,19 @@ mod tests {
         let mut store = WorkspaceStore::new();
         let a = store.create_workspace(old, Some("a".into())).unwrap();
         let mut idx = WorkspaceAssignments::default();
-        idx.assign(WindowId::new(1, 1), WindowWorkspaceInfo { space: old, workspace_id: a });
-        idx.assign(WindowId::new(1, 2), WindowWorkspaceInfo { space: new, workspace_id: a });
+        idx.assign(
+            WindowId::new(1, 1),
+            WindowWorkspaceInfo { space: old, workspace_id: a },
+        );
+        idx.assign(
+            WindowId::new(1, 2),
+            WindowWorkspaceInfo { space: new, workspace_id: a },
+        );
         idx.remap_space(old, new);
-        assert_eq!(idx.windows(new, a), vec![WindowId::new(1, 1), WindowId::new(1, 2)]);
+        assert_eq!(
+            idx.windows(new, a),
+            vec![WindowId::new(1, 1), WindowId::new(1, 2)]
+        );
         assert!(idx.windows(old, a).is_empty());
         assert_eq!(idx.spaces(), vec![new]);
         idx.debug_assert_invariants();
@@ -239,8 +264,14 @@ mod tests {
         let space = SpaceId::new(1);
         let (a, _) = two_workspaces(space);
         let mut idx = WorkspaceAssignments::default();
-        idx.assign(WindowId::new(1, 1), WindowWorkspaceInfo { space, workspace_id: a });
-        idx.assign(WindowId::new(2, 1), WindowWorkspaceInfo { space, workspace_id: a });
+        idx.assign(
+            WindowId::new(1, 1),
+            WindowWorkspaceInfo { space, workspace_id: a },
+        );
+        idx.assign(
+            WindowId::new(2, 1),
+            WindowWorkspaceInfo { space, workspace_id: a },
+        );
         idx.remove_all_for_pid(1);
         assert_eq!(idx.windows(space, a), vec![WindowId::new(2, 1)]);
         assert!(idx.has_assignments_in_space(space));

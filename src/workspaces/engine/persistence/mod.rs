@@ -10,16 +10,15 @@ pub use rini_ipc::protocol::{RestoreScope, RestoreSource};
 use serde::{Deserialize, Serialize};
 
 use super::{FloatingManager, LayoutEngine, WorkspaceLayouts};
-use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::layout::settings::LayoutSettings;
-use crate::workspaces::settings::VirtualWorkspaceSettings;
 use crate::windows::domain::rules::AppRuleEngine;
+use crate::workspaces::settings::VirtualWorkspaceSettings;
 use crate::workspaces::{
-    DisplayAffinity, FloatingPositionStore, VirtualWorkspaceId, WindowStore,
-    WorkspaceStore,
+    DisplayAffinity, FloatingPositionStore, VirtualWorkspaceId, WindowStore, WorkspaceStore,
 };
 use rini_core::ids::SpaceId;
+use rini_core::ids::{WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 static SAVE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

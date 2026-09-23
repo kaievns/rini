@@ -1,21 +1,21 @@
 use objc2_core_foundation::CGRect;
 use tracing::{debug, trace};
 
-use rini_core::ids::WindowId;
 use crate::app::reactor::events::EventOutcome;
 use crate::app::reactor::managers::DragManager;
 use crate::app::reactor::{DragState, Quiet};
-use crate::windows::domain::transaction::{TransactionId, TransactionManager};
-use crate::windows::platform::window_server::compute_window_manageability;
+use crate::windows::domain::info::WindowInfo as Window;
+use crate::windows::domain::info::WindowServerInfo;
+use crate::windows::domain::state::WindowFilter;
 use crate::windows::domain::state::WindowState;
+use crate::windows::domain::transaction::{TransactionId, TransactionManager};
+use crate::windows::platform::mouse::MouseState;
+use crate::windows::platform::window_server::compute_window_manageability;
 use crate::workspaces::LayoutEvent;
 use crate::workspaces::WindowVisibility;
-use crate::windows::domain::state::WindowFilter;
-use crate::windows::domain::info::WindowInfo as Window;
-use crate::windows::platform::mouse::MouseState;
-use rini_geometry::SameAs;
 use rini_core::ids::SpaceId;
-use crate::windows::domain::info::WindowServerInfo;
+use rini_core::ids::WindowId;
+use rini_geometry::SameAs;
 
 #[derive(Debug)]
 pub struct WindowCreatedPayload {
@@ -582,7 +582,16 @@ mod tests {
     fn a_frame_report_for_an_unknown_window_is_nothing_to_analyse() {
         let mut empty = RiniState::default();
         let tx = TransactionManager::new(WindowTxStore::new());
-        let d = classify(&mut empty, &tx, &mut drag(), rect(5.0, 5.0), None, false, MouseState::Up, false);
+        let d = classify(
+            &mut empty,
+            &tx,
+            &mut drag(),
+            rect(5.0, 5.0),
+            None,
+            false,
+            MouseState::Up,
+            false,
+        );
         assert!(handled(&d));
     }
 
@@ -592,10 +601,22 @@ mod tests {
         let tx = TransactionManager::new(WindowTxStore::new());
         let mut dr = drag();
         dr.skip_layout_for_window = Some(wid());
-        let d = classify(&mut s, &tx, &mut dr, rect(5.0, 5.0), None, false, MouseState::Up, true);
+        let d = classify(
+            &mut s,
+            &tx,
+            &mut dr,
+            rect(5.0, 5.0),
+            None,
+            false,
+            MouseState::Up,
+            true,
+        );
         assert!(handled(&d));
         assert!(matches!(dr.drag_state, DragState::Inactive));
-        assert_eq!(dr.skip_layout_for_window, None, "Mission Control moves every window");
+        assert_eq!(
+            dr.skip_layout_for_window, None,
+            "Mission Control moves every window"
+        );
     }
 
     // The window server replays frames. A report carrying an older transaction id is an echo of a
@@ -611,7 +632,16 @@ mod tests {
         let current = stale.next();
         tx.store_txid(wsid, current, rect(50.0, 50.0));
 
-        let d = classify(&mut s, &tx, &mut drag(), rect(9.0, 9.0), Some(stale), false, MouseState::Up, false);
+        let d = classify(
+            &mut s,
+            &tx,
+            &mut drag(),
+            rect(9.0, 9.0),
+            Some(stale),
+            false,
+            MouseState::Up,
+            false,
+        );
         assert!(handled(&d));
         assert_eq!(
             s.windows.window(wid()).unwrap().frame_monotonic,
@@ -628,9 +658,21 @@ mod tests {
         let txid = TransactionId::default().next();
         tx.store_txid(wsid, txid, rect(50.0, 50.0));
 
-        let d = classify(&mut s, &tx, &mut drag(), rect(50.0, 50.0), Some(txid), false, MouseState::Up, false);
+        let d = classify(
+            &mut s,
+            &tx,
+            &mut drag(),
+            rect(50.0, 50.0),
+            Some(txid),
+            false,
+            MouseState::Up,
+            false,
+        );
         assert!(handled(&d));
-        assert_eq!(s.windows.window(wid()).unwrap().frame_monotonic, rect(50.0, 50.0));
+        assert_eq!(
+            s.windows.window(wid()).unwrap().frame_monotonic,
+            rect(50.0, 50.0)
+        );
         assert_eq!(tx.get_target_frame(wsid), None, "the write is acknowledged");
     }
 
@@ -644,25 +686,59 @@ mod tests {
         let txid = TransactionId::default().next();
         tx.store_txid(wsid, txid, rect(50.0, 50.0));
 
-        let d = classify(&mut s, &tx, &mut drag(), rect(9.0, 9.0), Some(txid), false, MouseState::Down, false);
+        let d = classify(
+            &mut s,
+            &tx,
+            &mut drag(),
+            rect(9.0, 9.0),
+            Some(txid),
+            false,
+            MouseState::Down,
+            false,
+        );
         assert!(!handled(&d), "the user's drag is real geometry");
-        assert_eq!(tx.get_target_frame(wsid), None, "rini stops waiting for its own write");
+        assert_eq!(
+            tx.get_target_frame(wsid),
+            None,
+            "rini stops waiting for its own write"
+        );
     }
 
     #[test]
     fn a_frame_rini_asked_for_lands_without_analysis() {
         let mut s = state();
         let tx = TransactionManager::new(WindowTxStore::new());
-        let d = classify(&mut s, &tx, &mut drag(), rect(12.0, 12.0), None, true, MouseState::Up, false);
+        let d = classify(
+            &mut s,
+            &tx,
+            &mut drag(),
+            rect(12.0, 12.0),
+            None,
+            true,
+            MouseState::Up,
+            false,
+        );
         assert!(handled(&d));
-        assert_eq!(s.windows.window(wid()).unwrap().frame_monotonic, rect(12.0, 12.0));
+        assert_eq!(
+            s.windows.window(wid()).unwrap().frame_monotonic,
+            rect(12.0, 12.0)
+        );
     }
 
     #[test]
     fn an_unprompted_move_needs_geometry_analysis() {
         let mut s = state();
         let tx = TransactionManager::new(WindowTxStore::new());
-        let d = classify(&mut s, &tx, &mut drag(), rect(300.0, 300.0), None, false, MouseState::Up, false);
+        let d = classify(
+            &mut s,
+            &tx,
+            &mut drag(),
+            rect(300.0, 300.0),
+            None,
+            false,
+            MouseState::Up,
+            false,
+        );
         assert!(!handled(&d));
         assert_eq!(
             s.windows.window(wid()).unwrap().frame_monotonic,

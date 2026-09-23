@@ -301,13 +301,29 @@ mod tests {
 
         let by_app = AppRuleEngine::new(&[rule(Some("com.example.Editor"), None, false)], true);
         let decision = by_app.evaluate(modal);
-        assert_eq!(floats(&decision), Some(true), "an app rule does not tile the app's dialogs");
-        assert!(matches!(decision, AppRuleDecision::Managed { workspace: Some(_), .. }), "{decision:?}");
+        assert_eq!(
+            floats(&decision),
+            Some(true),
+            "an app rule does not tile the app's dialogs"
+        );
+        assert!(
+            matches!(decision, AppRuleDecision::Managed { workspace: Some(_), .. }),
+            "{decision:?}"
+        );
         assert_eq!(floats(&by_app.evaluate(plain)), Some(false));
 
-        let tiled_modals = AppRuleEngine::new(&[rule(Some("com.example.Editor"), Some(true), false)], true);
-        assert_eq!(floats(&tiled_modals.evaluate(modal)), Some(false), "a rule naming modal wins");
-        assert_eq!(tiled_modals.evaluate(plain), AppRuleDecision::NoMatch, "modal = true does not match a plain window");
+        let tiled_modals =
+            AppRuleEngine::new(&[rule(Some("com.example.Editor"), Some(true), false)], true);
+        assert_eq!(
+            floats(&tiled_modals.evaluate(modal)),
+            Some(false),
+            "a rule naming modal wins"
+        );
+        assert_eq!(
+            tiled_modals.evaluate(plain),
+            AppRuleDecision::NoMatch,
+            "modal = true does not match a plain window"
+        );
 
         let off = AppRuleEngine::new(&[], false);
         assert_eq!(off.evaluate(modal), AppRuleDecision::NoMatch);
@@ -318,7 +334,10 @@ mod tests {
     #[test]
     fn a_rule_naming_modal_is_more_specific_than_one_that_does_not() {
         let engine = AppRuleEngine::new(
-            &[rule(Some("com.example.Editor"), None, false), rule(Some("com.example.Editor"), Some(true), false)],
+            &[
+                rule(Some("com.example.Editor"), None, false),
+                rule(Some("com.example.Editor"), Some(true), false),
+            ],
             true,
         );
         let modal = WindowRuleContext {

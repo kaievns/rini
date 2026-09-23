@@ -1,6 +1,6 @@
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use super::snapshot::{CURRENT_SCHEMA_VERSION, PersistedLayout};
 use super::*;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 /// A saved file, read.
 ///
@@ -81,7 +81,11 @@ impl LayoutEngine {
         // Taken before anything is validated. This is the whole reason the memory is its own record:
         // every refusal below is about the LAYOUT, and none of them is a reason to forget the machine.
         let memory = persisted.take_display_memory();
-        let refuse = |error| LoadedLayout { layout: Err(error), memory: memory.clone(), schema_version };
+        let refuse = |error| LoadedLayout {
+            layout: Err(error),
+            memory: memory.clone(),
+            schema_version,
+        };
 
         if schema_version > CURRENT_SCHEMA_VERSION {
             return Ok(refuse(anyhow::anyhow!(
@@ -93,13 +97,15 @@ impl LayoutEngine {
         if let Err(error) = persisted.virtual_workspace_manager.validate_persisted_topology() {
             return Ok(refuse(anyhow::anyhow!("invalid workspace topology: {error}")));
         }
-        if let Err(error) =
-            persisted.workspace_layouts.validate_persisted(&persisted.virtual_workspace_manager)
+        if let Err(error) = persisted
+            .workspace_layouts
+            .validate_persisted(&persisted.virtual_workspace_manager)
         {
             return Ok(refuse(anyhow::anyhow!("invalid workspace layouts: {error}")));
         }
-        if let Err(error) =
-            persisted.floating_positions.validate_persisted(&persisted.virtual_workspace_manager)
+        if let Err(error) = persisted
+            .floating_positions
+            .validate_persisted(&persisted.virtual_workspace_manager)
         {
             return Ok(refuse(anyhow::anyhow!("invalid floating positions: {error}")));
         }
@@ -144,7 +150,11 @@ impl LayoutEngine {
             .filter(|window| engine.restored_location_for_window(*window).is_some())
             .collect::<Vec<_>>();
         engine.persistence.replace_pending(pending);
-        Ok(LoadedLayout { layout: Ok(engine), memory, schema_version })
+        Ok(LoadedLayout {
+            layout: Ok(engine),
+            memory,
+            schema_version,
+        })
     }
 
     pub fn save(&self, memory: &DisplayMemory, path: PathBuf) -> std::io::Result<()> {
@@ -460,9 +470,11 @@ impl LayoutEngine {
         layout_settings: &LayoutSettings,
     ) {
         self.set_layout_settings(layout_settings);
-        self.app_rules = AppRuleEngine::new(&virtual_workspace_config.app_rules, virtual_workspace_config.float_modal_windows);
+        self.app_rules = AppRuleEngine::new(
+            &virtual_workspace_config.app_rules,
+            virtual_workspace_config.float_modal_windows,
+        );
         self.virtual_workspace_manager
             .update_settings(virtual_workspace_config, layout_settings);
     }
 }
-
