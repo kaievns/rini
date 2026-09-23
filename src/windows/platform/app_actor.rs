@@ -496,7 +496,7 @@ impl<W: AxWorld> State<W> {
                 let _ = self.ax.set_size(&elem, desired.size);
 
                 let frame = match self
-                    .handle_ax_result(wid, trace("frame", &elem, || self.ax.frame(&elem)))?
+                    .handle_ax_result(wid, trace("frame", wid, || self.ax.frame(&elem)))?
                 {
                     Some(frame) => frame,
                     None => return Ok(false),
@@ -533,7 +533,7 @@ impl<W: AxWorld> State<W> {
                     let _ = self.ax.set_size(&elem, desired.size);
 
                     let frame = match self
-                        .handle_ax_result(wid, trace("frame", &elem, || self.ax.frame(&elem)))?
+                        .handle_ax_result(wid, trace("frame", wid, || self.ax.frame(&elem)))?
                     {
                         Some(frame) => frame,
                         None => continue,
@@ -572,7 +572,7 @@ impl<W: AxWorld> State<W> {
                     // particular, report the frame AX actually accepted rather than the
                     // requested position combined with a cached size.
                     let frame = match self
-                        .handle_ax_result(wid, trace("frame", &elem, || self.ax.frame(&elem)))?
+                        .handle_ax_result(wid, trace("frame", wid, || self.ax.frame(&elem)))?
                     {
                         Some(frame) => frame,
                         None => continue,
@@ -601,7 +601,7 @@ impl<W: AxWorld> State<W> {
         notif: AxNotificationKind,
         hinted_wid: Option<WindowId>,
     ) {
-        trace!(?notif, ?elem, "Got notification");
+        trace!(?notif, ?hinted_wid, "Got notification");
         match notif {
             AxNotificationKind::ApplicationHidden => self.on_application_hidden(),
             AxNotificationKind::ApplicationShown => self.on_application_shown(),
@@ -812,7 +812,7 @@ impl<W: AxWorld> State<W> {
         let mut this = this_ref.borrow_mut();
 
         let app = this.ax.app();
-        let is_frontmost = trace("is_frontmost", &app, || this.ax.frontmost(&app))?;
+        let is_frontmost = trace("is_frontmost", this.pid, || this.ax.frontmost(&app))?;
 
         // Focus-follows-mouse can enqueue a final hover transition while the
         // pointer is moving off a window (for example, into the menu bar).
@@ -854,7 +854,7 @@ impl<W: AxWorld> State<W> {
             // activation wait. Cancellation can stop follow-up batch raises, but it
             // must not leave process activation detached from its target window.
             let window = this.window(first)?;
-            trace("raise before activation wait", &window.elem, || {
+            trace("raise before activation wait", first, || {
                 this.ax.raise(&window.elem)
             })?;
 
@@ -881,7 +881,7 @@ impl<W: AxWorld> State<W> {
                 trace!(?wid, "Skipping duplicate raise after activation wait");
             } else {
                 let window = this.window(wid)?;
-                trace("raise", &window.elem, || this.ax.raise(&window.elem))?;
+                trace("raise", wid, || this.ax.raise(&window.elem))?;
             }
 
             // TODO: Check the frontmost (layer 0) window of the window server and retry if necessary.
@@ -916,9 +916,7 @@ impl<W: AxWorld> State<W> {
         quiet_if: Option<WindowId>,
         allow_register: bool,
     ) -> Option<WindowId> {
-        let elem = match trace("main_window", &self.ax.app(), || {
-            self.ax.main_window(&self.ax.app())
-        }) {
+        let elem = match trace("main_window", self.pid, || self.ax.main_window(&self.ax.app())) {
             Ok(elem) => elem,
             Err(e) => {
                 if self.windows.is_empty() {
@@ -992,9 +990,7 @@ impl<W: AxWorld> State<W> {
     }
 
     fn on_ax_activation_changed(&mut self) -> Result<(), AxError> {
-        let is_frontmost = trace("is_frontmost", &self.ax.app(), || {
-            self.ax.frontmost(&self.ax.app())
-        })?;
+        let is_frontmost = trace("is_frontmost", self.pid, || self.ax.frontmost(&self.ax.app()))?;
         let old_frontmost = std::mem::replace(&mut self.is_frontmost, is_frontmost);
         debug!(
             "on_ax_activation_changed, pid={:?}, is_frontmost={:?}, old_frontmost={:?}",
@@ -1110,14 +1106,13 @@ impl<W: AxWorld> State<W> {
                 continue;
             }
             window.hidden_by_app = false;
-            let minimized =
-                match trace("minimized", &window.elem, || self.ax.minimized(&window.elem)) {
-                    Ok(minimized) => minimized,
-                    Err(err) => {
-                        debug!(?wid, ?err, "Failed to read minimized state after app shown");
-                        false
-                    }
-                };
+            let minimized = match trace("minimized", wid, || self.ax.minimized(&window.elem)) {
+                Ok(minimized) => minimized,
+                Err(err) => {
+                    debug!(?wid, ?err, "Failed to read minimized state after app shown");
+                    false
+                }
+            };
             if minimized {
                 continue;
             }
@@ -1174,7 +1169,7 @@ impl<W: AxWorld> State<W> {
         let window_server_id = info.sys_id.filter(|sid| sid.as_nonzero().is_some()).or_else(|| {
             let id = self.ax.window_server_id(&elem);
             if id.is_none() {
-                info!("Could not get window server id for {elem:?}");
+                info!(pid = ?self.pid, "Could not get window server id for a new AX window");
             }
             id
         });
@@ -1226,7 +1221,7 @@ impl<W: AxWorld> State<W> {
                     AxError::Ax(code) if code == AXError::NotificationAlreadyRegistered
                 );
                 if !is_already_registered {
-                    trace!("Watching failed with error {err:?} on window {elem:#?}");
+                    trace!(?wid, "Watching failed with error {err:?}");
                     return false;
                 }
             }
@@ -1495,17 +1490,26 @@ fn app_thread_main(
     Executor::run(state.run(info, requests_tx, requests_rx, notifications_rx, raises_rx));
 }
 
-fn trace<T, E: std::fmt::Debug>(
+/// Time an Accessibility call and say what happened when it fails.
+///
+/// `about` names what the call was about — a window id, or the pid for an application-level call. It
+/// is deliberately NOT the element.
+///
+/// Formatting an `AXUIElement` is an Accessibility round-trip: its `Debug` delegates to the Core
+/// Foundation description, which queries the element for its role and title. So logging one costs a
+/// call to the application, and on a wedged application it blocks. The hot-path `trace!` had the
+/// field commented out for exactly that reason, but the error arm below still formatted the element —
+/// in the branch reached when the application is hung, which is the worst possible moment for another
+/// round-trip. Nine call sites threaded an element through this function to serve that one line.
+fn trace<T>(
     desc: &str,
-    elem: &E,
+    about: impl std::fmt::Debug,
     f: impl FnOnce() -> Result<T, AxError>,
 ) -> Result<T, AxError> {
     let start = Instant::now();
     let out = f();
-    let end = Instant::now();
-    // FIXME: ?elem here can change system behavior because it sends requests
-    // to the app.
-    trace!(time = ?(end - start), /*?elem,*/ "{desc:12}");
+    let elapsed = start.elapsed();
+    trace!(time = ?elapsed, ?about, "{desc:12}");
     if let Err(err) = &out {
         match err {
             AxError::Ax(ax_err)
@@ -1517,7 +1521,7 @@ fn trace<T, E: std::fmt::Debug>(
                 debug!("{desc} failed with {err} - app may have quit or become unresponsive");
             }
             _ => {
-                debug!("{desc} failed with {err} for element {elem:#?}");
+                debug!("{desc} failed with {err} for {about:?}");
             }
         }
     }

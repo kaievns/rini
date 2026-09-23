@@ -7,7 +7,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 
 | # | item | measure | state |
 |---|---|---|---|
-| 1 | the `?elem` FIXME in `trace` | formatting an `AXUIElement` is an AX round-trip; obeyed on the hot path, ignored on the error path | open |
+| 1 | the `?elem` FIXME in `trace` | formatting an `AXUIElement` is an AX round-trip; obeyed on the hot path, ignored on the error path | **done** |
 | 2 | `animation/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | open |
 | 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | open |
 | 4 | `main.rs` | 300-line `main`, no test | open |
@@ -29,3 +29,20 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
   `admissible::needs_title_element_to_be_standard` with a general rule. The TODO names the mechanism
   it needs and `FakeAx` now IS that mechanism, so it is unblocked, but knowing what the general rule
   is needs AX dumps from applications that currently misbehave. Investigation, not refactoring.
+
+## 1. The `?elem` FIXME
+
+`AXUIElement`'s `Debug` delegates to the Core Foundation description, which queries the element for
+its role and title. Formatting one is a round-trip to the application, and on a wedged application it
+blocks — inside a log line, which is the last place anyone looks for a stall.
+
+The FIXME was half-obeyed. `trace`'s hot-path `trace!` had the field commented out; the error arm
+three lines below still formatted the element, in the branch reached when the application is hung.
+Three more sites did it too, including the failure path of notification registration.
+
+`trace` now takes `about: impl Debug` — a window id, or the pid for an application-level call — and
+nine call sites pass what they already had in scope instead of threading an element through.
+
+Guarded by `no_accessibility_element_is_ever_logged` in `tests/architecture.rs`, because a comment
+did not hold. Reintroducing it at the `watch` failure site fails with the file, line and the offending
+code; reintroducing it in `trace` itself no longer compiles, since there is no element to format.

@@ -294,6 +294,45 @@ fn every_documented_path_resolves() {
     );
 }
 
+/// An Accessibility element is never handed to a log macro.
+///
+/// `AXUIElement`'s `Debug` delegates to the Core Foundation description, which QUERIES the element
+/// for its role and title. Formatting one is therefore a round-trip to the application, and on a
+/// wedged application it blocks — in a log line, which is the last place anyone looks for a stall.
+///
+/// This was found half-obeyed: `app_actor`'s `trace` had the field commented out with a FIXME, and
+/// the error arm three lines below still formatted the element, in the branch reached when the
+/// application is hung. A test rather than a comment, because the comment did not hold.
+#[test]
+fn no_accessibility_element_is_ever_logged() {
+    let mut offenders = Vec::new();
+    for path in rust_files(Path::new("src")) {
+        let text = fs::read_to_string(&path).expect("readable source");
+        for (number, line) in text.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            let names_an_element = ["elem", "element", "app_elem"].iter().any(|name| {
+                code.contains(&format!("?{name}"))
+                    || code.contains(&format!("{{{name}:"))
+                    || code.contains(&format!("{{{name}}}"))
+            });
+            let is_a_log = [
+                "trace!", "debug!", "info!", "warn!", "error!", "println!", "format!",
+            ]
+            .iter()
+            .any(|macro_name| code.contains(macro_name));
+            if names_an_element && is_a_log {
+                offenders.push(format!("{}:{}  {}", slash(&path), number + 1, code.trim()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "formatting an Accessibility element queries the application, so a log line becomes a \
+         round-trip that blocks on a hung app. Log the window id instead:\n{}",
+        offenders.join("\n")
+    );
+}
+
 fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries {
