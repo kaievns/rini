@@ -70,8 +70,20 @@ rewards keeping logic where it cannot be tested, which is the opposite of what t
 command enum where the arms delegate. Its 40-line prelude resolving `(space, workspace_id, layout)`
 is the part that is not a dispatch, and it is shared by every arm.
 
-Still open: `calculate_layout_with_virtual_workspaces` (201), `move_window_to_workspace` (177),
-`on_windows_on_screen_updated` (171), `move_window_to_space` (145).
+Still open, and named by the RULE rather than by line count this time:
+
+| rule | where | why it is worth naming |
+|---|---|---|
+| the park corner | `:2385` | a column scrolled off the strip parks in a corner, and which corner records the edge an animation brings it back in from. The wrong one flies the window in from the wrong side |
+| the floating rescue | `:2349` | `requested -> stored -> centred`, filtered by "off every screen". What stops a floating window being stranded where no display can show it |
+| `op_space` | `:2615` | act on where the window IS, not where the command said. The `if` is a tautology: both branches give the same answer in all three cases, and it collapses to `inferred_space.unwrap_or(space)` |
+| `"next"` / `"prev"` | `:2628` | matched as magic NAMES before the name lookup, so a workspace a user actually names "next" cannot be selected by name. Undocumented trap |
+| `center_rect` | `:2327` | centre a size in a rect. Trivial, pure, untested |
+
+`on_windows_on_screen_updated` (171) and `move_window_to_space` (145) carry no rules worth
+extracting: both sequence store mutations on `was_floating` branches, which is orchestration. The
+one candidate is a three-tier target-workspace fallback at `:3091`. They were on the earlier list
+because they are long, which was the wrong reason.
 
 ## 2. `windows/platform/app_actor.rs` — 1,369 lines, 0 tests
 
@@ -95,18 +107,17 @@ still has no in-file tests, because the AX seam is not done — see below.
 place (`State::failure_of`), and the rule reads only that. The architecture test forbids macOS types
 outside `platform/`, so a domain rule needs its own vocabulary anyway.
 
-### The AX seam is still open, and it needs a decision
+### The AX seam: GENERICS, agreed 2026-09-23
 
 `AXUIElement` is not just called, it is STORED: `AppWindowState.elem` holds one and
 `elem_to_wid: HashMap<AXUIElement, WindowId>` keys by one. Faking it means substituting the type
 throughout `State`, which is a choice between:
 
-- **generics** — `State<E: Element>`, zero cost, but the parameter spreads through every signature in
-  the file and into `spawn_app_thread`
-- **a trait object** — `Box<dyn Element>`, contained, but an allocation and a vtable hop per AX call
-  on the hot path, and `Element` has to be object-safe
+Generics it is: `State<E: Element>`, zero cost at runtime, with the parameter spreading through the
+file's signatures and into `spawn_app_thread`. A boxed trait was the alternative and was rejected for
+the allocation and vtable hop per AX call on the hot path.
 
-Not mine to pick mid-pass. The remaining untested weight behind it: `handle_notification` (166),
+The remaining untested weight behind it: `handle_notification` (166),
 `handle_request` (157), `handle_raise_request` (134), and the three worst TODOs in the tree — a
 window-matching heuristic known to be wrong (`:1210`), a missing frontmost-window retry (`:941`), and
 `FIXME: ?elem here can change system behavior` (`:1554`).
