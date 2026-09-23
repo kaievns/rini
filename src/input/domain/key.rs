@@ -518,8 +518,36 @@ pub fn is_modifier_key(key_code: KeyCode) -> bool {
         || matches!(key_code, KeyCode::CapsLock | KeyCode::Fn | KeyCode::NumLock)
 }
 
+/// One token of a key spec, as it should be WRITTEN.
+///
+/// Not to be confused with `normalize_token`, which folds a token for MATCHING a modifier name and
+/// therefore lower-cases. This one produces the canonical spelling: a single letter upper-cases,
+/// because `a` and `A` name the same physical key and the config may be written either way, and an
+/// arrow word becomes its `ArrowX` name.
+///
+/// Anything else is left exactly as written. A token this does not know is either a key name the
+/// keyboard layer will resolve or a typo the config validator will refuse, and guessing here would
+/// turn the second into the first.
+fn canonical_spec_token(word: &str) -> String {
+    if word.len() == 1 {
+        return word.to_ascii_uppercase();
+    }
+    match word.to_lowercase().as_str() {
+        "up" => "ArrowUp".to_owned(),
+        "down" => "ArrowDown".to_owned(),
+        "left" => "ArrowLeft".to_owned(),
+        "right" => "ArrowRight".to_owned(),
+        _ => word.to_owned(),
+    }
+}
+
 /// Canonicalises a key spec as written in `rini.toml`: single letters upper-cased, arrow words
 /// to `ArrowUp` and kin.
+///
+/// Splits on anything non-alphabetic and puts the separators back unchanged, so `Alt + Shift + Down`
+/// keeps its spacing and its pluses. The token rule was written out twice here — once for the words
+/// inside the loop and once for a trailing word with no separator after it — which is two places for
+/// one rule to be fixed in.
 pub fn normalize_spec(key: &str) -> String {
     let mut out = String::with_capacity(key.len());
     let mut word = String::new();
@@ -527,39 +555,16 @@ pub fn normalize_spec(key: &str) -> String {
     for ch in key.chars() {
         if ch.is_alphabetic() {
             word.push(ch);
-        } else {
-            if !word.is_empty() {
-                let token = if word.len() == 1 {
-                    word.to_ascii_uppercase()
-                } else {
-                    match word.to_lowercase().as_str() {
-                        "up" => "ArrowUp".to_string(),
-                        "down" => "ArrowDown".to_string(),
-                        "left" => "ArrowLeft".to_string(),
-                        "right" => "ArrowRight".to_string(),
-                        _ => word.clone(),
-                    }
-                };
-                out.push_str(&token);
-                word.clear();
-            }
-            out.push(ch);
+            continue;
         }
+        if !word.is_empty() {
+            out.push_str(&canonical_spec_token(&word));
+            word.clear();
+        }
+        out.push(ch);
     }
-
     if !word.is_empty() {
-        let token = if word.len() == 1 {
-            word.to_ascii_uppercase()
-        } else {
-            match word.to_lowercase().as_str() {
-                "up" => "ArrowUp".to_string(),
-                "down" => "ArrowDown".to_string(),
-                "left" => "ArrowLeft".to_string(),
-                "right" => "ArrowRight".to_string(),
-                _ => word.clone(),
-            }
-        };
-        out.push_str(&token);
+        out.push_str(&canonical_spec_token(&word));
     }
 
     out
@@ -587,5 +592,339 @@ mod tests {
         assert_eq!(normalize_spec("Ctrl + Up"), "Ctrl + ArrowUp");
         assert_eq!(normalize_spec("Shift + Left"), "Shift + ArrowLeft");
         assert_eq!(normalize_spec("Meta + Right"), "Meta + ArrowRight");
+    }
+
+    // --- the bitfield -------------------------------------------------------------------------
+
+    /// A generic modifier is BOTH sides, which is what makes `contains(CONTROL)` true for a press of
+    /// either one. Every family has to agree on that or a binding written `Ctrl` matches one side.
+    #[test]
+    fn every_generic_modifier_is_exactly_its_two_sides() {
+        for family in MOD_FAMILIES {
+            let mut both = Modifiers::empty();
+            both.insert(family.left);
+            both.insert(family.right);
+            assert_eq!(both, family.generic, "{} is not its own two sides", family.name);
+        }
+    }
+
+    /// No two families share a bit. A collision would make Ctrl and Alt the same modifier.
+    #[test]
+    fn no_two_families_share_a_bit() {
+        let mut seen = Modifiers::empty();
+        for family in MOD_FAMILIES {
+            assert!(
+                !seen.intersects(family.generic),
+                "{} overlaps another family",
+                family.name
+            );
+            seen.insert(family.generic);
+        }
+    }
+
+    #[test]
+    fn one_side_does_not_contain_the_generic_pair() {
+        let mut left_only = Modifiers::empty();
+        left_only.insert(Modifiers::CONTROL_LEFT);
+        assert!(!left_only.contains(Modifiers::CONTROL), "one side is not both");
+        assert!(left_only.intersects(Modifiers::CONTROL), "but it is one of them");
+    }
+
+    #[test]
+    fn removing_a_modifier_leaves_the_others() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL);
+        mods.insert(Modifiers::SHIFT);
+        mods.remove(Modifiers::CONTROL);
+        assert!(!mods.intersects(Modifiers::CONTROL));
+        assert!(mods.contains(Modifiers::SHIFT));
+    }
+
+    #[test]
+    fn a_specific_side_is_not_generic() {
+        let mut left = Modifiers::empty();
+        left.insert(Modifiers::ALT_LEFT);
+        assert!(!left.has_generic_modifiers());
+        let mut generic = Modifiers::empty();
+        generic.insert(Modifiers::ALT);
+        assert!(generic.has_generic_modifiers());
+    }
+
+    // --- expanding a generic binding ----------------------------------------------------------
+
+    /// `Ctrl + A` has to match left Ctrl, right Ctrl, or both held at once — three variants, because
+    /// macOS reports the side and the binding did not name one.
+    #[test]
+    fn a_generic_modifier_expands_to_three_variants() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL);
+        let variants = mods.expand_to_specific();
+        assert_eq!(variants.len(), 3);
+        assert!(variants.iter().any(|v| *v == Modifiers::CONTROL_LEFT));
+        assert!(variants.iter().any(|v| *v == Modifiers::CONTROL_RIGHT));
+        assert!(variants.iter().any(|v| v.contains(Modifiers::CONTROL)));
+    }
+
+    /// A binding that names a side has exactly one reading. Expanding it to both would make
+    /// `CtrlLeft + A` fire on right Ctrl, which is the whole point of writing the side.
+    #[test]
+    fn a_named_side_expands_to_itself_only() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL_LEFT);
+        assert_eq!(mods.expand_to_specific(), vec![Modifiers::CONTROL_LEFT]);
+    }
+
+    /// Two generic modifiers multiply: 3 x 3. This is the count that makes a three-modifier generic
+    /// binding 27 registrations, which is why the specific form is worth writing.
+    #[test]
+    fn two_generic_modifiers_multiply_their_variants() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL);
+        mods.insert(Modifiers::SHIFT);
+        assert_eq!(mods.expand_to_specific().len(), 9);
+    }
+
+    #[test]
+    fn no_modifiers_expands_to_one_empty_variant() {
+        assert_eq!(Modifiers::empty().expand_to_specific(), vec![Modifiers::empty()]);
+    }
+
+    #[test]
+    fn every_expansion_of_a_generic_modifier_presses_that_family() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::META);
+        for variant in mods.expand_to_specific() {
+            assert!(
+                variant.intersects(Modifiers::META),
+                "{variant} does not press Meta"
+            );
+        }
+    }
+
+    // --- tokens -------------------------------------------------------------------------------
+
+    #[test]
+    fn every_modifier_name_and_alias_parses() {
+        for token in [
+            "ctrl", "control", "alt", "option", "shift", "meta", "cmd", "command",
+        ] {
+            assert!(modifier_from_token(token).is_some(), "{token} does not parse");
+        }
+    }
+
+    /// The aliases are the same modifier, not merely both valid.
+    #[test]
+    fn an_alias_is_the_same_modifier_as_the_name_it_aliases() {
+        assert_eq!(modifier_from_token("option"), modifier_from_token("alt"));
+        assert_eq!(modifier_from_token("cmd"), modifier_from_token("meta"));
+        assert_eq!(modifier_from_token("command"), modifier_from_token("meta"));
+        assert_eq!(modifier_from_token("control"), modifier_from_token("ctrl"));
+    }
+
+    #[test]
+    fn a_side_prefix_names_that_side() {
+        assert_eq!(modifier_from_token("lctrl"), Some(Modifiers::CONTROL_LEFT));
+        assert_eq!(modifier_from_token("rctrl"), Some(Modifiers::CONTROL_RIGHT));
+        assert_eq!(modifier_from_token("ctrl"), Some(Modifiers::CONTROL));
+    }
+
+    #[test]
+    fn a_token_that_is_not_a_modifier_does_not_parse() {
+        for token in ["a", "ArrowUp", "hyper", "", "ctr"] {
+            assert_eq!(
+                modifier_from_token(token),
+                None,
+                "{token:?} should not be a modifier"
+            );
+        }
+    }
+
+    #[test]
+    fn inserting_from_a_token_reports_whether_it_was_one() {
+        let mut mods = Modifiers::empty();
+        assert!(mods.insert_from_token("ctrl"));
+        assert!(mods.contains(Modifiers::CONTROL));
+        assert!(!mods.insert_from_token("A"));
+        assert!(
+            mods.contains(Modifiers::CONTROL),
+            "a non-modifier leaves the set alone"
+        );
+    }
+
+    // --- printing -----------------------------------------------------------------------------
+
+    /// A `Hotkey` prints as something the config could have been written as, which is what makes the
+    /// logs and `rini debug` readable. Both sides print as the generic name.
+    #[test]
+    fn both_sides_print_as_the_generic_name() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL);
+        assert_eq!(mods.to_string(), "Ctrl");
+    }
+
+    #[test]
+    fn one_side_prints_as_that_side() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL_LEFT);
+        assert_eq!(mods.to_string(), "CtrlLeft");
+        let mut right = Modifiers::empty();
+        right.insert(Modifiers::SHIFT_RIGHT);
+        assert_eq!(right.to_string(), "ShiftRight");
+    }
+
+    /// The print order is the family order, not the insertion order, so the same set always prints
+    /// the same way and a log line can be compared against a config line.
+    #[test]
+    fn modifiers_print_in_a_fixed_order_whatever_order_they_went_in() {
+        let mut one = Modifiers::empty();
+        one.insert(Modifiers::META);
+        one.insert(Modifiers::CONTROL);
+        let mut other = Modifiers::empty();
+        other.insert(Modifiers::CONTROL);
+        other.insert(Modifiers::META);
+        assert_eq!(one.to_string(), other.to_string());
+        assert_eq!(one.to_string(), "Ctrl + Meta");
+    }
+
+    #[test]
+    fn no_modifiers_prints_as_nothing() {
+        assert_eq!(Modifiers::empty().to_string(), "");
+    }
+
+    // --- a modifiers-only binding needs a key -------------------------------------------------
+
+    /// A binding with no key registers against one anyway: macOS has no "modifier alone" hotkey, so
+    /// rini picks the modifier's own key code.
+    #[test]
+    fn a_modifiers_only_spec_becomes_a_hotkey_on_the_modifiers_own_key() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL);
+        let hotkey = HotkeySpec::ModifiersOnly { modifiers: mods }.to_hotkey().expect("a hotkey");
+        assert_eq!(hotkey.key_code, KeyCode::ControlLeft);
+    }
+
+    /// Naming only the right side picks the right key, not the left one.
+    #[test]
+    fn a_right_side_only_spec_picks_the_right_key() {
+        let mut mods = Modifiers::empty();
+        mods.insert(Modifiers::CONTROL_RIGHT);
+        assert_eq!(default_key_for_modifiers(mods), Some(KeyCode::ControlRight));
+    }
+
+    #[test]
+    fn a_spec_with_no_modifiers_at_all_has_no_default_key() {
+        assert_eq!(default_key_for_modifiers(Modifiers::empty()), None);
+    }
+
+    // --- is_modifier_key ----------------------------------------------------------------------
+
+    /// Both sides of every family, plus the three lock keys macOS reports as flags rather than as
+    /// presses. Missing one means a modifier press is treated as a key press and fires a binding.
+    #[test]
+    fn every_side_of_every_family_is_a_modifier_key() {
+        for family in MOD_FAMILIES {
+            assert!(is_modifier_key(family.left_key), "{} left", family.name);
+            assert!(is_modifier_key(family.right_key), "{} right", family.name);
+        }
+        for lock in [KeyCode::CapsLock, KeyCode::Fn, KeyCode::NumLock] {
+            assert!(is_modifier_key(lock), "{lock:?}");
+        }
+    }
+
+    #[test]
+    fn an_ordinary_key_is_not_a_modifier() {
+        for key in [
+            KeyCode::KeyA,
+            KeyCode::Digit1,
+            KeyCode::ArrowUp,
+            KeyCode::Space,
+        ] {
+            assert!(!is_modifier_key(key), "{key:?}");
+        }
+    }
+
+    // --- spec canonicalisation ----------------------------------------------------------------
+
+    #[test]
+    fn a_single_letter_is_upper_cased_whatever_it_arrives_as() {
+        assert_eq!(normalize_spec("ctrl + a"), "ctrl + A");
+        assert_eq!(normalize_spec("Ctrl + A"), "Ctrl + A");
+    }
+
+    /// A trailing word takes the same rule as a word inside the spec. This was written out twice, and
+    /// a fix to one copy and not the other is the failure the duplication invited.
+    #[test]
+    fn the_last_token_is_canonicalised_the_same_as_the_others() {
+        assert_eq!(normalize_spec("Alt + down"), "Alt + ArrowDown");
+        assert_eq!(normalize_spec("down + Alt"), "ArrowDown + Alt");
+        assert_eq!(normalize_spec("down"), "ArrowDown");
+        assert_eq!(normalize_spec("a"), "A");
+    }
+
+    /// Separators come back exactly as written, so canonicalising does not reformat the user's spec.
+    #[test]
+    fn spacing_and_separators_survive_untouched() {
+        assert_eq!(normalize_spec("Ctrl+a"), "Ctrl+A");
+        assert_eq!(normalize_spec("Ctrl  +  a"), "Ctrl  +  A");
+    }
+
+    /// A word this does not know is left alone, because it is either a key name the keyboard layer
+    /// resolves or a typo the config validator refuses. Guessing would turn the second into the first.
+    #[test]
+    fn an_unknown_word_is_left_exactly_as_written() {
+        assert_eq!(normalize_spec("Ctrl + Hyper"), "Ctrl + Hyper");
+        assert_eq!(normalize_spec("Ctrl + F13"), "Ctrl + F13");
+    }
+
+    #[test]
+    fn an_empty_spec_canonicalises_to_nothing() {
+        assert_eq!(normalize_spec(""), "");
+    }
+
+    #[test]
+    fn canonicalising_twice_changes_nothing_the_second_time() {
+        for spec in ["Alt + Shift + Down", "ctrl+a", "down", "Ctrl + F13", ""] {
+            let once = normalize_spec(spec);
+            assert_eq!(normalize_spec(&once), once, "{spec:?} is not stable");
+        }
+    }
+
+    // --- modifier combinations ----------------------------------------------------------------
+
+    fn combos() -> HashMap<String, String> {
+        let mut map = HashMap::default();
+        map.insert("hyper".to_owned(), "Ctrl + Alt + Shift + Meta".to_owned());
+        map
+    }
+
+    #[test]
+    fn a_leading_alias_is_replaced_by_its_definition() {
+        assert_eq!(
+            expand_modifier_combination("hyper + C", &combos()),
+            "Ctrl + Alt + Shift + Meta + C"
+        );
+    }
+
+    #[test]
+    fn a_spec_naming_no_alias_is_returned_unchanged() {
+        assert_eq!(expand_modifier_combination("Ctrl + C", &combos()), "Ctrl + C");
+    }
+
+    /// Only a LEADING alias is expanded. An alias later in the spec is left alone, which is a real
+    /// limit rather than an oversight: a combination names the modifiers a binding starts with, and
+    /// substituting one mid-spec would put modifiers after the key.
+    #[test]
+    fn an_alias_that_is_not_leading_is_left_alone() {
+        assert_eq!(
+            expand_modifier_combination("Ctrl + hyper", &combos()),
+            "Ctrl + hyper"
+        );
+    }
+
+    /// A bare alias with no key after it is also left alone, because the split looks for ` + `. Worth
+    /// knowing: `"hyper" = "..."` used as a whole binding does not expand.
+    #[test]
+    fn a_bare_alias_with_no_key_is_not_expanded() {
+        assert_eq!(expand_modifier_combination("hyper", &combos()), "hyper");
     }
 }

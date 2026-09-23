@@ -9,7 +9,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 |---|---|---|---|
 | 1 | the `?elem` FIXME in `trace` | formatting an `AXUIElement` is an AX round-trip; obeyed on the hot path, ignored on the error path | **done** |
 | 2 | `animation/domain/admission.rs` | 125 lines, 7 pure functions, 0 tests | **done** — 25 tests |
-| 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | open |
+| 3 | `input/domain/key.rs` | 515 lines, 1 test, and a 22-line block written twice | **done** — 35 tests |
 | 4 | `main.rs` | 300-line `main`, no test | open |
 | 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | open |
 | 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | open |
@@ -68,3 +68,29 @@ key bends the tile toward where it already is on every repeat and the flight nev
 says so rather than blaming a picture it never took; each of the four refusals names itself, because
 "the window appeared without animating" has four causes and the log is the only way to tell them
 apart afterwards.
+
+## 3. `input/domain/key.rs`
+
+515 lines with one test, and the token rule written out twice: once for the words inside
+`normalize_spec`'s loop and once for a trailing word with no separator after it. One
+`canonical_spec_token` now, and dropping the trailing call fails with `"Alt + Shift + Down"` where
+`"Alt + Shift + ArrowDown"` was expected — exactly the failure the duplication invited.
+
+Named `canonical_spec_token`, not `normalize_token`, because there was ALREADY a `normalize_token`
+doing the opposite: it lower-cases and strips, for matching a modifier name. One produces the
+canonical spelling, the other folds for comparison, and they had the same name.
+
+35 tests, covering the bitfield, generic expansion, token parsing, printing, modifiers-only bindings,
+`is_modifier_key` and spec canonicalisation. Two probes, both caught:
+
+| broken | caught by |
+|---|---|
+| a named side expanded to both sides | `a_named_side_expands_to_itself_only` — `CtrlLeft + A` would fire on right Ctrl |
+| the trailing-token canonicalisation | four assertions, with the literal before/after strings |
+
+Three properties are pinned that the code never stated. Every generic modifier is exactly its own two
+sides, and no two families share a bit — a collision would make Ctrl and Alt the same modifier.
+Generic modifiers multiply: `Ctrl + Shift + A` is 9 registrations and three generic modifiers is 27,
+which is the cost of not naming a side. And `expand_modifier_combination` only expands a LEADING
+alias followed by ` + `, so `"hyper"` alone does not expand; that is a real limit rather than an
+oversight, and it now says so in a test.
