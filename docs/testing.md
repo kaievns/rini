@@ -1,5 +1,36 @@
 # Testing notes
 
+## A fake at the FFI boundary, never a `#[cfg(test)]` branch inside a rule
+
+Two things look alike and are not.
+
+**A fake at the boundary is right.** `window_server.rs` answers its queries from thread-local
+overrides under `cfg(test)`, because the alternative is a test that depends on the windows the
+developer happens to have open. The section below records the two tests that flapped that way. The
+same goes for a `#[cfg(test)]` field like `Record::temp`: there is no field to read in production, so
+the accessor has no choice.
+
+**A `#[cfg(test)]` branch inside a rule is wrong,** and it is not a style question. It makes the
+suite a test of a different program, and the divergence is invisible at every call site. Four were
+found and removed:
+
+| was | the test build ran |
+|---|---|
+| `spaces.rs::is_user_space` | `true`, unconditionally |
+| `reactor/mod.rs` `space_is_user` | `true`, unconditionally |
+| `spaces.rs::resolve_command_space` | a different algorithm, both arguments discarded |
+| `spaces.rs::resolve_menu_bar_space` | the first screen's space, not the active one |
+
+Two of those hid live bugs. `is_user_space` meant the "only user spaces count" rule this project
+enforces was never the rule any test ran; the other meant a window could be followed onto the login
+space, and the guard written to prevent it was dead because a later step did the assignment anyway
+without checking. Both are in `docs/implementation-audit.md` under 4.4 and 4.4.1.
+
+The test for it: if the thing behind the `#[cfg]` is a QUERY — something the operating system
+answers — a fake is fine, and it belongs at the boundary with the other fakes. If it is a RULE —
+something rini decides — inject what the rule reads and let the test name it. `SpaceKinds` and
+`LiveDisplays` in `src/displays/platform/spaces.rs` are what that looks like.
+
 ## A unit test must not read the live window server
 
 `src/windows/platform/window_server.rs` answers queries from fakes and thread-local

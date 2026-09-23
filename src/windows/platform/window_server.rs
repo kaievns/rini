@@ -1,4 +1,3 @@
-use crate::windows::domain::info::WindowServerInfo;
 #[cfg(test)]
 use std::cell::RefCell;
 use std::ffi::{CStr, c_int};
@@ -17,19 +16,18 @@ use objc2_core_graphics::{
     kCGWindowBounds, kCGWindowLayer, kCGWindowNumber,
 };
 use once_cell::sync::Lazy;
-
+use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 use rini_geometry::CGRectExt;
-use rini_core::ids::{WindowId, WindowServerId};
+use rini_skylight_sys::*;
 #[cfg(test)]
 use rustc_hash::FxHashMap as HashMap;
-use rini_core::ids::pid_t;
+
+use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::platform::ax::element::{AXUIElement, Error as AxError};
 use crate::windows::platform::cg_ok;
 #[cfg(not(test))]
 use crate::windows::platform::process::ProcessSerialNumber;
 use crate::windows::platform::sub_level::window_sub_level;
-use rini_core::ids::SpaceId;
-use rini_skylight_sys::*;
 
 static G_CONNECTION: Lazy<i32> = Lazy::new(|| unsafe { SLSMainConnectionID() });
 static LAST_WINDOWSERVER_ACTIVITY_US: AtomicU64 = AtomicU64::new(0);
@@ -61,7 +59,6 @@ impl TryFrom<&AXUIElement> for WindowServerId {
         Ok(Self(id))
     }
 }
-
 
 #[inline]
 fn now_us() -> u64 {
@@ -143,9 +140,7 @@ impl WindowIterator {
     }
 
     #[inline]
-    pub fn count(&self) -> i32 {
-        unsafe { SLSWindowIteratorGetCount(self.iter) }
-    }
+    pub fn count(&self) -> i32 { unsafe { SLSWindowIteratorGetCount(self.iter) } }
 
     #[inline]
     pub fn advance<'a>(&'a self) -> Option<&'a Self> {
@@ -157,46 +152,30 @@ impl WindowIterator {
     }
 
     #[inline]
-    pub fn window_id(&self) -> u32 {
-        unsafe { SLSWindowIteratorGetWindowID(self.iter) }
-    }
+    pub fn window_id(&self) -> u32 { unsafe { SLSWindowIteratorGetWindowID(self.iter) } }
 
     #[inline]
-    pub fn level(&self) -> i32 {
-        unsafe { SLSWindowIteratorGetLevel(self.iter) }
-    }
+    pub fn level(&self) -> i32 { unsafe { SLSWindowIteratorGetLevel(self.iter) } }
 
     #[inline]
-    pub fn pid(&self) -> i32 {
-        unsafe { SLSWindowIteratorGetPID(self.iter) }
-    }
+    pub fn pid(&self) -> i32 { unsafe { SLSWindowIteratorGetPID(self.iter) } }
 
     #[inline]
-    pub fn parent_id(&self) -> u32 {
-        unsafe { SLSWindowIteratorGetParentID(self.iter) }
-    }
+    pub fn parent_id(&self) -> u32 { unsafe { SLSWindowIteratorGetParentID(self.iter) } }
 
     #[inline]
-    pub fn bounds(&self) -> CGRect {
-        unsafe { SLSWindowIteratorGetBounds(self.iter) }
-    }
+    pub fn bounds(&self) -> CGRect { unsafe { SLSWindowIteratorGetBounds(self.iter) } }
 
     #[inline]
-    pub fn alpha(&self) -> f32 {
-        unsafe { SLSWindowIteratorGetAlpha(self.iter) }
-    }
+    pub fn alpha(&self) -> f32 { unsafe { SLSWindowIteratorGetAlpha(self.iter) } }
 
     #[inline]
     #[allow(dead_code)]
-    pub fn tags(&self) -> u64 {
-        unsafe { SLSWindowIteratorGetTags(self.iter) }
-    }
+    pub fn tags(&self) -> u64 { unsafe { SLSWindowIteratorGetTags(self.iter) } }
 
     #[inline]
     #[allow(dead_code)]
-    pub fn attributes(&self) -> u64 {
-        unsafe { SLSWindowIteratorGetAttributes(self.iter) }
-    }
+    pub fn attributes(&self) -> u64 { unsafe { SLSWindowIteratorGetAttributes(self.iter) } }
 
     #[inline]
     pub fn constraints(&self) -> (CGSize, CGSize) {
@@ -222,9 +201,7 @@ impl WindowIterator {
 }
 
 impl Drop for WindowIterator {
-    fn drop(&mut self) {
-        unsafe { CFRelease(self.iter) }
-    }
+    fn drop(&mut self) { unsafe { CFRelease(self.iter) } }
 }
 
 /// Server-side filter for `SLSWindowQueryRun`.
@@ -484,20 +461,21 @@ pub fn get_windows(ids: &[WindowServerId]) -> Vec<WindowServerInfo> {
     out
 }
 
+#[cfg(test)]
 pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
-    #[cfg(test)]
-    {
-        return get_windows(&[id]).into_iter().next();
-    }
+    get_windows(&[id]).into_iter().next()
+}
 
-    #[cfg(not(test))]
-    {
-        let query = WindowIterator::new(&[id])?;
-        if query.count() != 1 || query.advance().is_none() {
-            return None;
-        }
-        return window_info_from_query(&query);
+/// A single-window query rather than `get_windows(&[id])`, which is the same answer through a
+/// general path. The count check is the reason: asking for one window and being handed a different
+/// number means the id is not the window it names any more, and a recycled id must not be answered.
+#[cfg(not(test))]
+pub fn get_window(id: WindowServerId) -> Option<WindowServerInfo> {
+    let query = WindowIterator::new(&[id])?;
+    if query.count() != 1 || query.advance().is_none() {
+        return None;
     }
+    window_info_from_query(&query)
 }
 
 pub fn get_num(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<i64> {
@@ -533,14 +511,6 @@ pub fn overlaps(a: CGRect, b: CGRect) -> bool {
         && b.origin.y < a.origin.y + a.size.height
 }
 
-
-
-
-
-
-
-
-
 /// Front-to-back position of every on-screen window, 0 being frontmost.
 /// `CGWindowListCopyWindowInfo` lists on-screen windows front to back, so the index is the depth.
 #[cfg(not(test))]
@@ -557,9 +527,8 @@ pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
 /// sets the order with `set_front_to_back_override`.
 #[cfg(test)]
 pub fn front_to_back_depths() -> std::collections::HashMap<u32, usize> {
-    TEST_FRONT_TO_BACK_OVERRIDE.with(|order| {
-        order.borrow().iter().enumerate().map(|(depth, id)| (*id, depth)).collect()
-    })
+    TEST_FRONT_TO_BACK_OVERRIDE
+        .with(|order| order.borrow().iter().enumerate().map(|(depth, id)| (*id, depth)).collect())
 }
 
 /// The on-screen order for test builds, frontmost first. `None` clears it.
@@ -597,9 +566,6 @@ pub fn visible_windows_on_display(display: CGRect) -> Vec<(WindowServerId, CGRec
         .collect()
 }
 
-
-
-
 #[cfg_attr(test, allow(dead_code))]
 fn window_is_effectively_invisible(alpha: f32, layer: i32) -> bool {
     layer == 0 && alpha <= EFFECTIVELY_INVISIBLE_WINDOW_ALPHA
@@ -621,7 +587,6 @@ fn window_info_from_query(query: &WindowIterator) -> Option<WindowServerInfo> {
         max_frame,
     })
 }
-
 
 /// Find the topmost window at `point`, or the next window below
 /// `below_window_id` when given. Returns `(window_id, owner_connection_id)`,
@@ -651,9 +616,7 @@ fn find_window_at_point(point: &mut CGPoint, below_window_id: Option<u32>) -> Op
     (wid != 0).then_some((wid, wcid))
 }
 
-fn is_own_window(cid: i32) -> bool {
-    *G_CONNECTION == cid
-}
+fn is_own_window(cid: i32) -> bool { *G_CONNECTION == cid }
 
 pub fn get_window_at_point(mut point: CGPoint) -> Option<WindowServerId> {
     let (mut wid, cid) = find_window_at_point(&mut point, None)?;
@@ -699,16 +662,13 @@ pub fn window_under_cursor() -> Option<WindowServerId> {
 }
 
 #[cfg(test)]
-pub fn window_level(_wid: u32) -> Option<NSWindowLevel> {
-    Some(0)
-}
+pub fn window_level(_wid: u32) -> Option<NSWindowLevel> { Some(0) }
 
 #[cfg(not(test))]
 pub fn window_level(wid: u32) -> Option<NSWindowLevel> {
     let query = WindowIterator::new(&[WindowServerId::new(wid)])?;
     Some(query.advance()?.level() as NSWindowLevel)
 }
-
 
 /// Returns the typed Skylight tags exposed by a window-query iterator.
 #[cfg_attr(test, allow(dead_code))]
@@ -851,7 +811,6 @@ pub fn key_focused_window(space: SpaceId) -> Option<WindowId> {
     })
 }
 
-
 #[cfg(test)]
 pub fn set_space_window_list_for_connection_override(ids: Option<Vec<u32>>) {
     TEST_SPACE_WINDOW_LIST_OVERRIDE.with(|override_ids| *override_ids.borrow_mut() = ids);
@@ -898,9 +857,7 @@ pub fn set_window_ordered_in_override(id: WindowServerId, ordered: Option<bool>)
 /// `None` means unanswerable, which is no evidence either way, while `Some(false)` retires the window. A
 /// test gets `None`. See "A unit test must not read the live window server" in `docs/testing.md`.
 #[cfg(test)]
-pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> {
-    None
-}
+pub fn app_window_suitability(_id: WindowServerId) -> Option<bool> { None }
 
 #[cfg(not(test))]
 pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
@@ -916,7 +873,6 @@ pub fn app_window_suitability(id: WindowServerId) -> Option<bool> {
 pub fn app_window_suitable(id: WindowServerId) -> bool {
     app_window_suitability(id).unwrap_or(false)
 }
-
 
 // credit: https://github.com/Hammerspoon/hammerspoon/issues/370#issuecomment-545545468
 pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> {
@@ -943,16 +899,13 @@ pub fn make_key_window(pid: pid_t, wsid: WindowServerId) -> Result<(), CGError> 
     Ok(())
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
     use super::{
-        WindowServerId, app_window_suitability, overlaps,
-        set_window_ordered_in_override, space_window_list_for_connection, window_ordered_in,
-        window_spaces,
+        WindowServerId, app_window_suitability, overlaps, set_window_ordered_in_override,
+        space_window_list_for_connection, window_ordered_in, window_spaces,
     };
 
     /// A query with no override must answer "unknown", never the truth about the developer's screen.
@@ -982,13 +935,12 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
-
-
-
-
     #[test]
     fn overlapping_rects_overlap() {
-        assert!(overlaps(rect(0.0, 0.0, 100.0, 100.0), rect(50.0, 50.0, 100.0, 100.0)));
+        assert!(overlaps(
+            rect(0.0, 0.0, 100.0, 100.0),
+            rect(50.0, 50.0, 100.0, 100.0)
+        ));
     }
 
     #[test]
@@ -1033,7 +985,6 @@ mod tests {
     }
 }
 
-
 /// Computes whether a window is manageable based on its properties and window server information.
 ///
 /// A window is manageable if:
@@ -1075,7 +1026,11 @@ pub fn compute_window_manageability(
 /// Whether the window server's picture of a window the app no longer lists says it is gone:
 /// not a suitable window, off layer 0, too small to be real, or ordered out. A failed query
 /// (`None`) is not evidence; only an explicit negative observation retires a window.
-pub fn looks_gone(info: &WindowServerInfo, suitable: Option<bool>, ordered_in: Option<bool>) -> bool {
+pub fn looks_gone(
+    info: &WindowServerInfo,
+    suitable: Option<bool>,
+    ordered_in: Option<bool>,
+) -> bool {
     const MIN_REAL_WINDOW_DIMENSION: f64 = 2.0;
     let too_small = info.frame.size.width.abs() < MIN_REAL_WINDOW_DIMENSION
         || info.frame.size.height.abs() < MIN_REAL_WINDOW_DIMENSION;
@@ -1093,14 +1048,21 @@ pub struct StackPlace {
 impl StackPlace {
     pub fn of(wsid: WindowServerId, frame: CGRect) -> Self {
         let id = wsid.as_u32();
-        Self { frame, level: window_level(id), sub_level: window_sub_level(id) }
+        Self {
+            frame,
+            level: window_level(id),
+            sub_level: window_sub_level(id),
+        }
     }
 }
 
 /// Whether one of the windows stacked above `candidate` sits wholly inside its frame at the same
 /// level and sub-level. Raising the candidate would put it over that window, which the user has
 /// deliberately on top; `above` is the stack from the top down to the candidate, exclusive.
-pub fn covered_by_peer_above(candidate: StackPlace, above: impl IntoIterator<Item = StackPlace>) -> bool {
+pub fn covered_by_peer_above(
+    candidate: StackPlace,
+    above: impl IntoIterator<Item = StackPlace>,
+) -> bool {
     above.into_iter().any(|peer| {
         candidate.frame.contains_rect(peer.frame)
             && candidate.level.zip(peer.level).is_some_and(|(c, p)| c == p)
@@ -1115,21 +1077,43 @@ mod stack_tests {
     use super::*;
 
     fn place(x: f64, w: f64, level: Option<NSWindowLevel>, sub_level: c_int) -> StackPlace {
-        StackPlace { frame: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 100.0)), level, sub_level }
+        StackPlace {
+            frame: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(w, 100.0)),
+            level,
+            sub_level,
+        }
     }
 
     #[test]
     fn a_peer_wholly_inside_at_the_same_level_covers() {
         let candidate = place(0.0, 1000.0, Some(0), 0);
-        assert!(covered_by_peer_above(candidate, [place(100.0, 200.0, Some(0), 0)]));
+        assert!(covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            Some(0),
+            0
+        )]));
     }
 
     #[test]
     fn a_peer_at_another_level_or_sub_level_or_overhanging_does_not() {
         let candidate = place(0.0, 1000.0, Some(0), 0);
-        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, Some(3), 0)]));
-        assert!(!covered_by_peer_above(candidate, [place(100.0, 200.0, Some(0), 1)]));
-        assert!(!covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), 0)]), "overhangs the edge");
+        assert!(!covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            Some(3),
+            0
+        )]));
+        assert!(!covered_by_peer_above(candidate, [place(
+            100.0,
+            200.0,
+            Some(0),
+            1
+        )]));
+        assert!(
+            !covered_by_peer_above(candidate, [place(900.0, 200.0, Some(0), 0)]),
+            "overhangs the edge"
+        );
         assert!(!covered_by_peer_above(candidate, []));
     }
 
@@ -1147,12 +1131,18 @@ mod stack_tests {
     #[test]
     fn a_window_is_gone_only_on_an_explicit_negative_observation() {
         let real = info(0, 800.0, 600.0);
-        assert!(!looks_gone(&real, None, None), "unknown suitability and order are not evidence");
+        assert!(
+            !looks_gone(&real, None, None),
+            "unknown suitability and order are not evidence"
+        );
         assert!(!looks_gone(&real, Some(true), Some(true)));
         assert!(looks_gone(&real, Some(false), None));
         assert!(looks_gone(&real, None, Some(false)));
         assert!(looks_gone(&info(1, 800.0, 600.0), None, None), "off layer 0");
-        assert!(looks_gone(&info(0, 1.0, 600.0), None, None), "a sliver is not a window");
+        assert!(
+            looks_gone(&info(0, 1.0, 600.0), None, None),
+            "a sliver is not a window"
+        );
     }
 
     #[test]

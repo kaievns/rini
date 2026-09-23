@@ -1,4 +1,3 @@
-use crate::workspaces::domain::display_memory::DisplayMemory;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -9,10 +8,11 @@ use tempfile::NamedTempFile;
 use tracing::Span;
 
 use super::{Event, Reactor};
-use crate::windows::domain::request::{AppThreadHandle, Request};
 use crate::app::channels::{self};
 use crate::app::config::Config;
+use crate::windows::domain::request::{AppThreadHandle, Request};
 use crate::workspaces::LayoutEngine;
+use crate::workspaces::domain::display_memory::DisplayMemory;
 
 thread_local! {
     static DESERIALIZE_THREAD_HANDLE: RefCell<Option<AppThreadHandle>> = RefCell::new(None);
@@ -39,15 +39,11 @@ impl Record {
     }
 
     #[cfg(test)]
-    pub fn new_for_test(temp: NamedTempFile) -> Self {
-        Self { file: None, temp: Some(temp) }
-    }
+    pub fn new_for_test(temp: NamedTempFile) -> Self { Self { file: None, temp: Some(temp) } }
 
     #[cfg(test)]
     #[allow(unused)]
-    pub(super) fn temp(&mut self) -> Option<&mut NamedTempFile> {
-        self.temp.as_mut()
-    }
+    pub(super) fn temp(&mut self) -> Option<&mut NamedTempFile> { self.temp.as_mut() }
 
     fn file(&mut self) -> Option<&mut File> {
         #[cfg(test)]
@@ -56,12 +52,7 @@ impl Record {
         self.file.as_mut()
     }
 
-    pub(super) fn start(
-        &mut self,
-        config: &Config,
-        layout: &LayoutEngine,
-        memory: &DisplayMemory,
-    ) {
+    pub(super) fn start(&mut self, config: &Config, layout: &LayoutEngine, memory: &DisplayMemory) {
         let Some(file) = self.file() else { return };
         let config = ron::ser::to_string(&config).unwrap();
         let layout = layout.serialize_to_string(memory);
@@ -91,8 +82,15 @@ pub fn replay(
     let memory = loaded.memory;
     let layout = loaded.layout?;
     let (broadcast_tx, _) = channels::channel();
-    let mut reactor =
-        Reactor::new(config, layout, memory, Record::new(None), broadcast_tx, None, false);
+    let mut reactor = Reactor::new(
+        config,
+        layout,
+        memory,
+        Record::new(None),
+        broadcast_tx,
+        None,
+        false,
+    );
     std::thread::spawn(move || {
         while let Some((span, request)) = rx.blocking_recv() {
             let _ = span.enter();

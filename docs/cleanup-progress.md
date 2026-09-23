@@ -20,8 +20,9 @@ the one that turned out to be a live bug.
 | MED | `spaces.rs:422` `active_display_uuid` | always `None` | **done** |
 | MED | `spaces.rs:611` `active_display_uuid` | always `None` | **done** |
 | LOW | `spaces.rs:498` `collect_state` | an inline fake screen cache | **done** — the fallback is now always compiled and defensible on its own |
-| LOW | `window_server.rs:488,742` | thread-local overrides | open |
+| LOW | `window_server.rs:488,742` | thread-local overrides | **kept** — fakes at the FFI boundary, which is the right pattern; `get_window` moved to item-level `#[cfg]` to match its neighbours |
 | LOW | `mod.rs:605` `autosave_path` | `None`, so the suite cannot overwrite `~/.rini/layout.ron` | **done** — set by `new_for_test` instead |
+| LOW | `replay.rs:53` `file()` | a temp file | **kept** — `Record::temp` is a `#[cfg(test)]` field, so there is no field to read in production |
 
 ### The five in `spaces.rs`
 
@@ -47,6 +48,10 @@ classifier, so a login or system space becomes "the window server had nothing to
 rule over `Candidates` falls back to the assignment. The guard was then provably redundant and is
 gone. Two tests in `reactor/tests/spaces.rs`, and the positive one — an ordinary inactive space
 still gets followed — is what makes the negative one a test of the rule.
+
+**Section 0 closed.** The distinction that came out of it — a fake at the FFI boundary is right, a
+`#[cfg(test)]` branch inside a rule is not — is now the opening section of `docs/testing.md`, so the
+next person meets it before writing one.
 
 ## 1. `workspaces/engine.rs` — 2,898 lines, 20 tests (144 lines/test)
 
