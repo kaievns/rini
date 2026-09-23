@@ -35,8 +35,8 @@ use crate::windows::domain::info::{AppInfo, WindowInfo};
 use crate::windows::platform::ax::element::{
     AX_STANDARD_WINDOW_SUBROLE, AX_WINDOW_ROLE, AXUIElement, Error as AxError,
 };
-use crate::windows::platform::ax::enhanced_ui::EnhancedUi;
 use crate::windows::platform::ax::observer::Observer;
+use crate::windows::platform::ax::world::{AxWorld, MacAx};
 use crate::windows::platform::mouse;
 use crate::windows::platform::process::ProcessInfo;
 use crate::windows::platform::window_server;
@@ -117,37 +117,37 @@ pub fn spawn_app_thread(
         .unwrap();
 }
 
-struct State {
+struct State<W: AxWorld> {
     pid: pid_t,
     bundle_id: Option<String>,
     running_app: Retained<NSRunningApplication>,
-    app: AXUIElement,
-    observer: Observer,
+    /// Everything this thread asks of Accessibility. Production installs `MacAx`; a test installs a
+    /// fake whose elements are plain numbers. See `platform/ax/world.rs`.
+    ax: W,
     events_tx: Box<dyn EventSink>,
-    windows: HashMap<WindowId, AppWindowState>,
-    elem_to_wid: HashMap<AXUIElement, WindowId>,
+    windows: HashMap<WindowId, AppWindowState<W::Element>>,
+    elem_to_wid: HashMap<W::Element, WindowId>,
     last_window_idx: u32,
     main_window: Option<WindowId>,
     last_activated: Option<(Instant, Quiet, Option<WindowId>, oneshot::Sender<()>)>,
     pending_activation_quiet: Option<(Instant, Quiet)>,
     is_hidden: bool,
     is_frontmost: bool,
-    enhanced_ui: EnhancedUi,
     raises_tx: channels::Sender<RaiseRequest>,
     tx_store: Option<WindowTxStore>,
 }
 
-struct AppWindowState {
-    pub elem: AXUIElement,
+struct AppWindowState<E> {
+    pub elem: E,
     last_seen_txid: TransactionId,
     hidden_by_app: bool,
     window_server_id: Option<WindowServerId>,
     title: String,
 }
 
-impl State {
+impl<W: AxWorld> State<W> {
     fn refresh_visible_windows(&mut self) -> Result<(), AxError> {
-        let window_elems = match self.app.windows() {
+        let window_elems = match self.ax.windows(&self.ax.app()) {
             Ok(elems) => elems,
             Err(e) => {
                 self.send_event(Event::WindowsDiscovered {
@@ -163,9 +163,9 @@ impl State {
         let mut known_visible = Vec::with_capacity(window_elems.len());
 
         for elem in window_elems {
-            let wsid = WindowServerId::try_from(&elem).ok();
+            let wsid = self.ax.window_server_id(&elem);
             let hint = wsid.and_then(|id| server_info_by_id.get(&id).copied());
-            let info = match WindowInfo::from_ax_element(&elem, hint) {
+            let info = match self.ax.window_info(&elem, hint) {
                 Ok((info, _)) => info,
                 Err(err) => {
                     let id = self.id(&elem).ok();
@@ -219,7 +219,7 @@ impl State {
         record.target.map(|_| record.txid)
     }
 
-    fn txid_for_window_state(&self, window: &AppWindowState) -> Option<TransactionId> {
+    fn txid_for_window_state(&self, window: &AppWindowState<W::Element>) -> Option<TransactionId> {
         self.txid_from_store(window.window_server_id)
             .or_else(|| Self::some_txid(window.last_seen_txid))
     }
@@ -237,7 +237,7 @@ impl State {
         info: AppInfo,
         requests_tx: channels::Sender<Request>,
         requests_rx: channels::Receiver<Request>,
-        notifications_rx: channels::Receiver<(AXUIElement, AxNotificationKind, Option<WindowId>)>,
+        notifications_rx: channels::Receiver<(W::Element, AxNotificationKind, Option<WindowId>)>,
         raises_rx: channels::Receiver<RaiseRequest>,
     ) {
         let handle = AppThreadHandle::from_sender(requests_tx);
@@ -256,7 +256,7 @@ impl State {
         this: &RefCell<Self>,
         mut requests_rx: channels::Receiver<Request>,
         mut notifications_rx: channels::Receiver<(
-            AXUIElement,
+            W::Element,
             AxNotificationKind,
             Option<WindowId>,
         )>,
@@ -292,8 +292,7 @@ impl State {
         let disable_enhanced_ui = batch.iter().any(|(_, req)| req.disables_enhanced_ui());
         if disable_enhanced_ui {
             let mut state = this.borrow_mut();
-            let app = state.app.clone();
-            state.enhanced_ui.acquire(&app);
+            state.ax.suppress_enhanced_ui();
         }
 
         let mut should_terminate = false;
@@ -323,8 +322,7 @@ impl State {
 
         if disable_enhanced_ui {
             let mut state = this.borrow_mut();
-            let app = state.app.clone();
-            state.enhanced_ui.release(&app);
+            state.ax.restore_enhanced_ui();
         }
 
         should_terminate
@@ -375,7 +373,7 @@ impl State {
             // encode the kind here just like the per-window registrations do.
             let data = encode_notification_data(kind, None);
             loop {
-                match self.observer.add_notification_with_data(&self.app, notif, data) {
+                match self.ax.watch(&self.ax.app(), notif, data) {
                     Ok(()) => break,
                     #[allow(non_upper_case_globals)]
                     Err(AxError::Ax(AXError::NotificationAlreadyRegistered)) => {
@@ -395,7 +393,7 @@ impl State {
             }
         }
 
-        let initial_window_elements = self.app.windows().unwrap_or_default();
+        let initial_window_elements = self.ax.windows(&self.ax.app()).unwrap_or_default();
         let server_info_by_id = self.visible_window_server_info_map(&initial_window_elements);
 
         let window_count = initial_window_elements.len();
@@ -405,7 +403,7 @@ impl State {
         let mut window_server_info = Vec::with_capacity(window_count);
 
         for elem in initial_window_elements {
-            let wsid = WindowServerId::try_from(&elem).ok();
+            let wsid = self.ax.window_server_id(&elem);
             let hint = wsid.and_then(|id| server_info_by_id.get(&id).copied());
             if let Some(info) = hint {
                 window_server_info.push(info);
@@ -420,8 +418,8 @@ impl State {
             windows.push((wid, info));
         }
 
-        self.main_window = self.app.main_window().ok().and_then(|w| self.id(&w).ok());
-        self.is_frontmost = self.app.frontmost().unwrap_or(false);
+        self.main_window = self.ax.main_window(&self.ax.app()).ok().and_then(|w| self.id(&w).ok());
+        self.is_frontmost = self.ax.frontmost(&self.ax.app()).unwrap_or(false);
 
         self.events_tx.send(Event::ApplicationLaunched {
             pid: self.pid,
@@ -436,7 +434,7 @@ impl State {
         true
     }
 
-    #[instrument(skip_all, fields(app = ?self.app, ?request))]
+    #[instrument(skip_all, fields(pid = ?self.pid, ?request))]
     fn handle_request(&mut self, request: Request) -> Result<bool, AxError> {
         match request {
             Request::Terminate => {
@@ -495,15 +493,16 @@ impl State {
                     },
                 };
 
-                let _ = elem.set_size(desired.size);
-                let _ = elem.set_position(desired.origin);
-                let _ = elem.set_size(desired.size);
+                let _ = self.ax.set_size(&elem, desired.size);
+                let _ = self.ax.set_position(&elem, desired.origin);
+                let _ = self.ax.set_size(&elem, desired.size);
 
-                let frame =
-                    match self.handle_ax_result(wid, trace("frame", &elem, || elem.frame()))? {
-                        Some(frame) => frame,
-                        None => return Ok(false),
-                    };
+                let frame = match self
+                    .handle_ax_result(wid, trace("frame", &elem, || self.ax.frame(&elem)))?
+                {
+                    Some(frame) => frame,
+                    None => return Ok(false),
+                };
 
                 self.send_event(Event::WindowFrameChanged(
                     wid,
@@ -531,15 +530,16 @@ impl State {
                         },
                     };
 
-                    let _ = elem.set_size(desired.size);
-                    let _ = elem.set_position(desired.origin);
-                    let _ = elem.set_size(desired.size);
+                    let _ = self.ax.set_size(&elem, desired.size);
+                    let _ = self.ax.set_position(&elem, desired.origin);
+                    let _ = self.ax.set_size(&elem, desired.size);
 
-                    let frame =
-                        match self.handle_ax_result(wid, trace("frame", &elem, || elem.frame()))? {
-                            Some(frame) => frame,
-                            None => continue,
-                        };
+                    let frame = match self
+                        .handle_ax_result(wid, trace("frame", &elem, || self.ax.frame(&elem)))?
+                    {
+                        Some(frame) => frame,
+                        None => continue,
+                    };
 
                     self.send_event(Event::WindowFrameChanged(
                         wid,
@@ -568,16 +568,17 @@ impl State {
                         },
                     };
 
-                    let _ = elem.set_position(position);
+                    let _ = self.ax.set_position(&elem, position);
 
                     // Preserve the existing per-window acknowledgement semantics. In
                     // particular, report the frame AX actually accepted rather than the
                     // requested position combined with a cached size.
-                    let frame =
-                        match self.handle_ax_result(wid, trace("frame", &elem, || elem.frame()))? {
-                            Some(frame) => frame,
-                            None => continue,
-                        };
+                    let frame = match self
+                        .handle_ax_result(wid, trace("frame", &elem, || self.ax.frame(&elem)))?
+                    {
+                        Some(frame) => frame,
+                        None => continue,
+                    };
 
                     self.send_event(Event::WindowFrameChanged(
                         wid,
@@ -595,10 +596,10 @@ impl State {
         Ok(false)
     }
 
-    #[instrument(skip_all, fields(app = ?self.app, ?notif))]
+    #[instrument(skip_all, fields(pid = ?self.pid, ?notif))]
     fn handle_notification(
         &mut self,
-        elem: AXUIElement,
+        elem: W::Element,
         notif: AxNotificationKind,
         hinted_wid: Option<WindowId>,
     ) {
@@ -678,7 +679,7 @@ impl State {
                         return;
                     }
                 };
-                let frame = match elem.frame() {
+                let frame = match self.ax.frame(&elem) {
                     Ok(frame) => frame,
                     // During display teardown, macOS can send AXWindowMoved after
                     // the old AX element has been invalidated. This is not a
@@ -740,7 +741,7 @@ impl State {
                     trace!(?wid, "Ignoring title change for superseded AX element");
                     return;
                 }
-                match elem.title() {
+                match self.ax.title(&elem) {
                     Ok(title) => {
                         let Ok(window) = self.window_mut(wid) else {
                             return;
@@ -775,7 +776,7 @@ impl From<AxError> for RaiseError {
     }
 }
 
-impl State {
+impl<W: AxWorld> State<W> {
     async fn handle_raise_request(
         this_ref: &RefCell<Self>,
         wids: Vec<WindowId>,
@@ -798,7 +799,10 @@ impl State {
         let is_standard = {
             let this = this_ref.borrow();
             let window = this.window(first)?;
-            window.elem.subrole().map(|s| s == AX_STANDARD_WINDOW_SUBROLE).unwrap_or(false)
+            this.ax
+                .subrole(&window.elem)
+                .map(|s| s == AX_STANDARD_WINDOW_SUBROLE)
+                .unwrap_or(false)
         };
 
         check_cancel()?;
@@ -809,7 +813,8 @@ impl State {
         check_cancel()?;
         let mut this = this_ref.borrow_mut();
 
-        let is_frontmost = trace("is_frontmost", &this.app, || this.app.frontmost())?;
+        let app = this.ax.app();
+        let is_frontmost = trace("is_frontmost", &app, || this.ax.frontmost(&app))?;
 
         // Focus-follows-mouse can enqueue a final hover transition while the
         // pointer is moving off a window (for example, into the menu bar).
@@ -825,17 +830,13 @@ impl State {
             return Ok(());
         }
 
-        let window_server_id = match WindowServerId::try_from(&this.window(first)?.elem) {
-            Ok(wsid) => Some(wsid),
-            Err(AxError::NotFound) => {
-                debug!(
-                    ?first,
-                    "Skipping make-key request because window has no server id yet"
-                );
-                None
-            }
-            Err(err) => return Err(err.into()),
-        };
+        let window_server_id = this.ax.window_server_id(&this.window(first)?.elem);
+        if window_server_id.is_none() {
+            debug!(
+                ?first,
+                "Skipping make-key request because window has no server id yet"
+            );
+        }
         let make_key_result =
             window_server_id.map(|wsid| window_server::make_key_window(this.pid, wsid));
         if let Some(Err(err)) = &make_key_result {
@@ -856,16 +857,17 @@ impl State {
             // must not leave process activation detached from its target window.
             let window = this.window(first)?;
             trace("raise before activation wait", &window.elem, || {
-                window.elem.raise()
+                this.ax.raise(&window.elem)
             })?;
 
             if wids.len() == 1 {
                 // `quiet` only applies if the first window is also the last.
                 let quiet_window_change = (quiet == Quiet::Yes).then_some(first);
-                Self::wait_for_activation(this, quiet, quiet_window_change, &token).await?;
+                Self::wait_for_activation(this_ref, this, quiet, quiet_window_change, &token)
+                    .await?;
             } else {
                 // Windows before the last are always quiet.
-                Self::wait_for_activation(this, Quiet::Yes, Some(first), &token).await?;
+                Self::wait_for_activation(this_ref, this, Quiet::Yes, Some(first), &token).await?;
             }
             this = this_ref.borrow_mut();
         } else {
@@ -881,7 +883,7 @@ impl State {
                 trace!(?wid, "Skipping duplicate raise after activation wait");
             } else {
                 let window = this.window(wid)?;
-                trace("raise", &window.elem, || window.elem.raise())?;
+                trace("raise", &window.elem, || this.ax.raise(&window.elem))?;
             }
 
             // TODO: Check the frontmost (layer 0) window of the window server and retry if necessary.
@@ -916,7 +918,9 @@ impl State {
         quiet_if: Option<WindowId>,
         allow_register: bool,
     ) -> Option<WindowId> {
-        let elem = match trace("main_window", &self.app, || self.app.main_window()) {
+        let elem = match trace("main_window", &self.ax.app(), || {
+            self.ax.main_window(&self.ax.app())
+        }) {
             Ok(elem) => elem,
             Err(e) => {
                 if self.windows.is_empty() {
@@ -990,7 +994,9 @@ impl State {
     }
 
     fn on_ax_activation_changed(&mut self) -> Result<(), AxError> {
-        let is_frontmost = trace("is_frontmost", &self.app, || self.app.frontmost())?;
+        let is_frontmost = trace("is_frontmost", &self.ax.app(), || {
+            self.ax.frontmost(&self.ax.app())
+        })?;
         let old_frontmost = std::mem::replace(&mut self.is_frontmost, is_frontmost);
         debug!(
             "on_ax_activation_changed, pid={:?}, is_frontmost={:?}, old_frontmost={:?}",
@@ -1038,12 +1044,13 @@ impl State {
     }
 
     async fn wait_for_activation(
+        this_ref: &RefCell<Self>,
         mut this: std::cell::RefMut<'_, Self>,
         quiet_activation: Quiet,
         quiet_window_change: Option<WindowId>,
         token: &CancellationToken,
     ) -> Result<(), RaiseError> {
-        let app = this.app.clone();
+        let app = this.ax.app();
         let (tx, rx) = oneshot::channel();
         if let Some((_, _, _, prev_tx)) =
             this.last_activated
@@ -1062,7 +1069,7 @@ impl State {
                     return Err(RaiseError::RaiseCancelled);
                 }
                 _ = Timer::sleep(Duration::from_millis(10)) => {
-                    if app.frontmost().unwrap_or(false) {
+                    if this_ref.borrow().ax.frontmost(&app).unwrap_or(false) {
                         trace!("Activation observed via frontmost polling");
                         break;
                     }
@@ -1105,13 +1112,14 @@ impl State {
                 continue;
             }
             window.hidden_by_app = false;
-            let minimized = match trace("minimized", &window.elem, || window.elem.minimized()) {
-                Ok(minimized) => minimized,
-                Err(err) => {
-                    debug!(?wid, ?err, "Failed to read minimized state after app shown");
-                    false
-                }
-            };
+            let minimized =
+                match trace("minimized", &window.elem, || self.ax.minimized(&window.elem)) {
+                    Ok(minimized) => minimized,
+                    Err(err) => {
+                        debug!(?wid, ?err, "Failed to read minimized state after app shown");
+                        false
+                    }
+                };
             if minimized {
                 continue;
             }
@@ -1127,11 +1135,10 @@ impl State {
     #[must_use]
     fn register_window(
         &mut self,
-        elem: AXUIElement,
+        elem: W::Element,
         server_info_hint: Option<WindowServerInfo>,
     ) -> Option<(WindowInfo, WindowId, Option<WindowServerInfo>)> {
-        let Ok((mut info, server_info)) = WindowInfo::from_ax_element(&elem, server_info_hint)
-        else {
+        let Ok((mut info, server_info)) = self.ax.window_info(&elem, server_info_hint) else {
             return None;
         };
         let candidate = admissible::Candidate {
@@ -1155,7 +1162,7 @@ impl State {
 
         // TODO: improve this heuristic using ideas from AeroSpace(maybe implement a similar testing architecture based on ax dumps)
         if admissible::needs_title_element_to_be_standard(self.bundle_id.as_deref())
-            && elem.attribute("AXTitleUIElement").is_err()
+            && self.ax.read_attribute(&elem, "AXTitleUIElement").is_err()
         {
             info.is_standard = false;
         }
@@ -1167,12 +1174,11 @@ impl State {
         }
 
         let window_server_id = info.sys_id.filter(|sid| sid.as_nonzero().is_some()).or_else(|| {
-            WindowServerId::try_from(&elem)
-                .or_else(|e| {
-                    info!("Could not get window server id for {elem:?}: {e}");
-                    Err(e)
-                })
-                .ok()
+            let id = self.ax.window_server_id(&elem);
+            if id.is_none() {
+                info!("Could not get window server id for {elem:?}");
+            }
+            id
         });
 
         let idx = window_server_id.and_then(WindowServerId::as_nonzero).unwrap_or_else(|| {
@@ -1209,17 +1215,13 @@ impl State {
         Some((info, wid, server_info))
     }
 
-    fn register_window_notifications(&self, elem: &AXUIElement, wid: WindowId) -> bool {
-        match elem.role() {
+    fn register_window_notifications(&self, elem: &W::Element, wid: WindowId) -> bool {
+        match self.ax.role(elem) {
             Ok(role) if role == AX_WINDOW_ROLE => (),
             _ => return false,
         }
         for &(kind, notif) in WINDOW_NOTIFICATIONS {
-            let res = self.observer.add_notification_with_data(
-                elem,
-                notif,
-                encode_notification_data(kind, Some(wid)),
-            );
+            let res = self.ax.watch(elem, notif, encode_notification_data(kind, Some(wid)));
             if let Err(err) = res {
                 let is_already_registered = matches!(
                     err,
@@ -1234,7 +1236,7 @@ impl State {
         true
     }
 
-    fn rebind_window_element(&mut self, wid: WindowId, elem: AXUIElement, info: &WindowInfo) {
+    fn rebind_window_element(&mut self, wid: WindowId, elem: W::Element, info: &WindowInfo) {
         let Some(old_elem) = self.windows.get(&wid).map(|window| window.elem.clone()) else {
             return;
         };
@@ -1265,26 +1267,19 @@ impl State {
         debug!(?wid, "Rebound window to refreshed AX element");
     }
 
-    fn remove_window_notifications(&self, elem: &AXUIElement) {
+    fn remove_window_notifications(&self, elem: &W::Element) {
         for &(_, notif) in WINDOW_NOTIFICATIONS {
-            if let Err(err) = self.observer.remove_notification(elem, notif) {
-                trace!(
-                    ?elem,
-                    notif,
-                    ?err,
-                    "Could not remove notification from superseded AX element"
-                );
-            }
+            self.ax.unwatch(elem, notif);
         }
     }
 
     fn visible_window_server_info_map(
         &self,
-        window_elements: &[AXUIElement],
+        window_elements: &[W::Element],
     ) -> HashMap<WindowServerId, WindowServerInfo> {
         let wsids: Vec<WindowServerId> = window_elements
             .iter()
-            .filter_map(|elem| WindowServerId::try_from(elem).ok())
+            .filter_map(|elem| self.ax.window_server_id(elem))
             .collect();
         let mut info_by_id = HashMap::with_capacity_and_hasher(wsids.len(), Default::default());
         for info in window_server::get_windows(&wsids) {
@@ -1355,7 +1350,7 @@ impl State {
             // `kAXWindowsAttribute` is space-filtered and cannot be used to decide
             // whether a tracked window still exists globally. Only drop state when
             // the element itself has become invalid.
-            if let Err(error) = window.elem.role()
+            if let Err(error) = self.ax.role(&window.elem)
                 && is_gone(Self::failure_of(&error))
             {
                 to_remove.push(wid);
@@ -1378,18 +1373,18 @@ impl State {
         self.events_tx.send(event);
     }
 
-    fn window(&self, wid: WindowId) -> Result<&AppWindowState, AxError> {
+    fn window(&self, wid: WindowId) -> Result<&AppWindowState<W::Element>, AxError> {
         assert_eq!(wid.pid, self.pid);
         self.windows.get(&wid).ok_or(AxError::NotFound)
     }
 
-    fn window_mut(&mut self, wid: WindowId) -> Result<&mut AppWindowState, AxError> {
+    fn window_mut(&mut self, wid: WindowId) -> Result<&mut AppWindowState<W::Element>, AxError> {
         assert_eq!(wid.pid, self.pid);
         self.windows.get_mut(&wid).ok_or(AxError::NotFound)
     }
 
-    fn id(&self, elem: &AXUIElement) -> Result<WindowId, AxError> {
-        if let Ok(id) = WindowServerId::try_from(elem) {
+    fn id(&self, elem: &W::Element) -> Result<WindowId, AxError> {
+        if let Some(id) = self.ax.window_server_id(elem) {
             if let Some(idx) = id.as_nonzero() {
                 let wid = WindowId { pid: self.pid, idx };
                 if self.windows.contains_key(&wid) {
@@ -1405,7 +1400,7 @@ impl State {
 
     fn wid_for_notification(
         &self,
-        elem: &AXUIElement,
+        elem: &W::Element,
         hinted_wid: Option<WindowId>,
     ) -> Result<WindowId, AxError> {
         hinted_wid
@@ -1414,23 +1409,23 @@ impl State {
             .ok_or(AxError::NotFound)
     }
 
-    fn is_current_window_element(&self, wid: WindowId, elem: &AXUIElement) -> bool {
+    fn is_current_window_element(&self, wid: WindowId, elem: &W::Element) -> bool {
         self.windows.get(&wid).is_some_and(|window| window.elem == *elem)
     }
 
-    fn remove_window(&mut self, wid: WindowId) -> Option<AppWindowState> {
+    fn remove_window(&mut self, wid: WindowId) -> Option<AppWindowState<W::Element>> {
         let window = self.windows.remove(&wid)?;
         self.elem_to_wid.remove(&window.elem);
         Some(window)
     }
 }
 
-impl Drop for State {
+impl<W: AxWorld> Drop for State<W> {
     fn drop(&mut self) {
         if let Some((_, _, _, tx)) = self.last_activated.take() {
             let _ = tx.send(());
         }
-        self.enhanced_ui.restore_if_needed(&self.app);
+        self.ax.restore_enhanced_ui_if_needed();
     }
 }
 
@@ -1485,8 +1480,7 @@ fn app_thread_main(
         pid,
         running_app,
         bundle_id: info.bundle_id.clone(),
-        app: app.clone(),
-        observer,
+        ax: MacAx::new(app.clone(), observer),
         events_tx,
         windows: HashMap::default(),
         elem_to_wid: HashMap::default(),
@@ -1496,7 +1490,6 @@ fn app_thread_main(
         pending_activation_quiet: None,
         is_hidden: false,
         is_frontmost: false,
-        enhanced_ui: EnhancedUi::default(),
         raises_tx,
         tx_store,
     };
@@ -1505,9 +1498,9 @@ fn app_thread_main(
     Executor::run(state.run(info, requests_tx, requests_rx, notifications_rx, raises_rx));
 }
 
-fn trace<T>(
+fn trace<T, E: std::fmt::Debug>(
     desc: &str,
-    elem: &AXUIElement,
+    elem: &E,
     f: impl FnOnce() -> Result<T, AxError>,
 ) -> Result<T, AxError> {
     let start = Instant::now();
@@ -1517,7 +1510,6 @@ fn trace<T>(
     // to the app.
     trace!(time = ?(end - start), /*?elem,*/ "{desc:12}");
     if let Err(err) = &out {
-        let app = elem.parent().ok().flatten();
         match err {
             AxError::Ax(ax_err)
                 if matches!(
@@ -1528,7 +1520,7 @@ fn trace<T>(
                 debug!("{desc} failed with {err} - app may have quit or become unresponsive");
             }
             _ => {
-                debug!("{desc} failed with {err} for element {elem:#?} with parent {app:#?}");
+                debug!("{desc} failed with {err} for element {elem:#?}");
             }
         }
     }

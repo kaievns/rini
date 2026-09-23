@@ -20,6 +20,8 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use rini_core::ids::WindowServerId;
 
+use crate::windows::domain::info::{WindowInfo, WindowServerInfo};
+
 use super::element::{AXUIElement, Error as AxError};
 use super::enhanced_ui::EnhancedUi;
 use super::observer::Observer;
@@ -61,6 +63,16 @@ pub trait AxWorld {
     fn raise(&self, elem: &Self::Element) -> Result<(), AxError>;
     fn can_resize(&self, elem: &Self::Element) -> Result<bool, AxError>;
     fn modal(&self, elem: &Self::Element) -> Result<bool, AxError>;
+
+    /// Everything rini records about a window, read in one go.
+    ///
+    /// A composition of the reads above plus a window-server lookup for the owning bundle, kept on the
+    /// world so a fake answers it the same way it answers the parts.
+    fn window_info(
+        &self,
+        elem: &Self::Element,
+        hint: Option<WindowServerInfo>,
+    ) -> Result<(WindowInfo, Option<WindowServerInfo>), AxError>;
 
     /// The window server's own id for this element, if it has one.
     ///
@@ -186,6 +198,14 @@ impl AxWorld for MacAx {
 
     fn modal(&self, elem: &AXUIElement) -> Result<bool, AxError> {
         elem.modal()
+    }
+
+    fn window_info(
+        &self,
+        elem: &AXUIElement,
+        hint: Option<WindowServerInfo>,
+    ) -> Result<(WindowInfo, Option<WindowServerInfo>), AxError> {
+        WindowInfo::from_ax_element(elem, hint)
     }
 
     fn window_server_id(&self, elem: &AXUIElement) -> Option<WindowServerId> {
