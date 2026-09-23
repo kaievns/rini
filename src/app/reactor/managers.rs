@@ -1,24 +1,21 @@
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_core::ids::{SpaceId, WindowId, pid_t};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tracing::trace;
 
 use super::replay::Record;
 use super::{AppState, Event, WorkspaceSwitchOrigin, WorkspaceSwitchState};
-use crate::app::channels;
-use rini_core::ids::{WindowId, pid_t};
-use crate::input::domain::drag_swap::DragManager as DragSwapManager;
 use crate::app::reactor::Reactor;
 use crate::app::reactor::animation::AnimationManager;
+use crate::app::{channels, hotkeys as wm_controller};
 use crate::displays::domain::topology::ForwardedSpaceState;
-use crate::input::platform::gesture_tap;
-use crate::input::platform::input_tap as event_tap;
-use crate::app::hotkeys as wm_controller;
 use crate::displays::platform::window_notify;
-use crate::windows::domain::raise as raise_manager;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::input::domain::drag_swap::DragManager as DragSwapManager;
+use crate::input::platform::{gesture_tap, input_tap as event_tap};
 use crate::input::settings::WindowSnappingSettings;
+use crate::windows::domain::raise as raise_manager;
 use crate::workspaces::LayoutEngine;
 use crate::workspaces::broadcast::BroadcastSender;
-use rini_core::ids::SpaceId;
 
 /// Manages application state and rules
 pub struct AppManager {
@@ -26,9 +23,7 @@ pub struct AppManager {
 }
 
 impl AppManager {
-    pub fn new() -> Self {
-        AppManager { apps: HashMap::default() }
-    }
+    pub fn new() -> Self { AppManager { apps: HashMap::default() } }
 }
 
 /// Manages drag operations and window swapping
@@ -39,21 +34,13 @@ pub struct DragManager {
 }
 
 impl DragManager {
-    pub fn reset(&mut self) {
-        self.drag_swap_manager.reset();
-    }
+    pub fn reset(&mut self) { self.drag_swap_manager.reset(); }
 
-    pub fn last_target(&self) -> Option<WindowId> {
-        self.drag_swap_manager.last_target()
-    }
+    pub fn last_target(&self) -> Option<WindowId> { self.drag_swap_manager.last_target() }
 
-    pub fn dragged(&self) -> Option<WindowId> {
-        self.drag_swap_manager.dragged()
-    }
+    pub fn dragged(&self) -> Option<WindowId> { self.drag_swap_manager.dragged() }
 
-    pub fn origin_frame(&self) -> Option<CGRect> {
-        self.drag_swap_manager.origin_frame()
-    }
+    pub fn origin_frame(&self) -> Option<CGRect> { self.drag_swap_manager.origin_frame() }
 
     pub fn update_config(&mut self, config: WindowSnappingSettings) {
         self.drag_swap_manager.update_config(config);
@@ -64,6 +51,19 @@ impl DragManager {
 pub struct NotificationManager {
     pub last_sls_notification_ids: Vec<u32>,
     pub _window_notify_tx: Option<window_notify::Sender>,
+}
+
+impl NotificationManager {
+    /// The sorted id list to tell the window server about, or `None` if it already knows.
+    ///
+    /// Sorted because the caller collects from a hash map, so the same set arrives in a different
+    /// order each time and an unsorted comparison would resubscribe on every event. The subscription
+    /// is a system call per change, and the set is unchanged for most events.
+    pub fn notification_ids_to_publish(&self, ids: impl Iterator<Item = u32>) -> Option<Vec<u32>> {
+        let mut ids: Vec<u32> = ids.collect();
+        ids.sort_unstable();
+        (ids != self.last_sls_notification_ids).then_some(ids)
+    }
 }
 
 /// Manages menu state and interactions
@@ -142,9 +142,7 @@ impl RefreshQuarantineManager {
         }
     }
 
-    pub fn blocks_refreshes(&self) -> bool {
-        self.state() != RefreshQuarantineState::Ready
-    }
+    pub fn blocks_refreshes(&self) -> bool { self.state() != RefreshQuarantineState::Ready }
 }
 
 /// Manages communication channels to other actors
@@ -365,7 +363,7 @@ pub struct PendingSpaceChangeManager {
 mod tests {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::{WINDOW_HIDDEN_THRESHOLD, bound_frame_to_screen};
+    use super::{NotificationManager, WINDOW_HIDDEN_THRESHOLD, bound_frame_to_screen};
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -466,5 +464,55 @@ mod tests {
         let bounded = bound_frame_to_screen(frame, screen);
         assert_eq!(bounded.origin.x, 2998.0);
         assert_eq!(bounded.size.width, 600.0);
+    }
+
+    fn manager(last: &[u32]) -> NotificationManager {
+        NotificationManager {
+            last_sls_notification_ids: last.to_vec(),
+            _window_notify_tx: None,
+        }
+    }
+
+    #[test]
+    fn a_new_window_is_published() {
+        let manager = manager(&[1, 2]);
+        assert_eq!(
+            manager.notification_ids_to_publish([1, 2, 3].into_iter()),
+            Some(vec![1, 2, 3])
+        );
+    }
+
+    /// The caller collects from a hash map, so the same set arrives in a different order each time.
+    /// Comparing unsorted would resubscribe on every event, and each resubscribe is a system call.
+    #[test]
+    fn the_same_set_in_a_different_order_publishes_nothing() {
+        let manager = manager(&[1, 2, 3]);
+        assert_eq!(manager.notification_ids_to_publish([3, 1, 2].into_iter()), None);
+    }
+
+    #[test]
+    fn a_closed_window_is_published() {
+        let manager = manager(&[1, 2, 3]);
+        assert_eq!(
+            manager.notification_ids_to_publish([1, 3].into_iter()),
+            Some(vec![1, 3])
+        );
+    }
+
+    #[test]
+    fn the_last_window_closing_is_published_as_an_empty_set() {
+        let manager = manager(&[1]);
+        assert_eq!(
+            manager.notification_ids_to_publish(std::iter::empty()),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn nothing_tracked_and_nothing_known_publishes_nothing() {
+        assert_eq!(
+            manager(&[]).notification_ids_to_publish(std::iter::empty()),
+            None
+        );
     }
 }

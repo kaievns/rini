@@ -16,6 +16,6 @@ they are all closed.
 | 6 | `rini-cli` 824 lines, 2 tests | **done** 2 -> 10 tests, incl. a no-collision sweep |
 | 8 | `FIXME mod.rs:501` restored state keeps dead apps | **done** stale: already handled at load, and tested |
 | 2 | `LayoutEngine` owns 14 things | **partly** IPC channel out (14 -> 13 fields, now an outbox the app drains); `display_affinity` + `launch_memory` remain, woven into the save format |
-| 3 | `Reactor` holds every store | **partly** frame writing is now `Present` (`&mut WindowStore` + `&TransactionManager`); `handle_layout_response` 303 -> 248 and `handle_authoritative_space_snapshot` 251 -> 228, 5 rules out to `raise_order` + `boundary` + `display_set_delta`, 24 tests, and the batching bug that reversed the raise order is fixed |
+| 3 | `Reactor` holds every store | **partly** frame writing is now `Present` (`&mut WindowStore` + `&TransactionManager`); `handle_layout_response` 303 -> 248 and `handle_authoritative_space_snapshot` 251 -> 228, 8 rules out to `raise_order`, `boundary`, `display_set_delta`, `ArrangeRequest`, `EventOutcome` and `NotificationManager`, 38 tests, and the batching bug that reversed the raise order is fixed |
 | 4 | 5,949-line integration test file | **done** 15 fixtures -> `fixtures.rs`, then 184 cases -> 8 subject files under `src/app/reactor/tests/`, largest 1,920 lines |
 | 7 | `app_actor.rs` 1,376 lines, 0 tests | **partly** admission rules -> `domain/admissible.rs`, 11 tests; the AX driver itself still needs a fake element seam |

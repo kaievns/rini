@@ -1,15 +1,12 @@
 use objc2_core_foundation::{CGPoint, CGRect};
+use rini_core::ids::{SpaceId, WindowId, WindowServerId, pid_t};
 
-use crate::windows::domain::info::{AppInfo, WindowInfo};
-use crate::windows::domain::request::Request;
-use rini_core::ids::{WindowId, pid_t};
-use crate::windows::domain::raise as raise_manager;
-use crate::app::hotkeys::WmEvent;
 use crate::app::config::Config;
+use crate::app::hotkeys::WmEvent;
+use crate::windows::domain::info::{AppInfo, WindowInfo, WindowServerInfo};
+use crate::windows::domain::raise as raise_manager;
+use crate::windows::domain::request::Request;
 use crate::workspaces::{Direction, EventResponse, LayoutEvent};
-use rini_core::ids::SpaceId;
-use rini_core::ids::WindowServerId;
-use crate::windows::domain::info::WindowServerInfo;
 
 #[derive(Debug)]
 pub(crate) struct WindowDiscoveryRequest {
@@ -32,7 +29,6 @@ pub(crate) struct WindowTitleBroadcast {
     pub(crate) previous_title: String,
     pub(crate) new_title: String,
 }
-
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TopologyReassignment {
@@ -93,10 +89,38 @@ pub(crate) struct ArrangeRequest {
     pub(crate) space_scope: Option<SpaceId>,
 }
 
+impl ArrangeRequest {
+    /// How many arrange passes to run, or `None` for none.
+    ///
+    /// A drag suppresses arranging: the user is holding the window and a pass would fight them. The
+    /// exception is a window that was DESTROYED mid-drag, where the drag is over as far as the strip
+    /// is concerned and the gap it left has to close.
+    ///
+    /// A requested arrange always runs at least once. `passes` is 0 on the constructors that set
+    /// `requested` directly, and taking that literally would ask for an arrange and then not do one.
+    pub(crate) fn passes_to_run(&self, in_drag: bool) -> Option<u8> {
+        if !self.requested || (in_drag && !self.window_was_destroyed) {
+            return None;
+        }
+        Some(self.passes.max(1))
+    }
+}
+
 impl EventOutcome {
     /// The event was observed, but it does not require any follow-up work.
-    pub(crate) fn no_change() -> Self {
-        Self::default()
+    pub(crate) fn no_change() -> Self { Self::default() }
+
+    /// Whether focus came to rest somewhere as a result of this event.
+    ///
+    /// Either the outcome names the window directly, or a layout event does. Both count: a click
+    /// reports focus with no layout change at all, and macOS raised only the window that was clicked,
+    /// so the strip still needs regrouping over whatever the click put in front of it.
+    pub(crate) fn focus_landed(&self) -> bool {
+        self.focused_window.is_some()
+            || self
+                .layout_events
+                .iter()
+                .any(|event| matches!(event, LayoutEvent::WindowFocused(..)))
     }
 
     /// Combines follow-up work produced by nested reducers while preserving
@@ -287,7 +311,6 @@ impl EventOutcome {
         self
     }
 
-
     pub(crate) fn with_wm_event(mut self, event: WmEvent) -> Self {
         self.wm_events.push(event);
         self
@@ -473,5 +496,71 @@ mod tests {
             EventOutcome::layout_changed(false).with_arrange_space_scope(Some(second_space)),
         );
         assert_eq!(outcome.arrange.space_scope, None);
+    }
+
+    fn arrange(requested: bool, passes: u8, window_was_destroyed: bool) -> ArrangeRequest {
+        ArrangeRequest {
+            requested,
+            passes,
+            window_was_destroyed,
+            ..ArrangeRequest::default()
+        }
+    }
+
+    #[test]
+    fn an_arrange_that_was_not_asked_for_runs_no_passes() {
+        assert_eq!(arrange(false, 3, false).passes_to_run(false), None);
+    }
+
+    /// A requested arrange always runs at least once. Several constructors set `requested` without
+    /// setting `passes`, and taking that literally would ask for an arrange and then not do one.
+    #[test]
+    fn a_requested_arrange_with_no_pass_count_still_runs_once() {
+        assert_eq!(arrange(true, 0, false).passes_to_run(false), Some(1));
+    }
+
+    #[test]
+    fn a_pass_count_is_taken_as_given() {
+        assert_eq!(arrange(true, 3, false).passes_to_run(false), Some(3));
+    }
+
+    /// A drag suppresses arranging: the user is holding the window and a pass would fight them.
+    #[test]
+    fn a_drag_suppresses_the_arrange() {
+        assert_eq!(arrange(true, 2, false).passes_to_run(true), None);
+    }
+
+    /// Unless the window was destroyed mid-drag. The drag is over as far as the strip is concerned
+    /// and the gap it left has to close.
+    #[test]
+    fn a_window_destroyed_mid_drag_arranges_anyway() {
+        assert_eq!(arrange(true, 2, true).passes_to_run(true), Some(2));
+    }
+
+    #[test]
+    fn a_named_focused_window_is_focus_landing() {
+        let outcome = EventOutcome::focus_changed(Some(WindowId::new(1, 1)), false);
+        assert!(outcome.focus_landed());
+    }
+
+    /// A click reports focus with no layout change at all, and macOS raised only the window that was
+    /// clicked, so the strip still needs regrouping over whatever the click put in front of it.
+    #[test]
+    fn a_layout_focus_event_alone_is_focus_landing() {
+        let outcome = EventOutcome::default()
+            .with_layout_event(LayoutEvent::WindowFocused(SpaceId::new(1), WindowId::new(1, 1)));
+        assert!(outcome.focus_landed());
+    }
+
+    #[test]
+    fn a_layout_event_that_is_not_a_focus_is_not_focus_landing() {
+        let outcome = EventOutcome::default()
+            .with_layout_event(LayoutEvent::WindowAdded(SpaceId::new(1), WindowId::new(1, 1)));
+        assert!(!outcome.focus_landed());
+    }
+
+    #[test]
+    fn nothing_happening_is_not_focus_landing() {
+        assert!(!EventOutcome::no_change().focus_landed());
     }
 }

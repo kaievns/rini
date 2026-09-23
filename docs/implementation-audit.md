@@ -206,8 +206,14 @@ reaches: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
 `transaction_manager` 11, `pending_space_change_manager` 3. Eight "manager"
 structs plus `RiniState`.
 
-Largest methods: `handle_layout_response` (303 → 248), `dispatch_workflow` (288),
-`apply_event_outcome` (271), `handle_authoritative_space_snapshot` (251 → 228).
+Largest methods, and what each one turned out to be:
+
+| method | lines | verdict |
+|---|---|---|
+| `handle_layout_response` | 303 → 248 | four rules extracted, one of them a bug fix |
+| `dispatch_workflow` | 288 | a dispatch table; length is not the defect |
+| `apply_event_outcome` | 271 → 261 | three rules extracted; the rest is an ordered drain |
+| `handle_authoritative_space_snapshot` | 251 → 228 | the display-set comparison extracted |
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
@@ -220,6 +226,14 @@ correctness hazard rather than a length one: the previous display set was captur
 inline, one line before the field holding it was overwritten, and a comment was all
 that kept the two statements in that order. The function now takes both lists as
 arguments.
+
+`apply_event_outcome` gave up three rules: `ArrangeRequest::passes_to_run`,
+`EventOutcome::focus_landed` and `NotificationManager::notification_ids_to_publish`,
+with 14 tests. What is left is a drain of 35 outcome fields in one deliberate order, and
+it stays one function on purpose: it takes `outcome` BY VALUE, so partial moves make the
+compiler prove every field is consumed exactly once. Splitting it into phase methods
+means passing `&mut EventOutcome` and `mem::take`-ing fields, which trades a
+compiler-checked invariant for four shorter functions.
 
 `dispatch_workflow` is long because it is a dispatch table — one arm per event variant,
 every arm delegating. Length is not the defect there and splitting it by event family

@@ -1472,6 +1472,8 @@ impl Reactor {
     fn apply_event_outcome(&mut self, outcome: EventOutcome) {
         // Per event: what this event's regroup raises is only known to this event.
         self.regroup_raised.clear();
+        // Read before the drains below start moving fields out of `outcome`.
+        let focus_landed = outcome.focus_landed();
         // Ahead of the layout events, as on the AX path: the closed window's picture goes first.
         for window in outcome.forgotten_windows {
             if let Some(tx) = &self.communication_manager.workspace_animation_tx {
@@ -1598,8 +1600,6 @@ impl Reactor {
             }
         }
 
-        let focus_landed = outcome.focused_window.is_some()
-            || outcome.layout_events.iter().any(|event| matches!(event, LayoutEvent::WindowFocused(..)));
         for event in outcome.layout_events {
             self.send_layout_event(event);
         }
@@ -1614,9 +1614,8 @@ impl Reactor {
         }
 
         let mut layout_changed = false;
-        if outcome.arrange.requested && (!self.is_in_drag() || outcome.arrange.window_was_destroyed)
-        {
-            for _ in 0..outcome.arrange.passes.max(1) {
+        if let Some(passes) = outcome.arrange.passes_to_run(self.is_in_drag()) {
+            for _ in 0..passes {
                 layout_changed |= self.update_layout_or_warn(
                     outcome.arrange.is_resize,
                     matches!(
@@ -1701,17 +1700,10 @@ impl Reactor {
         }
 
         if outcome.refresh_window_notifications {
-            let mut ids: Vec<u32> = self
-                .state
-                .windows
-                .iter_tracked_window_server_ids()
-                .map(|wsid| wsid.as_u32())
-                .collect();
-            ids.sort_unstable();
-
-            if ids != self.notification_manager.last_sls_notification_ids {
+            let tracked =
+                self.state.windows.iter_tracked_window_server_ids().map(|wsid| wsid.as_u32());
+            if let Some(ids) = self.notification_manager.notification_ids_to_publish(tracked) {
                 crate::displays::platform::cgs_notify::update_window_notifications(&ids);
-
                 self.notification_manager.last_sls_notification_ids = ids;
             }
         }
