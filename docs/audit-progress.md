@@ -19,3 +19,4 @@ they are all closed.
 | 3 | `Reactor` holds every store | **partly** frame writing is now `Present` (`&mut WindowStore` + `&TransactionManager`); `handle_layout_response` 303 -> 248 and `handle_authoritative_space_snapshot` 251 -> 228, 8 rules out to `raise_order`, `boundary`, `display_set_delta`, `ArrangeRequest`, `EventOutcome` and `NotificationManager`, 38 tests, and the batching bug that reversed the raise order is fixed |
 | 4 | 5,949-line integration test file | **done** 15 fixtures -> `fixtures.rs`, then 184 cases -> 8 subject files under `src/app/reactor/tests/`, largest 1,920 lines |
 | 7 | `app_actor.rs` 1,376 lines, 0 tests | **partly** admission rules -> `domain/admissible.rs`, 11 tests; the AX driver itself still needs a fake element seam |
+| 4b | `spaces.rs` buffering policy inline | **done** the `#[cfg(test)]` forks become an injected `SpaceKinds`; 3 rules out to `domain::topology`; two predicates with one body become `must_buffer`; 14 tests |

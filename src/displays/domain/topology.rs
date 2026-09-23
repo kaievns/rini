@@ -213,6 +213,70 @@ pub fn analyze_space_snapshot(
         invalidates_pending_targets,
     }
 }
+/// What to do with the two halves of a buffered snapshot once the actor is settled again.
+///
+/// The screen list and the space list arrive from two different native callbacks, so a buffered
+/// snapshot can hold either, both, or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferedSnapshot {
+    /// Both halves, agreeing on how many screens there are. Zip the spaces onto the screens and
+    /// forward one snapshot: forwarding the two separately lets the reactor see the new topology
+    /// with the old space ids and act between them.
+    Merge,
+    /// Both halves, disagreeing on the screen count. Neither half is worth forwarding on its own, so
+    /// resample.
+    Resample,
+    /// Only the screens were buffered.
+    ScreensOnly,
+    /// Only the spaces were buffered.
+    SpacesOnly,
+    /// Nothing was buffered.
+    Nothing,
+}
+
+/// Decide what a buffered snapshot amounts to, from the size of each half.
+pub fn buffered_snapshot(screens: Option<usize>, spaces: Option<usize>) -> BufferedSnapshot {
+    match (screens, spaces) {
+        (Some(screens), Some(spaces)) if screens == spaces => BufferedSnapshot::Merge,
+        (Some(_), Some(_)) => BufferedSnapshot::Resample,
+        (Some(_), None) => BufferedSnapshot::ScreensOnly,
+        (None, Some(_)) => BufferedSnapshot::SpacesOnly,
+        (None, None) => BufferedSnapshot::Nothing,
+    }
+}
+
+/// Whether a snapshot's spaces are coherent enough to commit.
+///
+/// One user space may not appear on two screens at once. macOS reports exactly that mid-transition,
+/// and committing it assigns one space's windows to two displays. Fullscreen spaces are exempt:
+/// they are nulled out before anything reads them, so a repeat is not a contradiction.
+pub fn snapshot_spaces_are_coherent(
+    spaces: &[Option<SpaceId>],
+    is_fullscreen: impl Fn(SpaceId) -> bool,
+) -> bool {
+    let mut seen: HashSet<SpaceId> = HashSet::default();
+    spaces.iter().all(|space| match space {
+        Some(space) if !is_fullscreen(*space) => seen.insert(*space),
+        _ => true,
+    })
+}
+
+/// Whether a snapshot can be forwarded as authoritative.
+///
+/// An empty screen list is never authoritative — it is what macOS reports mid-reconfiguration, and
+/// treating it as the truth evacuates every window. `require_complete_spaces` additionally demands
+/// that every screen has a space: a screen whose space is still unknown means the sample was taken
+/// too early.
+pub fn snapshot_is_committable(
+    spaces: &[Option<SpaceId>],
+    require_complete_spaces: bool,
+    is_fullscreen: impl Fn(SpaceId) -> bool,
+) -> bool {
+    !spaces.is_empty()
+        && (!require_complete_spaces || spaces.iter().all(Option::is_some))
+        && snapshot_spaces_are_coherent(spaces, is_fullscreen)
+}
+
 /// What changed about the attached display set between two snapshots.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplaySetDelta {
@@ -511,5 +575,91 @@ mod tests {
         let delta = display_set_delta(&[], &uuids(&["A", "B"]), true);
         assert_eq!(delta.arrived, uuids(&["A", "B"]));
         assert!(delta.departed.is_empty());
+    }
+
+    #[test]
+    fn two_agreeing_halves_merge() {
+        assert_eq!(buffered_snapshot(Some(2), Some(2)), BufferedSnapshot::Merge);
+    }
+
+    /// Forwarding the two halves separately lets the reactor see the new topology with the old space
+    /// ids and act between them, so a disagreement is resampled rather than half-forwarded.
+    #[test]
+    fn two_disagreeing_halves_are_resampled() {
+        assert_eq!(buffered_snapshot(Some(2), Some(1)), BufferedSnapshot::Resample);
+        assert_eq!(buffered_snapshot(Some(1), Some(2)), BufferedSnapshot::Resample);
+    }
+
+    #[test]
+    fn one_half_forwards_on_its_own() {
+        assert_eq!(buffered_snapshot(Some(1), None), BufferedSnapshot::ScreensOnly);
+        assert_eq!(buffered_snapshot(None, Some(1)), BufferedSnapshot::SpacesOnly);
+    }
+
+    #[test]
+    fn nothing_buffered_is_nothing_to_do() {
+        assert_eq!(buffered_snapshot(None, None), BufferedSnapshot::Nothing);
+    }
+
+    /// Two empty halves still agree, which is a merge of nothing rather than a resample.
+    #[test]
+    fn two_empty_halves_agree() {
+        assert_eq!(buffered_snapshot(Some(0), Some(0)), BufferedSnapshot::Merge);
+    }
+
+    fn never_fullscreen(_: SpaceId) -> bool { false }
+
+    /// One user space on two screens at once is what macOS reports mid-transition. Committing it
+    /// assigns one space's windows to two displays.
+    #[test]
+    fn one_user_space_on_two_screens_is_not_coherent() {
+        let spaces = [Some(SpaceId::new(1)), Some(SpaceId::new(1))];
+        assert!(!snapshot_spaces_are_coherent(&spaces, never_fullscreen));
+    }
+
+    #[test]
+    fn distinct_user_spaces_are_coherent() {
+        let spaces = [Some(SpaceId::new(1)), Some(SpaceId::new(2))];
+        assert!(snapshot_spaces_are_coherent(&spaces, never_fullscreen));
+    }
+
+    /// Fullscreen spaces are nulled out before anything reads them, so a repeat is not a
+    /// contradiction. This is the rule the classifier had to become injectable to test.
+    #[test]
+    fn a_repeated_fullscreen_space_is_still_coherent() {
+        let fullscreen = SpaceId::new(99);
+        let spaces = [Some(fullscreen), Some(fullscreen)];
+        assert!(snapshot_spaces_are_coherent(&spaces, |space| space == fullscreen));
+        assert!(
+            !snapshot_spaces_are_coherent(&spaces, never_fullscreen),
+            "the same pair is incoherent once those ids are user spaces"
+        );
+    }
+
+    #[test]
+    fn a_screen_with_no_space_never_makes_a_snapshot_incoherent() {
+        let spaces = [None, None];
+        assert!(snapshot_spaces_are_coherent(&spaces, never_fullscreen));
+    }
+
+    /// An empty screen list is what macOS reports mid-reconfiguration. Treating it as the truth
+    /// evacuates every window.
+    #[test]
+    fn no_screens_is_never_committable() {
+        assert!(!snapshot_is_committable(&[], false, never_fullscreen));
+        assert!(!snapshot_is_committable(&[], true, never_fullscreen));
+    }
+
+    #[test]
+    fn an_unknown_space_blocks_a_complete_commit_only() {
+        let spaces = [Some(SpaceId::new(1)), None];
+        assert!(!snapshot_is_committable(&spaces, true, never_fullscreen));
+        assert!(snapshot_is_committable(&spaces, false, never_fullscreen));
+    }
+
+    #[test]
+    fn an_incoherent_snapshot_is_never_committable() {
+        let spaces = [Some(SpaceId::new(1)), Some(SpaceId::new(1))];
+        assert!(!snapshot_is_committable(&spaces, false, never_fullscreen));
     }
 }

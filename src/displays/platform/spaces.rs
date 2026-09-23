@@ -17,7 +17,11 @@ use rini_core::ids::SpaceId;
 use crate::displays::screen::managed_display_space_ids;
 use crate::displays::screen::ScreenCache;
 use crate::displays::domain::screen::{CoordinateConverter, ScreenInfo};
-use crate::displays::domain::topology::{ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta};
+use crate::displays::domain::topology::{
+    ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta,
+    BufferedSnapshot, buffered_snapshot, snapshot_is_committable,
+    snapshot_spaces_are_coherent,
+};
 
 const REFRESH_DEFAULT_DELAY_NS: i64 = 100_000_000;
 const REFRESH_SPACE_SWITCH_DELAY_NS: i64 = 50_000_000;
@@ -84,6 +88,60 @@ struct PendingScreenParameters {
 
 
 
+/// How a space id is classified.
+///
+/// Two window-server calls per space, injected rather than called directly, because every rule in
+/// this file that decides what to forward asks one of them. They used to be `#[cfg(test)]`-forked
+/// functions: under test `is_fullscreen` compared against a threshold and `is_user` returned `true`
+/// unconditionally, so the "only user spaces count" rule this actor exists to enforce was never the
+/// rule any test ran.
+#[derive(Clone, Copy)]
+pub struct SpaceKinds {
+    /// A fullscreen space, which is transient native state and must not reach the reactor.
+    pub(crate) is_fullscreen: fn(SpaceId) -> bool,
+    /// A user space (`SLSSpaceGetType == 0`). A login or system space is neither.
+    pub(crate) is_user: fn(SpaceId) -> bool,
+}
+
+impl SpaceKinds {
+    /// What the window server says. The only classifier production uses.
+    pub fn from_window_server() -> Self {
+        Self {
+            is_fullscreen: |space| {
+                crate::displays::platform::space_query::space_is_fullscreen(space.get())
+            },
+            is_user: |space| crate::displays::platform::space_query::space_is_user(space.get()),
+        }
+    }
+
+    /// The classification tests get by default: ids at or above `TEST_FULLSCREEN_SPACE` are
+    /// fullscreen, and everything else is a user space. A test that needs a non-user space builds
+    /// its own `SpaceKinds`.
+    pub(crate) fn for_tests() -> Self {
+        Self { is_fullscreen: |space| space.get() >= TEST_FULLSCREEN_SPACE, is_user: |_| true }
+    }
+
+    pub(crate) fn is_fullscreen(&self, space: SpaceId) -> bool {
+        (self.is_fullscreen)(space)
+    }
+
+    pub(crate) fn is_user(&self, space: SpaceId) -> bool {
+        (self.is_user)(space)
+    }
+
+    pub(crate) fn classify(&self, space: SpaceId) -> Option<SpaceEventKind> {
+        if self.is_fullscreen(space) {
+            Some(SpaceEventKind::Fullscreen)
+        } else {
+            self.is_user(space).then_some(SpaceEventKind::User)
+        }
+    }
+}
+
+/// The lowest space id the test classifier treats as fullscreen. macOS fullscreen space ids are far
+/// above any user space id, which is what makes a threshold a usable stand-in.
+pub(crate) const TEST_FULLSCREEN_SPACE: u64 = 0x400000000;
+
 pub struct AuthorityState {
     pub sleeping: bool,
     pub session_inactive: bool,
@@ -110,6 +168,7 @@ pub struct AuthorityState {
     pre_churn_visible_window_spaces: HashMap<WindowServerId, SpaceId>,
     pending_topology_window_delta: Option<TopologyWindowDelta>,
     timers_enabled: bool,
+    space_kinds: SpaceKinds,
 }
 
 impl Default for AuthorityState {
@@ -140,14 +199,30 @@ impl Default for AuthorityState {
             pre_churn_visible_window_spaces: HashMap::default(),
             pending_topology_window_delta: None,
             timers_enabled: true,
+            space_kinds: SpaceKinds::for_tests(),
         }
     }
 }
 
 impl AuthorityState {
+    /// Whether the actor must hold everything back rather than forward it.
+    ///
+    /// Asleep, at the login window, or mid display reconfiguration. In all three the native picture
+    /// is part-formed: screens appear without spaces, spaces are reported on the wrong display, and a
+    /// window's space is whatever it was before the transition started. Forwarding any of that makes
+    /// the reactor act on it.
+    ///
+    /// This was two methods with different names and identical bodies —
+    /// `should_buffer_topology_updates` and `should_quarantine_window_space_event` — which is how one
+    /// of them gets a fourth condition and the other does not.
+    pub(crate) fn must_buffer(&self) -> bool {
+        self.sleeping || self.session_inactive || self.display_churn_active
+    }
+
     fn runtime() -> Self {
         let mut state = Self::default();
         state.screen_cache = Some(ScreenCache::new(MainThreadMarker::new().unwrap()));
+        state.space_kinds = SpaceKinds::from_window_server();
         state
     }
 }
@@ -171,8 +246,19 @@ impl SpacesActor {
 
     #[cfg(test)]
     pub fn new_for_tests(events: Box<dyn EventSink>) -> (Self, Sender) {
+        Self::new_for_tests_classifying(events, SpaceKinds::for_tests())
+    }
+
+    /// A test actor that classifies spaces the way the test needs. The default classifier calls every
+    /// non-fullscreen space a user space, so a test about non-user spaces has to say so.
+    #[cfg(test)]
+    pub fn new_for_tests_classifying(
+        events: Box<dyn EventSink>,
+        space_kinds: SpaceKinds,
+    ) -> (Self, Sender) {
         let mut state = AuthorityState::default();
         state.timers_enabled = false;
+        state.space_kinds = space_kinds;
         Self::new_with_state(events, state)
     }
 
@@ -262,7 +348,7 @@ impl SpacesActor {
                 self.schedule_screen_refresh();
             }
             Notification::ScreenParametersChanged(screens, converter) => {
-                if self.should_buffer_topology_updates() {
+                if self.state.must_buffer() {
                     self.state.pending_screen_parameters =
                         Some(PendingScreenParameters { screens, converter });
                 } else {
@@ -270,7 +356,7 @@ impl SpacesActor {
                 }
             }
             Notification::SpaceChanged(spaces) => {
-                if self.should_buffer_topology_updates() {
+                if self.state.must_buffer() {
                     self.state.pending_spaces = Some(spaces);
                 } else {
                     self.forward_space_snapshot(spaces);
@@ -280,34 +366,34 @@ impl SpacesActor {
                 self.handle_space_inventory_changed();
             }
             Notification::SpaceCreated(space) => {
-                if !self.should_buffer_topology_updates() && self.classify_space(space).is_some() {
+                if !self.state.must_buffer() && self.state.space_kinds.classify(space).is_some() {
                     self.events.send(OutEvent::SpaceCreated(space));
                 }
                 self.handle_space_inventory_changed();
             }
             Notification::SpaceDestroyed(space) => {
-                if !self.should_buffer_topology_updates() && self.classify_space(space).is_some() {
+                if !self.state.must_buffer() && self.state.space_kinds.classify(space).is_some() {
                     self.events.send(OutEvent::SpaceDestroyed(space));
                 }
                 self.handle_space_inventory_changed();
             }
             Notification::WindowServerAppeared(wsid, sid) => {
-                if self.should_quarantine_window_space_event() {
+                if self.state.must_buffer() {
                     self.state.quarantine_stats.appeared_dropped += 1;
                 } else {
                     self.state.visible_window_spaces.insert(wsid, sid);
-                    if let Some(kind) = self.classify_space(sid) {
+                    if let Some(kind) = self.state.space_kinds.classify(sid) {
                         self.events.send(OutEvent::WindowServerAppeared(wsid, sid, kind));
                     }
                 }
             }
             Notification::WindowServerDestroyed(wsid, sid) => {
-                if self.should_quarantine_window_space_event() {
+                if self.state.must_buffer() {
                     self.state.quarantine_stats.destroyed_dropped += 1;
                 } else {
                     self.state.visible_window_spaces.remove(&wsid);
                     let current_space = window_server::window_space(wsid);
-                    if let Some(kind) = self.classify_space(sid) {
+                    if let Some(kind) = self.state.space_kinds.classify(sid) {
                         if matches!(kind, SpaceEventKind::User)
                             && let Some(current_space) = current_space
                             && current_space != sid
@@ -346,7 +432,7 @@ impl SpacesActor {
             return;
         }
 
-        if self.should_buffer_topology_updates() {
+        if self.state.must_buffer() {
             self.schedule_screen_refresh_after(0, 0);
             return;
         }
@@ -380,7 +466,7 @@ impl SpacesActor {
     fn handle_active_space_changed(&mut self) {
         self.state.awaiting_space_switch_confirmation = true;
 
-        if self.should_buffer_topology_updates() {
+        if self.state.must_buffer() {
             self.schedule_screen_refresh_after(REFRESH_SPACE_SWITCH_DELAY_NS, 0);
             return;
         }
@@ -391,7 +477,7 @@ impl SpacesActor {
     }
 
     fn handle_space_inventory_changed(&mut self) {
-        if self.should_buffer_topology_updates() {
+        if self.state.must_buffer() {
             self.schedule_screen_refresh_after(0, 0);
             return;
         }
@@ -401,14 +487,6 @@ impl SpacesActor {
         if !self.try_forward_authoritative_snapshot(true, true) {
             self.schedule_screen_refresh_after(REFRESH_RETRY_DELAY_NS, 0);
         }
-    }
-
-    fn should_buffer_topology_updates(&self) -> bool {
-        self.state.sleeping || self.state.session_inactive || self.state.display_churn_active
-    }
-
-    fn should_quarantine_window_space_event(&self) -> bool {
-        self.state.sleeping || self.state.session_inactive || self.state.display_churn_active
     }
 
     fn collect_state(&mut self) -> Option<(Vec<ScreenInfo>, CoordinateConverter)> {
@@ -465,7 +543,7 @@ impl SpacesActor {
         let fullscreen_spaces: HashSet<SpaceId> = screens
             .iter()
             .filter_map(|screen| screen.space)
-            .filter(|space| Self::is_fullscreen_space(*space))
+            .filter(|space| self.state.space_kinds.is_fullscreen(*space))
             .collect();
         let mut screens = screens;
         self.preserve_user_spaces_during_fullscreen_transition(&previous_screens, &mut screens);
@@ -612,11 +690,11 @@ impl SpacesActor {
             let Some(new_space) = next.space else {
                 return false;
             };
-            Self::is_fullscreen_space(new_space)
+            self.state.space_kinds.is_fullscreen(new_space)
                 && previous_by_display
                     .get(display_uuid)
                     .and_then(|screen| screen.space)
-                    .is_some_and(|previous_space| !Self::is_fullscreen_space(previous_space))
+                    .is_some_and(|previous_space| !self.state.space_kinds.is_fullscreen(previous_space))
         });
         if !entering_fullscreen {
             return;
@@ -627,7 +705,7 @@ impl SpacesActor {
             .filter_map(|screen| {
                 let display_uuid = screen.display_uuid_opt()?;
                 let space = screen.space?;
-                (!Self::is_fullscreen_space(space)).then_some((space, display_uuid))
+                (!self.state.space_kinds.is_fullscreen(space)).then_some((space, display_uuid))
             })
             .collect();
 
@@ -641,13 +719,13 @@ impl SpacesActor {
             let Some(new_space) = next.space else {
                 continue;
             };
-            if Self::is_fullscreen_space(new_space) {
+            if self.state.space_kinds.is_fullscreen(new_space) {
                 continue;
             }
             let Some(previous_space) = previous.space else {
                 continue;
             };
-            if previous_space == new_space || Self::is_fullscreen_space(previous_space) {
+            if previous_space == new_space || self.state.space_kinds.is_fullscreen(previous_space) {
                 continue;
             }
             let should_rewrite =
@@ -662,7 +740,7 @@ impl SpacesActor {
 
     fn null_fullscreen_spaces(&self, screens: &mut [ScreenInfo]) {
         for screen in screens {
-            if screen.space.is_some_and(Self::is_fullscreen_space) {
+            if screen.space.is_some_and(|space| self.state.space_kinds.is_fullscreen(space)) {
                 screen.space = None;
             }
         }
@@ -671,7 +749,7 @@ impl SpacesActor {
     fn null_non_user_spaces(&self, screens: &mut [ScreenInfo]) {
         for screen in screens {
             if screen.space.is_some_and(|space| {
-                !Self::is_fullscreen_space(space) && !Self::is_user_space(space)
+                !self.state.space_kinds.is_fullscreen(space) && !self.state.space_kinds.is_user(space)
             }) {
                 screen.space = None;
             }
@@ -796,37 +874,6 @@ impl SpacesActor {
             }
 
             screens.iter().find_map(|screen| screen.space)
-        }
-    }
-
-    fn is_fullscreen_space(space: SpaceId) -> bool {
-        #[cfg(test)]
-        {
-            space.get() >= 0x400000000
-        }
-        #[cfg(not(test))]
-        {
-            crate::displays::platform::space_query::space_is_fullscreen(space.get())
-        }
-    }
-
-    fn is_user_space(space: SpaceId) -> bool {
-        #[cfg(test)]
-        {
-            let _ = space;
-            true
-        }
-        #[cfg(not(test))]
-        {
-            crate::displays::platform::space_query::space_is_user(space.get())
-        }
-    }
-
-    fn classify_space(&self, space: SpaceId) -> Option<SpaceEventKind> {
-        if Self::is_fullscreen_space(space) {
-            Some(SpaceEventKind::Fullscreen)
-        } else {
-            Self::is_user_space(space).then_some(SpaceEventKind::User)
         }
     }
 
@@ -962,61 +1009,45 @@ impl SpacesActor {
     }
 
     fn flush_pending_if_stable(&mut self) {
-        if self.should_buffer_topology_updates() {
+        if self.state.must_buffer() {
             return;
         }
 
-        let pending_screen_parameters = self.state.pending_screen_parameters.take();
+        let pending_screens = self.state.pending_screen_parameters.take();
         let pending_spaces = self.state.pending_spaces.take();
 
-        match (pending_screen_parameters, pending_spaces) {
-            (Some(pending), Some(spaces)) if pending.screens.len() == spaces.len() => {
-                // These two callbacks describe one native snapshot. Merge them before
-                // forwarding so the reactor's churn quarantine cannot observe the topology
-                // with stale space IDs and release between two WM events.
+        match buffered_snapshot(
+            pending_screens.as_ref().map(|pending| pending.screens.len()),
+            pending_spaces.as_ref().map(Vec::len),
+        ) {
+            BufferedSnapshot::Merge => {
+                let pending = pending_screens.expect("Merge means both halves are present");
+                let spaces = pending_spaces.expect("Merge means both halves are present");
                 let mut screens = pending.screens;
                 for (screen, space) in screens.iter_mut().zip(spaces) {
                     screen.space = space;
                 }
                 self.forward_screen_parameters(screens, pending.converter);
             }
-            (Some(_), Some(_)) => {
-                // A topology/space count mismatch is not coherent enough to commit.
-                // Resample once the native state is ready instead of forwarding either
-                // half of the buffered snapshot.
+            BufferedSnapshot::Resample => {
                 if !self.try_forward_authoritative_snapshot(true, true) {
                     self.schedule_screen_refresh_after(0, 0);
                 }
             }
-            (Some(pending), None) => {
+            BufferedSnapshot::ScreensOnly => {
+                let pending = pending_screens.expect("ScreensOnly means the screens are present");
                 self.forward_screen_parameters(pending.screens, pending.converter);
             }
-            (None, Some(spaces)) => {
+            BufferedSnapshot::SpacesOnly => {
+                let spaces = pending_spaces.expect("SpacesOnly means the spaces are present");
                 self.forward_space_snapshot(spaces);
             }
-            (None, None) => {}
+            BufferedSnapshot::Nothing => {}
         }
     }
 
-    fn screen_snapshot_is_valid_for_commit(screens: &[ScreenInfo]) -> bool {
-        let mut seen_user_spaces: HashSet<SpaceId> = HashSet::default();
-        screens.iter().all(|screen| match screen.space {
-            Some(space) if !Self::is_fullscreen_space(space) => seen_user_spaces.insert(space),
-            _ => true,
-        })
-    }
-
-    fn screen_snapshot_is_ready_for_authoritative_commit(
-        screens: &[ScreenInfo],
-        require_complete_spaces: bool,
-    ) -> bool {
-        !screens.is_empty()
-            && (!require_complete_spaces || screens.iter().all(|screen| screen.space.is_some()))
-            && Self::screen_snapshot_is_valid_for_commit(screens)
-    }
-
     fn process_screen_refresh(&mut self, attempt: u8, allow_retry: bool) {
-        if self.should_buffer_topology_updates() {
+        if self.state.must_buffer() {
             self.state.refresh_deferred_until_stable = true;
             self.state.refresh_pending = false;
             return;
@@ -1031,7 +1062,9 @@ impl SpacesActor {
             return;
         };
 
-        if !Self::screen_snapshot_is_ready_for_authoritative_commit(&screens, true) {
+        if !snapshot_is_committable(&Self::screen_spaces(&screens), true, |space| {
+            self.state.space_kinds.is_fullscreen(space)
+        }) {
             if allow_retry && attempt < REFRESH_MAX_RETRIES {
                 self.schedule_screen_refresh_after(REFRESH_RETRY_DELAY_NS, attempt + 1);
                 return;
@@ -1080,10 +1113,9 @@ impl SpacesActor {
         let Some((screens, converter)) = self.collect_state() else {
             return false;
         };
-        if !Self::screen_snapshot_is_ready_for_authoritative_commit(
-            &screens,
-            require_complete_spaces,
-        ) {
+        if !snapshot_is_committable(&Self::screen_spaces(&screens), require_complete_spaces, |space| {
+            self.state.space_kinds.is_fullscreen(space)
+        }) {
             return false;
         }
 
@@ -1258,7 +1290,9 @@ impl SpacesActor {
         };
 
         if hits >= DISPLAY_STABLE_REQUIRED_HITS {
-            if !Self::screen_snapshot_is_valid_for_commit(&screens) {
+            if !snapshot_spaces_are_coherent(&Self::screen_spaces(&screens), |space| {
+                self.state.space_kinds.is_fullscreen(space)
+            }) {
                 self.state.display_topology_state = None;
                 if !self.retry_display_stabilization(expected_epoch, attempt) {
                     self.finish_display_churn(expected_epoch, true);

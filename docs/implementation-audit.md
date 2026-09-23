@@ -173,6 +173,9 @@ Test scaffolding sits behind `#[cfg(test)]` in every case found
 (`reactor/testing.rs`, `replay.rs:41`, `spaces.rs:173`, `workspaces.rs:279`,
 `focus.rs:113`, `mod.rs:3673`). Nothing ships in the release binary.
 
+**Corrected.** Two of those were not scaffolding. `spaces.rs` had `#[cfg(test)]`
+INSIDE two production predicates, so the tests ran different code than ships — see 4.4.
+
 ## 3. Logic ownership that no longer makes sense
 
 ### 3.1 `LayoutEngine` owns fourteen unrelated things
@@ -320,7 +323,7 @@ The recent batches moved the opposite way deliberately — pure decisions to
 | file | code | why it resists |
 |---|---|---|
 | `src/windows/platform/app_actor.rs` | 1,376 | the AX driver. Needs a fake `AXUIElement` seam. PARTLY: its admission rules are now `windows::domain::admissible` with 11 tests (`4dac5df`) |
-| `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (42 tests) beside it, so covered |
+| `src/displays/platform/spaces.rs` | 1,087 | has `spaces/tests.rs` (44 tests) beside it, but two of its rules were untestable until `SpaceKinds` — see 4.4 |
 | `src/input/platform/gesture_tap.rs` | 657 | DONE: the phase machine is `SwipeTrack` in `domain/gesture.rs` with 7 tests (`06da288`) |
 | `src/app/reactor/observations.rs` | 574 | gathers from live stores; the shape is right, tests live in `reactor/tests/` |
 | `src/main.rs` | 430 | one 317-line `main`; composition root |
@@ -343,7 +346,37 @@ src/windows/domain/catalogue.rs   796 code / 9 tests    88:1
 almost untested. Its `parse_direction` plus the command mapping is the whole
 surface that can silently mis-map a key to the wrong command.
 
-### 4.4 The 317-line `main`
+### 4.4 The spaces actor's tests ran different code than ships
+
+**DONE — `SpaceKinds` is injected, and the rule it was hiding now has a test.**
+
+Found while working through 4.2. `src/displays/platform/spaces.rs` classified spaces
+through two functions with `#[cfg(test)]` bodies:
+
+```rust
+fn is_user_space(space: SpaceId) -> bool {
+    #[cfg(test)]    { let _ = space; true }
+    #[cfg(not(test))] { space_query::space_is_user(space.get()) }
+}
+```
+
+Under test every space was a user space. "Only user spaces count" is the invariant this
+actor exists to enforce — `src/displays/docs/README.md` states it — and 18 call sites
+depend on it, but no test could reach the rule. Proven by putting the old body back: the
+new test forwards `Some(SpaceId(7))` where it must forward `None`, so a login space
+reached the reactor as a display's space.
+
+`SpaceKinds` holds the two predicates as `fn` pointers on `AuthorityState`. Production
+wires the window server in `AuthorityState::runtime()`; a test names its own. Two rules
+moved to `displays::domain::topology` on the way out — `snapshot_is_committable` and
+`snapshot_spaces_are_coherent` — because they were static methods calling a platform
+predicate, plus `buffered_snapshot` for the five-case buffering decision. 14 tests.
+
+Also consolidated: `should_buffer_topology_updates` and
+`should_quarantine_window_space_event` had different names and byte-identical bodies. Now
+`AuthorityState::must_buffer`.
+
+### 4.5 The 317-line `main`
 
 `src/main.rs:100`. Flags, AX permission, the "separate Spaces" check, config read
 with fallback, layout restore, actor construction, joining. The config-fallback

@@ -104,6 +104,28 @@ fn active_display_space_falls_back_to_active_space_then_screen_order() {
     );
 }
 
+/// An actor that calls one specific space id a login space: neither fullscreen nor a user space.
+fn build_actor_with_a_non_user_space() -> (
+    SpacesActor,
+    channel::Receiver<OutEvent>,
+    channel::Receiver<OutEvent>,
+) {
+    let (wm_tx, wm_rx) = channel::channel();
+    let (reactor_tx, reactor_rx) = channel::channel();
+    let kinds = SpaceKinds {
+        is_fullscreen: |space| space.get() >= TEST_FULLSCREEN_SPACE,
+        is_user: |space| space.get() != NON_USER_SPACE,
+    };
+    let (actor, _) = SpacesActor::new_for_tests_classifying(
+        Box::new(Split { topology: wm_tx, rest: reactor_tx }),
+        kinds,
+    );
+    (actor, wm_rx, reactor_rx)
+}
+
+/// The id `build_actor_with_a_non_user_space` treats as a login space.
+const NON_USER_SPACE: u64 = 7;
+
 fn build_actor() -> (
     SpacesActor,
     channel::Receiver<OutEvent>,
@@ -1378,4 +1400,49 @@ fn display_origin_change_is_treated_as_topology_change() {
         }
         other => panic!("unexpected wm event: {other:?}"),
     }
+}
+
+/// A login or system space must never reach the reactor as a display's space.
+///
+/// `SLSSpaceGetType == 0` is the only thing that counts as a user space. This rule was unreachable
+/// from a test until the classifier became injectable: the old `#[cfg(test)]` fork of `is_user_space`
+/// returned `true` for every id, so under test there was no such thing as a non-user space.
+#[test]
+fn a_non_user_space_is_nulled_out_before_it_is_forwarded() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor_with_a_non_user_space();
+
+    actor.handle_event(Notification::ScreenParametersChanged(
+        vec![make_screen(Some(SpaceId::new(NON_USER_SPACE)))],
+        CoordinateConverter::default(),
+    ));
+
+    let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
+        panic!("expected a topology snapshot");
+    };
+    assert_eq!(
+        state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
+        vec![None],
+        "the login space is nulled out, so the reactor never assigns a window to it"
+    );
+}
+
+/// The same snapshot with an ordinary id keeps its space, which is what makes the test above a test
+/// of the rule rather than of the screen plumbing.
+#[test]
+fn a_user_space_is_forwarded_unchanged() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor_with_a_non_user_space();
+    let space = SpaceId::new(NON_USER_SPACE + 1);
+
+    actor.handle_event(Notification::ScreenParametersChanged(
+        vec![make_screen(Some(space))],
+        CoordinateConverter::default(),
+    ));
+
+    let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
+        panic!("expected a topology snapshot");
+    };
+    assert_eq!(
+        state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
+        vec![Some(space)]
+    );
 }

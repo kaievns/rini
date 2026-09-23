@@ -30,7 +30,10 @@ default workspaces.
 id; display UUID is the stable identity.
 
 **Only user spaces count.** `SLSSpaceGetType == 0`. Fullscreen and login spaces are
-transient native state and are nulled out before they can rewrite anything.
+transient native state and are nulled out before they can rewrite anything. The two
+predicates that decide this are `SpaceKinds`, injected into `AuthorityState` rather than
+called directly: they used to be `#[cfg(test)]`-forked functions whose test bodies called
+every space a user space, so the invariant was never the rule any test ran.
 
 **Both display sets are read before either is replaced.** A departing display's windows
 can only be recorded while the old assignments are still in the store — once macOS has
