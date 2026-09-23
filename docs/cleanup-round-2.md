@@ -17,7 +17,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | **done** — `HeldKeys` out, 12 tests |
 | 9 | `EventOutcome` | 32 fields, 51 references | **done** — `absorb` is compiler-checked, 12 -> 23 tests |
 | 10 | `engine/persistence/tests.rs` | 3,302 lines, 55 tests, one file | **done** — 7 subject files, largest 1,032 |
-| 11 | `animation/platform/engine.rs` | `start` 294, `begin_group` 253 | open |
+| 11 | `animation/platform/engine.rs` | `start` 294, `begin_group` 253 | **done** — `tile_path` out, 7 tests |
 
 ## Not on the list, and why
 
@@ -286,3 +286,30 @@ lost, compiled first try.
 literals, which is why my earlier measurement pass reported one test as 2,461 lines. Partitioning on
 column-0 item boundaries — with each attribute and doc-comment run belonging to the item below it —
 is exact, and it is the approach to reach for first next time.
+
+## 11. `animation/platform/engine.rs`
+
+`travel::tile_path` is the whole geometry decision for one window in a pass: five steps that were
+spread along the head of `start`'s loop, interleaved with snapshot captures and logging. 7 tests,
+`travel.rs` goes 36 to 43.
+
+**The line count barely moved — 294 to 291 — and that is the honest result.** What was extracted is
+14 lines of geometry; what stayed is capture orchestration, which is effectful by nature: it reads the
+window server, takes SkyLight snapshots against a budget, and decides per window whether to travel or
+reserve. `begin_group` is unchanged at 253 for the same reason.
+
+The value is that the geometry is now one named function with a return type that says "not worth
+drawing" explicitly, rather than five calls and an early `continue` in the middle of a capture loop.
+
+| broken | caught by |
+|---|---|
+| letting a floating window ride a neighbour's vector | "a floating tile rides nothing" |
+| including the subject among its own neighbours | `a_window_is_not_its_own_neighbour` |
+
+Two rules are now stated: the window server's frame beats the requested `from`, because the request
+says where the layout THINKS the window is and the server knows where it actually is; and a tile that
+would move entirely off screen is not drawn, because a layer and a capture for something nobody can
+see is pure cost.
+
+`actual_start` became `live_frame`, which is the window-server read it always was — a zero-sized frame
+is macOS saying it has not laid the window out yet, which is not a position to animate from.

@@ -31,9 +31,7 @@ pub use crate::animation::domain::motion::surface::SurfaceWindow;
 pub(crate) use crate::animation::domain::motion::surface::{
     pan_travel, surface_travel, to_overlay_space,
 };
-use crate::animation::domain::motion::travel::{
-    is_moving, neighbour_travel, resolve_end, resolve_start, travel_subject, worth_animating,
-};
+use crate::animation::domain::motion::travel::{TilePath, is_moving, tile_path};
 
 /// One window's part in an animation, as the caller describes it.
 #[derive(Debug)]
@@ -1231,28 +1229,25 @@ impl FlightEngine {
         let others: Vec<(CGRect, CGRect, bool)> =
             windows.iter().map(|r| (r.from, r.to, r.floating)).collect();
         for (index, request) in windows.iter().enumerate() {
-            let travel = (!request.floating)
-                .then(|| {
-                    let excluding_self: Vec<(CGRect, CGRect, bool)> = others
-                        .iter()
-                        .enumerate()
-                        .filter(|(j, _)| *j != index)
-                        .map(|(_, o)| *o)
-                        .collect();
-                    let subject = travel_subject(request.from, request.to, display_frame);
-                    neighbour_travel(subject, &excluding_self, display_frame)
-                })
-                .flatten();
-            let start = actual_start(request, display_frame, travel);
-            // The tile's visual destination; `final_frames` keeps the real park in `request.to`.
-            let end = resolve_end(start, request.to, display_frame, travel);
-            if !worth_animating(start, end, display_frame) {
+            let path = tile_path(
+                live_frame(request.server_id),
+                request.from,
+                request.to,
+                request.floating,
+                &others,
+                index,
+                display_frame,
+            );
+            let Some(TilePath { start, end, .. }) = path else {
                 offscreen += 1;
                 debug!(
                     wsid = request.server_id.as_u32(),
-                    start = format!(
+                    from = format!(
                         "{:.0},{:.0} {:.0}x{:.0}",
-                        start.origin.x, start.origin.y, start.size.width, start.size.height
+                        request.from.origin.x,
+                        request.from.origin.y,
+                        request.from.size.width,
+                        request.from.size.height
                     ),
                     to = format!(
                         "{:.0},{:.0} {:.0}x{:.0}",
@@ -1264,7 +1259,7 @@ impl FlightEngine {
                     "skipped as off screen"
                 );
                 continue;
-            }
+            };
             let snapshot = self.snapshot_for(request);
             // Queued now so the next switch has pixels, even if this one does not.
             if snapshot.as_ref().is_none_or(|s| {
@@ -2324,19 +2319,22 @@ impl FlightEngine {
 
 /// Where a window really is right now, from the window server: the reactor's `from` can be the
 /// previous pass's destination rather than where the window sits.
-fn actual_start(request: &AnimationRequest, display: CGRect, travel: Option<CGPoint>) -> CGRect {
-    let real = match crate::windows::platform::window_server::get_window(request.server_id) {
-        Some(info) if info.frame.size.width > 0.0 && info.frame.size.height > 0.0 => {
-            Some(info.frame)
-        }
-        _ => None,
-    };
-    resolve_start(real, request.from, request.to, display, travel)
+/// The frame the window server reports for a window, if it reports a real one.
+///
+/// A zero-sized frame is macOS saying it has not laid the window out yet, which is not a position to
+/// animate from. The geometry decision is `travel::tile_path`; this is the read it needs.
+fn live_frame(server_id: WindowServerId) -> Option<CGRect> {
+    crate::windows::platform::window_server::get_window(server_id)
+        .map(|info| info.frame)
+        .filter(|frame| frame.size.width > 0.0 && frame.size.height > 0.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::domain::motion::travel::{
+        neighbour_travel, resolve_end, resolve_start, travel_subject, worth_animating,
+    };
 
     /// The built-in display, for tests that need a screen to judge parks against.
     const DISPLAY: CGRect = CGRect {

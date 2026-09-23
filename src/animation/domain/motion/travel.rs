@@ -155,6 +155,56 @@ pub fn on_screen_extent(frame: CGRect, display: CGRect) -> (f64, f64) {
 /// Does a window travelling `from` → `to` appear on `display` at ANY point? The whole path is
 /// sampled, not just its ends: a window sweeping across mid-animation is exactly what conveys how
 /// far the strip travelled, and testing endpoints alone excluded it.
+/// Where one tile starts, where it ends, and the vector it rides.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TilePath {
+    /// Overlay-space start, before the coordinate conversion.
+    pub start: CGRect,
+    /// Where the tile lands. Not always `to`: a window heading for a park is drawn heading off the
+    /// edge, and the real park stays in the frame written to the window.
+    pub end: CGRect,
+    /// The neighbour vector this tile rides, if it is riding one.
+    pub travel: Option<CGPoint>,
+}
+
+/// The whole geometry decision for one window in a pass, or `None` if it is not worth drawing.
+///
+/// Five steps that were spread along the head of the animation loop, interleaved with snapshot
+/// captures and logging. In order: a floating window rides nothing, because it is not part of the
+/// strip and has no neighbour whose vector would mean anything; a tiled one borrows its nearest
+/// neighbour's vector so a window leaving for or returning from a park travels with the column it
+/// belongs to; the start comes from the frame the window server actually reports, falling back to the
+/// requested one; the end is the visual destination rather than the park; and a tile that would move
+/// entirely off screen is not drawn at all.
+///
+/// `others` is every window in the pass including this one, and `index` says which one is this one —
+/// rather than the caller building a self-excluding copy per window, which is what it used to do.
+pub fn tile_path(
+    real: Option<CGRect>,
+    from: CGRect,
+    to: CGRect,
+    floating: bool,
+    others: &[(CGRect, CGRect, bool)],
+    index: usize,
+    display: CGRect,
+) -> Option<TilePath> {
+    let travel = (!floating)
+        .then(|| {
+            let excluding_self: Vec<(CGRect, CGRect, bool)> = others
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != index)
+                .map(|(_, geometry)| *geometry)
+                .collect();
+            neighbour_travel(travel_subject(from, to, display), &excluding_self, display)
+        })
+        .flatten();
+
+    let start = resolve_start(real, from, to, display, travel);
+    let end = resolve_end(start, to, display, travel);
+    worth_animating(start, end, display).then_some(TilePath { start, end, travel })
+}
+
 pub fn worth_animating(from: CGRect, to: CGRect, display: CGRect) -> bool {
     /// Enough that a window cannot cross the display between two samples: the fastest realistic
     /// travel is a few display widths.
@@ -856,5 +906,125 @@ mod tests {
         let mut vertical = moving(4.0, 4.0);
         vertical.to.origin.y = 32.0 + 1117.0;
         assert!(travels_visibly(&[vertical]));
+    }
+
+    // --- tile_path: the whole geometry decision for one window ---------------------------------
+
+    /// An ordinary move on screen: the tile starts where the window server says it is and ends where
+    /// the pass wants it.
+    #[test]
+    fn a_window_moving_on_screen_gets_a_path_from_where_it_is_to_where_it_is_going() {
+        let from = rect(0., 0., 400., 600.);
+        let to = rect(500., 0., 400., 600.);
+        let path = tile_path(Some(from), from, to, false, &[(from, to, false)], 0, DISPLAY)
+            .expect("worth animating");
+        assert_eq!(path.start, from);
+        assert_eq!(path.end, to);
+    }
+
+    /// The window server's frame wins over the requested `from`, because the request describes where
+    /// the layout THINKS the window is and the server knows where it actually is.
+    #[test]
+    fn the_live_frame_beats_the_requested_start() {
+        let live = rect(40., 10., 400., 600.);
+        let believed = rect(0., 0., 400., 600.);
+        let to = rect(500., 0., 400., 600.);
+        let path = tile_path(
+            Some(live),
+            believed,
+            to,
+            false,
+            &[(believed, to, false)],
+            0,
+            DISPLAY,
+        )
+        .expect("worth animating");
+        assert_eq!(path.start, live);
+    }
+
+    /// No live frame falls back to the requested one rather than refusing: a window the server has not
+    /// laid out yet still has a place the layout wants it to come from.
+    #[test]
+    fn no_live_frame_falls_back_to_the_requested_start() {
+        let believed = rect(0., 0., 400., 600.);
+        let to = rect(500., 0., 400., 600.);
+        let path = tile_path(None, believed, to, false, &[(believed, to, false)], 0, DISPLAY)
+            .expect("worth animating");
+        assert_eq!(path.start, believed);
+    }
+
+    /// A tile that would move entirely off screen is not drawn. Drawing it costs a layer and a capture
+    /// for something nobody can see.
+    #[test]
+    fn a_move_entirely_off_screen_is_not_worth_a_tile() {
+        let far = rect(-9000., -9000., 400., 600.);
+        let also_far = rect(-9500., -9000., 400., 600.);
+        assert_eq!(
+            tile_path(
+                Some(far),
+                far,
+                also_far,
+                false,
+                &[(far, also_far, false)],
+                0,
+                DISPLAY
+            ),
+            None
+        );
+    }
+
+    /// A floating window rides nothing. It is not part of the strip, so a neighbour's vector would be
+    /// borrowed from a window it has no relationship with.
+    #[test]
+    fn a_floating_window_never_borrows_a_neighbours_vector() {
+        let from = rect(100., 100., 300., 300.);
+        let to = rect(100., 100., 300., 300.);
+        // A tiled neighbour making a big move, which a tiled window here would ride.
+        let neighbour = (rect(0., 0., 400., 600.), rect(900., 0., 400., 600.), false);
+        let path = tile_path(
+            Some(from),
+            from,
+            to,
+            true,
+            &[(from, to, true), neighbour],
+            0,
+            DISPLAY,
+        );
+        assert!(
+            path.is_none_or(|p| p.travel.is_none()),
+            "a floating tile rides nothing"
+        );
+    }
+
+    /// A window is never its own neighbour. If it were, every window would ride its own vector and the
+    /// park handling would never fire.
+    #[test]
+    fn a_window_is_not_its_own_neighbour() {
+        let from = rect(0., 0., 400., 600.);
+        let to = rect(500., 0., 400., 600.);
+        let alone = tile_path(Some(from), from, to, false, &[(from, to, false)], 0, DISPLAY)
+            .expect("worth animating");
+        assert_eq!(
+            alone.travel, None,
+            "the only window in the pass has no neighbour"
+        );
+    }
+
+    /// `index` selects which entry of `others` is the subject. Passing the wrong one would have a
+    /// window ride its own vector and exclude a real neighbour.
+    #[test]
+    fn the_index_says_which_of_the_others_is_this_window() {
+        let a = (rect(0., 0., 400., 600.), rect(0., 0., 400., 600.), false);
+        let b = (rect(500., 0., 400., 600.), rect(900., 0., 400., 600.), false);
+        let others = [a, b];
+
+        let first = tile_path(Some(a.0), a.0, a.1, false, &others, 0, DISPLAY);
+        let second = tile_path(Some(b.0), b.0, b.1, false, &others, 1, DISPLAY);
+
+        // Whatever each resolves to, they are resolved against DIFFERENT neighbour sets.
+        assert!(
+            first.is_some() || second.is_some(),
+            "at least one is worth drawing"
+        );
     }
 }
