@@ -90,9 +90,19 @@ State: open.
 
 ## 5. Small duplicates
 
-- `ax/permission.rs:28` / `:46` are 0.96 identical; the only difference is `kCFBooleanFalse`
-  versus `kCFBooleanTrue`, which is whether the permission dialog appears
-- `input/platform/tap.rs` has four near-identical constructors (0.86)
-- `windows/platform/app.rs:197` / `:211` — the pair finding 1.3 did not finish
+**Done**, and only one of the three was duplication.
 
-State: open.
+- `ax/permission.rs` — two bodies differing only in `kCFBooleanFalse` versus `kCFBooleanTrue`,
+  which is the difference between asking quietly and interrupting the user with a system dialog.
+  One `ax_trusted(Prompt)` now, with the choice named rather than copied.
+- `input/platform/tap.rs` — not duplication but a delegation ladder, and four of its six rungs had
+  no callers: `new_listen_only`, `new_at_location_listen_only`, and then `new_with_options` and
+  `new_at_location_with_options` once the first two were gone. All `pub`, so `dead_code` never saw
+  them. Two public constructors remain, both of which the tree actually calls. Two log lines that
+  named `new_at_location_with_options` from inside `create` were stale and now say `create`.
+- `windows/platform/app.rs:197` / `:211` — **kept.** The 0.88 is a shared two-step lookup; the
+  middles differ, and every difference is deliberate. A vanished process still gets the
+  activation-policy callback, because rini already has the answer and the caller must hear back; it
+  gets no finished-launching callback, because a process that is gone will never finish launching and
+  reporting one would announce a launch that did not happen. Neither had a doc comment saying so,
+  which was the real gap. Merging them behind a flag would hide exactly those decisions.

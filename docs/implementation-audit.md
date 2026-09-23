@@ -75,7 +75,12 @@ that drives it is not.
 
 ### 1.3 Three parallel KVO observer pairs
 
-**DONE — one `Observed` enum, eight functions down to four (`45adc4b`).**
+**DONE — one `Observed` enum, eight functions down to four (`45adc4b`). The remaining
+`ensure_*_observer` pair was reassessed and KEPT: the 0.88 is a shared two-step lookup, and the
+middles differ on purpose. A vanished process still gets the activation-policy callback, because the
+answer is already known and the caller must hear back; it gets no finished-launching callback,
+because a process that is gone will never finish launching. Neither said so, which was the real gap,
+and both now do.**
 
 `src/windows/platform/app.rs`, each pair differing only in which key path it
 observes:

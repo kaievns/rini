@@ -194,6 +194,11 @@ where
     *APPLICATION_CALLBACK.lock() = Some(Arc::new(callback));
 }
 
+/// Wait for the application to settle on an activation policy, then report it.
+///
+/// A vanished process still gets the callback: the question was what kind of application this is,
+/// and rini already has the answer it is going to get. The caller needs to hear back either way so
+/// the pending launch does not sit there forever.
 pub fn ensure_activation_policy_observer(pid: pid_t, info: AppInfo) {
     let callback = APPLICATION_CALLBACK.lock().clone();
     let Some(callback) = callback else {
@@ -208,6 +213,13 @@ pub fn ensure_activation_policy_observer(pid: pid_t, info: AppInfo) {
     });
 }
 
+/// Wait for the application to finish launching, then report it.
+///
+/// Deliberately not symmetrical with `ensure_activation_policy_observer`. A vanished process gets NO
+/// callback here, because the event being waited for is a launch and a process that is gone will
+/// never finish one; reporting it would announce a launch that did not happen. An application that
+/// has ALREADY finished launching is reported at once rather than observed, since the notification
+/// it would wait for has been and gone.
 pub fn ensure_finished_launching_observer(pid: pid_t, info: AppInfo) {
     let callback = APPLICATION_CALLBACK.lock().clone();
     let Some(callback) = callback else {
