@@ -17,24 +17,8 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 
 use crate::input::domain::key::{
-    F_KEYS, Hotkey, HotkeySpec, KeyCode, MOD_FAMILIES, ModFamily, Modifiers, normalize_token,
+    F_KEYS, Hotkey, HotkeySpec, KeyCode, MOD_FAMILIES, Modifiers, normalize_token,
 };
-
-impl ModFamily {
-    fn is_active(&self, flags: CGEventFlags) -> bool {
-        flags.0 & self.mask != 0
-            || (flags.bits() & self.left_mask) != 0
-            || (flags.bits() & self.right_mask) != 0
-    }
-
-    fn left_is_active(&self, flags: CGEventFlags) -> bool {
-        (flags.bits() & self.left_mask) != 0
-    }
-
-    fn right_is_active(&self, flags: CGEventFlags) -> bool {
-        (flags.bits() & self.right_mask) != 0
-    }
-}
 
 impl FromStr for KeyCode {
     type Err = anyhow::Error;
@@ -163,7 +147,7 @@ impl<'de> Deserialize<'de> for Hotkey {
 pub fn modifiers_from_flags(flags: CGEventFlags) -> Modifiers {
     let mut mods = Modifiers::empty();
     for m in MOD_FAMILIES {
-        if m.is_active(flags) {
+        if m.is_active(flags.bits()) {
             mods.insert(m.generic);
         }
     }
@@ -177,15 +161,15 @@ pub fn modifiers_from_flags_with_keys<S: std::hash::BuildHasher>(
     let mut mods = Modifiers::empty();
 
     for m in MOD_FAMILIES {
-        if !m.is_active(flags) {
+        if !m.is_active(flags.bits()) {
             continue;
         }
 
         // Prefer the tracked key set during normal event processing, while
         // retaining side information directly from the event flags when
         // recovering after a dropped event or re-enabled tap.
-        let has_left = pressed_keys.contains(&m.left_key) || m.left_is_active(flags);
-        let has_right = pressed_keys.contains(&m.right_key) || m.right_is_active(flags);
+        let has_left = pressed_keys.contains(&m.left_key) || m.left_is_active(flags.bits());
+        let has_right = pressed_keys.contains(&m.right_key) || m.right_is_active(flags.bits());
 
         if has_left {
             mods.insert(m.left);
@@ -203,18 +187,7 @@ pub fn modifiers_from_flags_with_keys<S: std::hash::BuildHasher>(
 }
 
 pub fn modifier_flag_for_key(key_code: KeyCode) -> Option<CGEventFlags> {
-    for m in MOD_FAMILIES {
-        if key_code == m.left_key || key_code == m.right_key {
-            return Some(CGEventFlags(m.mask));
-        }
-    }
-
-    match key_code {
-        KeyCode::CapsLock => Some(CGEventFlags::MaskAlphaShift),
-        KeyCode::Fn => Some(CGEventFlags::MaskSecondaryFn),
-        KeyCode::NumLock => Some(CGEventFlags::MaskNumericPad),
-        _ => None,
-    }
+    crate::input::domain::key::modifier_mask_for_key(key_code).map(CGEventFlags)
 }
 
 /// Returns whether the specific physical modifier key is active.
@@ -222,16 +195,7 @@ pub fn modifier_flag_for_key(key_code: KeyCode) -> Option<CGEventFlags> {
 /// The device-independent Core Graphics masks only identify a modifier
 /// family. The low device-dependent bits retain the left/right distinction.
 pub fn modifier_key_is_active(flags: CGEventFlags, key_code: KeyCode) -> bool {
-    for m in MOD_FAMILIES {
-        if key_code == m.left_key {
-            return m.left_is_active(flags);
-        }
-        if key_code == m.right_key {
-            return m.right_is_active(flags);
-        }
-    }
-
-    modifier_flag_for_key(key_code).is_some_and(|flag| flags.contains(flag))
+    crate::input::domain::key::modifier_key_is_active(flags.bits(), key_code)
 }
 
 pub fn key_code_from_event(event: &CGEvent) -> Option<KeyCode> {

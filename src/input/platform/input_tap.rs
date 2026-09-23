@@ -30,17 +30,16 @@ use crate::windows::platform::mouse::{MouseState, set_mouse_state};
 use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
 use rini_runloop::channel;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::input::domain::binding::WmCommand;
+use crate::input::domain::held_keys::HeldKeys;
 use crate::input::domain::hotkey::modifiers_satisfy;
-use crate::input::domain::key::{Hotkey, KeyCode, is_modifier_key};
+use crate::input::domain::key::{Hotkey, KeyCode};
 use crate::input::domain::pointer;
 use crate::input::event::{Event, EventSink};
 use crate::input::platform::cursor;
-use crate::input::platform::keyboard::{
-    key_code_from_event, modifier_key_is_active, modifiers_from_flags_with_keys,
-};
+use crate::input::platform::keyboard::{key_code_from_event, modifiers_from_flags_with_keys};
 use crate::input::platform::tap;
 use crate::input::settings::InputSettings;
 const MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL: u64 = 8_000_000; // 8ms ~= 125 Hz
@@ -88,7 +87,7 @@ struct State {
     focus_follows_mouse_enabled: bool,
     disable_hotkey_active: bool,
     low_power_mode: bool,
-    pressed_keys: HashSet<KeyCode>,
+    held: HeldKeys,
     current_flags: CGEventFlags,
 }
 
@@ -102,7 +101,7 @@ impl Default for State {
             focus_follows_mouse_enabled: true,
             disable_hotkey_active: false,
             low_power_mode: false,
-            pressed_keys: HashSet::default(),
+            held: HeldKeys::default(),
             current_flags: CGEventFlags::empty(),
         }
     }
@@ -688,7 +687,7 @@ impl InputTap {
         if event_type == CGEventType::KeyDown {
             if let Some(key_code) = key_code_opt {
                 let hotkey = Hotkey::new(
-                    modifiers_from_flags_with_keys(state.current_flags, &state.pressed_keys),
+                    modifiers_from_flags_with_keys(state.current_flags, state.held.pressed()),
                     key_code,
                 );
                 let bindings = self.hotkeys.load();
@@ -813,54 +812,30 @@ impl State {
     }
 
     fn note_key_down(&mut self, key_code: KeyCode) {
-        self.pressed_keys.insert(key_code);
+        self.held.key_down(key_code);
     }
 
     fn note_key_up(&mut self, key_code: KeyCode) {
-        self.pressed_keys.remove(&key_code);
+        self.held.key_up(key_code);
     }
 
     fn note_flags_changed(&mut self, key_code: KeyCode) {
-        if !is_modifier_key(key_code) {
-            return;
-        }
-        // Use the device-dependent side bit; the family-wide mask cannot
-        // distinguish (for example) AltLeft from AltRight.
-        if modifier_key_is_active(self.current_flags, key_code) {
-            self.pressed_keys.insert(key_code);
-        } else {
-            self.pressed_keys.remove(&key_code);
-        }
+        self.held.flags_changed(self.current_flags.bits(), key_code);
     }
 
     fn reconcile_modifier_keys(&mut self) {
-        self.pressed_keys.retain(|key| {
-            if is_modifier_key(*key) {
-                modifier_key_is_active(self.current_flags, *key)
-            } else {
-                true // non-modifier keys are not reconciled here
-            }
-        });
+        self.held.observe_flags(self.current_flags.bits());
+        self.held.reconcile_modifiers();
     }
 
     fn reconcile_after_event_tap_reenabled(&mut self, flags: CGEventFlags) {
-        // Any key-up may have occurred while the tap was disabled. Discard the
-        // edge-triggered cache and use the authoritative live modifier state.
-        self.pressed_keys.clear();
         self.current_flags = flags;
+        self.held.tap_re_enabled(flags.bits());
     }
 
     fn compute_disable_hotkey_active(&self, target: &Hotkey) -> bool {
-        let active = modifiers_from_flags_with_keys(self.current_flags, &self.pressed_keys);
-        modifiers_satisfy(target.modifiers, active) && self.base_key_active(target.key_code)
-    }
-
-    fn base_key_active(&self, key_code: KeyCode) -> bool {
-        if is_modifier_key(key_code) {
-            modifier_key_is_active(self.current_flags, key_code)
-        } else {
-            self.pressed_keys.contains(&key_code)
-        }
+        let active = modifiers_from_flags_with_keys(self.current_flags, self.held.pressed());
+        modifiers_satisfy(target.modifiers, active) && self.held.is_held(target.key_code)
     }
 }
 
@@ -976,13 +951,13 @@ mod tests {
     #[test]
     fn tap_recovery_discards_cached_keys_and_uses_live_flags() {
         let mut state = State::default();
-        state.pressed_keys.insert(KeyCode::ShiftLeft);
-        state.pressed_keys.insert(KeyCode::KeyA);
+        state.held.key_down(KeyCode::ShiftLeft);
+        state.held.key_down(KeyCode::KeyA);
 
         let live_flags = CGEventFlags::MaskShift | CGEventFlags::MaskCommand;
         state.reconcile_after_event_tap_reenabled(live_flags);
 
-        assert!(state.pressed_keys.is_empty());
+        assert!(state.held.pressed().is_empty());
         assert_eq!(state.current_flags, live_flags);
     }
 }

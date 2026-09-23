@@ -14,7 +14,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 5 | `layout/domain/scrolling.rs::calculate_layout` | 261 lines, pure, the heart of the tiling | **done** — 261 -> 229, 24 tests |
 | 6 | `app/reactor/query.rs` | 825 lines, 9 tests (91/test) | **done** — 9 -> 21 tests, 3 rules out |
 | 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | **done** — 9 -> 23 tests, and a prune bug |
-| 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | open |
+| 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | **done** — `HeldKeys` out, 12 tests |
 | 9 | `EventOutcome` | 32 fields, 51 references | open |
 | 10 | `engine/persistence/tests.rs` | 3,302 lines, 55 tests, one file | open |
 | 11 | `animation/platform/engine.rs` | `start` 294, `begin_group` 253 | open |
@@ -201,3 +201,33 @@ windows it omits. That is why `update_complete_window_server_info` clears first 
 partial one means "at least these". The hazard is silent: a caller treating a partial snapshot as
 complete leaves a closed window marked visible, and the reactor treats visibility as authoritative.
 Both halves are now pinned.
+
+## 8. `input/platform/input_tap.rs`
+
+The pressed-key tracking is out to `input/domain/held_keys.rs` with 12 tests, and the flag helpers it
+needed went to `input/domain/key.rs` where the masks already were.
+
+**Two sources that do not agree, which is the whole subject.** A key-down/key-up pair is an EDGE: it
+says what changed, and a disabled tap or a dropped event means an edge was missed and the cache is
+wrong. The modifier flags on every event are a LEVEL: authoritative about what is held right now, but
+only about modifiers. So modifiers are answered from the flags, everything else from the cache, and the
+cache is discarded whenever the tap comes back.
+
+Getting it wrong looks like rini ignoring the keyboard: a binding that fires with nothing held, or one
+that never fires until the user presses and releases a modifier to resynchronise.
+
+| broken | caught by |
+|---|---|
+| answering a modifier from the cache | 4 tests, including "no flag bit set, so it is not held whatever the cache says" |
+| reconciling instead of clearing on tap re-enable | "including one that may still be down" |
+
+`modifier_key_is_active`, `modifier_mask_for_key` and `ModFamily::{is_active, left_is_active,
+right_is_active}` moved from `platform/keyboard.rs` to `domain/key.rs`, taking `u64` rather than
+`CGEventFlags`. They were in platform only because of the parameter type — the masks were already in the
+domain table, whose own comment says it "needs no CoreGraphics". Platform keeps two one-line wrappers
+that call `.bits()`.
+
+Three rules are now stated that the code only implied: the family mask alone does not hold either side
+(so a `CtrlLeft` binding does not fire on right Ctrl), reconciling must not drop ordinary keys because
+the flags say nothing about them, and the lock keys are held by their flag alone because macOS reports
+them as flags and never as edges.

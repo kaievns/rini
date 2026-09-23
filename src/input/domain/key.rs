@@ -144,6 +144,29 @@ pub(in crate::input) struct ModFamily {
     pub(in crate::input) right_mask: u64,
 }
 
+impl ModFamily {
+    /// Whether this family is held at all, by either side.
+    ///
+    /// Three masks rather than one: macOS sets the family-wide bit AND a side bit, but not always
+    /// both, and an external keyboard can report a side without the family. Any of the three means
+    /// held.
+    pub(in crate::input) fn is_active(&self, flags: u64) -> bool {
+        flags & self.mask != 0 || self.left_is_active(flags) || self.right_is_active(flags)
+    }
+
+    /// Whether the LEFT key of this family is held.
+    ///
+    /// The side bit is device-dependent and is the only thing that distinguishes AltLeft from
+    /// AltRight; the family mask cannot.
+    pub(in crate::input) fn left_is_active(&self, flags: u64) -> bool {
+        flags & self.left_mask != 0
+    }
+
+    pub(in crate::input) fn right_is_active(&self, flags: u64) -> bool {
+        flags & self.right_mask != 0
+    }
+}
+
 pub(in crate::input) const MOD_FAMILIES: &[ModFamily] = &[
     ModFamily {
         name: "Ctrl",
@@ -510,6 +533,44 @@ impl From<HotkeySpec> for Hotkey {
         }
     }
 }
+
+/// The flag bits a key contributes when held, or `None` if it is not a modifier.
+///
+/// The three lock keys are here because macOS reports them as modifier FLAGS rather than as key
+/// presses, so a binding naming one is satisfied by the flag and never by an edge.
+pub fn modifier_mask_for_key(key_code: KeyCode) -> Option<u64> {
+    for m in MOD_FAMILIES {
+        if key_code == m.left_key || key_code == m.right_key {
+            return Some(m.mask);
+        }
+    }
+    match key_code {
+        KeyCode::CapsLock => Some(MASK_ALPHA_SHIFT),
+        KeyCode::Fn => Some(MASK_SECONDARY_FN),
+        KeyCode::NumLock => Some(MASK_NUMERIC_PAD),
+        _ => None,
+    }
+}
+
+/// Whether a specific modifier key is held, reading the side bit where there is one.
+pub fn modifier_key_is_active(flags: u64, key_code: KeyCode) -> bool {
+    for m in MOD_FAMILIES {
+        if key_code == m.left_key {
+            return m.left_is_active(flags);
+        }
+        if key_code == m.right_key {
+            return m.right_is_active(flags);
+        }
+    }
+    modifier_mask_for_key(key_code).is_some_and(|mask| flags & mask != 0)
+}
+
+/// `CGEventFlags::MaskAlphaShift`, as bits, so this module needs no CoreGraphics.
+const MASK_ALPHA_SHIFT: u64 = 0x0001_0000;
+/// `CGEventFlags::MaskSecondaryFn`.
+const MASK_SECONDARY_FN: u64 = 0x0080_0000;
+/// `CGEventFlags::MaskNumericPad`.
+const MASK_NUMERIC_PAD: u64 = 0x0020_0000;
 
 /// Whether a key is a modifier: one side of a family, or one of the three lock keys macOS reports
 /// as modifier flags rather than as key presses.
