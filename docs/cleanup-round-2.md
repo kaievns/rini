@@ -16,7 +16,7 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 | 7 | `windows/domain/catalogue.rs` | 796 lines, 71 public fns, 9 tests | **done** — 9 -> 23 tests, and a prune bug |
 | 8 | `input/platform/input_tap.rs` | 765 lines, 5 tests (153/test) | **done** — `HeldKeys` out, 12 tests |
 | 9 | `EventOutcome` | 32 fields, 51 references | **done** — `absorb` is compiler-checked, 12 -> 23 tests |
-| 10 | `engine/persistence/tests.rs` | 3,302 lines, 55 tests, one file | open |
+| 10 | `engine/persistence/tests.rs` | 3,302 lines, 55 tests, one file | **done** — 7 subject files, largest 1,032 |
 | 11 | `animation/platform/engine.rs` | `start` 294, `begin_group` 253 | open |
 
 ## Not on the list, and why
@@ -266,3 +266,23 @@ deserved. The destructure plus the same 32 assignments reading local bindings is
 
 Probes: overwriting a flag instead of OR-ing fails, and keeping one scope when two spaces disagree
 fails.
+
+## 10. `engine/persistence/tests.rs`
+
+3,302 lines into seven subject files over a shared `test_engine`. All 55 tests accounted for, none
+lost, compiled first try.
+
+| file | tests | lines | subject |
+|---|---|---|---|
+| `restore_scope.rs` | 11 | 1,032 | how much of a layout a restore replaces, and what it leaves alone |
+| `matching.rs` | 11 | 729 | which live window a saved identity is, and which it must not be |
+| `launch_memory.rs` | 7 | 641 | where an application's windows go when it comes back |
+| `schema.rs` | 11 | 415 | what a saved file may look like, and what is refused at the load boundary |
+| `startup.rs` | 6 | 404 | restoring at launch, with nothing running and the spaces renumbered |
+| `save_load.rs` | 7 | 383 | a round trip: what a save writes and what a load makes of it |
+| `announcements.rs` | 2 | 127 | what the engine tells the application it did |
+
+**Brace counting could not be used here.** The file is full of RON fixtures with braces inside string
+literals, which is why my earlier measurement pass reported one test as 2,461 lines. Partitioning on
+column-0 item boundaries — with each attribute and doc-comment run belonging to the item below it —
+is exact, and it is the approach to reach for first next time.
