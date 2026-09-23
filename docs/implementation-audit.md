@@ -206,13 +206,20 @@ reaches: `state` 112, `layout_manager` 61, `space_state` 43, `drag_manager` 18,
 `transaction_manager` 11, `pending_space_change_manager` 3. Eight "manager"
 structs plus `RiniState`.
 
-Largest methods: `handle_layout_response` (303 → 251), `dispatch_workflow` (288),
-`apply_event_outcome` (271), `handle_authoritative_space_snapshot` (251).
+Largest methods: `handle_layout_response` (303 → 248), `dispatch_workflow` (288),
+`apply_event_outcome` (271), `handle_authoritative_space_snapshot` (251 → 228).
 
 `handle_layout_response` gave up three rules to `windows::domain::raise_order`
 (`drop_parked`, `lead_with_regroup`, `group_by_app_and_space`) and one to
 `layout::domain::boundary` (`workspace_step_at_boundary`), with 15 tests between them.
 One of those extractions was a bug fix: see 3.2.1.
+
+`handle_authoritative_space_snapshot` gave up its display-set comparison to
+`displays::domain::topology::display_set_delta` with 9 tests. That one was a
+correctness hazard rather than a length one: the previous display set was captured
+inline, one line before the field holding it was overwritten, and a comment was all
+that kept the two statements in that order. The function now takes both lists as
+arguments.
 
 `dispatch_workflow` is long because it is a dispatch table — one arm per event variant,
 every arm delegating. Length is not the defect there and splitting it by event family

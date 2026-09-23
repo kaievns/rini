@@ -583,7 +583,7 @@ impl SpacesActor {
             should_force_refresh_layout,
             releases_lifecycle_refresh_quarantine,
             // Every coherent authoritative snapshot is a valid acknowledgement for
-            // the reactor's display-churn gate, including ordinary refreshes after
+            // the reactor's display-churn quarantine, including ordinary refreshes after
             // stabilization has already ended.
             releases_display_churn_refresh_quarantine: true,
             resized_spaces,
@@ -972,7 +972,7 @@ impl SpacesActor {
         match (pending_screen_parameters, pending_spaces) {
             (Some(pending), Some(spaces)) if pending.screens.len() == spaces.len() => {
                 // These two callbacks describe one native snapshot. Merge them before
-                // forwarding so the reactor's churn gate cannot observe the topology
+                // forwarding so the reactor's churn quarantine cannot observe the topology
                 // with stale space IDs and release between two WM events.
                 let mut screens = pending.screens;
                 for (screen, space) in screens.iter_mut().zip(spaces) {
@@ -1276,7 +1276,7 @@ impl SpacesActor {
             self.state.pending_screen_parameters = None;
             self.state.pending_spaces = None;
             // Forward the stabilized snapshot directly; its authoritative state
-            // acknowledges the reactor's churn gate when it is incorporated.
+            // acknowledges the reactor's churn quarantine when it is incorporated.
             self.forward_screen_parameters(screens, converter);
             self.finish_display_churn(expected_epoch, false);
             return;

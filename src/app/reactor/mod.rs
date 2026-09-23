@@ -58,6 +58,7 @@ use events::{
     focus as focus_service, space as topology_workflow, system as system_workflow,
     window as window_workflow,
 };
+use crate::displays::domain::topology::display_set_delta;
 use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order;
@@ -270,7 +271,7 @@ pub enum Event {
     /// Forwarded by the spaces actor after wake has been observed.
     ///
     /// The spaces actor is the authority for sleep/lock/display lifecycle.
-    /// The reactor uses this only to reopen refresh gating and resubscribe
+    /// The reactor uses this only to lift the refresh quarantine and resubscribe
     /// WindowServer notifications once the topology authority says wake
     /// processing has advanced.
     SystemWoke,
@@ -1138,7 +1139,7 @@ impl Reactor {
 
     // All lifecycle churn is upstreamed through the spaces actor. The reactor
     // only remembers that one visibility refresh is owed, then flushes it once
-    // every upstream gate is open again.
+    // every upstream quarantine is lifted.
     fn request_refresh_when_spaces_actor_stabilizes(&mut self) {
         self.defer_visible_refresh(true);
         self.flush_deferred_visible_refresh();
@@ -2127,16 +2128,11 @@ impl Reactor {
         }
 
         self.refocus_manager.stale_cleanup_state = StaleCleanupState::Enabled;
-        // Which displays were attached BEFORE this snapshot. Captured here because
-        // space_state.screens is replaced on the next line, and the reconnect remap
-        // below needs to distinguish "this display just came back" from "this display
-        // merely switched space".
-        let previous_display_uuids: HashSet<String> = self
-            .space_state
-            .screens
-            .iter()
-            .map(|screen| screen.display_uuid.clone())
-            .collect();
+        let display_set = display_set_delta(
+            &self.space_state.screens.iter().map(|screen| screen.display_uuid.clone()).collect::<Vec<_>>(),
+            &screens.iter().map(|screen| screen.display_uuid.clone()).collect::<Vec<_>>(),
+            display_set_changed,
+        );
         // Capture affinity for a departing display BEFORE anything reacts to its absence.
         //
         // This is the only moment the truth is still available. `self.state.windows` still
@@ -2145,16 +2141,9 @@ impl Reactor {
         // the remaining display there is no way left to tell which of them had been on the
         // one that vanished. Recording it now is what lets a later replug move back exactly
         // the windows that were there, rather than whichever windows now occupy those slots.
-        let departed_displays: Vec<String> = previous_display_uuids
-            .iter()
-            .filter(|uuid| {
-                !screens.iter().any(|screen| screen.display_uuid_opt() == Some(uuid.as_str()))
-            })
-            .cloned()
-            .collect();
-        for display_uuid in departed_displays {
+        for display_uuid in &display_set.departed {
             let Some(departing_space) =
-                self.layout_manager.layout_engine.last_space_for_display_uuid(&display_uuid)
+                self.layout_manager.layout_engine.last_space_for_display_uuid(display_uuid)
             else {
                 continue;
             };
@@ -2242,9 +2231,7 @@ impl Reactor {
         // Only while the display set is UNCHANGED. During a display change the current
         // assignments are mid-evacuation and would record the wrong display; on a settled
         // topology they are exactly right.
-        let display_set_unchanged =
-            !display_set_changed && self.space_state.screens.len() == previous_display_uuids.len();
-        if display_set_unchanged {
+        if display_set.unchanged {
             self.sync_display_affinity_from_live_layout();
         }
         let current_screens = self.screens_for_current_spaces();
@@ -2266,14 +2253,6 @@ impl Reactor {
         if let Some(delta) = topology_window_delta {
             outcome.absorb(self.apply_topology_window_delta(delta));
         }
-        let arrived_displays: Vec<String> = self
-            .space_state
-            .screens
-            .iter()
-            .filter_map(|screen| screen.display_uuid_opt())
-            .filter(|uuid| !previous_display_uuids.contains(*uuid))
-            .map(str::to_owned)
-            .collect();
         let active_windows = self.authoritative_active_space_windows();
         self.finalize_space_change(&spaces, active_windows, releases_lifecycle_refresh_quarantine);
         self.try_apply_pending_space_change();
@@ -2286,8 +2265,8 @@ impl Reactor {
         // still physically on the old display when the reconciliation reads their position,
         // so it puts them straight back. Running afterwards makes affinity the last word on
         // a display arrival, which is the whole point of recording it.
-        for display_uuid in arrived_displays {
-            outcome.absorb(self.repatriate_windows_to_display(&display_uuid));
+        for display_uuid in &display_set.arrived {
+            outcome.absorb(self.repatriate_windows_to_display(display_uuid));
         }
         if should_force_refresh_layout {
             outcome = outcome.with_force_window_refresh().with_arrange_passes(1);
@@ -2919,7 +2898,7 @@ impl Reactor {
         // Native WindowServer visibility is not enough to participate in Rini's
         // layout. Fullscreen exit can surface transient AppKit/Electron windows
         // that are visible and space-owned but are filtered out of query output.
-        // Treat this as the single gate for authoritative-space reconciliation:
+        // Treat this as the one condition for authoritative-space reconciliation:
         // if a window is not query-manageable, remove any stale layout/workspace
         // membership instead of re-assigning it from the WindowServer snapshot.
         if !self

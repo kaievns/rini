@@ -140,7 +140,7 @@ pub fn handle_window_server_destroyed(
                     "Promoting WindowServer disappearance to immediate WindowDestroyed"
                 );
                 // The AX `WindowDestroyed` lands after this has removed the window, so the cached
-                // picture is dropped here or not at all. Same gates as the AX path.
+                // picture is dropped here or not at all. Same conditions as the AX path.
                 if let Some(window) = state.windows.window(wid)
                     && window.is_effectively_manageable()
                     && !window.info.is_minimized

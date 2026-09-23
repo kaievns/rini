@@ -2621,7 +2621,7 @@ fn a_window_in_a_workspace_nobody_is_looking_at_is_still_remembered() {
 
 /// A display home is written once, on first sighting, and only if the space's display was known by then.
 /// A window that appeared before that mapping existed has none, forever — measured live on a window that
-/// rini tracked and had assigned to a workspace. Gating the projection on the home meant such a window
+/// rini tracked and had assigned to a workspace. Requiring the home for the projection meant such a window
 /// was never remembered at all, so the space's own display stands in for it.
 #[test]
 fn a_window_with_no_recorded_home_is_remembered_against_its_spaces_display() {

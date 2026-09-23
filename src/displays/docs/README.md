@@ -8,7 +8,7 @@ windows are on this space" is a window-server query over window ids.
 
 | | |
 |---|---|
-| `domain/topology.rs` | `ForwardedSpaceState`: one coherent snapshot of screens, spaces and their windows |
+| `domain/topology.rs` | `ForwardedSpaceState`: one coherent snapshot of screens, spaces and their windows. `analyze_space_snapshot` says what an incoming snapshot changes; `display_set_delta` says which displays arrived, which departed, and whether the set is settled |
 | `domain/screen.rs` | `ScreenInfo`, `CoordinateConverter`, `usable_frame` (what the menu bar and Dock leave), `menu_bar_inset`, the visible-space ordering |
 | `domain/space_activation.rs` | Which spaces rini manages, and how activation transfers when macOS mints a new space id |
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot |
@@ -31,6 +31,13 @@ id; display UUID is the stable identity.
 
 **Only user spaces count.** `SLSSpaceGetType == 0`. Fullscreen and login spaces are
 transient native state and are nulled out before they can rewrite anything.
+
+**Both display sets are read before either is replaced.** A departing display's windows
+can only be recorded while the old assignments are still in the store — once macOS has
+moved them to the remaining display there is no way to tell which were where. The
+reactor used to capture the previous set inline, one line before overwriting it, with a
+comment holding the order in place. `display_set_delta` takes both lists as arguments,
+so the ordering is in the signature rather than in a comment.
 
 ## Reading order
 

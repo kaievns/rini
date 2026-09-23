@@ -1,12 +1,12 @@
 //! The authoritative picture of displays and spaces the spaces actor hands the application:
 //! screens with their current space, what changed, and which windows sit on which active space.
 use objc2_core_foundation::{CGPoint, CGSize};
+use rini_core::ids::SpaceId;
 use rini_geometry::CGRectExt;
 use rini_ipc::protocol::{Direction, DisplaySelector};
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use rini_core::ids::SpaceId;
 use crate::displays::domain::screen::ScreenInfo;
 use crate::displays::domain::space_activation::{SpaceActivationConfig, SpaceActivationPolicy};
 
@@ -38,7 +38,7 @@ pub struct ForwardedSpaceState {
     pub allow_space_remap: bool,
     pub should_force_refresh_layout: bool,
     pub releases_lifecycle_refresh_quarantine: bool,
-    /// Releases the reactor's display-churn gate only after this authoritative
+    /// Releases the reactor's display-churn quarantine only after this authoritative
     /// snapshot has been incorporated into its workspace model.
     pub releases_display_churn_refresh_quarantine: bool,
     pub resized_spaces: Vec<(SpaceId, CGSize)>,
@@ -54,9 +54,7 @@ impl ForwardedSpaceState {
         self.screens.iter().filter_map(|screen| screen.space)
     }
 
-    pub fn first_known_space(&self) -> Option<SpaceId> {
-        self.iter_known_spaces().next()
-    }
+    pub fn first_known_space(&self) -> Option<SpaceId> { self.iter_known_spaces().next() }
 
     pub fn screen_for_point(&self, point: CGPoint) -> Option<&ScreenInfo> {
         self.screens.iter().find(|screen| screen.frame.contains(point))
@@ -215,6 +213,65 @@ pub fn analyze_space_snapshot(
         invalidates_pending_targets,
     }
 }
+/// What changed about the attached display set between two snapshots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplaySetDelta {
+    /// Displays that were attached and are not any more, in the order they were attached.
+    pub departed: Vec<String>,
+    /// Displays that are attached and were not, in the order they are now attached.
+    pub arrived: Vec<String>,
+    /// The attached set is the same as it was, so the current window assignments can be trusted.
+    pub unchanged: bool,
+}
+
+/// Compare two snapshots of the attached displays.
+///
+/// Both slices carry one entry per screen, in screen order; a screen macOS cannot identify carries
+/// an empty string. Taking both lists up front is the point of the function: the caller used to
+/// capture the previous set inline, one line before it replaced it, and the ordering was held in
+/// place by a comment.
+///
+/// `unchanged` needs `display_set_changed` from the snapshot AS WELL as the counts, because a
+/// display can be replaced by another one between two snapshots and leave the count alone. It
+/// decides whether the live window assignments are worth recording as display homes: mid-change they
+/// are part-way through an evacuation and would record the wrong display.
+///
+/// A screen with no UUID counts toward the previous set's size — that is what `unchanged` compares
+/// against — but can never be matched, so it never appears in `arrived` and is not reported as
+/// `departed`. There is nothing to record about a display that cannot be named.
+pub fn display_set_delta(
+    previous: &[String],
+    current: &[String],
+    display_set_changed: bool,
+) -> DisplaySetDelta {
+    let named = |uuids: &[String]| -> Vec<String> {
+        let mut seen: Vec<String> = Vec::new();
+        for uuid in uuids {
+            if !uuid.is_empty() && !seen.iter().any(|kept| kept == uuid) {
+                seen.push(uuid.clone());
+            }
+        }
+        seen
+    };
+    let previous_named = named(previous);
+    let current_named = named(current);
+    let distinct_previous = previous.iter().collect::<std::collections::BTreeSet<_>>().len();
+
+    DisplaySetDelta {
+        departed: previous_named
+            .iter()
+            .filter(|uuid| !current_named.contains(uuid))
+            .cloned()
+            .collect(),
+        arrived: current_named
+            .iter()
+            .filter(|uuid| !previous_named.contains(uuid))
+            .cloned()
+            .collect(),
+        unchanged: !display_set_changed && current.len() == distinct_previous,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TopologyWindowDelta {
     pub epoch: u64,
@@ -236,9 +293,9 @@ impl Default for TopologyWindowDelta {
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGRect, CGSize};
+    use rini_core::ids::ScreenId;
 
     use super::*;
-    use rini_core::ids::ScreenId;
 
     fn state(frames: &[CGRect]) -> ForwardedSpaceState {
         ForwardedSpaceState {
@@ -257,15 +314,17 @@ mod tests {
         }
     }
 
-    fn rect(x: f64, y: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(1000., 1000.))
-    }
+    fn rect(x: f64, y: f64) -> CGRect { CGRect::new(CGPoint::new(x, y), CGSize::new(1000., 1000.)) }
 
     #[test]
     fn index_selector_orders_screens_left_to_right_then_top_to_bottom() {
         let s = state(&[rect(2000., 0.), rect(0., 1000.), rect(0., 0.)]);
         let ordered: Vec<_> = s.screens_in_physical_order().iter().map(|sc| sc.id).collect();
-        assert_eq!(ordered, vec![ScreenId::new(3), ScreenId::new(2), ScreenId::new(1)]);
+        assert_eq!(ordered, vec![
+            ScreenId::new(3),
+            ScreenId::new(2),
+            ScreenId::new(1)
+        ]);
         assert_eq!(
             s.screen_for_selector(&DisplaySelector::Index(1), None).map(|sc| sc.id),
             Some(ScreenId::new(2))
@@ -279,18 +338,28 @@ mod tests {
         let origin = Some(CGPoint::new(500., 500.));
         let right = s.screen_for_selector(&DisplaySelector::Direction(Direction::Right), origin);
         assert_eq!(right.map(|sc| sc.id), Some(ScreenId::new(3)));
-        assert!(s.screen_for_selector(&DisplaySelector::Direction(Direction::Left), origin).is_none());
-        assert!(s.screen_for_selector(&DisplaySelector::Direction(Direction::Right), None).is_none());
+        assert!(
+            s.screen_for_selector(&DisplaySelector::Direction(Direction::Left), origin)
+                .is_none()
+        );
+        assert!(
+            s.screen_for_selector(&DisplaySelector::Direction(Direction::Right), None)
+                .is_none()
+        );
     }
 
     #[test]
     fn uuid_and_point_lookups() {
         let s = state(&[rect(0., 0.), rect(1000., 0.)]);
         assert_eq!(
-            s.screen_for_selector(&DisplaySelector::Uuid("uuid-1".into()), None).map(|sc| sc.id),
+            s.screen_for_selector(&DisplaySelector::Uuid("uuid-1".into()), None)
+                .map(|sc| sc.id),
             Some(ScreenId::new(2))
         );
-        assert_eq!(s.screen_for_point(CGPoint::new(1500., 10.)).map(|sc| sc.id), Some(ScreenId::new(2)));
+        assert_eq!(
+            s.screen_for_point(CGPoint::new(1500., 10.)).map(|sc| sc.id),
+            Some(ScreenId::new(2))
+        );
         assert!(s.screen_for_point(CGPoint::new(5000., 10.)).is_none());
     }
 
@@ -310,7 +379,10 @@ mod tests {
             &current,
             &active,
             &SpaceActivationPolicy::new(),
-            SpaceActivationConfig { default_disable: false, one_space: false },
+            SpaceActivationConfig {
+                default_disable: false,
+                one_space: false,
+            },
             &incoming,
         );
         assert!(a.command_space_only_update);
@@ -329,7 +401,10 @@ mod tests {
             &current,
             &active,
             &SpaceActivationPolicy::new(),
-            SpaceActivationConfig { default_disable: false, one_space: false },
+            SpaceActivationConfig {
+                default_disable: false,
+                one_space: false,
+            },
             &incoming,
         );
         assert!(!a.command_space_only_update);
@@ -346,10 +421,95 @@ mod tests {
             &current,
             &active,
             &SpaceActivationPolicy::new(),
-            SpaceActivationConfig { default_disable: false, one_space: false },
+            SpaceActivationConfig {
+                default_disable: false,
+                one_space: false,
+            },
             &incoming,
         );
         assert_eq!(a.authoritative_spaces, vec![Some(SpaceId::new(1)), None]);
         assert!(!a.command_space_only_update, "the effective active set changed");
+    }
+
+    fn uuids(list: &[&str]) -> Vec<String> { list.iter().map(|uuid| uuid.to_string()).collect() }
+
+    #[test]
+    fn nothing_attached_or_detached_is_no_delta() {
+        let before = uuids(&["A", "B"]);
+        let delta = display_set_delta(&before, &before, false);
+        assert!(delta.departed.is_empty());
+        assert!(delta.arrived.is_empty());
+        assert!(delta.unchanged);
+    }
+
+    #[test]
+    fn unplugging_a_display_reports_it_departed() {
+        let delta = display_set_delta(&uuids(&["A", "B"]), &uuids(&["A"]), true);
+        assert_eq!(delta.departed, uuids(&["B"]));
+        assert!(delta.arrived.is_empty());
+        assert!(!delta.unchanged);
+    }
+
+    #[test]
+    fn plugging_a_display_in_reports_it_arrived() {
+        let delta = display_set_delta(&uuids(&["A"]), &uuids(&["A", "B"]), true);
+        assert_eq!(delta.arrived, uuids(&["B"]));
+        assert!(delta.departed.is_empty());
+    }
+
+    /// Swapping one display for another keeps the count, which is why `unchanged` needs the
+    /// snapshot's own flag and not just the sizes.
+    #[test]
+    fn swapping_one_display_for_another_is_not_unchanged() {
+        let delta = display_set_delta(&uuids(&["A", "B"]), &uuids(&["A", "C"]), true);
+        assert_eq!(delta.departed, uuids(&["B"]));
+        assert_eq!(delta.arrived, uuids(&["C"]));
+        assert!(!delta.unchanged);
+    }
+
+    /// The flag alone is not enough either: a snapshot can say nothing changed while the counts
+    /// disagree, and then the live assignments are still mid-evacuation.
+    #[test]
+    fn a_count_that_disagrees_is_not_unchanged_even_without_the_flag() {
+        let delta = display_set_delta(&uuids(&["A", "B"]), &uuids(&["A"]), false);
+        assert!(!delta.unchanged);
+    }
+
+    /// Departed and arrived keep screen order, because the caller records display homes per
+    /// departing display and reads them back per arriving one.
+    #[test]
+    fn both_lists_keep_screen_order() {
+        let delta = display_set_delta(&uuids(&["A", "B", "C"]), &uuids(&["D", "E"]), true);
+        assert_eq!(delta.departed, uuids(&["A", "B", "C"]));
+        assert_eq!(delta.arrived, uuids(&["D", "E"]));
+    }
+
+    /// A screen macOS cannot name is counted, so it does not make a settled topology look changed,
+    /// but it is never reported either way: there is nothing to record about it.
+    #[test]
+    fn a_screen_with_no_uuid_is_counted_but_never_reported() {
+        let before = uuids(&["A", ""]);
+        let after = uuids(&["A", ""]);
+        let delta = display_set_delta(&before, &after, false);
+        assert!(delta.departed.is_empty());
+        assert!(delta.arrived.is_empty());
+        assert!(delta.unchanged, "two screens before, two now");
+    }
+
+    #[test]
+    fn a_display_reported_twice_is_one_display() {
+        let delta = display_set_delta(&uuids(&["A", "A"]), &uuids(&["A"]), false);
+        assert!(delta.departed.is_empty());
+        assert_eq!(
+            delta.unchanged, true,
+            "one distinct display before, one screen now"
+        );
+    }
+
+    #[test]
+    fn starting_from_nothing_is_all_arrivals() {
+        let delta = display_set_delta(&[], &uuids(&["A", "B"]), true);
+        assert_eq!(delta.arrived, uuids(&["A", "B"]));
+        assert!(delta.departed.is_empty());
     }
 }

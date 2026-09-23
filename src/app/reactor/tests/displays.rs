@@ -1268,7 +1268,7 @@ fn clamshell_sleep_preserves_nested_layout_across_display_replacement() {
 ///
 /// Two bugs made this fail. prune_display_state deleted the display's UUID -> space
 /// mapping the moment it was unplugged, destroying the only durable link between a
-/// physical display and its layout; and the spaces actor's own remap path is gated
+/// physical display and its layout; and the spaces actor's own remap path is held
 /// behind should_force_refresh_layout, which never became true across a real
 /// unplug/replug cycle (every snapshot reported allow_space_remap: false).
 ///
