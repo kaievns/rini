@@ -3,25 +3,21 @@
 use dispatchr::queue;
 use dispatchr::time::Time;
 use objc2_foundation::MainThreadMarker;
-
+use rini_core::ids::SpaceId;
 use rini_runloop::channel;
 use rini_runloop::dispatch::DispatchExt;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
-use crate::windows::platform::window_server;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use crate::displays::platform::display_churn;
-use crate::displays::event::{Event as OutEvent, EventSink};
-use rini_core::ids::SpaceId;
-#[cfg(not(test))]
-use crate::displays::screen::managed_display_space_ids;
-use crate::displays::screen::ScreenCache;
 use crate::displays::domain::screen::{CoordinateConverter, ScreenInfo};
 use crate::displays::domain::topology::{
-    ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta,
-    BufferedSnapshot, buffered_snapshot, snapshot_is_committable,
-    snapshot_spaces_are_coherent,
+    BufferedSnapshot, ForwardedSpaceState, QuarantineStats, SpaceEventKind, TopologyWindowDelta,
+    buffered_snapshot, snapshot_is_committable, snapshot_spaces_are_coherent,
 };
+use crate::displays::event::{Event as OutEvent, EventSink};
+use crate::displays::platform::display_churn;
+use crate::displays::screen::ScreenCache;
+use crate::windows::platform::window_server;
 
 const REFRESH_DEFAULT_DELAY_NS: i64 = 100_000_000;
 const REFRESH_SPACE_SWITCH_DELAY_NS: i64 = 50_000_000;
@@ -68,7 +64,6 @@ pub enum Notification {
 pub type Sender = channel::Sender<Notification>;
 type Receiver = channel::Receiver<Notification>;
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DisplayTopologyFingerprint(Vec<(String, u64, u64, u64, u64, Option<u64>)>);
 
@@ -78,23 +73,19 @@ struct DisplayTopologyState {
     hits: u8,
 }
 
-
-
 #[derive(Debug, Clone)]
 struct PendingScreenParameters {
     screens: Vec<ScreenInfo>,
     converter: CoordinateConverter,
 }
 
-
-
 /// How a space id is classified.
 ///
 /// Two window-server calls per space, injected rather than called directly, because every rule in
-/// this file that decides what to forward asks one of them. They used to be `#[cfg(test)]`-forked
-/// functions: under test `is_fullscreen` compared against a threshold and `is_user` returned `true`
-/// unconditionally, so the "only user spaces count" rule this actor exists to enforce was never the
-/// rule any test ran.
+/// this file that decides what to forward asks one of them. Each used to be a `#[cfg(test)]` branch
+/// INSIDE the function: under test `is_fullscreen` compared against a threshold and `is_user`
+/// returned `true` unconditionally, so the "only user spaces count" rule this actor exists to enforce
+/// was never the rule any test ran.
 #[derive(Clone, Copy)]
 pub struct SpaceKinds {
     /// A fullscreen space, which is transient native state and must not reach the reactor.
@@ -118,22 +109,59 @@ impl SpaceKinds {
     /// fullscreen, and everything else is a user space. A test that needs a non-user space builds
     /// its own `SpaceKinds`.
     pub(crate) fn for_tests() -> Self {
-        Self { is_fullscreen: |space| space.get() >= TEST_FULLSCREEN_SPACE, is_user: |_| true }
+        Self {
+            is_fullscreen: |space| space.get() >= TEST_FULLSCREEN_SPACE,
+            is_user: |_| true,
+        }
     }
 
-    pub(crate) fn is_fullscreen(&self, space: SpaceId) -> bool {
-        (self.is_fullscreen)(space)
-    }
+    pub(crate) fn is_fullscreen(&self, space: SpaceId) -> bool { (self.is_fullscreen)(space) }
 
-    pub(crate) fn is_user(&self, space: SpaceId) -> bool {
-        (self.is_user)(space)
-    }
+    pub(crate) fn is_user(&self, space: SpaceId) -> bool { (self.is_user)(space) }
 
     pub(crate) fn classify(&self, space: SpaceId) -> Option<SpaceEventKind> {
         if self.is_fullscreen(space) {
             Some(SpaceEventKind::Fullscreen)
         } else {
             self.is_user(space).then_some(SpaceEventKind::User)
+        }
+    }
+}
+
+/// What the window server says about displays and spaces right now.
+///
+/// Three reads, injected rather than called, for the same reason as [`SpaceKinds`]: each one used to
+/// sit behind a `#[cfg(test)]` branch inside the function that consumed it, so those rules ran a
+/// different body under test than the one that ships. A test names its own reader; the production
+/// reader is the only one `AuthorityState::runtime` installs.
+#[derive(Clone, Copy)]
+pub struct LiveDisplays {
+    /// The display whose menu bar macOS considers active.
+    pub(crate) active_menu_bar_display: fn() -> Option<String>,
+    /// The space currently showing on that display.
+    pub(crate) active_space: fn() -> Option<SpaceId>,
+    /// Every managed space, per display UUID.
+    pub(crate) spaces_per_display: fn() -> HashMap<String, Vec<SpaceId>>,
+}
+
+impl LiveDisplays {
+    /// The window server. The only reader production uses.
+    pub fn from_window_server() -> Self {
+        Self {
+            active_menu_bar_display: crate::displays::screen::active_menu_bar_display_uuid,
+            active_space: crate::displays::screen::get_active_space_number,
+            spaces_per_display: crate::displays::screen::managed_display_space_ids,
+        }
+    }
+
+    /// A reader that knows nothing, which is what a test gets unless it says otherwise. Every rule
+    /// over these has a path for "the window server did not answer", and that is the path a test
+    /// takes by default.
+    pub(crate) fn silent() -> Self {
+        Self {
+            active_menu_bar_display: || None,
+            active_space: || None,
+            spaces_per_display: HashMap::default,
         }
     }
 }
@@ -169,6 +197,7 @@ pub struct AuthorityState {
     pending_topology_window_delta: Option<TopologyWindowDelta>,
     timers_enabled: bool,
     space_kinds: SpaceKinds,
+    live: LiveDisplays,
 }
 
 impl Default for AuthorityState {
@@ -200,6 +229,7 @@ impl Default for AuthorityState {
             pending_topology_window_delta: None,
             timers_enabled: true,
             space_kinds: SpaceKinds::for_tests(),
+            live: LiveDisplays::silent(),
         }
     }
 }
@@ -223,6 +253,7 @@ impl AuthorityState {
         let mut state = Self::default();
         state.screen_cache = Some(ScreenCache::new(MainThreadMarker::new().unwrap()));
         state.space_kinds = SpaceKinds::from_window_server();
+        state.live = LiveDisplays::from_window_server();
         state
     }
 }
@@ -241,7 +272,15 @@ impl SpacesActor {
 
     fn new_with_state(events: Box<dyn EventSink>, state: AuthorityState) -> (Self, Sender) {
         let (sender, receiver) = channel::channel();
-        (Self { sender: sender.clone(), receiver, events, state }, sender)
+        (
+            Self {
+                sender: sender.clone(),
+                receiver,
+                events,
+                state,
+            },
+            sender,
+        )
     }
 
     #[cfg(test)]
@@ -259,6 +298,16 @@ impl SpacesActor {
         let mut state = AuthorityState::default();
         state.timers_enabled = false;
         state.space_kinds = space_kinds;
+        Self::new_with_state(events, state)
+    }
+
+    /// A test actor whose window server answers. The default reader is silent, so every rule that
+    /// consults it takes its "no answer" path unless a test says otherwise.
+    #[cfg(test)]
+    pub fn new_for_tests_seeing(events: Box<dyn EventSink>, live: LiveDisplays) -> (Self, Sender) {
+        let mut state = AuthorityState::default();
+        state.timers_enabled = false;
+        state.live = live;
         Self::new_with_state(events, state)
     }
 
@@ -404,8 +453,7 @@ impl SpacesActor {
                             self.handle_space_inventory_changed();
                             return;
                         }
-                        self.events
-                            .send(OutEvent::WindowServerDestroyed(wsid, sid, kind));
+                        self.events.send(OutEvent::WindowServerDestroyed(wsid, sid, kind));
                     }
                 }
             }
@@ -419,11 +467,7 @@ impl SpacesActor {
     }
 
     fn handle_active_display_changed(&mut self) {
-        #[cfg(not(test))]
-        let active_display_uuid = crate::displays::screen::active_menu_bar_display_uuid();
-        #[cfg(test)]
-        let active_display_uuid: Option<String> = None;
-
+        let active_display_uuid = (self.state.live.active_menu_bar_display)();
         self.handle_active_display_changed_for(active_display_uuid.as_deref());
     }
 
@@ -495,14 +539,10 @@ impl SpacesActor {
             .as_mut()
             .and_then(|screen_cache| screen_cache.refresh())
             .or_else(|| {
-                #[cfg(test)]
-                {
-                    Some((self.state.screens.clone(), self.state.last_converter))
-                }
-                #[cfg(not(test))]
-                {
-                    None
-                }
+                // No live source. The last coherent picture beats no screens at all: an empty screen
+                // list is what macOS reports mid-reconfiguration and is never authoritative.
+                (!self.state.screens.is_empty())
+                    .then(|| (self.state.screens.clone(), self.state.last_converter))
             })
     }
 
@@ -515,7 +555,8 @@ impl SpacesActor {
         let forwarded = self.build_forwarded_state(screens);
         self.state.last_sent_spaces = Some(Self::screen_spaces(&forwarded.screens));
         self.state.awaiting_space_switch_confirmation = false;
-        self.events.send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
+        self.events
+            .send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
     }
 
     fn forward_space_snapshot(&mut self, spaces: Vec<Option<SpaceId>>) {
@@ -535,7 +576,8 @@ impl SpacesActor {
         self.state.last_sent_spaces = Some(spaces.clone());
         let forwarded = self.build_forwarded_state(screens);
         self.state.awaiting_space_switch_confirmation = false;
-        self.events.send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
+        self.events
+            .send(OutEvent::SpaceStateUpdated(forwarded, self.state.last_converter));
     }
 
     fn build_forwarded_state(&mut self, screens: Vec<ScreenInfo>) -> ForwardedSpaceState {
@@ -608,10 +650,7 @@ impl SpacesActor {
             && screens.iter().all(|screen| screen.space.is_some());
         let space_remaps = self.compute_space_remaps(&screens, allow_space_remap);
         let menu_bar_space = self.resolve_menu_bar_space(&screens);
-        #[cfg(not(test))]
-        let active_display_uuid = crate::displays::screen::active_menu_bar_display_uuid();
-        #[cfg(test)]
-        let active_display_uuid: Option<String> = None;
+        let active_display_uuid = (self.state.live.active_menu_bar_display)();
         let command_space = self.resolve_command_space(&screens, active_display_uuid.as_deref());
         self.state.active_display_uuid = active_display_uuid
             .filter(|uuid| screens.iter().any(|screen| screen.display_uuid == *uuid))
@@ -623,20 +662,18 @@ impl SpacesActor {
                         .map(|screen| screen.display_uuid.clone())
                 })
             });
-        #[cfg(test)]
-        {
-            let mut display_space_ids: HashMap<String, Vec<SpaceId>> = HashMap::default();
+        // The window server's own list, or the screens in hand when it does not answer. An empty
+        // list would say "this display owns no spaces", which is never true of an attached display
+        // and is worse than the one space the snapshot already names.
+        let mut spaces_per_display = (self.state.live.spaces_per_display)();
+        if spaces_per_display.is_empty() {
             for screen in &screens {
                 if let Some(space) = screen.space {
-                    display_space_ids.entry(screen.display_uuid.clone()).or_default().push(space);
+                    spaces_per_display.entry(screen.display_uuid.clone()).or_default().push(space);
                 }
             }
-            self.state.display_space_ids = display_space_ids;
         }
-        #[cfg(not(test))]
-        {
-            self.state.display_space_ids = managed_display_space_ids();
-        }
+        self.state.display_space_ids = spaces_per_display;
 
         if !screens.is_empty() {
             self.state.has_seen_display_set = true;
@@ -694,7 +731,9 @@ impl SpacesActor {
                 && previous_by_display
                     .get(display_uuid)
                     .and_then(|screen| screen.space)
-                    .is_some_and(|previous_space| !self.state.space_kinds.is_fullscreen(previous_space))
+                    .is_some_and(|previous_space| {
+                        !self.state.space_kinds.is_fullscreen(previous_space)
+                    })
         });
         if !entering_fullscreen {
             return;
@@ -749,7 +788,8 @@ impl SpacesActor {
     fn null_non_user_spaces(&self, screens: &mut [ScreenInfo]) {
         for screen in screens {
             if screen.space.is_some_and(|space| {
-                !self.state.space_kinds.is_fullscreen(space) && !self.state.space_kinds.is_user(space)
+                !self.state.space_kinds.is_fullscreen(space)
+                    && !self.state.space_kinds.is_user(space)
             }) {
                 screen.space = None;
             }
@@ -819,23 +859,18 @@ impl SpacesActor {
         screens: &[ScreenInfo],
         active_display_uuid: Option<&str>,
     ) -> Option<SpaceId> {
-        #[cfg(test)]
+        let active_space = (self.state.live.active_space)();
+        if let Some(space) =
+            Self::resolve_active_display_space(screens, active_display_uuid, active_space)
         {
-            let _ = active_display_uuid;
-            Self::resolve_active_display_space(screens, None, None)
-                .or_else(|| self.state.screens.iter().find_map(|screen| screen.space))
+            return Some(space);
         }
-        #[cfg(not(test))]
-        {
-            let active_space = crate::displays::screen::get_active_space_number();
-            if let Some(space) =
-                Self::resolve_active_display_space(screens, active_display_uuid, active_space)
-            {
-                return Some(space);
-            }
-
-            screens.iter().find_map(|screen| screen.space)
-        }
+        // Whatever space the snapshot names, then whatever the last one named. A command has to land
+        // somewhere, and the previous answer beats no answer.
+        screens
+            .iter()
+            .find_map(|screen| screen.space)
+            .or_else(|| self.state.screens.iter().find_map(|screen| screen.space))
     }
 
     fn resolve_active_display_space(
@@ -858,23 +893,15 @@ impl SpacesActor {
     }
 
     fn resolve_menu_bar_space(&self, screens: &[ScreenInfo]) -> Option<SpaceId> {
-        #[cfg(test)]
+        if let Some(active_space) = (self.state.live.active_space)()
+            && screens.iter().any(|screen| screen.space == Some(active_space))
         {
-            screens
-                .iter()
-                .find_map(|screen| screen.space)
-                .or_else(|| self.state.screens.iter().find_map(|screen| screen.space))
+            return Some(active_space);
         }
-        #[cfg(not(test))]
-        {
-            if let Some(active_space) = crate::displays::screen::get_active_space_number()
-                && screens.iter().any(|screen| screen.space == Some(active_space))
-            {
-                return Some(active_space);
-            }
-
-            screens.iter().find_map(|screen| screen.space)
-        }
+        screens
+            .iter()
+            .find_map(|screen| screen.space)
+            .or_else(|| self.state.screens.iter().find_map(|screen| screen.space))
     }
 
     fn visible_window_spaces_for_screens(
@@ -1113,9 +1140,11 @@ impl SpacesActor {
         let Some((screens, converter)) = self.collect_state() else {
             return false;
         };
-        if !snapshot_is_committable(&Self::screen_spaces(&screens), require_complete_spaces, |space| {
-            self.state.space_kinds.is_fullscreen(space)
-        }) {
+        if !snapshot_is_committable(
+            &Self::screen_spaces(&screens),
+            require_complete_spaces,
+            |space| self.state.space_kinds.is_fullscreen(space),
+        ) {
             return false;
         }
 

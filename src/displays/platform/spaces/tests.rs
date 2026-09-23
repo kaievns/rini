@@ -1,7 +1,7 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_runloop::channel;
 
 use super::*;
-use rini_runloop::channel;
 use crate::displays::event::Event as OutEvent;
 
 /// Splits the actor's one event stream the way the application does: topology snapshots one way,
@@ -117,7 +117,10 @@ fn build_actor_with_a_non_user_space() -> (
         is_user: |space| space.get() != NON_USER_SPACE,
     };
     let (actor, _) = SpacesActor::new_for_tests_classifying(
-        Box::new(Split { topology: wm_tx, rest: reactor_tx }),
+        Box::new(Split {
+            topology: wm_tx,
+            rest: reactor_tx,
+        }),
         kinds,
     );
     (actor, wm_rx, reactor_rx)
@@ -133,7 +136,10 @@ fn build_actor() -> (
 ) {
     let (wm_tx, wm_rx) = channel::channel();
     let (reactor_tx, reactor_rx) = channel::channel();
-    let (actor, _) = SpacesActor::new_for_tests(Box::new(Split { topology: wm_tx, rest: reactor_tx }));
+    let (actor, _) = SpacesActor::new_for_tests(Box::new(Split {
+        topology: wm_tx,
+        rest: reactor_tx,
+    }));
     (actor, wm_rx, reactor_rx)
 }
 
@@ -175,10 +181,7 @@ fn forwards_stable_screen_and_space_updates_immediately() {
     ));
     actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
 
-    assert!(matches!(
-        recv_wm(&mut wm_rx),
-        OutEvent::SpaceStateUpdated(..)
-    ));
+    assert!(matches!(recv_wm(&mut wm_rx), OutEvent::SpaceStateUpdated(..)));
 
     actor.handle_event(Notification::SpaceChanged(vec![Some(space)]));
     assert_no_wm_event(&mut wm_rx);
@@ -195,7 +198,10 @@ fn confirmed_window_move_forwards_membership_without_space_switch() {
     actor.state.screens = vec![make_screen(Some(origin))];
     actor.state.last_sent_spaces = Some(vec![Some(origin)]);
     actor.state.visible_window_spaces.insert(wsid, origin);
-    crate::windows::platform::window_server::set_window_spaces_override(wsid, Some(vec![destination.get()]));
+    crate::windows::platform::window_server::set_window_spaces_override(
+        wsid,
+        Some(vec![destination.get()]),
+    );
 
     actor.handle_event(Notification::WindowServerDestroyed(wsid, origin));
 
@@ -261,13 +267,10 @@ fn quarantines_window_space_events_during_sleep_before_churn_begins() {
     actor.handle_event(Notification::SpaceCreated(SpaceId::new(5)));
     actor.handle_event(Notification::SpaceDestroyed(SpaceId::new(6)));
 
-    assert_eq!(
-        actor.state.quarantine_stats,
-        QuarantineStats {
-            appeared_dropped: 1,
-            destroyed_dropped: 1
-        }
-    );
+    assert_eq!(actor.state.quarantine_stats, QuarantineStats {
+        appeared_dropped: 1,
+        destroyed_dropped: 1
+    });
     assert!(!actor.state.visible_window_spaces.contains_key(&appeared));
     assert_eq!(
         actor.state.visible_window_spaces.get(&existing),
@@ -366,10 +369,7 @@ fn wake_does_not_flush_pending_updates_while_churn_is_still_active() {
         recv_reactor(&mut reactor_rx),
         OutEvent::DisplayChurnBegin
     ));
-    assert!(matches!(
-        recv_reactor(&mut reactor_rx),
-        OutEvent::SystemWoke
-    ));
+    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWoke));
     assert_no_wm_event(&mut wm_rx);
 
     actor.handle_event(Notification::DisplayChurnEnd);
@@ -801,10 +801,10 @@ fn wake_transient_cannot_steal_another_displays_space_history() {
     ));
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
-            assert_eq!(
-                state.space_remaps,
-                vec![(external_space_before_sleep, external_space_after_wake)]
-            );
+            assert_eq!(state.space_remaps, vec![(
+                external_space_before_sleep,
+                external_space_after_wake
+            )]);
             assert!(!state.space_remaps.contains(&(builtin_space, external_space_after_wake)));
         }
         other => panic!("unexpected wm event: {other:?}"),
@@ -852,10 +852,7 @@ fn sleep_wake_display_reattach_flushes_latest_stable_spaces_only() {
         recv_reactor(&mut reactor_rx),
         OutEvent::DisplayChurnBegin
     ));
-    assert!(matches!(
-        recv_reactor(&mut reactor_rx),
-        OutEvent::SystemWoke
-    ));
+    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWoke));
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(
@@ -884,13 +881,17 @@ fn topology_window_delta_is_emitted_when_windows_leave_space_during_churn_withou
     );
     let _ = recv_wm(&mut wm_rx);
 
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(space.get(), Some(vec![]));
-    actor.synthesize_topology_window_delta(
-        9,
-        actor.state.display_churn_flags,
-        &[make_screen(Some(space))],
+    crate::windows::platform::window_server::set_space_window_list_for_space_override(
+        space.get(),
+        Some(vec![]),
     );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(space.get(), None);
+    actor.synthesize_topology_window_delta(9, actor.state.display_churn_flags, &[make_screen(
+        Some(space),
+    )]);
+    crate::windows::platform::window_server::set_space_window_list_for_space_override(
+        space.get(),
+        None,
+    );
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(800.0),
@@ -916,14 +917,20 @@ fn first_empty_post_wake_snapshot_preserves_known_visible_windows() {
     actor.state.screens = vec![make_screen(Some(space))];
     actor.state.visible_window_spaces.insert(wsid, space);
     actor.state.release_reactor_quarantine_on_next_forward = true;
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(space.get(), Some(vec![]));
+    crate::windows::platform::window_server::set_space_window_list_for_space_override(
+        space.get(),
+        Some(vec![]),
+    );
 
     actor.forward_screen_parameters(
         vec![make_screen(Some(space))],
         CoordinateConverter::from_height(800.0),
     );
 
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(space.get(), None);
+    crate::windows::platform::window_server::set_space_window_list_for_space_override(
+        space.get(),
+        None,
+    );
     match recv_wm(&mut wm_rx) {
         OutEvent::SpaceStateUpdated(state, _) => {
             assert_eq!(state.active_window_spaces.get(&wsid), Some(&space));
@@ -959,15 +966,14 @@ fn topology_window_delta_treats_same_window_space_move_as_remove_then_add() {
         new_space.get(),
         Some(vec![wsid.as_u32()]),
     );
-    actor.synthesize_topology_window_delta(
-        10,
-        actor.state.display_churn_flags,
-        &[
-            make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),
-            make_screen_with(2, "display-right", 1000.0, 1000.0, Some(new_space)),
-        ],
+    actor.synthesize_topology_window_delta(10, actor.state.display_churn_flags, &[
+        make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),
+        make_screen_with(2, "display-right", 1000.0, 1000.0, Some(new_space)),
+    ]);
+    crate::windows::platform::window_server::set_space_window_list_for_space_override(
+        new_space.get(),
+        None,
     );
-    crate::windows::platform::window_server::set_space_window_list_for_space_override(new_space.get(), None);
     actor.forward_screen_parameters(
         vec![
             make_screen_with(1, "display-left", 0.0, 1000.0, Some(old_space)),
@@ -1108,10 +1114,7 @@ fn duplicate_space_transient_during_wake_is_not_forwarded_when_stable_snapshot_r
         recv_reactor(&mut reactor_rx),
         OutEvent::DisplayChurnBegin
     ));
-    assert!(matches!(
-        recv_reactor(&mut reactor_rx),
-        OutEvent::SystemWoke
-    ));
+    assert!(matches!(recv_reactor(&mut reactor_rx), OutEvent::SystemWoke));
     assert_no_wm_event(&mut wm_rx);
 }
 
@@ -1445,4 +1448,173 @@ fn a_user_space_is_forwarded_unchanged() {
         state.screens.iter().map(|screen| screen.space).collect::<Vec<_>>(),
         vec![Some(space)]
     );
+}
+
+/// A reader that answers, built from the two ids below.
+fn build_actor_seeing_display_and_space() -> (
+    SpacesActor,
+    channel::Receiver<OutEvent>,
+    channel::Receiver<OutEvent>,
+) {
+    let (wm_tx, wm_rx) = channel::channel();
+    let (reactor_tx, reactor_rx) = channel::channel();
+    let live = LiveDisplays {
+        active_menu_bar_display: || Some(ACTIVE_DISPLAY.to_string()),
+        active_space: || Some(SpaceId::new(ACTIVE_SPACE)),
+        spaces_per_display: || {
+            let mut map = HashMap::default();
+            map.insert(ACTIVE_DISPLAY.to_string(), vec![
+                SpaceId::new(ACTIVE_SPACE),
+                SpaceId::new(99),
+            ]);
+            map
+        },
+    };
+    let (actor, _) = SpacesActor::new_for_tests_seeing(
+        Box::new(Split {
+            topology: wm_tx,
+            rest: reactor_tx,
+        }),
+        live,
+    );
+    (actor, wm_rx, reactor_rx)
+}
+
+const ACTIVE_DISPLAY: &str = "display-right";
+const ACTIVE_SPACE: u64 = 77;
+
+/// The command space is the space on the display whose menu bar is active, not the first screen in
+/// the snapshot. This rule was unreachable from a test: `resolve_command_space` had a
+/// `#[cfg(test)]` body that discarded both arguments and ran a different algorithm.
+#[test]
+fn the_command_space_is_the_active_display_s_space_not_the_first_screen_s() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor_seeing_display_and_space();
+
+    actor.handle_event(Notification::ScreenParametersChanged(
+        vec![
+            make_screen_with(1, "display-left", 0.0, 1000.0, Some(SpaceId::new(1))),
+            make_screen_with(
+                2,
+                ACTIVE_DISPLAY,
+                1000.0,
+                1000.0,
+                Some(SpaceId::new(ACTIVE_SPACE)),
+            ),
+        ],
+        CoordinateConverter::default(),
+    ));
+
+    let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
+        panic!("expected a topology snapshot");
+    };
+    assert_eq!(
+        state.command_space,
+        Some(SpaceId::new(ACTIVE_SPACE)),
+        "the active display's space, even though display-left is first in the list"
+    );
+}
+
+/// The menu bar space is the active space when a screen actually has it.
+#[test]
+fn the_menu_bar_space_is_the_active_space_when_a_screen_has_it() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor_seeing_display_and_space();
+
+    actor.handle_event(Notification::ScreenParametersChanged(
+        vec![
+            make_screen_with(1, "display-left", 0.0, 1000.0, Some(SpaceId::new(1))),
+            make_screen_with(
+                2,
+                ACTIVE_DISPLAY,
+                1000.0,
+                1000.0,
+                Some(SpaceId::new(ACTIVE_SPACE)),
+            ),
+        ],
+        CoordinateConverter::default(),
+    ));
+
+    let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
+        panic!("expected a topology snapshot");
+    };
+    assert_eq!(state.menu_bar_space, Some(SpaceId::new(ACTIVE_SPACE)));
+}
+
+/// And it is ignored when no screen has it. The window server can name a space that belongs to a
+/// display the snapshot does not carry, mid-reconfiguration; believing it puts the menu bar on a
+/// screen that is not there.
+#[test]
+fn an_active_space_no_screen_has_is_not_the_menu_bar_space() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor_seeing_display_and_space();
+
+    actor.handle_event(Notification::ScreenParametersChanged(
+        vec![make_screen_with(
+            1,
+            "display-left",
+            0.0,
+            1000.0,
+            Some(SpaceId::new(1)),
+        )],
+        CoordinateConverter::default(),
+    ));
+
+    let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
+        panic!("expected a topology snapshot");
+    };
+    assert_eq!(
+        state.menu_bar_space,
+        Some(SpaceId::new(1)),
+        "the only screen's space, not the space the window server named"
+    );
+}
+
+/// Which spaces a display owns comes from the window server, which knows about spaces no screen is
+/// currently showing. Deriving it from the snapshot can only ever find the one space per display
+/// that the snapshot already names.
+#[test]
+fn the_spaces_a_display_owns_come_from_the_window_server() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor_seeing_display_and_space();
+
+    actor.handle_event(Notification::ScreenParametersChanged(
+        vec![make_screen_with(
+            2,
+            ACTIVE_DISPLAY,
+            0.0,
+            1000.0,
+            Some(SpaceId::new(ACTIVE_SPACE)),
+        )],
+        CoordinateConverter::default(),
+    ));
+
+    let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
+        panic!("expected a topology snapshot");
+    };
+    assert_eq!(
+        state.display_space_ids.get(ACTIVE_DISPLAY),
+        Some(&vec![SpaceId::new(ACTIVE_SPACE), SpaceId::new(99)]),
+        "both spaces, including the one nothing is showing"
+    );
+}
+
+/// With a silent window server the snapshot stands in, so a display still owns the space it is
+/// showing rather than owning nothing.
+#[test]
+fn a_silent_window_server_falls_back_to_the_snapshot() {
+    let (mut actor, mut wm_rx, _reactor_rx) = build_actor();
+    let space = SpaceId::new(5);
+
+    actor.handle_event(Notification::ScreenParametersChanged(
+        vec![make_screen_with(
+            1,
+            "display-left",
+            0.0,
+            1000.0,
+            Some(space),
+        )],
+        CoordinateConverter::default(),
+    ));
+
+    let OutEvent::SpaceStateUpdated(state, _) = recv_wm(&mut wm_rx) else {
+        panic!("expected a topology snapshot");
+    };
+    assert_eq!(state.display_space_ids.get("display-left"), Some(&vec![space]));
 }

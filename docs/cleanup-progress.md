@@ -13,15 +13,26 @@ the one that turned out to be a live bug.
 
 | severity | location | what the test ran instead | state |
 |---|---|---|---|
-| HIGH | `spaces.rs:822` `resolve_command_space` | a different algorithm; both inputs discarded | open |
-| HIGH | `spaces.rs:861` `resolve_menu_bar_space` | first screen's space, not the active one | open |
+| HIGH | `spaces.rs:822` `resolve_command_space` | a different algorithm; both inputs discarded | **done** |
+| HIGH | `spaces.rs:861` `resolve_menu_bar_space` | first screen's space, not the active one | **done** |
 | HIGH | `mod.rs:869` `space_is_user(..)` | `true`, unconditionally | **done** — and the guard turned out to be dead; see below |
-| MED | `spaces.rs:626` `display_space_ids` | derived from screens, not the window server | open |
-| MED | `spaces.rs:422` `active_display_uuid` | always `None` | open |
-| MED | `spaces.rs:611` `active_display_uuid` | always `None` | open |
-| LOW | `spaces.rs:498` `collect_state` | an inline fake screen cache | open |
+| MED | `spaces.rs:626` `display_space_ids` | derived from screens, not the window server | **done** |
+| MED | `spaces.rs:422` `active_display_uuid` | always `None` | **done** |
+| MED | `spaces.rs:611` `active_display_uuid` | always `None` | **done** |
+| LOW | `spaces.rs:498` `collect_state` | an inline fake screen cache | **done** — the fallback is now always compiled and defensible on its own |
 | LOW | `window_server.rs:488,742` | thread-local overrides | open |
 | LOW | `mod.rs:605` `autosave_path` | `None`, so the suite cannot overwrite `~/.rini/layout.ron` | **done** — set by `new_for_test` instead |
+
+### The five in `spaces.rs`
+
+Three window-server reads became `LiveDisplays`, injected beside `SpaceKinds`. Where the test body
+and the production body differed structurally, the production body stayed and the test body's
+fallback was kept only where it is defensible in production too — the previous snapshot's space when
+the current one names none, and the snapshot's spaces when the window server does not answer. One
+code path, no branch.
+
+Five tests, three of which fail if the reader goes silent again, which is the state the old bodies
+forced.
 
 ### What `mod.rs:869` turned out to be
 
