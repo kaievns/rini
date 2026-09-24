@@ -958,6 +958,64 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
 /// Adding a window to a workspace creates a FRESH column at the default ratio, so a window
 /// sized to a third or two thirds snapped back on every move. Reported as the size resetting
 /// to 50%. Asserts the laid-out width, which is what is actually visible.
+/// The switcher offers EVERY window, across applications and workspaces, most recently focused first.
+///
+/// Where `cycle_app_windows` is scoped to the focused application and ordered by position, this is
+/// scoped to nothing and ordered by recency. Both halves are asserted: the list spans two apps and two
+/// workspaces, and the order is the order they were focused in rather than the order they were added.
+#[test]
+fn the_switcher_offers_every_window_in_focus_order() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let ghostty = WindowId::new(1, 1);
+    let other_ghostty = WindowId::new(1, 2);
+    let slack = WindowId::new(2, 1);
+
+    set_space_membership(&[(space, &[901, 902, 903])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    reactor.add_test_app(2);
+    let workspaces = reactor.test_workspace_ids(space);
+    // Two applications, two workspaces: the exact shape neither existing cycler covers.
+    for (window, wsid, workspace) in [
+        (ghostty, 901u32, workspaces[0]),
+        (other_ghostty, 902, workspaces[1]),
+        (slack, 903, workspaces[0]),
+    ] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+
+    // Focus them in a known order, so recency and insertion order disagree.
+    for window in [other_ghostty, slack, ghostty] {
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
+
+    let list = reactor.probe_switch_candidates();
+    assert_eq!(
+        list.iter().map(|c| c.window).collect::<Vec<_>>(),
+        vec![ghostty, slack, other_ghostty],
+        "every window, both apps, both workspaces, most recently focused first"
+    );
+
+    // One step lands on the window focused before this one, which is what a quick tap is for.
+    let outcome = reactor.probe_switch_window(false);
+    let target = outcome.raise_requests.iter().find_map(|request| match request {
+        crate::windows::domain::raise::Event::RaiseRequest(request) => {
+            request.focus_window.map(|(window, _)| window)
+        }
+        _ => None,
+    });
+    assert_eq!(
+        target,
+        Some(slack),
+        "a single step goes to the previously focused window, in another application"
+    );
+}
+
 /// Cycling an app's windows must reach the ones on OTHER workspaces.
 ///
 /// macOS's cmd-` only offers windows on the visible workspace, so three Ghostty windows

@@ -26,5 +26,6 @@ pub mod app;
 pub mod displays;
 pub mod input;
 pub mod layout;
+pub mod switcher;
 pub mod windows;
 pub mod workspaces;

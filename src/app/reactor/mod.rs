@@ -57,6 +57,8 @@ use std::thread;
 use crate::displays::domain::topology::display_set_delta;
 use crate::displays::platform::spaces::SpaceKinds;
 use crate::layout::domain::boundary::workspace_step_at_boundary;
+use crate::switcher::domain::candidates::{Candidate, Scope, switch_list};
+use crate::switcher::domain::selection::Selection;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order;
 use crate::windows::domain::rules::AppRuleDecision;
@@ -1428,6 +1430,9 @@ impl Reactor {
             Event::Command(Command::Reactor(ReactorCommand::RedistributeWindows)) => {
                 return Ok(self.redistribute_windows());
             }
+            Event::Command(Command::Reactor(ReactorCommand::SwitchWindow { backward })) => {
+                return Ok(self.switch_window(backward));
+            }
             Event::Command(Command::Reactor(ReactorCommand::CycleAppWindows { backward })) => {
                 return Ok(self.cycle_app_windows(backward));
             }
@@ -2735,6 +2740,16 @@ impl Reactor {
         self.cycle_app_windows(backward)
     }
 
+    #[cfg(test)]
+    pub(crate) fn probe_switch_window(&mut self, backward: bool) -> EventOutcome {
+        self.switch_window(backward)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn probe_switch_candidates(&mut self) -> Vec<Candidate> {
+        self.switch_candidates(Scope::Everything)
+    }
+
     /// Cycle focus between the focused app's windows, wherever they are.
     ///
     /// macOS's cmd-` only offers windows it considers reachable on the current Space. rini
@@ -2788,18 +2803,29 @@ impl Reactor {
             return EventOutcome::no_change();
         }
 
-        let resolved_space = self.affinity().best_space_for_window_id(next);
+        self.focus_window_anywhere(next)
+    }
+
+    /// Focus `window` wherever it is, switching the owning display's workspace to follow.
+    ///
+    /// The half of `cycle_app_windows` that is not about choosing. Extracted because the switcher
+    /// needs exactly this and a second copy would be a second set of answers to "what does it take to
+    /// reach a window on another workspace": the space resolution, the active-space test that
+    /// `handle_command_reactor_focus_window` refuses without, and the workspace follow without which
+    /// focus lands on a window parked off-screen and the keystroke looks like a no-op.
+    fn focus_window_anywhere(&mut self, window: WindowId) -> EventOutcome {
+        let resolved_space = self.affinity().best_space_for_window_id(window);
         let space_is_active = resolved_space.is_some_and(|space| self.is_space_active(space));
         match command_workflow::handle_command_reactor_focus_window(
             &self.state,
             &self.app_manager,
             command_workflow::FocusWindowPayload {
-                window_id: next,
+                window_id: window,
                 window_server_id: self
                     .state
                     .windows
-                    .window(next)
-                    .and_then(|window| window.info.sys_id),
+                    .window(window)
+                    .and_then(|state| state.info.sys_id),
                 resolved_space,
                 space_is_active,
             },
@@ -2809,15 +2835,100 @@ impl Reactor {
                 // window that is parked off-screen and the keystroke looks like a no-op. This
                 // is the same follow used by the focus-changed path.
                 if let Some(space) = resolved_space {
-                    outcome.absorb(self.maybe_auto_switch_to_window_workspace(pid, next, space));
+                    outcome.absorb(
+                        self.maybe_auto_switch_to_window_workspace(window.pid, window, space),
+                    );
                 }
                 outcome
             }
             Err(error) => {
-                warn!(%error, ?next, "cycle app windows failed to focus");
+                warn!(%error, ?window, "failed to focus window");
                 EventOutcome::no_change()
             }
         }
+    }
+
+    /// Every window rini knows about, in the order they were last focused.
+    ///
+    /// Built from the workspace assignments rather than from any layout tree: a tree is per display and
+    /// per workspace, and this list is deliberately neither. Windows with no workspace assignment are
+    /// dropped — there is nowhere to switch TO for a window rini has not placed — which is the same
+    /// call `cycle_app_windows` makes.
+    ///
+    /// The workspace index comes from the canonical order rather than from the workspace id, so the
+    /// stable tail matches the order the user sees when they step through workspaces.
+    fn switch_candidates(&mut self, scope: Scope) -> Vec<Candidate> {
+        let assignments: Vec<(WindowId, SpaceId, crate::workspaces::VirtualWorkspaceId)> = self
+            .state
+            .windows
+            .iter_workspace_assignments()
+            .map(|(window, info)| (window, info.space, info.workspace_id))
+            .collect();
+
+        let mut candidates = Vec::with_capacity(assignments.len());
+        for (window, space, workspace_id) in assignments {
+            if !self.window_is_standard(window) {
+                continue;
+            }
+            let workspace_index = self
+                .layout_manager
+                .layout_engine
+                .virtual_workspace_manager_mut()
+                .list_workspaces(space)
+                .iter()
+                .position(|(id, _)| *id == workspace_id)
+                .unwrap_or(usize::MAX);
+            let Some(state) = self.state.windows.window(window) else {
+                continue;
+            };
+            let app_name = self
+                .app_manager
+                .apps
+                .get(&window.pid)
+                .and_then(|app| app.info.localized_name.clone())
+                .unwrap_or_default();
+            candidates.push(Candidate {
+                window,
+                space,
+                workspace_index,
+                title: state.info.title.clone(),
+                app_name,
+                is_minimized: state.info.is_minimized,
+            });
+        }
+
+        switch_list(candidates, self.main_window_tracker.focus_order(), scope)
+    }
+
+    /// One step of the switcher: focus the next window in the focus order, wherever it is.
+    ///
+    /// The no-popup half of the switcher, and on its own the whole of a quick tap. Deliberately not
+    /// built on `cycle_app_windows`: that one is scoped to the focused application's windows and sorted
+    /// by position rather than by recency, which is the opposite of what a switcher wants.
+    fn switch_window(&mut self, backward: bool) -> EventOutcome {
+        let list = self.switch_candidates(Scope::Everything);
+        let current = self.main_window();
+        // The list is focus-ordered, so the window in front is the one focused now — unless focus is
+        // somewhere rini does not track, in which case the front is still the best guess at "where I
+        // was", and stepping from it is right.
+        let here = current
+            .and_then(|window| list.iter().position(|candidate| candidate.window == window))
+            .unwrap_or(0);
+        let Some(mut cursor) = Selection::new(list.len(), here) else {
+            return EventOutcome::no_change();
+        };
+        cursor.step(if backward { -1 } else { 1 });
+        let target = list[cursor.index()].window;
+        if Some(target) == current {
+            return EventOutcome::no_change();
+        }
+        debug!(
+            idx = target.idx.get(),
+            from = ?current.map(|w| w.idx.get()),
+            rows = list.len(),
+            "switching window"
+        );
+        self.focus_window_anywhere(target)
     }
 
     fn redistribute_windows(&mut self) -> EventOutcome {

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use rustc_hash::FxHashMap as HashMap;
 
+use crate::windows::domain::focus_order::FocusOrder;
 use crate::windows::domain::request::Quiet;
 use rini_core::ids::{WindowId, pid_t};
 
@@ -93,6 +94,12 @@ pub struct MainWindowTracker {
     /// Which window of each app rini last saw focused. macOS picks a window of its own on activation,
     /// and that pick is not always this one.
     last_focused_by_app: HashMap<pid_t, WindowId>,
+    /// Every window in the order it was last focused, most recent first.
+    ///
+    /// Written here rather than beside the switcher that reads it, because this type is the only place
+    /// that sees every authoritative focus edge, and one writer is what stops it becoming a third focus
+    /// record that disagrees with the two above.
+    focus_order: FocusOrder,
     /// The app that has just been activated, with whatever it had focused BEFORE the activation.
     ///
     /// Snapshotted because the activation immediately overwrites the live record: macOS reports its own
@@ -140,12 +147,14 @@ impl MainWindowTracker {
                 if self.window_server_focus.is_some_and(|wid| wid.pid == pid) {
                     self.window_server_focus = None;
                 }
+                self.focus_order.forget_app(pid);
                 return None;
             }
             FocusEvent::WindowDestroyed(wid) => {
                 if self.window_server_focus == Some(wid) {
                     self.window_server_focus = None;
                 }
+                self.focus_order.forget(wid);
                 return None;
             }
             FocusEvent::ApplicationActivated(pid, quiet) => {
@@ -197,6 +206,7 @@ impl MainWindowTracker {
                 self.window_server_focus_authoritative = true;
                 self.window_server_focus = Some(wid);
                 self.last_focused_by_app.insert(wid.pid, wid);
+                self.focus_order.touch(wid);
                 return None;
             }
         };
@@ -209,10 +219,25 @@ impl MainWindowTracker {
         }
         if Some(event_pid) == self.global_frontmost && quiet_edge == Quiet::No {
             if let Some(wid) = self.main_window() {
+                // The other focus edge. The window-server arm above returns early, so this is the only
+                // other point at which this type decides a window has the focus — an AX activation
+                // before the window server has spoken, which is the cold-start case. Touching only the
+                // window-server arm would leave the order empty until the first native focus report.
+                self.focus_order.touch(wid);
                 return Some(wid);
             }
         }
         None
+    }
+
+    /// Every window in the order it was last focused, most recent first.
+    pub fn focus_order(&self) -> &FocusOrder {
+        &self.focus_order
+    }
+
+    /// Carry a window's place in the focus order across an identity change.
+    pub fn rekey_focus_order(&mut self, from: WindowId, to: WindowId) {
+        self.focus_order.rekey(from, to);
     }
 
     pub fn main_window(&self) -> Option<WindowId> {
@@ -262,10 +287,85 @@ impl MainWindowTracker {
 mod tests {
     use super::*;
 
+    mod focus_order_wiring {
+        use super::super::{FocusEvent, MainWindowTracker};
+        use crate::windows::domain::request::Quiet;
+        use rini_core::ids::WindowId;
+
+        fn wid(pid: rini_core::ids::pid_t, idx: u32) -> WindowId {
+            WindowId::new(pid, idx)
+        }
+
+        /// The order has to be populated by real focus edges, not just by a test poking the pure type.
+        /// `WindowServerFocusChanged` is the authoritative one.
+        #[test]
+        fn window_server_focus_records_the_order() {
+            let mut tracker = MainWindowTracker::default();
+
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(1, 1)));
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(2, 1)));
+
+            assert_eq!(
+                tracker.focus_order().iter().collect::<Vec<_>>(),
+                vec![wid(2, 1), wid(1, 1)]
+            );
+        }
+
+        /// The cold-start edge. `handle_event` returns early for the window-server arm, so an AX
+        /// activation before the window server has spoken is the only OTHER point this type decides a
+        /// window has focus — and tracking only the first would leave the order empty until the first
+        /// native focus report arrives.
+        #[test]
+        fn an_activation_before_the_window_server_speaks_records_the_order_too() {
+            let mut tracker = MainWindowTracker::default();
+            let _ = tracker.handle_event(FocusEvent::ApplicationLaunched {
+                pid: 5,
+                is_frontmost: true,
+                main_window: Some(wid(5, 1)),
+            });
+            let _ = tracker.handle_event(FocusEvent::ApplicationGloballyActivated(5));
+
+            let focused = tracker.handle_event(FocusEvent::ApplicationMainWindowChanged(
+                5,
+                Some(wid(5, 1)),
+                Quiet::No,
+            ));
+
+            assert_eq!(focused, Some(wid(5, 1)));
+            assert_eq!(
+                tracker.focus_order().iter().collect::<Vec<_>>(),
+                vec![wid(5, 1)],
+                "the order is not empty before the first window-server report"
+            );
+        }
+
+        #[test]
+        fn a_destroyed_window_leaves_the_order() {
+            let mut tracker = MainWindowTracker::default();
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(1, 1)));
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(1, 2)));
+
+            let _ = tracker.handle_event(FocusEvent::WindowDestroyed(wid(1, 1)));
+
+            assert_eq!(tracker.focus_order().iter().collect::<Vec<_>>(), vec![wid(1, 2)]);
+        }
+
+        #[test]
+        fn an_application_thread_ending_takes_its_windows_out_of_the_order() {
+            let mut tracker = MainWindowTracker::default();
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(1, 1)));
+            let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(wid(2, 1)));
+
+            let _ = tracker.handle_event(FocusEvent::ApplicationThreadTerminated(1));
+
+            assert_eq!(tracker.focus_order().iter().collect::<Vec<_>>(), vec![wid(2, 1)]);
+        }
+    }
+
     mod raise_echo {
         use std::time::{Duration, Instant};
 
-        use super::RaiseEcho;
+        use super::super::RaiseEcho;
         use rini_core::ids::WindowId;
 
         fn wid(idx: u32) -> WindowId {

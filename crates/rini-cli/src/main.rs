@@ -184,6 +184,16 @@ enum ExecuteCommands {
         #[arg(long)]
         backward: bool,
     },
+    /// Step through EVERY window, on every workspace and display, most recently focused first.
+    ///
+    /// Unbundled: one step per window rather than per application. This is the out-of-band path
+    /// that works with no event tap at all, which is the only thing that helps if the keyboard
+    /// tap has been stood down.
+    SwitchWindow {
+        /// Step backward through the order.
+        #[arg(long)]
+        backward: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -637,6 +647,9 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::Redistribute => CliCommand::Reactor(reactor::Command::Reactor(
             reactor::ReactorCommand::RedistributeWindows,
         )),
+        ExecuteCommands::SwitchWindow { backward } => CliCommand::Reactor(
+            reactor::Command::Reactor(reactor::ReactorCommand::SwitchWindow { backward }),
+        ),
         ExecuteCommands::CycleAppWindows { backward } => CliCommand::Reactor(
             reactor::Command::Reactor(reactor::ReactorCommand::CycleAppWindows { backward }),
         ),

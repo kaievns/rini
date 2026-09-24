@@ -7,13 +7,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const FEATURES: [&str; 6] = [
+const FEATURES: [&str; 7] = [
     "windows",
     "displays",
     "layout",
     "workspaces",
     "input",
     "animation",
+    "switcher",
 ];
 
 /// macOS and FFI surfaces a pure module must not reach for. `objc2_core_foundation` is absent on

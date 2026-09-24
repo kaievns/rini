@@ -54,6 +54,12 @@ pub(crate) fn lower(cmd: WmCmd, workspace_names: &[String]) -> Lowered {
                 backward: true,
             }))
         }
+        WmCmd::SwitchWindow => Lowered::Command(Reactor(reactor::ReactorCommand::SwitchWindow {
+            backward: false,
+        })),
+        WmCmd::SwitchWindowBackward => {
+            Lowered::Command(Reactor(reactor::ReactorCommand::SwitchWindow { backward: true }))
+        }
         WmCmd::NextWorkspace => layout(LayoutCommand::NextWorkspace(None)),
         WmCmd::PrevWorkspace => layout(LayoutCommand::PrevWorkspace(None)),
         WmCmd::CreateWorkspace => layout(LayoutCommand::CreateWorkspace),
@@ -174,6 +180,8 @@ mod tests {
             WmCmd::CloseWindow,
             WmCmd::CycleAppWindows,
             WmCmd::CycleAppWindowsBackward,
+            WmCmd::SwitchWindow,
+            WmCmd::SwitchWindowBackward,
             WmCmd::NextWorkspace,
             WmCmd::PrevWorkspace,
             WmCmd::CreateWorkspace,

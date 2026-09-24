@@ -105,6 +105,14 @@ pub enum ReactorCommand {
         selector: DisplaySelector,
         window_id: Option<u32>,
     },
+    /// Step through EVERY window, on every workspace and display, most recently focused first.
+    ///
+    /// Unbundled, unlike macOS's own switcher: one entry per window rather than per application, so
+    /// four windows of one app are four steps. Distinct from `CycleAppWindows`, which is scoped to the
+    /// focused application and ordered by position rather than by recency.
+    SwitchWindow {
+        backward: bool,
+    },
     /// Cycle focus between the focused app's windows, across workspaces and displays.
     ///
     /// macOS's own cmd-` only offers windows it considers reachable on the current Space, so

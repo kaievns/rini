@@ -42,6 +42,14 @@ pub enum WmCmd {
     /// expressible as plain strings.
     CycleAppWindows,
     CycleAppWindowsBackward,
+
+    /// Step through EVERY window, on every workspace and display, in the order they were last
+    /// focused. Unbundled: one entry per window, not per application.
+    ///
+    /// Two unit variants for the same reason as the pair above — a struct-bodied variant cannot be
+    /// written as a bare string in a keybinding, and rini panics at startup on one it cannot parse.
+    SwitchWindow,
+    SwitchWindowBackward,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

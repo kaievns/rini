@@ -45,6 +45,7 @@ Rules for keeping this honest:
 | [`workspaces.md`](workspaces.md) | The vertical stack of workspaces, and what belongs to one |
 | [`displays.md`](displays.md) | More than one screen, and surviving a replug |
 | [`focus.md`](focus.md) | Who has focus, and what is in front of what |
+| [`switcher.md`](switcher.md) | Every window, in the order they were last used |
 | [`input.md`](input.md) | Bindings, modifiers, and the gestures |
 | [`persistence.md`](persistence.md) | What survives a restart, and what a bad file costs |
 | [`animation.md`](animation.md) | What moves, and what must never be seen to move |
