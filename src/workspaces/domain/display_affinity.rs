@@ -46,7 +46,7 @@ pub struct DisplayAffinity {
 /// widths, which is exactly when this record is consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ColumnWidth {
-    /// Full viewport width, as `toggle_fullscreen_within_gaps` produces. Kept distinct
+    /// Full viewport width, as `ctrl-F` and the widest preset both produce. Kept distinct
     /// from `Offset` because it is a MODE, not a ratio: it must stay full width on a
     /// display of any size, and it round-trips back to the preset width when toggled off.
     FullWidth,

@@ -506,7 +506,7 @@ fn a_width_the_layout_gave_a_window_is_remembered_without_a_width_command() {
     // in: `window_width:{}` and every slot recording no width at all.
     let ws_id = engine.virtual_workspace_manager.active_workspace(space).unwrap();
     let layout = engine.workspace_layouts.active(space, ws_id).unwrap();
-    engine.workspace_tree_mut(ws_id).set_window_full_width(layout, window, true);
+    engine.workspace_tree_mut(ws_id).restore_window_full_width(layout, window);
     assert!(
         engine.workspace_tree(ws_id).is_window_full_width(layout, window),
         "setup"

@@ -14,7 +14,8 @@ principle, and deliberately is not reused — see "Why this shape" in
 |---|---|
 | `domain/scrolling.rs` | `ScrollingLayoutSystem`: the columns, the selection, the scroll offset, and `calculate_layout`. The one layout system there is |
 | `domain/strip.rs` | Where the strip sits and how wide its columns are: `anchor_x`, `column_starts`, `gap_share`, `reveal_offset` |
-| `domain/constraints.rs` | `solve_axis_lengths` for row heights, and `clamp_to_constraints` for what a window will accept |
+| `domain/constraints.rs` | `column_ratio` for how wide a column asks to be, `solve_axis_lengths` for row heights, and `clamp_to_constraints` for what a window will accept |
+| `domain/preset_width.rs` | Which width the next `ctrl-R` asks for, and whether that width is the maximise mode |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
 | `domain/boundary.rs` | What a swipe means once the strip has run out: which workspace step a strip edge implies, and the inversion flag that swaps it |
 | `settings.rs` | Ratios, gaps, presets, alignment, navigation style |
@@ -34,6 +35,11 @@ first, then assigns frames inside it. Both clamp to the window's limits through
 
 **Maximize stays in the strip.** There is one maximize mode and it keeps its
 strip-relative x, so the column still scrolls. The second mode rift had is deleted.
+
+**Maximized is a width, and also a mode.** It is the widest entry in the preset cycle,
+so `ctrl-R` reaches it and a step off it unmaximizes. It cannot be stored as a ratio
+because `max_column_width_ratio` is below 1.0 on purpose, which is why every rule that
+asks how wide a column is has to ask `column_ratio` rather than adding up the offset.
 
 ## Reading order
 

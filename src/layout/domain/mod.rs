@@ -3,5 +3,6 @@
 pub mod area;
 pub mod boundary;
 pub mod constraints;
+pub mod preset_width;
 pub mod scrolling;
 pub mod strip;

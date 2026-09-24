@@ -1362,8 +1362,7 @@ impl LayoutEngine {
         };
         match width {
             ColumnWidth::FullWidth => {
-                self.workspace_tree_mut(workspace_id)
-                    .set_window_full_width(layout, window, true);
+                self.workspace_tree_mut(workspace_id).restore_window_full_width(layout, window);
             }
             ColumnWidth::Offset(offset) => {
                 self.workspace_tree_mut(workspace_id)

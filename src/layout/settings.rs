@@ -16,10 +16,16 @@ fn default_scrolling_min_column_width_ratio() -> f64 {
 fn default_scrolling_max_column_width_ratio() -> f64 {
     0.9
 }
-/// Preset column widths cycled by `cycle_preset_column_width`, mirroring niri's
-/// `layout.preset-column-widths` defaults: a third, a half, two thirds.
+/// Preset column widths cycled by `cycle_preset_column_width`: a third, a half,
+/// two thirds, and the whole viewport.
+///
+/// niri's `layout.preset-column-widths` defaults stop at two thirds and leave full
+/// width to `maximize-column` alone. The full width is in the cycle here because
+/// `ctrl-F` maximising and `ctrl-R` refusing to size a maximised column left the
+/// window with no way out but `ctrl-F` again. A ratio of 1.0 means the maximise
+/// mode, not a ratio: see `layout::domain::preset_width`.
 fn default_scrolling_preset_column_widths() -> Vec<f64> {
-    vec![0.33333, 0.5, 0.66667]
+    vec![0.33333, 0.5, 0.66667, 1.0]
 }
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
@@ -59,7 +65,8 @@ pub struct ScrollingLayoutSettings {
     #[serde(default = "default_scrolling_max_column_width_ratio")]
     pub max_column_width_ratio: f64,
     /// Column widths cycled by `cycle_preset_column_width`, as ratios of the
-    /// tiling width. Mirrors niri's `layout.preset-column-widths`.
+    /// tiling width. Mirrors niri's `layout.preset-column-widths`, plus 1.0 for
+    /// the maximised column. Ratios outside `(0, 1]` are ignored.
     #[serde(default = "default_scrolling_preset_column_widths")]
     pub preset_column_widths: Vec<f64>,
     /// When true, horizontal focus stops at the ends of a display's strip instead

@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 use crate::layout::WindowLayoutConstraints;
 use crate::layout::domain::area::compute_tiling_area;
 use crate::layout::domain::constraints::{
-    AxisConstraints, clamp_to_constraints, column_limits, column_width, solve_axis_lengths,
+    AxisConstraints, clamp_to_constraints, column_limits, column_ratio, column_width,
+    solve_axis_lengths,
 };
+use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, reveal_offset};
 use crate::layout::settings::{
     ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
@@ -208,6 +210,65 @@ impl LayoutState {
             column.equalise_heights();
         }
         true
+    }
+
+    /// The width `wid`'s column is actually at, as a ratio of the viewport.
+    ///
+    /// 1.0 while maximised, whatever the column's stored offset says. Every rule that asks "how wide
+    /// is this now" has to read it this way: the stored offset is the width the column will go BACK
+    /// to, and answering with it made `ctrl-R` and the resize keys compute their next width from a
+    /// size the window had not been for some time.
+    fn ratio_of(&self, wid: WindowId, col_idx: usize) -> f64 {
+        if self.fullscreen_within_gaps.contains(&wid) {
+            return 1.0;
+        }
+        self.column_width_ratio + self.columns[col_idx].width_offset
+    }
+
+    /// Whether this column holds a maximised window, and so occupies the whole viewport.
+    fn is_full_width_column(&self, col: &Column) -> bool {
+        col.windows.iter().any(|wid| self.fullscreen_within_gaps.contains(wid))
+    }
+
+    /// Maximise `wid`, pulling it out of any stack it shares.
+    ///
+    /// A maximised window fills the tiling area, which would cover the siblings sharing its column
+    /// while the tree still claimed they were abreast. It becomes its own column, and where it came
+    /// from is kept so the toggle can put it back.
+    fn enter_full_width(&mut self, wid: WindowId) {
+        if let Some(origin) = self.split_out(wid, Direction::Right) {
+            self.stack_origins.insert(wid, origin);
+        }
+        self.fullscreen_within_gaps.insert(wid);
+    }
+
+    /// Stop being maximised and go back into the stack `enter_full_width` pulled the window out of.
+    ///
+    /// A window that was alone in its column has no origin and simply stops being maximised. So does
+    /// one whose whole former column has since closed.
+    fn leave_full_width_restoring(&mut self, wid: WindowId) {
+        self.fullscreen_within_gaps.remove(&wid);
+        if let Some(origin) = self.stack_origins.remove(&wid) {
+            self.restore_into_stack(wid, origin);
+        }
+    }
+
+    /// Stop being maximised because the window was given a width of its own, and stay put.
+    ///
+    /// The window becomes an ordinary column with nowhere to return to, so the origin is FORGOTTEN
+    /// rather than kept for later: the maximise that recorded it is over. Leaving it recorded meant a
+    /// later `ctrl-F` — which records no new origin, the window being alone in its column by then —
+    /// toggled off into a stack the user had not touched since.
+    fn leave_full_width_in_place(&mut self, wid: WindowId) {
+        self.fullscreen_within_gaps.remove(&wid);
+        self.stack_origins.remove(&wid);
+    }
+
+    /// Give `wid`'s column an explicit ratio, leaving full width if it was maximised.
+    fn set_column_ratio(&mut self, wid: WindowId, col_idx: usize, ratio: f64) {
+        self.leave_full_width_in_place(wid);
+        self.columns[col_idx].width_offset = ratio - self.column_width_ratio;
+        self.columns[col_idx].width_overridden = true;
     }
 
     fn locate(&self, wid: WindowId) -> Option<(usize, usize)> {
@@ -528,17 +589,12 @@ impl ScrollingLayoutSystem {
         }
     }
 
-    fn clamp_ratio(&self, ratio: f64) -> f64 {
-        ratio
-            .clamp(
-                self.settings.min_column_width_ratio,
-                self.settings.max_column_width_ratio,
-            )
-            .max(0.05)
-    }
-
-    fn clamp_ratio_with_bounds(ratio: f64, min_ratio: f64, max_ratio: f64) -> f64 {
-        ratio.clamp(min_ratio, max_ratio).max(0.05)
+    /// The configured default width, held inside its own bounds.
+    ///
+    /// The same clamp a column gets, with no offset to add: `column_ratio` is the only place the
+    /// bounds are applied, so the default and the columns derived from it cannot drift apart.
+    fn clamp_base_ratio(ratio: f64, min_ratio: f64, max_ratio: f64) -> f64 {
+        column_ratio(false, ratio, 0.0, min_ratio, max_ratio)
     }
 
     fn column_widths_and_starts(
@@ -548,15 +604,19 @@ impl ScrollingLayoutSystem {
         min_ratio: f64,
         max_ratio: f64,
     ) -> (Vec<f64>, Vec<f64>) {
-        let base_ratio =
-            Self::clamp_ratio_with_bounds(state.column_width_ratio, min_ratio, max_ratio);
+        let base_ratio = Self::clamp_base_ratio(state.column_width_ratio, min_ratio, max_ratio);
         let mut widths = Vec::with_capacity(state.columns.len());
         let mut starts = Vec::with_capacity(state.columns.len());
         let mut cursor = 0.0;
         for col in &state.columns {
             starts.push(cursor);
-            let ratio =
-                Self::clamp_ratio_with_bounds(base_ratio + col.width_offset, min_ratio, max_ratio);
+            let ratio = column_ratio(
+                state.is_full_width_column(col),
+                base_ratio,
+                col.width_offset,
+                min_ratio,
+                max_ratio,
+            );
             let width = (screen_width * ratio).max(1.0);
             widths.push(width);
             cursor += width + gap_x;
@@ -903,26 +963,28 @@ impl ScrollingLayoutSystem {
         let tiling = compute_tiling_area(screen, gaps);
         let gap_x = gaps.inner.horizontal;
         let gap_y = gaps.inner.vertical;
-        let base_ratio = self.clamp_ratio(state.column_width_ratio);
+        let base_ratio = Self::clamp_base_ratio(
+            state.column_width_ratio,
+            self.settings.min_column_width_ratio,
+            self.settings.max_column_width_ratio,
+        );
 
         let mut column_widths = Vec::with_capacity(state.columns.len());
         let mut column_ratios = Vec::with_capacity(state.columns.len());
         for col in state.columns.iter() {
-            // A column holding a full-width ("within gaps") window occupies the
-            // whole viewport, so it must be WIDTH 1.0 here as well as in the frame
-            // assignment below. column_widths feeds column_starts, which is what
-            // reserves horizontal space in the strip — without this the strip only
-            // reserves the normal column width and the following column is laid
-            // out on top of the full-width one.
-            let holds_full_width =
-                col.windows.iter().any(|wid| state.fullscreen_within_gaps.contains(wid));
+            // A maximised column must be width 1.0 here as well as in the frame assignment below:
+            // column_widths feeds column_starts, which is what reserves horizontal space in the
+            // strip, and reserving the ordinary width laid the next column out on top of it.
+            //
             // A lone column keeps its width; expanding it tied a window's size to its neighbours.
             // See "Column width" in `src/layout/docs/strip.md`.
-            let ratio = if holds_full_width {
-                1.0
-            } else {
-                self.clamp_ratio(base_ratio + col.width_offset)
-            };
+            let ratio = column_ratio(
+                state.is_full_width_column(col),
+                base_ratio,
+                col.width_offset,
+                self.settings.min_column_width_ratio,
+                self.settings.max_column_width_ratio,
+            );
             let limits =
                 column_limits(col.windows.iter().filter_map(|wid| constraints.get(wid).copied()));
             let width = column_width(ratio, tiling.size.width, gap_x, limits);
@@ -1291,19 +1353,20 @@ impl ScrollingLayoutSystem {
             .is_some_and(|state| state.fullscreen_within_gaps.contains(&wid))
     }
 
-    /// Set or clear the full-viewport-width mode for a window's column.
-    pub fn set_window_full_width(&mut self, layout: LayoutId, wid: WindowId, full: bool) {
+    /// Put a window back to the full viewport width it was remembered at.
+    ///
+    /// The same transition the key makes, so a window that comes back into a column it shares is
+    /// pulled out of it rather than left maximised on top of its siblings. There is no setter for the
+    /// other direction: nothing restores a window to "not maximised", because a window being placed
+    /// is not maximised to begin with.
+    pub fn restore_window_full_width(&mut self, layout: LayoutId, wid: WindowId) {
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
         if state.locate(wid).is_none() {
             return;
         }
-        if full {
-            state.fullscreen_within_gaps.insert(wid);
-        } else {
-            state.fullscreen_within_gaps.remove(&wid);
-        }
+        state.enter_full_width(wid);
     }
 
     /// Remove a window from ONE layout only.
@@ -1659,19 +1722,10 @@ impl ScrollingLayoutSystem {
             return Vec::new();
         };
 
-        if state.fullscreen_within_gaps.remove(&selected) {
-            // Back where it came from, if that place still exists. A window that was alone in its
-            // column has no origin and simply stops being maximized.
-            if let Some(origin) = state.stack_origins.remove(&selected) {
-                state.restore_into_stack(selected, origin);
-            }
+        if state.fullscreen_within_gaps.contains(&selected) {
+            state.leave_full_width_restoring(selected);
         } else {
-            // A maximized window fills the tiling area, which would cover the siblings sharing its
-            // column. Pull it out first, so what is on screen matches what the tree says.
-            if let Some(origin) = state.split_out(selected, Direction::Right) {
-                state.stack_origins.insert(selected, origin);
-            }
-            state.fullscreen_within_gaps.insert(selected);
+            state.enter_full_width(selected);
         }
         state.selected = Some(selected);
 
@@ -1692,20 +1746,11 @@ impl ScrollingLayoutSystem {
     /// snaps to a known set — so every column ends up at one of a few predictable
     /// sizes instead of drifting.
     ///
-    /// Widths are stored as `width_offset` relative to `column_width_ratio`, the
-    /// same representation the resize path uses, so nothing else needs to know
-    /// these came from a preset.
+    /// Full width is one of those widths rather than a mode outside the cycle: a maximised column
+    /// takes its turn like the rest, and a step off it is what UNMAXIMISES the window. The rule is
+    /// [`next_preset`]; what a width means for a maximised column is `LayoutState::set_column_ratio`.
     pub fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId> {
-        let presets: Vec<f64> = self
-            .settings
-            .preset_column_widths
-            .iter()
-            .copied()
-            .filter(|r| *r > 0.0 && *r <= 1.0)
-            .collect();
-        if presets.is_empty() {
-            return Vec::new();
-        }
+        let presets = self.settings.preset_column_widths.clone();
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
@@ -1721,18 +1766,12 @@ impl ScrollingLayoutSystem {
             return Vec::new();
         };
 
-        let base_ratio = state.column_width_ratio;
-        let current = base_ratio + state.columns[col_idx].width_offset;
-
-        // Advance to the first preset meaningfully wider than the current width,
-        // wrapping to the narrowest. The 1% epsilon stops floating-point noise
-        // (and the rounding applied when frames are written) from making the
-        // current width look like it is already just past a preset, which would
-        // skip an entry.
-        let next = presets.iter().copied().find(|p| *p > current + 0.01).unwrap_or(presets[0]);
-
-        state.columns[col_idx].width_offset = next - base_ratio;
-        state.columns[col_idx].width_overridden = true;
+        match next_preset(state.ratio_of(selected, col_idx), &presets) {
+            Some(PresetWidth::Full) => state.enter_full_width(selected),
+            Some(PresetWidth::Ratio(ratio)) => state.set_column_ratio(selected, col_idx, ratio),
+            None => return Vec::new(),
+        }
+        state.selected = Some(selected);
 
         // A width change moves every column start after it, so the strip has to be
         // rescrolled or a column at the viewport edge grows off-screen. Same
@@ -1879,11 +1918,16 @@ impl ScrollingLayoutSystem {
             return;
         }
 
-        let current = base_ratio + state.columns[col_idx].width_offset;
-        let next = current + amount;
-        let clamped = next.clamp(min_ratio, max_ratio).max(0.05);
-        state.columns[col_idx].width_offset = clamped - base_ratio;
-        state.columns[col_idx].width_overridden = true;
+        let selected = state.columns[col_idx].windows[row_idx];
+        let current = state.ratio_of(selected, col_idx);
+        // Nothing is wider than the viewport, so growing a maximised column is a no-op rather than a
+        // step that silently unmaximises it and lands on `max_column_width_ratio` — which is BELOW
+        // full width, so "grow" would visibly shrink the window.
+        if current >= 1.0 && amount > 0.0 {
+            return;
+        }
+        let clamped = (current + amount).clamp(min_ratio, max_ratio).max(0.05);
+        state.set_column_ratio(selected, col_idx, clamped);
         if niri_navigation {
             state.reveal_selected_without_direction();
         } else {
@@ -2804,7 +2848,7 @@ mod tests {
         let w1 = wid(1, 1);
         system.add_window_after_selection(layout, w1);
 
-        system.set_window_full_width(layout, w1, true);
+        system.restore_window_full_width(layout, w1);
         assert!(system.is_window_full_width(layout, w1));
 
         let screen = screen(1000.0, 800.0);
@@ -2816,7 +2860,8 @@ mod tests {
         );
 
         // And it round-trips back to the preset, so the mode is not a one-way door.
-        system.set_window_full_width(layout, w1, false);
+        assert!(system.select_window(layout, w1));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
         let frame = frame_for(&render(&system, layout, screen, &gaps), w1);
         assert!((frame.size.width - 400.0).abs() < 1.0, "got {frame:?}");
     }
@@ -3035,6 +3080,140 @@ mod tests {
             (width_of(&system) - 0.33333).abs() < 0.02,
             "after wrap {}",
             width_of(&system)
+        );
+    }
+
+    /// The bounds the shipped config uses: a maximum well below 1.0, so that `ctrl-+` cannot crawl
+    /// to the full viewport and full width stays `ctrl-F`'s to give.
+    fn preset_settings() -> ScrollingLayoutSettings {
+        let mut settings = niri_settings(0.5);
+        settings.min_column_width_ratio = 0.33333;
+        settings.max_column_width_ratio = 0.66667;
+        settings.preset_column_widths = vec![0.33333, 0.5, 0.66667, 1.0];
+        settings
+    }
+
+    /// The reported defect. `ctrl-F` maximised the window and `ctrl-R` then appeared dead: it wrote a
+    /// width the layout pass ignored, because a maximised column is 1.0 whatever its stored width
+    /// says. The step has to UNMAXIMISE, which is the only way out of full width besides `ctrl-F`.
+    #[test]
+    fn a_step_off_full_width_actually_resizes_the_window() {
+        let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
+        let screen = screen(1200.0, 800.0);
+        let gaps = GapSettings::default();
+        let tiling_width = compute_tiling_area(screen, &gaps).size.width;
+        let width_of = |system: &ScrollingLayoutSystem| {
+            frame_for(&render(system, layout, screen, &gaps), w1).size.width / tiling_width
+        };
+
+        assert!(system.select_window(layout, w1));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        assert!(
+            (width_of(&system) - 1.0).abs() < 0.02,
+            "maximised {}",
+            width_of(&system)
+        );
+
+        system.cycle_preset_column_width(layout);
+
+        assert!(
+            !system.is_window_full_width(layout, w1),
+            "a window given a width is no longer maximised"
+        );
+        assert!(
+            (width_of(&system) - 0.33333).abs() < 0.02,
+            "nothing is wider than the viewport, so the cycle starts over at the narrowest; got {}",
+            width_of(&system)
+        );
+    }
+
+    /// Full width is reachable from the cycle even though it is above `max_column_width_ratio`,
+    /// because it is the maximise MODE rather than a ratio. Asking for it as a ratio would be
+    /// clamped to two thirds and the widest preset would be unreachable.
+    #[test]
+    fn the_cycle_reaches_full_width_past_the_configured_maximum() {
+        let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
+        let screen = screen(1200.0, 800.0);
+        let gaps = GapSettings::default();
+        let tiling_width = compute_tiling_area(screen, &gaps).size.width;
+
+        assert!(system.select_window(layout, w1));
+        system.cycle_preset_column_width(layout); // 0.5 -> 0.66667
+        system.cycle_preset_column_width(layout); // 0.66667 -> full
+
+        assert!(system.is_window_full_width(layout, w1));
+        let width = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+        assert!(
+            (width / tiling_width - 1.0).abs() < 0.02,
+            "the widest preset must fill the viewport, got {}",
+            width / tiling_width
+        );
+    }
+
+    /// Growing a maximised column used to write a width nothing read. It cannot grow — there is
+    /// nothing wider than the viewport — so it stays maximised rather than unmaximising onto
+    /// `max_column_width_ratio`, which is NARROWER than what it has and would read as a shrink.
+    #[test]
+    fn growing_a_maximised_column_leaves_it_maximised() {
+        let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
+
+        assert!(system.select_window(layout, w1));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        system.resize_selection_by(layout, 0.05, ResizeOrientation::Horizontal);
+
+        assert!(system.is_window_full_width(layout, w1));
+    }
+
+    /// Shrinking one, on the other hand, has somewhere to go: it leaves full width and starts from
+    /// the width it actually HAS rather than the width it was before being maximised.
+    #[test]
+    fn shrinking_a_maximised_column_unmaximises_it() {
+        let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
+        let screen = screen(1200.0, 800.0);
+        let gaps = GapSettings::default();
+        let tiling_width = compute_tiling_area(screen, &gaps).size.width;
+
+        assert!(system.select_window(layout, w1));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
+
+        assert!(!system.is_window_full_width(layout, w1));
+        let ratio =
+            frame_for(&render(&system, layout, screen, &gaps), w1).size.width / tiling_width;
+        assert!(
+            (ratio - 0.66667).abs() < 0.02,
+            "one step down from the viewport, clamped to the configured maximum; got {ratio}"
+        );
+    }
+
+    /// Found while fixing the above, not reported: the scroll gesture computed its own column widths
+    /// and did not know about maximised ones, so it stepped the strip by `max_column_width_ratio` of
+    /// the viewport for a column occupying all of it. One swipe left the next column part-way on
+    /// screen. Both sides read `constraints::column_ratio` now.
+    #[test]
+    fn a_swipe_steps_over_a_maximised_column_by_its_real_width() {
+        let (mut system, layout, w1, w2) = setup_two_windows(preset_settings());
+        let screen = screen(1200.0, 800.0);
+        let gaps = GapSettings::default();
+        let tiling_width = compute_tiling_area(screen, &gaps).size.width;
+
+        assert!(system.select_window(layout, w1));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        // The gesture reads the geometry the last layout pass recorded.
+        render(&system, layout, screen, &gaps);
+        assert_eq!(scroll_offset(&system, layout), 0.0);
+
+        system.scroll_by_delta(layout, 1.0);
+
+        let stepped = scroll_offset(&system, layout);
+        assert!(
+            (stepped - (tiling_width + gaps.inner.horizontal)).abs() < 2.0,
+            "one swipe should clear the whole maximised column ({} + gap), stepped {stepped}",
+            tiling_width
+        );
+        assert!(
+            frame_for(&render(&system, layout, screen, &gaps), w2).origin.x < tiling_width,
+            "the next column should be on screen after the swipe"
         );
     }
 
@@ -3382,6 +3561,74 @@ mod tests {
             vec![vec![w[2]], vec![w[1]]],
             "no stack to rejoin"
         );
+    }
+
+    /// A window given a width has nowhere to return to.
+    ///
+    /// `ctrl-R` off full width leaves the window where it is, so the stack it was pulled out of stops
+    /// being its destination and is forgotten. Keeping the record made the NEXT `ctrl-F` pair a
+    /// teleport: maximising records no new origin (the window is alone in its column by then), so the
+    /// press that unmaximised it read the stale one and dropped the window into a stack the user had
+    /// not touched since.
+    #[test]
+    fn a_window_given_a_width_does_not_rejoin_its_old_stack_later() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        system.cycle_preset_column_width(layout);
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+
+        // A fresh maximise and a fresh press to leave it. Nothing here asked for the old stack.
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+
+        assert_eq!(
+            shape(&system, layout),
+            vec![vec![w[0], w[2]], vec![w[1]]],
+            "it stays the ordinary column ctrl-R made it"
+        );
+    }
+
+    /// The other half of the same rule: a window that has NOT been given a width still round-trips.
+    /// This is what stops the record being dropped too eagerly.
+    #[test]
+    fn a_maximised_window_still_rejoins_its_stack_on_the_second_press() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        assert!(system.select_window(layout, w[1]));
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        system.toggle_fullscreen_within_gaps_of_selection(layout);
+
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
+    }
+
+    /// Reaching full width through the width cycle has to pull the window out of its stack, exactly
+    /// as `ctrl-F` does. It fills the tiling area either way, so leaving it in the column would cover
+    /// the siblings the tree still says are abreast of it.
+    #[test]
+    fn cycling_to_full_width_pulls_a_stacked_window_out_too() {
+        let mut settings = ScrollingLayoutSettings::default();
+        settings.preset_column_widths = vec![1.0];
+        let (mut system, layout, w) = stacked_three(settings);
+
+        assert!(system.select_window(layout, w[1]));
+        system.cycle_preset_column_width(layout);
+
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert!(system.is_window_full_width(layout, w[1]));
+    }
+
+    /// Restoring a remembered full width at startup goes through the same transition, so a window
+    /// whose column is shared is pulled out of it rather than left maximised over its siblings.
+    #[test]
+    fn restoring_a_remembered_full_width_pulls_the_window_out_of_its_stack() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+
+        system.restore_window_full_width(layout, w[1]);
+
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+        assert!(system.is_window_full_width(layout, w[1]));
     }
 
     // A window alone in its column has nothing to be pulled out of, which is the common case and

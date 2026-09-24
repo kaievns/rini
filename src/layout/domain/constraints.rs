@@ -41,6 +41,23 @@ pub fn column_limits(
     limits
 }
 
+/// The ratio of the viewport a column asks for, before its windows get a say.
+///
+/// Full width is a MODE rather than a wider ratio: an ordinary column is clamped to
+/// `max_column_width_ratio` — two thirds in the shipped config, deliberately, so that the
+/// incremental resize keys cannot crawl to 100% — so a maximised column cannot be expressed as a
+/// ratio at all and has to be asked for separately.
+///
+/// Both the layout pass and the scroll-gesture arithmetic read this, because they used to disagree:
+/// the gesture computed a maximised column at `max_column_width_ratio` of the viewport, so it
+/// stepped the strip by two thirds of a screen for a column occupying all of it.
+pub fn column_ratio(full_width: bool, base_ratio: f64, offset: f64, min: f64, max: f64) -> f64 {
+    if full_width {
+        return 1.0;
+    }
+    (base_ratio + offset).clamp(min, max).max(0.05)
+}
+
 /// How wide one column of the strip is.
 ///
 /// `ratio` of the viewport, then widened to whatever the windows in it require, then narrowed to what
@@ -234,7 +251,40 @@ pub fn solve_axis_lengths(items: &[AxisConstraints], usable: f64) -> Vec<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AxisConstraints, solve_axis_lengths};
+    use super::{AxisConstraints, column_ratio, solve_axis_lengths};
+
+    /// The bounds the shipped config uses, where the maximum is deliberately well below 1.0.
+    const MIN: f64 = 0.33333;
+    const MAX: f64 = 0.66667;
+
+    #[test]
+    fn a_maximised_column_takes_the_whole_viewport_whatever_the_bounds_say() {
+        assert_eq!(column_ratio(true, 0.5, 0.0, MIN, MAX), 1.0);
+    }
+
+    /// Its stored offset is untouched while it is maximised, which is what lets `ctrl-F` hand the
+    /// column back its old width without having had to remember one.
+    #[test]
+    fn a_maximised_column_ignores_the_width_it_will_go_back_to() {
+        assert_eq!(column_ratio(true, 0.5, -0.16667, MIN, MAX), 1.0);
+    }
+
+    #[test]
+    fn an_ordinary_column_is_its_base_plus_its_offset() {
+        assert_eq!(column_ratio(false, 0.5, 0.16667, MIN, MAX), 0.66667);
+    }
+
+    #[test]
+    fn an_ordinary_column_is_held_inside_the_configured_bounds() {
+        assert_eq!(column_ratio(false, 0.5, 0.5, MIN, MAX), MAX);
+        assert_eq!(column_ratio(false, 0.5, -0.5, MIN, MAX), MIN);
+    }
+
+    /// A config with a zero or inverted minimum must not produce a column nothing can be seen in.
+    #[test]
+    fn a_column_is_never_narrower_than_a_twentieth_of_the_screen() {
+        assert_eq!(column_ratio(false, 0.0, 0.0, 0.0, MAX), 0.05);
+    }
 
     #[test]
     fn scales_non_fixed_minima_after_reserving_fixed_segments() {

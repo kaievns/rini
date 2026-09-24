@@ -98,12 +98,22 @@ permission, builds every actor and joins them.
    `rini-skylight-sys` and re-exported; `ScreenId` is the CGDirectDisplayID.
    `rini-ipc` has wire twins and `From` impls.
 6. **No re-export shims.** When a type moves, its importers change.
+7. **A change leaves nothing behind.** Moving functionality means the old path is
+   gone, not unreachable: no branch that can no longer be taken, no helper with
+   one caller doing what its replacement does, no state written and never read,
+   no second function computing what the first one already decided. The bug this
+   answers was exactly that shape — `ctrl-R` wrote a column width while a
+   separate maximise flag made the layout ignore it, so two records disagreed and
+   the key looked dead. When a fix reveals a stale sibling, the sibling is part of
+   the fix.
 
 `tests/architecture.rs` checks rules 1 and 2 against the tree on every
 `cargo test`, with comments stripped so prose about `platform` is not a
 dependency on it. One file is named as an exception, and a further test fails if
 it stops needing to be. Rule 4 the compiler checks: a crate cannot name the
-application's modules. Rules 3, 5 and 6 are conventions.
+application's modules. `cargo build` catches the crudest breaches of rule 7 —
+an unread field or an unreachable branch is a warning, and the build carries
+none. Rules 3, 5, 6 and the rest of 7 are conventions.
 
 ## Why this shape and not one crate per feature
 

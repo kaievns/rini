@@ -10,8 +10,30 @@ is borrowed.
   viewport, which made a window's size depend on how many *other* windows the
   workspace held: a full-size window moved from workspace 1 to 2 to 3 went
   half-size on 2 and full on 3 with nothing about the window changing. niri
-  does the same; full width is `maximize-column`'s job, here
-  `toggle_fullscreen_within_gaps`, and that mode is remembered per display.
+  does the same; full width is asked for, by `ctrl-F` or by the width cycle
+  reaching 1.0, and that mode is remembered per display.
+- **Full width is the widest preset, and a mode.** Both, and the pair is why
+  `ctrl-R` looked dead on a maximized window: the cycle wrote a `width_offset`
+  that `calculate_layout` then ignored, because a column holding a maximized
+  window is 1.0 whatever its stored width says. It cannot be a ratio like the
+  others — `max_column_width_ratio` is 0.66667 in the shipped config, so 1.0
+  asked for as a ratio comes back as two thirds — so `preset_width::next_preset`
+  answers `Full` or `Ratio` and the caller applies the matching transition.
+- **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
+  keys both do it, and the window stays where it is rather than going back to
+  the stack `ctrl-F` pulled it out of: `StackOrigin` is FORGOTTEN, not kept. A
+  kept one turned the next `ctrl-F` pair into a teleport — maximizing an already
+  lone window records no new origin, so the press that unmaximized it read the
+  stale one and dropped the window into a stack untouched since.
+- **Growing a maximized column does nothing.** Nothing is wider than the
+  viewport. Stepping it would unmaximize onto `max_column_width_ratio`, which is
+  *narrower* than what it has, so "grow" would visibly shrink the window. A
+  shrink does unmaximize, starting from 1.0 rather than the width it had before.
+- **One place applies the width bounds.** `constraints::column_ratio`, read by
+  the layout pass, by the scroll-gesture arithmetic and by the default width.
+  The gesture used to compute its own and did not know about maximized columns,
+  so it stepped the strip by two thirds of a screen for a column occupying all
+  of it and one swipe left the next column part-way on.
 - **There is one maximize mode, and it stays in the strip.** A second mode,
   `toggle_fullscreen`, used to assign the usable frame with its own absolute
   origin. That differed from this one by nothing but the outer gap, and it
@@ -45,7 +67,8 @@ is borrowed.
   area, which would otherwise cover the siblings sharing its column while the
   tree still claimed they were abreast. It becomes its own column immediately to
   the right, and a second press puts it back beside the neighbour it left
-  (`StackOrigin`). A neighbour is remembered rather than a row index, because
+  (`StackOrigin`). Every route in maximizes the same way — the key, the width
+  cycle, and restoring a remembered full width at startup. A neighbour is remembered rather than a row index, because
   while the window is maximized its old column can move along the strip or
   change size. If every window it could return to has closed, it stays the
   column it became rather than being put somewhere the user never had it.
