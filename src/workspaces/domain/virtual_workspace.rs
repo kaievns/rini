@@ -902,6 +902,9 @@ impl WorkspaceStore {
             position,
             size,
             focus,
+            // The pin is applied where homes are decided, not where workspaces are: it says which
+            // DISPLAY a window belongs to, and this function is about which workspace.
+            display: _,
         } = rule_decision
         {
             let target_workspace_id = if let Some(ref ws_sel) = workspace {
@@ -1442,6 +1445,7 @@ mod tests {
         let settings = VirtualWorkspaceSettings {
             default_workspace_count: 4,
             app_rules: vec![AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.editor".into()),
                 workspace: Some(WorkspaceSelector::Index(2)),
                 floating: false,
@@ -1612,6 +1616,7 @@ mod tests {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.default_workspace_count = 3;
         settings.app_rules = vec![AppWorkspaceRule {
+            display: None,
             app_id: Some("com.example.unmanaged".into()),
             workspace: None,
             floating: false,
@@ -1896,6 +1901,7 @@ mod tests {
         settings.app_rules = vec![
             // Floating by app_id
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.test".into()),
                 workspace: None,
                 floating: true,
@@ -1912,6 +1918,7 @@ mod tests {
             },
             // Match by app_name -> workspace 1
             AppWorkspaceRule {
+                display: None,
                 app_id: None,
                 workspace: Some(WorkspaceSelector::Index(1)),
                 floating: false,
@@ -1928,6 +1935,7 @@ mod tests {
             },
             // Title substring -> workspace 0
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.foo".into()),
                 workspace: Some(WorkspaceSelector::Index(0)),
                 floating: false,
@@ -1944,6 +1952,7 @@ mod tests {
             },
             // Title regex -> workspace 2
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.foo".into()),
                 workspace: Some(WorkspaceSelector::Index(2)),
                 floating: false,
@@ -1960,6 +1969,7 @@ mod tests {
             },
             // AX role + subrole floating
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.special".into()),
                 workspace: None,
                 floating: true,
@@ -1976,6 +1986,7 @@ mod tests {
             },
             // Workspace by name
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.name".into()),
                 workspace: Some(WorkspaceSelector::Name("coding".into())),
                 floating: false,
@@ -1992,6 +2003,7 @@ mod tests {
             },
             // Specificity tie breaking generic vs substring (generic workspace 0, specific workspace 2)
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.tie".into()),
                 workspace: Some(WorkspaceSelector::Index(0)),
                 floating: false,
@@ -2007,6 +2019,7 @@ mod tests {
                 modal: None,
             },
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("com.example.tie".into()),
                 workspace: Some(WorkspaceSelector::Index(2)),
                 floating: false,
@@ -2023,6 +2036,7 @@ mod tests {
             },
             // Reapplication: Bitwarden title becomes floating
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("app.zen-browser.zen".into()),
                 workspace: None,
                 floating: true,
@@ -2038,6 +2052,7 @@ mod tests {
                 modal: None,
             },
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("app.zen-browser.zen".into()),
                 workspace: Some(WorkspaceSelector::Index(2)),
                 floating: false,
@@ -2054,6 +2069,7 @@ mod tests {
             },
             // Workspace override when specific rule matches different workspace + floating
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("app.zen-browser.zen".into()),
                 workspace: Some(WorkspaceSelector::Index(1)),
                 floating: false,
@@ -2069,6 +2085,7 @@ mod tests {
                 modal: None,
             },
             AppWorkspaceRule {
+                display: None,
                 app_id: Some("app.zen-browser.zen".into()),
                 workspace: Some(WorkspaceSelector::Index(3)),
                 floating: true,

@@ -235,6 +235,19 @@ workspace_names = [
 #     windows are initially resized; tiled windows receive a one-time resize after insertion.
 #   - focus (boolean): focus the window after applying the rule, switching to its virtual workspace.
 #   - manage (boolean): whether Rini should manage the matching window. Set to false to ignore the window completely (default = true).
+#   - display ("internal" | "external"): keep matched windows on that display.
+#
+#     A ROLE, not a display. The external monitor at home and the one at the office
+#     have different UUIDs, so a rule naming one would be silently inert at the
+#     other desk. "internal" is the machine's own screen (CGDisplayIsBuiltin);
+#     "external" is anything else, the leftmost when there are two.
+#
+#     A default, not a law. It decides where a window belongs when the current
+#     display arrangement has not been told otherwise, so it corrects an app that
+#     OPENS on the wrong screen, and an explicit move (ctrl-M, a drag, a move
+#     command) still wins and is remembered per arrangement. A role nothing fills
+#     — pinned to "internal" with the lid shut — is inert, so the window lives
+#     wherever there is rather than being held off a screen that is not there.
 #
 # Matching behavior (summary):
 #   1. All rules that match a window are evaluated.
@@ -252,6 +265,7 @@ workspace_names = [
 #       app_rules = [
 #         { app_id = "com.example.X", title_regex = "Dialog", floating = true },
 #         { app_id = "com.example.X", floating = false },
+#         { app_id = "com.tinyspeck.slackmacgap", display = "internal" },
 #       ]
 #
 #   - Use `title_substring` for simple, literal (case-sensitive) substring matches.

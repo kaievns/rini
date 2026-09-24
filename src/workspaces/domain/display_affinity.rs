@@ -160,10 +160,16 @@ impl DisplayAffinity {
             window_home: std::mem::take(&mut self.legacy_window_home),
             display_strip: std::mem::take(&mut self.legacy_display_strip),
             window_width: std::mem::take(&mut self.legacy_window_width),
+            // A file written before arrangements existed recorded no distinction between a home the
+            // user chose and one rini inferred. Treating them all as CHOSEN would make every display
+            // pin inert until the window was closed, so they come across as inferred and a pin may
+            // correct them.
+            home_by_intent: Default::default(),
         };
         if let Some(unnamed) = self.setups.remove(&SetupId::default()) {
             // The file's records lose to what this session has actually observed.
             legacy.window_home.extend(unnamed.window_home);
+            legacy.home_by_intent.extend(unnamed.home_by_intent);
             legacy.display_strip.extend(unnamed.display_strip);
             for (display, widths) in unnamed.window_width {
                 legacy.window_width.entry(display).or_default().extend(widths);
@@ -235,7 +241,32 @@ impl DisplayAffinity {
     /// display change must not call this, or the evacuation overwrites the very record
     /// the replug needs.
     pub fn set_window_home(&mut self, window: WindowId, display: &str) {
-        self.setup_mut().window_home.insert(window, display.to_owned());
+        let setup = self.setup_mut();
+        setup.window_home.insert(window, display.to_owned());
+        // The user chose this, so a display pin must not talk them out of it later.
+        setup.home_by_intent.insert(window);
+    }
+
+    /// Give `window` the home a display pin asks for, unless the user has chosen one.
+    ///
+    /// Stronger than `set_window_home_if_absent`, because a home rini merely INFERRED from where the
+    /// window happened to open is exactly what a pin exists to correct: an app that opens on the
+    /// external is the reported case. Weaker than an explicit move, which is recorded as chosen and
+    /// left alone.
+    ///
+    /// Not recorded as chosen itself: the pin is re-applied on every settled topology, so it does not
+    /// need remembering, and marking it would make it indistinguishable from a real move.
+    pub fn set_pinned_home(&mut self, window: WindowId, display: &str) -> bool {
+        let setup = self.setup_mut();
+        if setup.home_was_chosen(window) {
+            return false;
+        }
+        let already = setup.window_home.get(&window).map(String::as_str) == Some(display);
+        if already {
+            return false;
+        }
+        setup.window_home.insert(window, display.to_owned());
+        true
     }
 
     /// Record a home only if the window does not already have one.
@@ -417,6 +448,59 @@ mod tests {
             Some(ColumnWidth::FullWidth),
             "full width on the laptop alone, half when docked: the case one key per display cannot express"
         );
+    }
+
+    /// A pin corrects a home rini merely inferred from where a window happened to open, which is the
+    /// reported case: Slack opening on the external when it belongs on the laptop.
+    #[test]
+    fn a_pin_overrides_an_inferred_home() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home_if_absent(win(1), "studio");
+
+        assert!(affinity.set_pinned_home(win(1), "builtin"));
+        assert_eq!(affinity.window_home(win(1)), Some("builtin"));
+    }
+
+    /// And never overrides one the user chose. "Unless I explicitly move it there."
+    #[test]
+    fn a_pin_leaves_a_chosen_home_alone() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), "studio");
+
+        assert!(!affinity.set_pinned_home(win(1), "builtin"));
+        assert_eq!(
+            affinity.window_home(win(1)),
+            Some("studio"),
+            "the window stays where the user put it"
+        );
+    }
+
+    /// Choosing is per arrangement, like everything else. Moving a pinned window to the external
+    /// while docked must not disable the pin on the laptop alone.
+    #[test]
+    fn choosing_a_home_in_one_arrangement_does_not_free_the_pin_in_another() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), "studio");
+
+        affinity.use_setup(laptop());
+        affinity.set_window_home_if_absent(win(1), "studio");
+        assert!(
+            affinity.set_pinned_home(win(1), "builtin"),
+            "the laptop arrangement never heard the user choose anything"
+        );
+    }
+
+    /// Re-applying the same pin is not a change, so the settled-topology pass does not report work it
+    /// did not do on every single event.
+    #[test]
+    fn re_applying_a_pin_that_already_holds_changes_nothing() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(laptop());
+        assert!(affinity.set_pinned_home(win(1), "builtin"));
+        assert!(!affinity.set_pinned_home(win(1), "builtin"));
     }
 
     /// The television case. A display nobody has used before must not be handed a layout, and the

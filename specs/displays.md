@@ -77,6 +77,25 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > before — a window on the SAME display in two arrangements wanting a different width in each — is the
 > one this answers.
 
+## Pinning an app to a display
+
+- A config rule MAY pin matching windows to the `internal` or the `external` display.
+- A pin names a ROLE, never a display. The external at home and the one at the office have different
+  UUIDs, so a rule naming one would be silently inert at the other desk.
+- A pin is a DEFAULT, not a law, and the precedence MUST be: an explicit move by the user, then the
+  pin, then where the window happens to be.
+  - It MUST correct a home rini merely inferred, which is what makes an app that OPENS on the wrong
+    screen end up on the right one.
+  - It MUST NOT override a home the user chose. Choosing is per arrangement, so moving a pinned window
+    across while docked MUST NOT disable the pin when the laptop is alone.
+- A pin whose role nothing fills MUST be inert. Pinned to the internal display with the lid shut, the
+  window lives on whatever is attached rather than being held off the only screen there is.
+
+> **Reported 2026-09-24.** "I will also need overrides in the config to say if I want specific
+> apps/windows to be pinned to internal or external display consistently no matter what. Like for
+> example Slack, Outlook, Messages should never leave my internal display unless I explicitly move it
+> there or the lid is closed and external is the only one available."
+
 > **Reported 2026-09-24.** "Can you add a ctrl-M key binding that will move a window between monitors? I
 > might need left/right down the road, but for now I just really want to cycle because I only have two
 > monitors so one button is enough." The `next` selector it needs had never worked: `DisplaySelector` is

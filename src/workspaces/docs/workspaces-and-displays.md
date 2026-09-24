@@ -96,6 +96,18 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   Measured: the external's affinity list held three closed windows while all
   fourteen live windows were homed to the built-in; repatriation reported
   `homed=[3 windows] to_move=[]` and the external came back empty every time.
+- **A pin beats an observation and loses to a choice.** An app rule naming
+  `display = "internal"` decides where a window belongs when the arrangement has
+  not been told otherwise. That needs three levels, not two, so `Setup` records
+  which homes the USER chose (`home_by_intent`, written by `set_window_home`)
+  separately from the ones inferred from where a window was seen
+  (`set_window_home_if_absent`). `set_pinned_home` overrides the second and
+  leaves the first alone. Without the distinction the pin either lapsed — an app
+  opening on the external kept it, because a home was already present — or
+  overrode the user on every settled topology.
+
+  The pin is re-applied on every settled topology rather than recorded, so it is
+  never mistaken for a move, and a role nothing fills writes nothing at all.
 - **A native space belongs to one display.** `set_display_space` evicts any
   other display claiming the space; without that, two displays both appear to
   own it and the affinity pass moves windows between them forever.

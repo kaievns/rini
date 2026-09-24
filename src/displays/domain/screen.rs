@@ -20,6 +20,13 @@ pub struct ScreenInfo {
     pub display_uuid: String,
     pub name: Option<String>,
     pub space: Option<SpaceId>,
+    /// The machine's own screen, as `CGDisplayIsBuiltin` reports it.
+    ///
+    /// What "internal" means to a display pin. A UUID cannot answer it — the built-in's UUID is as
+    /// opaque as any other — and the name is localised, so matching "Built-in Retina Display" would
+    /// work in English and quietly stop working in any other language.
+    #[serde(default)]
+    pub is_builtin: bool,
 }
 
 impl ScreenInfo {

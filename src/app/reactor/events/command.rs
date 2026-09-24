@@ -447,6 +447,7 @@ mod tests {
 
     fn screen(space: Option<SpaceId>) -> ScreenInfo {
         ScreenInfo {
+            is_builtin: false,
             id: ScreenId::new(1),
             frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)),
             display_uuid: "uuid-1".into(),

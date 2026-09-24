@@ -59,9 +59,11 @@ use crate::displays::platform::spaces::SpaceKinds;
 use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order;
+use crate::windows::domain::rules::AppRuleDecision;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::workspaces::domain::display_affinity::SetupChange;
 use crate::workspaces::domain::display_memory::DisplayMemory;
+use crate::workspaces::domain::display_pin::display_for_role;
 use events::{
     EventOutcome, app as application_workflow, command as command_workflow, focus as focus_service,
     space as topology_workflow, system as system_workflow, window as window_workflow,
@@ -2632,6 +2634,48 @@ impl Reactor {
         change
     }
 
+    /// Give every pinned window the home its rule asks for, in the arrangement now in force.
+    ///
+    /// `set_window_home_if_absent`, deliberately: a pin is the DEFAULT home, so an explicit move in
+    /// this arrangement wins and the window stays where the user put it. That is what "unless I
+    /// explicitly move it there" means. A role nothing fills — pinned to the internal display with the
+    /// lid shut — resolves to nothing and writes nothing, so the window goes wherever there is.
+    fn apply_display_pins(&mut self) {
+        let screens: Vec<ScreenInfo> =
+            self.space_state.screens_in_physical_order().into_iter().cloned().collect();
+        let pins: Vec<(WindowId, String)> = self
+            .state
+            .windows
+            .iter_windows()
+            .filter_map(|(window, state)| {
+                let app = self.app_manager.apps.get(&window.pid);
+                let decision = self.layout_manager.layout_engine.evaluate_app_rules(
+                    app.and_then(|app| app.info.bundle_id.as_deref()),
+                    app.and_then(|app| app.info.localized_name.as_deref()),
+                    Some(state.info.title.as_str()),
+                    state.info.ax_role.as_deref(),
+                    state.info.ax_subrole.as_deref(),
+                    state.info.is_modal,
+                );
+                let AppRuleDecision::Managed { display: Some(role), .. } = decision else {
+                    return None;
+                };
+                let target = display_for_role(role, screens.iter())?;
+                Some((window, target.to_owned()))
+            })
+            .collect();
+        // Not named `display`: that shadows tracing's own `display` helper inside the macro.
+        for (window, target) in pins {
+            if self.state.display_memory.affinity.set_pinned_home(window, &target) {
+                debug!(
+                    idx = window.idx.get(),
+                    pinned_to = %target,
+                    "pinning a window to the display its rule names"
+                );
+            }
+        }
+    }
+
     fn sync_display_affinity_from_live_layout(&mut self) {
         if crate::displays::platform::display_churn::is_active() {
             return;
@@ -2643,6 +2687,11 @@ impl Reactor {
         self.layout_manager
             .layout_engine
             .forget_affinity_for_dead_windows(&self.state.windows, &mut self.state.display_memory);
+        // Pins first. Both this and the observation below write a home only if one is absent, so
+        // whichever runs first decides — and for a pinned window the answer must be its rule, not
+        // wherever macOS happens to have parked it. A new arrangement starts with every home absent,
+        // so without this the pin would lapse on every dock.
+        self.apply_display_pins();
         let observations: Vec<(String, Vec<WindowId>)> = self
             .space_state
             .screens

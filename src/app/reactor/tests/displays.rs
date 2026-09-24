@@ -1452,6 +1452,7 @@ fn arranging_one_setup_does_not_disturb_another() {
     let terminal = WindowId::new(1, 1);
 
     let screen = |uuid: &str, id: u32, frame: CGRect, space: SpaceId| ScreenInfo {
+        is_builtin: false,
         id: rini_core::ids::ScreenId::new(id),
         frame,
         space: Some(space),
@@ -1522,6 +1523,83 @@ fn arranging_one_setup_does_not_disturb_another() {
     );
 }
 
+/// A pinned app stays on the display its rule names, even when a new arrangement would otherwise
+/// learn it from where macOS happens to have parked it.
+///
+/// Reported: "Slack, Outlook, Messages should never leave my internal display unless I explicitly move
+/// it there or the lid is closed and external is the only one available." A pin is a DEFAULT home, so
+/// it fills the absence a fresh arrangement starts with — and an explicit move, which writes a home,
+/// still wins.
+#[test]
+fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
+    let mut reactor = test_reactor();
+    reactor.config.settings.layout.gaps = Default::default();
+    reactor.set_test_app_rules(vec![crate::windows::domain::rules::AppWorkspaceRule {
+        app_id: Some("com.tinyspeck.slackmacgap".to_owned()),
+        display: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
+        ..default_app_rule()
+    }]);
+
+    let builtin_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let slack = WindowId::new(1, 1);
+
+    let screen =
+        |uuid: &str, id: u32, frame: CGRect, space: SpaceId, is_builtin: bool| ScreenInfo {
+            id: rini_core::ids::ScreenId::new(id),
+            frame,
+            space: Some(space),
+            display_uuid: uuid.to_owned(),
+            name: None,
+            is_builtin,
+        };
+    let builtin = |space| screen("builtin", 0, builtin_frame, space, true);
+    let studio = |space| screen("studio", 1, external_frame, space, false);
+
+    // Slack sitting on the EXTERNAL, which is where observation would home it. Only the pin can
+    // give the right answer here, which is what makes this test about the pin.
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    reactor.handle_event(space_state_event_from_screens(vec![
+        builtin(builtin_space),
+        studio(external_space),
+    ]));
+    reactor.add_test_app_with_info(1, "com.tinyspeck.slackmacgap", "Slack");
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    reactor.add_test_window(
+        slack,
+        WindowServerId::new(901),
+        Some(external_space),
+        external_frame,
+    );
+    assert!(reactor.assign_test_window_to_workspace(external_space, slack, external_workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, slack));
+    reactor.handle_event(space_state_event_from_screens(vec![
+        builtin(builtin_space),
+        studio(external_space),
+    ]));
+    assert_eq!(
+        reactor.state.display_memory.affinity.window_home(slack),
+        Some("builtin"),
+        "the pin decides, not where macOS happens to have put the window"
+    );
+
+    // Lid shut: only the external is attached, so the pinned role is filled by nothing and the pin
+    // goes quiet rather than holding the window off a screen that is not there.
+    set_space_membership(&[(external_space, &[901])]);
+    reactor.handle_event(space_state_event_from_screens_with(
+        vec![studio(external_space)],
+        |state| state.display_set_changed = true,
+    ));
+    reactor.handle_event(space_state_event_from_screens(vec![studio(external_space)]));
+    assert_eq!(
+        reactor.state.display_memory.affinity.window_home(slack),
+        Some("studio"),
+        "with no internal display the pin is inert and the window lives where it can"
+    );
+}
+
 /// The television case. A display the machine has never seen starts with NO claim on any window.
 ///
 /// Reported: "when a new one is attached, it should start with having all the windows still on the
@@ -1539,6 +1617,7 @@ fn a_display_never_seen_before_takes_no_windows() {
     let projector_space = SpaceId::new(700);
 
     let screen = |uuid: &str, id: u32, frame: CGRect, space: SpaceId| ScreenInfo {
+        is_builtin: false,
         id: rini_core::ids::ScreenId::new(id),
         frame,
         space: Some(space),

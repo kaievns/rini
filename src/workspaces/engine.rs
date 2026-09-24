@@ -1279,6 +1279,30 @@ impl LayoutEngine {
         self.workspace_tree(workspace_id).all_windows_in_layout(layout)
     }
 
+    /// What the app rules say about a window, for a caller that only needs the decision.
+    ///
+    /// The rule engine lives here because the workspace assignment reads it. A display pin is read by
+    /// the reactor instead, which is the only place that knows both the application's name and which
+    /// screens are attached.
+    pub fn evaluate_app_rules(
+        &self,
+        app_bundle_id: Option<&str>,
+        app_name: Option<&str>,
+        window_title: Option<&str>,
+        ax_role: Option<&str>,
+        ax_subrole: Option<&str>,
+        is_modal: bool,
+    ) -> AppRuleDecision {
+        self.app_rules.evaluate(WindowRuleContext {
+            app_bundle_id,
+            app_name,
+            window_title,
+            ax_role,
+            ax_subrole,
+            is_modal,
+        })
+    }
+
     /// Record the width `window` now occupies on the display owning `space`.
     ///
     /// Called after any command that deliberately sets a width. Width is remembered per
@@ -3497,6 +3521,7 @@ mod tests {
     fn floating_app_rule_emits_one_shot_placement_and_switches_focus_workspace() {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.app_rules = vec![AppWorkspaceRule {
+            display: None,
             app_id: Some("com.example.Tool".into()),
             workspace: Some(WorkspaceSelector::Index(1)),
             floating: true,
@@ -3594,6 +3619,7 @@ mod tests {
     fn tiled_app_rule_size_sets_scrolling_column_width() {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.app_rules = vec![AppWorkspaceRule {
+            display: None,
             app_id: Some("com.example.Editor".into()),
             workspace: None,
             floating: false,

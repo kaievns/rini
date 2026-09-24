@@ -182,6 +182,7 @@ impl<S: System> ScreenCache<S> {
                     display_uuid,
                     name: ns_screens.iter().find(|s| s.cg_id == cg_id).and_then(|s| s.name.clone()),
                     space: None,
+                    is_builtin: unsafe { rini_skylight_sys::CGDisplayIsBuiltin(cg_id.as_u32()) },
                 }
             })
             .collect();

@@ -275,6 +275,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, frame)| ScreenInfo {
+                    is_builtin: false,
                     id: ScreenId::new(i as u32 + 1),
                     frame: *frame,
                     display_uuid: format!("uuid-{i}"),

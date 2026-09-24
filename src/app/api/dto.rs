@@ -261,11 +261,15 @@ impl<'de> Deserialize<'de> for RuntimeDisplayData {
 
         let helper = DisplayDataDe::deserialize(deserializer)?;
         let info = ScreenInfo {
+            is_builtin: false,
             id: ScreenId::new(helper.screen_id),
             frame: helper.frame,
             display_uuid: helper.uuid,
             name: helper.name,
             space: helper.space.map(SpaceId::new),
+            // Not on the wire: this is the IPC view of a display, and no client asks which screen is
+            // the machine's own. Adding it to the protocol for one internal rule is not worth a
+            // wire change.
         };
 
         Ok(RuntimeDisplayData {
@@ -328,6 +332,7 @@ mod tests {
     #[test]
     fn display_data_serializes_with_legacy_shape() {
         let info = ScreenInfo {
+            is_builtin: false,
             id: ScreenId::new(7),
             frame: CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 400.0)),
             display_uuid: "display-uuid".to_string(),

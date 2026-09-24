@@ -44,6 +44,16 @@ pub struct AppWorkspaceRule {
     /// Optional: match on the window's `AXModal` attribute. `true` matches modal dialogs,
     /// `false` matches everything else. A rule naming `modal` overrides `float_modal_windows`.
     pub modal: Option<bool>,
+
+    /// Keep matching windows on the internal or the external display.
+    ///
+    /// A ROLE, not a display: the external at home and the one at the office have different UUIDs,
+    /// and a rule naming one would be silently inert at the other desk.
+    ///
+    /// A default rather than a law. It decides where a window belongs when the display arrangement in
+    /// force has not been told otherwise, so an explicit move still wins, and a role nothing fills —
+    /// the lid shut, with only an external attached — leaves the window wherever it can go.
+    pub display: Option<crate::workspaces::domain::display_pin::DisplayRole>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
@@ -81,6 +91,8 @@ pub enum AppRuleDecision {
         position: Option<AppRulePosition>,
         size: Option<AppRuleSize>,
         focus: bool,
+        /// The display role this window is pinned to, if the rule names one.
+        display: Option<crate::workspaces::domain::display_pin::DisplayRole>,
     },
 }
 
@@ -142,6 +154,7 @@ impl AppRuleEngine {
                     position: None,
                     size: None,
                     focus: false,
+                    display: None,
                 }
             } else {
                 AppRuleDecision::NoMatch
@@ -156,6 +169,7 @@ impl AppRuleEngine {
                 position: matched.rule.position,
                 size: matched.rule.size,
                 focus: matched.rule.focus,
+                display: matched.rule.display,
             }
         }
     }
@@ -227,6 +241,7 @@ mod tests {
     #[test]
     fn evaluates_without_workspace_or_layout_state() {
         let rule = AppWorkspaceRule {
+            display: None,
             app_id: Some("com.example.Editor".into()),
             workspace: None,
             floating: true,
@@ -254,12 +269,14 @@ mod tests {
                 position: Some(AppRulePosition { x: 0.4, y: 0.7 }),
                 size: Some(AppRuleSize { w: Some(640.0), h: Some(480.0) }),
                 focus: true,
+                display: None,
             }
         );
     }
 
     fn rule(app_id: Option<&str>, modal: Option<bool>, floating: bool) -> AppWorkspaceRule {
         AppWorkspaceRule {
+            display: None,
             app_id: app_id.map(Into::into),
             workspace: Some(WorkspaceSelector::Index(2)),
             floating,

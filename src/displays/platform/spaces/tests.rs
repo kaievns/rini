@@ -21,6 +21,7 @@ impl EventSink for Split {
 
 fn make_screen(space: Option<SpaceId>) -> ScreenInfo {
     ScreenInfo {
+        is_builtin: false,
         id: rini_core::ids::ScreenId::new(1),
         frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0)),
         display_uuid: "display-1".to_string(),
@@ -37,6 +38,7 @@ fn make_screen_with(
     space: Option<SpaceId>,
 ) -> ScreenInfo {
     ScreenInfo {
+        is_builtin: false,
         id: rini_core::ids::ScreenId::new(screen_id),
         frame: CGRect::new(CGPoint::new(origin_x, 0.0), CGSize::new(width, 800.0)),
         display_uuid: display_uuid.to_string(),

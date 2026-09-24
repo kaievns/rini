@@ -20,7 +20,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use rini_core::ids::{WindowId, pid_t};
-use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::workspaces::domain::display_affinity::ColumnWidth;
 
@@ -74,6 +74,13 @@ pub struct Setup {
     /// Column width each window last had on each display.
     #[serde(default)]
     pub window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
+    /// Windows whose home the USER chose, rather than one rini inferred from where the window was.
+    ///
+    /// The difference matters to a display pin. A pin overrides a home that was merely observed —
+    /// otherwise an app that opens on the wrong screen keeps it — and never overrides one the user
+    /// asked for, which is what "unless I explicitly move it there" means.
+    #[serde(default)]
+    pub home_by_intent: HashSet<WindowId>,
 }
 
 impl Setup {
@@ -86,8 +93,14 @@ impl Setup {
         self.window_home.is_empty() && self.display_strip.is_empty() && self.window_width.is_empty()
     }
 
+    /// Whether the user chose this window's home, as opposed to rini inferring it.
+    pub fn home_was_chosen(&self, window: WindowId) -> bool {
+        self.home_by_intent.contains(&window)
+    }
+
     pub fn forget_window(&mut self, window: WindowId) {
         self.window_home.remove(&window);
+        self.home_by_intent.remove(&window);
         for strip in self.display_strip.values_mut() {
             strip.retain(|candidate| *candidate != window);
         }
@@ -99,6 +112,7 @@ impl Setup {
 
     pub fn forget_app(&mut self, pid: pid_t) {
         self.window_home.retain(|window, _| window.pid != pid);
+        self.home_by_intent.retain(|window| window.pid != pid);
         for strip in self.display_strip.values_mut() {
             strip.retain(|window| window.pid != pid);
         }
@@ -111,6 +125,9 @@ impl Setup {
     pub fn rekey_window(&mut self, from: WindowId, to: WindowId) {
         if let Some(home) = self.window_home.remove(&from) {
             self.window_home.insert(to, home);
+        }
+        if self.home_by_intent.remove(&from) {
+            self.home_by_intent.insert(to);
         }
         for strip in self.display_strip.values_mut() {
             for window in strip.iter_mut() {

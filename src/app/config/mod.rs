@@ -551,6 +551,7 @@ mod tests {
     fn app_rule_geometry_validation_rejects_invalid_values() {
         let mut settings = VirtualWorkspaceSettings::default();
         settings.app_rules.push(AppWorkspaceRule {
+            display: None,
             app_id: Some("com.example.Tool".into()),
             workspace: None,
             floating: false,

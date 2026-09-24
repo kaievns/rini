@@ -16,6 +16,29 @@ use crate::windows::domain::transaction::Requested;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{LayoutCommand, LayoutEngine};
 
+/// A rule matching nothing and asking for nothing, to be filled in by a test.
+///
+/// Mirrors what serde produces for a bare `{ app_id = "..." }` — `manage: true` above all, since
+/// deriving `Default` would make it false and quietly stop rini managing the matched windows.
+pub fn default_app_rule() -> crate::windows::domain::rules::AppWorkspaceRule {
+    crate::windows::domain::rules::AppWorkspaceRule {
+        app_id: None,
+        workspace: None,
+        floating: false,
+        position: None,
+        size: None,
+        focus: false,
+        manage: true,
+        app_name: None,
+        title_regex: None,
+        title_substring: None,
+        ax_role: None,
+        ax_subrole: None,
+        modal: None,
+        display: None,
+    }
+}
+
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {
         let mut config = Config::default();
@@ -184,6 +207,16 @@ impl Reactor {
         self.handle_event(Event::WindowsDiscovered { pid, new, known_visible });
     }
 
+    /// Install app rules and rebuild the rule engine, as a config reload does.
+    pub fn set_test_app_rules(
+        &mut self,
+        rules: Vec<crate::windows::domain::rules::AppWorkspaceRule>,
+    ) {
+        self.config.virtual_workspaces.app_rules = rules;
+        let settings = self.config.virtual_workspaces.clone();
+        self.layout_manager.layout_engine.update_virtual_workspace_settings(&settings);
+    }
+
     pub fn add_test_app(&mut self, pid: pid_t) {
         self.add_test_app_with_info(pid, "com.test.app", "Test App");
     }
@@ -316,6 +349,7 @@ pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) 
         .zip(spaces.into_iter())
         .enumerate()
         .map(|(idx, (frame, space))| ScreenInfo {
+            is_builtin: false,
             id: rini_core::ids::ScreenId::new(idx as u32),
             frame,
             space,
@@ -387,6 +421,7 @@ pub fn fullscreen_startup_space_state(
     fullscreen_space: SpaceId,
 ) -> Event {
     let mut state = forwarded_space_state(vec![ScreenInfo {
+        is_builtin: false,
         id: rini_core::ids::ScreenId::new(0),
         frame: screen,
         space: None,
