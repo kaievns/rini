@@ -32,6 +32,13 @@ pub enum Event {
     },
     /// Take the panel off screen.
     Hide,
+    /// Pictures the animation engine already held. Drawn on the next `Show`, and kept for later ones.
+    Pictures(
+        Vec<(
+            rini_core::ids::WindowId,
+            crate::animation::platform::window_snapshot::WindowSnapshot,
+        )>,
+    ),
 }
 
 /// Owns the panel and pumps the channel.
@@ -61,6 +68,17 @@ impl SwitcherActor {
                 Event::Hide => {
                     if let Some(panel) = self.panel.as_mut() {
                         panel.hide();
+                    }
+                }
+                Event::Pictures(pictures) => {
+                    // Only if a panel exists. Pictures arriving before the first switch have nowhere
+                    // to go, and building a window to hold them would pay 112ms for nothing.
+                    if let Some(panel) = self.panel.as_mut() {
+                        let count = pictures.len();
+                        panel.set_pictures(pictures);
+                        if count > 0 {
+                            panel.redraw();
+                        }
                     }
                 }
             }

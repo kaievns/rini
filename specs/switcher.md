@@ -92,6 +92,24 @@ switcher answers "every window I have, wherever it is".
 - A click in a gap or the padding MUST select nothing. Guessing at the nearest row selects a window the
   user did not point at.
 
+## The pictures
+
+- Each row MUST show a picture of its window where one is available, scaled to fit rather than cropped —
+  a cropped thumbnail of a browser is a rectangle of text.
+- A picture MUST NOT be captured while the switch is opening. Capture costs about 40ms plus 14.5ms per
+  window, measured, and the popup has to appear at once. The panel draws what is already cached and
+  nothing else.
+- A row with no picture MUST still read as a row. It keeps a placeholder rather than leaving a hole.
+- A picture arriving after the popup is already up MUST be drawn. The cache is asked on the open and
+  answers a moment later, so the first open of a switch would otherwise stay blank.
+- A picture MUST be refused if it does not cover its window. The cheap capture route returns a sliver
+  for exactly the off-screen and hidden-workspace windows a switcher exists to show — measured at
+  40x1081 and 1x28 — and a sliver stretched across a row is worse than no picture.
+- Age MUST NOT be a reason to refuse one. A ten-minute-old picture of a window beats a grey box;
+  staleness is a reason to capture again, not to withhold.
+- Opening a switch MAY queue captures for the rows that have none, so the next open has them. That work
+  MUST be in the background and MUST NOT touch any window.
+
 ## The trigger
 
 - The trigger MUST be a configurable chord, never cmd-tab specifically.

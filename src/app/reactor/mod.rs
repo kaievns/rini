@@ -2948,6 +2948,7 @@ impl Reactor {
             .list
             .iter()
             .map(|candidate| crate::switcher::platform::panel::Row {
+                window: candidate.window,
                 title: candidate.title.clone(),
                 app_name: candidate.app_name.clone(),
                 is_minimized: candidate.is_minimized,
@@ -2963,11 +2964,36 @@ impl Reactor {
         let Some(screen) = screen else {
             return;
         };
+        let windows: Vec<WindowId> = switch.list.iter().map(|c| c.window).collect();
         tx.send(crate::switcher::platform::actor::Event::Show {
             rows,
             selected: switch.cursor.index(),
             screen,
         });
+
+        // Ask for whatever pictures are already held. A READ, so it costs a hash lookup per window —
+        // capturing here would cost 40ms plus 14.5ms a window and the popup has to appear now.
+        if let Some(anim) = self.communication_manager.workspace_animation_tx.as_ref() {
+            anim.send(crate::animation::platform::engine::Event::LendSnapshots(
+                windows.clone(),
+            ));
+            // And queue captures for the rest, so the NEXT open has them. Background work; nothing is
+            // drawn and no window is touched.
+            let targets: Vec<crate::animation::domain::request::SnapshotTarget> = windows
+                .iter()
+                .filter_map(|window| {
+                    let state = self.state.windows.window(*window)?;
+                    Some(crate::animation::domain::request::SnapshotTarget {
+                        window: *window,
+                        server_id: state.info.sys_id?,
+                        size: state.frame_monotonic.size,
+                    })
+                })
+                .collect();
+            if !targets.is_empty() {
+                anim.send(crate::animation::platform::engine::Event::WarmWindows(targets));
+            }
+        }
     }
 
     fn hide_switch(&self) {

@@ -14,6 +14,8 @@
 //! Created once and kept, because creating a window costs about 112ms against 14ms to order one in.
 //! Shown by ordering in and out rather than by alpha, for the hit-testing reason above.
 
+use rustc_hash::FxHashMap as HashMap;
+
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
@@ -25,6 +27,8 @@ use objc2_foundation::NSString;
 use objc2_quartz_core::{CALayer, CATextLayer};
 use tracing::debug;
 
+use crate::animation::platform::overlay::set_layer_contents;
+use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::switcher::domain::layout::{Metrics, Strip, lay_out};
 
@@ -51,10 +55,19 @@ define_class!(
 );
 
 /// One row to draw.
+#[derive(Clone)]
 pub struct Row {
+    pub window: rini_core::ids::WindowId,
     pub title: String,
     pub app_name: String,
     pub is_minimized: bool,
+}
+
+#[derive(Clone)]
+struct LastDraw {
+    strip: Strip,
+    rows: Vec<Row>,
+    selected: usize,
 }
 
 /// The popup, alive for the lifetime of the process and ordered in only while a switch is open.
@@ -69,6 +82,14 @@ pub struct SwitcherPanel {
     metrics: Metrics,
     visible: bool,
     scale: f64,
+    /// What was last drawn, so a picture arriving after the popup is already up can be drawn without
+    /// the reactor being asked to send the rows again.
+    last: Option<LastDraw>,
+    /// Pictures handed over by the animation engine, by window.
+    ///
+    /// Kept across opens: a picture that was good enough to draw last time is still better than a grey
+    /// box, and the engine only ever sends more.
+    pictures: HashMap<rini_core::ids::WindowId, WindowSnapshot>,
 }
 
 impl SwitcherPanel {
@@ -136,6 +157,8 @@ impl SwitcherPanel {
             metrics: Metrics::default(),
             visible: false,
             scale,
+            pictures: HashMap::default(),
+            last: None,
         })
     }
 
@@ -162,11 +185,42 @@ impl SwitcherPanel {
 
         self.rebuild_rows(rows.len());
         self.place(&strip, rows, selected);
+        self.last = Some(LastDraw {
+            strip,
+            rows: rows.to_vec(),
+            selected,
+        });
 
         if !self.visible {
             self.window.orderFrontRegardless();
             self.visible = true;
         }
+    }
+
+    /// Draw the strip again with whatever is now known, if the panel is up.
+    ///
+    /// The pictures arrive after the popup has already appeared — the engine is asked on the open and
+    /// answers a moment later — so without this the first open of a switch would stay grey.
+    pub fn redraw(&mut self) {
+        if !self.visible {
+            return;
+        }
+        let Some(last) = self.last.clone() else {
+            return;
+        };
+        self.place(&last.strip, &last.rows, last.selected);
+    }
+
+    /// Take the pictures the animation engine holds, and redraw if the panel is up.
+    pub fn set_pictures(&mut self, pictures: Vec<(rini_core::ids::WindowId, WindowSnapshot)>) {
+        for (window, snapshot) in pictures {
+            self.pictures.insert(window, snapshot);
+        }
+    }
+
+    /// Whether a window already has a picture, so the caller knows what is worth warming.
+    pub fn has_picture(&self, window: rini_core::ids::WindowId) -> bool {
+        self.pictures.contains_key(&window)
     }
 
     /// Order the panel out. Ordering rather than fading: an alpha-0 window still hit-tests, and this
@@ -242,6 +296,16 @@ impl SwitcherPanel {
             let picture = CGRect::new(rect.origin, self.metrics.tile);
             tile.setFrame(picture);
             tile.setOpacity(if row.is_minimized { 0.45 } else { 1.0 });
+            match self.pictures.get(&row.window) {
+                Some(snapshot) => {
+                    // The window is wider than the tile, so the picture is scaled to fit inside it
+                    // rather than cropped: a cropped thumbnail of a browser is a rectangle of text.
+                    tile.setContentsGravity(unsafe { objc2_quartz_core::kCAGravityResizeAspect });
+                    set_layer_contents(tile, snapshot);
+                }
+                // Left as the placeholder slab. A row with no picture still reads as a row.
+                None => unsafe { tile.setContents(None) },
+            }
 
             caption.setFrame(CGRect::new(
                 CGPoint::new(rect.origin.x, rect.origin.y + self.metrics.tile.height + 4.0),
@@ -298,6 +362,7 @@ mod tests {
 
     fn row(app: &str, title: &str) -> Row {
         Row {
+            window: rini_core::ids::WindowId::new(1, 1),
             title: title.to_owned(),
             app_name: app.to_owned(),
             is_minimized: false,

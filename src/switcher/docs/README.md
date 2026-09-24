@@ -64,6 +64,17 @@ hit-tests. So the panel orders in and out instead, at ~14ms a gesture.
 taking a click would activate rini and deactivate the application being switched away from — inverting
 the one thing a switcher exists to do.
 
+**The pictures are borrowed, never captured here.** Capture costs ~40ms plus 14.5ms per window
+(measured, `src/animation/docs/capture-overlay-research.md`), so the panel cannot take one while the
+popup is opening. The animation engine already keeps a cache for the overlay, and
+`Event::LendSnapshots` is a READ of it — a hash lookup per window. The engine answers through an
+installed callback that the APP wires to this actor, so neither feature names the other. Opening a
+switch also queues warms for the rows with no picture, so the next open has them.
+
+**`usable`, not `get`.** The cheap capture route returns a sliver for exactly the off-screen and
+hidden-workspace windows this feature exists to show, and a sliver stretched across a row is worse than
+a placeholder. Age is not a reason to refuse one, though: a ten-minute-old picture beats a grey box.
+
 **The popup is cosmetic.** The reactor holds the list and the cursor and runs on its own thread; the
 panel is a main-thread actor fed rows over a channel. A slow or missing panel delays a picture and
 nothing else, because the switch is already correct on the other side.

@@ -381,6 +381,12 @@ fn main() {
         let events_tx = events_tx.clone();
         move |frames| events_tx.send(reactor::Event::ApplyOverlayFrames(frames))
     }));
+    // The app wires the two features together, so neither has to name the other: the animation engine
+    // lends its pictures and the switcher panel draws them.
+    flight_engine.set_lend_snapshots(Box::new({
+        let switcher_tx = switcher_tx.clone();
+        move |pictures| switcher_tx.send(rini::switcher::platform::actor::Event::Pictures(pictures))
+    }));
 
     // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
     // Animation require it. Idle until a switch opens, and it builds its window on first use.

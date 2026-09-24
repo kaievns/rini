@@ -1411,7 +1411,12 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 
 /// Hands a snapshot to a layer as its contents; Core Animation takes a `CGImage` or an `IOSurface`
 /// directly.
-fn set_layer_contents(layer: &CALayer, snapshot: &WindowSnapshot) {
+/// Hand a captured picture to a layer, whichever kind of image it is.
+///
+/// `pub(crate)` so the switcher's panel draws pictures the same way the overlay does. The alternative
+/// was a second copy of these six lines, and two places deciding how a snapshot becomes layer
+/// contents is exactly the kind of split that drifts.
+pub(crate) fn set_layer_contents(layer: &CALayer, snapshot: &WindowSnapshot) {
     unsafe {
         match &snapshot.image {
             SnapshotImage::Bitmap(image) => {

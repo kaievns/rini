@@ -107,10 +107,25 @@ pub enum Event {
     WarmWindows(Vec<SnapshotTarget>),
     /// Warm from the window server rather than rini's window table. Debug command only.
     WarmCache,
+    /// Hand out the pictures already cached for these windows, to whoever installed `lend_snapshots`.
+    ///
+    /// A READ. It captures nothing and queues nothing, so it costs a hash lookup per window and is
+    /// safe to send on a keypress — which is the point, since the switcher popup cannot afford the
+    /// 40ms plus 14.5ms per window a capture costs.
+    ///
+    /// Answered through an installed callback rather than a reply channel, the way `place_frames`
+    /// already is: the animation feature must not name whoever is asking.
+    LendSnapshots(Vec<WindowId>),
 }
 
 /// Called with real-window frames to apply while the overlay covers them.
 pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, CGRect)>)>;
+
+/// Called with the pictures this engine holds for the windows `LendSnapshots` asked about.
+///
+/// Only windows with a picture worth drawing appear; the rest are absent rather than present and
+/// empty, so the caller does not have to know what makes a snapshot usable.
+pub type LendSnapshots = Box<dyn Fn(Vec<(WindowId, WindowSnapshot)>)>;
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
@@ -569,6 +584,7 @@ pub struct FlightEngine {
     bar_refresh: Option<RepeatingTimer>,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
+    lend_snapshots: Option<LendSnapshots>,
 }
 
 impl FlightEngine {
@@ -601,7 +617,12 @@ impl FlightEngine {
             pictures: DisplayPictures::default(),
             bar_refresh: None,
             place_frames: None,
+            lend_snapshots: None,
         }
+    }
+
+    pub fn set_lend_snapshots(&mut self, lend: LendSnapshots) {
+        self.lend_snapshots = Some(lend);
     }
 
     pub fn set_place_frames(&mut self, place: PlaceFrames) {
@@ -650,6 +671,7 @@ impl FlightEngine {
             }
             Event::DressingReady { window, dressing } => self.dressing_ready(window, dressing),
             Event::WarmCache => self.warm_cache(),
+            Event::LendSnapshots(windows) => self.lend_snapshots(windows),
             Event::WarmWindows(targets) => {
                 self.warm_windows(targets);
             }
@@ -792,6 +814,26 @@ impl FlightEngine {
     }
 
     /// Queues background captures for every visible window on the display. Cheap to repeat.
+    /// Hand out what is already cached for `windows`, in the order asked.
+    ///
+    /// `usable` rather than `get`: the SkyLight route returns a sliver for exactly the off-screen and
+    /// inactive-workspace windows a switcher exists to show — measured at 40x1081 for an off-strip
+    /// window and 1x28 for one on a hidden workspace — and stretching a sliver across a row is worse
+    /// than showing no picture.
+    ///
+    /// Age is deliberately NOT a reason to refuse one. A ten-minute-old picture of a window beats a
+    /// grey box; staleness is a reason to warm, not to withhold.
+    fn lend_snapshots(&self, windows: Vec<WindowId>) {
+        let Some(lend) = &self.lend_snapshots else {
+            return;
+        };
+        let held: Vec<(WindowId, WindowSnapshot)> = windows
+            .into_iter()
+            .filter_map(|window| self.cache.usable(window).cloned().map(|snap| (window, snap)))
+            .collect();
+        lend(held);
+    }
+
     fn warm_cache(&mut self) {
         let Some((display_frame, _)) = self.display else {
             warn!("no display geometry yet; cannot warm the snapshot cache");
