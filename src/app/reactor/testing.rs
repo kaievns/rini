@@ -343,6 +343,18 @@ pub fn space_state_event_from_screens(screens: Vec<ScreenInfo>) -> Event {
     Event::SpaceStateChanged(forwarded_space_state(screens))
 }
 
+/// Screens given by hand, so a test can name the display UUIDs rather than take `test-display-N`.
+/// Needed by anything about display IDENTITY: which arrangement is in force depends on the UUIDs,
+/// so "a different external" cannot be expressed by an index.
+pub fn space_state_event_from_screens_with(
+    screens: Vec<ScreenInfo>,
+    update: impl FnOnce(&mut ForwardedSpaceState),
+) -> Event {
+    let mut state = forwarded_space_state(screens);
+    update(&mut state);
+    Event::SpaceStateChanged(state)
+}
+
 pub fn forwarded_space_state(screens: Vec<ScreenInfo>) -> ForwardedSpaceState {
     let command_space = screens.iter().find_map(|screen| screen.space);
     let active_spaces = screens.iter().filter_map(|screen| screen.space).collect();

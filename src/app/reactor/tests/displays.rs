@@ -1436,6 +1436,179 @@ fn replug_returns_the_windows_that_were_on_that_display() {
     );
 }
 
+/// The defect per-arrangement records actually fix: two arrangements fighting over one home.
+///
+/// A window had ONE home, so the last deliberate move won everywhere. Move a terminal onto the
+/// laptop while undocked — an intent, so it is recorded — and the docked arrangement lost the only
+/// record saying that window belongs on the studio display. Redocking then left it behind. Each
+/// arrangement keeps its own answer now, so arranging the laptop cannot silently re-arrange the desk.
+#[test]
+fn arranging_one_setup_does_not_disturb_another() {
+    let mut reactor = test_reactor();
+    let builtin_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let terminal = WindowId::new(1, 1);
+
+    let screen = |uuid: &str, id: u32, frame: CGRect, space: SpaceId| ScreenInfo {
+        id: rini_core::ids::ScreenId::new(id),
+        frame,
+        space: Some(space),
+        display_uuid: uuid.to_owned(),
+        name: None,
+    };
+    let builtin = |space| screen("builtin", 0, builtin_frame, space);
+    let studio = |space| screen("studio", 1, external_frame, space);
+    let docked = |b, e| vec![builtin(b), studio(e)];
+
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    reactor.handle_event(space_state_event_from_screens(docked(
+        builtin_space,
+        external_space,
+    )));
+    reactor.add_test_app(1);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    reactor.add_test_window(
+        terminal,
+        WindowServerId::new(901),
+        Some(external_space),
+        external_frame,
+    );
+    assert!(reactor.assign_test_window_to_workspace(external_space, terminal, external_workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, terminal));
+    reactor.handle_event(space_state_event_from_screens(docked(
+        builtin_space,
+        external_space,
+    )));
+    assert_eq!(
+        reactor.state.display_memory.affinity.window_home(terminal),
+        Some("studio")
+    );
+
+    // Undock, and DELIBERATELY put the terminal on the laptop: an intent, which is recorded.
+    set_space_membership(&[(builtin_space, &[901]), (external_space, &[])]);
+    reactor.handle_event(space_state_event_from_screens_with(
+        vec![builtin(builtin_space)],
+        |state| state.display_set_changed = true,
+    ));
+    reactor.handle_event(space_state_event_from_screens(vec![builtin(builtin_space)]));
+    reactor.state.display_memory.affinity.set_window_home(terminal, "builtin");
+    assert_eq!(
+        reactor.state.display_memory.affinity.window_home(terminal),
+        Some("builtin"),
+        "the laptop arrangement now says the laptop"
+    );
+
+    // Redock. The docked arrangement never heard about that move.
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    reactor.handle_event(space_state_event_from_screens_with(
+        docked(builtin_space, external_space),
+        |state| state.display_set_changed = true,
+    ));
+    assert_eq!(
+        reactor.state.display_memory.affinity.window_home(terminal),
+        Some("studio"),
+        "the desk arrangement kept its own answer"
+    );
+    assert_eq!(
+        reactor
+            .state
+            .windows
+            .workspace_info_for_window(terminal)
+            .map(|assignment| assignment.space),
+        Some(external_space),
+        "so the window goes back to the studio display on redock"
+    );
+}
+
+/// The television case. A display the machine has never seen starts with NO claim on any window.
+///
+/// Reported: "when a new one is attached, it should start with having all the windows still on the
+/// internal and let me move windows to external". Records are per arrangement, and an arrangement
+/// nobody has seen remembers nothing, so there is nothing to repatriate and nothing moves. Without
+/// that, plugging a projector into a meeting-room table would lay out the windows according to the
+/// arrangement of a monitor sitting in another building.
+#[test]
+fn a_display_never_seen_before_takes_no_windows() {
+    let mut reactor = test_reactor();
+    let builtin_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let external_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let builtin_space = SpaceId::new(1);
+    let external_space = SpaceId::new(479);
+    let projector_space = SpaceId::new(700);
+
+    let screen = |uuid: &str, id: u32, frame: CGRect, space: SpaceId| ScreenInfo {
+        id: rini_core::ids::ScreenId::new(id),
+        frame,
+        space: Some(space),
+        display_uuid: uuid.to_owned(),
+        name: None,
+    };
+    let builtin = |space| screen("builtin", 0, builtin_frame, space);
+    let studio = |space| screen("studio", 1, external_frame, space);
+    let projector = |space| screen("projector", 2, external_frame, space);
+
+    // Docked at the desk: two windows living on the studio display.
+    let a = WindowId::new(1, 1);
+    let b = WindowId::new(1, 2);
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[901, 902])]);
+    reactor.handle_event(space_state_event_from_screens(vec![
+        builtin(builtin_space),
+        studio(external_space),
+    ]));
+    reactor.add_test_app(1);
+    let external_workspace = reactor.test_workspace(external_space, 0);
+    reactor.add_test_window(a, WindowServerId::new(901), Some(external_space), external_frame);
+    reactor.add_test_window(b, WindowServerId::new(902), Some(external_space), external_frame);
+    assert!(reactor.assign_test_window_to_workspace(external_space, a, external_workspace));
+    assert!(reactor.assign_test_window_to_workspace(external_space, b, external_workspace));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, a));
+    reactor.send_layout_event(LayoutEvent::WindowAdded(external_space, b));
+    reactor.handle_event(space_state_event_from_screens(vec![
+        builtin(builtin_space),
+        studio(external_space),
+    ]));
+    assert_eq!(
+        reactor.state.display_memory.affinity.window_home(a),
+        Some("studio"),
+        "the docked arrangement records the studio display"
+    );
+
+    // Undock, and let the laptop-only arrangement settle.
+    set_space_membership(&[(builtin_space, &[901, 902]), (external_space, &[])]);
+    reactor.handle_event(space_state_event_from_screens_with(
+        vec![builtin(builtin_space)],
+        |state| state.display_set_changed = true,
+    ));
+    reactor.handle_event(space_state_event_from_screens(vec![builtin(builtin_space)]));
+
+    // A projector in a meeting room: a display this machine has never held a window on.
+    set_space_membership(&[(builtin_space, &[901, 902]), (projector_space, &[])]);
+    reactor.handle_event(space_state_event_from_screens_with(
+        vec![builtin(builtin_space), projector(projector_space)],
+        |state| state.display_set_changed = true,
+    ));
+    reactor.handle_event(space_state_event_from_screens(vec![
+        builtin(builtin_space),
+        projector(projector_space),
+    ]));
+
+    let space_of = |reactor: &Reactor, window: WindowId| {
+        reactor
+            .state
+            .windows
+            .workspace_info_for_window(window)
+            .map(|assignment| assignment.space)
+    };
+    assert_eq!(
+        space_of(&reactor, a),
+        Some(builtin_space),
+        "a window must not be moved onto a display that has never held it"
+    );
+    assert_eq!(space_of(&reactor, b), Some(builtin_space));
+}
+
 /// A replug must not disturb the display that stayed attached.
 ///
 /// remap_space deletes the workspaces already sitting on the target space id, which drops
@@ -1510,8 +1683,13 @@ fn replug_leaves_the_other_display_group_order_untouched() {
     );
 }
 
-/// A window parked on the built-in only because its own display was unplugged must NOT be
-/// re-homed to the built-in. That would overwrite the record the replug depends on.
+/// A window parked on the built-in only because its own display was unplugged must not lose the
+/// record the replug depends on.
+///
+/// Records are per ARRANGEMENT now, so this reads differently than it used to. The built-in-only
+/// arrangement genuinely holds the window on the built-in — that is where it is, and where it should
+/// be next time the laptop is alone — while the docked arrangement still says the external. The
+/// invariant is the same one and it is asserted where it counts: the window goes back on replug.
 #[test]
 fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
     let mut reactor = test_reactor();
@@ -1552,9 +1730,27 @@ fn evacuated_windows_keep_their_home_while_their_display_is_detached() {
 
     assert_eq!(
         reactor.state.display_memory.affinity.window_home(exile),
+        Some("test-display-0"),
+        "on the built-in alone the window IS on the built-in, and that arrangement says so"
+    );
+
+    // Replug. The docked arrangement never stopped saying the external, so the window goes back.
+    set_space_membership(&[(builtin_space, &[]), (external_space, &[901])]);
+    reactor.handle_event(space_state_event_with(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+        |state| state.display_set_changed = true,
+    ));
+    reactor.handle_event(space_state_event(
+        vec![builtin, external],
+        vec![Some(builtin_space), Some(external_space)],
+    ));
+
+    assert_eq!(
+        reactor.state.display_memory.affinity.window_home(exile),
         Some("test-display-1"),
-        "an evacuated window must keep its own display's home, otherwise the replug has \
-         nothing left to bring it back with"
+        "the docked arrangement kept its own record, so the replug has something to bring the \
+         window back with"
     );
 }
 

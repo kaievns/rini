@@ -36,9 +36,19 @@
 A workspace is a work context — coding, comms, research — and it spans every attached display. The same
 context is arranged differently depending on what is plugged in, and rini remembers each arrangement.
 
-- A window MUST remember, per display: which display it belongs to, its column width there, and its
-  place in that display's strip order. All three are keyed by display UUID, so plugging a monitor in
-  spreads the workspace and unplugging it gathers the windows back, each to a remembered place.
+- A window MUST remember, per ARRANGEMENT: which display it belongs to, its column width there, and
+  its place in that display's strip order. An arrangement is the SET of attached displays, named by
+  their UUIDs, so plugging a monitor in spreads the workspace and unplugging it gathers the windows
+  back, each to a place remembered for that arrangement.
+- Arrangements MUST NOT share records. Rearranging while docked MUST NOT change how the laptop looks
+  alone, and the reverse. One record per window cannot express this: the last deliberate move won
+  everywhere, so moving a window onto the laptop while undocked silently cancelled its place at the
+  desk.
+- An arrangement is identified by WHICH displays are attached, not how many. An external at home, one
+  at the office and a meeting-room projector are three arrangements, and none inherits another's
+  layout.
+- A display that has never held a window MUST take none when it is attached. Every window stays where
+  it is and waits to be told, and the arrangement learns from where the user puts them.
 - Width MUST be remembered per (window, display), not per window. Half of 2338pt is comfortable and
   half of 1728pt is cramped; one number cannot serve both. This is what lets a browser be full-width
   when the laptop is alone and half-width on the external.
@@ -56,11 +66,16 @@ context is arranged differently depending on what is plugged in, and rini rememb
 > Plugging a monitor in will let me spread a workspace between monitors and organise windows
 > differently, say editor on one screen, terminal on the other, or have a browser full-width when there
 > is one monitor but then have it 1/2 width on the external... when I add/remove monitor the windows
-> should remember where they were in each configuration and regroup/resize accordingly." Recorded as the
-> requirement the per-display affinity already answers; per-display keying covers every case where a
-> window MOVES between displays. It does not cover a window that stays on one display in both
-> arrangements and wants a different width in each — that would have to be keyed by the attached SET,
-> not the display. Not built, and not reported as a need.
+> should remember where they were in each configuration and regroup/resize accordingly."
+>
+> **Reported 2026-09-24, same session.** "I need that behaviour in the missing case... it needs to be
+> keyed to a set of displays not per display, because configuration depends on a set: internal
+> only/internal+external/external only (with internal lid closed). Moreover you need to track those
+> display IDs too. My external display at home is different from one at the office. Or say I plug in a
+> TV/projector in a meeting, my setup should not assume that it can just move everything to it."
+> Records moved from one key per display to one per arrangement. The case that could not be expressed
+> before — a window on the SAME display in two arrangements wanting a different width in each — is the
+> one this answers.
 
 > **Reported 2026-09-24.** "Can you add a ctrl-M key binding that will move a window between monitors? I
 > might need left/right down the road, but for now I just really want to cycle because I only have two

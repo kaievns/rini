@@ -99,14 +99,27 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
 - **A native space belongs to one display.** `set_display_space` evicts any
   other display claiming the space; without that, two displays both appear to
   own it and the affinity pass moves windows between them forever.
-- **Per-display keying covers a window that MOVES, not one that stays.** Every
-  case in the "arranged differently per display" requirement works because the
-  window relocates: the browser is full-width under the built-in's key and half
-  under the external's. What it cannot express is a window that sits on the SAME
-  display in both arrangements and wants a different width in each — a terminal
-  full-width alone, half when the editor comes back to share the screen. That
-  needs keying by the attached SET, not by the display. Not built; nobody has
-  asked.
+- **Records are per ARRANGEMENT, not per display.** Keying by one display cannot
+  express a window that sits on the SAME display in two arrangements and wants a
+  different width in each — a terminal full-width on the laptop alone, half when
+  the editor comes back from the external to share the screen. Nor can it express
+  two arrangements disagreeing about where a window belongs: with one home per
+  window the last deliberate move won everywhere, so moving a terminal onto the
+  laptop while undocked cancelled its place at the desk and redocking left it
+  behind. `display_setup::SetupId` is the sorted set of attached display UUIDs,
+  and each arrangement owns its own homes, strip orders and widths.
+
+  Identity, not count. The external at home, the one at the office and a
+  meeting-room projector are three arrangements. A display that has never held a
+  window takes none when attached — not by a guard, but because the arrangement
+  it forms holds no records naming it, so repatriation finds nothing to move.
+
+  `DisplayAffinity` holds the arrangements and remembers which is in force, so
+  everything above it asks the same questions as before and gets answers scoped
+  to the current one. Three operations deliberately reach across ALL of them:
+  forgetting a dead window, forgetting an app, and rekeying a relaunch. A
+  `WindowId` that has died can never match again, and the arrangement holding the
+  stale record may not be attached for months.
 
 ## Restore must not strand windows
 

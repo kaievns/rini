@@ -73,7 +73,9 @@ pub enum ColumnWidth {
 /// What naming an arrangement turned out to mean.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupChange {
-    /// Already in force with records. Nothing to do.
+    /// Already in force, with records. They apply: an unplug and replug quick enough that nothing
+    /// else was named in between still restores, which is why this counts as restorable rather than
+    /// as "nothing to do".
     Unchanged,
     /// Seen before: its records apply, so windows can be put back where they were.
     Known,
@@ -87,10 +89,10 @@ pub enum SetupChange {
 }
 
 impl SetupChange {
-    /// Whether the caller may put windows back. False for an arrangement with nothing to say, which
-    /// is what stops a newly attached display from claiming windows it has never held.
+    /// Whether the caller may put windows back. False only for an arrangement with nothing to say,
+    /// which is what stops a newly attached display from claiming windows it has never held.
     pub fn restores_windows(self) -> bool {
-        matches!(self, Self::Known | Self::Adopted)
+        matches!(self, Self::Known | Self::Adopted | Self::Unchanged)
     }
 }
 
@@ -540,7 +542,12 @@ mod tests {
     fn naming_the_arrangement_in_force_is_unchanged() {
         let mut affinity = DisplayAffinity::default();
         affinity.use_setup(docked());
-        assert_eq!(affinity.use_setup(docked()), SetupChange::Unchanged);
+        let change = affinity.use_setup(docked());
+        assert_eq!(change, SetupChange::Unchanged);
+        assert!(
+            change.restores_windows(),
+            "a quick unplug and replug with nothing named in between still restores"
+        );
         assert_eq!(
             affinity.use_setup(vec!["studio".to_owned(), "builtin".to_owned()]),
             SetupChange::Unchanged,

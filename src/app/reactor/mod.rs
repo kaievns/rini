@@ -60,6 +60,7 @@ use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
+use crate::workspaces::domain::display_affinity::SetupChange;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use events::{
     EventOutcome, app as application_workflow, command as command_workflow, focus as focus_service,
@@ -2236,6 +2237,10 @@ impl Reactor {
                 Some(display_uuid.to_string()),
             );
         }
+        // Which hardware arrangement is in force. Every window record is scoped to it, so this has
+        // to be settled before anything below reads or writes one — the repatriation at the end of
+        // this function above all.
+        let setup_change = self.adopt_current_display_setup();
         // Re-observe where windows are, and in what order, whenever the topology is settled.
         //
         // Only while the display set is UNCHANGED. During a display change the current
@@ -2275,6 +2280,19 @@ impl Reactor {
         // still physically on the old display when the reconciliation reads their position,
         // so it puts them straight back. Running afterwards makes affinity the last word on
         // a display arrival, which is the whole point of recording it.
+        //
+        // A display nobody has used before takes nothing, and that needs no check here: the records
+        // are scoped to the arrangement in force, an arrangement nobody has seen holds none, so
+        // there is nothing homed to the new display to move. Saying so in the log is worth it —
+        // "why did my windows not move onto the projector" has an answer — but a guard around the
+        // loop would be a branch that cannot change the outcome.
+        if !setup_change.restores_windows() && !display_set.arrived.is_empty() {
+            info!(
+                setup = %self.state.display_memory.affinity.current_setup(),
+                arrived = ?display_set.arrived,
+                "a display arrangement nobody has seen: every window stays where it is"
+            );
+        }
         for display_uuid in &display_set.arrived {
             outcome.absorb(self.repatriate_windows_to_display(display_uuid));
         }
@@ -2591,6 +2609,29 @@ impl Reactor {
     ///
     /// Cheap enough to run on every settled layout because it only walks the active
     /// workspace of each screen, which is what the layout pass just computed anyway.
+    /// Put the arrangement the attached displays form in force, and say what that turned out to be.
+    ///
+    /// Called on every settled topology. An arrangement nobody has seen answers `New`, which is the
+    /// caller's instruction to move nothing: see `display_setup` for why a display's identity, not
+    /// just the number of displays, is what names an arrangement.
+    fn adopt_current_display_setup(&mut self) -> SetupChange {
+        let attached: Vec<String> = self
+            .space_state
+            .screens
+            .iter()
+            .filter_map(|screen| screen.display_uuid_owned())
+            .collect();
+        let change = self.state.display_memory.affinity.use_setup(attached);
+        if !matches!(change, SetupChange::Unchanged | SetupChange::Refused) {
+            info!(
+                setup = %self.state.display_memory.affinity.current_setup(),
+                ?change,
+                "display arrangement in force"
+            );
+        }
+        change
+    }
+
     fn sync_display_affinity_from_live_layout(&mut self) {
         if crate::displays::platform::display_churn::is_active() {
             return;
