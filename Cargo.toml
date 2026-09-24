@@ -123,6 +123,8 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 	"NSGraphics",
 	"NSGraphicsContext",
 	"NSImage",
+	# Gates NSImage::CGImageForProposedRect, which turns an app icon into pixels a layer can draw.
+	"NSImageRep",
 	"NSMenu",
 	"NSMenuItem",
 	"NSOpenPanel",

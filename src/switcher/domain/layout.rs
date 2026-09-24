@@ -33,10 +33,10 @@ pub struct Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            tile: CGSize::new(200.0, 125.0),
-            gap: 12.0,
-            padding: 20.0,
-            caption: 34.0,
+            tile: CGSize::new(260.0, 163.0),
+            gap: 14.0,
+            padding: 22.0,
+            caption: 36.0,
             max_screen_fraction: 0.9,
         }
     }

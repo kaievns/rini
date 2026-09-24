@@ -19,18 +19,20 @@ use rustc_hash::FxHashMap as HashMap;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSPanel, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSBackingStoreType, NSColor, NSPanel, NSRunningApplication, NSView, NSWindowCollectionBehavior,
+    NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
 use objc2_foundation::NSString;
-use objc2_quartz_core::{CALayer, CATextLayer};
+use objc2_quartz_core::{CALayer, CATextLayer, CATransaction};
 use tracing::debug;
 
 use crate::animation::platform::overlay::set_layer_contents;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::switcher::domain::layout::{Metrics, Strip, lay_out};
+use crate::windows::platform::app::NSRunningApplicationExt;
 
 /// Above the animation overlay's 18, so a switch opened mid-flight is not drawn behind the tiles it is
 /// offering.
@@ -38,6 +40,12 @@ const PANEL_LEVEL: isize = 21;
 
 const CORNER: f64 = 14.0;
 const TILE_CORNER: f64 = 6.0;
+/// The app icon badged into a tile's corner. Small enough to read as a cue rather than as content,
+/// large enough to tell two apps apart at a glance.
+const ICON: f64 = 30.0;
+/// How far the badge sits inside the tile's corner, so it reads as on top of the picture rather than
+/// as part of it.
+const ICON_INSET: f64 = 6.0;
 
 define_class!(
     /// Top-left origin, so the layer tree agrees with the geometry in `domain::layout`.
@@ -78,6 +86,8 @@ pub struct SwitcherPanel {
     /// stepping the selection moves a highlight rather than tearing down a layer tree.
     tiles: Vec<Retained<CALayer>>,
     captions: Vec<Retained<CATextLayer>>,
+    /// One badge per row, in front of its tile.
+    icons: Vec<Retained<CALayer>>,
     highlight: Retained<CALayer>,
     metrics: Metrics,
     visible: bool,
@@ -85,6 +95,11 @@ pub struct SwitcherPanel {
     /// What was last drawn, so a picture arriving after the popup is already up can be drawn without
     /// the reactor being asked to send the rows again.
     last: Option<LastDraw>,
+    /// App icons already read, by pid.
+    ///
+    /// Cached because reading one goes out to the application bundle, and a switch redraws on every
+    /// step. `None` is cached too: an application with no icon must not be asked again on each redraw.
+    app_icons: HashMap<rini_core::ids::pid_t, Option<Retained<objc2_core_graphics::CGImage>>>,
     /// Pictures handed over by the animation engine, by window.
     ///
     /// Kept across opens: a picture that was good enough to draw last time is still better than a grey
@@ -133,7 +148,7 @@ impl SwitcherPanel {
         root.setCornerRadius(CORNER);
         root.setMasksToBounds(true);
         root.setBackgroundColor(Some(
-            &NSColor::colorWithSRGBRed_green_blue_alpha(0.11, 0.11, 0.13, 0.94).CGColor(),
+            &NSColor::colorWithSRGBRed_green_blue_alpha(0.11, 0.11, 0.13, 0.78).CGColor(),
         ));
 
         // Under the tiles, so a tile's picture is never hidden by its own highlight.
@@ -153,11 +168,13 @@ impl SwitcherPanel {
             view,
             tiles: Vec::new(),
             captions: Vec::new(),
+            icons: Vec::new(),
             highlight,
             metrics: Metrics::default(),
             visible: false,
             scale,
             pictures: HashMap::default(),
+            app_icons: HashMap::default(),
             last: None,
         })
     }
@@ -179,11 +196,16 @@ impl SwitcherPanel {
         self.window.setFrame_display(cocoa, false);
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), strip.panel.size);
         self.view.setFrame(bounds);
+        // The root's frame and any freshly built row layers, for the same no-implicit-animation reason
+        // as `place`: a panel that changes size between switches would otherwise slide into its new
+        // bounds while its rows are already being drawn at the new ones.
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
         if let Some(root) = self.view.layer() {
             root.setFrame(bounds);
         }
-
         self.rebuild_rows(rows.len());
+        CATransaction::commit();
         self.place(&strip, rows, selected);
         self.last = Some(LastDraw {
             strip,
@@ -250,6 +272,9 @@ impl SwitcherPanel {
         for caption in self.captions.drain(..) {
             caption.removeFromSuperlayer();
         }
+        for icon in self.icons.drain(..) {
+            icon.removeFromSuperlayer();
+        }
         for _ in 0..count {
             let tile = CALayer::layer();
             tile.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -281,11 +306,52 @@ impl SwitcherPanel {
             }
             root.addSublayer(&caption);
             self.captions.push(caption);
+
+            let icon = CALayer::layer();
+            icon.setAnchorPoint(CGPoint::new(0.0, 0.0));
+            icon.setContentsScale(self.scale);
+            // In front of the tile, which is at 1.0.
+            icon.setZPosition(1.5);
+            icon.setHidden(true);
+            root.addSublayer(&icon);
+            self.icons.push(icon);
         }
         debug!(count, "switcher panel rebuilt its rows");
     }
 
-    fn place(&self, strip: &Strip, rows: &[Row], selected: usize) {
+    /// The application's icon, read once and kept.
+    ///
+    /// `None` is cached as well as `Some`: an application with no icon, or one that quit between being
+    /// listed and being drawn, must not be asked again on every redraw of the strip.
+    fn app_icon(
+        &mut self,
+        pid: rini_core::ids::pid_t,
+    ) -> Option<Retained<objc2_core_graphics::CGImage>> {
+        if let Some(cached) = self.app_icons.get(&pid) {
+            return cached.clone();
+        }
+        let icon = NSRunningApplication::with_process_id(pid)
+            .and_then(|app| app.icon_image(ICON * self.scale));
+        self.app_icons.insert(pid, icon.clone());
+        icon
+    }
+
+    fn place(&mut self, strip: &Strip, rows: &[Row], selected: usize) {
+        // Resolved before the drawing loop, which borrows the layer vectors: caching an icon needs
+        // `&mut self` and the loop cannot hold both.
+        let badges: Vec<Option<Retained<objc2_core_graphics::CGImage>>> =
+            rows.iter().map(|row| self.app_icon(row.window.pid)).collect();
+
+        // No implicit animations. Setting `contents` on a layer cross-fades over about a quarter of a
+        // second by default, and these layers are REUSED across switches: a tile that held the previous
+        // switch's window fades from that picture into this one. With the two most recent windows
+        // trading places between one switch and the next — which they do, because the list is ordered
+        // by focus — two adjacent tiles cross-fade into each other's pictures, and the strip looks like
+        // it is shuffling itself after it has already appeared. Reported as exactly that.
+        //
+        // The same reason the overlay disables actions everywhere it touches a layer.
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
         for (index, rect) in strip.rows.iter().enumerate() {
             let Some(tile) = self.tiles.get(index) else { continue };
             let Some(caption) = self.captions.get(index) else {
@@ -296,6 +362,28 @@ impl SwitcherPanel {
             let picture = CGRect::new(rect.origin, self.metrics.tile);
             tile.setFrame(picture);
             tile.setOpacity(if row.is_minimized { 0.45 } else { 1.0 });
+            // Bottom-left of the picture: away from a window's own controls, which sit top-left, and
+            // away from the caption below.
+            if let Some(badge) = self.icons.get(index) {
+                match badges.get(index).and_then(|icon| icon.clone()) {
+                    Some(image) => {
+                        badge.setFrame(CGRect::new(
+                            CGPoint::new(
+                                rect.origin.x + ICON_INSET,
+                                rect.origin.y + self.metrics.tile.height - ICON - ICON_INSET,
+                            ),
+                            CGSize::new(ICON, ICON),
+                        ));
+                        let raw: *const objc2_core_graphics::CGImage = &*image;
+                        unsafe {
+                            let _: () = msg_send![&**badge, setContents: raw];
+                        }
+                        badge.setHidden(false);
+                    }
+                    None => badge.setHidden(true),
+                }
+            }
+
             match self.pictures.get(&row.window) {
                 Some(snapshot) => {
                     // The window is wider than the tile, so the picture is scaled to fit inside it
@@ -317,6 +405,11 @@ impl SwitcherPanel {
             }
         }
 
+        self.place_highlight(strip, selected);
+        CATransaction::commit();
+    }
+
+    fn place_highlight(&self, strip: &Strip, selected: usize) {
         match strip.rows.get(selected) {
             Some(rect) => {
                 self.highlight.setHidden(false);

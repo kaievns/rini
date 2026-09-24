@@ -1,3 +1,5 @@
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+
 use crate::windows::domain::info::{AppInfo, WindowInfo};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -330,6 +332,15 @@ pub trait NSRunningApplicationExt {
     fn pid(&self) -> pid_t;
     fn bundle_id(&self) -> Option<Retained<NSString>>;
     fn localized_name(&self) -> Option<Retained<NSString>>;
+    /// The application's icon, as a `CGImage` a layer can draw.
+    ///
+    /// Converted here rather than handed out as an `NSImage`, because an `NSImage` is a description of
+    /// how to draw at some size and a layer wants pixels. `size` is the point size wanted; AppKit picks
+    /// the best representation for it.
+    ///
+    /// `None` for an application with no icon and for one that has quit between being listed and being
+    /// asked — the second is ordinary, since a switcher list is a moment old by the time it is drawn.
+    fn icon_image(&self, size: f64) -> Option<Retained<objc2_core_graphics::CGImage>>;
 }
 
 impl NSRunningApplicationExt for NSRunningApplication {
@@ -347,6 +358,14 @@ impl NSRunningApplicationExt for NSRunningApplication {
 
     fn localized_name(&self) -> Option<Retained<NSString>> {
         self.localizedName()
+    }
+
+    fn icon_image(&self, size: f64) -> Option<Retained<objc2_core_graphics::CGImage>> {
+        let icon = self.icon()?;
+        let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(size, size));
+        // A raw pointer, not `Some(&mut _)`: the parameter is `*mut NSRect` and AppKit writes the rect
+        // it actually chose back into it, which is why it cannot be a temporary.
+        unsafe { icon.CGImageForProposedRect_context_hints(&mut rect, None, None) }
     }
 }
 

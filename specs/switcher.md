@@ -109,6 +109,17 @@ switcher answers "every window I have, wherever it is".
   staleness is a reason to capture again, not to withhold.
 - Opening a switch MAY queue captures for the rows that have none, so the next open has them. That work
   MUST be in the background and MUST NOT touch any window.
+- Each row MUST carry its application's icon as a small badge, as a cue that is readable faster than a
+  thumbnail or a title.
+- Drawing MUST NOT animate implicitly. The row layers are reused between switches and the list is
+  ordered by focus, so the two most recent windows trade places from one switch to the next; a layer
+  that cross-fades from its previous picture to its new one makes the strip look like it is shuffling
+  itself after it has already appeared.
+
+> **Reported 2026-09-25.** "The two latest window icons swap visually AFTER popup becomes visible, so
+> it's not synchronised properly and looks buggy." Core Animation cross-fades a `contents` change over
+> about a quarter of a second by default, and the reused tiles were fading between the two windows'
+> pictures. The overlay disables implicit actions everywhere it touches a layer; the panel did not.
 
 ## The trigger
 
