@@ -12,12 +12,20 @@
 //! came from there is nothing to consult on replug. Affinity is therefore only written
 //! by paths that express intent (an explicit move, or first sighting of a window) and
 //! never by the forced reassignment that follows a display change.
+//!
+//! Every window record is held per ARRANGEMENT — see [`crate::workspaces::domain::display_setup`].
+//! This type owns the arrangements, remembers which one is in force, and answers every question
+//! about it, so nothing above has to carry a [`SetupId`] around. The space mapping is the exception:
+//! which display owns which native space is a fact about this session's hardware, not about one
+//! arrangement, and it is retained for unplugged displays too.
 
 use serde::{Deserialize, Serialize};
 
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::FxHashMap as HashMap;
+
+use crate::workspaces::domain::display_setup::{Setup, SetupId};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DisplayAffinity {
@@ -28,16 +36,24 @@ pub struct DisplayAffinity {
     /// layout it had before. Pruning it on unplug is what made reconnected displays
     /// come back empty.
     display_space: HashMap<String, SpaceId>,
-    /// Display each window belongs to, by display UUID.
-    window_home: HashMap<WindowId, String>,
-    /// Last observed strip order per display, so a replug can rebuild adjacency rather
-    /// than repatriating in arbitrary id order.
+    /// What each hardware arrangement remembers about the windows.
     #[serde(default)]
-    display_strip: HashMap<String, Vec<WindowId>>,
-    /// Column width each window last had on each display, keyed by display UUID. Width belongs
-    /// to the display, not the workspace: see "Display affinity" in `src/workspaces/docs/workspaces-and-displays.md`.
+    setups: HashMap<SetupId, Setup>,
+    /// The arrangement in force. Every window record is read and written under it.
+    ///
+    /// Persisted, so a restart into the same hardware reads the same arrangement rather than
+    /// starting from nothing and re-homing everything.
     #[serde(default)]
-    window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
+    current: SetupId,
+    /// Window records from a file written before arrangements existed, under the names that file
+    /// used. Read, never written: the first arrangement to be named adopts them, so an upgrade keeps
+    /// the homes it had instead of re-deriving every one of them.
+    #[serde(default, skip_serializing, rename = "window_home")]
+    legacy_window_home: HashMap<WindowId, String>,
+    #[serde(default, skip_serializing, rename = "display_strip")]
+    legacy_display_strip: HashMap<String, Vec<WindowId>>,
+    #[serde(default, skip_serializing, rename = "window_width")]
+    legacy_window_width: HashMap<String, HashMap<WindowId, ColumnWidth>>,
 }
 
 /// The width a window occupied, as the layout means it rather than in points.
@@ -54,14 +70,120 @@ pub enum ColumnWidth {
     Offset(f64),
 }
 
+/// What naming an arrangement turned out to mean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupChange {
+    /// Already in force with records. Nothing to do.
+    Unchanged,
+    /// Seen before: its records apply, so windows can be put back where they were.
+    Known,
+    /// Never seen. It remembers nothing, so NOTHING may be moved — the windows stay where they are
+    /// and this arrangement learns from where they end up.
+    New,
+    /// New, and it adopted the records of a file written before arrangements existed.
+    Adopted,
+    /// No displays named. macOS reports that mid-reconfiguration and it is never a real arrangement.
+    Refused,
+}
+
+impl SetupChange {
+    /// Whether the caller may put windows back. False for an arrangement with nothing to say, which
+    /// is what stops a newly attached display from claiming windows it has never held.
+    pub fn restores_windows(self) -> bool {
+        matches!(self, Self::Known | Self::Adopted)
+    }
+}
+
 impl DisplayAffinity {
     /// Nothing has been recorded. Used to tell a schema-5 file's nested section from a schema-4
     /// file's top-level one: a file has one shape or the other, never both.
     pub fn is_empty(&self) -> bool {
         self.display_space.is_empty()
-            && self.window_home.is_empty()
-            && self.display_strip.is_empty()
-            && self.window_width.is_empty()
+            && self.setups.is_empty()
+            && self.legacy_window_home.is_empty()
+            && self.legacy_display_strip.is_empty()
+            && self.legacy_window_width.is_empty()
+    }
+
+    /// Put the arrangement `displays` form in force, and say whether it is one nobody has seen.
+    ///
+    /// A new arrangement starts EMPTY and the caller must move nothing: a display nobody has used
+    /// before has no claim on any window, so attaching a television in a meeting room leaves every
+    /// window where it is and waits to be told. The windows then get homed where they already are by
+    /// the ordinary settled-topology pass, and from then on this arrangement remembers itself.
+    ///
+    /// An arrangement of no displays is refused outright — macOS reports an empty screen list
+    /// mid-reconfiguration, and switching to it would hand out the empty arrangement's records and
+    /// then adopt the evacuation as the layout.
+    pub fn use_setup(&mut self, displays: impl IntoIterator<Item = String>) -> SetupChange {
+        let owned: Vec<String> = displays.into_iter().collect();
+        let id = SetupId::of(owned.iter().map(String::as_str));
+        if id.is_empty() {
+            return SetupChange::Refused;
+        }
+        if id == self.current && self.setups.contains_key(&id) {
+            return SetupChange::Unchanged;
+        }
+
+        let legacy = self.take_legacy();
+        let entry = self.setups.entry(id.clone());
+        let known = matches!(entry, std::collections::hash_map::Entry::Occupied(_));
+        let setup = entry.or_default();
+        let mut adopted = false;
+        if !known && setup.is_empty() && !legacy.is_empty() {
+            *setup = legacy;
+            adopted = true;
+        }
+        self.current = id;
+        match (known, adopted) {
+            (true, _) => SetupChange::Known,
+            (false, true) => SetupChange::Adopted,
+            (false, false) => SetupChange::New,
+        }
+    }
+
+    /// The arrangement in force.
+    pub fn current_setup(&self) -> &SetupId {
+        &self.current
+    }
+
+    /// Records written before any arrangement was named, ready to be adopted by the first one.
+    ///
+    /// Two sources, both meaning "we did not know the arrangement yet": the field names a schema-5
+    /// file used, and the unnamed arrangement that writes land in before the first settled topology.
+    /// Windows are seen before the screens settle, so without this their homes were recorded under a
+    /// nameless arrangement and then never read again.
+    fn take_legacy(&mut self) -> Setup {
+        let mut legacy = Setup {
+            window_home: std::mem::take(&mut self.legacy_window_home),
+            display_strip: std::mem::take(&mut self.legacy_display_strip),
+            window_width: std::mem::take(&mut self.legacy_window_width),
+        };
+        if let Some(unnamed) = self.setups.remove(&SetupId::default()) {
+            // The file's records lose to what this session has actually observed.
+            legacy.window_home.extend(unnamed.window_home);
+            legacy.display_strip.extend(unnamed.display_strip);
+            for (display, widths) in unnamed.window_width {
+                legacy.window_width.entry(display).or_default().extend(widths);
+            }
+        }
+        legacy
+    }
+
+    /// The records of the arrangement in force. Empty when none has been named yet, which answers
+    /// every query with "nothing remembered" rather than panicking.
+    fn setup(&self) -> &Setup {
+        static EMPTY: std::sync::LazyLock<Setup> = std::sync::LazyLock::new(Setup::default);
+        self.setups.get(&self.current).unwrap_or(&EMPTY)
+    }
+
+    fn setup_mut(&mut self) -> &mut Setup {
+        self.setups.entry(self.current.clone()).or_default()
+    }
+
+    /// Whether the arrangement in force remembers anything about the windows.
+    pub fn current_setup_is_empty(&self) -> bool {
+        self.setup().is_empty()
     }
     /// Record that `display` currently owns `space`, evicting any other claimant: a native space
     /// has one display, and two claimants make the affinity pass move windows forever.
@@ -111,7 +233,7 @@ impl DisplayAffinity {
     /// display change must not call this, or the evacuation overwrites the very record
     /// the replug needs.
     pub fn set_window_home(&mut self, window: WindowId, display: &str) {
-        self.window_home.insert(window, display.to_owned());
+        self.setup_mut().window_home.insert(window, display.to_owned());
     }
 
     /// Record a home only if the window does not already have one.
@@ -119,36 +241,19 @@ impl DisplayAffinity {
     /// Used at first sighting. A window that has been seen before keeps the display it
     /// was last deliberately placed on, even when it is currently parked elsewhere.
     pub fn set_window_home_if_absent(&mut self, window: WindowId, display: &str) {
-        self.window_home.entry(window.to_owned()).or_insert_with(|| display.to_owned());
+        self.setup_mut()
+            .window_home
+            .entry(window.to_owned())
+            .or_insert_with(|| display.to_owned());
     }
 
     pub fn window_home(&self, window: WindowId) -> Option<&str> {
-        self.window_home.get(&window).map(String::as_str)
+        self.setup().window_home.get(&window).map(String::as_str)
     }
 
-    /// Windows homed to `display`, in the strip order last observed on it.
-    ///
-    /// Order matters on replug. Repatriating in `WindowId` order is effectively arbitrary,
-    /// so two windows the user had kept side by side come back with unrelated windows
-    /// between them. Windows with a remembered position come first, in that order;
-    /// anything homed here without one follows, in id order for determinism.
+    /// Windows homed to `display` in the arrangement in force, in the strip order last observed.
     pub fn windows_homed_to(&self, display: &str) -> Vec<WindowId> {
-        let mut homed: Vec<WindowId> = self
-            .window_home
-            .iter()
-            .filter_map(|(window, home)| (home == display).then_some(*window))
-            .collect();
-        homed.sort_unstable();
-
-        let order = self.display_strip.get(display);
-        let mut ordered: Vec<WindowId> = Vec::with_capacity(homed.len());
-        if let Some(order) = order {
-            ordered.extend(order.iter().copied().filter(|window| homed.contains(window)));
-        }
-        let remainder: Vec<WindowId> =
-            homed.into_iter().filter(|window| !ordered.contains(window)).collect();
-        ordered.extend(remainder);
-        ordered
+        self.setup().windows_homed_to(display)
     }
 
     /// Remember the strip order currently on `display`.
@@ -158,19 +263,23 @@ impl DisplayAffinity {
     /// dragged in, or reshuffled since they were first homed.
     pub fn set_display_strip(&mut self, display: &str, windows: Vec<WindowId>) {
         if windows.is_empty() {
-            self.display_strip.remove(display);
+            self.setup_mut().display_strip.remove(display);
         } else {
-            self.display_strip.insert(display.to_owned(), windows);
+            self.setup_mut().display_strip.insert(display.to_owned(), windows);
         }
     }
 
     pub fn display_strip(&self, display: &str) -> &[WindowId] {
-        self.display_strip.get(display).map(Vec::as_slice).unwrap_or_default()
+        self.setup().display_strip.get(display).map(Vec::as_slice).unwrap_or_default()
     }
 
     /// Remember the width `window` occupies on `display`.
     pub fn set_window_width(&mut self, display: &str, window: WindowId, width: ColumnWidth) {
-        self.window_width.entry(display.to_owned()).or_default().insert(window, width);
+        self.setup_mut()
+            .window_width
+            .entry(display.to_owned())
+            .or_default()
+            .insert(window, width);
     }
 
     /// Forget any remembered width, so the window adopts the display's default.
@@ -178,65 +287,56 @@ impl DisplayAffinity {
     /// Distinct from never having had one: toggling a deliberate width back off is an
     /// instruction to stop pinning it, not to keep the old value.
     pub fn clear_window_width(&mut self, display: &str, window: WindowId) {
-        if let Some(widths) = self.window_width.get_mut(display) {
+        let setup = self.setup_mut();
+        if let Some(widths) = setup.window_width.get_mut(display) {
             widths.remove(&window);
             if widths.is_empty() {
-                self.window_width.remove(display);
+                setup.window_width.remove(display);
             }
         }
     }
 
     /// The width `window` last had on `display`, if it ever had a deliberate one.
     pub fn window_width(&self, display: &str, window: WindowId) -> Option<ColumnWidth> {
-        self.window_width.get(display)?.get(&window).copied()
+        self.setup().window_width.get(display)?.get(&window).copied()
     }
 
     /// Every window that currently has a home, in any display.
     pub fn homed_windows(&self) -> Vec<WindowId> {
-        let mut windows: Vec<WindowId> = self.window_home.keys().copied().collect();
+        let mut windows: Vec<WindowId> = self.setup().window_home.keys().copied().collect();
         windows.sort_unstable();
         windows
     }
 
+    /// Forget a window in EVERY arrangement, not only the one in force.
+    ///
+    /// A `WindowId` dies with its window, so a record of it under another arrangement is a record
+    /// that can never match again — and the arrangement it belongs to is not attached to be cleaned
+    /// up later. Leaving them is how the lists filled with closed windows while an external was
+    /// unplugged, which made repatriation report homes for three dead windows and bring nothing back.
     pub fn forget_window(&mut self, window: WindowId) {
-        self.window_home.remove(&window);
-        for strip in self.display_strip.values_mut() {
-            strip.retain(|candidate| *candidate != window);
+        for setup in self.setups.values_mut() {
+            setup.forget_window(window);
         }
-        for widths in self.window_width.values_mut() {
-            widths.remove(&window);
-        }
-        self.window_width.retain(|_, widths| !widths.is_empty());
+        self.legacy_window_home.remove(&window);
     }
 
     pub fn forget_app(&mut self, pid: pid_t) {
-        self.window_home.retain(|window, _| window.pid != pid);
-        for strip in self.display_strip.values_mut() {
-            strip.retain(|window| window.pid != pid);
+        for setup in self.setups.values_mut() {
+            setup.forget_app(pid);
         }
-        for widths in self.window_width.values_mut() {
-            widths.retain(|window, _| window.pid != pid);
-        }
-        self.window_width.retain(|_, widths| !widths.is_empty());
+        self.legacy_window_home.retain(|window, _| window.pid != pid);
     }
 
-    /// Carry a window's home across an identity change (an app relaunching into a new
-    /// `WindowId` for the same window).
+    /// Carry a window's records across an identity change (an app relaunching into a new
+    /// `WindowId` for the same window), in every arrangement: the window is the same window under
+    /// all of them, and the arrangements not in force are exactly the ones nothing else will fix.
     pub fn rekey_window(&mut self, from: WindowId, to: WindowId) {
-        if let Some(home) = self.window_home.remove(&from) {
-            self.window_home.insert(to, home);
+        for setup in self.setups.values_mut() {
+            setup.rekey_window(from, to);
         }
-        for strip in self.display_strip.values_mut() {
-            for window in strip.iter_mut() {
-                if *window == from {
-                    *window = to;
-                }
-            }
-        }
-        for widths in self.window_width.values_mut() {
-            if let Some(width) = widths.remove(&from) {
-                widths.insert(to, width);
-            }
+        if let Some(home) = self.legacy_window_home.remove(&from) {
+            self.legacy_window_home.insert(to, home);
         }
     }
 
@@ -260,7 +360,7 @@ impl DisplayAffinity {
 
     #[cfg(test)]
     pub fn homed_window_count(&self) -> usize {
-        self.window_home.len()
+        self.setup().window_home.len()
     }
 }
 
@@ -270,6 +370,182 @@ mod tests {
 
     fn win(idx: u32) -> WindowId {
         WindowId::new(1, idx)
+    }
+
+    fn docked() -> Vec<String> {
+        vec!["builtin".to_owned(), "studio".to_owned()]
+    }
+
+    fn laptop() -> Vec<String> {
+        vec!["builtin".to_owned()]
+    }
+
+    /// The reported requirement. A window arranged one way while docked must not disturb how the
+    /// laptop looks alone, and coming back must find the docked arrangement intact.
+    #[test]
+    fn each_arrangement_remembers_its_own_layout() {
+        let mut affinity = DisplayAffinity::default();
+
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), "studio");
+        affinity.set_window_width("studio", win(1), ColumnWidth::Offset(0.0));
+
+        // Undocked: the same window is on the laptop, full width. Nothing about the docked
+        // arrangement may change.
+        affinity.use_setup(laptop());
+        assert_eq!(
+            affinity.window_home(win(1)),
+            None,
+            "the laptop arrangement has not been told anything about this window yet"
+        );
+        affinity.set_window_home(win(1), "builtin");
+        affinity.set_window_width("builtin", win(1), ColumnWidth::FullWidth);
+
+        affinity.use_setup(docked());
+        assert_eq!(affinity.window_home(win(1)), Some("studio"));
+        assert_eq!(
+            affinity.window_width("studio", win(1)),
+            Some(ColumnWidth::Offset(0.0))
+        );
+
+        affinity.use_setup(laptop());
+        assert_eq!(affinity.window_home(win(1)), Some("builtin"));
+        assert_eq!(
+            affinity.window_width("builtin", win(1)),
+            Some(ColumnWidth::FullWidth),
+            "full width on the laptop alone, half when docked: the case one key per display cannot express"
+        );
+    }
+
+    /// The television case. A display nobody has used before must not be handed a layout, and the
+    /// caller is told so, because moving windows onto it is exactly what must not happen.
+    #[test]
+    fn an_arrangement_nobody_has_seen_remembers_nothing_and_says_so() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(laptop());
+        affinity.set_window_home(win(1), "builtin");
+
+        let change = affinity.use_setup(vec!["builtin".to_owned(), "projector".to_owned()]);
+        assert_eq!(change, SetupChange::New);
+        assert!(
+            !change.restores_windows(),
+            "nothing may be moved onto a display that has never held anything"
+        );
+        assert_eq!(
+            affinity.window_home(win(1)),
+            None,
+            "and it must not inherit the laptop's arrangement either"
+        );
+    }
+
+    #[test]
+    fn returning_to_a_known_arrangement_restores_windows() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), "studio");
+
+        affinity.use_setup(laptop());
+        let change = affinity.use_setup(docked());
+        assert_eq!(change, SetupChange::Known);
+        assert!(change.restores_windows());
+        assert_eq!(affinity.windows_homed_to("studio"), vec![win(1)]);
+    }
+
+    /// macOS reports no screens at all mid-reconfiguration. Taking that as an arrangement would hand
+    /// out an empty layout and then record the evacuation as the truth.
+    #[test]
+    fn an_arrangement_of_no_displays_is_refused() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), "studio");
+
+        assert_eq!(affinity.use_setup(Vec::new()), SetupChange::Refused);
+        assert_eq!(
+            affinity.window_home(win(1)),
+            Some("studio"),
+            "the arrangement in force is untouched"
+        );
+    }
+
+    /// Windows are seen before the screens settle, so their homes are written before any arrangement
+    /// is named. The first arrangement to be named adopts them rather than starting blank.
+    #[test]
+    fn records_written_before_the_screens_settled_are_adopted() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home(win(1), "builtin");
+        affinity.set_window_width("builtin", win(1), ColumnWidth::FullWidth);
+
+        let change = affinity.use_setup(laptop());
+        assert_eq!(change, SetupChange::Adopted);
+        assert!(change.restores_windows());
+        assert_eq!(affinity.window_home(win(1)), Some("builtin"));
+        assert_eq!(
+            affinity.window_width("builtin", win(1)),
+            Some(ColumnWidth::FullWidth)
+        );
+    }
+
+    /// Only the FIRST arrangement adopts them. A second one is a genuinely new arrangement and must
+    /// start empty, or every arrangement would inherit the same layout forever.
+    #[test]
+    fn only_the_first_arrangement_adopts_the_unnamed_records() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.set_window_home(win(1), "builtin");
+        affinity.use_setup(laptop());
+
+        assert_eq!(affinity.use_setup(docked()), SetupChange::New);
+        assert_eq!(affinity.window_home(win(1)), None);
+    }
+
+    /// A dead window's id can never match again, and the arrangement it is recorded under may not be
+    /// attached for months. Leaving the record is how the lists filled with closed windows.
+    #[test]
+    fn forgetting_a_window_reaches_every_arrangement() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), "studio");
+        affinity.use_setup(laptop());
+        affinity.set_window_home(win(1), "builtin");
+
+        affinity.forget_window(win(1));
+
+        assert_eq!(affinity.window_home(win(1)), None);
+        affinity.use_setup(docked());
+        assert_eq!(
+            affinity.window_home(win(1)),
+            None,
+            "gone from the arrangement that was not in force too"
+        );
+    }
+
+    /// The same window under a new id after a relaunch, in every arrangement for the same reason.
+    #[test]
+    fn a_relaunch_rekeys_every_arrangement() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        affinity.set_window_home(win(1), "studio");
+        affinity.use_setup(laptop());
+        affinity.set_window_home(win(1), "builtin");
+
+        affinity.rekey_window(win(1), win(7));
+
+        assert_eq!(affinity.window_home(win(7)), Some("builtin"));
+        affinity.use_setup(docked());
+        assert_eq!(affinity.window_home(win(7)), Some("studio"));
+    }
+
+    /// Naming the arrangement already in force changes nothing, so a settled topology that reports
+    /// the same screens does not look like a change and trigger a needless pass.
+    #[test]
+    fn naming_the_arrangement_in_force_is_unchanged() {
+        let mut affinity = DisplayAffinity::default();
+        affinity.use_setup(docked());
+        assert_eq!(affinity.use_setup(docked()), SetupChange::Unchanged);
+        assert_eq!(
+            affinity.use_setup(vec!["studio".to_owned(), "builtin".to_owned()]),
+            SetupChange::Unchanged,
+            "and the order the screens are reported in is not a change"
+        );
     }
 
     #[test]

@@ -70,10 +70,13 @@ impl LayoutEngine {
         // for an enum that no longer exists and RON reports a shape mismatch deep inside the tree.
         // Saying so here is the difference between "start fresh" and an unreadable error.
         if buf.contains("layout_system:scrolling(") {
+            // 4 is the version that dropped the wrapper and does not move when the current version
+            // does. Interpolating CURRENT_SCHEMA_VERSION here made the message claim the file
+            // predated whatever the latest schema happened to be, which was true by accident and
+            // said nothing about the actual incompatibility.
             return Err(anyhow::anyhow!(
-                "this layout file predates schema {}: it wraps each layout in the layout-system \
-                 tag that rini no longer has, so the saved strip is ignored and laid out fresh",
-                CURRENT_SCHEMA_VERSION,
+                "this layout file predates schema 4: it wraps each layout in the layout-system \
+                 tag that rini no longer has, so the saved strip is ignored and laid out fresh"
             ));
         }
         let mut persisted = PersistedLayout::deserialize(buf)?;

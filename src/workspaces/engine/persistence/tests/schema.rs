@@ -12,12 +12,12 @@ fn persisted_layout_schema_is_versioned_and_legacy_files_still_load() {
     let engine = test_engine();
     let memory = DisplayMemory::default();
     let serialized = engine.serialize_to_string(&memory);
-    assert!(serialized.contains("\"schema_version\":5"), "{serialized}");
+    assert!(serialized.contains("\"schema_version\":6"), "{serialized}");
 
-    let legacy = serialized.replacen("\"schema_version\":5,", "", 1);
+    let legacy = serialized.replacen("\"schema_version\":6,", "", 1);
     LayoutEngine::deserialize_from_str(&legacy).unwrap();
 
-    let future = serialized.replacen("\"schema_version\":5", "\"schema_version\":6", 1);
+    let future = serialized.replacen("\"schema_version\":6", "\"schema_version\":7", 1);
     let error = match LayoutEngine::deserialize_from_str(&future) {
         Ok(_) => panic!("future schema version should be rejected"),
         Err(error) => error,
@@ -33,10 +33,10 @@ fn schema_v2_display_maps_are_folded_into_the_affinity_registry() {
     let empty = DisplayMemory::default();
     let v2 = engine
         .serialize_to_string(&empty)
-        .replacen("\"schema_version\":5", "\"schema_version\":2", 1)
+        .replacen("\"schema_version\":6", "\"schema_version\":2", 1)
         .replacen(
-            "\"display_memory\":(affinity:(display_space:{},window_home:{},display_strip:{},\
-             window_width:{}),launch:(apps:{}))",
+            "\"display_memory\":(affinity:(display_space:{},setups:{},current:\"\"),\
+             launch:(apps:{}))",
             "\"space_display_map\":{(7):Some(\"external-uuid\")},\
              \"display_last_space\":{\"builtin-uuid\":(1)}",
             1,
@@ -109,7 +109,7 @@ fn a_schema_four_file_moves_its_display_memory_into_the_nested_record() {
         affinity,
         &v5[nested_end..]
     )
-    .replacen(r#""schema_version":5"#, r#""schema_version":4"#, 1);
+    .replacen(r#""schema_version":6"#, r#""schema_version":4"#, 1);
     assert!(
         v4.contains(r#""display_affinity":"#),
         "the fixture is in the old shape: {v4}"
@@ -133,7 +133,7 @@ fn a_schema_four_file_moves_its_display_memory_into_the_nested_record() {
     );
 
     let rewritten = loaded.layout.unwrap().serialize_to_string(&loaded.memory);
-    assert!(rewritten.contains(r#""schema_version":5"#));
+    assert!(rewritten.contains(r#""schema_version":6"#));
     assert!(
         rewritten.contains(r#""display_memory":("#),
         "written in the nested shape"
@@ -180,7 +180,7 @@ fn a_layout_file_wrapped_in_the_old_layout_system_tag_is_refused_by_name() {
         Err(error) => error.to_string(),
     };
     assert!(
-        message.contains("predates schema 5") && message.contains("laid out fresh"),
+        message.contains("predates schema 4") && message.contains("laid out fresh"),
         "the error has to say what happened and what follows: {message}"
     );
 }
@@ -208,7 +208,7 @@ fn a_layout_from_a_newer_schema_is_refused_without_forgetting_the_displays() {
     memory.affinity.set_window_home(window, "studio-display");
 
     let written = engine.serialize_to_string(&memory);
-    let from_the_future = written.replacen(r#""schema_version":5"#, r#""schema_version":99"#, 1);
+    let from_the_future = written.replacen(r#""schema_version":6"#, r#""schema_version":99"#, 1);
     assert_ne!(from_the_future, written);
 
     let loaded = LayoutEngine::deserialize_file(&from_the_future).expect("the bytes still parse");

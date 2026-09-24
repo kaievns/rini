@@ -3,7 +3,12 @@ use crate::workspaces::domain::display_memory::DisplayMemory;
 
 /// 4 dropped the `LayoutSystemKind` wrapper. Version 3 files tag every layout `scrolling((...))`
 /// for an enum that no longer exists, so they are refused rather than half-read.
-pub(super) const CURRENT_SCHEMA_VERSION: u32 = 5;
+///
+/// 6 keys the window records by display ARRANGEMENT (`display_setup::SetupId`) instead of holding
+/// one set at the top of the affinity. A 5 file still loads — its records are read under their old
+/// names and adopted by the first arrangement named — but the reverse is not true, and the bump is
+/// what makes an older rini REFUSE a 6 file instead of reading it and finding no homes at all.
+pub(super) const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 fn legacy_schema_version() -> u32 {
     0
