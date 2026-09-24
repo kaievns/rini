@@ -12,6 +12,8 @@ nothing.
 | **Who is offered** | `domain/candidates.rs` — `Candidate`, `Scope`, `switch_list`, `opening_selection` |
 | **Where the cursor is** | `domain/selection.rs` — `Selection`: stepping with wrap, clicking, and following its row when the list changes under it |
 | **Which binding holds it** | `domain/trigger.rs` — the session's keys, derived from the `switch_window` binding rather than configured twice |
+| **Where the rows go** | `domain/layout.rs` — the panel rect, one rect per row, the scroll that keeps the selection visible, and the hit test |
+| **The popup** | `platform/panel.rs` — the `NSPanel` and its layer tree; `platform/actor.rs` — the main thread it must live on |
 
 Focus order itself is not here. It is a fact about window focus, so it lives with the rest
 of the focus tracking in `src/windows/domain/focus_order.rs` and this feature reads it.
@@ -53,10 +55,23 @@ the cursor live on the reactor side, where the popup will be drawn.
 removed: the modifier's release is never swallowed, a session has a hard deadline checked against
 arriving events rather than a timer, and a key the switch has no use for passes through.
 
+**Its own window, not the animation overlay's.** The overlay is opaque black across the whole display,
+only ever shown with a captured desktop behind it, sets `ignoresMouseEvents(true)`, and is shown by
+fading its alpha — which a window that accepts clicks cannot do, because an alpha-0 window still
+hit-tests. So the panel orders in and out instead, at ~14ms a gesture.
+
+**An `NSPanel` with `NonactivatingPanel`.** rini runs as an Accessory application, so a plain window
+taking a click would activate rini and deactivate the application being switched away from — inverting
+the one thing a switcher exists to do.
+
+**The popup is cosmetic.** The reactor holds the list and the cursor and runs on its own thread; the
+panel is a main-thread actor fed rows over a channel. A slow or missing panel delays a picture and
+nothing else, because the switch is already correct on the other side.
+
 ## Reading order
 
-`domain/candidates.rs`, then `domain/selection.rs`. Both are pure and fully tested without a
-reactor, a window server or a screen.
+`domain/candidates.rs`, then `domain/selection.rs`, then `domain/layout.rs`. All three are pure and
+fully tested without a reactor, a window server or a screen. `platform/` after that.
 
 ## Detail
 

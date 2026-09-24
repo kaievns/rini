@@ -237,6 +237,8 @@ fn main() {
     let (gesture_tap_tx, gesture_tap_rx) = rini::app::channels::channel();
     let (cursor_warp_tx, cursor_warp_rx) = rini::app::channels::channel();
     let (workspace_animation_tx, workspace_animation_rx) = rini::app::channels::channel();
+    let (switcher_tx, switcher_rx) = rini::app::channels::channel();
+
     let reactor = Reactor::spawn(
         config.clone(),
         layout,
@@ -246,6 +248,7 @@ fn main() {
         broadcast_tx.clone(),
         Some(cursor_warp_tx.clone()),
         Some(workspace_animation_tx.clone()),
+        Some(switcher_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
         Some(gesture_tap_tx.clone()),
         opt.one,
@@ -379,6 +382,10 @@ fn main() {
         move |frames| events_tx.send(reactor::Event::ApplyOverlayFrames(frames))
     }));
 
+    // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
+    // Animation require it. Idle until a switch opens, and it builds its window on first use.
+    let switcher_actor = rini::switcher::platform::actor::SwitcherActor::new(switcher_rx, mtm);
+
     let mission_control_native = NativeMissionControl::new(events_tx.clone());
 
     if config.settings.default_disable {
@@ -418,6 +425,7 @@ fn main() {
             supervise("process_actor", process_actor.run()),
             supervise("cursor_warp", cursor_warp.run()),
             supervise("flight_engine", flight_engine.run()),
+            supervise("switcher", switcher_actor.run()),
         );
     });
 }

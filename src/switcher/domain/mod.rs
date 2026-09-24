@@ -2,5 +2,6 @@
 //! where the cursor sits.
 
 pub mod candidates;
+pub mod layout;
 pub mod selection;
 pub mod trigger;

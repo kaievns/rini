@@ -76,6 +76,22 @@ switcher answers "every window I have, wherever it is".
 - The modifier that holds a switch open MUST be derived from the trigger binding itself. Configuring it
   separately would be a second record of one fact, free to disagree.
 
+## The popup
+
+- Holding the modifier MUST show a strip of the candidate windows with the selection highlighted, and
+  releasing it MUST take the strip away.
+- The strip MUST show every candidate. A list too long to fit MUST scroll to keep the selection visible
+  rather than being capped — a cap hides exactly the tail a global switcher exists to reach.
+- The panel MUST be sized to its content up to a fraction of the screen, so three windows get a small
+  panel rather than an empty band.
+- The panel MUST appear on the display the switch is being driven from, not always on the primary.
+- The popup MUST be cosmetic. A switch works with no panel at all: the selection and the commit are
+  decided before anything is drawn, so a slow or failed panel costs a picture and never a wrong window.
+- The panel MUST NOT activate rini. rini runs as an Accessory application, so a window that takes a
+  click would deactivate the application being switched away from — inverting the point.
+- A click in a gap or the padding MUST select nothing. Guessing at the nearest row selects a window the
+  user did not point at.
+
 ## The trigger
 
 - The trigger MUST be a configurable chord, never cmd-tab specifically.
@@ -103,6 +119,7 @@ switcher answers "every window I have, wherever it is".
 
 ## Where it lives
 
+`src/switcher/domain/layout.rs` is where the rows go, `src/switcher/platform/panel.rs` the popup itself,
 `src/switcher/domain/candidates.rs` is who is offered and in what order,
 `src/switcher/domain/selection.rs` the cursor, `src/switcher/domain/trigger.rs` which binding holds a
 switch open, and `src/input/domain/switch_session.rs` the tap's side of it. The focus order itself is a fact about focus and lives

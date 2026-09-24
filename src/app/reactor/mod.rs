@@ -448,6 +448,9 @@ pub struct Reactor {
     pub one_space: bool,
     /// The switcher session, while one is open.
     live_switch: Option<LiveSwitch>,
+    /// Where the popup is drawn. `None` until the main thread registers itself, and absent entirely in
+    /// tests — the switch works without it, which is what keeps the popup cosmetic.
+    switcher_tx: Option<crate::switcher::platform::actor::Sender>,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
@@ -513,6 +516,7 @@ impl Reactor {
         broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
         workspace_animation_tx: Option<crate::animation::platform::engine::Sender>,
+        switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -531,6 +535,7 @@ impl Reactor {
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.communication_manager.workspace_animation_tx = workspace_animation_tx;
+        reactor.switcher_tx = switcher_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());
@@ -563,6 +568,7 @@ impl Reactor {
         };
         let reactor = Reactor {
             live_switch: None,
+            switcher_tx: None,
             config: config.clone(),
             one_space,
             app_manager: managers::AppManager::new(),
@@ -2895,15 +2901,18 @@ impl Reactor {
                     rows = self.live_switch.as_ref().map(|s| s.list.len()).unwrap_or(0),
                     backward, "switch opened"
                 );
+                self.draw_switch();
                 EventOutcome::no_change()
             }
             SwitchSignal::Step(delta) => {
                 if let Some(switch) = self.live_switch.as_mut() {
                     switch.cursor.step(delta);
                 }
+                self.draw_switch();
                 EventOutcome::no_change()
             }
             SwitchSignal::Commit => {
+                self.hide_switch();
                 let Some(switch) = self.live_switch.take() else {
                     return EventOutcome::no_change();
                 };
@@ -2918,8 +2927,52 @@ impl Reactor {
             }
             SwitchSignal::Cancel => {
                 self.live_switch = None;
+                self.hide_switch();
                 EventOutcome::no_change()
             }
+        }
+    }
+
+    /// Ask the main thread to draw the open switch.
+    ///
+    /// Silent when there is no popup: a switch works without one, which is what keeps the panel
+    /// cosmetic rather than load-bearing.
+    fn draw_switch(&self) {
+        let Some(tx) = self.switcher_tx.as_ref() else {
+            return;
+        };
+        let Some(switch) = self.live_switch.as_ref() else {
+            return;
+        };
+        let rows: Vec<crate::switcher::platform::panel::Row> = switch
+            .list
+            .iter()
+            .map(|candidate| crate::switcher::platform::panel::Row {
+                title: candidate.title.clone(),
+                app_name: candidate.app_name.clone(),
+                is_minimized: candidate.is_minimized,
+            })
+            .collect();
+        // The display the switch is being driven from, so the popup appears where the user is looking
+        // rather than always on the primary.
+        let screen = self
+            .command_context_space()
+            .and_then(|space| self.space_state.screen_by_space(space))
+            .or_else(|| self.space_state.screens.first())
+            .map(|screen| screen.frame);
+        let Some(screen) = screen else {
+            return;
+        };
+        tx.send(crate::switcher::platform::actor::Event::Show {
+            rows,
+            selected: switch.cursor.index(),
+            screen,
+        });
+    }
+
+    fn hide_switch(&self) {
+        if let Some(tx) = self.switcher_tx.as_ref() {
+            tx.send(crate::switcher::platform::actor::Event::Hide);
         }
     }
 

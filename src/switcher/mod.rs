@@ -3,3 +3,4 @@
 //! See `src/switcher/docs/README.md`.
 
 pub mod domain;
+pub mod platform;
