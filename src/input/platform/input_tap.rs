@@ -420,9 +420,13 @@ impl InputTap {
                 should_rebuild_mask = true;
             }
             Request::SetSwitchKeys(keys) => {
-                // A session in progress is ended here rather than left running: the keys it was
-                // watching for may no longer exist, so nothing would be left to close it.
-                if let Some(signal) = self.state.borrow_mut().switch.set_keys(keys) {
+                // Through the `state` this function already holds. Re-borrowing `self.state` here
+                // panicked the input thread on startup: `on_request` takes one `borrow_mut` for the
+                // whole match, so every arm has to go through it.
+                //
+                // A session in progress is ended rather than left running: the keys it was watching
+                // for may no longer exist, so nothing would be left to close it.
+                if let Some(signal) = state.switch.set_keys(keys) {
                     self.events.send(Event::Switch(signal));
                 }
             }
