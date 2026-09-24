@@ -28,29 +28,24 @@ pub fn workspace_step_at_boundary(
     }
 }
 
-/// Whether a command stops at the end of this display's strip instead of continuing onto the next
-/// one.
+/// The strip edge a blocked command ran into, or `None` when the direction is not a strip axis.
 ///
-/// `isolate_displays` makes each display its own scrollable strip, which is what a user with two
-/// monitors usually wants: going right from the rightmost column should stop, not jump.
+/// One answer to two questions, because they are the same question. `Some` means the command ran out
+/// of strip: it stops here, the view bounces, and it MUST NOT continue onto the next display. `None`
+/// means the direction is not along a strip at all, so there is no edge to report and the adjacent
+/// display is a legitimate destination.
 ///
-/// It governs MOVING a window as well as moving focus. Only focus consulted it at first, so a window
-/// pushed past the last column teleported to the other monitor while focus in the same direction
-/// stopped — the same key, two answers. What the strip's end means cannot depend on whether a window
-/// is coming along.
+/// **Each display is its own strip. Always.** Going right from the rightmost column stops, whether it
+/// is focus moving or a window. This was a setting (`isolate_displays`, default off) and is not any
+/// more: the behaviour it turned off — horizontal movement silently hopping displays mid-strip — is
+/// not one anybody wanted, and having the option meant two code paths where one of them was never
+/// used. Moving a window did not consult the setting at all, so a window pushed past the last column
+/// teleported to the other monitor while focus in the same direction stopped.
 ///
-/// It applies to the horizontal axis only. Up and down are not strip axes — they move through the
-/// workspace stack — so there is no strip to isolate and the setting has nothing to say. Applying it
-/// to all four directions would silently disable vertical navigation between displays.
-pub fn stays_on_this_display(isolate_displays: bool, direction: Direction) -> bool {
-    isolate_displays && matches!(direction, Direction::Left | Direction::Right)
-}
-
-/// The strip edge a blocked horizontal command ran into, or `None` for a vertical one.
-///
-/// Up and down are not strip axes: a column's top is not an edge the strip surface can give against,
-/// and bouncing the whole strip vertically for one would claim the workspace stack had stopped. Both
-/// the focus path and the move path ask this, so the two cannot answer differently about the same key.
+/// Up and down are deliberately NOT strip axes. They move through the workspace stack, so a column's
+/// top is not an edge the surface can give against, and bouncing the strip vertically for one would
+/// claim the stack had stopped. Vertical movement between displays keeps working; treating all four
+/// directions alike would silently disable it.
 pub fn strip_edge(direction: Direction) -> Option<Direction> {
     matches!(direction, Direction::Left | Direction::Right).then_some(direction)
 }
@@ -126,37 +121,18 @@ mod tests {
         }
     }
 
+    /// Every display is its own strip, with nothing to configure: a horizontal end is always an end,
+    /// so it always stops and always bounces.
     #[test]
-    fn isolating_displays_stops_horizontal_movement_at_the_strip_s_end() {
-        assert!(stays_on_this_display(true, Direction::Left));
-        assert!(stays_on_this_display(true, Direction::Right));
-    }
-
-    /// Up and down move through the workspace stack, not along a strip, so there is nothing to
-    /// isolate. Applying the setting to all four directions would disable vertical navigation
-    /// between displays without anybody asking for that.
-    #[test]
-    fn isolating_displays_never_stops_vertical_movement() {
-        assert!(!stays_on_this_display(true, Direction::Up));
-        assert!(!stays_on_this_display(true, Direction::Down));
-    }
-
-    #[test]
-    fn nothing_is_held_back_when_displays_are_not_isolated() {
-        for direction in [
-            Direction::Left,
-            Direction::Right,
-            Direction::Up,
-            Direction::Down,
-        ] {
-            assert!(!stays_on_this_display(false, direction));
-        }
-    }
-
-    #[test]
-    fn only_the_horizontal_ends_are_strip_edges() {
+    fn a_horizontal_end_is_always_an_end() {
         assert_eq!(strip_edge(Direction::Left), Some(Direction::Left));
         assert_eq!(strip_edge(Direction::Right), Some(Direction::Right));
+    }
+
+    /// The other half, and the one worth guarding: up and down must stay crossable. Answering `Some`
+    /// for them would make every vertical command an edge and cut the displays apart entirely.
+    #[test]
+    fn a_vertical_command_is_not_a_strip_end() {
         assert_eq!(strip_edge(Direction::Up), None);
         assert_eq!(strip_edge(Direction::Down), None);
     }

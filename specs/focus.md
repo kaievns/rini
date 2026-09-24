@@ -59,22 +59,28 @@ The strip is ONE group. Everything on it stacks together, and nothing off it may
 
 ## Crossing displays
 
-- Moving focus horizontally off the end of a strip MAY continue onto the next display, or MAY stop,
-  according to the `isolate_displays` setting.
-- **Moving a WINDOW off the end of a strip MUST obey the same setting.** With displays isolated, the
-  window stays on its own strip and the view bounces. What the end of a strip means cannot depend on
-  whether a window is coming along.
-- That setting applies to the horizontal axis ONLY. Up and down move through the workspace stack, not
-  along a strip, so there is nothing to isolate and vertical navigation between displays MUST keep
-  working whatever the setting says.
+- **Each display is its own strip, and this is NOT configurable.** Moving focus horizontally off the
+  end of a strip MUST stop there and bounce. It MUST NOT continue onto the next display.
+- **Moving a WINDOW off the end of a strip MUST behave identically.** The window stays on its own strip
+  and the view bounces. What the end of a strip means cannot depend on whether a window is coming
+  along.
+- This applies to the horizontal axis ONLY. Up and down move through the workspace stack, not along a
+  strip, so both focus and windows MUST still cross between displays vertically.
 - Activating an application with cmd-tab MUST NOT change which display is active.
 
 > **Reported 2026-09-24.** "When an external monitor is connected and I'm moving a window in a strip and
 > I reach the end of a strip on one monitor it moves the window to the next monitor, which is
 > unexpected... strips should operate independently between monitors and it applies to both navigation
-> and moving windows." Only focus consulted `isolate_displays`; the move path called
+> and moving windows." Only focus consulted the `isolate_displays` setting; the move path called
 > `next_space_for_direction` unconditionally, so the same key gave two answers depending on whether a
 > window was coming along.
+>
+> **Reported 2026-09-24, same session.** "I don't need a config on this, I want it to be the only
+> behaviour baked into the code." The setting is deleted rather than defaulted on: what it turned off —
+> horizontal movement silently hopping displays mid-strip — is not a behaviour anybody wanted, and
+> keeping it meant two code paths where one was never used. One rule, `boundary::strip_edge`, now
+> answers both "is this an end to bounce at" and "may this cross to the next display", because they are
+> the same question.
 
 ## Where it lives
 

@@ -66,7 +66,7 @@ rewards keeping logic where it cannot be tested, which is the opposite of what t
 |---|---|---|
 | `workspace_focus::preferred` | 56 lines of `if focus_window.is_none()` | six tiers, and the one that matters is invisible in the original: every tiled candidate outranks every floating one, because a floating window sits on top of the strip and focusing one on each switch buries the columns the user switched to see |
 | `workspace_focus::cycle_step` | `(idx + len - 1) % len` inline | the indices are unsigned, so stepping back from 0 underflows unless the length is added first |
-| `boundary::focus_stays_on_this_display` | two conditions inline | applies to the horizontal axis only; up and down move through the workspace stack, so applying it to all four directions would silently disable vertical navigation between displays |
+| `boundary::strip_edge` (extracted as `focus_stays_on_this_display`) | two conditions inline | applies to the horizontal axis only; up and down move through the workspace stack, so applying it to all four directions would silently disable vertical navigation between displays. Later absorbed the `isolate_displays` setting, which is gone: one answer to "is this an end" and "may this cross" |
 
 `handle_command` stays 265 lines for the same reason `dispatch_workflow` does: it is a match on a
 command enum where the arms delegate. Its 40-line prelude resolving `(space, workspace_id, layout)`

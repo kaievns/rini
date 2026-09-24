@@ -9,9 +9,7 @@ use super::{
     WorkspaceLayouts,
 };
 use crate::layout::WindowLayoutConstraints;
-use crate::layout::domain::boundary::{
-    stays_on_this_display, strip_edge, workspace_stack_direction,
-};
+use crate::layout::domain::boundary::{strip_edge, workspace_stack_direction};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
@@ -548,18 +546,16 @@ impl LayoutEngine {
             if let Some(prev_wid) = previous_selection {
                 let _ = self.workspace_tree_mut(ws_id).select_window(layout, prev_wid);
             }
-            let isolate_horizontal =
-                stays_on_this_display(self.layout_settings.scrolling.isolate_displays, direction);
-
-            let adjacent_space = if isolate_horizontal {
-                None
-            } else {
-                self.next_space_for_direction(
+            // A strip end stops here: each display is its own strip. Only a vertical command, which
+            // is not along a strip at all, may look to the adjacent display.
+            let adjacent_space = match strip_edge(direction) {
+                Some(_) => None,
+                None => self.next_space_for_direction(
                     space,
                     direction,
                     visible_spaces,
                     visible_space_centers,
-                )
+                ),
             };
 
             if let Some(new_space) = adjacent_space {
@@ -3280,6 +3276,111 @@ mod tests {
         (vec![left, right, middle], centers, left, middle, right)
     }
 
+    /// Two displays, one window each, side by side. The side-by-side arrangement is what makes a
+    /// horizontal command have somewhere it COULD go, which is the whole point of the test.
+    #[allow(clippy::type_complexity)]
+    fn two_displays_side_by_side(
+        first_space: u64,
+    ) -> (
+        WindowStore,
+        LayoutEngine,
+        DisplayMemory,
+        SpaceId,
+        SpaceId,
+        WindowId,
+        WindowId,
+        HashMap<SpaceId, CGPoint>,
+    ) {
+        two_displays(first_space, CGPoint::new(1000.0, 0.0))
+    }
+
+    /// The same, stacked vertically, so up and down have somewhere to go and left and right do not.
+    ///
+    /// The second display is BELOW the first, which is a NEGATIVE y offset: space centres are in the
+    /// window server's coordinates, where y grows upward, and `directional_delta` reads them that way.
+    #[allow(clippy::type_complexity)]
+    fn two_displays_stacked(
+        first_space: u64,
+    ) -> (
+        WindowStore,
+        LayoutEngine,
+        DisplayMemory,
+        SpaceId,
+        SpaceId,
+        WindowId,
+        WindowId,
+        HashMap<SpaceId, CGPoint>,
+    ) {
+        two_displays(first_space, CGPoint::new(0.0, -800.0))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn two_displays(
+        first_space: u64,
+        second_centre: CGPoint,
+    ) -> (
+        WindowStore,
+        LayoutEngine,
+        DisplayMemory,
+        SpaceId,
+        SpaceId,
+        WindowId,
+        WindowId,
+        HashMap<SpaceId, CGPoint>,
+    ) {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
+        let first = SpaceId::new(first_space);
+        let second = SpaceId::new(first_space + 1);
+        let size = CGSize::new(1000.0, 800.0);
+        let pid: pid_t = 73;
+        let on_first = WindowId::new(pid, 1);
+        let on_second = WindowId::new(pid, 2);
+
+        for (space, wid) in [(first, on_first), (second, on_second)] {
+            let _ = engine.handle_event(
+                &mut window_store,
+                &mut memory,
+                LayoutEvent::SpaceExposed(space, size),
+            );
+            let _ = engine.handle_event(
+                &mut window_store,
+                &mut memory,
+                LayoutEvent::WindowsOnScreenUpdated(
+                    space,
+                    pid,
+                    vec![(
+                        wid,
+                        None,
+                        None,
+                        None,
+                        false,
+                        true,
+                        CGSize::new(0.0, 0.0),
+                        None,
+                        None,
+                    )],
+                    None,
+                ),
+            );
+        }
+
+        let mut centers = HashMap::default();
+        centers.insert(first, CGPoint::new(0.0, 0.0));
+        centers.insert(second, second_centre);
+        (
+            window_store,
+            engine,
+            memory,
+            first,
+            second,
+            on_first,
+            on_second,
+            centers,
+        )
+    }
+
     #[test]
     fn next_space_for_direction_respects_physical_layout() {
         let engine = test_engine();
@@ -3892,185 +3993,129 @@ mod tests {
         );
     }
 
-    /// With isolate_displays set, horizontal focus must stop at the end of the
-    /// current display's strip instead of continuing onto the adjacent display.
+    /// Each display is its own strip, so horizontal focus stops at this display's last column and
+    /// never continues onto the neighbour. Baked in: this was a setting, defaulting to the hop.
     #[test]
-    fn isolate_displays_stops_horizontal_focus_at_the_strip_end() {
-        for isolate in [false, true] {
-            let mut window_store = WindowStore::default();
-            let mut engine = test_engine();
-            let mut memory = DisplayMemory::default();
-            let mut settings = LayoutSettings::default();
-            settings.scrolling.isolate_displays = isolate;
-            engine.set_layout_settings(&settings);
+    fn horizontal_focus_stops_at_the_end_of_this_displays_strip() {
+        let (mut window_store, mut engine, mut memory, left, right, on_left, on_right, centers) =
+            two_displays_side_by_side(540);
+        let visible_spaces = vec![left, right];
 
-            let left = SpaceId::new(520);
-            let right = SpaceId::new(521);
-            let size = CGSize::new(1000.0, 800.0);
-            let pid: pid_t = 73;
-            let on_left = WindowId::new(pid, 1);
-            let on_right = WindowId::new(pid, 2);
-            let info = |wid| {
-                (
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(0.0, 0.0),
-                    None,
-                    None,
-                )
-            };
+        // Sitting on the only window of the LEFT display, walk right: there is no further column on
+        // this display, and the neighbour is not a continuation of this strip.
+        engine.focused_window = Some(on_left);
+        let response = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(left),
+            &visible_spaces,
+            &centers,
+            LayoutCommand::MoveFocus(Direction::Right),
+        );
+        assert_ne!(
+            response.focus_window,
+            Some(on_right),
+            "focus must not cross to the adjacent display"
+        );
+        assert_eq!(
+            response.edge_hit,
+            Some(Direction::Right),
+            "the strip stopped at its end: the reactor bounces it"
+        );
 
-            for (space, wid) in [(left, on_left), (right, on_right)] {
-                let _ = engine.handle_event(
-                    &mut window_store,
-                    &mut memory,
-                    LayoutEvent::SpaceExposed(space, size),
-                );
-                let _ = engine.handle_event(
-                    &mut window_store,
-                    &mut memory,
-                    LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(wid)], None),
-                );
-            }
+        // Up at the top of a one-window column is not a strip edge, so nothing bounces.
+        engine.focused_window = Some(on_left);
+        let up = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(left),
+            &visible_spaces,
+            &centers,
+            LayoutCommand::MoveFocus(Direction::Up),
+        );
+        assert_eq!(up.edge_hit, None);
+    }
 
-            let visible_spaces = vec![left, right];
-            let mut centers = HashMap::default();
-            centers.insert(left, CGPoint::new(0.0, 0.0));
-            centers.insert(right, CGPoint::new(1000.0, 0.0));
+    /// The half that must NOT be broken by baking the strips apart. Up and down are not strip axes, so
+    /// they still cross between displays — treating all four directions alike would cut the displays
+    /// off from each other entirely.
+    #[test]
+    fn vertical_focus_still_crosses_between_displays() {
+        let (mut window_store, mut engine, mut memory, above, below, up_top, down_below, centers) =
+            two_displays_stacked(560);
+        let visible_spaces = vec![above, below];
 
-            // Sitting on the only window of the LEFT display, walk right: there is
-            // no further column on this display, so the adjacent display is the
-            // only place focus could go.
-            engine.focused_window = Some(on_left);
-            let response = engine.handle_command(
-                &mut window_store,
-                &mut memory,
-                Some(left),
-                &visible_spaces,
-                &centers,
-                LayoutCommand::MoveFocus(Direction::Right),
-            );
-
-            if isolate {
-                assert_ne!(
-                    response.focus_window,
-                    Some(on_right),
-                    "isolate_displays = true must not move focus to the adjacent display"
-                );
-                assert_eq!(
-                    response.edge_hit,
-                    Some(Direction::Right),
-                    "the strip stopped at its end: the reactor bounces it"
-                );
-            } else {
-                assert_eq!(
-                    response.focus_window,
-                    Some(on_right),
-                    "isolate_displays = false should still cross to the adjacent display"
-                );
-                assert_eq!(response.edge_hit, None, "focus moved on: no edge");
-            }
-            // Up at the top of a one-window column is not a strip edge.
-            engine.focused_window = Some(on_left);
-            let up = engine.handle_command(
-                &mut window_store,
-                &mut memory,
-                Some(left),
-                &visible_spaces,
-                &centers,
-                LayoutCommand::MoveFocus(Direction::Up),
-            );
-            assert_eq!(up.edge_hit, None);
-        }
+        engine.focused_window = Some(up_top);
+        let response = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(above),
+            &visible_spaces,
+            &centers,
+            LayoutCommand::MoveFocus(Direction::Down),
+        );
+        assert_eq!(
+            response.focus_window,
+            Some(down_below),
+            "vertical navigation between displays must keep working"
+        );
+        assert_eq!(response.edge_hit, None, "focus moved on: no edge");
     }
 
     /// Reported: pushing a window past the last column sent it to the other monitor, while focus in
-    /// the same direction stopped. Isolated displays are isolated for MOVING too, and the stop reports
-    /// the edge so the strip bounces instead of the key looking dead.
+    /// the same direction stopped. The strips are independent for MOVING too, and the stop reports the
+    /// edge so the strip bounces instead of the key looking dead.
     #[test]
-    fn isolate_displays_keeps_a_moved_window_on_its_own_strip() {
-        for isolate in [false, true] {
-            let mut window_store = WindowStore::default();
-            let mut engine = test_engine();
-            let mut memory = DisplayMemory::default();
-            let mut settings = LayoutSettings::default();
-            settings.scrolling.isolate_displays = isolate;
-            engine.set_layout_settings(&settings);
+    fn a_moved_window_stays_on_its_own_displays_strip() {
+        let (mut window_store, mut engine, mut memory, left, right, on_left, _on_right, centers) =
+            two_displays_side_by_side(530);
+        let visible_spaces = vec![left, right];
 
-            let left = SpaceId::new(530);
-            let right = SpaceId::new(531);
-            let size = CGSize::new(1000.0, 800.0);
-            let pid: pid_t = 74;
-            let on_left = WindowId::new(pid, 1);
-            let on_right = WindowId::new(pid, 2);
-            let info = |wid| {
-                (
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(0.0, 0.0),
-                    None,
-                    None,
-                )
-            };
+        // The only window of the LEFT display, pushed right. There is no further column on this
+        // display, and the neighbour is a strip of its own.
+        engine.focused_window = Some(on_left);
+        let response = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(left),
+            &visible_spaces,
+            &centers,
+            LayoutCommand::MoveNode(Direction::Right),
+        );
+        assert_eq!(
+            engine.space_with_window(on_left),
+            Some(left),
+            "the window must not travel to the adjacent display"
+        );
+        assert_eq!(
+            response.edge_hit,
+            Some(Direction::Right),
+            "the strip stopped at its end: the reactor bounces it"
+        );
+    }
 
-            for (space, wid) in [(left, on_left), (right, on_right)] {
-                let _ = engine.handle_event(
-                    &mut window_store,
-                    &mut memory,
-                    LayoutEvent::SpaceExposed(space, size),
-                );
-                let _ = engine.handle_event(
-                    &mut window_store,
-                    &mut memory,
-                    LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(wid)], None),
-                );
-            }
+    /// Vertical moves are not along a strip, so a window can still be pushed to the display below.
+    #[test]
+    fn a_window_can_still_be_moved_to_the_display_below() {
+        let (mut window_store, mut engine, mut memory, above, below, up_top, _d, centers) =
+            two_displays_stacked(570);
+        let visible_spaces = vec![above, below];
 
-            let visible_spaces = vec![left, right];
-            let mut centers = HashMap::default();
-            centers.insert(left, CGPoint::new(0.0, 0.0));
-            centers.insert(right, CGPoint::new(1000.0, 0.0));
-
-            // The only window of the LEFT display, pushed right. There is no further column on this
-            // display, so the adjacent display is the only place it could go.
-            engine.focused_window = Some(on_left);
-            let response = engine.handle_command(
-                &mut window_store,
-                &mut memory,
-                Some(left),
-                &visible_spaces,
-                &centers,
-                LayoutCommand::MoveNode(Direction::Right),
-            );
-
-            if isolate {
-                assert_eq!(
-                    engine.space_with_window(on_left),
-                    Some(left),
-                    "isolate_displays = true must not move the window to the adjacent display"
-                );
-                assert_eq!(
-                    response.edge_hit,
-                    Some(Direction::Right),
-                    "the strip stopped at its end: the reactor bounces it"
-                );
-            } else {
-                assert_eq!(
-                    engine.space_with_window(on_left),
-                    Some(right),
-                    "isolate_displays = false should still carry the window across"
-                );
-                assert_eq!(response.edge_hit, None, "the window moved on: no edge");
-            }
-        }
+        engine.focused_window = Some(up_top);
+        let response = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(above),
+            &visible_spaces,
+            &centers,
+            LayoutCommand::MoveNode(Direction::Down),
+        );
+        assert_eq!(
+            engine.space_with_window(up_top),
+            Some(below),
+            "a vertical move still carries the window across"
+        );
+        assert_eq!(response.edge_hit, None);
     }
 
     /// A move that lands somewhere reports no edge, or every successful press would bounce too.
@@ -4079,10 +4124,6 @@ mod tests {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
         let mut memory = DisplayMemory::default();
-        let mut settings = LayoutSettings::default();
-        settings.scrolling.isolate_displays = true;
-        engine.set_layout_settings(&settings);
-
         let space = SpaceId::new(532);
         let pid: pid_t = 75;
         let first = WindowId::new(pid, 1);

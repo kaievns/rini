@@ -9,7 +9,7 @@ use objc2_core_foundation::CGPoint;
 use rini_core::ids::SpaceId;
 
 use super::CommandTarget;
-use crate::layout::domain::boundary::{stays_on_this_display, strip_edge};
+use crate::layout::domain::boundary::strip_edge;
 use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine, WindowStore};
 use tracing::debug;
 
@@ -41,28 +41,23 @@ impl LayoutEngine {
                     return EventResponse::default();
                 }
 
-                // The strip has no room that way. Whether the window may leave for the next display
-                // is the same question focus asks, and has to get the same answer: a window pushed
-                // past the last column used to teleport to the other monitor while focus in that
-                // direction stopped.
-                let adjacent_space = if stays_on_this_display(
-                    self.layout_settings.scrolling.isolate_displays,
-                    direction,
-                ) {
-                    None
-                } else {
-                    self.next_space_for_direction(
+                // The strip has no room that way. Whether the window may leave for the next display is
+                // the same question focus asks, and gets the same answer from the same place: a window
+                // pushed past the last column used to teleport to the other monitor while focus in
+                // that direction stopped.
+                let adjacent_space = match strip_edge(direction) {
+                    Some(_) => None,
+                    None => self.next_space_for_direction(
                         space,
                         direction,
                         visible_spaces,
                         visible_space_centers,
-                    )
+                    ),
                 };
 
                 let Some(new_space) = adjacent_space else {
                     // Nowhere to go. The view bounces, so the stop reads as an end of the strip
-                    // rather than a dropped keypress. Horizontal only, as the focus path is: a
-                    // column's top is not an edge the strip surface can give against.
+                    // rather than a dropped keypress.
                     return EventResponse {
                         edge_hit: strip_edge(direction),
                         ..EventResponse::default()
