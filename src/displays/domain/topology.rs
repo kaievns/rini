@@ -3,7 +3,7 @@
 use objc2_core_foundation::{CGPoint, CGSize};
 use rini_core::ids::SpaceId;
 use rini_geometry::CGRectExt;
-use rini_ipc::protocol::{Direction, DisplaySelector};
+use rini_ipc::protocol::{Direction, DisplaySelector, RelativeDisplay};
 use rini_skylight_sys::{DisplayReconfigFlags, WindowServerId};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
@@ -140,10 +140,24 @@ impl ForwardedSpaceState {
             DisplaySelector::Direction(direction) => {
                 self.screen_for_direction_from_point(origin?, *direction)
             }
+            DisplaySelector::Relative(RelativeDisplay::Next) => self.screen_after(origin?),
             DisplaySelector::Index(index) => self.screens_in_physical_order().get(*index).copied(),
             DisplaySelector::Uuid(uuid) => {
                 self.screens.iter().find(|screen| screen.display_uuid == *uuid)
             }
+        }
+    }
+
+    /// The display after the one holding `origin`, in physical order, wrapping to the first.
+    ///
+    /// Wrapping is what makes one key enough on two displays. An origin on no known display answers
+    /// the first display rather than nothing, so the key still moves the window somewhere reachable
+    /// when it has been parked off screen.
+    pub fn screen_after(&self, origin: CGPoint) -> Option<&ScreenInfo> {
+        let order = self.screens_in_physical_order();
+        match order.iter().position(|screen| screen.frame.contains(origin)) {
+            Some(current) => order.get((current + 1) % order.len()).copied(),
+            None => order.first().copied(),
         }
     }
 
@@ -395,6 +409,56 @@ mod tests {
         assert_eq!(
             s.screen_for_selector(&DisplaySelector::Index(1), None).map(|sc| sc.id),
             Some(ScreenId::new(2))
+        );
+    }
+
+    /// One key has to get back as well as there, which is what wrapping buys. `Direction` cannot do
+    /// this: right from the rightmost display answers nothing.
+    #[test]
+    fn next_cycles_through_the_displays_and_wraps() {
+        let s = state(&[rect(0., 0.), rect(1000., 0.)]);
+        let next = |x: f64| {
+            s.screen_for_selector(
+                &DisplaySelector::Relative(RelativeDisplay::Next),
+                Some(CGPoint::new(x, 500.)),
+            )
+            .map(|sc| sc.id)
+        };
+
+        assert_eq!(next(500.), Some(ScreenId::new(2)), "left display -> right");
+        assert_eq!(
+            next(1500.),
+            Some(ScreenId::new(1)),
+            "right display wraps back to the left one"
+        );
+    }
+
+    /// A window parked off every screen still has to go somewhere the user can see.
+    #[test]
+    fn next_from_nowhere_answers_the_first_display() {
+        let s = state(&[rect(0., 0.), rect(1000., 0.)]);
+        assert_eq!(
+            s.screen_for_selector(
+                &DisplaySelector::Relative(RelativeDisplay::Next),
+                Some(CGPoint::new(-9000., -9000.))
+            )
+            .map(|sc| sc.id),
+            Some(ScreenId::new(1))
+        );
+    }
+
+    /// With one display the cycle is a no-op rather than an error: the caller compares source and
+    /// target and does nothing, which is the same as the key being unbound.
+    #[test]
+    fn next_on_a_single_display_answers_that_display() {
+        let s = state(&[rect(0., 0.)]);
+        assert_eq!(
+            s.screen_for_selector(
+                &DisplaySelector::Relative(RelativeDisplay::Next),
+                Some(CGPoint::new(500., 500.))
+            )
+            .map(|sc| sc.id),
+            Some(ScreenId::new(1))
         );
     }
 

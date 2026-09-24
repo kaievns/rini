@@ -99,6 +99,14 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
 - **A native space belongs to one display.** `set_display_space` evicts any
   other display claiming the space; without that, two displays both appear to
   own it and the affinity pass moves windows between them forever.
+- **Per-display keying covers a window that MOVES, not one that stays.** Every
+  case in the "arranged differently per display" requirement works because the
+  window relocates: the browser is full-width under the built-in's key and half
+  under the external's. What it cannot express is a window that sits on the SAME
+  display in both arrangements and wants a different width in each — a terminal
+  full-width alone, half when the editor comes back to share the screen. That
+  needs keying by the attached SET, not by the display. Not built; nobody has
+  asked.
 
 ## Restore must not strand windows
 

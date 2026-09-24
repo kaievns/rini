@@ -337,8 +337,11 @@ comb1 = "Alt + Shift"
 # - resize_window_shrink = "horizontal"|"vertical"|"smart"
 # - swap_windows = [123, 456]
 # - exec = "command" | exec = ["cmd", "arg1", "..."]
-# - move_mouse_to_display = "left"|"right"|"up"|"down"|N|"<display_uuid>"
-# - move_window_to_display = { selector = "left"|"right"|"up"|"down"|N|"<display_uuid>", window_id = 123 }
+# - move_mouse_to_display = "next"|"left"|"right"|"up"|"down"|N|"<display_uuid>"
+# - move_window_to_display = { selector = "next"|"left"|"right"|"up"|"down"|N|"<display_uuid>", window_id = 123 }
+#   "next" steps to the next display in physical order and WRAPS, so one key is
+#   enough to go back and forth between two. A direction does not wrap: right
+#   from the rightmost display answers nothing.
 # - close_window / close_window = { window_server_id = 123 } (optional window id)
 # - focus_window = { window_id = 123, window_server_id = 456 }
 
@@ -400,6 +403,7 @@ comb1 = "Alt + Shift"
 # "Alt + Ctrl + Down" = { move_window_to_display = { selector = "down" } }
 # "Alt + Ctrl + Left" = { move_window_to_display = { selector = "left" } }
 # "Alt + Ctrl + Right" = { move_window_to_display = { selector = "right" } }
+# "Ctrl + M" = { move_window_to_display = { selector = "next" } }
 # "Alt + Ctrl + A" = { move_window_to_display = { selector = 0 } }
 
 "Alt + Enter" = { "exec" = ["/bin/bash", "-c", "open -a \"/System/Applications/Utilities/Terminal.app\""] }

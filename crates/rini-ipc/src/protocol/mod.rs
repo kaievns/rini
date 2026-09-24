@@ -21,5 +21,7 @@ pub use queries::{
     DiagnosticDisplayCensus, DiagnosticSpace, DiagnosticWindow, DiagnosticsData, DisplayData,
     LayoutStateData, Point, Rect, Size, WindowData, WindowId, WorkspaceData, WorkspaceLayoutData,
 };
-pub use selectors::{DisplaySelector, RestoreScope, RestoreSource, WorkspaceSelector};
+pub use selectors::{
+    DisplaySelector, RelativeDisplay, RestoreScope, RestoreSource, WorkspaceSelector,
+};
 pub use transport::{JsonRiniResponse, RiniRequest, RiniResponse};

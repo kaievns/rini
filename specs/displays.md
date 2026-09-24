@@ -31,6 +31,43 @@
 > coordinates was measured at x=-1680 with no display there, stranding them with nothing to migrate
 > them back; a single dock/undock cycle then produced a layout only fixable by deleting the layout file.
 
+## One work context, arranged differently per display
+
+A workspace is a work context — coding, comms, research — and it spans every attached display. The same
+context is arranged differently depending on what is plugged in, and rini remembers each arrangement.
+
+- A window MUST remember, per display: which display it belongs to, its column width there, and its
+  place in that display's strip order. All three are keyed by display UUID, so plugging a monitor in
+  spreads the workspace and unplugging it gathers the windows back, each to a remembered place.
+- Width MUST be remembered per (window, display), not per window. Half of 2338pt is comfortable and
+  half of 1728pt is cramped; one number cannot serve both. This is what lets a browser be full-width
+  when the laptop is alone and half-width on the external.
+- Width MUST be remembered as the layout means it — a mode or a ratio — never in points, because the
+  record is consulted exactly when the display size differs.
+- A window's display MUST be written only by intent: an explicit move, a drag, a first sighting, or a
+  restore. The forced reassignment that follows an unplug MUST NOT write it, because that record is the
+  only thing that brings the window back.
+- Moving a window to another display MUST be an intent, so the window stays there across a later
+  unplug and replug.
+- `next` MUST cycle and wrap, so a single key moves a window back and forth between two displays. A
+  direction MUST NOT wrap: right from the rightmost display names nothing.
+
+> **Reported 2026-09-24.** "I will have my windows organised by workspaces coding/comms/research.
+> Plugging a monitor in will let me spread a workspace between monitors and organise windows
+> differently, say editor on one screen, terminal on the other, or have a browser full-width when there
+> is one monitor but then have it 1/2 width on the external... when I add/remove monitor the windows
+> should remember where they were in each configuration and regroup/resize accordingly." Recorded as the
+> requirement the per-display affinity already answers; per-display keying covers every case where a
+> window MOVES between displays. It does not cover a window that stays on one display in both
+> arrangements and wants a different width in each — that would have to be keyed by the attached SET,
+> not the display. Not built, and not reported as a need.
+
+> **Reported 2026-09-24.** "Can you add a ctrl-M key binding that will move a window between monitors? I
+> might need left/right down the road, but for now I just really want to cycle because I only have two
+> monitors so one button is enough." The `next` selector it needs had never worked: `DisplaySelector` is
+> an untagged enum ending in `Uuid(String)`, which accepts any string, so `selector = "next"` parsed as
+> a display whose UUID was literally "next" and the command silently moved nothing.
+
 ## What a display change must not do
 
 - A snapshot naming no screens MUST NOT be treated as authoritative. An empty screen list is what macOS
