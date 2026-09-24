@@ -61,10 +61,20 @@ The strip is ONE group. Everything on it stacks together, and nothing off it may
 
 - Moving focus horizontally off the end of a strip MAY continue onto the next display, or MAY stop,
   according to the `isolate_displays` setting.
+- **Moving a WINDOW off the end of a strip MUST obey the same setting.** With displays isolated, the
+  window stays on its own strip and the view bounces. What the end of a strip means cannot depend on
+  whether a window is coming along.
 - That setting applies to the horizontal axis ONLY. Up and down move through the workspace stack, not
   along a strip, so there is nothing to isolate and vertical navigation between displays MUST keep
   working whatever the setting says.
 - Activating an application with cmd-tab MUST NOT change which display is active.
+
+> **Reported 2026-09-24.** "When an external monitor is connected and I'm moving a window in a strip and
+> I reach the end of a strip on one monitor it moves the window to the next monitor, which is
+> unexpected... strips should operate independently between monitors and it applies to both navigation
+> and moving windows." Only focus consulted `isolate_displays`; the move path called
+> `next_space_for_direction` unconditionally, so the same key gave two answers depending on whether a
+> window was coming along.
 
 ## Where it lives
 

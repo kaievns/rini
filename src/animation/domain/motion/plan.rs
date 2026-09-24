@@ -779,7 +779,11 @@ pub fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
 
 /// How far the surface gives when a command pushes past an end, in points. Enough to read as
 /// the view straining against a stop, small enough that no column leaves its place.
-pub const EDGE_BOUNCE_OVERSHOOT: f64 = 36.0;
+///
+/// 36 at first, which was reported as too small to notice: on a 1720pt strip it is 2% of the
+/// viewport, and a glance away misses it. 72 is 4%, still well inside the inner gap's own column so
+/// nothing appears to swap places.
+pub const EDGE_BOUNCE_OVERSHOOT: f64 = 72.0;
 
 /// The surface's nudge for a push in `direction`: the way the view was pushed, so the content
 /// moves the opposite way, as it would have had there been anything further. Focus right at the
@@ -1026,8 +1030,8 @@ mod tests {
     /// the way a pan pins floating windows and a switch carries them.
     #[test]
     fn the_floating_container_bounces_only_vertically() {
-        let sideways = CGPoint::new(-36.0, 0.0);
-        let upward = CGPoint::new(0.0, -36.0);
+        let sideways = CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0);
+        let upward = CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT);
         for key in [GroupKey::Rigid(0), GroupKey::Rigid(3), GroupKey::Loose] {
             assert!(bounce_carries(key, sideways), "{key:?}");
             assert!(bounce_carries(key, upward), "{key:?}");

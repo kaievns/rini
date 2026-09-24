@@ -18,6 +18,24 @@ only the transitions are missing.
   Accessibility round-trip, and a raise issued after the on-screen windows puts a 1pt sliver in front
   of them.
 
+## Pushing past an end
+
+- A command that runs into an end MUST bounce the view: the ends of a strip, and the ends of the
+  workspace stack when wrapping is off. A stop with no cue is indistinguishable from a dropped keypress.
+- **Moving a window MUST bounce exactly as navigating does**, at both kinds of end.
+- The bounce MUST be large enough to notice at a glance and small enough that nothing appears to change
+  places. 72pt of a 1720pt viewport.
+- Real windows MUST NOT move. The bounce is the drawn surface giving, and the window frames are
+  untouched throughout.
+- A request that simply cannot be honoured — a workspace named by an index that does not exist — is NOT
+  an end and MUST NOT bounce. Bouncing would claim the stack has an edge in a direction nobody named.
+
+> **Reported 2026-09-24.** "The little bounce animation when navigation reaches an end of strip or
+> workspaces stack is neat but a bit too small, I need a little more swing. Also when I'm moving a window
+> in a strip or between workspaces it needs similar animations, because otherwise there is no visual cue
+> and it feels like a bug/stuck." The overshoot was 36pt; moving reported no edge at all, so it never
+> reached the bounce.
+
 ## Arriving mid-flight
 
 The layout does not wait for an animation to land, so a second pass can arrive with a different

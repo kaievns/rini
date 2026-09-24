@@ -290,17 +290,24 @@ switch's claim on the destination's scroll offset, which needs care. The
 window-voting classifier (`strip_pan_delta`) is gone: it only ran when the
 space had no strip, which is when there is nothing to pan.
 
-**Edge bounce.** A command that pushes past an end of the strip (focus
-left/right at the first/last column) or of the workspace stack (next/prev at
-the bottom/top with `prevent_wrapping`, or nothing further to skip to) used
-to stop dead, which read as a dropped keypress. The layout reports it as
-`EventResponse::edge_hit` (`move_focus_internal`'s fallback for left/right
-only; `handle_virtual_workspace_command` for up/down), distinct from
-`boundary_hit`, which is the gesture's threshold crossing. The reactor
-(`start_edge_bounce`) sends `Event::Bounce` with the active workspace's surface
-and `edge_bounce_overshoot` (`src/app/reactor/animation.rs`): `EDGE_BOUNCE_OVERSHOOT` (36pt) the way the
-content would have gone, so focus right pulls the strip left and the next
-workspace pulls the row up. The actor (`start_bounce`) composes a flight with
+**Edge bounce.** A command that pushes past an end of the strip (the first/last
+column) or of the workspace stack (next/prev at the bottom/top with
+`prevent_wrapping`, or nothing further to skip to) used to stop dead, which read
+as a dropped keypress. The layout reports it as `EventResponse::edge_hit`,
+distinct from `boundary_hit`, which is the gesture's threshold crossing. Four
+places report it: `move_focus_internal`'s fallback and `MoveNode`'s, both
+left/right only, and `handle_virtual_workspace_command` and
+`move_window_to_workspace`, both up/down. Moving reports it because moving
+without a cue was indistinguishable from a stuck key — the same reason
+navigating does. A `MoveWindowToWorkspace` naming a workspace outright reports
+nothing: not finding workspace 7 is a request that cannot be honoured, not a
+push against an end, so `workspace_stack_direction` answers only for
+`next`/`prev`. The reactor (`start_edge_bounce`) sends `Event::Bounce` with the
+active workspace's surface and `edge_bounce_overshoot`
+(`src/app/reactor/animation.rs`): `EDGE_BOUNCE_OVERSHOOT` (72pt) the way the
+content would have gone, so going right pulls the strip left and the next
+workspace pulls the row up. It was 36pt and was reported as too small to
+notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The actor (`start_bounce`) composes a flight with
 no travel when none is running (every tile at rest, `final_frames` the layout
 the windows already sit at) and adds the bounce to whatever is running
 otherwise, extending the clock to cover the return (`clock_for_bounce`). The

@@ -110,10 +110,18 @@ is borrowed.
 - **Resume at the strip's selection, not `first()`.** Taking the first column
   unconditionally is why leaving a floating window jumped to the leftmost
   column.
-- **Only left/right report an edge hit.** Up/down is not a strip axis; a
-  stack's top is not an edge the view can bounce against.
-- **With `isolate_displays`, horizontal focus stops at the display's strip
-  end** instead of continuing onto the neighbour; vertical still crosses.
+- **Only left/right report an edge hit** (`boundary::strip_edge`). Up/down is not
+  a strip axis; a column's top is not an edge the view can bounce against, and
+  bouncing the strip vertically for one would claim the workspace stack stopped.
+- **With `isolate_displays`, horizontal movement stops at the display's strip
+  end** instead of continuing onto the neighbour; vertical still crosses. It
+  governs moving a WINDOW as well as moving focus: only focus consulted it at
+  first, so a window pushed past the last column teleported to the other monitor
+  while focus in the same direction stopped.
+- **Moving reports an edge the way navigating does.** `MoveNode` with nowhere to
+  go, and `MoveWindowToWorkspace` with no workspace that way, both set
+  `edge_hit` so the view bounces. Neither did, and a move that changed nothing
+  and said nothing was indistinguishable from a stuck key.
 
 ## Joining
 

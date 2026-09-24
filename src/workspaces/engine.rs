@@ -9,7 +9,9 @@ use super::{
     WorkspaceLayouts,
 };
 use crate::layout::WindowLayoutConstraints;
-use crate::layout::domain::boundary::focus_stays_on_this_display;
+use crate::layout::domain::boundary::{
+    stays_on_this_display, strip_edge, workspace_stack_direction,
+};
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::rules::{AppRuleDecision, AppRuleEngine, WindowRuleContext};
@@ -546,10 +548,8 @@ impl LayoutEngine {
             if let Some(prev_wid) = previous_selection {
                 let _ = self.workspace_tree_mut(ws_id).select_window(layout, prev_wid);
             }
-            let isolate_horizontal = focus_stays_on_this_display(
-                self.layout_settings.scrolling.isolate_displays,
-                direction,
-            );
+            let isolate_horizontal =
+                stays_on_this_display(self.layout_settings.scrolling.isolate_displays, direction);
 
             let adjacent_space = if isolate_horizontal {
                 None
@@ -615,10 +615,8 @@ impl LayoutEngine {
                 .filter_active_workspace_window(window_store, space, previous_selection)
                 .or_else(|| visible_windows.first().copied())
             {
-                // The strip stopped at its end. Up/down is not a strip axis (a stack's top is
-                // not an edge of anything the view can bounce), so only left/right report it.
-                let edge_hit =
-                    matches!(direction, Direction::Left | Direction::Right).then_some(direction);
+                // The strip stopped at its end.
+                let edge_hit = strip_edge(direction);
                 let response = EventResponse {
                     changed: true,
                     focus_window: Some(fallback_focus),
@@ -2460,7 +2458,14 @@ impl LayoutEngine {
                 .find_map(|(id, workspace_name)| (workspace_name == name).then_some(*id)),
         };
         let Some(target_workspace_id) = target_workspace_id else {
-            return EventResponse::default();
+            // The stack has no workspace that way, so the view bounces and the stop reads as an end
+            // rather than a dropped keypress — the same answer a blocked workspace SWITCH gives. A
+            // selector that names a workspace outright reports no edge: not finding workspace 7 is a
+            // request that cannot be honoured, not a push against the bottom of the stack.
+            return EventResponse {
+                edge_hit: workspace_stack_direction(workspace),
+                ..EventResponse::default()
+            };
         };
 
         if current_workspace_id == target_workspace_id {
@@ -3981,6 +3986,284 @@ mod tests {
             );
             assert_eq!(up.edge_hit, None);
         }
+    }
+
+    /// Reported: pushing a window past the last column sent it to the other monitor, while focus in
+    /// the same direction stopped. Isolated displays are isolated for MOVING too, and the stop reports
+    /// the edge so the strip bounces instead of the key looking dead.
+    #[test]
+    fn isolate_displays_keeps_a_moved_window_on_its_own_strip() {
+        for isolate in [false, true] {
+            let mut window_store = WindowStore::default();
+            let mut engine = test_engine();
+            let mut memory = DisplayMemory::default();
+            let mut settings = LayoutSettings::default();
+            settings.scrolling.isolate_displays = isolate;
+            engine.set_layout_settings(&settings);
+
+            let left = SpaceId::new(530);
+            let right = SpaceId::new(531);
+            let size = CGSize::new(1000.0, 800.0);
+            let pid: pid_t = 74;
+            let on_left = WindowId::new(pid, 1);
+            let on_right = WindowId::new(pid, 2);
+            let info = |wid| {
+                (
+                    wid,
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    CGSize::new(0.0, 0.0),
+                    None,
+                    None,
+                )
+            };
+
+            for (space, wid) in [(left, on_left), (right, on_right)] {
+                let _ = engine.handle_event(
+                    &mut window_store,
+                    &mut memory,
+                    LayoutEvent::SpaceExposed(space, size),
+                );
+                let _ = engine.handle_event(
+                    &mut window_store,
+                    &mut memory,
+                    LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(wid)], None),
+                );
+            }
+
+            let visible_spaces = vec![left, right];
+            let mut centers = HashMap::default();
+            centers.insert(left, CGPoint::new(0.0, 0.0));
+            centers.insert(right, CGPoint::new(1000.0, 0.0));
+
+            // The only window of the LEFT display, pushed right. There is no further column on this
+            // display, so the adjacent display is the only place it could go.
+            engine.focused_window = Some(on_left);
+            let response = engine.handle_command(
+                &mut window_store,
+                &mut memory,
+                Some(left),
+                &visible_spaces,
+                &centers,
+                LayoutCommand::MoveNode(Direction::Right),
+            );
+
+            if isolate {
+                assert_eq!(
+                    engine.space_with_window(on_left),
+                    Some(left),
+                    "isolate_displays = true must not move the window to the adjacent display"
+                );
+                assert_eq!(
+                    response.edge_hit,
+                    Some(Direction::Right),
+                    "the strip stopped at its end: the reactor bounces it"
+                );
+            } else {
+                assert_eq!(
+                    engine.space_with_window(on_left),
+                    Some(right),
+                    "isolate_displays = false should still carry the window across"
+                );
+                assert_eq!(response.edge_hit, None, "the window moved on: no edge");
+            }
+        }
+    }
+
+    /// A move that lands somewhere reports no edge, or every successful press would bounce too.
+    #[test]
+    fn a_move_with_room_to_go_reports_no_edge() {
+        let mut window_store = WindowStore::default();
+        let mut engine = test_engine();
+        let mut memory = DisplayMemory::default();
+        let mut settings = LayoutSettings::default();
+        settings.scrolling.isolate_displays = true;
+        engine.set_layout_settings(&settings);
+
+        let space = SpaceId::new(532);
+        let pid: pid_t = 75;
+        let first = WindowId::new(pid, 1);
+        let second = WindowId::new(pid, 2);
+        let info = |wid| {
+            (
+                wid,
+                None,
+                None,
+                None,
+                false,
+                true,
+                CGSize::new(0.0, 0.0),
+                None,
+                None,
+            )
+        };
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, CGSize::new(1000.0, 800.0)),
+        );
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(first), info(second)], None),
+        );
+
+        engine.focused_window = Some(first);
+        let _ = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(space),
+            &[space],
+            &HashMap::default(),
+            LayoutCommand::MoveFocus(Direction::Left),
+        );
+        let moved = engine.handle_command(
+            &mut window_store,
+            &mut memory,
+            Some(space),
+            &[space],
+            &HashMap::default(),
+            LayoutCommand::MoveNode(Direction::Right),
+        );
+        assert_eq!(moved.edge_hit, None);
+    }
+
+    /// Moving a window down the workspace stack from the bottom one has nowhere to go. Reported as
+    /// feeling stuck, because nothing moved and nothing said why.
+    ///
+    /// Only with `prevent_wrapping`. Wrapping turns the same press into a real move to the top of the
+    /// stack, which is not an edge and must not bounce — asserted at the end.
+    #[test]
+    fn moving_a_window_past_the_end_of_the_workspace_stack_reports_the_edge() {
+        let mut window_store = WindowStore::default();
+        let mut workspace_settings = VirtualWorkspaceSettings::default();
+        workspace_settings.prevent_wrapping = true;
+        let mut engine = LayoutEngine::new(&workspace_settings, &LayoutSettings::default());
+        let mut memory = DisplayMemory::default();
+        let space = SpaceId::new(533);
+        let pid: pid_t = 76;
+        let wid = WindowId::new(pid, 1);
+
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, CGSize::new(1000.0, 800.0)),
+        );
+        let _ = engine.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowsOnScreenUpdated(
+                space,
+                pid,
+                vec![(
+                    wid,
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    CGSize::new(0.0, 0.0),
+                    None,
+                    None,
+                )],
+                None,
+            ),
+        );
+        engine.focused_window = Some(wid);
+
+        let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
+        assert!(
+            engine
+                .virtual_workspace_manager_mut()
+                .set_active_workspace(space, workspaces.last().unwrap().0)
+        );
+        let _ = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::MoveWindowToWorkspace {
+                workspace: WorkspaceSelector::Index(workspaces.len() - 1),
+                follow: true,
+                window_id: None,
+            },
+        );
+
+        let past_the_bottom = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::MoveWindowToWorkspace {
+                workspace: WorkspaceSelector::Name("next".to_owned()),
+                follow: true,
+                window_id: None,
+            },
+        );
+        assert_eq!(past_the_bottom.edge_hit, Some(Direction::Down));
+
+        // Naming a workspace that does not exist is a request that cannot be honoured, not a push
+        // against an end, so it reports no direction to bounce in.
+        let nonexistent = engine.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::MoveWindowToWorkspace {
+                workspace: WorkspaceSelector::Index(99),
+                follow: true,
+                window_id: None,
+            },
+        );
+        assert_eq!(nonexistent.edge_hit, None);
+
+        // With wrapping allowed the same press lands on the top of the stack. That is a move, not an
+        // end, and bouncing it would claim the stack stopped when the window had just travelled.
+        let mut wrapping =
+            LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
+        let _ = wrapping.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::SpaceExposed(space, CGSize::new(1000.0, 800.0)),
+        );
+        let _ = wrapping.handle_event(
+            &mut window_store,
+            &mut memory,
+            LayoutEvent::WindowsOnScreenUpdated(
+                space,
+                pid,
+                vec![(
+                    wid,
+                    None,
+                    None,
+                    None,
+                    false,
+                    true,
+                    CGSize::new(0.0, 0.0),
+                    None,
+                    None,
+                )],
+                None,
+            ),
+        );
+        wrapping.focused_window = Some(wid);
+        let workspaces = wrapping.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
+        assert!(
+            wrapping
+                .virtual_workspace_manager_mut()
+                .set_active_workspace(space, workspaces.last().unwrap().0)
+        );
+        let wrapped = wrapping.handle_virtual_workspace_command(
+            &mut window_store,
+            &mut memory,
+            space,
+            &LayoutCommand::MoveWindowToWorkspace {
+                workspace: WorkspaceSelector::Name("next".to_owned()),
+                follow: true,
+                window_id: None,
+            },
+        );
+        assert_eq!(wrapped.edge_hit, None);
     }
 
     #[test]

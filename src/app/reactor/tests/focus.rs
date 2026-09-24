@@ -586,6 +586,73 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     assert!(bounces(&mut animation_rx).is_empty());
 }
 
+/// Reported: MOVING a window past an end had no cue at all, so it read as a stuck key. It bounces the
+/// same way navigating does — the strip for a column that cannot go further, the row for a workspace
+/// stack with nothing beyond it.
+#[test]
+fn moving_a_window_past_an_end_bounces_the_view_too() {
+    use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
+    use crate::animation::platform::engine::Event as Anim;
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.config.settings.animate = true;
+    let mut settings = reactor.config.virtual_workspaces.clone();
+    settings.prevent_wrapping = true;
+    reactor
+        .layout_manager
+        .layout_engine
+        .update_virtual_workspace_settings(&settings);
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
+    let last_column = WindowId::new(1, 2);
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, last_column));
+    apps.requests();
+
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let bounces = |rx: &mut channels::Receiver<Anim>| {
+        let mut out = Vec::new();
+        while let Ok((_, event)) = rx.try_recv() {
+            if let Anim::Bounce { overshoot, windows, .. } = event {
+                out.push((overshoot, windows.len()));
+            }
+        }
+        out
+    };
+
+    // The last column, pushed right. There is nowhere on this strip for it to go and only one
+    // display, so it stays and the strip gives.
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    assert_eq!(
+        bounces(&mut animation_rx),
+        vec![(CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0), 2)],
+        "the strip's end: one bounce to the left carrying both columns"
+    );
+    assert_eq!(
+        reactor.layout_manager.layout_engine.focused_window(),
+        Some(last_column),
+        "the window stays put and stays focused"
+    );
+
+    // And the top of the workspace stack, where there is no previous workspace to move it to.
+    reactor.handle_test_layout_command(LayoutCommand::MoveWindowToWorkspace {
+        workspace: rini_ipc::protocol::WorkspaceSelector::Name("prev".to_owned()),
+        follow: true,
+        window_id: None,
+    });
+    assert_eq!(
+        bounces(&mut animation_rx),
+        vec![(CGPoint::new(0.0, EDGE_BOUNCE_OVERSHOOT), 2)],
+        "the top of the stack: one bounce downward"
+    );
+
+    // A move that lands somewhere is a move, not a bounce.
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Left));
+    assert!(bounces(&mut animation_rx).is_empty());
+}
+
 /// A raise walks the whole workspace and macOS reports a focus change for every window it touches. Taking
 /// those at face value moved the layout's selection down the raise list, and the strip scrolled to each in
 /// turn: eight scroll targets from one keypress, ending where it started.
