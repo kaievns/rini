@@ -134,6 +134,9 @@ impl WmController {
         match event {
             Displays(event) => self.events_tx.send(Event::from(event)),
             Input(crate::input::event::Event::Command(cmd)) => self.handle_event(Command(cmd)),
+            Input(crate::input::event::Event::Switch(signal)) => {
+                self.events_tx.send(Event::Switch(signal))
+            }
             Input(crate::input::event::Event::MouseUp) => self.events_tx.send(Event::MouseUp),
             Input(crate::input::event::Event::PointerEnteredWindow(window)) => {
                 self.events_tx.send(Event::MouseMoved(window))
@@ -294,6 +297,16 @@ impl WmController {
         debug!("register_hotkeys");
         let bindings: Vec<(String, WmCommand)> =
             self.config.config.key_specs.iter().cloned().collect();
+        // Derived from the same bindings rather than configured separately, so the chord that opens a
+        // switch and the modifier that holds it open cannot disagree.
+        let switch_keys =
+            crate::switcher::domain::trigger::switch_keys_from_bindings(&bindings, |spec| {
+                let hotkey =
+                    <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(spec)
+                        .ok()?;
+                Some((hotkey.modifiers, hotkey.key_code))
+            });
+        _ = self.event_tap_tx.send(event_tap::Request::SetSwitchKeys(switch_keys));
         _ = self.event_tap_tx.send(event_tap::Request::SetHotkeys(bindings));
     }
 

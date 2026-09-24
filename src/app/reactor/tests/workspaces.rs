@@ -1016,6 +1016,92 @@ fn the_switcher_offers_every_window_in_focus_order() {
     );
 }
 
+/// A held session steps a selection and focuses ONCE, on the release.
+///
+/// Focusing as the selection moved would raise every window it passed over — a burst of Accessibility
+/// work and a visible flicker through windows the user never asked to see. The signals arrive from the
+/// input thread; nothing but the commit touches a window.
+#[test]
+fn a_held_switch_focuses_only_on_the_commit() {
+    use crate::input::domain::switch_session::Signal;
+
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let first = WindowId::new(1, 1);
+    let second = WindowId::new(1, 2);
+    let third = WindowId::new(1, 3);
+
+    set_space_membership(&[(space, &[901, 902, 903])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    for (window, wsid) in [(first, 901u32), (second, 902), (third, 903)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    // Focus order: third (oldest), second, first (current).
+    for window in [third, second, first] {
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
+
+    let raised = |outcome: &crate::app::reactor::EventOutcome| {
+        outcome.raise_requests.iter().find_map(|request| match request {
+            crate::windows::domain::raise::Event::RaiseRequest(request) => {
+                request.focus_window.map(|(window, _)| window)
+            }
+            _ => None,
+        })
+    };
+
+    // Open selects the second entry, and one step moves to the third. Neither touches a window.
+    let opened = reactor.dispatch_test_switch(Signal::Open { backward: false });
+    assert_eq!(raised(&opened), None, "opening a switch focuses nothing");
+    let stepped = reactor.dispatch_test_switch(Signal::Step(1));
+    assert_eq!(raised(&stepped), None, "stepping focuses nothing");
+
+    let committed = reactor.dispatch_test_switch(Signal::Commit);
+    assert_eq!(
+        raised(&committed),
+        Some(third),
+        "the release focuses the selection, once: second entry plus one step"
+    );
+}
+
+/// Escape leaves everything where it was.
+#[test]
+fn a_cancelled_switch_focuses_nothing() {
+    use crate::input::domain::switch_session::Signal;
+
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let first = WindowId::new(1, 1);
+    let second = WindowId::new(1, 2);
+
+    set_space_membership(&[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    for (window, wsid) in [(first, 901u32), (second, 902)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    reactor.handle_event(Event::WindowServerFocusChanged(first, space));
+
+    reactor.dispatch_test_switch(Signal::Open { backward: false });
+    reactor.dispatch_test_switch(Signal::Cancel);
+    let after = reactor.dispatch_test_switch(Signal::Commit);
+
+    assert!(
+        after.raise_requests.is_empty(),
+        "a commit after a cancel has nothing to commit"
+    );
+}
+
 /// Cycling an app's windows must reach the ones on OTHER workspaces.
 ///
 /// macOS's cmd-` only offers windows on the visible workspace, so three Ghostty windows

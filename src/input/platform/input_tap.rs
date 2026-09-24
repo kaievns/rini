@@ -32,11 +32,16 @@ use rini_core::ids::WindowServerId;
 use rini_runloop::channel;
 use rustc_hash::FxHashMap as HashMap;
 
+use std::time::Instant;
+
 use crate::input::domain::binding::WmCommand;
 use crate::input::domain::held_keys::HeldKeys;
 use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::key::{Hotkey, KeyCode};
 use crate::input::domain::pointer;
+use crate::input::domain::switch_session::{
+    KeyEvent as SwitchKeyEvent, KeyEventKind, SwitchKeys, SwitchSession,
+};
 use crate::input::event::{Event, EventSink};
 use crate::input::platform::cursor;
 use crate::input::platform::keyboard::{key_code_from_event, modifiers_from_flags_with_keys};
@@ -56,6 +61,8 @@ pub enum Request {
     KeyboardLayoutChanged,
     SettingsUpdated(InputSettings),
     SetLowPowerMode(bool),
+    /// The keys a switcher session answers to, or `None` to disable it.
+    SetSwitchKeys(Option<SwitchKeys>),
 }
 
 pub struct InputTap {
@@ -89,6 +96,8 @@ struct State {
     low_power_mode: bool,
     held: HeldKeys,
     current_flags: CGEventFlags,
+    /// Whether a switcher session is open, and what it answers to.
+    switch: SwitchSession,
 }
 
 impl Default for State {
@@ -103,6 +112,7 @@ impl Default for State {
             low_power_mode: false,
             held: HeldKeys::default(),
             current_flags: CGEventFlags::empty(),
+            switch: SwitchSession::default(),
         }
     }
 }
@@ -199,6 +209,7 @@ impl InputTap {
         let old_tap = self.tap.borrow_mut().replace(new_tap);
         drop(old_tap);
         self.event_mask.set(next_mask);
+        self.abandon_switch_session();
     }
 
     fn rebuild_invalidated_event_tap(
@@ -408,6 +419,13 @@ impl InputTap {
                 self.rebuild_hotkeys_for_current_layout();
                 should_rebuild_mask = true;
             }
+            Request::SetSwitchKeys(keys) => {
+                // A session in progress is ended here rather than left running: the keys it was
+                // watching for may no longer exist, so nothing would be left to close it.
+                if let Some(signal) = self.state.borrow_mut().switch.set_keys(keys) {
+                    self.events.send(Event::Switch(signal));
+                }
+            }
             Request::KeyboardLayoutChanged => {
                 self.rebuild_hotkeys_for_current_layout();
                 should_rebuild_mask = true;
@@ -501,6 +519,24 @@ impl InputTap {
         state.reconcile_after_event_tap_reenabled(flags);
         drop(state);
         self.refresh_disable_hotkey_state(&mut self.state.borrow_mut());
+        self.abandon_switch_session();
+    }
+
+    /// End any switcher session, because the tap can no longer be trusted about what is held.
+    ///
+    /// Called from BOTH paths that replace the tap. Only the invalidation path reconciles the held-key
+    /// cache, and the mask rebuild — which a config reload takes — used to leave the state untouched, so
+    /// a session would cross it still believing its modifier was down and keep swallowing the arrows
+    /// with nothing left to release it.
+    ///
+    /// Commits rather than cancels: the user pressed the key meaning to go somewhere, and rini losing
+    /// the keyboard underneath them is not a reason to pretend they did not.
+    fn abandon_switch_session(&self) {
+        let signal = self.state.borrow_mut().switch.abandon();
+        if let Some(signal) = signal {
+            debug!("abandoning a switcher session: the tap was replaced");
+            self.events.send(Event::Switch(signal));
+        }
     }
 
     fn on_event(self: &Arc<Self>, event_type: CGEventType, event: &CGEvent) -> bool {
@@ -683,6 +719,43 @@ impl InputTap {
             }
         }
         self.refresh_disable_hotkey_state(state);
+
+        // The switcher session, BEFORE the hotkey table.
+        //
+        // Ordering rather than relaxing: the autorepeat suppression below lives inside the table
+        // branch and exists because a repeat re-fired real commands (workspace_auto_back_and_forth
+        // toggled on every one). A session that needs repeats to advance the selection gets them by
+        // being asked first, leaving that rule exactly as it was.
+        if let Some(key_code) = key_code_opt {
+            let kind = match event_type {
+                CGEventType::KeyDown => Some(KeyEventKind::Down),
+                CGEventType::KeyUp => Some(KeyEventKind::Up),
+                CGEventType::FlagsChanged => Some(KeyEventKind::FlagsChanged),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let is_repeat = CGEvent::integer_value_field(
+                    Some(event),
+                    CGEventField::KeyboardEventAutorepeat,
+                ) != 0;
+                let verdict = state.switch.on_key(SwitchKeyEvent {
+                    kind,
+                    key: key_code,
+                    modifiers: modifiers_from_flags_with_keys(
+                        state.current_flags,
+                        state.held.pressed(),
+                    ),
+                    is_repeat,
+                    at: Instant::now(),
+                });
+                if let Some(signal) = verdict.signal {
+                    self.events.send(Event::Switch(signal));
+                }
+                if verdict.swallow {
+                    return false;
+                }
+            }
+        }
 
         if event_type == CGEventType::KeyDown {
             if let Some(key_code) = key_code_opt {

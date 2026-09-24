@@ -56,8 +56,9 @@ use std::thread;
 
 use crate::displays::domain::topology::display_set_delta;
 use crate::displays::platform::spaces::SpaceKinds;
+use crate::input::domain::switch_session::Signal as SwitchSignal;
 use crate::layout::domain::boundary::workspace_step_at_boundary;
-use crate::switcher::domain::candidates::{Candidate, Scope, switch_list};
+use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
 use crate::switcher::domain::selection::Selection;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order;
@@ -265,6 +266,8 @@ pub enum Event {
     /// `roadmap.md` under known bugs; acting on it needs a measured case, because the visible
     /// symptom is a layout pass that does not happen rather than one that goes wrong.
     MouseUp,
+    /// A switcher session opened, moved, committed or was cancelled.
+    Switch(crate::input::domain::switch_session::Signal),
     /// Sent by the event tap only when the cursor enters a different window.
     /// Window resolution and transition deduplication stay on the input
     /// thread; the reactor only applies the model-dependent focus/raise work.
@@ -430,9 +433,21 @@ impl Event {
         })
     }
 }
+/// A switcher session in progress: the list as it was when the switch opened, and the cursor over it.
+///
+/// Snapshotted at open rather than rebuilt per step, so the list cannot reorder under the user while
+/// they are stepping through it — the focus order it is built from would change the moment anything
+/// committed.
+struct LiveSwitch {
+    list: Vec<Candidate>,
+    cursor: Selection,
+}
+
 pub struct Reactor {
     pub config: Config,
     pub one_space: bool,
+    /// The switcher session, while one is open.
+    live_switch: Option<LiveSwitch>,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
@@ -547,6 +562,7 @@ impl Reactor {
             None => (None, WindowTxStore::new()),
         };
         let reactor = Reactor {
+            live_switch: None,
             config: config.clone(),
             one_space,
             app_manager: managers::AppManager::new(),
@@ -1429,6 +1445,9 @@ impl Reactor {
             }
             Event::Command(Command::Reactor(ReactorCommand::RedistributeWindows)) => {
                 return Ok(self.redistribute_windows());
+            }
+            Event::Switch(signal) => {
+                return Ok(self.handle_switch_signal(signal));
             }
             Event::Command(Command::Reactor(ReactorCommand::SwitchWindow { backward })) => {
                 return Ok(self.switch_window(backward));
@@ -2843,6 +2862,62 @@ impl Reactor {
             }
             Err(error) => {
                 warn!(%error, ?window, "failed to focus window");
+                EventOutcome::no_change()
+            }
+        }
+    }
+
+    /// Handle a switcher session signal from the input thread.
+    ///
+    /// The list and the cursor live HERE rather than in the tap, because the tap answers inside the
+    /// event delivery path and must do no work, and because this is the thread the popup will be drawn
+    /// on. The input thread holds nothing but a flag and a generation.
+    ///
+    /// Nothing is focused until the commit. A step that focused as it went would raise every window
+    /// the selection passed over, which is both a burst of Accessibility work and a visible flicker
+    /// through windows the user never asked to see.
+    fn handle_switch_signal(&mut self, signal: SwitchSignal) -> EventOutcome {
+        match signal {
+            SwitchSignal::Open { backward } => {
+                let list = self.switch_candidates(Scope::Everything);
+                let start = opening_selection(&list);
+                self.live_switch = start.and_then(|index| {
+                    let mut cursor = Selection::new(list.len(), index)?;
+                    // `backward` on the opening press means the user wants the other end: the window
+                    // before this one in the other direction, which is the last entry rather than the
+                    // second.
+                    if backward {
+                        cursor.step(-2);
+                    }
+                    Some(LiveSwitch { list, cursor })
+                });
+                debug!(
+                    rows = self.live_switch.as_ref().map(|s| s.list.len()).unwrap_or(0),
+                    backward, "switch opened"
+                );
+                EventOutcome::no_change()
+            }
+            SwitchSignal::Step(delta) => {
+                if let Some(switch) = self.live_switch.as_mut() {
+                    switch.cursor.step(delta);
+                }
+                EventOutcome::no_change()
+            }
+            SwitchSignal::Commit => {
+                let Some(switch) = self.live_switch.take() else {
+                    return EventOutcome::no_change();
+                };
+                let Some(target) = switch.list.get(switch.cursor.index()) else {
+                    return EventOutcome::no_change();
+                };
+                let window = target.window;
+                if Some(window) == self.main_window() {
+                    return EventOutcome::no_change();
+                }
+                self.focus_window_anywhere(window)
+            }
+            SwitchSignal::Cancel => {
+                self.live_switch = None;
                 EventOutcome::no_change()
             }
         }

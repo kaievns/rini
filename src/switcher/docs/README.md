@@ -11,6 +11,7 @@ nothing.
 |---|---|
 | **Who is offered** | `domain/candidates.rs` — `Candidate`, `Scope`, `switch_list`, `opening_selection` |
 | **Where the cursor is** | `domain/selection.rs` — `Selection`: stepping with wrap, clicking, and following its row when the list changes under it |
+| **Which binding holds it** | `domain/trigger.rs` — the session's keys, derived from the `switch_window` binding rather than configured twice |
 
 Focus order itself is not here. It is a fact about window focus, so it lives with the rest
 of the focus tracking in `src/windows/domain/focus_order.rs` and this feature reads it.
@@ -42,6 +43,15 @@ race that shows up as the popup highlighting one window while the release focuse
 
 **Scope is a parameter, not a second code path.** The global switcher was asked for first and a
 per-workspace one is wanted later; they differ only in which candidates are admitted.
+
+**The tap holds a flag, not a list.** `src/input/domain/switch_session.rs` answers "swallow or pass,
+and what do I tell the reactor" for every key event, because an active event tap sits in the event
+delivery path and the window server blocks each matching event until the callback returns. The list and
+the cursor live on the reactor side, where the popup will be drawn.
+
+**Three rules there are about not stranding the user**, and each one has a test that fails when it is
+removed: the modifier's release is never swallowed, a session has a hard deadline checked against
+arriving events rather than a timer, and a key the switch has no use for passes through.
 
 ## Reading order
 

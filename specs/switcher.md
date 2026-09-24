@@ -49,6 +49,33 @@ switcher answers "every window I have, wherever it is".
 > popup, a cmd hold and tab-up while holding brings up the popup, releasing cmd closes it. It should
 > also accept arrow keys and mouse clicks too like a normal window switcher popup."
 
+## Holding it open
+
+- A quick tap MUST step without showing anything. Holding the trigger's modifier MUST keep the switch
+  open so further presses move a selection, and RELEASING the modifier MUST commit it.
+- Nothing MUST be focused until the commit. Focusing as the selection moves raises every window it
+  passes over — a burst of Accessibility work, and a visible flicker through windows nobody asked to
+  see.
+- The modifier's release MUST be passed through. Swallowing it would leave every application believing
+  that modifier is held forever.
+- A repeat of the trigger MUST step the selection. Holding the key is how a switcher is walked.
+- The arrow keys MUST move the selection while a switch is open, and Escape MUST cancel it without
+  focusing anything.
+- A key the switch has no use for MUST pass through untouched, and MUST NOT end the switch. Swallowing
+  everything would be the more thorough modal behaviour and is also how a live session becomes a dead
+  keyboard.
+- A switch MUST have a hard deadline, checked against arriving events rather than kept by a timer, and
+  reaching it MUST commit. The event tap can be rebuilt by a config reload, stood down for ten seconds
+  by its own re-enable governor, or have its held-key cache wiped — and a session that still believed
+  its modifier was held would swallow the arrow keys with nothing left to release it.
+- Replacing the event tap MUST end a live session, on EVERY path that replaces it. It MUST commit rather
+  than cancel: the user pressed the key meaning to go somewhere, and rini losing the keyboard underneath
+  them is not a reason to pretend they did not.
+- The list MUST be snapshotted when the switch opens, not rebuilt per step. It is ordered by focus, and
+  focus changes the moment anything commits.
+- The modifier that holds a switch open MUST be derived from the trigger binding itself. Configuring it
+  separately would be a second record of one fact, free to disagree.
+
 ## The trigger
 
 - The trigger MUST be a configurable chord, never cmd-tab specifically.
@@ -77,6 +104,7 @@ switcher answers "every window I have, wherever it is".
 ## Where it lives
 
 `src/switcher/domain/candidates.rs` is who is offered and in what order,
-`src/switcher/domain/selection.rs` the cursor. The focus order itself is a fact about focus and lives
+`src/switcher/domain/selection.rs` the cursor, `src/switcher/domain/trigger.rs` which binding holds a
+switch open, and `src/input/domain/switch_session.rs` the tap's side of it. The focus order itself is a fact about focus and lives
 with the rest of it, in `src/windows/domain/focus_order.rs`. Reaching a window anywhere is
 `Reactor::focus_window_anywhere`. Design notes are in `src/switcher/docs/README.md`.

@@ -351,6 +351,16 @@ comb1 = "Alt + Shift"
 # - resize_window_shrink = "horizontal"|"vertical"|"smart"
 # - swap_windows = [123, 456]
 # - exec = "command" | exec = ["cmd", "arg1", "..."]
+# - switch_window / switch_window_backward: step through EVERY window, on every
+#   workspace and display, most recently focused first. One entry per window
+#   rather than per application, so four windows of one app are four steps.
+#
+#   Bind it with a modifier: the modifier is what holds the switch open. A quick
+#   tap steps to the window you were in before; holding the modifier and pressing
+#   the key again steps further, the arrow keys move the selection, Escape
+#   cancels, and RELEASING the modifier commits. Bound without a modifier it
+#   still works as a one-shot step, since there is nothing whose release could
+#   commit.
 # - move_mouse_to_display = "next"|"left"|"right"|"up"|"down"|N|"<display_uuid>"
 # - move_window_to_display = { selector = "next"|"left"|"right"|"up"|"down"|N|"<display_uuid>", window_id = 123 }
 #   "next" steps to the next display in physical order and WRAPS, so one key is

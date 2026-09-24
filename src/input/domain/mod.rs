@@ -7,3 +7,4 @@ pub mod held_keys;
 pub mod hotkey;
 pub mod key;
 pub mod pointer;
+pub mod switch_session;

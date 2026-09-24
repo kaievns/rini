@@ -8,6 +8,11 @@ use crate::input::domain::binding::WmCommand;
 pub enum Event {
     /// A key binding or gesture fired.
     Command(WmCommand),
+    /// A switcher session opened, moved, committed or was cancelled.
+    ///
+    /// On the same channel as `Command`, so an Open, its Steps and its Commit cannot be reordered
+    /// relative to each other however long the far side takes to read them.
+    Switch(crate::input::domain::switch_session::Signal),
     /// A mouse button was released while the tap was processing mouse events.
     MouseUp,
     /// The pointer moved into a different window than the one it was in.

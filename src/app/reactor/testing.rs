@@ -180,6 +180,15 @@ impl Reactor {
         self.maybe_swap_on_drag(wid, new_frame);
     }
 
+    /// Drive a switcher session signal the way the input thread does, returning the outcome.
+    pub fn dispatch_test_switch(
+        &mut self,
+        signal: crate::input::domain::switch_session::Signal,
+    ) -> EventOutcome {
+        self.dispatch_workflow(Event::Switch(signal))
+            .expect("switch signal should dispatch")
+    }
+
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
         self.handle_event(Event::Command(crate::app::reactor::state::Command::Layout(
             command,
