@@ -68,3 +68,36 @@ destination for a window already moving.
 `src/animation/domain/motion/` is the planning, `src/animation/domain/admission.rs` the mid-flight
 rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
 `src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
+
+## Floating windows during a flight
+
+- A flight MUST draw the front-to-back order the screen LANDS in. An order that only exists for the
+  length of the animation reads as the windows rearranging themselves twice.
+- Only the TILED group moves as one. Focusing a floating window MUST lift that window alone: the strip
+  stays in front of every other floating window, because macOS raises only the window that gained focus
+  and that is what the flight lands on.
+
+> **Reported 2026-09-25.** "During the animation from here to 1pass it renders zoom window under it too.
+> When it lands the stack is zoom in bg -> strip -> 1pass, but during the animation it renders strip ->
+> zoom -> 1pass." Diagnosed, NOT fixed.
+>
+> `z_group::tile_depth` and `container_z` band by GROUP: the focused window's group goes in front and the
+> other group a stride behind. With a floating window focused, that promotes EVERY floating window over
+> the strip, so zoom rides up with 1Password and drops back on landing. The module's own doc already
+> states the right rule — "focusing one of those puts IT in front of the whole strip" — so this is the
+> implementation generalising from one window to its group.
+>
+> Fixing `tile_depth` alone does nothing. Tile layers are children of their group's container
+> (`overlay.rs`, `container.addSublayer(&picture)`), containers are siblings under the root, and a
+> parent's `zPosition` fully decides cross-container order. All floating windows share one container, so
+> no per-tile depth can put one float in front of the strip and another behind it.
+>
+> The landed order needs THREE positions — focused float, strip, other floats — and the overlay has two.
+> The fix is to give the focused floating window its own container in front of the strip band, leave
+> `GroupKey::Floating` behind it always, and make `tile_depth` read "the strip is in front of the floats,
+> except the one float that has focus". `Banding` has to carry which float that is, since the overlay
+> chooses containers before it bands them.
+>
+> An attempt that changed only `z_group` is at `/tmp/z_group.attempt.rs`; it left the strip and the
+> floating container both at zero, which is less correct than the current wrong-but-deterministic order.
+> Seven engine property tests encode the symmetric group rule and will need updating with the real fix.
