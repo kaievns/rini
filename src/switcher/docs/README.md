@@ -11,7 +11,7 @@ nothing.
 |---|---|
 | **Who is offered** | `domain/candidates.rs` — `Candidate`, `Scope`, `switch_list`, `opening_selection` |
 | **Where the cursor is** | `domain/selection.rs` — `Selection`: stepping with wrap, clicking, and following its row when the list changes under it |
-| **Which binding holds it** | `domain/trigger.rs` — the session's keys, derived from the `switch_window` binding rather than configured twice |
+| **Which binding holds it** | `domain/trigger.rs` — each switcher's session keys, derived from its own binding rather than configured twice |
 | **Where the rows go** | `domain/layout.rs` — the panel rect, one rect per row, the scroll that keeps the selection visible, and the hit test |
 | **Whether a draw travels** | `domain/motion.rs` — how long the ring takes to move, and the one case where moving is right |
 | **The popup** | `platform/panel.rs` — the `NSPanel` and its layer tree; `platform/actor.rs` — the main thread it must live on |
@@ -22,8 +22,7 @@ of the focus tracking in `src/windows/domain/focus_order.rs` and this feature re
 ## The shape that matters
 
 **One row per window, never per application.** A row standing for four Slack windows cannot
-take you to the third one. This is the whole reason the switcher is not a wrapper over
-`cycle_app_windows`, which is deliberately scoped to the focused application.
+take you to the third one.
 
 **Focus order first, then a stable tail.** The window you want next is nearly always the one
 you were in before this one. But a window rini has never seen focused has no place in that
@@ -44,8 +43,27 @@ because the window-server visible/hidden sweeps overwrite it.
 arrow keys, and a mouse click. Any two of them keeping their own idea of the selected row is a
 race that shows up as the popup highlighting one window while the release focuses another.
 
-**Scope is a parameter, not a second code path.** The global switcher was asked for first and a
-per-workspace one is wanted later; they differ only in which candidates are admitted.
+**Three switchers, one machinery.** Every window (cmd-tab), the focused workspace, and the focused
+application's windows (cmd-`) share the session, the popup, the selection and the commit. They differ
+in `Scope`: which candidates are admitted and, for the application, the order. The application's
+`cycle_app_windows` used to be its own code path with its own list; it is now this with a scope.
+
+**A workspace switch spans every display.** A workspace is one context spread across displays, and
+its id is the same on all of them, so the scope is the workspace rather than the display the switch
+was opened on. Picking a window hidden on the other display switches that display to it, which is what
+reaching any window already does.
+
+**An application's windows rotate; everything else goes by recency.** That is the difference between
+cmd-` and cmd-tab, and it is not cosmetic. By recency, quick taps toggle between the two most recent
+windows and never reach a third — which is exactly the reported failure of macOS's own cmd-` with three
+Ghostty windows over two rini workspaces. The rotation starts at the current window, so every list
+still opens on its second entry.
+
+**One session, several triggers.** The tap holds one live session at most, remembering which trigger
+opened it: that trigger's key steps it and its modifiers hold it. Another switcher's trigger pressed
+mid-switch is eaten with nothing sent, or it would reach the hotkey table and run a one-shot step in
+the middle of the switch. And the most specific trigger wins, because modifiers match as "at least
+these" and `Ctrl + Alt + Q` satisfies a `Ctrl + Q` binding too.
 
 **The tap holds a flag, not a list.** `src/input/domain/switch_session.rs` answers "swallow or pass,
 and what do I tell the reactor" for every key event, because an active event tap sits in the event

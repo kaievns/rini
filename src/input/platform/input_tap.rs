@@ -61,8 +61,8 @@ pub enum Request {
     KeyboardLayoutChanged,
     SettingsUpdated(InputSettings),
     SetLowPowerMode(bool),
-    /// The keys a switcher session answers to, or `None` to disable it.
-    SetSwitchKeys(Option<SwitchKeys>),
+    /// The keys each switcher's session answers to; empty disables them all.
+    SetSwitchKeys(Vec<SwitchKeys>),
 }
 
 pub struct InputTap {

@@ -13,6 +13,7 @@ use crate::app::config::WorkspaceSelector;
 use crate::app::reactor;
 use crate::input::domain::binding::{ExecCmd, WmCmd};
 use crate::workspaces::LayoutCommand;
+use rini_ipc::protocol::SwitchScope;
 
 /// What the controller should do about a binding.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +35,12 @@ pub(crate) fn lower(cmd: WmCmd, workspace_names: &[String]) -> Lowered {
     use reactor::Command::{Layout, Reactor};
 
     let layout = |command| Lowered::Command(Layout(command));
+    let switch = |backward, scope| {
+        Lowered::Command(Reactor(reactor::ReactorCommand::SwitchWindow {
+            backward,
+            scope,
+        }))
+    };
     match cmd {
         WmCmd::ReloadConfig => Lowered::ReloadConfig,
         WmCmd::Exec(cmd) => Lowered::Exec(cmd),
@@ -44,22 +51,12 @@ pub(crate) fn lower(cmd: WmCmd, workspace_names: &[String]) -> Lowered {
         WmCmd::CloseWindow => Lowered::Command(Reactor(reactor::ReactorCommand::CloseWindow {
             window_server_id: None,
         })),
-        WmCmd::CycleAppWindows => {
-            Lowered::Command(Reactor(reactor::ReactorCommand::CycleAppWindows {
-                backward: false,
-            }))
-        }
-        WmCmd::CycleAppWindowsBackward => {
-            Lowered::Command(Reactor(reactor::ReactorCommand::CycleAppWindows {
-                backward: true,
-            }))
-        }
-        WmCmd::SwitchWindow => Lowered::Command(Reactor(reactor::ReactorCommand::SwitchWindow {
-            backward: false,
-        })),
-        WmCmd::SwitchWindowBackward => {
-            Lowered::Command(Reactor(reactor::ReactorCommand::SwitchWindow { backward: true }))
-        }
+        WmCmd::CycleAppWindows => switch(false, SwitchScope::App),
+        WmCmd::CycleAppWindowsBackward => switch(true, SwitchScope::App),
+        WmCmd::SwitchWindow => switch(false, SwitchScope::Everything),
+        WmCmd::SwitchWindowBackward => switch(true, SwitchScope::Everything),
+        WmCmd::SwitchWorkspaceWindow => switch(false, SwitchScope::Workspace),
+        WmCmd::SwitchWorkspaceWindowBackward => switch(true, SwitchScope::Workspace),
         WmCmd::NextWorkspace => layout(LayoutCommand::NextWorkspace(None)),
         WmCmd::PrevWorkspace => layout(LayoutCommand::PrevWorkspace(None)),
         WmCmd::CreateWorkspace => layout(LayoutCommand::CreateWorkspace),
@@ -132,20 +129,30 @@ mod tests {
         );
     }
 
+    /// Three switchers, one command: they differ only in scope and direction, which is what keeps the
+    /// app-window cycle and the two switchers from being three code paths.
     #[test]
-    fn the_two_cycle_directions_differ_only_in_their_flag() {
-        assert_eq!(
-            lowered(WmCmd::CycleAppWindows),
-            Lowered::Command(reactor::Command::Reactor(
-                reactor::ReactorCommand::CycleAppWindows { backward: false }
-            ))
-        );
-        assert_eq!(
-            lowered(WmCmd::CycleAppWindowsBackward),
-            Lowered::Command(reactor::Command::Reactor(
-                reactor::ReactorCommand::CycleAppWindows { backward: true }
-            ))
-        );
+    fn every_switcher_alias_is_one_command_with_a_scope() {
+        for (alias, backward, scope) in [
+            (WmCmd::SwitchWindow, false, SwitchScope::Everything),
+            (WmCmd::SwitchWindowBackward, true, SwitchScope::Everything),
+            (WmCmd::SwitchWorkspaceWindow, false, SwitchScope::Workspace),
+            (
+                WmCmd::SwitchWorkspaceWindowBackward,
+                true,
+                SwitchScope::Workspace,
+            ),
+            (WmCmd::CycleAppWindows, false, SwitchScope::App),
+            (WmCmd::CycleAppWindowsBackward, true, SwitchScope::App),
+        ] {
+            assert_eq!(
+                lowered(alias.clone()),
+                Lowered::Command(reactor::Command::Reactor(
+                    reactor::ReactorCommand::SwitchWindow { backward, scope }
+                )),
+                "{alias:?}"
+            );
+        }
     }
 
     /// Moving a window to a workspace does not follow it. The user asked to send the window away,
@@ -182,6 +189,8 @@ mod tests {
             WmCmd::CycleAppWindowsBackward,
             WmCmd::SwitchWindow,
             WmCmd::SwitchWindowBackward,
+            WmCmd::SwitchWorkspaceWindow,
+            WmCmd::SwitchWorkspaceWindowBackward,
             WmCmd::NextWorkspace,
             WmCmd::PrevWorkspace,
             WmCmd::CreateWorkspace,

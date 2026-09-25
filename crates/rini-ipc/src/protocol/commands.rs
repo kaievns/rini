@@ -105,26 +105,37 @@ pub enum ReactorCommand {
         selector: DisplaySelector,
         window_id: Option<u32>,
     },
-    /// Step through EVERY window, on every workspace and display, most recently focused first.
+    /// One step of the window switcher over `scope`, focusing the window it lands on wherever it is.
     ///
     /// Unbundled, unlike macOS's own switcher: one entry per window rather than per application, so
-    /// four windows of one app are four steps. Distinct from `CycleAppWindows`, which is scoped to the
-    /// focused application and ordered by position rather than by recency.
+    /// four windows of one app are four steps. The scope decides the order as well as the windows —
+    /// see `SwitchScope`.
     SwitchWindow {
-        backward: bool,
-    },
-    /// Cycle focus between the focused app's windows, across workspaces and displays.
-    ///
-    /// macOS's own cmd-` only offers windows it considers reachable on the current Space, so
-    /// with one app's windows spread over several rini workspaces it silently cycles a subset:
-    /// three Ghostty windows, only the two sharing a workspace reachable. rini knows where all
-    /// of them are, so it can do the full rotation and switch the owning display's workspace to
-    /// follow.
-    CycleAppWindows {
-        /// Reverse order, for a shift-modified binding.
         #[serde(default)]
         backward: bool,
+        #[serde(default)]
+        scope: SwitchScope,
     },
+}
+
+/// Which windows a switch offers, and in what order.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchScope {
+    /// Every window, on every workspace and display, most recently focused first. cmd-tab.
+    #[default]
+    Everything,
+    /// The focused workspace's windows on EVERY display, most recently focused first. A workspace is
+    /// one context spread across displays, so a switch scoped to it is not scoped to a display.
+    Workspace,
+    /// The focused application's windows, wherever they are, in a fixed ROTATION rather than by
+    /// recency. cmd-`.
+    ///
+    /// Rotation because a quick tap has to be able to reach every window: macOS's own cmd-` only
+    /// offers windows on the current Space, so with three Ghostty windows over two rini workspaces
+    /// it cycled the two sharing one and never reached the third. By recency a quick tap would
+    /// toggle between the two most recent and leave the third unreachable again.
+    App,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

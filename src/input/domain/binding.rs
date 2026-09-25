@@ -50,6 +50,10 @@ pub enum WmCmd {
     /// written as a bare string in a keybinding, and rini panics at startup on one it cannot parse.
     SwitchWindow,
     SwitchWindowBackward,
+
+    /// The same switch over the focused workspace only, on every display it spans.
+    SwitchWorkspaceWindow,
+    SwitchWorkspaceWindowBackward,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

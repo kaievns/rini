@@ -8,7 +8,7 @@ use rini_core::ids::WindowServerId;
 use rini_ipc::RiniMachClient;
 use rini_ipc::protocol::WorkspaceSelector;
 use rini_ipc::protocol::{self as reactor, DisplaySelector};
-use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse};
+use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse, SwitchScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -190,6 +190,12 @@ enum ExecuteCommands {
     /// that works with no event tap at all, which is the only thing that helps if the keyboard
     /// tap has been stood down.
     SwitchWindow {
+        /// Step backward through the order.
+        #[arg(long)]
+        backward: bool,
+    },
+    /// Step through the focused workspace's windows on every display, most recently focused first.
+    SwitchWorkspaceWindow {
         /// Step backward through the order.
         #[arg(long)]
         backward: bool,
@@ -579,6 +585,13 @@ fn build_subscribe_request(sub: SubscribeCommands) -> Result<RiniRequest, String
     }
 }
 
+/// One step of the window switcher over `scope`.
+fn switch(backward: bool, scope: SwitchScope) -> CliCommand {
+    CliCommand::Reactor(reactor::Command::Reactor(
+        reactor::ReactorCommand::SwitchWindow { backward, scope },
+    ))
+}
+
 fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String> {
     let rini_command = match execute {
         ExecuteCommands::Window { window_cmd } => map_window_command(window_cmd)?,
@@ -647,12 +660,11 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::Redistribute => CliCommand::Reactor(reactor::Command::Reactor(
             reactor::ReactorCommand::RedistributeWindows,
         )),
-        ExecuteCommands::SwitchWindow { backward } => CliCommand::Reactor(
-            reactor::Command::Reactor(reactor::ReactorCommand::SwitchWindow { backward }),
-        ),
-        ExecuteCommands::CycleAppWindows { backward } => CliCommand::Reactor(
-            reactor::Command::Reactor(reactor::ReactorCommand::CycleAppWindows { backward }),
-        ),
+        ExecuteCommands::SwitchWindow { backward } => switch(backward, SwitchScope::Everything),
+        ExecuteCommands::SwitchWorkspaceWindow { backward } => {
+            switch(backward, SwitchScope::Workspace)
+        }
+        ExecuteCommands::CycleAppWindows { backward } => switch(backward, SwitchScope::App),
     };
 
     if let CliCommand::Config(rini_ipc::protocol::ConfigCommand::GetConfig) = &rini_command {

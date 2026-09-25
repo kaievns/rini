@@ -10,6 +10,7 @@ use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::request::Request;
 use crate::workspaces::{LayoutCommand, LayoutEvent};
+use rini_ipc::protocol::SwitchScope;
 
 #[test]
 fn layout_query_exposes_active_and_inactive_workspace_container_trees() {
@@ -960,7 +961,7 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
 /// to 50%. Asserts the laid-out width, which is what is actually visible.
 /// The switcher offers EVERY window, across applications and workspaces, most recently focused first.
 ///
-/// Where `cycle_app_windows` is scoped to the focused application and ordered by position, this is
+/// Where the application switcher is scoped to the focused application and rotates, this is
 /// scoped to nothing and ordered by recency. Both halves are asserted: the list spans two apps and two
 /// workspaces, and the order is the order they were focused in rather than the order they were added.
 #[test]
@@ -994,7 +995,7 @@ fn the_switcher_offers_every_window_in_focus_order() {
         reactor.handle_event(Event::WindowServerFocusChanged(window, space));
     }
 
-    let list = reactor.probe_switch_candidates();
+    let list = reactor.probe_switch_candidates(SwitchScope::Everything);
     assert_eq!(
         list.iter().map(|c| c.window).collect::<Vec<_>>(),
         vec![ghostty, slack, other_ghostty],
@@ -1002,7 +1003,7 @@ fn the_switcher_offers_every_window_in_focus_order() {
     );
 
     // One step lands on the window focused before this one, which is what a quick tap is for.
-    let outcome = reactor.probe_switch_window(false);
+    let outcome = reactor.probe_switch_window(false, SwitchScope::Everything);
     let target = outcome.raise_requests.iter().find_map(|request| match request {
         crate::windows::domain::raise::Event::RaiseRequest(request) => {
             request.focus_window.map(|(window, _)| window)
@@ -1014,6 +1015,126 @@ fn the_switcher_offers_every_window_in_focus_order() {
         Some(slack),
         "a single step goes to the previously focused window, in another application"
     );
+}
+
+/// The workspace switcher follows the WORKSPACE, not the display: its windows on the other display
+/// are offered, and another workspace's windows on this display are not.
+#[test]
+fn a_workspace_switch_offers_that_workspace_on_every_display() {
+    let mut reactor = test_reactor();
+    let left = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let right = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1920., 1080.));
+    let (left_space, right_space) = (SpaceId::new(1), SpaceId::new(2));
+    let here = WindowId::new(1, 1);
+    let there = WindowId::new(2, 1);
+    let other_workspace = WindowId::new(1, 2);
+
+    set_space_membership(&[(left_space, &[901, 903]), (right_space, &[902])]);
+    reactor.handle_event(space_state_event(
+        vec![left, right],
+        vec![Some(left_space), Some(right_space)],
+    ));
+    reactor.add_test_app(1);
+    reactor.add_test_app(2);
+    let workspaces = reactor.test_workspace_ids(left_space);
+    for (window, wsid, space, screen, workspace) in [
+        (here, 901u32, left_space, left, workspaces[0]),
+        (there, 902, right_space, right, workspaces[0]),
+        (other_workspace, 903, left_space, left, workspaces[1]),
+    ] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    reactor.send_layout_event(LayoutEvent::WindowFocused(left_space, here));
+    reactor.handle_event(Event::WindowServerFocusChanged(here, left_space));
+    reactor.set_test_focus(here);
+
+    let mut offered: Vec<WindowId> = reactor
+        .probe_switch_candidates(SwitchScope::Workspace)
+        .iter()
+        .map(|c| c.window)
+        .collect();
+    offered.sort();
+    assert_eq!(
+        offered,
+        vec![here, there],
+        "both displays' share of the focused workspace, and nothing from the other workspace"
+    );
+}
+
+/// The application switcher offers the focused application's windows and nothing else, wherever
+/// they are, and a held switch over it commits within them.
+#[test]
+fn an_app_switch_stays_inside_the_focused_application() {
+    use crate::input::domain::switch_session::Signal;
+
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let meeting = WindowId::new(1, 1);
+    let controls = WindowId::new(1, 2);
+    let slack = WindowId::new(2, 1);
+
+    set_space_membership(&[(space, &[901, 902, 903])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    reactor.add_test_app(2);
+    let workspace = reactor.test_workspace(space, 0);
+    for (window, wsid) in [(meeting, 901u32), (controls, 902), (slack, 903)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    // Slack last-but-one, so a switch by recency would go there.
+    for window in [controls, slack, meeting] {
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
+    reactor.set_test_focus(meeting);
+
+    assert_eq!(
+        reactor
+            .probe_switch_candidates(SwitchScope::App)
+            .iter()
+            .map(|c| c.window)
+            .collect::<Vec<_>>(),
+        vec![meeting, controls],
+        "the current window first, then the rest of its application"
+    );
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::App,
+    });
+    let committed = reactor.dispatch_test_switch(Signal::Commit);
+    let target = committed.raise_requests.iter().find_map(|request| match request {
+        crate::windows::domain::raise::Event::RaiseRequest(request) => {
+            request.focus_window.map(|(window, _)| window)
+        }
+        _ => None,
+    });
+    assert_eq!(target, Some(controls), "not Slack, which recency would pick");
+}
+
+/// With nothing focused there is no application to switch within, so the switch does nothing rather
+/// than guessing one.
+#[test]
+fn an_app_switch_with_nothing_focused_offers_nothing() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    set_space_membership(&[(space, &[901])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let window = WindowId::new(1, 1);
+    reactor.add_test_window(window, WindowServerId::new(901), Some(space), screen);
+    let workspace = reactor.test_workspace(space, 0);
+    assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+
+    assert!(reactor.probe_switch_candidates(SwitchScope::App).is_empty());
+    let outcome = reactor.probe_switch_window(false, SwitchScope::App);
+    assert!(outcome.raise_requests.is_empty());
 }
 
 /// A held session steps a selection and focuses ONCE, on the release.
@@ -1057,7 +1178,10 @@ fn a_held_switch_focuses_only_on_the_commit() {
     };
 
     // Open selects the second entry, and one step moves to the third. Neither touches a window.
-    let opened = reactor.dispatch_test_switch(Signal::Open { backward: false });
+    let opened = reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
     assert_eq!(raised(&opened), None, "opening a switch focuses nothing");
     let stepped = reactor.dispatch_test_switch(Signal::Step(1));
     assert_eq!(raised(&stepped), None, "stepping focuses nothing");
@@ -1092,7 +1216,10 @@ fn a_cancelled_switch_focuses_nothing() {
     }
     reactor.handle_event(Event::WindowServerFocusChanged(first, space));
 
-    reactor.dispatch_test_switch(Signal::Open { backward: false });
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
     reactor.dispatch_test_switch(Signal::Cancel);
     let after = reactor.dispatch_test_switch(Signal::Commit);
 
@@ -1107,8 +1234,8 @@ fn a_cancelled_switch_focuses_nothing() {
 /// macOS's cmd-` only offers windows on the visible workspace, so three Ghostty windows
 /// split across two workspaces cycled between the two that shared one: "i have three
 /// ghostty windows between different displays/workspaces and i can only swap between the
-/// two on the same workspace". rini knows where all of them are, so CycleAppWindows rotates
-/// through every one and switches the display's workspace to follow.
+/// two on the same workspace". rini knows where all of them are, so the application switcher
+/// rotates through every one and switches the display's workspace to follow.
 #[test]
 fn cycling_app_windows_reaches_every_workspace() {
     let mut reactor = test_reactor();
@@ -1141,7 +1268,7 @@ fn cycling_app_windows_reaches_every_workspace() {
     // by hand — otherwise every iteration rotates from the same starting point.
     let mut visited = vec![first];
     for _ in 0..3 {
-        let outcome = reactor.probe_cycle_app_windows(false);
+        let outcome = reactor.probe_switch_window(false, SwitchScope::App);
         let target = outcome.raise_requests.iter().find_map(|request| match request {
             crate::windows::domain::raise::Event::RaiseRequest(request) => {
                 request.focus_window.map(|(window, _)| window)

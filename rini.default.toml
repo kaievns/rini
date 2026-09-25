@@ -361,6 +361,15 @@ comb1 = "Alt + Shift"
 #   cancels, and RELEASING the modifier commits. Bound without a modifier it
 #   still works as a one-shot step, since there is nothing whose release could
 #   commit.
+# - switch_workspace_window / switch_workspace_window_backward: the same switch
+#   over the focused workspace only, on EVERY display it spans.
+# - cycle_app_windows / cycle_app_windows_backward: the same switch over the
+#   focused application's windows, wherever they are. These ROTATE rather than
+#   following recency, like cmd-` rather than cmd-tab, so repeated quick taps
+#   reach every window instead of toggling between the last two.
+#
+#   All three switchers hold, pop up and commit the same way. Each one's modifier
+#   comes from its own binding.
 # - move_mouse_to_display = "next"|"left"|"right"|"up"|"down"|N|"<display_uuid>"
 # - move_window_to_display = { selector = "next"|"left"|"right"|"up"|"down"|N|"<display_uuid>", window_id = 123 }
 #   "next" steps to the next display in physical order and WRAPS, so one key is

@@ -13,13 +13,23 @@ switcher answers "every window I have, wherever it is".
   window you minimised unreachable by the one key whose job is reaching windows.
 - A window with no workspace assignment MAY be omitted: there is nowhere to switch to for a window rini
   has not placed.
-- A narrower scope — the windows of the current workspace only — MUST be available on its own binding.
+- A narrower scope — the windows of the focused workspace only — MUST be available on its own binding.
   It is the same machinery with a narrower candidate set, never a second code path.
+- The workspace scope MUST cover that workspace on EVERY display, not the display the switch was opened
+  on. A workspace is one context spread across displays.
+- A third scope — the focused application's windows, wherever they are — MUST be the same machinery
+  too. It is cmd-`, and it replaced a separate cycler with its own list rather than sitting beside it.
+- With nothing focused there is no application to switch within, and the application switch MUST do
+  nothing rather than guess one. A workspace switch with nothing focused MUST take the workspace on
+  the display it is driven from, since one is always being looked at.
 
 ## Order
 
 - The order MUST be most-recently-focused first. That is what makes the switcher useful: the window you
   want next is nearly always the one you were in before this one.
+- The application scope is the exception: its windows MUST rotate in a fixed order starting from the
+  current one. By recency, quick taps toggle between the two most recent and a third window is never
+  reached — which is what macOS's own cmd-` did to three Ghostty windows over two rini workspaces.
 - A window rini has never seen focused MUST still appear, after the ones it has, ordered by space, then
   workspace position, then window id. The enumeration arrives from a hash map whose order differs run
   to run, so the tail MUST be sorted explicitly or the list reshuffles between two presses of the same
@@ -39,6 +49,11 @@ switcher answers "every window I have, wherever it is".
 - Stepping MUST wrap at both ends, in both directions.
 - The step MUST be reachable without the keyboard, through the CLI. That is the only path that still
   works when the event tap has been stood down, and rini cannot hand a redirected chord back to macOS.
+
+> **Asked 2026-09-25.** Popups for all three switchers — every window, the current workspace, and an
+> application's windows (the cmd-` equivalent) — and on the workspace one: "yes to filter by workspace
+> not by display, that's the expectation." The popup comes from holding a binding's modifier. A CLI call
+> has no key to release, so from the CLI each of the three is a one-shot step.
 
 > **Reported 2026-09-24.** "What I want [is] a niri style app switcher on cmd-tab instead of the macOS
 > built in one... show a popup strip with a small preview of each window instead of icons (although
@@ -75,6 +90,12 @@ switcher answers "every window I have, wherever it is".
   focus changes the moment anything commits.
 - The modifier that holds a switch open MUST be derived from the trigger binding itself. Configuring it
   separately would be a second record of one fact, free to disagree.
+- Each switcher with a binding MUST get its own trigger, and a live session MUST answer only to the
+  trigger that opened it: its key steps, and its modifiers hold.
+- Another switcher's trigger pressed while a switch is open MUST be swallowed and change nothing. Passed
+  through, it reaches the hotkey table and runs that switcher's one-shot step mid-switch.
+- When a key press satisfies more than one trigger, the one naming the most modifiers MUST win.
+  Modifiers match as "at least these", so `Ctrl + Alt + Q` satisfies a `Ctrl + Q` binding too.
 
 ## The popup
 

@@ -25,6 +25,8 @@
 
 use std::time::{Duration, Instant};
 
+use rini_ipc::protocol::SwitchScope;
+
 use crate::input::domain::hotkey::modifiers_satisfy;
 use crate::input::domain::key::{KeyCode, Modifiers};
 
@@ -35,9 +37,11 @@ use crate::input::domain::key::{KeyCode, Modifiers};
 /// and short enough that a session nobody is holding cannot sit on the arrow keys.
 pub const MAX_SESSION: Duration = Duration::from_secs(12);
 
-/// The keys a switch answers to.
+/// The keys one switcher answers to. There is one of these per switcher that has a binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchKeys {
+    /// Which switcher these keys open.
+    pub scope: SwitchScope,
     /// The chord that opens a switch and steps it forward.
     pub forward: KeyCode,
     /// The modifiers that must be held for `forward` to mean "switch".
@@ -64,9 +68,9 @@ impl SwitchKeys {
 /// Serialisable because the reactor's event enum is, for the record/replay harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Signal {
-    /// Begin a switch. The reactor builds the list and selects the second entry, so an Open followed
-    /// straight by a Commit is the quick tap.
-    Open { backward: bool },
+    /// Begin a switch over `scope`. The reactor builds the list and selects the second entry, so an
+    /// Open followed straight by a Commit is the quick tap.
+    Open { backward: bool, scope: SwitchScope },
     /// Move the selection. Negative steps backward.
     Step(isize),
     /// Focus the selection and end the switch.
@@ -130,7 +134,8 @@ impl Verdict {
 /// Whether a switch is open, and since when.
 #[derive(Debug, Default)]
 pub struct SwitchSession {
-    keys: Option<SwitchKeys>,
+    /// One entry per switcher with a binding. At most one session is live, whichever opened it.
+    keys: Vec<SwitchKeys>,
     live: Option<Live>,
     /// Counts opens for the lifetime of the tap, not of a session. Derived from `live` it was always
     /// 1, because `live` is `None` at the moment a session opens.
@@ -143,14 +148,16 @@ struct Live {
     /// Bumped on every open, so a stale reveal or commit arriving late can be recognised and dropped
     /// by the far side rather than acted on.
     generation: u64,
+    /// Which entry of `keys` opened this session: its key steps it and its modifiers hold it.
+    trigger: usize,
 }
 
 impl SwitchSession {
-    /// Install the keys a switch answers to, ending any session in progress.
+    /// Install the keys the switchers answer to, ending any session in progress.
     ///
     /// Called when the bindings change. Ending the session is the point: the keys it was watching for
     /// may no longer exist, so there would be nothing left to close it.
-    pub fn set_keys(&mut self, keys: Option<SwitchKeys>) -> Option<Signal> {
+    pub fn set_keys(&mut self, keys: Vec<SwitchKeys>) -> Option<Signal> {
         self.keys = keys;
         self.live.take().map(|_| Signal::Cancel)
     }
@@ -173,9 +180,9 @@ impl SwitchSession {
 
     /// The whole decision, for one key event.
     pub fn on_key(&mut self, event: KeyEvent) -> Verdict {
-        let Some(keys) = self.keys.clone() else {
+        if self.keys.is_empty() {
             return Verdict::PASS;
-        };
+        }
 
         // The deadline first, so an event arriving after one is the thing that closes the session
         // rather than being swallowed by it.
@@ -189,58 +196,67 @@ impl SwitchSession {
             }
         }
 
+        let Some(live) = self.live else {
+            return match event.kind {
+                KeyEventKind::Down => self.open(event),
+                KeyEventKind::Up | KeyEventKind::FlagsChanged => Verdict::PASS,
+            };
+        };
+        let keys = &self.keys[live.trigger];
         let hold_held = modifiers_satisfy(keys.hold, event.modifiers);
 
         match event.kind {
-            KeyEventKind::FlagsChanged => {
-                // The commit. Never swallowed, whatever else is true.
-                if self.live.is_some() && !hold_held {
-                    self.live = None;
-                    return Verdict::pass_with(Signal::Commit);
-                }
-                Verdict::PASS
+            // The commit. Never swallowed, whatever else is true.
+            KeyEventKind::FlagsChanged if !hold_held => {
+                self.live = None;
+                Verdict::pass_with(Signal::Commit)
             }
-            KeyEventKind::Up => {
-                // The trigger's own release, whose press was swallowed. Swallow it too rather than
-                // leaving the focused application an orphan key-up for a key it never saw pressed.
-                if self.live.is_some() && event.key == keys.forward {
-                    return Verdict::eat();
-                }
-                Verdict::PASS
-            }
-            KeyEventKind::Down => self.on_key_down(&keys, event, hold_held),
+            KeyEventKind::FlagsChanged => Verdict::PASS,
+            // The trigger's own release, whose press was swallowed. Swallow it too rather than
+            // leaving the focused application an orphan key-up for a key it never saw pressed.
+            KeyEventKind::Up if event.key == keys.forward => Verdict::eat(),
+            KeyEventKind::Up => Verdict::PASS,
+            KeyEventKind::Down => self.step(live, event, hold_held),
         }
     }
 
-    fn on_key_down(&mut self, keys: &SwitchKeys, event: KeyEvent, hold_held: bool) -> Verdict {
-        let backward = modifiers_satisfy(keys.backward, event.modifiers);
-
-        if event.key == keys.forward && hold_held {
-            return match self.live {
-                // Already open: another press steps the selection. Repeats included, which is what
-                // makes holding the key walk the list the way the native switcher does.
-                Some(_) => Verdict::eat_with(Signal::Step(if backward { -1 } else { 1 })),
-                None => {
-                    if !keys.can_hold() {
-                        // Nothing to release, so nothing could ever commit. Leave it to the one-shot
-                        // binding rather than opening a session that cannot close.
-                        return Verdict::PASS;
-                    }
-                    self.opens = self.opens.wrapping_add(1);
-                    self.live = Some(Live {
-                        opened: event.at,
-                        generation: self.opens,
-                    });
-                    Verdict::eat_with(Signal::Open { backward })
-                }
-            };
-        }
-
-        // Everything below only means anything while a switch is open.
-        if self.live.is_none() {
+    /// A key going down with no switch open: open one if it is a trigger, pass it through otherwise.
+    fn open(&mut self, event: KeyEvent) -> Verdict {
+        let Some(trigger) = self.trigger_for(event) else {
+            return Verdict::PASS;
+        };
+        let keys = &self.keys[trigger];
+        if !keys.can_hold() {
+            // Nothing to release, so nothing could ever commit. Leave it to the one-shot binding
+            // rather than opening a session that cannot close.
             return Verdict::PASS;
         }
+        let backward = modifiers_satisfy(keys.backward, event.modifiers);
+        let scope = keys.scope;
+        self.opens = self.opens.wrapping_add(1);
+        self.live = Some(Live {
+            opened: event.at,
+            generation: self.opens,
+            trigger,
+        });
+        Verdict::eat_with(Signal::Open { backward, scope })
+    }
 
+    /// A key going down with a switch open.
+    fn step(&mut self, live: Live, event: KeyEvent, hold_held: bool) -> Verdict {
+        let keys = &self.keys[live.trigger];
+        if event.key == keys.forward && hold_held {
+            // Another press steps the selection. Repeats included, which is what makes holding the key
+            // walk the list the way the native switcher does.
+            let backward = modifiers_satisfy(keys.backward, event.modifiers);
+            return Verdict::eat_with(Signal::Step(if backward { -1 } else { 1 }));
+        }
+        // Another switcher's trigger, pressed while this one is open. Eaten with nothing sent: passed
+        // through it would reach the hotkey table and run that switcher's one-shot step in the middle
+        // of this switch, focusing a window nobody has committed to.
+        if self.trigger_for(event).is_some() {
+            return Verdict::eat();
+        }
         match event.key {
             KeyCode::ArrowLeft | KeyCode::ArrowUp => Verdict::eat_with(Signal::Step(-1)),
             KeyCode::ArrowRight | KeyCode::ArrowDown => Verdict::eat_with(Signal::Step(1)),
@@ -254,6 +270,34 @@ impl SwitchSession {
             _ => Verdict::PASS,
         }
     }
+
+    /// Which switcher this key press is the trigger of.
+    ///
+    /// The MOST specific match wins. Modifiers are matched as "at least these", so with `Ctrl + Q` and
+    /// `Ctrl + Alt + Q` both bound, `Ctrl + Alt + Q` satisfies both — and it means the second one.
+    fn trigger_for(&self, event: KeyEvent) -> Option<usize> {
+        self.keys
+            .iter()
+            .enumerate()
+            .filter(|(_, keys)| event.key == keys.forward)
+            .filter(|(_, keys)| modifiers_satisfy(keys.hold, event.modifiers))
+            .max_by_key(|(index, keys)| (kinds(keys.hold), std::cmp::Reverse(*index)))
+            .map(|(index, _)| index)
+    }
+}
+
+/// How many kinds of modifier a set names, whichever side: `Ctrl + Alt` is two, and so is
+/// `ControlLeft + Alt`. Bits would count a sideless `Ctrl` as two, since it is both sides at once.
+fn kinds(modifiers: Modifiers) -> usize {
+    [
+        Modifiers::SHIFT,
+        Modifiers::CONTROL,
+        Modifiers::ALT,
+        Modifiers::META,
+    ]
+    .into_iter()
+    .filter(|kind| modifiers.intersects(*kind))
+    .count()
 }
 
 #[cfg(test)]
@@ -262,6 +306,7 @@ mod tests {
 
     fn keys() -> SwitchKeys {
         SwitchKeys {
+            scope: SwitchScope::Everything,
             forward: KeyCode::KeyQ,
             hold: Modifiers::CONTROL,
             backward: Modifiers::SHIFT,
@@ -270,7 +315,7 @@ mod tests {
 
     fn session() -> SwitchSession {
         let mut session = SwitchSession::default();
-        assert_eq!(session.set_keys(Some(keys())), None);
+        assert_eq!(session.set_keys(vec![keys()]), None);
         session
     }
 
@@ -310,7 +355,10 @@ mod tests {
             opened,
             Verdict {
                 swallow: true,
-                signal: Some(Signal::Open { backward: false })
+                signal: Some(Signal::Open {
+                    backward: false,
+                    scope: SwitchScope::Everything
+                })
             }
         );
         assert!(session.is_live());
@@ -388,7 +436,10 @@ mod tests {
             opened,
             Verdict {
                 swallow: true,
-                signal: Some(Signal::Open { backward: true })
+                signal: Some(Signal::Open {
+                    backward: true,
+                    scope: SwitchScope::Everything
+                })
             }
         );
 
@@ -529,7 +580,7 @@ mod tests {
         let mut session = session();
         session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
 
-        assert_eq!(session.set_keys(Some(keys())), Some(Signal::Cancel));
+        assert_eq!(session.set_keys(vec![keys()]), Some(Signal::Cancel));
         assert!(!session.is_live());
     }
 
@@ -551,11 +602,12 @@ mod tests {
     fn a_trigger_with_nothing_to_hold_never_opens_a_session() {
         let base = Instant::now();
         let mut session = SwitchSession::default();
-        session.set_keys(Some(SwitchKeys {
+        session.set_keys(vec![SwitchKeys {
+            scope: SwitchScope::Everything,
             forward: KeyCode::KeyQ,
             hold: Modifiers::empty(),
             backward: Modifiers::SHIFT,
-        }));
+        }]);
 
         assert_eq!(
             session.on_key(down(KeyCode::KeyQ, Modifiers::empty(), base)),
@@ -653,5 +705,115 @@ mod tests {
 
         session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, at(base, 40)));
         assert_ne!(session.generation(), first);
+    }
+
+    fn three_switchers() -> SwitchSession {
+        let mut session = SwitchSession::default();
+        session.set_keys(vec![
+            keys(),
+            SwitchKeys {
+                scope: SwitchScope::Workspace,
+                forward: KeyCode::KeyW,
+                hold: Modifiers::CONTROL,
+                backward: Modifiers::SHIFT,
+            },
+            SwitchKeys {
+                scope: SwitchScope::App,
+                forward: KeyCode::KeyQ,
+                hold: {
+                    let mut hold = Modifiers::CONTROL;
+                    hold.insert(Modifiers::ALT);
+                    hold
+                },
+                backward: Modifiers::SHIFT,
+            },
+        ]);
+        session
+    }
+
+    fn control_alt() -> Modifiers {
+        let mut held = Modifiers::CONTROL_LEFT;
+        held.insert(Modifiers::ALT_LEFT);
+        held
+    }
+
+    /// Each switcher's trigger opens a switch over its own scope.
+    #[test]
+    fn each_trigger_opens_its_own_scope() {
+        let base = Instant::now();
+        let mut session = three_switchers();
+
+        let opened = session.on_key(down(KeyCode::KeyW, Modifiers::CONTROL_LEFT, base));
+        assert_eq!(
+            opened.signal,
+            Some(Signal::Open {
+                backward: false,
+                scope: SwitchScope::Workspace
+            })
+        );
+        session.on_key(flags(Modifiers::empty(), at(base, 50)));
+
+        let opened = session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, at(base, 100)));
+        assert_eq!(
+            opened.signal,
+            Some(Signal::Open {
+                backward: false,
+                scope: SwitchScope::Everything
+            })
+        );
+    }
+
+    /// `Ctrl + Alt + Q` satisfies `Ctrl + Q` too, because modifiers match as "at least these". It means
+    /// the binding that names both.
+    #[test]
+    fn the_most_specific_trigger_wins() {
+        let base = Instant::now();
+        let mut session = three_switchers();
+
+        let opened = session.on_key(down(KeyCode::KeyQ, control_alt(), base));
+        assert_eq!(
+            opened.signal,
+            Some(Signal::Open {
+                backward: false,
+                scope: SwitchScope::App
+            })
+        );
+    }
+
+    /// The session steps on the key that opened it, and is held by the modifiers that opened it.
+    #[test]
+    fn a_session_answers_to_the_trigger_that_opened_it() {
+        let base = Instant::now();
+        let mut session = three_switchers();
+        session.on_key(down(KeyCode::KeyW, Modifiers::CONTROL_LEFT, base));
+
+        let stepped = session.on_key(down(KeyCode::KeyW, Modifiers::CONTROL_LEFT, at(base, 40)));
+        assert_eq!(stepped, Verdict::eat_with(Signal::Step(1)));
+        let released = session.on_key(flags(Modifiers::empty(), at(base, 80)));
+        assert_eq!(released, Verdict::pass_with(Signal::Commit));
+    }
+
+    /// Another switcher's trigger pressed mid-switch is eaten and sends nothing. Passed through it
+    /// would reach the hotkey table and run that switcher's one-shot step in the middle of this one.
+    #[test]
+    fn another_switchers_trigger_mid_switch_does_nothing() {
+        let base = Instant::now();
+        let mut session = three_switchers();
+        session.on_key(down(KeyCode::KeyW, Modifiers::CONTROL_LEFT, base));
+
+        let other = session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, at(base, 40)));
+        assert_eq!(other, Verdict::eat());
+        assert!(session.is_live(), "and the open switch carries on");
+    }
+
+    /// A switch held by `Ctrl + Alt` commits when either is let go, not only when both are.
+    #[test]
+    fn letting_go_of_part_of_the_hold_commits() {
+        let base = Instant::now();
+        let mut session = three_switchers();
+        session.on_key(down(KeyCode::KeyQ, control_alt(), base));
+
+        let released = session.on_key(flags(Modifiers::CONTROL_LEFT, at(base, 60)));
+        assert_eq!(released, Verdict::pass_with(Signal::Commit));
     }
 }

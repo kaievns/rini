@@ -10,12 +10,16 @@
 //! never seen focused has no place in that order, and the enumeration it arrives in is an `FxHashMap`
 //! iteration — unspecified, and different run to run. Sorting the tail explicitly is what stops the
 //! list reshuffling between two presses of the same key.
+//!
+//! One scope is the exception: an application's own windows ROTATE rather than following recency,
+//! which is cmd-` against cmd-tab. See `Scope::App`.
 
 use objc2_core_foundation::CGSize;
 
-use rini_core::ids::{SpaceId, WindowId};
+use rini_core::ids::{SpaceId, WindowId, pid_t};
 
 use crate::windows::domain::focus_order::FocusOrder;
+use crate::workspaces::VirtualWorkspaceId;
 
 /// One window the switcher can offer.
 ///
@@ -27,6 +31,9 @@ use crate::windows::domain::focus_order::FocusOrder;
 pub struct Candidate {
     pub window: WindowId,
     pub space: SpaceId,
+    /// The workspace the window belongs to. Workspaces are one list for every display, so this names
+    /// the same workspace whichever display the window is on.
+    pub workspace: VirtualWorkspaceId,
     /// Sort key for the stable tail, from the workspace's canonical position rather than its id.
     pub workspace_index: usize,
     /// The window's size on screen. Carried so the popup can draw a tile in the window's own
@@ -40,28 +47,40 @@ pub struct Candidate {
     pub is_minimized: bool,
 }
 
-/// How much of the machine a switch covers.
+/// Which windows a switch offers.
 ///
-/// The global switcher is the one asked for first; the per-workspace variant is the same machinery
-/// with a narrower candidate set, which is why this is a parameter rather than a second code path.
+/// Three switchers, one machinery: they differ in which candidates are admitted and, for one of them,
+/// in the order — which is why this is a parameter rather than three code paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     /// Every window on every workspace and every display.
     Everything,
-    /// Only windows on this space — one display's current workspace.
-    ThisSpace(SpaceId),
+    /// One workspace, on EVERY display it spans. A workspace is one context spread across displays,
+    /// so the switch follows the workspace rather than the display it was opened on.
+    Workspace(VirtualWorkspaceId),
+    /// One application's windows, wherever they are, in a fixed rotation starting from the current one.
+    ///
+    /// Rotation rather than recency because a quick tap has to be able to reach every window. By
+    /// recency, tapping toggles between the two most recent and the third is unreachable — which is
+    /// exactly what macOS's own cmd-` did to three Ghostty windows spread over two rini workspaces.
+    App(pid_t),
 }
 
 impl Scope {
     fn admits(self, candidate: &Candidate) -> bool {
         match self {
             Self::Everything => true,
-            Self::ThisSpace(space) => candidate.space == space,
+            Self::Workspace(workspace) => candidate.workspace == workspace,
+            Self::App(pid) => candidate.window.pid == pid,
         }
     }
 }
 
-/// The switcher's list: focus order first, then everything never focused, stably ordered.
+/// The switcher's list: focus order first, then everything never focused, stably ordered — or, for an
+/// application, the stable order rotated so `current` comes first.
+///
+/// Either way the window you are in is the first entry, so the switch opens on the second
+/// (`opening_selection`) and a quick tap goes one step.
 ///
 /// `candidates` may arrive in any order. The result is deterministic for the same inputs, which is
 /// what lets two presses of the same key walk the list rather than jumping around it.
@@ -69,6 +88,7 @@ pub fn switch_list(
     candidates: impl IntoIterator<Item = Candidate>,
     order: &FocusOrder,
     scope: Scope,
+    current: Option<WindowId>,
 ) -> Vec<Candidate> {
     let mut admitted: Vec<Candidate> =
         candidates.into_iter().filter(|candidate| scope.admits(candidate)).collect();
@@ -81,6 +101,15 @@ pub fn switch_list(
             b.window,
         ))
     });
+
+    if let Scope::App(_) = scope {
+        if let Some(at) =
+            current.and_then(|current| admitted.iter().position(|c| c.window == current))
+        {
+            admitted.rotate_left(at);
+        }
+        return admitted;
+    }
 
     // Then lift the ones with a focus record to the front, in that order. A stable partition rather
     // than a comparator, because "never focused" has no position to compare against.
@@ -118,11 +147,22 @@ mod tests {
         WindowId::new(pid, idx)
     }
 
-    fn candidate(pid: rini_core::ids::pid_t, idx: u32, space: u64, workspace: usize) -> Candidate {
+    /// Workspace `n` in the canonical order. Ids are slotmap keys, so a test makes its own.
+    fn workspace(n: usize) -> VirtualWorkspaceId {
+        slotmap::KeyData::from_ffi((1u64 << 32) | (n as u64 + 1)).into()
+    }
+
+    fn candidate(
+        pid: rini_core::ids::pid_t,
+        idx: u32,
+        space: u64,
+        workspace_at: usize,
+    ) -> Candidate {
         Candidate {
             window: win(pid, idx),
             space: SpaceId::new(space),
-            workspace_index: workspace,
+            workspace: workspace(workspace_at),
+            workspace_index: workspace_at,
             size: CGSize::new(800.0, 600.0),
             title: format!("window {idx}"),
             app_name: format!("app {pid}"),
@@ -141,7 +181,7 @@ mod tests {
         order.touch(win(1, 1));
         order.touch(win(1, 3));
 
-        let switched = switch_list(list, &order, Scope::Everything);
+        let switched = switch_list(list, &order, Scope::Everything, None);
 
         assert_eq!(
             switched.iter().map(|c| c.window).collect::<Vec<_>>(),
@@ -163,8 +203,8 @@ mod tests {
         let backwards: Vec<Candidate> = forwards.iter().rev().cloned().collect();
         let order = FocusOrder::default();
 
-        let a = switch_list(forwards, &order, Scope::Everything);
-        let b = switch_list(backwards, &order, Scope::Everything);
+        let a = switch_list(forwards, &order, Scope::Everything, None);
+        let b = switch_list(backwards, &order, Scope::Everything, None);
 
         assert_eq!(a, b);
         assert_eq!(
@@ -183,7 +223,7 @@ mod tests {
             candidate(7, 2, 1, 0),
             candidate(7, 3, 1, 0),
         ];
-        let switched = switch_list(list, &FocusOrder::default(), Scope::Everything);
+        let switched = switch_list(list, &FocusOrder::default(), Scope::Everything, None);
         assert_eq!(switched.len(), 3);
     }
 
@@ -194,21 +234,85 @@ mod tests {
             candidate(1, 2, 1, 3),
             candidate(1, 3, 99, 0),
         ];
-        let switched = switch_list(list, &FocusOrder::default(), Scope::Everything);
+        let switched = switch_list(list, &FocusOrder::default(), Scope::Everything, None);
         assert_eq!(switched.len(), 3);
     }
 
+    /// The workspace scope follows the WORKSPACE, not the display: its windows on the other display are
+    /// offered, and another workspace's windows on this display are not.
     #[test]
-    fn this_space_admits_only_its_own_windows() {
+    fn a_workspace_switch_spans_every_display_the_workspace_is_on() {
         let list = vec![
             candidate(1, 1, 1, 0),
             candidate(1, 2, 1, 3),
             candidate(1, 3, 99, 0),
         ];
-        let switched = switch_list(list, &FocusOrder::default(), Scope::ThisSpace(SpaceId::new(1)));
+        let switched = switch_list(
+            list,
+            &FocusOrder::default(),
+            Scope::Workspace(workspace(0)),
+            None,
+        );
         assert_eq!(
             switched.iter().map(|c| c.window).collect::<Vec<_>>(),
-            vec![win(1, 1), win(1, 2)]
+            vec![win(1, 1), win(1, 3)],
+            "both displays' share of workspace 0, and not workspace 3"
+        );
+    }
+
+    /// The workspace scope still goes by recency, like the global one.
+    #[test]
+    fn a_workspace_switch_is_in_focus_order() {
+        let list = vec![candidate(1, 1, 1, 0), candidate(1, 2, 99, 0)];
+        let mut order = FocusOrder::default();
+        order.touch(win(1, 1));
+        order.touch(win(1, 2));
+        let switched = switch_list(list, &order, Scope::Workspace(workspace(0)), Some(win(1, 2)));
+        assert_eq!(
+            switched.iter().map(|c| c.window).collect::<Vec<_>>(),
+            vec![win(1, 2), win(1, 1)]
+        );
+    }
+
+    #[test]
+    fn an_application_switch_admits_only_its_windows_wherever_they_are() {
+        let list = vec![
+            candidate(7, 1, 1, 0),
+            candidate(8, 2, 1, 0),
+            candidate(7, 3, 99, 2),
+        ];
+        let switched = switch_list(list, &FocusOrder::default(), Scope::App(7), None);
+        assert_eq!(
+            switched.iter().map(|c| c.window).collect::<Vec<_>>(),
+            vec![win(7, 1), win(7, 3)]
+        );
+    }
+
+    /// The reported case behind the rotation: three Ghostty windows, two sharing a workspace and one
+    /// elsewhere. By recency a quick tap toggles between the two most recent and the third is never
+    /// reached; in rotation every tap moves on, whatever the focus history says.
+    #[test]
+    fn an_application_switch_rotates_rather_than_following_recency() {
+        let list = vec![
+            candidate(7, 1, 1, 0),
+            candidate(7, 2, 1, 0),
+            candidate(7, 3, 1, 1),
+        ];
+        let mut order = FocusOrder::default();
+        order.touch(win(7, 2));
+        order.touch(win(7, 1));
+
+        let from_one = switch_list(list.clone(), &order, Scope::App(7), Some(win(7, 1)));
+        assert_eq!(
+            from_one.iter().map(|c| c.window).collect::<Vec<_>>(),
+            vec![win(7, 1), win(7, 2), win(7, 3)],
+            "the current window first, then the rotation"
+        );
+        let from_two = switch_list(list, &order, Scope::App(7), Some(win(7, 2)));
+        assert_eq!(
+            from_two.iter().map(|c| c.window).collect::<Vec<_>>(),
+            vec![win(7, 2), win(7, 3), win(7, 1)],
+            "so the next step goes on to the third rather than back to the first"
         );
     }
 
@@ -217,7 +321,8 @@ mod tests {
     fn minimised_windows_are_offered() {
         let mut minimised = candidate(1, 1, 1, 0);
         minimised.is_minimized = true;
-        let switched = switch_list(vec![minimised], &FocusOrder::default(), Scope::Everything);
+        let switched =
+            switch_list(vec![minimised], &FocusOrder::default(), Scope::Everything, None);
         assert_eq!(switched.len(), 1);
     }
 
@@ -228,7 +333,7 @@ mod tests {
         order.touch(win(9, 9));
         order.touch(win(1, 1));
 
-        let switched = switch_list(vec![candidate(1, 1, 1, 0)], &order, Scope::Everything);
+        let switched = switch_list(vec![candidate(1, 1, 1, 0)], &order, Scope::Everything, None);
 
         assert_eq!(
             switched.iter().map(|c| c.window).collect::<Vec<_>>(),

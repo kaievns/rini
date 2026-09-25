@@ -40,7 +40,8 @@ activation only. No timer is involved:
   frontmost, and re-snapshotting there would capture the window the activation
   just focused.
 - The next `WindowServerFocusChanged` for that pid consumes the snapshot.
-- cmd-` is rini's own `CycleAppWindows` command, and it raises the window itself.
+- cmd-` is rini's own application switcher (`cycle_app_windows`, `SwitchScope::App`), and it raises
+  the window itself.
   The app is already frontmost, so there is no activation edge and no snapshot.
 - A raise rini asked for arrives as a quiet activation, which drops the pending
   snapshot. Redirecting behind rini's own raise would undo it.
