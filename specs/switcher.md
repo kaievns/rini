@@ -127,18 +127,28 @@ switcher answers "every window I have, wherever it is".
   target rather than a current line, and the ember's remit covers focused borders as well as active
   bars. A whole outline says "this is the one" about a tile; an edge bar says "this is where I am" about
   a list.
-- The panel sits on `--n1` rather than the content plane `--n2`, because it floats OVER content rather
-  than being content, and at the content plane's brightness too much of what is behind it read through.
-- The panel MUST blur what is behind it rather than only tinting it. A flat translucent fill over live
-  windows reads as a smeared screenshot; the blur is what makes it read as a surface. The tint then sits
-  OVER the blur and only darkens it, so it MUST NOT be opaque.
+- The panel MUST blur what is behind it rather than only tinting it. The target is macOS's own switcher,
+  a step darker: a dark frosted surface you can see shapes through, not a flat wash over live windows.
+- The tint over the blur MUST darken with its COLOUR rather than with its opacity, and MUST leave enough
+  transparency for the blur to read. A dark material under a near-opaque dark wash is indistinguishable
+  from an opaque slab, which is the failure this replaced. It takes `--n0`, two steps below the content
+  plane: the panel floats OVER content rather than being content.
 - The blur MUST stay active while rini is not the frontmost application. rini is an Accessory app and is
   never frontmost, so a material that follows the window's active state would never blur at all.
+- The panel MUST pin a dark appearance rather than inheriting one. The material's colour comes from the
+  appearance, so on a machine in light mode an inherited appearance renders a light frosted panel under
+  a dark tint.
 - The panel's corner radius MUST follow macOS's floating surfaces rather than the design system's card
   radius. The system tops out at 7px with "corners stay crisp", which is right for a card in a document
   and wrong for a panel that sits beside Spotlight and the volume HUD.
+- A tile's corner radius MUST follow the window it is a picture of, not the system's control radius. A
+  square-cornered tile reads as a screenshot of a window rather than as a window.
+- The panel's inset BELOW the captions MUST be tighter than the one above the tiles. The eye measures
+  from the tiles, because a tile is a bright slab and a caption is two thin lines that read as part of
+  the surrounding space — so equal insets look bottom-heavy however the arithmetic is written.
 - The caption band MUST be sized to its text. A caption layer draws from its top, so a taller band
-  leaves the surplus underneath, where it reads as the bottom padding being larger than the top.
+  leaves the surplus underneath, and a row with no window title draws one line and leaves the second
+  line's worth empty.
 - The ember MUST appear once. Its budget is one or two appearances per screen, and the selected row is
   the one thing here that earns it.
 - Drawing MUST NOT animate implicitly. The row layers are reused between switches and the list is
@@ -146,11 +156,15 @@ switcher answers "every window I have, wherever it is".
   that cross-fades from its previous picture to its new one makes the strip look like it is shuffling
   itself after it has already appeared.
 
-> **Reported 2026-09-25.** "The padding at the bottom is visually larger than at the top, I'd also want
-> to increase the corner radius on the popup itself to be more in line with the macOS theming. Also can
-> you add blur to the background instead of just opacity." The padding was symmetric in geometry and
-> asymmetric on screen: the caption band was 36pt for about 27pt of text, and the 9pt of slack landed
-> under it.
+> **Reported 2026-09-25, twice.** "The padding at the bottom is visually larger than at the top, I'd
+> also want to increase the corner radius on the popup itself... Also can you add blur to the background
+> instead of just opacity." Then, after the caption band had been tightened and the blur added: "Bottom
+> padding is still too big, the blur doesn't work, I want a similar deal to the native app switcher just
+> darker, increase radius on both the thumbs and the popup itself."
+>
+> The second report is what found both root causes. The padding was never a caption-band problem: equal
+> insets are bottom-heavy because the caption reads as space. And the blur was present but invisible,
+> because the 0.62 tint left about a tenth of the backdrop showing.
 
 > **Reported 2026-09-25.** "It's a bit too much opacity, needs to be a bit darker. For the window in
 > focus just use the primary focus colour for the whole outline, not just the left border." The fill went

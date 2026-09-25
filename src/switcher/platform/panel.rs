@@ -19,9 +19,9 @@ use rustc_hash::FxHashMap as HashMap;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSPanel, NSRunningApplication, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameVibrantDark, NSBackingStoreType, NSColor, NSPanel,
+    NSRunningApplication, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+    NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
@@ -45,10 +45,13 @@ const PANEL_LEVEL: isize = 21;
 // The panel is a floating surface, which the elevation law puts on the content plane with a hairline:
 // "Bars/sidebars on --n1, content on --n2", and "Shadows are for floating things: windows, popovers".
 
-/// `--n1`, chrome. A step below the content plane on purpose: this panel floats OVER content rather
-/// than being content, and at the content plane's brightness too much of what is behind it came
-/// through. Reported as needing to be darker.
-const N1: (f64, f64, f64) = (0.082, 0.090, 0.102);
+/// `--n0`, the deepest step on the spine.
+///
+/// The tint over the blur. Two steps below the content plane on purpose: this panel floats OVER content
+/// rather than being content, and the darkening has to be done with the COLOUR rather than with opacity,
+/// because opacity is what the blur needs left over to be visible at all. `--n1` at 0.62 was the
+/// previous answer and it read as an opaque slab.
+const N0: (f64, f64, f64) = (0.059, 0.067, 0.075);
 /// `--n3`, raised. A tile with no picture yet is a surface sitting on the panel.
 const N3: (f64, f64, f64) = (0.133, 0.145, 0.153);
 /// `--line`, the hairline. "Borders are soft visible hairlines — never bright, never
@@ -69,9 +72,13 @@ const EMBER_SOFT: (f64, f64, f64) = (0.247, 0.176, 0.157);
 /// right for cards in a document. This is not a card: it is a floating macOS panel, and macOS's own
 /// floating surfaces — Spotlight, the volume HUD, a popover — are rounded far more than 7px. Matching
 /// the platform reads as correct here in a way that matching the document system does not.
-const CORNER: f64 = 18.0;
-/// `--radius-control`, 5px, for the smaller surfaces inside it.
-const TILE_CORNER: f64 = 5.0;
+const CORNER: f64 = 26.0;
+/// The tiles' radius, and a departure for the same reason as the panel's.
+///
+/// `--radius-control` is 5px, which is a button's radius. A tile here is a picture of a window, and the
+/// windows it is a picture of are themselves rounded at about 10px by macOS — so a square-cornered tile
+/// reads as a screenshot of a window rather than as a window.
+const TILE_CORNER: f64 = 11.0;
 /// The ember ring around the selected row.
 ///
 /// The elevation law's default for an active ROW in a list is a soft fill plus a 2px inset bar at its
@@ -86,8 +93,13 @@ const FOCUS_RING: f64 = 2.0;
 /// the `HUDWindow` material is already dark, and this takes it the rest of the way.
 ///
 /// The spec has no token for an overlay's translucency, so the number is a judgement. It has been 0.78
-/// and 0.90 as flat fills; over a blur it needs to be lower to let the blur read at all.
-const PANEL_ALPHA: f64 = 0.62;
+/// and 0.90 as flat FILLS, and 0.62 over the blur — where it was still high enough that the blur was
+/// doing nothing visible, reported as the blur not working. A dark material under a 0.62 near-black wash
+/// leaves about a tenth of the backdrop, which is indistinguishable from an opaque slab.
+///
+/// So the darkening moved to the colour: `--n0` instead of `--n1`, at an opacity low enough that the
+/// blur is the thing you see. Same intent as the native switcher, a step darker.
+const PANEL_ALPHA: f64 = 0.30;
 
 /// The app icon badged into a tile's corner. Small enough to read as a cue rather than as content,
 /// large enough to tell two apps apart at a glance.
@@ -195,6 +207,14 @@ impl SwitcherPanel {
                 | NSWindowCollectionBehavior::FullScreenNone,
         );
 
+        // Vibrant dark, pinned rather than inherited. The material's own colour comes from the
+        // appearance, so on a machine in light mode an inherited appearance would render a LIGHT frosted
+        // panel under a dark tint — the two fighting, and neither winning. Vibrancy is also what the
+        // blur samples through.
+        if let Some(dark) = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameVibrantDark }) {
+            window.setAppearance(Some(&dark));
+        }
+
         // A blurred backing rather than a flat translucent fill. `HUDWindow` is the material macOS uses
         // for exactly this kind of floating panel, and `BehindWindow` is what makes it sample the
         // desktop rather than its own siblings. `Active` so it stays blurred while rini is not the
@@ -223,7 +243,7 @@ impl SwitcherPanel {
         root.setContentsScale(scale);
         root.setCornerRadius(CORNER);
         root.setMasksToBounds(true);
-        root.setBackgroundColor(Some(&token(N1, PANEL_ALPHA)));
+        root.setBackgroundColor(Some(&token(N0, PANEL_ALPHA)));
         root.setBorderWidth(1.0);
         root.setBorderColor(Some(&token(LINE, 1.0)));
 

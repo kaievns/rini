@@ -80,22 +80,33 @@ a placeholder. Age is not a reason to refuse one, though: a ten-minute-old pictu
 `--n11` for captions, and an `--ember-soft` fill inside a 2px `--ember` ring for the selection.
 
 **Blurred, not just translucent.** An `NSVisualEffectView` with the `HUDWindow` material behind the
-layer tree, blending `BehindWindow` so it samples the desktop. Its state is pinned `Active`: rini is an
-Accessory application and is never frontmost, so the default `FollowsWindowActiveState` would leave the
-material flat forever. The tint then sits over the blur and only darkens it — an opaque fill would hide
-the blur it is painted on.
+layer tree, blending `BehindWindow` so it samples the desktop, and a dark appearance pinned on the
+window rather than inherited — the material takes its colour from the appearance, so a machine in light
+mode would otherwise get a light frosted panel under a dark tint. Its state is pinned `Active` too:
+rini is an Accessory application and is never frontmost, so the default `FollowsWindowActiveState` would
+leave the material flat forever.
 
-Three deliberate departures from the defaults, all because a switcher is not a document. It sits on
-`--n1` rather than the content plane `--n2` — it floats OVER content rather than being content, and at
+**The tint darkens with its colour, not its opacity.** This is the part that was wrong once: with the
+blur in place and a 0.62 wash over it, about a tenth of the backdrop survived and the panel read as an
+opaque slab — reported as the blur not working. So the wash dropped to 0.30 and moved a step down the
+spine to `--n0` instead. Same intent as the native switcher, a step darker.
+
+Four deliberate departures from the defaults, all because a switcher is not a document. It sits on
+`--n0` rather than the content plane `--n2` — it floats OVER content rather than being content, and at
 `--n2` too much of what was behind it read through. And the selection is RINGED rather than barred at
 its left edge: the elevation law's active-row default is a soft fill plus a 2px inset bar, which is
 right for a current line in a list and wrong for a focus target, and the ember's remit covers focused
-borders too. And the corner radius follows macOS's floating surfaces rather than the system's
-`--radius-card` 7px, which is right for a card in a document and wrong for something that sits beside
-Spotlight. Radii are the card (7px) and control (5px) values, because the
-system's own words are "corners stay crisp". The ember has a budget of one or two appearances per
-screen and the selected row is the one thing here that spends it. The fill's opacity is the single
-value that is still a judgement: the system has no token for an overlay's translucency.
+borders too. And both radii are larger than the system's: the panel's because it sits beside Spotlight
+and the volume HUD rather than in a document, and a tile's because the windows it holds pictures of are
+themselves rounded, so a crisp-cornered tile reads as a screenshot of a window rather than as a window.
+The ember has a budget of one or two appearances per screen and the selected row is the one thing here
+that spends it. The tint's opacity is the single value that is still a judgement: the system has no
+token for an overlay's translucency.
+
+**The bottom inset is tighter than the top one.** Not a bug being papered over — the eye measures from
+the tiles, and a caption is two thin lines of small text that read as part of the surrounding space. So
+equal insets put the tile 22pt below the top edge and 54pt above the bottom one, and the panel looks
+bottom-heavy however evenly the arithmetic is written. Reported twice before this was the answer.
 
 **A tile is as wide as its window.** Every tile shares one height so the captions line up, and the
 width comes from the window's own proportions — which is most of what tells two windows of the same

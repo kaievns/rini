@@ -30,14 +30,22 @@ pub struct Metrics {
     pub max_tile_width: f64,
     /// Between rows.
     pub gap: f64,
-    /// Inside the panel's edge, around the whole strip.
+    /// Inside the panel's edge, at the sides and above the strip.
     pub padding: f64,
+    /// Below the captions, and SMALLER than `padding` on purpose.
+    ///
+    /// The eye anchors on the tiles, not on the captions: a tile is a bright slab and a caption is two
+    /// thin lines of small text that read as part of the surrounding space. So equal numbers above and
+    /// below put the tile 22pt from the top edge and 54pt from the bottom one, and the panel looks
+    /// bottom-heavy however the arithmetic is written. Reported twice, the second time after the caption
+    /// band had already been tightened, which is what ruled out the band being the whole of it.
+    pub bottom_padding: f64,
     /// Height below each tile for the title and app name.
     ///
     /// Sized to the TEXT, not chosen for looks: two lines at 11pt with default leading is about 27pt,
-    /// and a taller box leaves slack under the text that reads as extra padding — a caption layer draws
-    /// from its top, so any surplus lands at the bottom. Reported as the bottom padding looking larger
-    /// than the top when this was 36.
+    /// and a taller box leaves slack under the text — a caption layer draws from its top, so any surplus
+    /// lands at the bottom. A row with no window title draws one line and leaves the second line's worth
+    /// empty, which is why the band cannot be trusted to read as full.
     pub caption: f64,
     /// Between a tile and its caption.
     pub caption_gap: f64,
@@ -53,6 +61,7 @@ impl Default for Metrics {
             max_tile_width: 340.0,
             gap: 14.0,
             padding: 22.0,
+            bottom_padding: 9.0,
             caption: 27.0,
             caption_gap: 5.0,
             max_screen_fraction: 0.9,
@@ -75,6 +84,11 @@ impl Metrics {
 
     fn row_height(&self) -> f64 {
         self.tile_height + self.caption_gap + self.caption
+    }
+
+    /// The panel's height: the row, with `padding` above it and `bottom_padding` below.
+    fn panel_height(&self) -> f64 {
+        self.padding + self.row_height() + self.bottom_padding
     }
 }
 
@@ -137,7 +151,7 @@ pub fn lay_out(
 
     let panel_size = CGSize::new(
         visible + metrics.padding * 2.0,
-        metrics.row_height() + metrics.padding * 2.0,
+        metrics.panel_height(),
     );
     let panel = CGRect::new(
         CGPoint::new(
@@ -244,10 +258,33 @@ mod tests {
             strip.rows[0].size.height,
             m.tile_height + m.caption_gap + m.caption
         );
-        assert_eq!(
-            strip.panel.size.height,
-            m.tile_height + m.caption_gap + m.caption + m.padding * 2.0,
-            "and the panel is that row plus equal padding above and below"
+    }
+
+    /// The panel's inset below the captions is SMALLER than the one above the tiles, and the tile is what
+    /// the eye measures from. Equal insets read as bottom-heavy, because the caption band between the
+    /// tile and the bottom edge reads as space rather than as content.
+    #[test]
+    fn the_inset_below_the_captions_is_tighter_than_the_one_above_the_tiles() {
+        let m = metrics();
+        let strip = lay_out(&[wide()], 0, screen(), m).expect("strip");
+        let row = strip.rows[0];
+
+        assert_eq!(row.origin.y, m.padding, "the strip hangs from the top inset");
+        let below = strip.panel.size.height - (row.origin.y + row.size.height);
+        assert!(
+            below < m.padding,
+            "{below} below the captions is not tighter than {} above the tiles",
+            m.padding
+        );
+
+        // What the eye actually compares: tile top to the panel's top edge, against tile bottom to its
+        // bottom edge. The caption band can never make these equal, so the test pins the gap it is
+        // allowed to leave rather than pretending to symmetry.
+        let above_tile = m.padding;
+        let below_tile = strip.panel.size.height - (row.origin.y + m.tile_height);
+        assert!(
+            below_tile < above_tile * 2.0,
+            "tile sits {above_tile} from the top and {below_tile} from the bottom"
         );
     }
 
