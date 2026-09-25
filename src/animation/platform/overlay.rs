@@ -33,7 +33,7 @@ pub use crate::animation::domain::motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
     lerp_rect, placeholder_mode, resize_in_flight,
 };
-use crate::animation::domain::motion::z_group::{StackGroup, container_z};
+use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::platform::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::animation::platform::window_snapshot::{SnapshotImage, WindowSnapshot};
 use crate::displays::domain::screen::CoordinateConverter;
@@ -353,6 +353,16 @@ pub struct TileOverlay {
     /// One layer per rigid piece of a flight; a container's `position` is the only animated
     /// translation its members get.
     containers: HashMap<GroupKey, Retained<CALayer>>,
+    /// The floating container's twin, drawn in front of the strip: where the floating windows that come
+    /// forward with the focus are drawn (`Banding::lifted`).
+    ///
+    /// A twin rather than a second plan group because it is the same rigid piece — every floating window
+    /// rides one translation — and only its depth differs. Tiles are children of their container, and a
+    /// container's zPosition alone decides its children's order against every other container, so one
+    /// floating container could never put one application in front of the strip and another behind it.
+    /// Created, reset, moved, animated and dropped with the floating container, so a tile moved between
+    /// the two lands exactly where it was.
+    lifted: Option<Retained<CALayer>>,
     /// The real desktop, drawn behind everything and held still.
     backdrop: Retained<CALayer>,
     /// The bar, redrawn on top with its own alpha since the overlay covers the real one. See "The
@@ -442,6 +452,7 @@ impl TileOverlay {
             bar,
             bar_drawn: false,
             containers: HashMap::new(),
+            lifted: None,
             tile_layers: HashMap::new(),
             frame,
             scale,
@@ -635,24 +646,37 @@ impl TileOverlay {
     /// Writes every container's and tile's `zPosition` from `banding`. A hard cut: z does not
     /// interpolate. Callers hold the transaction.
     pub(crate) fn rebank(&self, banding: &Banding) {
-        let focused = if banding.floating_in_front {
-            StackGroup::Floating
-        } else {
-            StackGroup::Tiled
-        };
+        let off_strip = banding.focus_off_strip;
         for (key, layer) in &self.containers {
             let z = match key {
-                GroupKey::Floating => container_z(StackGroup::Floating, focused),
+                GroupKey::Floating => container_z(Band::Behind, off_strip),
                 key => {
                     let index = banding
                         .group_order
                         .iter()
                         .position(|k| k == key)
                         .unwrap_or(banding.group_order.len());
-                    container_z(StackGroup::Tiled, focused) - index as f64 * 0.25
+                    container_z(Band::Strip, off_strip) - index as f64 * 0.25
                 }
             };
             layer.setZPosition(z);
+        }
+        if let (Some(lifted), Some(behind)) =
+            (self.lifted.as_ref(), self.containers.get(&GroupKey::Floating))
+        {
+            lifted.setZPosition(container_z(Band::Lifted, off_strip));
+            for (window, tile) in &self.tile_layers {
+                if tile.key != Some(GroupKey::Floating) {
+                    continue;
+                }
+                let parent = if banding.lifted.contains(window) {
+                    lifted
+                } else {
+                    behind
+                };
+                reparent(&tile.picture, parent);
+                reparent(&tile.shadow, parent);
+            }
         }
         for (window, tile) in &self.tile_layers {
             let Some(&within) = banding.within.get(window) else {
@@ -667,22 +691,24 @@ impl TileOverlay {
     /// The container for `key`, created on first use, put back at the origin with no animation
     /// riding it. Callers hold the transaction.
     fn reset_container(&mut self, key: GroupKey) -> Retained<CALayer> {
-        let root = &self.root;
-        let layer = self
-            .containers
-            .entry(key)
-            .or_insert_with(|| {
-                let layer = CALayer::layer();
-                layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
-                layer.setMasksToBounds(false);
-                root.addSublayer(&layer);
-                layer
-            })
-            .clone();
-        layer.removeAllAnimations();
-        layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), self.frame.size));
-        layer.setPosition(CGPoint::new(0.0, 0.0));
+        let root = self.root.clone();
+        let layer = self.containers.entry(key).or_insert_with(|| new_container(&root)).clone();
+        if key == GroupKey::Floating {
+            self.lifted.get_or_insert_with(|| new_container(&root));
+        }
+        for layer in self.layers_of(key) {
+            layer.removeAllAnimations();
+            layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), self.frame.size));
+            layer.setPosition(CGPoint::new(0.0, 0.0));
+        }
         layer
+    }
+
+    /// Every layer that carries `key`'s translation: its container, and for the floating container its
+    /// twin in front of the strip. Anything that moves or resets one moves or resets both.
+    fn layers_of(&self, key: GroupKey) -> Vec<Retained<CALayer>> {
+        let twin = (key == GroupKey::Floating).then(|| self.lifted.clone()).flatten();
+        self.containers.get(&key).cloned().into_iter().chain(twin).collect()
     }
 
     /// Drops every tile not in `keep`, and every container left with no tile.
@@ -699,8 +725,12 @@ impl TileOverlay {
             }
         }
         for key in empty_containers {
-            if let Some(layer) = self.containers.remove(&key) {
+            for layer in self.layers_of(key) {
                 layer.removeFromSuperlayer();
+            }
+            self.containers.remove(&key);
+            if key == GroupKey::Floating {
+                self.lifted = None;
             }
         }
     }
@@ -714,17 +744,16 @@ impl TileOverlay {
         for target in animation_targets(plan) {
             match target {
                 AnimationTarget::Container { key, from, to } => {
-                    let Some(layer) = self.containers.get(&key) else {
-                        continue;
-                    };
                     let (from, to) = (whole_point(from), whole_point(to));
-                    layer.setPosition(to);
-                    if !duration.is_zero() {
-                        let animation = position_animation(from, to, timing);
-                        layer.addAnimation_forKey(
-                            &animation,
-                            Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                        );
+                    for layer in self.layers_of(key) {
+                        layer.setPosition(to);
+                        if !duration.is_zero() {
+                            let animation = position_animation(from, to, timing);
+                            layer.addAnimation_forKey(
+                                &animation,
+                                Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
+                            );
+                        }
                     }
                 }
                 AnimationTarget::Tile { window, from, to } => {
@@ -757,12 +786,18 @@ impl TileOverlay {
         let timing = Timing::starting_now(duration);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        for (key, layer) in &self.containers {
-            if !bounce_carries(*key, overshoot) {
+        let keys: Vec<GroupKey> = self.containers.keys().copied().collect();
+        for key in keys {
+            if !bounce_carries(key, overshoot) {
                 continue;
             }
-            let animation = bounce_animation(overshoot, timing);
-            layer.addAnimation_forKey(&animation, Some(&NSString::from_str(BOUNCE_ANIMATION_KEY)));
+            for layer in self.layers_of(key) {
+                let animation = bounce_animation(overshoot, timing);
+                layer.addAnimation_forKey(
+                    &animation,
+                    Some(&NSString::from_str(BOUNCE_ANIMATION_KEY)),
+                );
+            }
         }
         commit_now();
     }
@@ -851,7 +886,9 @@ impl TileOverlay {
             return layer.clone();
         }
         let layer = self.reset_container(key);
-        layer.setPosition(position);
+        for layer in self.layers_of(key) {
+            layer.setPosition(position);
+        }
         layer
     }
 
@@ -863,7 +900,7 @@ impl TileOverlay {
             (a.width - b.width).abs() < 0.5 && (a.height - b.height).abs() < 0.5
         };
         // SAFETY: `presentationLayer` returns a read-only copy of the layer.
-        let containers = self.containers.values().all(|layer| {
+        let containers = self.containers.values().chain(self.lifted.as_ref()).all(|layer| {
             unsafe { layer.presentationLayer() }
                 .is_none_or(|p| close(p.position(), layer.position()))
         });
@@ -937,33 +974,31 @@ impl TileOverlay {
         }
 
         for &(key, to) in &delta.retargeted_groups {
-            let Some(layer) = self.containers.get(&key) else {
-                continue;
-            };
-            let from = presented.get(&key).copied().unwrap_or(layer.position());
-            let to = whole_point(to);
-            layer.setPosition(to);
-            if !duration.is_zero() {
-                let animation = position_animation(from, to, timing);
-                layer.addAnimation_forKey(
-                    &animation,
-                    Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                );
+            for layer in self.layers_of(key) {
+                let from = presented.get(&key).copied().unwrap_or(layer.position());
+                let to = whole_point(to);
+                layer.setPosition(to);
+                if !duration.is_zero() {
+                    let animation = position_animation(from, to, timing);
+                    layer.addAnimation_forKey(
+                        &animation,
+                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
+                    );
+                }
             }
         }
         for &(key, install) in &delta.new_groups {
-            let Some(layer) = self.containers.get(&key) else {
-                continue;
-            };
-            let to = whole_point(plan.positions.get(&key).copied().unwrap_or(install));
-            let install = whole_point(install);
-            layer.setPosition(to);
-            if !duration.is_zero() && !install.same_as(to) {
-                let animation = position_animation(install, to, timing);
-                layer.addAnimation_forKey(
-                    &animation,
-                    Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
-                );
+            for layer in self.layers_of(key) {
+                let to = whole_point(plan.positions.get(&key).copied().unwrap_or(install));
+                let install = whole_point(install);
+                layer.setPosition(to);
+                if !duration.is_zero() && !install.same_as(to) {
+                    let animation = position_animation(install, to, timing);
+                    layer.addAnimation_forKey(
+                        &animation,
+                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
+                    );
+                }
             }
         }
 
@@ -1137,6 +1172,9 @@ impl TileOverlay {
         }
         for (_, container) in self.containers.drain() {
             container.removeFromSuperlayer();
+        }
+        if let Some(lifted) = self.lifted.take() {
+            lifted.removeFromSuperlayer();
         }
         commit_now();
         let _ = self.mtm;
@@ -1403,6 +1441,15 @@ fn new_crop_grid(container: &CALayer) -> CropGrid {
     CropGrid { pieces }
 }
 
+/// An empty container covering the overlay, under `root`.
+fn new_container(root: &CALayer) -> Retained<CALayer> {
+    let layer = CALayer::layer();
+    layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    layer.setMasksToBounds(false);
+    root.addSublayer(&layer);
+    layer
+}
+
 /// Moves `layer` under `container` unless it is already there.
 fn reparent(layer: &CALayer, container: &CALayer) {
     let already = layer.superlayer().is_some_and(|current| {
@@ -1498,9 +1545,36 @@ mod tests {
 
     #[test]
     fn every_possible_tile_draws_between_the_backdrop_and_the_bar() {
-        use crate::animation::domain::motion::z_group::{StackGroup, tile_depth};
-        let deepest = tile_depth(None, false, StackGroup::Floating, StackGroup::Tiled);
-        let shallowest = tile_depth(Some(0), true, StackGroup::Tiled, StackGroup::Tiled);
+        use crate::animation::domain::motion::z_group::{
+            MAX_TILE_DEPTH, StackGroup, Stacked, stack,
+        };
+        let app = |pid: i32, idx: u32| rini_core::ids::WindowId {
+            pid,
+            idx: std::num::NonZeroU32::new(idx).unwrap(),
+        };
+        // The deepest a tile can go: unreported, off the strip, behind it, with focus off the strip so
+        // there are three bands in use.
+        let windows = [
+            Stacked {
+                window: app(1, 1),
+                group: StackGroup::Floating,
+                server_order: Some(0),
+            },
+            Stacked {
+                window: app(2, 2),
+                group: StackGroup::Tiled,
+                server_order: Some(1),
+            },
+            Stacked {
+                window: app(3, 3),
+                group: StackGroup::Floating,
+                server_order: None,
+            },
+        ];
+        let placements = stack(&windows, Some(app(1, 1)));
+        let deepest = placements[2].depth;
+        let shallowest = placements[0].depth;
+        assert_eq!(deepest, MAX_TILE_DEPTH, "MAX_TILE_DEPTH is the real bound");
         assert!(
             -(deepest as f64) > BACKDROP_Z,
             "the deepest tile clears the backdrop"

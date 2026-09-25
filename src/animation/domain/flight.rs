@@ -350,20 +350,6 @@ pub(in crate::animation) fn group_of(
     }
 }
 
-/// The group drawn in front: the focus target's, or the strip when it is not being animated.
-pub(in crate::animation) fn focus_group(
-    focus: Option<WindowId>,
-    mut windows: impl Iterator<Item = (WindowId, bool)>,
-) -> crate::animation::domain::motion::z_group::StackGroup {
-    let Some(focus) = focus else {
-        return crate::animation::domain::motion::z_group::StackGroup::Tiled;
-    };
-    windows
-        .find(|(window, _)| *window == focus)
-        .map(|(_, floating)| group_of(floating))
-        .unwrap_or(crate::animation::domain::motion::z_group::StackGroup::Tiled)
-}
-
 /// A stable [`WindowId`] derived from a window server id. Pid 0 keeps it clear of real ids.
 pub(in crate::animation) fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
     WindowId {

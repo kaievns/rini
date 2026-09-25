@@ -82,30 +82,25 @@ rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation si
 - "Off the strip" is NOT a set. Two windows being off the strip says nothing about whether they come
   forward together.
 
+- An off-strip window the server already has in front of the strip MUST stay in front of it. macOS
+  raises the application gaining focus over it and does not push it behind the strip.
+- Inside the lifted band the application gaining focus MUST lead. The server has not raised it yet
+  when a flight starts, so its own order can still put another application between two of its windows.
+
 > **Reported 2026-09-25.** "During the animation from here to 1pass it renders zoom window under it too.
 > When it lands the stack is zoom in bg -> strip -> 1pass, but during the animation it renders strip ->
-> zoom -> 1pass." Diagnosed, NOT fixed.
+> zoom -> 1pass." Then, on the rule: "a multi-window application like zoom, focusing on one the
+> application windows brings that entire application windows set up. It doesn't mean bring all off
+> strip apps up, only the one being focused." Fixed.
 >
-> `z_group` bands by `StackGroup`, which has exactly two values: `Tiled` and `Floating`. Every off-strip
-> window is in one group, so focusing 1Password promotes zoom with it. The group an off-strip window
-> belongs to is its APPLICATION.
+> The z rule banded by `StackGroup`, which had two values, `Tiled` and `Floating`, so every off-strip
+> window was one group and focusing 1Password promoted zoom with it. It now draws three bands with the
+> strip always in the middle (`z_group::stack`).
 >
-> The reported windows are single-window applications, so this case alone does not distinguish per-window
-> from per-application grouping. Per-application is the rule, and it is what macOS activation does.
->
-> Fixing `tile_depth` alone does nothing whichever rule is used. Tile layers are children of their
-> group's container (`overlay.rs`, `container.addSublayer(&picture)`), containers are siblings under the
-> root, and a parent's `zPosition` fully decides cross-container order. One container holds every
-> off-strip window, so no per-tile depth can put one application in front of the strip and another
-> behind it.
->
-> So the fix is to make the container partition match the rule: one container per off-strip APPLICATION
-> in place of the single floating one, and three bands rather than two — the focused application, then
-> the strip, then the other applications. The bands fall out of the partition instead of needing a
-> special case for the window that has focus, which the two-value `StackGroup` would have forced.
-> `MAX_TILE_DEPTH` becomes three strides and the backdrop has to sit behind that.
->
-> An attempt that changed only `z_group` is at `/tmp/z_group.attempt.rs`; it left the strip and the
-> floating container both at zero, which is less correct than the current wrong-but-deterministic order.
-> Seven engine property tests encode "the focused window's group goes in front" with `Floating` as a
-> group, and will need rewriting around the application set rather than patching until green.
+> Fixing the depths alone could not have worked. Tile layers are children of their container, a
+> container's `zPosition` alone decides its children's order against every other container, and one
+> container held every floating window. So the floating container has a twin in front of the strip that
+> rides every translation the floating container does, and each floating tile is moved into whichever
+> of the two its band names. A twin rather than one container per application, because only the
+> focused application changes band: every other application keeps the server's order among the rest,
+> which one container behind the strip already expresses.

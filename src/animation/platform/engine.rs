@@ -238,42 +238,55 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &WindowSnapshot) -> Overl
     }
 }
 
-/// Depth for every tile, banded by z-group (`tile_depth`); companions keep their window's depth.
+/// The z rule's view of every tile that is not a companion, in tile order.
+fn stacked_windows(
+    tiles: &[OverlayTile],
+) -> Vec<crate::animation::domain::motion::z_group::Stacked> {
+    tiles
+        .iter()
+        .filter(|t| !t.companion)
+        .map(|t| crate::animation::domain::motion::z_group::Stacked {
+            window: t.window,
+            group: group_of(t.floating),
+            server_order: t.server_order,
+        })
+        .collect()
+}
+
+/// Depth for every tile, banded by `z_group::stack`; companions keep their window's depth.
 /// The reactor's regroup matches it. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 fn restack(tiles: &mut [OverlayTile], focus: Option<WindowId>) {
-    let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
-    for tile in tiles.iter_mut().filter(|t| !t.companion) {
-        tile.depth = crate::animation::domain::motion::z_group::tile_depth(
-            tile.server_order,
-            focus == Some(tile.window),
-            group_of(tile.floating),
-            focused_group,
-        );
+    let placements =
+        crate::animation::domain::motion::z_group::stack(&stacked_windows(tiles), focus);
+    for (tile, placement) in tiles.iter_mut().filter(|t| !t.companion).zip(placements) {
+        tile.depth = placement.depth;
     }
 }
 
-/// The flight's z-order as containers: `container_z - within` reproduces `-tile_depth`.
+/// The flight's z-order as containers: `container_z - within` reproduces `-depth`.
 /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
 fn band_plan(
     plan: &plan::FlightPlan,
     tiles: &[OverlayTile],
     focus: Option<WindowId>,
 ) -> plan::Banding {
-    use crate::animation::domain::motion::z_group::{GROUP_STRIDE, StackGroup, tile_depth};
-    let focused_group = focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
-    let within: HashMap<WindowId, usize> = tiles
-        .iter()
-        .map(|t| {
-            let group = group_of(t.floating);
-            let depth = if t.companion {
-                // Its window's banded depth, less the band.
-                t.depth % GROUP_STRIDE
-            } else {
-                tile_depth(t.server_order, focus == Some(t.window), group, group)
-            };
-            (t.window, depth)
-        })
-        .collect();
+    use crate::animation::domain::motion::z_group::{
+        Band, GROUP_STRIDE, focus_is_off_strip, stack,
+    };
+    let stacked = stacked_windows(tiles);
+    let placements = stack(&stacked, focus);
+    let mut within: HashMap<WindowId, usize> = HashMap::default();
+    let mut lifted: Vec<WindowId> = Vec::new();
+    for (window, placement) in stacked.iter().zip(&placements) {
+        within.insert(window.window, placement.within);
+        if placement.band == Band::Lifted {
+            lifted.push(window.window);
+        }
+    }
+    for tile in tiles.iter().filter(|t| t.companion) {
+        // Its window's banded depth, less the band.
+        within.insert(tile.window, tile.depth % GROUP_STRIDE);
+    }
     let mut strip: Vec<(plan::GroupKey, bool, usize)> = Vec::new();
     for group in plan.groups.iter().filter(|g| !g.members.is_empty()) {
         let holds_focus = focus.is_some_and(|f| group.members.iter().any(|m| m.window == f));
@@ -295,7 +308,8 @@ fn band_plan(
     }
     strip.sort_by_key(|(_, holds_focus, shallowest)| (!*holds_focus, *shallowest));
     plan::Banding {
-        floating_in_front: focused_group == StackGroup::Floating,
+        focus_off_strip: focus_is_off_strip(&stacked, focus),
+        lifted,
         within,
         group_order: strip.into_iter().map(|(key, _, _)| key).collect(),
     }
@@ -4479,7 +4493,10 @@ mod tests {
             ];
             restack(&mut tiles, None);
             assert_eq!(tiles[0].depth, GROUP_STRIDE - 1);
-            assert_eq!(tiles[1].depth, MAX_TILE_DEPTH);
+            // The back of the band behind the strip. With focus on the strip there is no lifted band
+            // in front, so that is two strides deep rather than the three `MAX_TILE_DEPTH` allows.
+            assert_eq!(tiles[1].depth, 2 * GROUP_STRIDE - 1);
+            assert!(tiles[1].depth <= MAX_TILE_DEPTH);
         }
 
         /// P-3.9.
@@ -5972,7 +5989,6 @@ mod tests {
     mod rigid_groups {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
-        use crate::animation::domain::motion::z_group::StackGroup;
         use crate::animation::platform::engine::plan::*;
         use crate::animation::platform::window_snapshot::is_a_resize;
 
@@ -6787,10 +6803,10 @@ mod tests {
             }
         }
 
-        /// The 50/50 pair with Settings over them (`model/z_group.rs`).
+        /// The 50/50 pair with Settings over them (`motion/z_group.rs`).
         #[test]
         fn band_plan_puts_the_floating_container_behind_the_strip_unless_it_holds_focus() {
-            use crate::animation::domain::motion::z_group::{GROUP_STRIDE, tile_depth};
+            use crate::animation::domain::motion::z_group::GROUP_STRIDE;
             let (left, right) = (rect(4.0, 32.0, 860.0, 1081.0), rect(868.0, 32.0, 856.0, 1081.0));
             let settings = rect(500.0, 300.0, 700.0, 500.0);
             let far = column(2.0);
@@ -6811,7 +6827,8 @@ mod tests {
             let moving = plan.groups[1].key;
 
             let banding = band_plan(&plan, &tiles, Some(wid(90)));
-            assert!(!banding.floating_in_front);
+            assert!(!banding.focus_off_strip);
+            assert!(banding.lifted.is_empty(), "nothing is lifted over the strip");
             assert_eq!(
                 banding.group_order,
                 vec![still, moving],
@@ -6822,14 +6839,8 @@ mod tests {
                 0,
                 "the focused window leads its container"
             );
-            assert_eq!(
-                banding.within[&wid(89)],
-                tile_depth(Some(2), false, StackGroup::Tiled, StackGroup::Tiled)
-            );
-            assert_eq!(
-                banding.within[&wid(5830)],
-                tile_depth(Some(1), false, StackGroup::Floating, StackGroup::Floating)
-            );
+            assert_eq!(banding.within[&wid(89)], 3, "one past its server order");
+            assert_eq!(banding.within[&wid(5830)], 2);
             let anchor = tiles.iter().find(|t| t.window == wid(90)).unwrap().depth;
             assert_eq!(
                 banding.within[&wid(900)],
@@ -6839,7 +6850,8 @@ mod tests {
 
             restack(&mut tiles, Some(wid(5830)));
             let banding = band_plan(&plan, &tiles, Some(wid(5830)));
-            assert!(banding.floating_in_front);
+            assert!(banding.focus_off_strip);
+            assert_eq!(banding.lifted, vec![wid(5830)]);
             assert_eq!(banding.within[&wid(5830)], 0);
             assert_eq!(
                 banding.group_order,
@@ -6848,10 +6860,47 @@ mod tests {
             );
         }
 
-        /// Property P3 (seed 163, 200 runs): `container_z - within` is `-tile_depth` exactly.
+        /// The reported flight: switching to 1Password with zoom behind the strip. Only 1Password's
+        /// application is lifted; zoom stays in the floating container behind the strip.
         #[test]
-        fn container_bands_plus_within_depths_reproduce_tile_depth() {
-            use crate::animation::domain::motion::z_group::{container_z, tile_depth};
+        fn band_plan_lifts_only_the_application_gaining_focus() {
+            let app = |pid: i32, idx: u32| WindowId {
+                pid,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            };
+            let (column, onepassword, zoom, controls) =
+                (app(10, 1), app(20, 2), app(30, 3), app(30, 4));
+            let slot = rect(4.0, 32.0, 1720.0, 1081.0);
+            let (card, meeting, bar) = (
+                rect(414.0, 35.0, 900.0, 1079.0),
+                rect(224.0, 95.0, 1280.0, 960.0),
+                rect(600.0, 900.0, 400.0, 60.0),
+            );
+            let mut tiles = vec![
+                stacked(column, slot, slot, Some(0), false),
+                stacked(onepassword, entrance_from(card), card, Some(5), true),
+                stacked(zoom, meeting, meeting, Some(3), true),
+                stacked(controls, bar, bar, Some(4), true),
+            ];
+            restack(&mut tiles, Some(onepassword));
+            let plan = FlightPlan::from(plan_from_tiles(&tiles));
+            let banding = band_plan(&plan, &tiles, Some(onepassword));
+            assert_eq!(banding.lifted, vec![onepassword], "zoom is not lifted with it");
+
+            // Focusing either zoom window lifts both of them: they are one application.
+            restack(&mut tiles, Some(controls));
+            let banding = band_plan(&plan, &tiles, Some(controls));
+            let mut lifted = banding.lifted.clone();
+            lifted.sort();
+            assert_eq!(lifted, vec![zoom, controls]);
+        }
+
+        /// Property P3 (seed 163, 200 runs): `container_z - within` is `-depth` exactly, the lifted
+        /// floating windows are in front of every strip tile, and the rest are behind every one.
+        /// Pids are drawn from three applications so the application rule is exercised.
+        #[test]
+        fn container_bands_plus_within_depths_reproduce_every_depth() {
+            use crate::animation::domain::motion::z_group::{Band, container_z, stack};
             let mut rng = Gen(163);
             for run in 0..RUNS {
                 let count = 1 + rng.below(8) as usize;
@@ -6863,52 +6912,59 @@ mod tests {
                         } else {
                             Some(rng.below(40) as usize)
                         };
-                        stacked(wid(i as u32 + 1), f, f, order, rng.coin())
+                        let window = WindowId {
+                            pid: 1 + rng.below(3) as i32,
+                            idx: std::num::NonZeroU32::new(i as u32 + 1).unwrap(),
+                        };
+                        stacked(window, f, f, order, rng.coin())
                     })
                     .collect();
                 let focus = if rng.coin() {
-                    Some(wid(1 + rng.below(count as u64) as u32))
+                    Some(tiles[rng.below(count as u64) as usize].window)
                 } else {
                     None
                 };
                 restack(&mut tiles, focus);
                 let plan = FlightPlan::from(plan_from_tiles(&tiles));
                 let banding = band_plan(&plan, &tiles, focus);
-                let focused_group =
-                    focus_group(focus, tiles.iter().map(|t| (t.window, t.floating)));
-                assert_eq!(
-                    banding.floating_in_front,
-                    focused_group == StackGroup::Floating,
-                    "seed 163 run {run}"
-                );
                 let tag = format!("seed 163 run {run}");
+                let placements = stack(&stacked_windows(&tiles), focus);
                 let mut strip_total: Vec<f64> = Vec::new();
-                let mut floating_total: Vec<f64> = Vec::new();
-                for tile in &tiles {
-                    let group = group_of(tile.floating);
+                let mut lifted_total: Vec<f64> = Vec::new();
+                let mut behind_total: Vec<f64> = Vec::new();
+                for (tile, placement) in tiles.iter().zip(&placements) {
                     let within = banding.within[&tile.window];
-                    let total = container_z(group, focused_group) - within as f64;
-                    let expected = -(tile_depth(
-                        tile.server_order,
-                        focus == Some(tile.window),
-                        group,
-                        focused_group,
-                    ) as f64);
-                    assert_eq!(total, expected, "{tag}: {:?}", tile.window);
-                    assert_eq!(total, -(tile.depth as f64), "{tag}: restack agrees");
-                    if tile.floating {
-                        floating_total.push(total)
-                    } else {
-                        strip_total.push(total)
+                    let total =
+                        container_z(placement.band, banding.focus_off_strip) - within as f64;
+                    assert_eq!(total, -(tile.depth as f64), "{tag}: {:?}", tile.window);
+                    assert_eq!(
+                        banding.lifted.contains(&tile.window),
+                        placement.band == Band::Lifted,
+                        "{tag}: {:?}",
+                        tile.window
+                    );
+                    match placement.band {
+                        Band::Strip => strip_total.push(total),
+                        Band::Lifted => lifted_total.push(total),
+                        Band::Behind => behind_total.push(total),
                     }
                 }
-                for f in &floating_total {
-                    for s in &strip_total {
-                        if focused_group == StackGroup::Tiled {
-                            assert!(f < s, "{tag}: floating {f} in front of strip {s}");
-                        } else {
-                            assert!(f > s, "{tag}: floating {f} behind strip {s}");
-                        }
+                for s in &strip_total {
+                    for f in &lifted_total {
+                        assert!(f > s, "{tag}: lifted {f} behind strip {s}");
+                    }
+                    for f in &behind_total {
+                        assert!(f < s, "{tag}: floating {f} in front of strip {s}");
+                    }
+                }
+                if let Some(focus) = focus {
+                    let focus_floating = tiles.iter().any(|t| t.window == focus && t.floating);
+                    for tile in tiles.iter().filter(|t| t.floating && t.window.pid == focus.pid) {
+                        assert_eq!(
+                            banding.lifted.contains(&tile.window),
+                            focus_floating,
+                            "{tag}: the focused application comes forward as a set"
+                        );
                     }
                 }
                 // Every occupied strip container is ordered once; the floating one never is.

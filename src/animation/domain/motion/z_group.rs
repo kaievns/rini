@@ -6,22 +6,24 @@
 //!
 //! An APPLICATION is the other. Focusing one window of a multi-window application brings that
 //! application's windows forward together, which is what macOS itself does — raising a window activates
-//! its application, and activating an application raises its windows as a set. Focusing one window off
-//! the strip therefore lifts ITS application, and leaves every other application where it was.
+//! its application, and activating an application raises its windows as a set. A zoom call is a
+//! meeting window and its controls; an editor with a modal is two windows. Focusing one off-strip window
+//! therefore lifts ITS application in front of the strip, and leaves every other application where it
+//! was.
 //!
 //! What macOS does NOT have is the first notion. It raises the one window that was clicked, which leaves
 //! a window from another application sandwiched between two columns that sit side by side on screen — so
 //! one half of a 50/50 pair is in front of it and the other half behind.
 //!
-//! `StackGroup::Floating` does not express the application set: it puts every off-strip window in ONE
-//! group, so focusing one of them lifts all of them. That is the defect written up under "Floating
-//! windows during a flight" in `specs/animation.md`; the group an off-strip window belongs to is its
-//! application, not "not the strip".
+//! So a flight draws its windows in three bands, `Band`, and the strip is always the middle one. See
+//! "Which windows come forward together" in `specs/animation.md`.
 //!
 //! The strip rule decides two different things: which containers the animation overlay draws in front
-//! (`container_z`), and which real windows have to be raised to put the order back.
+//! (`container_z`), and which real windows have to be raised to put the order back (`regroup_tiled`).
 
-/// Which z-order group a window belongs to.
+use rini_core::ids::WindowId;
+
+/// Which kind of window this is: on the strip or off it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum StackGroup {
     /// Part of the tiled surface, which moves as one.
@@ -30,59 +32,140 @@ pub enum StackGroup {
     Floating,
 }
 
-/// Room for every window of one group before the next group starts, so no member of the group behind can
-/// ever be drawn in front of a member of the group in front.
+/// Where a window is drawn for one flight, relative to the strip.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Band {
+    /// Off the strip and in front of it: the application gaining focus, and any off-strip window the
+    /// window server already has in front of the strip. Only occupied while focus is off the strip.
+    Lifted,
+    /// The strip.
+    Strip,
+    /// Off the strip and behind it.
+    Behind,
+}
+
+/// Room for every window of one band before the next band starts, so no member of the band behind can
+/// ever be drawn in front of a member of the band in front.
 ///
 /// Public because the overlay derives its backdrop depth from it: the deepest possible tile is just
-/// short of two strides, and the backdrop has to sit behind THAT, not behind some smaller constant.
-/// The floating group's tiles used to land at zPosition about -(1<<20) while the backdrop sat at
-/// -10000, so every floating tile was drawn behind the desktop picture — present in every
-/// composition and visible in none.
+/// short of three strides, and the backdrop has to sit behind THAT, not behind some smaller constant.
+/// The floating tiles used to land at zPosition about -(1<<20) while the backdrop sat at -10000, so
+/// every floating tile was drawn behind the desktop picture — present in every composition and visible
+/// in none.
 pub const GROUP_STRIDE: usize = 1 << 20;
 
-/// The deepest depth `tile_depth` can produce: the unreported-window fallback of the back group.
-pub const MAX_TILE_DEPTH: usize = 2 * GROUP_STRIDE - 1;
+/// Inside the lifted band, the application gaining focus takes the front half and every other lifted
+/// window the back half. The server has not raised the application yet when a flight starts, so its
+/// own order can still put another application's window between two of its windows.
+const APP_SPAN: usize = GROUP_STRIDE / 2;
 
-/// A container's zPosition among its siblings in the overlay: the focused group's containers at
-/// zero, the other group's one stride behind. With each tile at `-within` inside its container,
-/// `container_z - within` is `-tile_depth`, so containers band the way tiles did. See "The
+/// The deepest depth `stack` can produce: the unreported-window fallback of the band behind the strip.
+pub const MAX_TILE_DEPTH: usize = 3 * GROUP_STRIDE - 1;
+
+/// What the z rule needs to know about one window.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Stacked {
+    pub window: WindowId,
+    pub group: StackGroup,
+    /// The window server's front-to-back position, 0 frontmost; `None` when unreported.
+    pub server_order: Option<usize>,
+}
+
+/// Where one window is drawn.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Placement {
+    pub band: Band,
+    /// Front-to-back position inside its band, 0 frontmost.
+    pub within: usize,
+    /// Front-to-back position across the whole flight, 0 frontmost: the band's offset plus `within`.
+    pub depth: usize,
+}
+
+/// Whether the window gaining focus is off the strip, which is the only time anything is lifted.
+///
+/// A focus the flight does not draw counts as on the strip: nothing it would lift is known.
+pub fn focus_is_off_strip(windows: &[Stacked], focus: Option<WindowId>) -> bool {
+    focus.is_some_and(|focus| {
+        windows.iter().any(|w| w.window == focus && w.group == StackGroup::Floating)
+    })
+}
+
+/// Every window's placement, in the order `windows` gives them.
+///
+/// The strip is the middle band. Off-strip windows go behind it, except while focus is off the strip:
+/// then the focused window's whole APPLICATION is lifted in front of it, and so is any other off-strip
+/// window the server already has in front of the strip — which is where it stays when the flight lands,
+/// because macOS raises only the application gaining focus.
+///
+/// Within a band the window server's own order is kept, since that is right for windows that really do
+/// overlap. A window the server did not report sorts to the back of its own band rather than the back
+/// of everything: a tile drawn too far back inside its band is invisible, while one drawn in the wrong
+/// band is the bug this exists to prevent.
+pub fn stack(windows: &[Stacked], focus: Option<WindowId>) -> Vec<Placement> {
+    let off_strip = focus_is_off_strip(windows, focus);
+    let strip_front = windows
+        .iter()
+        .filter(|w| w.group == StackGroup::Tiled)
+        .filter_map(|w| w.server_order)
+        .min();
+    windows
+        .iter()
+        .map(|w| {
+            let focused_app = focus.is_some_and(|focus| focus.pid == w.window.pid);
+            let band = match w.group {
+                StackGroup::Tiled => Band::Strip,
+                StackGroup::Floating if !off_strip => Band::Behind,
+                StackGroup::Floating => {
+                    let in_front_of_strip =
+                        w.server_order.zip(strip_front).is_some_and(|(order, front)| order < front);
+                    if focused_app || in_front_of_strip {
+                        Band::Lifted
+                    } else {
+                        Band::Behind
+                    }
+                }
+            };
+            let within = if focus == Some(w.window) {
+                0
+            } else if band == Band::Lifted {
+                if focused_app {
+                    order_in(w.server_order, APP_SPAN - 1)
+                } else {
+                    APP_SPAN + order_in(w.server_order, APP_SPAN - 1)
+                }
+            } else {
+                order_in(w.server_order, GROUP_STRIDE - 1)
+            };
+            let depth = band_offset(band, off_strip) * GROUP_STRIDE + within;
+            Placement { band, within, depth }
+        })
+        .collect()
+}
+
+/// A band's zPosition among its siblings in the overlay. With each tile at `-within` inside its
+/// container, `container_z - within` is `-depth`, so containers band the way `stack` does. See "The
 /// overlay engine" in `src/animation/docs/animation-smoothness.md`.
-pub fn container_z(group: StackGroup, focused_group: StackGroup) -> f64 {
-    if group == focused_group {
-        0.0
-    } else {
-        -(GROUP_STRIDE as f64)
+pub fn container_z(band: Band, focus_off_strip: bool) -> f64 {
+    -((band_offset(band, focus_off_strip) * GROUP_STRIDE) as f64)
+}
+
+/// How many strides in front of a band are occupied. The lifted band is only ever occupied while focus
+/// is off the strip, so with focus on the strip the strip leads and nothing is spent on an empty band.
+fn band_offset(band: Band, focus_off_strip: bool) -> usize {
+    match (band, focus_off_strip) {
+        (Band::Lifted, _) => 0,
+        (Band::Strip, false) => 0,
+        (Band::Strip, true) => 1,
+        (Band::Behind, false) => 1,
+        (Band::Behind, true) => 2,
     }
 }
 
-/// Front-to-back position for a tile, 0 being frontmost.
-///
-/// Three bands: the window gaining focus, then the rest of ITS group, then the other group. Within a band
-/// the window server's own order is kept, since that is right for windows that really do overlap.
-///
-/// A window the server did not report sorts to the back of its own band rather than the back of everything:
-/// a tile drawn too far back inside its group is invisible, while one drawn in the wrong group is the bug
-/// this exists to prevent.
-pub fn tile_depth(
-    server_order: Option<usize>,
-    gaining_focus: bool,
-    group: StackGroup,
-    focused_group: StackGroup,
-) -> usize {
-    if gaining_focus {
-        return 0;
-    }
-    // Saturating: the server's order is untrusted input, and `usize::MAX + 1` is a debug-build
-    // abort for a value that only needed to mean "the back of the band".
-    let within = server_order
-        .map(|order| order.saturating_add(1))
-        .unwrap_or(GROUP_STRIDE - 1)
-        .min(GROUP_STRIDE - 1);
-    if group == focused_group {
-        within
-    } else {
-        GROUP_STRIDE + within
-    }
+/// One past the server's order, so 0 stays free for the window gaining focus; `cap` for a window the
+/// server did not report. Saturating: the server's order is untrusted input, and `usize::MAX + 1` is a
+/// debug-build abort for a value that only needed to mean "the back of the band".
+fn order_in(server_order: Option<usize>, cap: usize) -> usize {
+    server_order.map(|order| order.saturating_add(1)).unwrap_or(cap).min(cap)
 }
 
 /// Whether the real window order breaks the rule, given the groups front to back.
@@ -189,92 +272,219 @@ mod tests {
         assert!(!tiled_is_behind(&[]));
     }
 
-    /// Focusing either half of a 50/50 pair has to lift BOTH of them over the floating window, which is the
-    /// whole point: they sit side by side on screen and cannot be on opposite sides of it.
-    #[test]
-    fn focusing_one_strip_window_puts_its_whole_group_in_front() {
-        let focused = tile_depth(Some(0), true, Tiled, Tiled);
-        let partner = tile_depth(Some(3), false, Tiled, Tiled);
-        let settings = tile_depth(Some(1), false, Floating, Tiled);
-        assert!(focused < partner, "the focused window leads its group");
-        assert!(
-            partner < settings,
-            "and its partner still beats the floating window"
-        );
+    fn wid(pid: i32, idx: u32) -> WindowId {
+        WindowId::new(pid, idx)
     }
 
-    /// The converse, which macOS already does: a floating window that takes focus goes in front of the
-    /// entire strip, not just the column it happens to overlap.
+    fn strip(window: WindowId, order: Option<usize>) -> Stacked {
+        Stacked {
+            window,
+            group: Tiled,
+            server_order: order,
+        }
+    }
+
+    fn off(window: WindowId, order: Option<usize>) -> Stacked {
+        Stacked {
+            window,
+            group: Floating,
+            server_order: order,
+        }
+    }
+
+    fn placed(windows: &[Stacked], focus: WindowId) -> Vec<Placement> {
+        stack(windows, Some(focus))
+    }
+
+    /// Focusing either half of a 50/50 pair has to lift BOTH of them over the floating window, which is
+    /// the whole point: they sit side by side on screen and cannot be on opposite sides of it. Even a
+    /// floating window the server had in front of the strip goes behind it.
     #[test]
-    fn focusing_a_floating_window_puts_it_in_front_of_the_whole_strip() {
-        let settings = tile_depth(Some(0), true, Floating, Floating);
-        let nearest_column = tile_depth(Some(1), false, Tiled, Floating);
-        let far_column = tile_depth(Some(9), false, Tiled, Floating);
-        assert!(settings < nearest_column);
-        assert!(
-            nearest_column < far_column,
-            "the strip keeps its own order behind it"
-        );
+    fn focusing_one_strip_window_puts_the_whole_strip_in_front() {
+        let (left, right, settings) = (wid(10, 1), wid(11, 2), wid(12, 3));
+        let windows = [
+            strip(left, Some(2)),
+            strip(right, Some(3)),
+            off(settings, Some(0)),
+        ];
+        let p = placed(&windows, left);
+
+        assert_eq!(p[0].depth, 0, "the focused window leads");
+        assert!(p[0].depth < p[1].depth, "then its partner");
+        assert!(p[1].depth < p[2].depth, "and the floating window behind both");
+        assert_eq!(p[2].band, Band::Behind);
+    }
+
+    /// The reported bug. Switching to a floating 1Password window drew zoom, another off-strip window,
+    /// in front of the strip for the length of the flight — and the screen landed with zoom BEHIND the
+    /// strip, because macOS raises only the application gaining focus.
+    ///
+    /// The server order as the flight started: the strip in front, zoom and 1Password behind it.
+    #[test]
+    fn focusing_one_application_does_not_lift_another() {
+        let (column, onepassword, zoom) = (wid(10, 1), wid(20, 2), wid(30, 3));
+        let windows = [
+            strip(column, Some(0)),
+            off(onepassword, Some(5)),
+            off(zoom, Some(4)),
+        ];
+        let p = placed(&windows, onepassword);
+
+        assert_eq!(p[1].band, Band::Lifted);
+        assert_eq!(p[0].band, Band::Strip);
+        assert_eq!(p[2].band, Band::Behind, "zoom stays behind the strip");
+        assert!(p[1].depth < p[0].depth && p[0].depth < p[2].depth);
+    }
+
+    /// The use case the rule is for: a zoom call is a meeting window and its controls, and focusing
+    /// either one brings both in front of the strip — including a window the server still has behind it.
+    #[test]
+    fn focusing_one_window_lifts_its_whole_application() {
+        let (column, meeting, controls) = (wid(10, 1), wid(30, 2), wid(30, 3));
+        let windows = [
+            strip(column, Some(0)),
+            off(meeting, Some(1)),
+            off(controls, Some(2)),
+        ];
+        let p = placed(&windows, controls);
+
+        assert_eq!(p[1].band, Band::Lifted, "the meeting comes with its controls");
+        assert_eq!(p[2].band, Band::Lifted);
+        assert_eq!(p[2].depth, 0, "the focused one leads its application");
+        assert!(p[1].depth < p[0].depth, "and both are in front of the strip");
+    }
+
+    /// An off-strip window already in front of the strip stays there: macOS raises the application
+    /// gaining focus over it, and does not push it behind the strip. It lands between the two.
+    #[test]
+    fn a_window_already_in_front_of_the_strip_stays_in_front_of_it() {
+        let (column, zoom, onepassword) = (wid(10, 1), wid(30, 2), wid(20, 3));
+        let windows = [
+            off(zoom, Some(0)),
+            strip(column, Some(1)),
+            off(onepassword, Some(4)),
+        ];
+        let p = placed(&windows, onepassword);
+
+        assert_eq!(p[0].band, Band::Lifted);
+        assert!(p[2].depth < p[0].depth, "1Password in front of zoom");
+        assert!(p[0].depth < p[1].depth, "and zoom still in front of the strip");
+    }
+
+    /// The server has not raised the application yet when the flight starts, so another application's
+    /// window can sit between two of its windows. The application gaining focus leads its band whatever
+    /// the server's order says, because that is the order it lands in.
+    #[test]
+    fn the_focused_application_leads_the_lifted_band() {
+        let (column, zoom, meeting, controls) = (wid(10, 1), wid(30, 2), wid(40, 3), wid(40, 4));
+        let windows = [
+            off(zoom, Some(0)),
+            strip(column, Some(1)),
+            off(meeting, Some(2)),
+            off(controls, Some(7)),
+        ];
+        let p = placed(&windows, meeting);
+
+        assert!(p[3].depth < p[0].depth, "its controls in front of zoom");
     }
 
     #[test]
-    fn within_a_group_the_window_servers_order_is_kept() {
-        assert!(
-            tile_depth(Some(0), false, Tiled, Tiled) < tile_depth(Some(1), false, Tiled, Tiled)
-        );
-        assert!(
-            tile_depth(Some(1), false, Tiled, Tiled) < tile_depth(Some(17), false, Tiled, Tiled)
-        );
-        assert!(
-            tile_depth(Some(0), false, Floating, Tiled)
-                < tile_depth(Some(1), false, Floating, Tiled)
-        );
+    fn within_a_band_the_window_servers_order_is_kept() {
+        let (focus, a, b, c) = (wid(10, 1), wid(11, 2), wid(12, 3), wid(13, 4));
+        let windows = [
+            strip(focus, Some(0)),
+            strip(a, Some(1)),
+            strip(b, Some(17)),
+            off(c, Some(0)),
+        ];
+        let p = placed(&windows, focus);
+        assert!(p[1].depth < p[2].depth);
     }
 
-    /// A window the server did not report must not fall out of its group: behind its own kind, still in
-    /// front of the group that is meant to be behind.
+    /// A window the server did not report must not fall out of its band: behind its own kind, still in
+    /// front of the band that is meant to be behind.
     #[test]
-    fn an_unreported_window_stays_inside_its_own_group() {
-        let unknown_strip = tile_depth(None, false, Tiled, Tiled);
-        let known_strip = tile_depth(Some(50), false, Tiled, Tiled);
-        let nearest_floating = tile_depth(Some(0), false, Floating, Tiled);
+    fn an_unreported_window_stays_inside_its_own_band() {
+        let (focus, known, unknown, floating) = (wid(10, 1), wid(11, 2), wid(12, 3), wid(13, 4));
+        let windows = [
+            strip(focus, Some(0)),
+            strip(known, Some(50)),
+            strip(unknown, None),
+            off(floating, Some(0)),
+        ];
+        let p = placed(&windows, focus);
         assert!(
-            known_strip < unknown_strip,
+            p[1].depth < p[2].depth,
             "behind the windows the server did report"
         );
+        assert!(p[2].depth < p[3].depth, "but still in front of the band behind");
+    }
+
+    /// The stride has to outrun any plausible window count, or a deep window in one band would wrap past
+    /// a shallow one in the next and the banding would silently invert.
+    #[test]
+    fn no_window_count_can_make_the_bands_overlap() {
+        let (column, deep, onepassword, zoom) = (wid(10, 1), wid(11, 2), wid(20, 3), wid(30, 4));
+        let windows = [
+            strip(column, Some(0)),
+            strip(deep, Some(usize::MAX)),
+            off(onepassword, Some(usize::MAX)),
+            off(zoom, Some(1)),
+        ];
+        let p = placed(&windows, onepassword);
         assert!(
-            unknown_strip < nearest_floating,
-            "but still in front of the other group"
+            p[1].depth < p[3].depth,
+            "the deepest strip window beats the band behind"
         );
+        for placement in &p {
+            assert!(placement.depth <= MAX_TILE_DEPTH);
+        }
     }
 
-    /// The stride has to outrun any plausible window count, or a deep window in the front group would wrap
-    /// past a shallow one in the back group and the grouping would silently invert.
+    /// `container_z - within` is `-depth` for every band and either focus, which is the invariant the
+    /// overlay relies on to put a tile inside its container.
     #[test]
-    fn no_window_count_can_make_the_groups_overlap() {
-        let deepest_in_front = tile_depth(Some(usize::MAX), false, Tiled, Tiled);
-        let shallowest_behind = tile_depth(Some(0), false, Floating, Tiled);
-        assert!(deepest_in_front < shallowest_behind);
+    fn containers_band_exactly_as_windows_do() {
+        let (column, onepassword, zoom, settings) =
+            (wid(10, 1), wid(20, 2), wid(30, 3), wid(40, 4));
+        let windows = [
+            off(settings, Some(0)),
+            strip(column, Some(1)),
+            off(onepassword, Some(5)),
+            off(zoom, Some(4)),
+        ];
+        for focus in [column, onepassword] {
+            let off_strip = focus_is_off_strip(&windows, Some(focus));
+            for p in placed(&windows, focus) {
+                assert_eq!(
+                    container_z(p.band, off_strip) - p.within as f64,
+                    -(p.depth as f64),
+                    "{p:?} with {focus:?} focused"
+                );
+            }
+        }
     }
 
-    /// A container sits at zero with its group focused and one stride behind otherwise, so the
-    /// overlay's containers band exactly as `tile_depth` bands tiles.
+    /// With focus on the strip nothing is lifted, so the strip leads at zero and nothing is spent on an
+    /// empty band in front of it.
     #[test]
-    fn a_container_is_at_zero_when_its_group_is_focused_and_a_stride_behind_otherwise() {
-        assert_eq!(container_z(Tiled, Tiled), 0.0);
-        assert_eq!(container_z(Floating, Floating), 0.0);
-        assert_eq!(container_z(Floating, Tiled), -(GROUP_STRIDE as f64));
-        assert_eq!(container_z(Tiled, Floating), -(GROUP_STRIDE as f64));
-        // The band less the within-band depth is the tile's negated depth, for both groups.
-        let within = tile_depth(Some(3), false, Floating, Floating);
-        assert_eq!(
-            container_z(Floating, Tiled) - within as f64,
-            -(tile_depth(Some(3), false, Floating, Tiled) as f64)
-        );
-        assert_eq!(
-            container_z(Tiled, Tiled) - within as f64,
-            -(tile_depth(Some(3), false, Tiled, Tiled) as f64)
-        );
+    fn with_focus_on_the_strip_the_strip_leads_at_zero() {
+        assert_eq!(container_z(Band::Strip, false), 0.0);
+        assert_eq!(container_z(Band::Behind, false), -(GROUP_STRIDE as f64));
+        assert_eq!(container_z(Band::Lifted, true), 0.0);
+        assert_eq!(container_z(Band::Strip, true), -(GROUP_STRIDE as f64));
+        assert_eq!(container_z(Band::Behind, true), -(2.0 * GROUP_STRIDE as f64));
+    }
+
+    /// A focus the flight does not draw lifts nothing: there is no application to lift.
+    #[test]
+    fn a_focus_outside_the_flight_lifts_nothing() {
+        let (column, zoom) = (wid(10, 1), wid(30, 2));
+        let windows = [strip(column, Some(1)), off(zoom, Some(0))];
+        let p = stack(&windows, Some(wid(99, 9)));
+        assert_eq!(p[1].band, Band::Behind);
+        assert!(!focus_is_off_strip(&windows, Some(wid(99, 9))));
+        assert!(!focus_is_off_strip(&windows, None));
     }
 
     /// A floating window in FRONT of the whole strip is the wanted state, not a broken order.

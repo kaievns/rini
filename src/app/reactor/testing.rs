@@ -181,7 +181,7 @@ impl Reactor {
     }
 
     /// Drive a switcher session signal the way the input thread does, returning the outcome.
-    pub fn dispatch_test_switch(
+    pub(crate) fn dispatch_test_switch(
         &mut self,
         signal: crate::input::domain::switch_session::Signal,
     ) -> EventOutcome {

@@ -291,11 +291,16 @@ impl From<ReflowPlan> for FlightPlan {
 }
 
 /// Where every container and tile sits front to back. Pure output of `band_plan`: the floating
-/// container in front or behind as a whole, strip containers in `group_order`, each tile at its
-/// within-band depth. `container_z - within` is `-tile_depth` (`model/z_group.rs`).
+/// windows split between the band in front of the strip and the band behind it, strip containers in
+/// `group_order`, each tile at its within-band depth. `container_z - within` is `-depth`
+/// (`motion/z_group.rs`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Banding {
-    pub floating_in_front: bool,
+    /// Whether the window gaining focus is off the strip, which moves the strip back a band.
+    pub focus_off_strip: bool,
+    /// The floating windows drawn in front of the strip: the application gaining focus, and any the
+    /// server already has there. Every other floating window is drawn behind it.
+    pub lifted: Vec<WindowId>,
     /// Depth inside its container per tile; a companion carries its window's.
     pub within: HashMap<WindowId, usize>,
     /// Strip containers front to back: the one holding focus first, then by shallowest member.

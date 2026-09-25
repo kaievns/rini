@@ -12,7 +12,7 @@ flights of the same thing.
 | `domain/motion/plan.rs` | `FlightPlan`, rigid groups, and `merge_plans` for a pass arriving mid-flight |
 | `domain/motion/travel.rs`, `surface.rs` | How far each tile goes, and what a pinned one does |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, the one curve |
-| `domain/motion/z_group.rs` | `tile_depth`, `container_z`: the z-bands |
+| `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/strip_stack.rs` | The stacked-workspace geometry a switch moves through |
 | `domain/motion/fit.rs` | Whether a captured picture still fits the tile it is for |
 | `domain/timing.rs`, `flight.rs`, `admission.rs` | When work happens, what a flight is and when it may capture, and how a mid-flight request is admitted |

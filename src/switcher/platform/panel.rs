@@ -19,9 +19,10 @@ use rustc_hash::FxHashMap as HashMap;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameVibrantDark, NSBackingStoreType, NSColor, NSPanel,
-    NSRunningApplication, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameVibrantDark, NSBackingStoreType,
+    NSColor, NSPanel, NSRunningApplication, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
+    NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
@@ -506,7 +507,11 @@ impl SwitcherPanel {
     /// next — which they do, because the list is ordered by focus — two adjacent tiles cross-fade into
     /// each other's pictures, and the strip looks like it is shuffling itself after it has already
     /// appeared. Reported as exactly that.
-    fn draw_contents(&self, rows: &[Row], badges: &[Option<Retained<objc2_core_graphics::CGImage>>]) {
+    fn draw_contents(
+        &self,
+        rows: &[Row],
+        badges: &[Option<Retained<objc2_core_graphics::CGImage>>],
+    ) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for (index, row) in rows.iter().enumerate() {
@@ -516,7 +521,9 @@ impl SwitcherPanel {
                     Some(snapshot) => {
                         // Scaled to fit inside the tile rather than cropped: a cropped thumbnail of a
                         // browser is a rectangle of text.
-                        tile.setContentsGravity(unsafe { objc2_quartz_core::kCAGravityResizeAspect });
+                        tile.setContentsGravity(unsafe {
+                            objc2_quartz_core::kCAGravityResizeAspect
+                        });
                         set_layer_contents(tile, snapshot);
                     }
                     // Left as the placeholder slab. A row with no picture still reads as a row.
@@ -555,7 +562,8 @@ impl SwitcherPanel {
         CATransaction::setDisableActions(movement == Move::Snap);
         if movement == Move::Glide {
             CATransaction::setAnimationDuration(GLIDE_SECONDS);
-            let ease = CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseOut });
+            let ease =
+                CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseOut });
             CATransaction::setAnimationTimingFunction(Some(&ease));
         }
         for (index, rect) in strip.rows.iter().enumerate() {

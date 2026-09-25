@@ -812,7 +812,7 @@ System Settings, just used — the window sliding in was drawn UNDERNEATH it, an
 stack corrected itself the instant the overlay lifted. Photographed mid-animation: the
 Settings panel sits over the arriving Chrome window, and 350ms later it is behind it.
 
-`tile_depth` puts the window that is gaining focus at the front and shifts everything
+`z_group::stack` puts the window that is gaining focus at the front and shifts everything
 else back one, so the stack the overlay draws is the stack the real windows will be in
 when it hands over. The focus target comes from `LayoutEngine::focused_window()`, which
 is the layout's own answer to where focus is going, rather than the window server's
@@ -834,16 +834,17 @@ after clicking the LEFT terminal (idx 90):
 ```
 
 Settings spans x = 383 to 1106 and idx 91 spans 865 to 1724, so the overlap is real
-and visible. The rule is in `model::z_group`: focusing any window on the strip puts
+and visible. The rule is in `motion::z_group`: focusing any window on the strip puts
 the whole strip in front of everything off it, and focusing something off the strip
-puts that in front of the whole strip. Within a group the window server's own order
-is kept, since windows in one group really can overlap.
+puts ITS APPLICATION in front of the whole strip — not every off-strip window, which
+is what a two-value group once did. Within a band the window server's own order is
+kept, since windows in one band really can overlap.
 
 It decides two separate things:
 
-- **Tile order.** `tile_depth` puts the focus target first, then the rest of its
-  group, then the other group, with a stride between groups wide enough that no
-  window count can make them interleave. Without it, the animation drew the floating
+- **Tile order.** `stack` puts the focus target first and draws three bands —
+  lifted off-strip windows, the strip, the off-strip windows behind it — with a
+  stride between bands wide enough that no window count can make them interleave. Without it, the animation drew the floating
   window over the columns sliding past underneath.
 - **Real order.** `regroup_tiled` returns the strip windows back to front when a
   floating window is INSIDE the strip — something on the strip in front of it and
@@ -933,7 +934,7 @@ show through and left the backdrop showing instead.
 
 A pinned tile therefore keeps the z-position it gets from the window server's real
 front-to-back order like every other tile. That survives the move to containers:
-floating tiles live in their own container, but `tile_depth` still orders tiles by
+floating tiles live in their own containers, but `stack` still orders tiles by
 the window server's order WITHIN a band, which is what this finding needs.
 
 Verified by pixel, on the left edge of a floating window during a scroll, before the

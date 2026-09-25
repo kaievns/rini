@@ -149,10 +149,7 @@ pub fn lay_out(
     let widest = (screen.size.width * metrics.max_screen_fraction) - metrics.padding * 2.0;
     let visible = strip.min(widest.max(metrics.max_tile_width));
 
-    let panel_size = CGSize::new(
-        visible + metrics.padding * 2.0,
-        metrics.panel_height(),
-    );
+    let panel_size = CGSize::new(visible + metrics.padding * 2.0, metrics.panel_height());
     let panel = CGRect::new(
         CGPoint::new(
             screen.origin.x + ((screen.size.width - panel_size.width) / 2.0).round(),

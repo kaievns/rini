@@ -142,14 +142,33 @@ pop at lift. Cross-container z is a tie rule, not a guarantee: strip
 windows do not overlap at rest, so overlap between two moving groups is
 transient, and the group holding focus is drawn first.
 
-Depth is banded by z-group (`tile_depth` in `animation/domain/motion/z_group.rs`) at the
-container level (`band_plan`, `rebank`). The floating container sits at
-`container_z`: zero with a floating focus, one `GROUP_STRIDE` behind with a
-strip focus (or no focus the flight draws); strip containers the other way
-round, a quarter step apart in `Banding.group_order`. Each tile sits at its
-within-band depth inside its container (`Banding.within`; a companion a
-quarter step in front of its window, a shadow half a step behind its
-picture). `container_z - within` is `-tile_depth`, so the drawn order is
+Depth is banded (`stack` in `animation/domain/motion/z_group.rs`) at the
+container level (`band_plan`, `rebank`), in three bands with the strip always
+the middle one: `Lifted` in front of it, `Behind` behind it. Only one set of
+off-strip windows comes forward with a focus, and that set is the focused
+window's APPLICATION — a zoom call is a meeting window and its controls — plus
+any off-strip window the server already has in front of the strip, which is
+where macOS leaves it. Every other off-strip window stays behind. With focus on
+the strip nothing is lifted, so the strip leads at zero and the floating
+container is one `GROUP_STRIDE` behind; with focus off it, the strip is one
+stride back and the floating container two.
+
+The floating container therefore has a twin (`TileOverlay::lifted`) in front of
+the strip, and `rebank` moves each floating tile into whichever of the two its
+band names. A twin rather than a second plan group: every floating window rides
+one translation, so the twin is created, reset, moved, animated and dropped with
+the floating container (`layers_of`) and a tile moved between them lands where
+it was. It has to be a separate layer at all because tiles are children of their
+container and a container's `zPosition` alone decides its children's order
+against every other container — one floating container cannot put one
+application in front of the strip and another behind it. Found drawing zoom in
+front of the strip for the length of a switch to 1Password and dropping it
+behind on landing ("Which windows come forward together", `specs/animation.md`).
+
+Strip containers sit a quarter step apart in `Banding.group_order`. Each tile
+sits at its within-band depth inside its container (`Banding.within`; a
+companion a quarter step in front of its window, a shadow half a step behind its
+picture). `container_z - within` is `-depth`, so the drawn order is
 what `restack` computes for `tile.depth` and what the reactor's regroup
 (`regroup_tiled`, "Real order" in `capture-overlay-research.md`) puts on the
 real screen at lift. Core Animation sorts `zPosition` among siblings only,
@@ -275,8 +294,8 @@ Mechanics worth remembering:
   `NSGeometry` + `objc2-core-foundation` features of `objc2-foundation`.
 
 Found on the first live run of the per-tile strip path: **floating tiles
-were drawn behind the desktop backdrop.** The back group sits one
-`GROUP_STRIDE` deep (about 1<<20) and the backdrop sat at -10000, so the
+were drawn behind the desktop backdrop.** The band behind the strip sits
+strides deep (1<<20 each) and the backdrop sat at -10000, so the
 floating Settings window's tile was in every composition and visible in
 none. `BACKDROP_Z` is derived from `z_group::MAX_TILE_DEPTH`, pinned by
 `every_possible_tile_draws_between_the_backdrop_and_the_bar`; the containers
