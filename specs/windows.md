@@ -54,19 +54,34 @@ thread.
 
 ## Windows rini has parked
 
-- A window rini has moved off screen to hide it MUST stay in rini's model for as long as it exists. A
-  parked window that rini forgets is stranded: it is off screen, no strip holds it, no workspace can
-  bring it back, and the switcher cannot offer it because it has no workspace assignment.
+- A window rini has moved off screen to hide it MUST stay reachable across a restart. A parked window
+  rini drops is stranded: it is off screen, no strip holds it, no workspace brings it back, and the
+  switcher cannot offer it because it has no workspace assignment.
+- Startup MUST NOT silently discard a persisted window it cannot match. The saved layout is the only
+  record of where a parked window was, so discarding the record while the window is still off screen
+  makes the window unrecoverable by any means rini offers.
 
 > **Reported 2026-09-25.** "When I switch to the 1password window it doesn't go up, I can't see it
-> behind the kirocrew window." Diagnosed, NOT fixed. The observation: `rini-cli query windows` listed 10
-> windows, and the 1Password and Kiro Crew windows were not among them — while `CGWindowListCopyWindowInfo`
-> showed both alive at (1727, 1085) and (1727, 1089), which is rini's own off-screen park corner. So both
-> had been parked by rini and then dropped from its model, leaving them permanently invisible and
-> unreachable. rini did see both APPLICATIONS, so this is window registration rather than Accessibility
-> being refused.
+> behind the kirocrew window... the popup doesn't show either." Diagnosed, NOT fixed.
 >
-> The suspected path is `src/app/reactor/events/space.rs`, where a window-server disappearance with
-> `ordered_in == Some(false)` is promoted to an immediate `WindowDestroyed`. A window parked off the
-> display is a plausible trigger for exactly that report. Not confirmed: the running build logs at WARN
-> and the decision is at DEBUG, so reproducing it needs the log level raised first.
+> What was measured, 60 seconds after a `service restart` with 26 windows alive on the display:
+>
+> | Source | Windows |
+> |---|---|
+> | `CGWindowListCopyWindowInfo` | 26 |
+> | `~/.rini/layout.ron` | 202 entries |
+> | `rini-cli query windows` | 2 |
+>
+> The two rini held were the only two NOT parked. Every window at the off-screen park corner —
+> (1727, 1085) on this display — was absent from the model, including the 1Password and Kiro Crew
+> windows named in the report. rini saw both APPLICATIONS, so this is window registration and not
+> Accessibility being refused.
+>
+> The mechanism is named by rini's own log: `workspaces::engine`, "Ignored unmatched persisted windows
+> after application discovery". Startup matches persisted windows against what it discovers and drops
+> what does not match, and a window parked off the display is exactly what fails to be discovered. So
+> the count of 10 seen earlier in the same session was an accumulation over a long uptime, not the
+> result of startup adoption.
+>
+> This makes the switcher look broken after every restart for a reason that is not in the switcher: it
+> can only offer what rini knows, and after a restart rini knows the visible workspace.
