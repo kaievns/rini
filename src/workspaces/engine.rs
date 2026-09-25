@@ -2191,6 +2191,11 @@ impl LayoutEngine {
                     bundle_id.as_deref(),
                     all_screens,
                 )
+                    // And enough of it left on screen to grab, which the test above does NOT catch:
+                    // that one needs a sliver in BOTH axes, and a park shows nearly its full height.
+                    && crate::workspaces::HiddenWindowPlacement::floating_frame_is_usable(
+                        *screen, *rect,
+                    )
             });
             let rect = visible.unwrap_or_else(|| center_rect(window_size(wid)));
             positions.insert(wid, rect);

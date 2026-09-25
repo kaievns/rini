@@ -159,6 +159,9 @@ switcher answers "every window I have, wherever it is".
   line's worth empty.
 - The ember MUST appear once. Its budget is one or two appearances per screen, and the selected row is
   the one thing here that earns it.
+- The selection's ring MUST be drawn OVER the thumbnails. Under them it is clipped away on every side
+  except the margin, which reads as a glow rather than an outline. The `--ember-soft` wash stays under,
+  because a fill drawn over a tile hides the picture it is marking.
 - The selection's ring MUST travel to the window it is moving to, and a list long enough to scroll MUST
   scroll under it. A ring that teleports gives no cue about which direction the selection went, and a
   strip that jumps loses the sense that the selection is moving through a list rather than the list

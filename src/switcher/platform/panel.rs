@@ -177,7 +177,11 @@ pub struct SwitcherPanel {
     captions: Vec<Retained<CATextLayer>>,
     /// One badge per row, in front of its tile.
     icons: Vec<Retained<CALayer>>,
+    /// The `--ember-soft` wash, UNDER the tiles: it tints a row whose picture has not arrived yet.
     highlight: Retained<CALayer>,
+    /// The ember ring, OVER the tiles. Its own layer because the wash cannot follow it there — a fill
+    /// drawn over a tile would hide the picture it is marking.
+    ring: Retained<CALayer>,
     metrics: Metrics,
     visible: bool,
     scale: f64,
@@ -279,9 +283,20 @@ impl SwitcherPanel {
         highlight.setZPosition(0.0);
         highlight.setHidden(true);
         highlight.setBackgroundColor(Some(&token(EMBER_SOFT, 1.0)));
-        highlight.setBorderWidth(FOCUS_RING);
-        highlight.setBorderColor(Some(&token(EMBER, 1.0)));
         root.addSublayer(&highlight);
+
+        // Over everything: the tiles are at 1.0, the badges at 1.5, the captions at 2.0. A ring drawn
+        // under the tiles is clipped away by them on every side except where the 4pt margin shows, which
+        // reads as a glow rather than as an outline.
+        let ring = CALayer::layer();
+        ring.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        ring.setContentsScale(scale);
+        ring.setCornerRadius(TILE_CORNER + 3.0);
+        ring.setZPosition(3.0);
+        ring.setHidden(true);
+        ring.setBorderWidth(FOCUS_RING);
+        ring.setBorderColor(Some(&token(EMBER, 1.0)));
+        root.addSublayer(&ring);
 
         Some(Self {
             window,
@@ -291,6 +306,7 @@ impl SwitcherPanel {
             captions: Vec::new(),
             icons: Vec::new(),
             highlight,
+            ring,
             metrics: Metrics::default(),
             visible: false,
             scale,
@@ -582,13 +598,19 @@ impl SwitcherPanel {
     fn place_highlight(&self, strip: &Strip, selected: usize) {
         match strip.rows.get(selected) {
             Some(rect) => {
-                self.highlight.setHidden(false);
-                self.highlight.setFrame(CGRect::new(
+                let frame = CGRect::new(
                     CGPoint::new(rect.origin.x - 4.0, rect.origin.y - 4.0),
                     CGSize::new(rect.size.width + 8.0, self.metrics.tile_height + 8.0),
-                ));
+                );
+                self.highlight.setHidden(false);
+                self.highlight.setFrame(frame);
+                self.ring.setHidden(false);
+                self.ring.setFrame(frame);
             }
-            None => self.highlight.setHidden(true),
+            None => {
+                self.highlight.setHidden(true);
+                self.ring.setHidden(true);
+            }
         }
     }
 }

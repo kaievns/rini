@@ -67,6 +67,32 @@ impl HiddenWindowPlacement {
         rini_geometry::park_entry_frame(park, destination, display)
     }
 
+    /// The least of a floating window that must show on each axis for its frame to be worth keeping.
+    ///
+    /// About a title bar's grab area. Not a guess at what looks nice: below this there is nothing left
+    /// to click, so the user cannot drag the window back either.
+    const FLOATING_USABLE_PX: f64 = 64.0;
+
+    /// Whether a remembered floating frame still puts enough of the window on screen to use it.
+    ///
+    /// EITHER axis is enough to condemn a frame, and that is the whole reason this is not one of the two
+    /// predicates above. Both of those ask "is this a parked TILED column", and both require a sliver in
+    /// BOTH axes, because a column peeking in at the edge of the strip shows its full height and is
+    /// legitimately on screen. A park always shows most of its height, so a floating window parked in a
+    /// corner passes both of them.
+    ///
+    /// Which is how three floating windows ended up stranded. Their measured frames showed 1pt of width
+    /// against 28pt, 44pt and 52pt of height, so `is_hidden` (3pt) and `is_off_screen` (40pt) both
+    /// called them real positions — and the floating path writes the frame back as the window's own
+    /// position every time the workspace is arranged, so reading it as real once is permanent.
+    pub fn floating_frame_is_usable(screen: CGRect, window: CGRect) -> bool {
+        let visible_width =
+            (window.max().x.min(screen.max().x) - window.origin.x.max(screen.origin.x)).max(0.0);
+        let visible_height =
+            (window.max().y.min(screen.max().y) - window.origin.y.max(screen.origin.y)).max(0.0);
+        visible_width >= Self::FLOATING_USABLE_PX && visible_height >= Self::FLOATING_USABLE_PX
+    }
+
     pub fn is_hidden(screen: CGRect, window: CGRect, other_screens: &[CGRect]) -> bool {
         [HideCorner::BottomLeft, HideCorner::BottomRight]
             .into_iter()
@@ -92,6 +118,61 @@ mod tests {
 
     fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
+    }
+
+    /// The measured frames of the three floating windows found stranded, each showing 1pt of width.
+    #[test]
+    fn a_floating_frame_parked_in_a_corner_is_not_usable() {
+        let screen = rect(0.0, 32.0, 1728.0, 1085.0);
+        let parked = [
+            rect(1727.0, 1089.0, 900.0, 1079.0),
+            rect(1727.0, 1065.0, 723.0, 884.0),
+            rect(1727.0, 1073.0, 1280.0, 960.0),
+        ];
+
+        for frame in parked {
+            assert!(
+                !HiddenWindowPlacement::floating_frame_is_usable(screen, frame),
+                "{frame:?} leaves nothing to grab"
+            );
+        }
+    }
+
+    /// Why this is not one of the other two predicates: both of them call these same frames real
+    /// positions, and for tiled columns they are right to. Remove the one-axis rule above and this test
+    /// is what fails.
+    #[test]
+    fn the_two_axis_tests_both_accept_a_parked_float() {
+        let screen = rect(0.0, 32.0, 1728.0, 1085.0);
+        let parked = rect(1727.0, 1065.0, 723.0, 884.0);
+
+        assert!(!HiddenWindowPlacement::is_hidden(screen, parked, &[]));
+        assert!(!HiddenWindowPlacement::is_off_screen(screen, parked));
+        assert!(!HiddenWindowPlacement::floating_frame_is_usable(screen, parked));
+    }
+
+    /// A floating window the user dragged half off an edge is theirs to keep.
+    #[test]
+    fn a_floating_frame_hanging_off_an_edge_is_still_usable() {
+        let screen = rect(0.0, 32.0, 1728.0, 1085.0);
+
+        assert!(HiddenWindowPlacement::floating_frame_is_usable(
+            screen,
+            rect(1400.0, 200.0, 900.0, 600.0)
+        ));
+        assert!(HiddenWindowPlacement::floating_frame_is_usable(
+            screen,
+            rect(-400.0, 200.0, 900.0, 600.0)
+        ));
+    }
+
+    #[test]
+    fn a_floating_frame_entirely_off_the_display_is_not_usable() {
+        let screen = rect(0.0, 32.0, 1728.0, 1085.0);
+        assert!(!HiddenWindowPlacement::floating_frame_is_usable(
+            screen,
+            rect(4000.0, 200.0, 900.0, 600.0)
+        ));
     }
 
     /// A strip coordinate thousands of points along the strip has nothing on screen, which is the frame

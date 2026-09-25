@@ -120,6 +120,11 @@ bottom-heavy however evenly the arithmetic is written. Reported twice before thi
 width comes from the window's own proportions — which is most of what tells two windows of the same
 application apart. Clamped at both ends, because the proportions in a real strip are extreme.
 
+**Two layers for the selection, not one.** The `--ember-soft` wash sits UNDER the tiles, where it tints
+a row whose picture has not arrived; the ring sits OVER them. They cannot be one layer: under the tiles
+the ring is clipped away on every side except the 4pt margin and reads as a glow, and over them the wash
+would hide the picture it is marking.
+
 **The ring travels and the strip scrolls under it.** Two transactions per draw, not one: contents with
 implicit actions off, then geometry with them on. Contents can never animate — that is the cross-fade
 shuffle above — and geometry animates only when the popup is already up with the same rows, because
