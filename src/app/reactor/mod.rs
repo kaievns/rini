@@ -2949,6 +2949,7 @@ impl Reactor {
             .iter()
             .map(|candidate| crate::switcher::platform::panel::Row {
                 window: candidate.window,
+                size: candidate.size,
                 title: candidate.title.clone(),
                 app_name: candidate.app_name.clone(),
                 is_minimized: candidate.is_minimized,
@@ -3045,6 +3046,7 @@ impl Reactor {
                 window,
                 space,
                 workspace_index,
+                size: state.frame_monotonic.size,
                 title: state.info.title.clone(),
                 app_name,
                 is_minimized: state.info.is_minimized,

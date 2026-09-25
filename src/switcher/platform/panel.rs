@@ -38,14 +38,45 @@ use crate::windows::platform::app::NSRunningApplicationExt;
 /// offering.
 const PANEL_LEVEL: isize = 21;
 
-const CORNER: f64 = 14.0;
-const TILE_CORNER: f64 = 6.0;
+// Colours and radii from the Okibi design system, dark theme. Named tokens rather than chosen values:
+// "Nothing in a UI is a one-off colour; every surface and tone is a step."
+//
+// The panel is a floating surface, which the elevation law puts on the content plane with a hairline:
+// "Bars/sidebars on --n1, content on --n2", and "Shadows are for floating things: windows, popovers".
+
+/// `--n2`, the content plane. The panel is the working surface, and the law is that the working
+/// surface is the brightest plane.
+const N2: (f64, f64, f64) = (0.106, 0.118, 0.125);
+/// `--n3`, raised. A tile with no picture yet is a surface sitting on the panel.
+const N3: (f64, f64, f64) = (0.133, 0.145, 0.153);
+/// `--line`, the hairline. "Borders are soft visible hairlines — never bright, never
+/// darker-than-panel voids."
+const LINE: (f64, f64, f64) = (0.184, 0.196, 0.208);
+/// `--n11`, primary text.
+const N11: (f64, f64, f64) = (0.882, 0.890, 0.898);
+/// `--ember`. Owns selection and active indicators, on a budget of one or two appearances per screen —
+/// here it is exactly one: the selected row.
+const EMBER: (f64, f64, f64) = (1.0, 0.486, 0.314);
+/// `--ember-soft`, the specified fill for an active row.
+const EMBER_SOFT: (f64, f64, f64) = (0.247, 0.176, 0.157);
+
+/// `--radius-card`, 7px. "Corners stay crisp; only pills/circles fully round" — so the panel gets the
+/// card radius rather than something rounder.
+const CORNER: f64 = 7.0;
+/// `--radius-control`, 5px, for the smaller surfaces inside it.
+const TILE_CORNER: f64 = 5.0;
+/// The 2px inset bar an active row carries, per the elevation law.
+const ACTIVE_BAR: f64 = 2.0;
+/// The panel's fill opacity. The spec has no token for an overlay's translucency, so this is the one
+/// value here that is a judgement rather than a token.
+const PANEL_ALPHA: f64 = 0.78;
+
 /// The app icon badged into a tile's corner. Small enough to read as a cue rather than as content,
 /// large enough to tell two apps apart at a glance.
-const ICON: f64 = 30.0;
+const ICON: f64 = 38.0;
 /// How far the badge sits inside the tile's corner, so it reads as on top of the picture rather than
 /// as part of it.
-const ICON_INSET: f64 = 6.0;
+const ICON_INSET: f64 = 7.0;
 
 define_class!(
     /// Top-left origin, so the layer tree agrees with the geometry in `domain::layout`.
@@ -62,10 +93,17 @@ define_class!(
     }
 );
 
+/// A token as a `CGColor`, at `alpha`.
+fn token(rgb: (f64, f64, f64), alpha: f64) -> Retained<objc2_core_graphics::CGColor> {
+    NSColor::colorWithSRGBRed_green_blue_alpha(rgb.0, rgb.1, rgb.2, alpha).CGColor()
+}
+
 /// One row to draw.
 #[derive(Clone)]
 pub struct Row {
     pub window: rini_core::ids::WindowId,
+    /// The window's size on screen, which decides how wide its tile is.
+    pub size: CGSize,
     pub title: String,
     pub app_name: String,
     pub is_minimized: bool,
@@ -89,6 +127,7 @@ pub struct SwitcherPanel {
     /// One badge per row, in front of its tile.
     icons: Vec<Retained<CALayer>>,
     highlight: Retained<CALayer>,
+    active_bar: Retained<CALayer>,
     metrics: Metrics,
     visible: bool,
     scale: f64,
@@ -147,9 +186,9 @@ impl SwitcherPanel {
         root.setContentsScale(scale);
         root.setCornerRadius(CORNER);
         root.setMasksToBounds(true);
-        root.setBackgroundColor(Some(
-            &NSColor::colorWithSRGBRed_green_blue_alpha(0.11, 0.11, 0.13, 0.78).CGColor(),
-        ));
+        root.setBackgroundColor(Some(&token(N2, PANEL_ALPHA)));
+        root.setBorderWidth(1.0);
+        root.setBorderColor(Some(&token(LINE, 1.0)));
 
         // Under the tiles, so a tile's picture is never hidden by its own highlight.
         let highlight = CALayer::layer();
@@ -158,10 +197,18 @@ impl SwitcherPanel {
         highlight.setCornerRadius(TILE_CORNER + 3.0);
         highlight.setZPosition(0.0);
         highlight.setHidden(true);
-        highlight.setBackgroundColor(Some(
-            &NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, 0.22).CGColor(),
-        ));
+        highlight.setBackgroundColor(Some(&token(EMBER_SOFT, 1.0)));
         root.addSublayer(&highlight);
+
+        // The 2px inset ember bar the elevation law pairs with an ember-soft fill. A separate layer so
+        // it can sit at the selection's left edge whatever width that row is.
+        let active_bar = CALayer::layer();
+        active_bar.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        active_bar.setContentsScale(scale);
+        active_bar.setZPosition(2.5);
+        active_bar.setHidden(true);
+        active_bar.setBackgroundColor(Some(&token(EMBER, 1.0)));
+        root.addSublayer(&active_bar);
 
         Some(Self {
             window,
@@ -170,6 +217,7 @@ impl SwitcherPanel {
             captions: Vec::new(),
             icons: Vec::new(),
             highlight,
+            active_bar,
             metrics: Metrics::default(),
             visible: false,
             scale,
@@ -183,7 +231,8 @@ impl SwitcherPanel {
     ///
     /// `screen` is the display to centre on, in CoreGraphics coordinates.
     pub fn show(&mut self, rows: &[Row], selected: usize, screen: CGRect) {
-        let Some(strip) = lay_out(rows.len(), selected, screen, self.metrics) else {
+        let sizes: Vec<CGSize> = rows.iter().map(|row| row.size).collect();
+        let Some(strip) = lay_out(&sizes, selected, screen, self.metrics) else {
             self.hide();
             return;
         };
@@ -282,11 +331,8 @@ impl SwitcherPanel {
             tile.setCornerRadius(TILE_CORNER);
             tile.setMasksToBounds(true);
             tile.setZPosition(1.0);
-            // A placeholder until the snapshot cache is read: a flat slab, so a row with no picture
-            // still reads as a row rather than as a hole.
-            tile.setBackgroundColor(Some(
-                &NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 1.0, 1.0, 0.08).CGColor(),
-            ));
+            // The raised plane, so a row with no picture yet reads as a surface rather than as a hole.
+            tile.setBackgroundColor(Some(&token(N3, 1.0)));
             root.addSublayer(&tile);
             self.tiles.push(tile);
 
@@ -298,7 +344,11 @@ impl SwitcherPanel {
                 caption.setFontSize(11.0);
                 caption.setAlignmentMode(objc2_quartz_core::kCAAlignmentCenter);
                 caption.setTruncationMode(objc2_quartz_core::kCATruncationEnd);
-                caption.setForegroundColor(Some(&NSColor::whiteColor().CGColor()));
+                // n11, primary text. Both lines of the caption share it: the contrast law asks for
+                // n9 or brighter for anything that is reading matter rather than furniture, and one
+                // text layer cannot carry two colours. Splitting the app name onto n10 would need a
+                // second layer per row, which is a change to make when the panel is worth polishing.
+                caption.setForegroundColor(Some(&token(N11, 1.0)));
                 // No `setFont`. CATextLayer's `font` is a CFTypeRef taking a name, a CGFont or a
                 // CTFont, and none of the three bridges from an NSFont without a cast this file would
                 // be the only place in the tree to need. The default face at this size is legible, and
@@ -359,7 +409,11 @@ impl SwitcherPanel {
             };
             let Some(row) = rows.get(index) else { continue };
 
-            let picture = CGRect::new(rect.origin, self.metrics.tile);
+            // The row's own width: each tile is as wide as its window is in proportion.
+            let picture = CGRect::new(
+                rect.origin,
+                CGSize::new(rect.size.width, self.metrics.tile_height),
+            );
             tile.setFrame(picture);
             tile.setOpacity(if row.is_minimized { 0.45 } else { 1.0 });
             // Bottom-left of the picture: away from a window's own controls, which sit top-left, and
@@ -370,7 +424,7 @@ impl SwitcherPanel {
                         badge.setFrame(CGRect::new(
                             CGPoint::new(
                                 rect.origin.x + ICON_INSET,
-                                rect.origin.y + self.metrics.tile.height - ICON - ICON_INSET,
+                                rect.origin.y + self.metrics.tile_height - ICON - ICON_INSET,
                             ),
                             CGSize::new(ICON, ICON),
                         ));
@@ -396,8 +450,8 @@ impl SwitcherPanel {
             }
 
             caption.setFrame(CGRect::new(
-                CGPoint::new(rect.origin.x, rect.origin.y + self.metrics.tile.height + 4.0),
-                CGSize::new(self.metrics.tile.width, self.metrics.caption - 6.0),
+                CGPoint::new(rect.origin.x, rect.origin.y + self.metrics.tile_height + 4.0),
+                CGSize::new(rect.size.width, self.metrics.caption - 6.0),
             ));
             let text = caption_text(row);
             unsafe {
@@ -415,10 +469,18 @@ impl SwitcherPanel {
                 self.highlight.setHidden(false);
                 self.highlight.setFrame(CGRect::new(
                     CGPoint::new(rect.origin.x - 4.0, rect.origin.y - 4.0),
-                    CGSize::new(self.metrics.tile.width + 8.0, self.metrics.tile.height + 8.0),
+                    CGSize::new(rect.size.width + 8.0, self.metrics.tile_height + 8.0),
+                ));
+                self.active_bar.setHidden(false);
+                self.active_bar.setFrame(CGRect::new(
+                    CGPoint::new(rect.origin.x - 4.0, rect.origin.y - 4.0),
+                    CGSize::new(ACTIVE_BAR, self.metrics.tile_height + 8.0),
                 ));
             }
-            None => self.highlight.setHidden(true),
+            None => {
+                self.highlight.setHidden(true);
+                self.active_bar.setHidden(true);
+            }
         }
     }
 }
@@ -456,6 +518,7 @@ mod tests {
     fn row(app: &str, title: &str) -> Row {
         Row {
             window: rini_core::ids::WindowId::new(1, 1),
+            size: CGSize::new(800.0, 600.0),
             title: title.to_owned(),
             app_name: app.to_owned(),
             is_minimized: false,

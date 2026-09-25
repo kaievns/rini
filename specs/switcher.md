@@ -111,10 +111,28 @@ switcher answers "every window I have, wherever it is".
   MUST be in the background and MUST NOT touch any window.
 - Each row MUST carry its application's icon as a small badge, as a cue that is readable faster than a
   thumbnail or a title.
+- A tile MUST be as wide as its window is, in proportion — a full-width window reading as wide and a
+  third-width column as narrow is most of what tells two windows of one application apart at a glance.
+  Widths MUST be clamped: a third-width column beside a maximised window is 86pt against 260pt at the
+  tile height, and 86pt has no room for an icon badge and a caption.
+- Every tile MUST be the same height, so the captions line up.
+- Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
+  Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
+  `--line` hairline and a shadow; a tile with no picture takes the raised plane `--n3`; captions take
+  `--n11`; and the selected row takes the specified active-row treatment, an `--ember-soft` fill with a
+  2px inset `--ember` bar. Radii are `--radius-card` 7px for the panel and `--radius-control` 5px
+  inside it, because "corners stay crisp; only pills/circles fully round".
+- The ember MUST appear once. Its budget is one or two appearances per screen, and the selected row is
+  the one thing here that earns it.
 - Drawing MUST NOT animate implicitly. The row layers are reused between switches and the list is
   ordered by focus, so the two most recent windows trade places from one switch to the next; a layer
   that cross-fades from its previous picture to its new one makes the strip look like it is shuffling
   itself after it has already appeared.
+
+> **Reported 2026-09-25.** "Make the icon slightly larger, and also change the tiles width to match the
+> window width. Also adjust the colours to match the [Okibi design system] specs." The one value in the
+> panel that is still a judgement rather than a token is the fill's opacity: the spec has no token for
+> an overlay's translucency.
 
 > **Reported 2026-09-25.** "The two latest window icons swap visually AFTER popup becomes visible, so
 > it's not synchronised properly and looks buggy." Core Animation cross-fades a `contents` change over

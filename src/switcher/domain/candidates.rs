@@ -11,6 +11,8 @@
 //! iteration — unspecified, and different run to run. Sorting the tail explicitly is what stops the
 //! list reshuffling between two presses of the same key.
 
+use objc2_core_foundation::CGSize;
+
 use rini_core::ids::{SpaceId, WindowId};
 
 use crate::windows::domain::focus_order::FocusOrder;
@@ -20,12 +22,17 @@ use crate::windows::domain::focus_order::FocusOrder;
 /// Carries no picture. A thumbnail is a platform concern and a domain file may not name one — the
 /// architecture test bans `platform::` under `domain/` — so the surface pairs a row with its snapshot
 /// by `WindowId` at draw time.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// No `Eq`: a size is floats. `PartialEq` is all the tests need.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     pub window: WindowId,
     pub space: SpaceId,
     /// Sort key for the stable tail, from the workspace's canonical position rather than its id.
     pub workspace_index: usize,
+    /// The window's size on screen. Carried so the popup can draw a tile in the window's own
+    /// proportions — a full-width window reading as wide and a third-width column as narrow is most of
+    /// what tells two terminals apart at a glance.
+    pub size: CGSize,
     pub title: String,
     pub app_name: String,
     /// Minimised windows are offered. macOS's own switcher shows them, and leaving them out means a
@@ -116,6 +123,7 @@ mod tests {
             window: win(pid, idx),
             space: SpaceId::new(space),
             workspace_index: workspace,
+            size: CGSize::new(800.0, 600.0),
             title: format!("window {idx}"),
             app_name: format!("app {pid}"),
             is_minimized: false,

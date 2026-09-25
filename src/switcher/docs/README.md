@@ -75,6 +75,18 @@ switch also queues warms for the rows with no picture, so the next open has them
 hidden-workspace windows this feature exists to show, and a sliver stretched across a row is worse than
 a placeholder. Age is not a reason to refuse one, though: a ten-minute-old picture beats a grey box.
 
+**Colours are tokens, not choices.** The panel draws from the Okibi design system's resolved values:
+`--n2` for the content plane it sits on, `--n3` for a tile with no picture yet, `--line` for the
+hairline, `--n11` for captions, and the specified active-row treatment — `--ember-soft` fill plus a 2px
+inset `--ember` bar — for the selection. Radii are the card (7px) and control (5px) values, because the
+system's own words are "corners stay crisp". The ember has a budget of one or two appearances per
+screen and the selected row is the one thing here that spends it. The fill's opacity is the single
+value that is still a judgement: the system has no token for an overlay's translucency.
+
+**A tile is as wide as its window.** Every tile shares one height so the captions line up, and the
+width comes from the window's own proportions — which is most of what tells two windows of the same
+application apart. Clamped at both ends, because the proportions in a real strip are extreme.
+
 **The popup is cosmetic.** The reactor holds the list and the cursor and runs on its own thread; the
 panel is a main-thread actor fed rows over a channel. A slow or missing panel delays a picture and
 nothing else, because the switch is already correct on the other side.
