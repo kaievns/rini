@@ -51,3 +51,22 @@ as visible rather than absent. The reverse — an id the server does not report 
 `src/windows/domain/admissible.rs` is admission, `src/windows/domain/catalogue.rs` the records,
 `src/windows/domain/ax_events.rs` the liveness rules, `src/windows/platform/app_actor.rs` the per-app
 thread.
+
+## Windows rini has parked
+
+- A window rini has moved off screen to hide it MUST stay in rini's model for as long as it exists. A
+  parked window that rini forgets is stranded: it is off screen, no strip holds it, no workspace can
+  bring it back, and the switcher cannot offer it because it has no workspace assignment.
+
+> **Reported 2026-09-25.** "When I switch to the 1password window it doesn't go up, I can't see it
+> behind the kirocrew window." Diagnosed, NOT fixed. The observation: `rini-cli query windows` listed 10
+> windows, and the 1Password and Kiro Crew windows were not among them — while `CGWindowListCopyWindowInfo`
+> showed both alive at (1727, 1085) and (1727, 1089), which is rini's own off-screen park corner. So both
+> had been parked by rini and then dropped from its model, leaving them permanently invisible and
+> unreachable. rini did see both APPLICATIONS, so this is window registration rather than Accessibility
+> being refused.
+>
+> The suspected path is `src/app/reactor/events/space.rs`, where a window-server disappearance with
+> `ordered_in == Some(false)` is promoted to an immediate `WindowDestroyed`. A window parked off the
+> display is a plausible trigger for exactly that report. Not confirmed: the running build logs at WARN
+> and the decision is at DEBUG, so reproducing it needs the log level raised first.

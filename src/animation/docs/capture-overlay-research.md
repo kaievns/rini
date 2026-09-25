@@ -455,8 +455,17 @@ Dock          -2147483624
 Notification Center   -2147483601
 ```
 
-The overlay window is opaque with a black background: left transparent, a gap
-between columns rendered as AppKit's bare grey slab. Its content view is a
+The overlay window has a black background colour, which is what fills a gap
+between columns; left with no background it rendered as AppKit's bare grey slab.
+It is NOT flagged opaque, and the distinction matters: `isOpaque` is a promise to
+the window server that nothing behind the window contributes to what is
+composited, and that promise is kept for windows ABOVE it as well. Combined with
+the alpha-toggle decision below, which leaves the overlay ordered in at alpha 0
+between flights, it truncated the backdrop for every window above level 18 — the
+switcher's `NSVisualEffectView` blurred an empty black slab and looked like it was
+not blurring at all. The black background is what draws black; opaque never was.
+
+Its content view is a
 flipped `NSView` (`isFlipped`), so the layer tree agrees with CoreGraphics
 coordinates; `setGeometryFlipped` on a view-backed layer is silently
 ineffective, and on the backdrop layer it flips the contents too and drew the
@@ -471,7 +480,10 @@ every case. The combination that achieves this is `.borderless` style,
 
 ### Toggle alpha, do not order the window in and out
 
-This is a 30-fold difference and it decides the show and hide path:
+This is a 30-fold difference and it decides the show and hide path. The cost of
+the choice is that the overlay is permanently in the window stack, so everything
+it tells the window server about itself applies while it is invisible — see the
+opacity note above:
 
 ```
                       median      min      max

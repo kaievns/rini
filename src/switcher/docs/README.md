@@ -13,6 +13,7 @@ nothing.
 | **Where the cursor is** | `domain/selection.rs` — `Selection`: stepping with wrap, clicking, and following its row when the list changes under it |
 | **Which binding holds it** | `domain/trigger.rs` — the session's keys, derived from the `switch_window` binding rather than configured twice |
 | **Where the rows go** | `domain/layout.rs` — the panel rect, one rect per row, the scroll that keeps the selection visible, and the hit test |
+| **Whether a draw travels** | `domain/motion.rs` — how long the ring takes to move, and the one case where moving is right |
 | **The popup** | `platform/panel.rs` — the `NSPanel` and its layer tree; `platform/actor.rs` — the main thread it must live on |
 
 Focus order itself is not here. It is a fact about window focus, so it lives with the rest
@@ -79,6 +80,13 @@ a placeholder. Age is not a reason to refuse one, though: a ten-minute-old pictu
 `--n1` for the plane it sits on, `--n3` for a tile with no picture yet, `--line` for the hairline,
 `--n11` for captions, and an `--ember-soft` fill inside a 2px `--ember` ring for the selection.
 
+**The blur needed something removed, not added.** The `NSVisualEffectView` was in place and doing
+nothing, because rini's own animation overlay sits ordered in at alpha 0 across the whole display at
+level 18 and declared itself OPAQUE. Opaque is a promise that nothing behind the window contributes to
+what is composited, and the window server keeps that promise for windows above it too — so the backdrop
+this panel samples was truncated at an empty black slab. Two rounds of tinting were spent on it before
+that was found; the tint was never the problem.
+
 **Blurred, not just translucent.** An `NSVisualEffectView` with the `HUDWindow` material behind the
 layer tree, blending `BehindWindow` so it samples the desktop, and a dark appearance pinned on the
 window rather than inherited — the material takes its colour from the appearance, so a machine in light
@@ -112,14 +120,28 @@ bottom-heavy however evenly the arithmetic is written. Reported twice before thi
 width comes from the window's own proportions — which is most of what tells two windows of the same
 application apart. Clamped at both ends, because the proportions in a real strip are extreme.
 
+**The ring travels and the strip scrolls under it.** Two transactions per draw, not one: contents with
+implicit actions off, then geometry with them on. Contents can never animate — that is the cross-fade
+shuffle above — and geometry animates only when the popup is already up with the same rows, because
+rebuilt layers sit at the origin and animating a first draw flies the strip in from the corner.
+`domain/motion.rs` is that decision, and a picture arriving mid-travel leaves the geometry alone rather
+than cutting the animation short.
+
+**Two things about the window that are not about drawing at all.** Its level is the pop-up menu level
+rather than "just above rini's overlay": applications keep windows at the floating, modal and status
+levels, and 21 went under all of the last one. And its collection behaviour is `FullScreenAuxiliary`,
+not `FullScreenNone` — those sound like one statement and are two, the second of which means "never
+shown ON a full-screen space" and made the popup invisible whenever anything was full screen.
+
 **The popup is cosmetic.** The reactor holds the list and the cursor and runs on its own thread; the
 panel is a main-thread actor fed rows over a channel. A slow or missing panel delays a picture and
 nothing else, because the switch is already correct on the other side.
 
 ## Reading order
 
-`domain/candidates.rs`, then `domain/selection.rs`, then `domain/layout.rs`. All three are pure and
-fully tested without a reactor, a window server or a screen. `platform/` after that.
+`domain/candidates.rs`, then `domain/selection.rs`, then `domain/layout.rs`, then the four lines of
+`domain/motion.rs`. All four are pure and fully tested without a reactor, a window server or a screen.
+`platform/` after that.
 
 ## Detail
 

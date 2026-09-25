@@ -3,5 +3,6 @@
 
 pub mod candidates;
 pub mod layout;
+pub mod motion;
 pub mod selection;
 pub mod trigger;

@@ -89,6 +89,14 @@ switcher answers "every window I have, wherever it is".
   decided before anything is drawn, so a slow or failed panel costs a picture and never a wrong window.
 - The panel MUST NOT activate rini. rini runs as an Accessory application, so a window that takes a
   click would deactivate the application being switched away from — inverting the point.
+- The panel MUST sit above every level an application can put a window at. Applications keep windows at
+  the floating, modal and status levels, and a switcher that can be covered cannot be read.
+- The panel MUST be allowed to appear over a native full-screen space. Declaring it "never full screen"
+  is not the same statement as "never shown on a full-screen space", and the second one makes the popup
+  impossible to see whenever any application is full screen.
+- Nothing rini itself leaves on screen MAY claim to be opaque while it is invisible. The animation
+  overlay stays ordered in at alpha 0 between flights, and an opaque window truncates the backdrop that
+  a blurred surface above it samples — which is what stopped the switcher's blur working at all.
 - A click in a gap or the padding MUST select nothing. Guessing at the nearest row selects a window the
   user did not point at.
 
@@ -151,10 +159,27 @@ switcher answers "every window I have, wherever it is".
   line's worth empty.
 - The ember MUST appear once. Its budget is one or two appearances per screen, and the selected row is
   the one thing here that earns it.
-- Drawing MUST NOT animate implicitly. The row layers are reused between switches and the list is
+- The selection's ring MUST travel to the window it is moving to, and a list long enough to scroll MUST
+  scroll under it. A ring that teleports gives no cue about which direction the selection went, and a
+  strip that jumps loses the sense that the selection is moving through a list rather than the list
+  being replaced.
+- A draw MUST travel only when the popup is ALREADY up with the same rows. Layers are rebuilt when the
+  row count changes and start at the origin, so animating a first draw flies the whole strip in from
+  the corner of the panel.
+- A picture arriving while the selection is travelling MUST NOT move anything. Re-setting a frame
+  mid-travel cuts the animation short, which reads as a stutter.
+- Contents MUST NOT animate. The row layers are reused between switches and the list is
   ordered by focus, so the two most recent windows trade places from one switch to the next; a layer
   that cross-fades from its previous picture to its new one makes the strip look like it is shuffling
   itself after it has already appeared.
+
+> **Reported 2026-09-25.** "Good radius, blur still doesn't work. Also there is some weird z-layering
+> issue... when I trigger the app-switcher the popup doesn't show either, probably stuck behind something
+> else." Two separate causes, neither of them the tint I had changed twice: rini's own animation overlay
+> claims to be opaque while sitting invisible at alpha 0 over the whole display, and the panel declared
+> `FullScreenNone` when it wanted `FullScreenAuxiliary`.
+>
+> The same report also asked for the ring and the scroll to be animated.
 
 > **Reported 2026-09-25, twice.** "The padding at the bottom is visually larger than at the top, I'd
 > also want to increase the corner radius on the popup itself... Also can you add blur to the background

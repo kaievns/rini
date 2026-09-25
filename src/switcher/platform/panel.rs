@@ -26,18 +26,24 @@ use objc2_app_kit::{
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
 use objc2_foundation::NSString;
-use objc2_quartz_core::{CALayer, CATextLayer, CATransaction};
+use objc2_quartz_core::{
+    CALayer, CAMediaTimingFunction, CATextLayer, CATransaction, kCAMediaTimingFunctionEaseOut,
+};
 use tracing::debug;
 
 use crate::animation::platform::overlay::set_layer_contents;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::switcher::domain::layout::{Metrics, Strip, lay_out};
+use crate::switcher::domain::motion::{GLIDE_SECONDS, glides};
 use crate::windows::platform::app::NSRunningApplicationExt;
 
-/// Above the animation overlay's 18, so a switch opened mid-flight is not drawn behind the tiles it is
-/// offering.
-const PANEL_LEVEL: isize = 21;
+/// The pop-up menu level, which is where macOS draws its own switcher and its menus.
+///
+/// Was 21, chosen only to clear rini's animation overlay at 18. That is too low: an application is free
+/// to keep a window at the floating (3), modal (8) or status (25) level, and at 21 the popup went under
+/// anything at 25 or above. A switcher that can be covered is a switcher that cannot be read.
+const PANEL_LEVEL: isize = 101;
 
 // Colours and radii from the Okibi design system, dark theme. Named tokens rather than chosen values:
 // "Nothing in a UI is a one-off colour; every surface and tone is a step."
@@ -139,6 +145,19 @@ pub struct Row {
     pub is_minimized: bool,
 }
 
+/// What a draw does to the layers' geometry.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Move {
+    /// Put them where they belong, at once. The panel is appearing, or its rows were just rebuilt, so
+    /// there is no previous position to travel from.
+    Snap,
+    /// Travel there. The strip is already up and only the selection and the scroll have moved.
+    Glide,
+    /// Leave the geometry untouched. This draw is filling in a picture that has arrived, and re-setting
+    /// a frame would cut short a glide already running.
+    Leave,
+}
+
 #[derive(Clone)]
 struct LastDraw {
     strip: Strip,
@@ -200,11 +219,16 @@ impl SwitcherPanel {
         // switched away from.
         window.setIgnoresMouseEvents(true);
         window.setLevel(PANEL_LEVEL);
+        // FullScreenAuxiliary, NOT FullScreenNone. They sound like the same statement — this window is
+        // never itself full screen — but FullScreenNone also means the window is never shown ON a full
+        // screen space. With an application in native full screen, that made the popup impossible to
+        // see: the switch worked and nothing appeared. Auxiliary is the one that says "not full screen
+        // itself, but allowed to sit over one".
         window.setCollectionBehavior(
             NSWindowCollectionBehavior::CanJoinAllSpaces
                 | NSWindowCollectionBehavior::Stationary
                 | NSWindowCollectionBehavior::IgnoresCycle
-                | NSWindowCollectionBehavior::FullScreenNone,
+                | NSWindowCollectionBehavior::FullScreenAuxiliary,
         );
 
         // Vibrant dark, pinned rather than inherited. The material's own colour comes from the
@@ -291,6 +315,10 @@ impl SwitcherPanel {
             debug!("switcher panel has no cocoa frame; not showing");
             return;
         };
+        // Read BEFORE `rebuild_rows`, which is what makes the layers new and so makes their positions
+        // meaningless to travel from.
+        let showing = self.visible.then_some(self.tiles.len());
+
         self.window.setFrame_display(cocoa, false);
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), strip.panel.size);
         self.backing.setFrame(bounds);
@@ -305,7 +333,12 @@ impl SwitcherPanel {
         }
         self.rebuild_rows(rows.len());
         CATransaction::commit();
-        self.place(&strip, rows, selected);
+        let movement = if glides(showing, rows.len()) {
+            Move::Glide
+        } else {
+            Move::Snap
+        };
+        self.place(&strip, rows, selected, movement);
         self.last = Some(LastDraw {
             strip,
             rows: rows.to_vec(),
@@ -329,7 +362,8 @@ impl SwitcherPanel {
         let Some(last) = self.last.clone() else {
             return;
         };
-        self.place(&last.strip, &last.rows, last.selected);
+        // Geometry untouched: a picture arriving mid-step must not cut short the glide already running.
+        self.place(&last.strip, &last.rows, last.selected, Move::Leave);
     }
 
     /// Take the pictures the animation engine holds, and redraw if the panel is up.
@@ -436,48 +470,46 @@ impl SwitcherPanel {
         icon
     }
 
-    fn place(&mut self, strip: &Strip, rows: &[Row], selected: usize) {
-        // Resolved before the drawing loop, which borrows the layer vectors: caching an icon needs
-        // `&mut self` and the loop cannot hold both.
+    fn place(&mut self, strip: &Strip, rows: &[Row], selected: usize, movement: Move) {
+        // Resolved before the drawing loops, which borrow the layer vectors: caching an icon needs
+        // `&mut self` and a loop cannot hold both.
         let badges: Vec<Option<Retained<objc2_core_graphics::CGImage>>> =
             rows.iter().map(|row| self.app_icon(row.window.pid)).collect();
 
-        // No implicit animations. Setting `contents` on a layer cross-fades over about a quarter of a
-        // second by default, and these layers are REUSED across switches: a tile that held the previous
-        // switch's window fades from that picture into this one. With the two most recent windows
-        // trading places between one switch and the next — which they do, because the list is ordered
-        // by focus — two adjacent tiles cross-fade into each other's pictures, and the strip looks like
-        // it is shuffling itself after it has already appeared. Reported as exactly that.
-        //
-        // The same reason the overlay disables actions everywhere it touches a layer.
+        self.draw_contents(rows, &badges);
+        if movement != Move::Leave {
+            self.move_layers(strip, rows, selected, movement);
+        }
+    }
+
+    /// What each row SHOWS. Never animated.
+    ///
+    /// Setting `contents` on a layer cross-fades over about a quarter of a second by default, and these
+    /// layers are REUSED across switches: a tile that held the previous switch's window fades from that
+    /// picture into this one. With the two most recent windows trading places between one switch and the
+    /// next — which they do, because the list is ordered by focus — two adjacent tiles cross-fade into
+    /// each other's pictures, and the strip looks like it is shuffling itself after it has already
+    /// appeared. Reported as exactly that.
+    fn draw_contents(&self, rows: &[Row], badges: &[Option<Retained<objc2_core_graphics::CGImage>>]) {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        for (index, rect) in strip.rows.iter().enumerate() {
-            let Some(tile) = self.tiles.get(index) else { continue };
-            let Some(caption) = self.captions.get(index) else {
-                continue;
-            };
-            let Some(row) = rows.get(index) else { continue };
-
-            // The row's own width: each tile is as wide as its window is in proportion.
-            let picture = CGRect::new(
-                rect.origin,
-                CGSize::new(rect.size.width, self.metrics.tile_height),
-            );
-            tile.setFrame(picture);
-            tile.setOpacity(if row.is_minimized { 0.45 } else { 1.0 });
-            // Bottom-left of the picture: away from a window's own controls, which sit top-left, and
-            // away from the caption below.
+        for (index, row) in rows.iter().enumerate() {
+            if let Some(tile) = self.tiles.get(index) {
+                tile.setOpacity(if row.is_minimized { 0.45 } else { 1.0 });
+                match self.pictures.get(&row.window) {
+                    Some(snapshot) => {
+                        // Scaled to fit inside the tile rather than cropped: a cropped thumbnail of a
+                        // browser is a rectangle of text.
+                        tile.setContentsGravity(unsafe { objc2_quartz_core::kCAGravityResizeAspect });
+                        set_layer_contents(tile, snapshot);
+                    }
+                    // Left as the placeholder slab. A row with no picture still reads as a row.
+                    None => unsafe { tile.setContents(None) },
+                }
+            }
             if let Some(badge) = self.icons.get(index) {
                 match badges.get(index).and_then(|icon| icon.clone()) {
                     Some(image) => {
-                        badge.setFrame(CGRect::new(
-                            CGPoint::new(
-                                rect.origin.x + ICON_INSET,
-                                rect.origin.y + self.metrics.tile_height - ICON - ICON_INSET,
-                            ),
-                            CGSize::new(ICON, ICON),
-                        ));
                         let raw: *const objc2_core_graphics::CGImage = &*image;
                         unsafe {
                             let _: () = msg_send![&**badge, setContents: raw];
@@ -487,32 +519,62 @@ impl SwitcherPanel {
                     None => badge.setHidden(true),
                 }
             }
-
-            match self.pictures.get(&row.window) {
-                Some(snapshot) => {
-                    // The window is wider than the tile, so the picture is scaled to fit inside it
-                    // rather than cropped: a cropped thumbnail of a browser is a rectangle of text.
-                    tile.setContentsGravity(unsafe { objc2_quartz_core::kCAGravityResizeAspect });
-                    set_layer_contents(tile, snapshot);
+            if let Some(caption) = self.captions.get(index) {
+                let text = caption_text(row);
+                unsafe {
+                    caption.setString(Some(&*NSString::from_str(&text)));
                 }
-                // Left as the placeholder slab. A row with no picture still reads as a row.
-                None => unsafe { tile.setContents(None) },
-            }
-
-            // Exactly the caption band, so the text's own box has no slack to read as extra padding.
-            caption.setFrame(CGRect::new(
-                CGPoint::new(
-                    rect.origin.x,
-                    rect.origin.y + self.metrics.tile_height + self.metrics.caption_gap,
-                ),
-                CGSize::new(rect.size.width, self.metrics.caption),
-            ));
-            let text = caption_text(row);
-            unsafe {
-                caption.setString(Some(&*NSString::from_str(&text)));
             }
         }
+        CATransaction::commit();
+    }
 
+    /// Where each row SITS, and where the selection's ring sits.
+    ///
+    /// Animated when the strip is only moving, which is what makes the ring travel to the next window
+    /// and the strip scroll under it rather than both teleporting. Ease-out, because the eye needs to
+    /// see where the ring left from and does not care how it arrives.
+    fn move_layers(&self, strip: &Strip, rows: &[Row], selected: usize, movement: Move) {
+        CATransaction::begin();
+        CATransaction::setDisableActions(movement == Move::Snap);
+        if movement == Move::Glide {
+            CATransaction::setAnimationDuration(GLIDE_SECONDS);
+            let ease = CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseOut });
+            CATransaction::setAnimationTimingFunction(Some(&ease));
+        }
+        for (index, rect) in strip.rows.iter().enumerate() {
+            if rows.get(index).is_none() {
+                continue;
+            }
+            // The row's own width: each tile is as wide as its window is in proportion.
+            if let Some(tile) = self.tiles.get(index) {
+                tile.setFrame(CGRect::new(
+                    rect.origin,
+                    CGSize::new(rect.size.width, self.metrics.tile_height),
+                ));
+            }
+            // Bottom-left of the picture: away from a window's own controls, which sit top-left, and
+            // away from the caption below.
+            if let Some(badge) = self.icons.get(index) {
+                badge.setFrame(CGRect::new(
+                    CGPoint::new(
+                        rect.origin.x + ICON_INSET,
+                        rect.origin.y + self.metrics.tile_height - ICON - ICON_INSET,
+                    ),
+                    CGSize::new(ICON, ICON),
+                ));
+            }
+            // Exactly the caption band, so the text's own box has no slack to read as extra padding.
+            if let Some(caption) = self.captions.get(index) {
+                caption.setFrame(CGRect::new(
+                    CGPoint::new(
+                        rect.origin.x,
+                        rect.origin.y + self.metrics.tile_height + self.metrics.caption_gap,
+                    ),
+                    CGSize::new(rect.size.width, self.metrics.caption),
+                ));
+            }
+        }
         self.place_highlight(strip, selected);
         CATransaction::commit();
     }
