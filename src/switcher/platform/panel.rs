@@ -44,9 +44,10 @@ const PANEL_LEVEL: isize = 21;
 // The panel is a floating surface, which the elevation law puts on the content plane with a hairline:
 // "Bars/sidebars on --n1, content on --n2", and "Shadows are for floating things: windows, popovers".
 
-/// `--n2`, the content plane. The panel is the working surface, and the law is that the working
-/// surface is the brightest plane.
-const N2: (f64, f64, f64) = (0.106, 0.118, 0.125);
+/// `--n1`, chrome. A step below the content plane on purpose: this panel floats OVER content rather
+/// than being content, and at the content plane's brightness too much of what is behind it came
+/// through. Reported as needing to be darker.
+const N1: (f64, f64, f64) = (0.082, 0.090, 0.102);
 /// `--n3`, raised. A tile with no picture yet is a surface sitting on the panel.
 const N3: (f64, f64, f64) = (0.133, 0.145, 0.153);
 /// `--line`, the hairline. "Borders are soft visible hairlines — never bright, never
@@ -65,11 +66,17 @@ const EMBER_SOFT: (f64, f64, f64) = (0.247, 0.176, 0.157);
 const CORNER: f64 = 7.0;
 /// `--radius-control`, 5px, for the smaller surfaces inside it.
 const TILE_CORNER: f64 = 5.0;
-/// The 2px inset bar an active row carries, per the elevation law.
-const ACTIVE_BAR: f64 = 2.0;
+/// The ember ring around the selected row.
+///
+/// The elevation law's default for an active ROW in a list is a soft fill plus a 2px inset bar at its
+/// left edge, which is what this was. A switcher row is not a list row: it is a focus target, and the
+/// ember's own remit covers "focused borders" as well as active bars. A whole outline says "this is
+/// the one" about a tile; an edge bar says "this is the current line" about a list.
+const FOCUS_RING: f64 = 2.0;
 /// The panel's fill opacity. The spec has no token for an overlay's translucency, so this is the one
-/// value here that is a judgement rather than a token.
-const PANEL_ALPHA: f64 = 0.78;
+/// value here that is a judgement rather than a token. 0.78 first, reported as letting too much
+/// through.
+const PANEL_ALPHA: f64 = 0.90;
 
 /// The app icon badged into a tile's corner. Small enough to read as a cue rather than as content,
 /// large enough to tell two apps apart at a glance.
@@ -127,7 +134,6 @@ pub struct SwitcherPanel {
     /// One badge per row, in front of its tile.
     icons: Vec<Retained<CALayer>>,
     highlight: Retained<CALayer>,
-    active_bar: Retained<CALayer>,
     metrics: Metrics,
     visible: bool,
     scale: f64,
@@ -186,7 +192,7 @@ impl SwitcherPanel {
         root.setContentsScale(scale);
         root.setCornerRadius(CORNER);
         root.setMasksToBounds(true);
-        root.setBackgroundColor(Some(&token(N2, PANEL_ALPHA)));
+        root.setBackgroundColor(Some(&token(N1, PANEL_ALPHA)));
         root.setBorderWidth(1.0);
         root.setBorderColor(Some(&token(LINE, 1.0)));
 
@@ -198,17 +204,9 @@ impl SwitcherPanel {
         highlight.setZPosition(0.0);
         highlight.setHidden(true);
         highlight.setBackgroundColor(Some(&token(EMBER_SOFT, 1.0)));
+        highlight.setBorderWidth(FOCUS_RING);
+        highlight.setBorderColor(Some(&token(EMBER, 1.0)));
         root.addSublayer(&highlight);
-
-        // The 2px inset ember bar the elevation law pairs with an ember-soft fill. A separate layer so
-        // it can sit at the selection's left edge whatever width that row is.
-        let active_bar = CALayer::layer();
-        active_bar.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        active_bar.setContentsScale(scale);
-        active_bar.setZPosition(2.5);
-        active_bar.setHidden(true);
-        active_bar.setBackgroundColor(Some(&token(EMBER, 1.0)));
-        root.addSublayer(&active_bar);
 
         Some(Self {
             window,
@@ -217,7 +215,6 @@ impl SwitcherPanel {
             captions: Vec::new(),
             icons: Vec::new(),
             highlight,
-            active_bar,
             metrics: Metrics::default(),
             visible: false,
             scale,
@@ -471,16 +468,8 @@ impl SwitcherPanel {
                     CGPoint::new(rect.origin.x - 4.0, rect.origin.y - 4.0),
                     CGSize::new(rect.size.width + 8.0, self.metrics.tile_height + 8.0),
                 ));
-                self.active_bar.setHidden(false);
-                self.active_bar.setFrame(CGRect::new(
-                    CGPoint::new(rect.origin.x - 4.0, rect.origin.y - 4.0),
-                    CGSize::new(ACTIVE_BAR, self.metrics.tile_height + 8.0),
-                ));
             }
-            None => {
-                self.highlight.setHidden(true);
-                self.active_bar.setHidden(true);
-            }
+            None => self.highlight.setHidden(true),
         }
     }
 }

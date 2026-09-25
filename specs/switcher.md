@@ -119,15 +119,27 @@ switcher answers "every window I have, wherever it is".
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
   `--line` hairline and a shadow; a tile with no picture takes the raised plane `--n3`; captions take
-  `--n11`; and the selected row takes the specified active-row treatment, an `--ember-soft` fill with a
-  2px inset `--ember` bar. Radii are `--radius-card` 7px for the panel and `--radius-control` 5px
-  inside it, because "corners stay crisp; only pills/circles fully round".
+  `--n11`; and the selected row takes an `--ember-soft` fill inside a 2px `--ember` ring. Radii are
+  `--radius-card` 7px for the panel and `--radius-control` 5px inside it, because "corners stay crisp;
+  only pills/circles fully round".
+- The selected row MUST be ringed on all four sides rather than barred at one edge. The elevation law's
+  default for an active row in a list is a soft fill plus a 2px inset bar, but a switcher row is a focus
+  target rather than a current line, and the ember's remit covers focused borders as well as active
+  bars. A whole outline says "this is the one" about a tile; an edge bar says "this is where I am" about
+  a list.
+- The panel sits on `--n1` rather than the content plane `--n2`, because it floats OVER content rather
+  than being content, and at the content plane's brightness too much of what is behind it read through.
 - The ember MUST appear once. Its budget is one or two appearances per screen, and the selected row is
   the one thing here that earns it.
 - Drawing MUST NOT animate implicitly. The row layers are reused between switches and the list is
   ordered by focus, so the two most recent windows trade places from one switch to the next; a layer
   that cross-fades from its previous picture to its new one makes the strip look like it is shuffling
   itself after it has already appeared.
+
+> **Reported 2026-09-25.** "It's a bit too much opacity, needs to be a bit darker. For the window in
+> focus just use the primary focus colour for the whole outline, not just the left border." The fill went
+> from `--n2` at 0.78 to `--n1` at 0.90 — a step down the spine AND less translucent — and the left bar
+> became a ring.
 
 > **Reported 2026-09-25.** "Make the icon slightly larger, and also change the tiles width to match the
 > window width. Also adjust the colours to match the [Okibi design system] specs." The one value in the

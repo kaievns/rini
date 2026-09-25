@@ -76,9 +76,15 @@ hidden-workspace windows this feature exists to show, and a sliver stretched acr
 a placeholder. Age is not a reason to refuse one, though: a ten-minute-old picture beats a grey box.
 
 **Colours are tokens, not choices.** The panel draws from the Okibi design system's resolved values:
-`--n2` for the content plane it sits on, `--n3` for a tile with no picture yet, `--line` for the
-hairline, `--n11` for captions, and the specified active-row treatment — `--ember-soft` fill plus a 2px
-inset `--ember` bar — for the selection. Radii are the card (7px) and control (5px) values, because the
+`--n1` for the plane it sits on, `--n3` for a tile with no picture yet, `--line` for the hairline,
+`--n11` for captions, and an `--ember-soft` fill inside a 2px `--ember` ring for the selection.
+
+Two deliberate departures from the defaults, both because a switcher is not a document. It sits on
+`--n1` rather than the content plane `--n2` — it floats OVER content rather than being content, and at
+`--n2` too much of what was behind it read through. And the selection is RINGED rather than barred at
+its left edge: the elevation law's active-row default is a soft fill plus a 2px inset bar, which is
+right for a current line in a list and wrong for a focus target, and the ember's remit covers focused
+borders too. Radii are the card (7px) and control (5px) values, because the
 system's own words are "corners stay crisp". The ember has a budget of one or two appearances per
 screen and the selected row is the one thing here that spends it. The fill's opacity is the single
 value that is still a judgement: the system has no token for an overlay's translucency.
