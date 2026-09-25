@@ -129,12 +129,28 @@ switcher answers "every window I have, wherever it is".
   a list.
 - The panel sits on `--n1` rather than the content plane `--n2`, because it floats OVER content rather
   than being content, and at the content plane's brightness too much of what is behind it read through.
+- The panel MUST blur what is behind it rather than only tinting it. A flat translucent fill over live
+  windows reads as a smeared screenshot; the blur is what makes it read as a surface. The tint then sits
+  OVER the blur and only darkens it, so it MUST NOT be opaque.
+- The blur MUST stay active while rini is not the frontmost application. rini is an Accessory app and is
+  never frontmost, so a material that follows the window's active state would never blur at all.
+- The panel's corner radius MUST follow macOS's floating surfaces rather than the design system's card
+  radius. The system tops out at 7px with "corners stay crisp", which is right for a card in a document
+  and wrong for a panel that sits beside Spotlight and the volume HUD.
+- The caption band MUST be sized to its text. A caption layer draws from its top, so a taller band
+  leaves the surplus underneath, where it reads as the bottom padding being larger than the top.
 - The ember MUST appear once. Its budget is one or two appearances per screen, and the selected row is
   the one thing here that earns it.
 - Drawing MUST NOT animate implicitly. The row layers are reused between switches and the list is
   ordered by focus, so the two most recent windows trade places from one switch to the next; a layer
   that cross-fades from its previous picture to its new one makes the strip look like it is shuffling
   itself after it has already appeared.
+
+> **Reported 2026-09-25.** "The padding at the bottom is visually larger than at the top, I'd also want
+> to increase the corner radius on the popup itself to be more in line with the macOS theming. Also can
+> you add blur to the background instead of just opacity." The padding was symmetric in geometry and
+> asymmetric on screen: the caption band was 36pt for about 27pt of text, and the 9pt of slack landed
+> under it.
 
 > **Reported 2026-09-25.** "It's a bit too much opacity, needs to be a bit darker. For the window in
 > focus just use the primary focus colour for the whole outline, not just the left border." The fill went

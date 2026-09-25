@@ -19,7 +19,8 @@ use rustc_hash::FxHashMap as HashMap;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSPanel, NSRunningApplication, NSView, NSWindowCollectionBehavior,
+    NSBackingStoreType, NSColor, NSPanel, NSRunningApplication, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
     NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -61,9 +62,14 @@ const EMBER: (f64, f64, f64) = (1.0, 0.486, 0.314);
 /// `--ember-soft`, the specified fill for an active row.
 const EMBER_SOFT: (f64, f64, f64) = (0.247, 0.176, 0.157);
 
-/// `--radius-card`, 7px. "Corners stay crisp; only pills/circles fully round" — so the panel gets the
-/// card radius rather than something rounder.
-const CORNER: f64 = 7.0;
+/// The panel's corner radius.
+///
+/// A DEPARTURE from the design system, asked for and worth recording. Its geometry tops out at
+/// `--radius-card` 7px with the rule "corners stay crisp; only pills/circles fully round", which is
+/// right for cards in a document. This is not a card: it is a floating macOS panel, and macOS's own
+/// floating surfaces — Spotlight, the volume HUD, a popover — are rounded far more than 7px. Matching
+/// the platform reads as correct here in a way that matching the document system does not.
+const CORNER: f64 = 18.0;
 /// `--radius-control`, 5px, for the smaller surfaces inside it.
 const TILE_CORNER: f64 = 5.0;
 /// The ember ring around the selected row.
@@ -73,10 +79,15 @@ const TILE_CORNER: f64 = 5.0;
 /// ember's own remit covers "focused borders" as well as active bars. A whole outline says "this is
 /// the one" about a tile; an edge bar says "this is the current line" about a list.
 const FOCUS_RING: f64 = 2.0;
-/// The panel's fill opacity. The spec has no token for an overlay's translucency, so this is the one
-/// value here that is a judgement rather than a token. 0.78 first, reported as letting too much
-/// through.
-const PANEL_ALPHA: f64 = 0.90;
+/// The tint laid over the blurred backing.
+///
+/// Not a fill: the panel is blurred by an `NSVisualEffectView` behind this layer, and an opaque layer
+/// on top would hide it entirely. So this is a wash that darkens the blur rather than replacing it —
+/// the `HUDWindow` material is already dark, and this takes it the rest of the way.
+///
+/// The spec has no token for an overlay's translucency, so the number is a judgement. It has been 0.78
+/// and 0.90 as flat fills; over a blur it needs to be lower to let the blur read at all.
+const PANEL_ALPHA: f64 = 0.62;
 
 /// The app icon badged into a tile's corner. Small enough to read as a cue rather than as content,
 /// large enough to tell two apps apart at a glance.
@@ -126,6 +137,8 @@ struct LastDraw {
 /// The popup, alive for the lifetime of the process and ordered in only while a switch is open.
 pub struct SwitcherPanel {
     window: Retained<NSPanel>,
+    /// The blurred backing. Held because it has to be resized with the panel.
+    backing: Retained<NSVisualEffectView>,
     view: Retained<SwitcherView>,
     /// One layer per visible row, reused across opens. Rebuilt only when the row count changes, so
     /// stepping the selection moves a highlight rather than tearing down a layer tree.
@@ -182,10 +195,28 @@ impl SwitcherPanel {
                 | NSWindowCollectionBehavior::FullScreenNone,
         );
 
+        // A blurred backing rather than a flat translucent fill. `HUDWindow` is the material macOS uses
+        // for exactly this kind of floating panel, and `BehindWindow` is what makes it sample the
+        // desktop rather than its own siblings. `Active` so it stays blurred while rini is not the
+        // frontmost application — which it never is, being an Accessory app, so the default
+        // `FollowsWindowActiveState` would leave the material flat.
+        let backing = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
+        backing.setMaterial(NSVisualEffectMaterial::HUDWindow);
+        backing.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        backing.setState(NSVisualEffectState::Active);
+        backing.setWantsLayer(true);
+        if let Some(layer) = backing.layer() {
+            // The blur has to be clipped to the same rounded rect as the panel, or its square corners
+            // show through underneath the layer tree's rounded ones.
+            layer.setCornerRadius(CORNER);
+            layer.setMasksToBounds(true);
+        }
+        window.setContentView(Some(&backing));
+
         let view: Retained<SwitcherView> =
             unsafe { msg_send![SwitcherView::alloc(mtm), initWithFrame: frame] };
         view.setWantsLayer(true);
-        window.setContentView(Some(&view));
+        backing.addSubview(&view);
 
         let root = view.layer()?;
         let scale = backing_scale();
@@ -210,6 +241,7 @@ impl SwitcherPanel {
 
         Some(Self {
             window,
+            backing,
             view,
             tiles: Vec::new(),
             captions: Vec::new(),
@@ -241,6 +273,7 @@ impl SwitcherPanel {
         };
         self.window.setFrame_display(cocoa, false);
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), strip.panel.size);
+        self.backing.setFrame(bounds);
         self.view.setFrame(bounds);
         // The root's frame and any freshly built row layers, for the same no-implicit-animation reason
         // as `place`: a panel that changes size between switches would otherwise slide into its new
@@ -446,9 +479,13 @@ impl SwitcherPanel {
                 None => unsafe { tile.setContents(None) },
             }
 
+            // Exactly the caption band, so the text's own box has no slack to read as extra padding.
             caption.setFrame(CGRect::new(
-                CGPoint::new(rect.origin.x, rect.origin.y + self.metrics.tile_height + 4.0),
-                CGSize::new(rect.size.width, self.metrics.caption - 6.0),
+                CGPoint::new(
+                    rect.origin.x,
+                    rect.origin.y + self.metrics.tile_height + self.metrics.caption_gap,
+                ),
+                CGSize::new(rect.size.width, self.metrics.caption),
             ));
             let text = caption_text(row);
             unsafe {

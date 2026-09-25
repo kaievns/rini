@@ -33,7 +33,14 @@ pub struct Metrics {
     /// Inside the panel's edge, around the whole strip.
     pub padding: f64,
     /// Height below each tile for the title and app name.
+    ///
+    /// Sized to the TEXT, not chosen for looks: two lines at 11pt with default leading is about 27pt,
+    /// and a taller box leaves slack under the text that reads as extra padding — a caption layer draws
+    /// from its top, so any surplus lands at the bottom. Reported as the bottom padding looking larger
+    /// than the top when this was 36.
     pub caption: f64,
+    /// Between a tile and its caption.
+    pub caption_gap: f64,
     /// The most of the screen's width the panel may take.
     pub max_screen_fraction: f64,
 }
@@ -46,7 +53,8 @@ impl Default for Metrics {
             max_tile_width: 340.0,
             gap: 14.0,
             padding: 22.0,
-            caption: 36.0,
+            caption: 27.0,
+            caption_gap: 5.0,
             max_screen_fraction: 0.9,
         }
     }
@@ -66,7 +74,7 @@ impl Metrics {
     }
 
     fn row_height(&self) -> f64 {
-        self.tile_height + self.caption
+        self.tile_height + self.caption_gap + self.caption
     }
 }
 
@@ -222,6 +230,25 @@ mod tests {
         let m = metrics();
         assert_eq!(m.tile_width(CGSize::new(0.0, 0.0)), m.max_tile_width);
         assert_eq!(m.tile_width(CGSize::new(-10.0, 100.0)), m.max_tile_width);
+    }
+
+    /// The reported asymmetry. A caption layer draws from its top, so a box taller than its text leaves
+    /// the surplus at the bottom, where it reads as extra padding under the strip. The band is sized to
+    /// two lines at 11pt.
+    #[test]
+    fn a_row_is_the_tile_plus_exactly_the_caption_band() {
+        let m = metrics();
+        let strip = lay_out(&[wide()], 0, screen(), m).expect("strip");
+
+        assert_eq!(
+            strip.rows[0].size.height,
+            m.tile_height + m.caption_gap + m.caption
+        );
+        assert_eq!(
+            strip.panel.size.height,
+            m.tile_height + m.caption_gap + m.caption + m.padding * 2.0,
+            "and the panel is that row plus equal padding above and below"
+        );
     }
 
     #[test]
