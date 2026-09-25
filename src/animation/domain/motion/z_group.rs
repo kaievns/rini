@@ -1,14 +1,24 @@
-//! Tiled windows are one z-order group.
+//! Windows come forward in SETS, and there are two kinds of set.
 //!
-//! A scrolling workspace is a single surface, so its windows belong together in front-to-back order as
-//! well as in position: focusing any window on the strip brings the whole strip in front of the windows
-//! that are not on it, and focusing one of those puts it in front of the whole strip.
+//! The strip is one. A scrolling workspace is a single surface, so its windows belong together in
+//! front-to-back order as well as in position: focusing any window on the strip brings the whole strip
+//! in front of everything not on it.
 //!
-//! macOS has no such notion. It raises the one window that was clicked, which leaves a floating window
-//! sandwiched between two columns that sit side by side on screen — so one half of a 50/50 pair is in
-//! front of it and the other half behind.
+//! An APPLICATION is the other. Focusing one window of a multi-window application brings that
+//! application's windows forward together, which is what macOS itself does — raising a window activates
+//! its application, and activating an application raises its windows as a set. Focusing one window off
+//! the strip therefore lifts ITS application, and leaves every other application where it was.
 //!
-//! The same rule decides two different things: which containers the animation overlay draws in front
+//! What macOS does NOT have is the first notion. It raises the one window that was clicked, which leaves
+//! a window from another application sandwiched between two columns that sit side by side on screen — so
+//! one half of a 50/50 pair is in front of it and the other half behind.
+//!
+//! `StackGroup::Floating` does not express the application set: it puts every off-strip window in ONE
+//! group, so focusing one of them lifts all of them. That is the defect written up under "Floating
+//! windows during a flight" in `specs/animation.md`; the group an off-strip window belongs to is its
+//! application, not "not the strip".
+//!
+//! The strip rule decides two different things: which containers the animation overlay draws in front
 //! (`container_z`), and which real windows have to be raised to put the order back.
 
 /// Which z-order group a window belongs to.

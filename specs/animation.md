@@ -69,35 +69,43 @@ destination for a window already moving.
 rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
 `src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
 
-## Floating windows during a flight
+## Which windows come forward together
 
 - A flight MUST draw the front-to-back order the screen LANDS in. An order that only exists for the
   length of the animation reads as the windows rearranging themselves twice.
-- Only the TILED group moves as one. Focusing a floating window MUST lift that window alone: the strip
-  stays in front of every other floating window, because macOS raises only the window that gained focus
-  and that is what the flight lands on.
+- The strip is one set. Focusing any window on it MUST bring the whole strip in front of everything not
+  on it, because a scrolling workspace is a single surface and cannot have a hole in it.
+- An APPLICATION is the other set. Focusing one window of a multi-window application MUST bring that
+  application's windows forward together, and MUST leave every other application where it was. This is
+  what macOS does on its own: raising a window activates its application, and that raises its windows as
+  a set. So it is also the order the flight lands on.
+- "Off the strip" is NOT a set. Two windows being off the strip says nothing about whether they come
+  forward together.
 
 > **Reported 2026-09-25.** "During the animation from here to 1pass it renders zoom window under it too.
 > When it lands the stack is zoom in bg -> strip -> 1pass, but during the animation it renders strip ->
 > zoom -> 1pass." Diagnosed, NOT fixed.
 >
-> `z_group::tile_depth` and `container_z` band by GROUP: the focused window's group goes in front and the
-> other group a stride behind. With a floating window focused, that promotes EVERY floating window over
-> the strip, so zoom rides up with 1Password and drops back on landing. The module's own doc already
-> states the right rule — "focusing one of those puts IT in front of the whole strip" — so this is the
-> implementation generalising from one window to its group.
+> `z_group` bands by `StackGroup`, which has exactly two values: `Tiled` and `Floating`. Every off-strip
+> window is in one group, so focusing 1Password promotes zoom with it. The group an off-strip window
+> belongs to is its APPLICATION.
 >
-> Fixing `tile_depth` alone does nothing. Tile layers are children of their group's container
-> (`overlay.rs`, `container.addSublayer(&picture)`), containers are siblings under the root, and a
-> parent's `zPosition` fully decides cross-container order. All floating windows share one container, so
-> no per-tile depth can put one float in front of the strip and another behind it.
+> The reported windows are single-window applications, so this case alone does not distinguish per-window
+> from per-application grouping. Per-application is the rule, and it is what macOS activation does.
 >
-> The landed order needs THREE positions — focused float, strip, other floats — and the overlay has two.
-> The fix is to give the focused floating window its own container in front of the strip band, leave
-> `GroupKey::Floating` behind it always, and make `tile_depth` read "the strip is in front of the floats,
-> except the one float that has focus". `Banding` has to carry which float that is, since the overlay
-> chooses containers before it bands them.
+> Fixing `tile_depth` alone does nothing whichever rule is used. Tile layers are children of their
+> group's container (`overlay.rs`, `container.addSublayer(&picture)`), containers are siblings under the
+> root, and a parent's `zPosition` fully decides cross-container order. One container holds every
+> off-strip window, so no per-tile depth can put one application in front of the strip and another
+> behind it.
+>
+> So the fix is to make the container partition match the rule: one container per off-strip APPLICATION
+> in place of the single floating one, and three bands rather than two — the focused application, then
+> the strip, then the other applications. The bands fall out of the partition instead of needing a
+> special case for the window that has focus, which the two-value `StackGroup` would have forced.
+> `MAX_TILE_DEPTH` becomes three strides and the backdrop has to sit behind that.
 >
 > An attempt that changed only `z_group` is at `/tmp/z_group.attempt.rs`; it left the strip and the
 > floating container both at zero, which is less correct than the current wrong-but-deterministic order.
-> Seven engine property tests encode the symmetric group rule and will need updating with the real fix.
+> Seven engine property tests encode "the focused window's group goes in front" with `Floating` as a
+> group, and will need rewriting around the application set rather than patching until green.
