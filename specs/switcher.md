@@ -68,6 +68,17 @@ switcher answers "every window I have, wherever it is".
 
 - A quick tap MUST step without showing anything. Holding the trigger's modifier MUST keep the switch
   open so further presses move a selection, and RELEASING the modifier MUST commit it.
+- The popup MUST wait for the hold. It is drawn only once a switch has stayed open past a short
+  threshold, and a switch that commits or cancels inside it is never drawn at all. The switch itself
+  MUST NOT wait: the selection and the commit are decided the moment the keys arrive, and only the
+  picture of them is held back.
+- A step inside the threshold MUST draw at once. Pressing the key again is the user walking the list,
+  which is as sure a sign of a hold as the modifier staying down, and stepping blind is worse than an
+  early popup.
+
+> **Reported 2026-09-26.** "The popup should not show on quick combos, it should detect whether I did a
+> quick combo and released, or if I keep holding the mod button after initial tap. In the former case no
+> popup, in the latter a popup." The rule above was already written; the panel drew on the open anyway.
 - Nothing MUST be focused until the commit. Focusing as the selection moves raises every window it
   passes over — a burst of Accessibility work, and a visible flicker through windows nobody asked to
   see.

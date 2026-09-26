@@ -14,6 +14,7 @@ nothing.
 | **Which binding holds it** | `domain/trigger.rs` — each switcher's session keys, derived from its own binding rather than configured twice |
 | **Where the rows go** | `domain/layout.rs` — the panel rect, one rect per row, the scroll that keeps the selection visible, and the hit test |
 | **Whether a draw travels** | `domain/motion.rs` — how long the ring takes to move, and the one case where moving is right |
+| **When the popup appears** | `domain/reveal.rs` — only once a switch has been held, never on a quick combo |
 | **The popup** | `platform/panel.rs` — the `NSPanel` and its layer tree; `platform/actor.rs` — the main thread it must live on |
 
 Focus order itself is not here. It is a fact about window focus, so it lives with the rest
@@ -155,6 +156,12 @@ rather than "just above rini's overlay": applications keep windows at the floati
 levels, and 21 went under all of the last one. And its collection behaviour is `FullScreenAuxiliary`,
 not `FullScreenNone` — those sound like one statement and are two, the second of which means "never
 shown ON a full-screen space" and made the popup invisible whenever anything was full screen.
+
+**The popup waits for a hold.** `domain/reveal.rs` holds the first draw of a switch back for
+`HOLD_TO_REVEAL`, and a switch that ends inside it is never drawn, so a quick combo steps without a
+flash of panel. The actor keeps the latest draw asked for while it waits and draws that one, and builds
+the window meanwhile so the first popup does not pay the 112ms either. A second draw while waiting —
+which only a step produces — draws at once.
 
 **The popup is cosmetic.** The reactor holds the list and the cursor and runs on its own thread; the
 panel is a main-thread actor fed rows over a channel. A slow or missing panel delays a picture and

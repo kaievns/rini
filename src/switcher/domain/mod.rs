@@ -4,5 +4,6 @@
 pub mod candidates;
 pub mod layout;
 pub mod motion;
+pub mod reveal;
 pub mod selection;
 pub mod trigger;
