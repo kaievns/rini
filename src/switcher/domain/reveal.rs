@@ -12,8 +12,9 @@ use std::time::{Duration, Instant};
 /// How long a switch has to stay open before the popup is drawn.
 ///
 /// A judgement, not a measurement: long enough that the modifier's release in a quick combo lands
-/// before it, short enough that a deliberate hold does not feel like waiting.
-pub const HOLD_TO_REVEAL: Duration = Duration::from_millis(200);
+/// before it, short enough that a deliberate hold does not feel like waiting. 200ms at first, raised
+/// to 300ms on request after using it.
+pub const HOLD_TO_REVEAL: Duration = Duration::from_millis(300);
 
 /// What to do with a draw the reactor asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +98,15 @@ mod tests {
         base + Duration::from_millis(millis)
     }
 
+    /// The moment the hold is up, and a moment comfortably past it.
+    fn hold(base: Instant) -> Instant {
+        base + HOLD_TO_REVEAL
+    }
+
+    fn after_hold(base: Instant) -> Instant {
+        base + HOLD_TO_REVEAL * 2
+    }
+
     /// The reported bug: a quick combo showed the popup. Opened and released inside the hold, nothing
     /// is ever drawn.
     #[test]
@@ -104,14 +114,14 @@ mod tests {
         let base = Instant::now();
         let mut reveal = Reveal::default();
 
-        assert_eq!(reveal.on_show(base), Draw::Later { due: at(base, 200) });
+        assert_eq!(reveal.on_show(base), Draw::Later { due: hold(base) });
         assert!(!reveal.on_tick(at(base, 90)), "not yet");
         assert!(
             !reveal.on_hide(),
             "released before the hold: nothing to take down"
         );
         assert!(
-            !reveal.on_tick(at(base, 250)),
+            !reveal.on_tick(after_hold(base)),
             "and a deadline arriving after the release draws nothing"
         );
         assert!(!reveal.is_shown());
@@ -124,9 +134,12 @@ mod tests {
         let mut reveal = Reveal::default();
         reveal.on_show(base);
 
-        assert!(reveal.on_tick(at(base, 200)));
+        assert!(reveal.on_tick(hold(base)));
         assert!(reveal.is_shown());
-        assert!(!reveal.on_tick(at(base, 400)), "drawn once, not on every tick");
+        assert!(
+            !reveal.on_tick(after_hold(base)),
+            "drawn once, not on every tick"
+        );
         assert!(reveal.on_hide(), "and the release takes it down");
     }
 
@@ -147,9 +160,9 @@ mod tests {
         let base = Instant::now();
         let mut reveal = Reveal::default();
         reveal.on_show(base);
-        reveal.on_tick(at(base, 200));
+        reveal.on_tick(hold(base));
 
-        assert_eq!(reveal.on_show(at(base, 300)), Draw::Now);
+        assert_eq!(reveal.on_show(after_hold(base)), Draw::Now);
     }
 
     /// Each switch waits out its own hold: a previous switch that was shown does not let the next
@@ -159,9 +172,12 @@ mod tests {
         let base = Instant::now();
         let mut reveal = Reveal::default();
         reveal.on_show(base);
-        reveal.on_tick(at(base, 200));
+        reveal.on_tick(hold(base));
         reveal.on_hide();
 
-        assert!(matches!(reveal.on_show(at(base, 1000)), Draw::Later { .. }));
+        assert!(matches!(
+            reveal.on_show(after_hold(base) + HOLD_TO_REVEAL),
+            Draw::Later { .. }
+        ));
     }
 }
