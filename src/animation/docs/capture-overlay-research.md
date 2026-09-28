@@ -1944,8 +1944,10 @@ unfocused the tile slides in dimmed and snaps to focused at the handover.
 Ghostty greys out noticeably, so this was the most visible flicker left after
 the sizing fixes.
 
-Fixed by recapturing it at 12% progress, by which point the reactor has shown
-the workspace and moved focus, so SkyLight returns the focused rendering.
+Fixed by recapturing it mid-flight, by which point the reactor has shown the
+workspace and moved focus, so SkyLight returns the focused rendering. The
+window being left is recaptured with it. When and by which route is in
+"Mid-flight passes" in `animation-smoothness.md`.
 
 On the main thread this cost too much. Measured over a 494ms flight, capture
 times of 38ms to 179ms dropped the frame count from 30 to as low as 26. Moving
@@ -1956,4 +1958,5 @@ which yabai relies on as well, capturing on a pthread per window at
 and replaces contents only, never geometry, so a late arrival cannot disturb the
 movement.
 
-This does nothing for blur, which no capture contains. See the section above.
+A framed recapture of a window wholly on a display carries its blur too; see
+"A composite of the window and what is below it carries the blur".

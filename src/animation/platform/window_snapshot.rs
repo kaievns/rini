@@ -162,6 +162,12 @@ pub fn capture_via_framed_with_dressing(
     })
 }
 
+/// Whether `window` lies wholly on one display now, which is when a framed capture of it is whole.
+pub fn is_wholly_on_a_display(window: WindowServerId) -> bool {
+    crate::windows::platform::window_server::get_window(window)
+        .is_some_and(|info| fully_on_a_display(info.frame, &active_display_bounds()))
+}
+
 /// The window and everything below it on screen, cropped to `rect`. Leaves out every window above it,
 /// so neither an overlapping window nor rini's own overlay can end up in the picture.
 fn capture_below_and_including(
@@ -426,21 +432,22 @@ impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
     }
 
     /// Stores a snapshot, subject to [`should_replace`] for its pixels, with [`CarriesOver`]
-    /// deciding what survives of the rest either way.
-    pub fn insert(&mut self, window: WindowId, mut snapshot: T) {
+    /// deciding what survives of the rest either way. True when its pixels are now the ones held.
+    pub fn insert(&mut self, window: WindowId, mut snapshot: T) -> bool {
         if !snapshot.cacheable() {
-            return;
+            return false;
         }
         if let Some(existing) = self.entries.get_mut(&window) {
             if !should_replace(Some(existing.coverage()), snapshot.coverage())
                 || existing.keeps_over(&snapshot)
             {
                 existing.absorb(snapshot);
-                return;
+                return false;
             }
             snapshot.inherit(existing);
         }
         self.entries.insert(window, snapshot);
+        true
     }
 
     pub fn get(&self, window: WindowId) -> Option<&T> {
@@ -548,7 +555,7 @@ mod tests {
     fn a_stand_in_is_never_cached() {
         let mut cache: SnapshotCache<WindowSnapshot> = SnapshotCache::new();
         let window = WindowId::new(1, 1);
-        cache.insert(window, placeholder(CGSize::new(859.0, 1081.0), test_bitmap()));
+        assert!(!cache.insert(window, placeholder(CGSize::new(859.0, 1081.0), test_bitmap())));
         assert!(cache.get(window).is_none());
     }
 
@@ -570,10 +577,12 @@ mod tests {
         let window = WindowId::new(1, 1);
         let mut blurred = test_snapshot(CGSize::new(859.0, 1081.0));
         blurred.carries_blur = true;
-        cache.insert(window, blurred);
+        assert!(cache.insert(window, blurred), "a first picture is held");
 
-        cache.insert(window, test_snapshot(CGSize::new(859.0, 1081.0)));
-
+        assert!(
+            !cache.insert(window, test_snapshot(CGSize::new(859.0, 1081.0))),
+            "and the refusal is reported, so a flight in the air does not draw the grey one either"
+        );
         assert!(cache.get(window).unwrap().carries_blur, "the blur stays");
     }
 

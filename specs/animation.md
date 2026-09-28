@@ -106,6 +106,24 @@ rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation si
 > had already been measured returning the same flat grey. The window captured together with what is
 > below it carries the real blur and leaves out anything above it, measured the same day.
 
+## Focus changing during a flight
+
+- When a flight moves focus from one window to another, both MUST land in their new focus rendering:
+  the window gaining focus active, the window losing it inactive. The change MUST reach each tile while
+  the flight still moves, so nothing changes at rest after the lift.
+- Both ends MUST be recaptured wherever they are: wholly on a display, or clipped by its edge.
+- A picture begun before the flight asked for it MUST NOT reach the tile. It shows the focus as it was,
+  and landing after the flight's own picture it would cut the tile back.
+- A picture the cache refuses MUST NOT reach a tile either. The flight would draw what the next one
+  will not.
+- A flight that moves focus nowhere MUST NOT recapture anything.
+
+> **Reported 2026-09-28.** "The old window stays in its old active state throughout the entire
+> transition and then flickers in in its inactive state once the animation finished. Would be great if
+> we could swap the image during the animation itself if it's available." The recapture already
+> covered both ends, but at 0.5 through the background service. Its pictures landed at 0.82 to 1.16 of
+> the flight, measured the same day, past the 0.6 cutoff it had then, so neither end was ever cut in.
+
 ## Which windows come forward together
 
 - A flight MUST draw the front-to-back order the screen LANDS in. An order that only exists for the

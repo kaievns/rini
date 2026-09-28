@@ -7,11 +7,13 @@
 
 use objc2_core_foundation::CGRect;
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use rini_core::ids::{WindowId, WindowServerId};
 
 use super::timing::{
     COMPANION_CENTER_SLACK, COMPANION_EXPANSION, HANDOVER_THRESHOLD_PT, REFRESH_APPLY_BEFORE,
+    REFRESH_PASSES_AT, REVEAL_APPLY_BEFORE,
 };
 use crate::animation::domain::request::SnapshotTarget;
 
@@ -31,6 +33,63 @@ pub(in crate::animation) fn refresh_targets(
         .flatten()
         .filter(|window| tiles.contains(window))
         .collect()
+}
+
+/// A flight's recapture of the two ends of its focus change, in the passes at `REFRESH_PASSES_AT`.
+/// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+#[derive(Debug, Default)]
+pub(in crate::animation) struct FocusRefresh {
+    /// How many of the passes have been taken.
+    passes: usize,
+    /// When the first pass asked for its pictures.
+    asked: Option<Instant>,
+    /// The windows recaptured: the only moving tiles that may take a picture mid-flight.
+    targets: Vec<WindowId>,
+    /// When the picture the refresh last cut onto each target was taken.
+    shown: Vec<(WindowId, Instant)>,
+}
+
+impl FocusRefresh {
+    /// Whether a pass is due at `progress`; takes it when it is. A first look that comes late skips
+    /// the passes it overslept rather than taking them back to back.
+    pub(in crate::animation) fn take_pass(&mut self, progress: f64, allowed: bool) -> bool {
+        let due = REFRESH_PASSES_AT.iter().filter(|&&at| progress >= at).count();
+        if !allowed || due <= self.passes {
+            return false;
+        }
+        self.passes = due;
+        true
+    }
+
+    /// A pass asked for pictures of `targets` at `now`.
+    pub(in crate::animation) fn ask(&mut self, targets: Vec<WindowId>, now: Instant) {
+        self.targets = targets;
+        self.asked.get_or_insert(now);
+    }
+
+    pub(in crate::animation) fn is_target(&self, window: WindowId) -> bool {
+        self.targets.contains(&window)
+    }
+
+    /// Whether a picture of `window` taken at `taken` was taken for this refresh, and is newer than
+    /// the one the refresh last cut in.
+    ///
+    /// A picture requested before the flight, or coalesced into a capture already running when the
+    /// refresh asked, shows the focus as it was; landing after the refresh's own, it would cut the tile
+    /// back. Both are older than the ask: a capture's `taken` is never earlier than the capture began,
+    /// on either route.
+    pub(in crate::animation) fn is_fresh(&self, window: WindowId, taken: Instant) -> bool {
+        let shown = self.shown.iter().find(|(w, _)| *w == window).map(|(_, at)| *at);
+        self.asked.is_some_and(|asked| taken >= asked) && shown.is_none_or(|shown| taken > shown)
+    }
+
+    /// The refresh cut a picture of `window` taken at `taken` onto its tile.
+    pub(in crate::animation) fn cut(&mut self, window: WindowId, taken: Instant) {
+        match self.shown.iter_mut().find(|(w, _)| *w == window) {
+            Some(entry) => entry.1 = taken,
+            None => self.shown.push((window, taken)),
+        }
+    }
 }
 
 /// How a fresh group of tiles begins moving.
@@ -107,37 +166,27 @@ pub(in crate::animation) enum SwapDecision {
     CacheOnly,
 }
 
-/// How an incoming picture compares with the one cached for its window, judged before caching.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(in crate::animation) struct CacheComparison {
-    /// Renders the same within thumbprint tolerance; non-bitmap pairs count as different.
-    pub(in crate::animation) renders_like_cached: bool,
-    /// Captured by the same route (`SnapshotSource`) as the cached picture. Routes render a
-    /// translucent window differently, so a route change alone reads as a change.
-    pub(in crate::animation) same_source: bool,
-}
-
 /// Whether a picture landing mid-flight may change what a tile draws. `progress` is `None`
 /// before the flight starts moving. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn should_swap_mid_flight(
     state: TileState,
     settled: bool,
-    renders_like_cached: bool,
-    same_source: bool,
+    fresh: bool,
     progress: Option<f64>,
 ) -> SwapDecision {
     match state {
         TileState::Awaiting | TileState::Reveal { .. } if progress.is_none() => SwapDecision::Claim,
         TileState::Awaiting => SwapDecision::Admit,
         TileState::Reveal { fits: true }
-            if settled && progress.is_some_and(|p| p < REFRESH_APPLY_BEFORE) =>
+            if settled && progress.is_some_and(|p| p < REVEAL_APPLY_BEFORE) =>
         {
             SwapDecision::Swap("reveal")
         }
         TileState::Reveal { .. } => SwapDecision::CacheOnly,
+        // No likeness test: a focus change is a traffic light and a dimmed title bar, which no
+        // thumbprint small enough to be cheap can see, and a cut to an identical picture is invisible.
         TileState::MovingRefreshTarget { fits: true, resizing }
-            if same_source
-                && !renders_like_cached
+            if fresh
                 && (!resizing || settled)
                 && progress.is_some_and(|p| p < REFRESH_APPLY_BEFORE) =>
         {
@@ -382,5 +431,85 @@ mod tests {
     fn mismatched_or_empty_thumbprints_never_match() {
         assert!(!renderings_match(&[1, 2, 3], &[1, 2]));
         assert!(!renderings_match(&[], &[]));
+    }
+
+    fn window(idx: u32) -> WindowId {
+        WindowId::new(7, idx)
+    }
+
+    fn after(base: Instant, millis: u64) -> Instant {
+        base + std::time::Duration::from_millis(millis)
+    }
+
+    /// Nothing is fresh before the refresh asks: the flight has no picture of its own yet.
+    #[test]
+    fn nothing_is_fresh_before_the_refresh_asks() {
+        let refresh = FocusRefresh::default();
+        assert!(!refresh.is_fresh(window(1), Instant::now()));
+    }
+
+    /// The race behind the rule: a capture already running when the refresh asked is coalesced with
+    /// it, lands later, and shows the focus as it was. It carries the older stamp and is refused.
+    #[test]
+    fn a_picture_begun_before_the_ask_is_not_fresh() {
+        let base = Instant::now();
+        let mut refresh = FocusRefresh::default();
+        refresh.ask(vec![window(1), window(2)], after(base, 100));
+
+        assert!(
+            !refresh.is_fresh(window(1), after(base, 40)),
+            "begun before the ask"
+        );
+        assert!(
+            refresh.is_fresh(window(1), after(base, 100)),
+            "begun as it asked"
+        );
+        assert!(refresh.is_fresh(window(2), after(base, 130)));
+    }
+
+    /// Once the refresh has cut a picture in, only a newer one may follow: the first pass's service
+    /// capture landing after the second pass's framed one would cut the tile back a step.
+    #[test]
+    fn after_a_cut_only_a_newer_picture_is_fresh() {
+        let base = Instant::now();
+        let mut refresh = FocusRefresh::default();
+        refresh.ask(vec![window(1)], after(base, 100));
+        refresh.cut(window(1), after(base, 250));
+
+        assert!(
+            !refresh.is_fresh(window(1), after(base, 120)),
+            "older than what is shown"
+        );
+        assert!(!refresh.is_fresh(window(1), after(base, 250)), "the one shown");
+        assert!(refresh.is_fresh(window(1), after(base, 260)));
+    }
+
+    /// The second pass keeps the first pass's ask: its pictures are newer, and so still fresh, while
+    /// anything from before the first pass stays refused.
+    #[test]
+    fn a_second_pass_keeps_the_first_ask() {
+        let base = Instant::now();
+        let mut refresh = FocusRefresh::default();
+        refresh.ask(vec![window(1)], after(base, 100));
+        refresh.ask(vec![window(1)], after(base, 220));
+
+        assert!(
+            refresh.is_fresh(window(1), after(base, 150)),
+            "the first pass's own picture"
+        );
+        assert!(!refresh.is_fresh(window(1), after(base, 90)));
+        assert!(refresh.is_target(window(1)));
+        assert!(!refresh.is_target(window(2)));
+    }
+
+    #[test]
+    fn the_passes_are_taken_once_each_and_only_when_allowed() {
+        let mut refresh = FocusRefresh::default();
+        assert!(!refresh.take_pass(0.1, true), "before the first");
+        assert!(!refresh.take_pass(0.3, false), "not allowed now");
+        assert!(refresh.take_pass(0.3, true), "and taken once it is");
+        assert!(!refresh.take_pass(0.4, true));
+        assert!(refresh.take_pass(0.55, true));
+        assert!(!refresh.take_pass(1.0, true), "spent");
     }
 }

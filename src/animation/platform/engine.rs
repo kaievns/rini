@@ -18,7 +18,7 @@ use crate::animation::domain::request::SnapshotTarget;
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
 use crate::animation::platform::snapshot_service::SnapshotService;
 use crate::animation::platform::window_snapshot::{
-    SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing,
+    SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing, is_wholly_on_a_display,
 };
 use rini_core::ids::WindowId;
 use rini_core::ids::WindowServerId;
@@ -130,8 +130,7 @@ pub type LendSnapshots = Box<dyn Fn(Vec<(WindowId, WindowSnapshot)>)>;
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
 
-/// The destination refresh's requests: one ScreenCaptureKit target per wanted window, and the
-/// windows covered. One route only, so the refresh compares like with like against the cache.
+/// The focus refresh's capture targets, one per wanted window that has a tile, and the windows covered.
 fn refresh_requests(
     tiles: &[(WindowId, WindowServerId, CGSize)],
     wanted: &[WindowId],
@@ -162,10 +161,8 @@ struct RunningAnimation {
     awaiting: Vec<(WindowId, CGSize)>,
     /// When to stop waiting for reveal pixels and fly the placeholder (`reveal_hold_limit`).
     hold_deadline: Option<Instant>,
-    /// Whether the focus change's ends have been recaptured. See `refresh_destination_among`.
-    destination_refreshed: bool,
-    /// Windows the refresh recaptured: the only tiles that may take a picture mid-flight.
-    refresh_targets: Vec<WindowId>,
+    /// The recapture of the focus change's two ends. See `refresh_destination_among`.
+    refresh: FocusRefresh,
     /// Windows whose hairline landed this flight, so `finish` harvests nothing twice.
     harvested: HashSet<WindowId>,
     /// The window gaining focus, from the latest pass that named one; its group is banded in front.
@@ -356,15 +353,10 @@ impl RunningAnimation {
         self.started.map(|_| self.progress())
     }
 
-    /// Whether the destination refresh is due at `progress`; takes the one slot when it is.
+    /// Whether a focus refresh pass is due at `progress`; takes it when it is.
     fn take_refresh(&mut self, progress: f64) -> bool {
-        let due = !self.destination_refreshed
-            && progress >= REFRESH_DESTINATION_AT
-            && capture_work_allowed(self.phase(), CaptureKind::Refresh);
-        if due {
-            self.destination_refreshed = true;
-        }
-        due
+        let allowed = capture_work_allowed(self.phase(), CaptureKind::Refresh);
+        self.refresh.take_pass(progress, allowed)
     }
 
     /// What `window` is doing in this flight when a picture of it lands, for `should_swap_mid_flight`.
@@ -387,7 +379,7 @@ impl RunningAnimation {
         }
         let resizing =
             crate::animation::platform::window_snapshot::is_a_resize(tile.from.size, tile.to.size);
-        if self.refresh_targets.contains(&window) {
+        if self.refresh.is_target(window) {
             TileState::MovingRefreshTarget { fits, resizing }
         } else {
             TileState::Moving { fits, resizing }
@@ -745,34 +737,20 @@ impl FlightEngine {
                 "background snapshot landed"
             );
             // Background captures are never settled: the service knows sizes, not paint states.
-            let comparison = if self.running.is_some() {
-                self.compare_with_cached(window, &snapshot)
-            } else {
-                CacheComparison::default()
-            };
-            self.cache.insert(window, snapshot.clone());
-            if snapshot.is_usable() {
-                self.offer_mid_flight(window, &snapshot, false, comparison);
+            if self.cache.insert(window, snapshot.clone()) && snapshot.is_usable() {
+                self.offer_mid_flight(window, &snapshot, false);
             }
         }
     }
 
-    /// Offers an already-cached picture to the running flight per `should_swap_mid_flight`.
-    fn offer_mid_flight(
-        &mut self,
-        window: WindowId,
-        snapshot: &WindowSnapshot,
-        settled: bool,
-        comparison: CacheComparison,
-    ) {
+    /// Offers a picture the cache just took to the running flight per `should_swap_mid_flight`. One
+    /// the cache refused is never offered: a flight would draw what the next one will not.
+    fn offer_mid_flight(&mut self, window: WindowId, snapshot: &WindowSnapshot, settled: bool) {
         let Some(running) = self.running.as_ref() else { return };
         let progress = running.progress_if_started();
         let state = running.tile_state(window, snapshot);
-        let CacheComparison {
-            renders_like_cached,
-            same_source,
-        } = comparison;
-        match should_swap_mid_flight(state, settled, renders_like_cached, same_source, progress) {
+        let fresh = running.refresh.is_fresh(window, snapshot.taken);
+        match should_swap_mid_flight(state, settled, fresh, progress) {
             // An unsettled capture of a held window can be its unpainted surface.
             SwapDecision::Claim => {
                 if settled {
@@ -790,6 +768,11 @@ impl FlightEngine {
                     progress = progress.unwrap_or(0.0),
                     "picture swapped mid-flight"
                 );
+                if let Some(running) = self.running.as_mut()
+                    && matches!(state, TileState::MovingRefreshTarget { .. })
+                {
+                    running.refresh.cut(window, snapshot.taken);
+                }
                 let remaining = self.remaining_flight();
                 if let Some(overlay) = self.overlay.as_mut() {
                     overlay.set_tile_picture(window, snapshot, remaining);
@@ -912,7 +895,8 @@ impl FlightEngine {
         self.overlay.as_mut()
     }
 
-    /// Recaptures both ends of a focus change once per flight, by the service route only.
+    /// Recaptures both ends of a focus change, framed where the window is wholly on a display and by
+    /// the service where it is clipped, which a framed capture returns only a sliver of.
     /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
     fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
         let current = self.running.as_ref().and_then(|running| running.focus);
@@ -923,38 +907,70 @@ impl FlightEngine {
         }
         let (wanted, requests) = refresh_requests(tiles, &wanted);
         if let Some(running) = self.running.as_mut() {
-            running.refresh_targets = wanted.clone();
+            running.refresh.ask(wanted, Instant::now());
         }
-        debug!(windows = wanted.len(), "destination refresh requested");
-        self.service.request(requests);
+        let (framed, clipped): (Vec<SnapshotTarget>, Vec<SnapshotTarget>) = requests
+            .into_iter()
+            .partition(|target| is_wholly_on_a_display(target.server_id));
+        debug!(
+            framed = framed.len(),
+            clipped = clipped.len(),
+            "destination refresh requested"
+        );
+        self.capture_framed(
+            "focus-refresh",
+            framed.iter().map(|target| target.window).collect(),
+            |window, snapshot| {
+                snapshot.is_usable().then_some(Event::PictureReady {
+                    window,
+                    snapshot,
+                    settled: true,
+                })
+            },
+        );
+        self.service.request(clipped);
     }
 
-    /// Harvests hairlines for `windows` on a plain thread: the service's completion queue must not
-    /// make capture calls (see `snapshot_service`). Results come back as `DressingReady`, or as a whole
+    /// Harvests hairlines for `windows`. Results come back as `DressingReady`, or as a whole
     /// `PictureReady` when the window has a blur the capture that just landed could not contain: the
     /// harvest is the moment a window is on screen and at rest, which is when that can be put back.
     fn harvest_dressings(&self, windows: Vec<WindowId>) {
+        self.capture_framed("dressing-harvest", windows, |window, snapshot| {
+            if snapshot.carries_blur && snapshot.is_usable() {
+                Some(Event::PictureReady {
+                    window,
+                    snapshot,
+                    settled: true,
+                })
+            } else {
+                snapshot.dressing.map(|dressing| Event::DressingReady { window, dressing })
+            }
+        });
+    }
+
+    /// Framed captures of `windows` on a plain thread, each turned into what `event` sends back. Never
+    /// on the service's completion queue, which must not make capture calls (see `snapshot_service`).
+    fn capture_framed(
+        &self,
+        name: &str,
+        windows: Vec<WindowId>,
+        event: fn(WindowId, WindowSnapshot) -> Option<Event>,
+    ) {
         if windows.is_empty() {
             return;
         }
         let tx = self.tx.clone();
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         std::thread::Builder::new()
-            .name("dressing-harvest".to_string())
+            .name(name.to_string())
             .spawn(move || {
                 for window in windows {
                     let server_id = WindowServerId::from(window);
                     let Some(snapshot) = capture_via_framed_with_dressing(server_id, scale) else {
                         continue;
                     };
-                    if snapshot.carries_blur && snapshot.is_usable() {
-                        _ = tx.send(Event::PictureReady {
-                            window,
-                            snapshot,
-                            settled: true,
-                        });
-                    } else if let Some(dressing) = snapshot.dressing {
-                        _ = tx.send(Event::DressingReady { window, dressing });
+                    if let Some(event) = event(window, snapshot) {
+                        _ = tx.send(event);
                     }
                 }
             })
@@ -979,55 +995,13 @@ impl FlightEngine {
 
     /// Takes a framed recapture: a chase's reveal, or the destination refresh.
     fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot, settled: bool) {
-        // Compared before the cache absorbs the newcomer; a same-looking swap is a cut for nothing.
-        let comparison = self.compare_with_cached(window, &snapshot);
         if snapshot.dressing.is_some() {
             if let Some(running) = self.running.as_mut() {
                 running.harvested.insert(window);
             }
         }
-        self.cache.insert(window, snapshot.clone());
-        self.offer_mid_flight(window, &snapshot, settled, comparison);
-    }
-
-    /// How an incoming picture compares with the cached one. With nothing cached the source counts
-    /// as the same and the rendering as different.
-    fn compare_with_cached(&self, window: WindowId, incoming: &WindowSnapshot) -> CacheComparison {
-        use crate::animation::platform::window_snapshot::SnapshotImage;
-        let Some(cached) = self.cache.get(window) else {
-            return CacheComparison {
-                renders_like_cached: false,
-                same_source: true,
-            };
-        };
-        let same_source = cached.source == incoming.source;
-        if !cached.fits(CGSize::new(
-            incoming.coverage.covered.0,
-            incoming.coverage.covered.1,
-        )) {
-            return CacheComparison {
-                renders_like_cached: false,
-                same_source,
-            };
-        }
-        let (SnapshotImage::Bitmap(old), SnapshotImage::Bitmap(new)) =
-            (&cached.image, &incoming.image)
-        else {
-            return CacheComparison {
-                renders_like_cached: false,
-                same_source,
-            };
-        };
-        let renders_like_cached = match (
-            crate::animation::platform::edge_dressing::thumbprint(old),
-            crate::animation::platform::edge_dressing::thumbprint(new),
-        ) {
-            (Some(a), Some(b)) => renderings_match(&a, &b),
-            _ => false,
-        };
-        CacheComparison {
-            renders_like_cached,
-            same_source,
+        if self.cache.insert(window, snapshot.clone()) {
+            self.offer_mid_flight(window, &snapshot, settled);
         }
     }
 
@@ -1790,8 +1764,7 @@ impl FlightEngine {
             entrances,
             hold_deadline: holding.then(|| Instant::now() + reveal_hold_limit(duration)),
             awaiting,
-            destination_refreshed: false,
-            refresh_targets: Vec::new(),
+            refresh: FocusRefresh::default(),
             harvested: HashSet::new(),
             focus,
             plan,
@@ -2653,8 +2626,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: plan::FlightPlan::empty(),
@@ -2824,7 +2796,6 @@ mod tests {
             let decision = should_swap_mid_flight(
                 TileState::Moving { fits: true, resizing: false },
                 false,
-                false,
                 true,
                 Some(0.4),
             );
@@ -2840,7 +2811,6 @@ mod tests {
         fn a_refresh_landing_late_is_cached_only() {
             let decision = should_swap_mid_flight(
                 TileState::MovingRefreshTarget { fits: true, resizing: false },
-                false,
                 false,
                 true,
                 Some(0.98),
@@ -2994,8 +2964,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: plan::FlightPlan::empty(),
@@ -3036,8 +3005,7 @@ mod tests {
         fn expected(
             state: TileState,
             settled: bool,
-            renders_like_cached: bool,
-            same_source: bool,
+            fresh: bool,
             progress: Option<f64>,
         ) -> SwapDecision {
             match state {
@@ -3054,8 +3022,8 @@ mod tests {
                     }
                 }
                 TileState::MovingRefreshTarget { fits: true, resizing } => {
-                    let early = progress.is_some_and(|p| p < 0.6);
-                    if early && same_source && !renders_like_cached && (!resizing || settled) {
+                    let early = progress.is_some_and(|p| p < 0.9);
+                    if early && fresh && (!resizing || settled) {
                         SwapDecision::Swap("refresh")
                     } else {
                         SwapDecision::CacheOnly
@@ -3068,39 +3036,38 @@ mod tests {
         /// 2.1.
         #[test]
         fn should_swap_mid_flight_full_table() {
-            let progresses = [None, Some(0.3), Some(0.59), Some(0.6), Some(0.9)];
+            let progresses = [
+                None,
+                Some(0.3),
+                Some(0.59),
+                Some(0.6),
+                Some(0.89),
+                Some(0.9),
+            ];
             let mut swaps = 0usize;
             for state in STATES {
                 for settled in [false, true] {
-                    for same in [false, true] {
-                        for same_source in [false, true] {
-                            for progress in progresses {
-                                let got = should_swap_mid_flight(
-                                    state,
-                                    settled,
-                                    same,
-                                    same_source,
-                                    progress,
-                                );
-                                assert_eq!(
-                                    got,
-                                    expected(state, settled, same, same_source, progress),
-                                    "{state:?} settled={settled} same={same} same_source={same_source} progress={progress:?}"
-                                );
-                                if matches!(got, SwapDecision::Swap(_)) {
-                                    swaps += 1;
-                                }
+                    for fresh in [false, true] {
+                        for progress in progresses {
+                            let got = should_swap_mid_flight(state, settled, fresh, progress);
+                            assert_eq!(
+                                got,
+                                expected(state, settled, fresh, progress),
+                                "{state:?} settled={settled} fresh={fresh} progress={progress:?}"
+                            );
+                            if matches!(got, SwapDecision::Swap(_)) {
+                                swaps += 1;
                             }
                         }
                     }
                 }
             }
-            // Refresh: fits, differs, same route, 2 early progresses x 3 (settle x resizing) = 6;
-            // reveal: fits, settled, 2 same x 2 routes x 2 progresses = 8.
+            // Refresh: fits, fresh, 4 progresses before 0.9 x 3 (settle x resizing) = 12;
+            // reveal: fits, settled, 2 freshness x 2 progresses before 0.6 = 4.
             assert_eq!(
                 swaps,
-                6 + 8,
-                "the table has exactly the early refresh and reveal swaps"
+                12 + 4,
+                "the table has exactly the refresh and reveal swaps in their windows"
             );
         }
 
@@ -3112,28 +3079,30 @@ mod tests {
             for _ in 0..RUNS {
                 let state = STATES[rng.below(STATES.len() as u64) as usize];
                 let settled = rng.coin();
-                let same = rng.coin();
-                let same_source = rng.coin();
+                let fresh = rng.coin();
                 let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
-                let decision = should_swap_mid_flight(state, settled, same, same_source, progress);
+                let decision = should_swap_mid_flight(state, settled, fresh, progress);
                 if let SwapDecision::Swap(reason) = decision {
                     swaps += 1;
                     match state {
                         TileState::MovingRefreshTarget { fits: true, .. } => {
                             assert_eq!(reason, "refresh", "seed 95: {state:?}");
-                            assert!(!same, "seed 95: swapped a picture rendering like the cache");
-                            assert!(same_source, "seed 95: swapped a picture from another route");
+                            assert!(fresh, "seed 95: swapped a picture older than the refresh");
+                            assert!(
+                                progress.is_some_and(|p| p < 0.9),
+                                "seed 95: refresh at {progress:?}"
+                            );
                         }
                         TileState::Reveal { fits: true } => {
                             assert_eq!(reason, "reveal", "seed 95: {state:?}");
                             assert!(settled, "seed 95: an unsettled reveal swapped");
+                            assert!(
+                                progress.is_some_and(|p| p < 0.6),
+                                "seed 95: reveal at {progress:?}"
+                            );
                         }
                         other => panic!("seed 95: swapped onto {other:?}"),
                     }
-                    assert!(
-                        progress.is_some_and(|p| p < 0.6),
-                        "seed 95: swap at {progress:?}"
-                    );
                 }
                 if matches!(state, TileState::Moving { .. }) {
                     assert_eq!(decision, SwapDecision::CacheOnly, "seed 95: {state:?}");
@@ -3142,57 +3111,62 @@ mod tests {
             assert!(swaps > 0, "generator sanity: no Swap in {RUNS} runs");
         }
 
-        /// A picture from another route differs by route alone, so it never reaches the tile.
+        /// A picture older than the refresh shows the focus as it was, so it never reaches the tile.
         #[test]
-        fn a_route_change_alone_never_swaps_the_refresh() {
+        fn a_picture_older_than_the_refresh_never_swaps_it() {
             for settled in [false, true] {
                 for resizing in [false, true] {
                     let decision = should_swap_mid_flight(
                         TileState::MovingRefreshTarget { fits: true, resizing },
                         settled,
                         false,
-                        false,
                         Some(0.3),
                     );
                     assert_eq!(
                         decision,
                         SwapDecision::CacheOnly,
-                        "settled={settled} resizing={resizing}: a route change swapped"
+                        "settled={settled} resizing={resizing}: a stale picture swapped"
                     );
                 }
             }
         }
 
+        /// The reported flicker: the window being left kept its focused rendering until the lift. A
+        /// fresh picture of it is cut in whatever it looks like, until late in the flight.
         #[test]
-        fn the_same_route_rendering_differently_swaps_the_refresh() {
-            assert_eq!(
+        fn a_fresh_refresh_picture_swaps_until_late_in_the_flight() {
+            let at = |progress| {
                 should_swap_mid_flight(
                     TileState::MovingRefreshTarget { fits: true, resizing: false },
                     false,
-                    false,
                     true,
-                    Some(0.3),
-                ),
-                SwapDecision::Swap("refresh")
+                    Some(progress),
+                )
+            };
+            assert_eq!(at(0.3), SwapDecision::Swap("refresh"));
+            assert_eq!(
+                at(0.82),
+                SwapDecision::Swap("refresh"),
+                "measured: landings at 0.82"
             );
+            assert_eq!(at(0.9), SwapDecision::CacheOnly);
         }
 
         /// Seed 97, 200 runs.
         #[test]
-        fn a_refresh_swap_implies_the_same_route() {
+        fn a_refresh_swap_implies_a_fresh_picture() {
             let mut rng = Gen(97);
             let mut swaps = 0usize;
             for _ in 0..RUNS {
                 let state = STATES[rng.below(STATES.len() as u64) as usize];
-                let same_source = rng.coin();
+                let fresh = rng.coin();
                 let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
-                let decision =
-                    should_swap_mid_flight(state, rng.coin(), rng.coin(), same_source, progress);
+                let decision = should_swap_mid_flight(state, rng.coin(), fresh, progress);
                 if decision == SwapDecision::Swap("refresh") {
                     swaps += 1;
                     assert!(
-                        same_source,
-                        "seed 97: {state:?} at {progress:?} swapped across routes"
+                        fresh,
+                        "seed 97: {state:?} at {progress:?} swapped a stale picture"
                     );
                 }
             }
@@ -3200,7 +3174,7 @@ mod tests {
         }
 
         #[test]
-        fn the_destination_refresh_uses_one_route() {
+        fn the_refresh_asks_once_for_each_wanted_window_with_a_tile() {
             let size = CGSize::new(859.0, 1081.0);
             let tiles = vec![
                 (wid(1), WindowServerId::new(10), size),
@@ -3222,25 +3196,39 @@ mod tests {
 
         /// 2.1, 3.6.
         #[test]
-        fn one_refresh_per_flight_at_the_midpoint_and_none_at_frame_zero() {
+        fn two_refresh_passes_per_flight_and_none_at_frame_zero() {
             let mut holding = flight(None);
             holding.awaiting.push((wid(1), CGSize::new(859.0, 1081.0)));
             assert!(!holding.take_refresh(0.0), "a hold does not refresh");
-            assert!(!holding.destination_refreshed);
+            assert!(
+                !holding.take_refresh(0.6),
+                "nor does it take a pass it cannot use"
+            );
 
             let mut running = flight(Some(Instant::now()));
             let fired: Vec<f64> = (0..=100)
                 .map(|i| i as f64 / 100.0)
                 .filter(|&progress| running.take_refresh(progress))
                 .collect();
-            assert_eq!(fired, vec![0.5], "refresh slots taken: {fired:?}");
-            assert!(running.destination_refreshed);
+            assert_eq!(fired, vec![0.25, 0.55], "refresh passes taken: {fired:?}");
             assert!(
                 !(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)),
                 "spent"
             );
-            assert_eq!(REFRESH_DESTINATION_AT, 0.5);
-            assert_eq!(REFRESH_APPLY_BEFORE, 0.6);
+            assert_eq!(REFRESH_PASSES_AT, [0.25, 0.55]);
+            assert_eq!(REFRESH_APPLY_BEFORE, 0.9);
+            assert_eq!(REVEAL_APPLY_BEFORE, 0.6);
+        }
+
+        /// A first tick late in the flight takes one pass, not every pass it slept through.
+        #[test]
+        fn a_late_first_look_takes_one_pass() {
+            let mut running = flight(Some(Instant::now()));
+            assert!(running.take_refresh(0.7));
+            assert!(
+                !running.take_refresh(0.71),
+                "the overslept pass is not taken after it"
+            );
         }
 
         /// 2.1.
@@ -3255,7 +3243,7 @@ mod tests {
             running.tiles.push(tile(wid(2), slot, grown));
             running.tiles.push(tile(wid(3), parked, slot));
             running.awaiting.push((wid(2), grown.size));
-            running.refresh_targets.push(wid(3));
+            running.refresh.ask(vec![wid(3)], Instant::now());
             let (entrance, waiting) = entrance_reservation(wid(4), slot, false);
             running.entrances.push(entrance);
             running.awaiting.extend(waiting);
@@ -3292,7 +3280,7 @@ mod tests {
                 TileState::Moving { fits: false, resizing: true }
             );
             // A refresh target in flight but past its hold is still only the refresh target.
-            running.refresh_targets.push(wid(2));
+            running.refresh.ask(vec![wid(3), wid(2)], Instant::now());
             assert_eq!(
                 running.tile_state(wid(2), &test_snapshot(grown.size)),
                 TileState::MovingRefreshTarget { fits: true, resizing: true }
@@ -3729,21 +3717,17 @@ mod tests {
             );
             let state = running.tile_state(wid(1), &reveal);
             assert_eq!(
-                should_swap_mid_flight(state, true, false, true, Some(0.3)),
-                SwapDecision::Swap("reveal")
-            );
-            assert_eq!(
-                should_swap_mid_flight(state, true, false, false, Some(0.3)),
+                should_swap_mid_flight(state, true, false, Some(0.3)),
                 SwapDecision::Swap("reveal"),
-                "the chase's framed picture is the truth for a grow, whatever the cached route"
+                "the chase's framed picture is the truth for a grow, refresh or not"
             );
             assert_eq!(
-                should_swap_mid_flight(state, false, false, true, Some(0.3)),
+                should_swap_mid_flight(state, false, true, Some(0.3)),
                 SwapDecision::CacheOnly,
                 "an unsettled capture can be the unpainted surface"
             );
             assert_eq!(
-                should_swap_mid_flight(state, true, false, true, Some(0.6)),
+                should_swap_mid_flight(state, true, true, Some(0.6)),
                 SwapDecision::CacheOnly,
                 "too late: a cut this close to lift reads as flicker"
             );
@@ -3848,8 +3832,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: plan::FlightPlan::empty(),
@@ -3894,24 +3877,17 @@ mod tests {
             let mut rng = Gen(92);
             for _ in 0..RUNS {
                 let settled = rng.coin();
-                let same = rng.coin();
-                let same_source = rng.coin();
+                let fresh = rng.coin();
                 let progress = rng.below(1001) as f64 / 1000.0;
                 assert_eq!(
-                    should_swap_mid_flight(TileState::Awaiting, settled, same, same_source, None),
+                    should_swap_mid_flight(TileState::Awaiting, settled, fresh, None),
                     SwapDecision::Claim,
-                    "seed 92: settled={settled} same={same}"
+                    "seed 92: settled={settled} fresh={fresh}"
                 );
                 assert_eq!(
-                    should_swap_mid_flight(
-                        TileState::Awaiting,
-                        settled,
-                        same,
-                        same_source,
-                        Some(progress)
-                    ),
+                    should_swap_mid_flight(TileState::Awaiting, settled, fresh, Some(progress)),
                     SwapDecision::Admit,
-                    "seed 92: settled={settled} same={same} progress={progress}"
+                    "seed 92: settled={settled} fresh={fresh} progress={progress}"
                 );
             }
             let mut flight = flight(None);
@@ -3922,20 +3898,14 @@ mod tests {
 
         /// Outside the bug condition on the swap path.
         #[test]
-        fn an_unfitting_or_identical_picture_is_cached_only() {
+        fn an_unfitting_or_stale_picture_is_cached_only() {
             let mut rng = Gen(94);
             for _ in 0..RUNS {
                 let settled = rng.coin();
                 let resizing = rng.coin();
                 let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
                 assert_eq!(
-                    should_swap_mid_flight(
-                        TileState::NotTiled,
-                        settled,
-                        rng.coin(),
-                        rng.coin(),
-                        progress
-                    ),
+                    should_swap_mid_flight(TileState::NotTiled, settled, rng.coin(), progress),
                     SwapDecision::CacheOnly,
                     "seed 94: no tile"
                 );
@@ -3944,7 +3914,7 @@ mod tests {
                     TileState::MovingRefreshTarget { fits: false, resizing },
                 ] {
                     assert_eq!(
-                        should_swap_mid_flight(state, settled, rng.coin(), rng.coin(), progress),
+                        should_swap_mid_flight(state, settled, rng.coin(), progress),
                         SwapDecision::CacheOnly,
                         "seed 94: {state:?} does not fit"
                     );
@@ -3954,9 +3924,9 @@ mod tests {
                     TileState::MovingRefreshTarget { fits: true, resizing },
                 ] {
                     assert_eq!(
-                        should_swap_mid_flight(state, settled, true, rng.coin(), progress),
+                        should_swap_mid_flight(state, settled, false, progress),
                         SwapDecision::CacheOnly,
-                        "seed 94: {state:?} renders like the cached picture"
+                        "seed 94: {state:?} is older than the refresh"
                     );
                 }
             }
@@ -4017,12 +3987,16 @@ mod tests {
                         any_state(&mut rng),
                         rng.coin(),
                         rng.coin(),
-                        rng.coin(),
                         progress,
                     );
                     decisions.push(decision);
-                    cache.insert(wid(1), incoming.clone());
+                    let stored = cache.insert(wid(1), incoming.clone());
                     let held = cache.get(wid(1)).expect("seed 93: every landing leaves an entry");
+                    assert_eq!(
+                        stored,
+                        should_replace(before, incoming.coverage),
+                        "seed 93: insert reports what it did"
+                    );
                     if should_replace(before, incoming.coverage) {
                         assert_eq!(held.coverage, incoming.coverage, "seed 93: taken");
                     } else {
@@ -4051,18 +4025,19 @@ mod tests {
             );
         }
 
-        /// P-3.6. Unfixed code fired at 0.00 and 0.50; the preserved part is the one slot at the midpoint.
+        /// P-3.6. The preserved part: the refresh never fires at frame zero, and its passes are few.
         #[test]
-        fn one_destination_refresh_fires_at_the_midpoint() {
+        fn the_focus_refresh_fires_mid_flight_only() {
             let mut running = flight(Some(Instant::now()));
             let fired: Vec<f64> = (0..=100)
                 .map(|i| i as f64 / 100.0)
                 .filter(|&progress| running.take_refresh(progress))
                 .collect();
-            let late: Vec<f64> = fired.iter().copied().filter(|p| *p >= 0.5).collect();
-            assert_eq!(late, vec![0.5], "refreshes at or after the midpoint: {fired:?}");
+            assert!(
+                fired.iter().all(|p| *p > 0.0),
+                "a refresh at frame zero: {fired:?}"
+            );
             assert!(fired.len() <= 2, "more than the schedule allows: {fired:?}");
-            assert_eq!(REFRESH_DESTINATION_AT, 0.5);
             assert!(
                 refresh_targets(Some(wid(1)), Some(wid(2)), &[wid(1), wid(2), wid(3)]).len() <= 2
             );
@@ -4299,8 +4274,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: plan::FlightPlan::empty(),
@@ -4642,8 +4616,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: plan::FlightPlan::empty(),
@@ -4879,8 +4852,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: plan::FlightPlan::empty(),
@@ -4981,7 +4953,7 @@ mod tests {
             let state = flight.tile_state(wid(3), &test_snapshot(slot.size));
             assert_eq!(state, TileState::Reveal { fits: true });
             assert_eq!(
-                should_swap_mid_flight(state, true, false, false, Some(0.3)),
+                should_swap_mid_flight(state, true, false, Some(0.3)),
                 SwapDecision::Swap("reveal")
             );
         }
@@ -5388,8 +5360,7 @@ mod tests {
             entrances: Vec::new(),
             awaiting: Vec::new(),
             hold_deadline: None,
-            destination_refreshed: false,
-            refresh_targets: Vec::new(),
+            refresh: FocusRefresh::default(),
             harvested: HashSet::new(),
             focus: None,
             plan: plan::FlightPlan::empty(),
@@ -5411,8 +5382,7 @@ mod tests {
             entrances: Vec::new(),
             awaiting: Vec::new(),
             hold_deadline: None,
-            destination_refreshed: false,
-            refresh_targets: Vec::new(),
+            refresh: FocusRefresh::default(),
             harvested: HashSet::new(),
             focus: None,
             plan: plan::FlightPlan::empty(),
@@ -5430,8 +5400,7 @@ mod tests {
             entrances: Vec::new(),
             awaiting: Vec::new(),
             hold_deadline: None,
-            destination_refreshed: false,
-            refresh_targets: Vec::new(),
+            refresh: FocusRefresh::default(),
             harvested: HashSet::new(),
             focus: None,
             plan: plan::FlightPlan::empty(),
@@ -6671,8 +6640,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: FlightPlan::empty(),
@@ -6792,8 +6760,7 @@ mod tests {
                 awaiting: awaiting.clone(),
                 hold_deadline: holding
                     .then(|| Instant::now() + reveal_hold_limit(Duration::from_millis(350))),
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: Some(wid(9)),
                 plan: FlightPlan::empty(),
@@ -6836,8 +6803,7 @@ mod tests {
                 entrances: Vec::new(),
                 awaiting: Vec::new(),
                 hold_deadline: None,
-                destination_refreshed: false,
-                refresh_targets: Vec::new(),
+                refresh: FocusRefresh::default(),
                 harvested: HashSet::new(),
                 focus: None,
                 plan: FlightPlan::empty(),

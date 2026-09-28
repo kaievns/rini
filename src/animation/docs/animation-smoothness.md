@@ -183,42 +183,69 @@ Parked windows have no tile, so a tile-only check missed their moves and
 left them at the old park.
 
 A picture landing mid-flight goes to the cache first. It reaches a moving
-tile only if the tile is waiting for it (`should_swap_mid_flight`): an
-entrance's first picture (claimed or admitted), a grow's settled reveal, or
-the destination refresh. Reveal and refresh cut only before 0.6 progress;
-later landings are cached for the next flight. Background captures never
-reach a tile. They landed mid-flight in 310 of 321 flights (median 4 per
-flight), and every cut read as a flicker or a change of transparency:
-SkyLight and ScreenCaptureKit render a translucent window differently. On a
-resizing tile the cut also re-keyed the resize from the presented state,
-which staggered that tile against its neighbours. The destination refresh
-has one slot per flight, at 0.5 (`REFRESH_DESTINATION_AT`), and recaptures
-only on a focus change, only its two ends (`refresh_targets`, against the
-previous flight's `last_focus`): the window being switched into and the one
-being left, so both land in their focus rendering. Focus changes a
-window's rendering without changing its size (measured on a 1pt window
-border: 65 of 255 focused against 42 unfocused), so `Event::RefreshFocus`
-also recaptures a window whenever focus moves to or from it, whatever the
-size test says about its cached picture. A flight that moves
-focus nowhere recaptures nothing. It used to recapture the two frontmost
-tiles by depth on every flight; a translucent window's two captures differ
-by the wallpaper behind it, so that cut the two front Ghostty tiles at 0.55
-on every strip pan (log 2026-09-16 2:05). It asks ONE capture
-route, the ScreenCaptureKit service `warm_windows` fills the cache from
-(`refresh_requests`), and the swap requires the landing picture to come by
-the cached picture's route (`same_source`, from `SnapshotSource`). Racing
-the service against a framed SkyLight capture swapped every refresh target
-two or three times per flight (log 22:34:04: swaps at 0.539, 0.549, 0.561
-in one pan): the two routes render a translucent window differently, so a
-route change alone failed the thumbprint match, and the next flight's cache
-held the other route's picture, repeating forever. The check blocks the
-refresh only; a chase's framed reveal is the truth for a grow whatever the
-cache holds. Every cut logs "picture swapped mid-flight" with its reason;
-that line is the acceptance counter, at most one `reason=refresh` per window
-per flight.
+tile only if the cache took it and the tile is waiting for it
+(`should_swap_mid_flight`): an entrance's first picture (claimed or
+admitted), a grow's settled reveal, or the focus refresh. A picture the
+cache refuses never reaches a tile, so a flight never draws the grey capture
+of a window whose cached picture carries its blur. A reveal cuts only before
+0.6 progress (`REVEAL_APPLY_BEFORE`), a refresh before 0.9
+(`REFRESH_APPLY_BEFORE`); later landings are cached for the next flight.
+Background captures never reach a tile. They landed mid-flight in 310 of 321
+flights (median 4 per flight), and every cut read as a flicker or a change
+of transparency. On a resizing tile the cut also re-keyed the resize from
+the presented state, which staggered that tile against its neighbours.
+
+The focus refresh recaptures only on a focus change, only its two ends
+(`refresh_targets`, against the previous flight's `last_focus`): the window
+being switched into and the one being left, so both land in their focus
+rendering. Focus changes a window's rendering without changing its size
+(measured on a 1pt window border: 65 of 255 focused against 42 unfocused).
+`Event::RefreshFocus` recaptures both ends when focus moves outside rini, by
+a click or an app activating itself. A move rini makes returns before it,
+since the layout already holds that focus, so for those the flight's own
+refresh is the only recapture. A flight that moves focus nowhere recaptures
+nothing. It used to recapture the two frontmost tiles by depth on every
+flight; a translucent window's two captures differ by the wallpaper behind
+it, so that cut the two front Ghostty tiles at 0.55 on every strip pan (log
+2026-09-16 2:05).
+
+It takes two passes, at 0.25 and 0.55 of the flight (`REFRESH_PASSES_AT`,
+`FocusRefresh`); the second is for an app that repaints its focus late. A
+single pass at 0.5 through the ScreenCaptureKit service never once landed in
+time: asked at 0.53, its pictures landed at 0.82 to 1.16 (debug log
+2026-09-28, two flights, 154ms and 222ms after the ask), past the 0.6 cutoff
+it had then. The window being left kept its focused rendering to the lift
+and changed at rest, which is the flicker reported that day. A pass
+captures a window wholly on a display framed, on a plain thread
+(`capture_framed`), with its blur and its hairline. A window clipped by the
+display edge goes to the service instead, because a framed capture returns
+only the visible sliver ("A clipped destination needs ScreenCaptureKit, not
+SkyLight" in `capture-overlay-research.md`).
+A strip pan places the real windows at frame zero, so by the first pass both
+ends are usually where they land. One case still changes at rest: a clipped
+window whose picture carries its blur, where the service's grey capture is
+refused by the cache and so never cut in.
+
+No likeness test and no same-route test guard the cut any more. A focus
+change is a traffic light and a dimmed title bar, below what a 32x32
+thumbprint resolves, and a cut to an identical picture changes nothing on
+screen. Freshness guards it instead (`FocusRefresh::is_fresh`): a picture
+swaps only if its capture began at or after the refresh asked, and after the
+picture the refresh last cut in. The service skips a request for a window it
+is already capturing, and a capture begun before the flight shows the old
+focus. Both carry an older `taken`, which the service stamps when a capture
+starts, not when it lands. The same-route test answered a race: the service
+and a framed capture both answered every refresh, the two routes' pictures
+failed the thumbprint match against each other, and every refresh target was
+swapped two or three times per flight (log 22:34:04: swaps at 0.539, 0.549,
+0.561 in one pan). Each pass now asks one route per window, so a window
+takes at most one refresh cut per pass. The reveal never had either test; a
+chase's framed reveal is the truth for a grow whatever the cache holds.
+Every cut logs "picture swapped mid-flight" with its reason; that line is
+the acceptance counter, at most two `reason=refresh` per window per flight.
 
 **Capture work in flight.** Between frame zero and lift the window server
-serves only the chases and the one refresh (`capture_work_allowed`).
+serves only the chases and the focus refresh (`capture_work_allowed`).
 Everything else waits for `finish()`. The reactor's `warm_all_workspaces`
 (about 15 captures per switch, queued 0.3ms after the start) goes to
 `deferred_warm`; the desktop render goes to `deferred_desktop`; hairline
@@ -563,9 +590,9 @@ inside a ScreenCaptureKit completion: on modern macOS
 a call from the delivery queue deadlocks its own reply until a ~20s
 timeout and every capture in the process serialises behind it (measured as
 half-minute window switches). The focused ring lands with the
-post-flight harvest of the animated set (`finish`), not mid-flight: the
-destination refresh no longer harvests, since it no longer takes the framed
-route (see "Mid-flight passes").
+post-flight harvest of the animated set (`finish`), or with the focus
+refresh's framed capture of a window wholly on a display, which carries
+its hairline and counts as that window's harvest (see "Mid-flight passes").
 
 The companion-tile machinery from attempt 2 stays (`companion_of` /
 `companion_tiles`): it is the right answer for anyone whose border tool IS
@@ -625,7 +652,7 @@ next column. The companion tests use this machine's bordersrc geometry
 Staleness is accepted by construction ("a slightly stale moving image is not
 perceptible", `capture-overlay-research.md`) and the worst case — the
 destination's focus appearance — is patched mid-flight
-(`refresh_destination_among`, at 0.5, the two ends of a focus change). What that
+(`refresh_destination_among`, at 0.25 and 0.55, the two ends of a focus change). What that
 does not cover: content that changed while parked. Terminal output, chat,
 anything live — warmed only at animation end, focus change, and layout
 passes, so a window that repainted itself while hidden is stale until the

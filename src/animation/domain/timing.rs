@@ -15,12 +15,17 @@ pub(in crate::animation) const FRAME_INTERVAL: Duration = Duration::from_micros(
 /// See "Layout changes" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 
-/// Progress at which the focus change's two ends are recaptured, once per flight.
+/// Progress at which the focus change's two ends are recaptured: early enough to land and be cut in
+/// while the flight still moves, then again for an app that repaints its focus late.
 /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) const REFRESH_DESTINATION_AT: f64 = 0.5;
+pub(in crate::animation) const REFRESH_PASSES_AT: [f64; 2] = [0.25, 0.55];
 
-/// A refresh landing at or after this progress is cached only; a later cut reads as lift flicker.
-pub(in crate::animation) const REFRESH_APPLY_BEFORE: f64 = 0.6;
+/// A reveal landing at or after this progress is cached only.
+pub(in crate::animation) const REVEAL_APPLY_BEFORE: f64 = 0.6;
+
+/// A focus refresh is swapped in up to here. Later than a reveal: the alternative to a cut while the
+/// flight still moves is the same change after it lands, at rest, which is what reads as a flicker.
+pub(in crate::animation) const REFRESH_APPLY_BEFORE: f64 = 0.9;
 
 /// How long after an animation to recapture the bar: a bar composite is too slow (31ms median)
 /// to pay per switch, so a burst of switches pays it once, at the end.

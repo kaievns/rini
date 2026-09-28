@@ -476,6 +476,9 @@ impl SnapshotService {
             let size = capture.size;
             let revision = capture.revision;
             let scale = self.scale();
+            // Stamped here, not on delivery: the pixels are no older than this, and a capture coalesced
+            // into one already running keeps that one's older stamp, so a caller can tell the two apart.
+            let taken = std::time::Instant::now();
             let completion =
                 RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
                     let buffer = NonNull::new(sample)
@@ -484,7 +487,7 @@ impl SnapshotService {
                     let surface = buffer.and_then(|b| CVPixelBufferGetIOSurface(Some(&b)));
                     // No capture calls in here: `CGWindowListCreateImage` is proxied through this
                     // same delivery queue and deadlocks until a ~20s timeout. The owner harvests later.
-                    service.finish(target, size, revision, scale, surface, filled, None);
+                    service.finish(target, size, revision, scale, surface, filled, taken);
                 });
             unsafe {
                 SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
@@ -504,7 +507,7 @@ impl SnapshotService {
         scale: f64,
         surface: Option<CFRetained<IOSurfaceRef>>,
         filled: Option<bool>,
-        dressing: Option<crate::animation::platform::edge_dressing::EdgeDressing>,
+        taken: std::time::Instant,
     ) {
         let landed = {
             let mut state = self.state.lock().unwrap();
@@ -535,10 +538,10 @@ impl SnapshotService {
                             window: (size.width, size.height),
                         },
                         source: SnapshotSource::ScreenCaptureKit,
-                        dressing,
+                        dressing: None,
                         // The window on its own: grey wherever it has a blur. See `translucency`.
                         carries_blur: false,
-                        taken: std::time::Instant::now(),
+                        taken,
                     },
                 );
                 true
@@ -732,7 +735,7 @@ mod tests {
             2.0,
             None,
             None,
-            None,
+            std::time::Instant::now(),
         );
         assert_eq!(calls.load(Ordering::Relaxed), 0);
     }
