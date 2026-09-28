@@ -54,58 +54,102 @@ fn plist_path() -> io::Result<PathBuf> {
     Ok(home.join("Library").join("LaunchAgents").join(format!("{RINI_PLIST}.plist")))
 }
 
-/// Finds the rini binary on `PATH`, resolving symlinks. TCC keys the Accessibility grant to the launch
-/// path, so the agent must use the real file ("TCC keys the grant to the launch path" in
-/// docs/permissions-and-the-launch-agent.md).
-fn find_rini_executable_in_path(path_env: &std::ffi::OsStr) -> io::Result<Option<PathBuf>> {
-    let mut current_dir: Option<PathBuf> = None;
-    for dir in env::split_paths(path_env) {
-        let candidate = dir.join("rini");
-        if candidate.is_file() {
-            if candidate.is_absolute() {
-                // A failure here means the link is dangling, in which case the path as written is the
-                // best available answer and launchd will report the real problem.
-                return Ok(Some(candidate.canonicalize().unwrap_or(candidate)));
-            }
-
-            let base = match current_dir.as_ref() {
-                Some(dir) => dir,
-                None => {
-                    current_dir = Some(env::current_dir()?);
-                    current_dir.as_ref().expect("just set")
-                }
-            };
-            return Ok(Some(base.join(candidate)));
-        }
-    }
-    Ok(None)
+/// The binary the service should run: the one running this command, symlinks resolved.
+///
+/// Not a `$PATH` lookup. A lookup found a stale `~/.local/bin/rini` and launched a month-old build under
+/// a code requirement TCC had never granted; the build asked to start the service is the build meant.
+/// Resolved because TCC keys the grant to the launch path, and a symlink behaves as an ungranted client.
+/// Both are measured in `docs/permissions-and-the-launch-agent.md`.
+fn agent_executable(invoked: &Path) -> PathBuf {
+    // A failure here means the link is dangling, in which case the path as written is the best
+    // available answer and launchd will report the real problem.
+    invoked.canonicalize().unwrap_or_else(|_| invoked.to_path_buf())
 }
 
 fn find_rini_executable() -> io::Result<PathBuf> {
-    if let Some(path_env) = env::var_os("PATH") {
-        if let Some(candidate) = find_rini_executable_in_path(&path_env)? {
-            return Ok(candidate);
-        }
-    }
-
-    let exe_path = env::current_exe().map_err(|_| {
+    let invoked = env::current_exe().map_err(|_| {
         io::Error::new(
             io::ErrorKind::Other,
             "unable to retrieve path of current executable",
         )
     })?;
-    let sibling = exe_path.with_file_name("rini");
-    if sibling.is_file() {
-        return Ok(sibling);
-    }
+    Ok(agent_executable(&invoked))
+}
 
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        format!(
-            "rini agent executable not found: not present in $PATH and no sibling 'rini' next to current executable ('{}')",
-            exe_path.display()
-        ),
-    ))
+/// What launchd has to be told to get the job running the plist on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Launch {
+    /// Not loaded: load it and start it.
+    Bootstrap,
+    /// Loaded from a plist that has since changed: unload, load again, start.
+    Reload,
+    /// Loaded and current: start it, killing a running instance first when `kill`.
+    Kickstart { kill: bool },
+}
+
+/// launchd runs the job definition it LOADED, not the file on disk. So a plist that changed while the
+/// job is loaded only takes effect after a bootout and a fresh bootstrap — a kickstart, with or without
+/// `-k`, would run the old binary again, which is how a rewritten plist could still leave a stale build
+/// running.
+fn launch_plan(loaded: bool, plist_changed: bool, restart: bool) -> Launch {
+    match (loaded, plist_changed) {
+        (false, _) => Launch::Bootstrap,
+        (true, true) => Launch::Reload,
+        (true, false) => Launch::Kickstart { kill: restart },
+    }
+}
+
+fn launch(plan: Launch, plist_path: &Path) -> io::Result<()> {
+    let uid = getuid();
+    let service_target = format!("gui/{}/{}", uid, RINI_PLIST);
+    let domain_target = format!("gui/{}", uid);
+    let plist = plist_path.to_str().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "service file path is not UTF-8")
+    })?;
+    match plan {
+        Launch::Bootstrap => {
+            let _ = run_launchctl(&["enable", &service_target], true);
+            let _ = spawn_launchctl(&["bootstrap", &domain_target, plist]);
+        }
+        Launch::Reload => {
+            let _ = run_launchctl(&["bootout", &domain_target, plist], true);
+            let _ = spawn_launchctl(&["bootstrap", &domain_target, plist]);
+        }
+        Launch::Kickstart { .. } => {}
+    }
+    if matches!(plan, Launch::Bootstrap | Launch::Reload) {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    let args: &[&str] = match plan {
+        Launch::Kickstart { kill: true } => &["kickstart", "-k", &service_target],
+        _ => &["kickstart", &service_target],
+    };
+    let code = run_launchctl(args, false)?;
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("{plan:?}: kickstart failed (exit {code})"),
+        ))
+    }
+}
+
+/// Point the plist at the build running this command. True when that changed it.
+///
+/// Skipped without `USER` and `PATH` in the environment, which the plist is built from; an existing
+/// plist is then left as it is rather than rewritten with gaps.
+fn refresh_plist(plist_path: &Path) -> io::Result<bool> {
+    if env::var_os("USER").is_some() && env::var_os("PATH").is_some() {
+        ensure_plist_up_to_date(plist_path)
+    } else {
+        Ok(false)
+    }
+}
+
+fn service_is_loaded() -> bool {
+    let service_target = format!("gui/{}/{}", getuid(), RINI_PLIST);
+    run_launchctl(&["print", &service_target], true).unwrap_or(1) == 0
 }
 
 fn plist_contents() -> io::Result<String> {
@@ -281,6 +325,7 @@ pub fn service_uninstall() -> io::Result<()> {
     Ok(())
 }
 
+/// Start the service on the build running this command.
 pub fn service_start() -> io::Result<()> {
     let plist_path = plist_path()?;
     if !plist_path.is_file() {
@@ -295,63 +340,14 @@ pub fn service_start() -> io::Result<()> {
             )
         })?;
     }
-
-    let uid = getuid();
-    let service_target = format!("gui/{}/{}", uid, RINI_PLIST);
-    let domain_target = format!("gui/{}", uid);
-
-    let plist_changed = if env::var_os("USER").is_some() && env::var_os("PATH").is_some() {
-        ensure_plist_up_to_date(&plist_path)?
-    } else {
-        false
-    };
-
-    let is_bootstrapped = run_launchctl(&["print", &service_target], true).unwrap_or(1);
-    if is_bootstrapped != 0 {
-        let _ = run_launchctl(&["enable", &service_target], true);
-
-        let _ = spawn_launchctl(&["bootstrap", &domain_target, plist_path.to_str().unwrap()]);
-        let _ = std::thread::sleep(std::time::Duration::from_millis(150));
-        let code = run_launchctl(&["kickstart", &service_target], false)?;
-        if code == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("kickstart after bootstrap failed (exit {})", code),
-            ))
-        }
-    } else {
-        let code = run_launchctl(&["kickstart", &service_target], false)?;
-        if code == 0 {
-            return Ok(());
-        }
-
-        if plist_changed {
-            let _ = run_launchctl(&["bootout", &domain_target, plist_path.to_str().unwrap()], true);
-            let _ = spawn_launchctl(&["bootstrap", &domain_target, plist_path.to_str().unwrap()]);
-            let _ = std::thread::sleep(std::time::Duration::from_millis(150));
-            let code2 = run_launchctl(&["kickstart", &service_target], false)?;
-            if code2 == 0 {
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "kickstart failed (exit {}), reload+kickstart failed (exit {})",
-                        code, code2
-                    ),
-                ))
-            }
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("kickstart failed (exit {})", code),
-            ))
-        }
-    }
+    let plist_changed = refresh_plist(&plist_path)?;
+    launch(
+        launch_plan(service_is_loaded(), plist_changed, false),
+        &plist_path,
+    )
 }
 
+/// Restart the service on the build running this command.
 pub fn service_restart() -> io::Result<()> {
     let plist_path = plist_path()?;
     if !plist_path.is_file() {
@@ -360,18 +356,11 @@ pub fn service_restart() -> io::Result<()> {
             format!("service file '{}' is not installed", plist_path.display()),
         ));
     }
-
-    let uid = getuid();
-    let service_target = format!("gui/{}/{}", uid, RINI_PLIST);
-    let code = run_launchctl(&["kickstart", "-k", &service_target], false)?;
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("kickstart -k failed (exit {})", code),
-        ))
-    }
+    let plist_changed = refresh_plist(&plist_path)?;
+    launch(
+        launch_plan(service_is_loaded(), plist_changed, true),
+        &plist_path,
+    )
 }
 
 pub fn service_stop() -> io::Result<()> {
@@ -421,28 +410,52 @@ mod tests {
 
     use super::*;
 
+    /// TCC keys the grant to the launch path, so a symlinked invocation must point the service at the
+    /// real file.
     #[test]
-    fn find_rini_executable_resolves_a_symlink_to_the_real_binary() {
+    fn the_agent_runs_the_real_file_behind_a_symlink() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-
         let real = dir.join("rini-real");
         fs::write(&real, b"#!/bin/sh\nexit 0\n").unwrap();
-        let mut perms = fs::metadata(&real).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-            fs::set_permissions(&real, perms).unwrap();
-        }
-
         let link = dir.join("rini");
         unix_fs::symlink(&real, &link).unwrap();
 
-        let found = find_rini_executable_in_path(dir.as_os_str())
-            .unwrap()
-            .expect("expected to find rini in PATH");
-        assert_eq!(found, real.canonicalize().unwrap());
+        assert_eq!(agent_executable(&link), real.canonicalize().unwrap());
+    }
+
+    /// A dangling link is passed through as written, so launchd reports the real problem.
+    #[test]
+    fn a_dangling_link_is_passed_through() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("rini");
+        unix_fs::symlink(tmp.path().join("gone"), &link).unwrap();
+
+        assert_eq!(agent_executable(&link), link);
+    }
+
+    /// The case that left a stale build running: a plist rewritten while the job is loaded has to be
+    /// reloaded, for a start AND a restart, because launchd runs what it loaded.
+    #[test]
+    fn a_changed_plist_under_a_loaded_job_is_reloaded() {
+        assert_eq!(launch_plan(true, true, false), Launch::Reload);
+        assert_eq!(launch_plan(true, true, true), Launch::Reload);
+    }
+
+    #[test]
+    fn an_unloaded_job_is_bootstrapped_whatever_changed() {
+        assert_eq!(launch_plan(false, true, false), Launch::Bootstrap);
+        assert_eq!(launch_plan(false, false, true), Launch::Bootstrap);
+    }
+
+    /// A start leaves a running instance alone; a restart kills it first.
+    #[test]
+    fn a_current_plist_is_just_kickstarted() {
+        assert_eq!(
+            launch_plan(true, false, false),
+            Launch::Kickstart { kill: false }
+        );
+        assert_eq!(launch_plan(true, false, true), Launch::Kickstart { kill: true });
     }
 
     #[test]

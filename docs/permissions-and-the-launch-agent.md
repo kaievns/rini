@@ -56,7 +56,7 @@ falls on the launch agent, not on terminal launches.
 Separate from the above, and also measured. The agent used to point at
 `/opt/homebrew/bin/rini`, a symlink to `~/.local/bin/rini`. Pointed at the
 symlink it behaved as an ungranted client even in states where the real path
-worked, so `find_rini_executable` now canonicalises. The symlink is the more
+worked, so `agent_executable` canonicalises. The symlink is the more
 stable path, which is why it was chosen originally, but stability is worth
 nothing against the agent being unable to move a window.
 
@@ -95,26 +95,36 @@ out. Measured 2026-09-18: a rini started by `rini service restart` (launchd,
 current bootstrap domain` and `rini-cli query workspaces` from a shell reaches
 it, as do the four sketchybar `subscribe` hooks in the user config. The cause of
 the earlier failure was not established; a stale binary at a second path (see
-"Deploy is `service restart`") is the likeliest candidate.
+"The service runs the build that starts it") is the likeliest candidate.
 
 `MachServices` stays commented out in `src/app/launch_agent.rs`. Enabling
 it would make launchd own the port and start rini on demand, which needs
 `bootstrap_check_in` instead of `bootstrap_register`. Not needed for the CLI to
 work.
 
-## Deploy is `service restart`, never `stop` then `start`
+## The service runs the build that starts it
 
-Measured 2026-09-15, 1:39 UTC. `rini service start` regenerates the plist from
-a PATH lookup. It found a stale `~/.local/bin/rini` and launched it. Same
-identifier, different code requirement: TCC invalidated both grants for the
-client. Accessibility prompted again; Screen Recording stayed revoked, so every
-capture returned nothing and the overlay flew empty tiles (`tiles=0,
-missing=22` on every flight). `service restart` is `kickstart -k` and leaves the
-plist alone. Delete stale copies of the binary so a lookup cannot find them.
+`rini service start` and `rini service restart` point the plist at the binary
+running the command, symlinks resolved (`agent_executable`), and nothing else.
+
+That replaced a `$PATH` lookup, which failed twice. Measured 2026-09-15, 1:39
+UTC: it found a stale `~/.local/bin/rini` and launched it. Same identifier,
+different code requirement, so TCC invalidated both grants for the client.
+Accessibility prompted again; Screen Recording stayed revoked, so every capture
+returned nothing and the overlay flew empty tiles (`tiles=0, missing=22` on
+every flight). It happened again on 2026-09-24 with an August build, and every
+"deployed" claim after that was about month-old code.
+
+Rewriting the plist is not enough on its own. launchd runs the job definition it
+LOADED, so a plist that changes while the job is loaded only takes effect after a
+bootout and a fresh bootstrap; a kickstart, with or without `-k`, runs the old
+binary again. Both commands reload in that case (`launch_plan`). `restart` used
+to leave the plist alone on purpose, as the safe path around the lookup; with the
+lookup gone it no longer needs to.
 
 ## Current state
 
-rini runs as the launchd agent, deployed with `rini service restart`, with its
+rini runs as the launchd agent, deployed with `target/release/rini service restart`, with its
 own Accessibility and Screen Recording grants keyed to the signed binary
 (`docs/signing.md`). The CLI and sketchybar hooks reach it. Whether the grants
 survive a reboot has not been measured since the signing identity was
