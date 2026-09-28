@@ -440,6 +440,7 @@ impl SnapshotService {
                         source: SnapshotSource::ScreenCaptureKit,
                         dressing: None,
                         taken: std::time::Instant::now(),
+                        carries_blur: false,
                     });
                     true
                 }
@@ -535,6 +536,8 @@ impl SnapshotService {
                         },
                         source: SnapshotSource::ScreenCaptureKit,
                         dressing,
+                        // The window on its own: grey wherever it has a blur. See `translucency`.
+                        carries_blur: false,
                         taken: std::time::Instant::now(),
                     },
                 );
@@ -701,6 +704,7 @@ mod tests {
                     source: SnapshotSource::ScreenCaptureKit,
                     dressing: None,
                     taken: std::time::Instant::now(),
+                    carries_blur: false,
                 },
             );
         }

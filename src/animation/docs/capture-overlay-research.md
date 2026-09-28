@@ -1517,13 +1517,13 @@ Masking an `NSVisualEffectView` to the fractional-alpha regions is the textbook
 fix and does not work here: the capture is fully opaque exactly where the blur
 belongs, so there is no mask to derive.
 
-What DOES contain the blur is a display capture cropped to the window, which is
-the third column above, and for an unoccluded on-screen window it is pixel-exact
-including the shadow. It cannot run at switch time, being a ScreenCaptureKit
-call, but it would fit the background refresh, at the cost of baking whatever
-was behind the window into the picture. yabai accepts flat translucency on the
-bet that nobody notices in 200ms, which over a calm background is the right
-call.
+What DOES contain the blur is a capture of the window together with what is
+below it, which is what the third column shows. The route this section first
+pointed at was a ScreenCaptureKit display capture cropped to the window; the
+route actually used is cheaper, synchronous, and immune to occlusion — see "A
+composite of the window and what is below it carries the blur" below. yabai
+accepts flat translucency on the bet that nobody notices in 200ms; with blurred
+materials now on most windows' sidebars and toolbars, that bet stopped paying.
 
 ### Plain transparency IS capturable, so the blur can be traded away
 
@@ -1544,6 +1544,58 @@ So the blur discrepancy is a choice rather than a wall: an app configured for
 plain transparency animates correctly, and one configured for a system material
 cannot. Worth knowing before building anything elaborate to approximate the
 material.
+
+### A composite of the window and what is below it carries the blur
+
+Measured 2026-09-28 with a titled window holding a `sidebar` visual-effect view,
+over a window of bright vertical stripes, 420x260pt at 2x:
+
+```
+CGWindowListCreateImage option                  result                     cost
+IncludingWindow (the window alone)              flat grey, opaque          1.6ms
+OnScreenBelowWindow | IncludingWindow           the real blur              15.9ms
+OnScreenOnly (the screen)                       the real blur, identical
+```
+
+The same composite with an opaque window placed ABOVE the blurred one, over half
+of it, came back without that window: the option takes the target and everything
+below it, so an overlapping window, the switcher's popup and rini's own overlay
+at level 18 are all left out. At 1720x1081pt the composite cost 13.8ms — the cost
+is fixed overhead, not area.
+
+The composite has no transparency: the rounded corners came back filled with the
+stripes behind them. So it is merged with the window's own capture
+(`animation::domain::translucency`): the window's own pixel wherever it is not
+fully opaque — corners, and real per-pixel transparency, which captures
+correctly on its own (see the next section) — and the composite's wherever it
+is. Opaque content is pixel-identical between the two, so the merge only
+changes the blurred areas, and whether it changed anything is what marks a
+picture as carrying its blur.
+
+It is only taken for a window wholly on a display, and never for every tile at
+the start of a flight: at 14ms a window that would delay the flight.
+
+**And it is only kept if the window is still where it was once the capture
+returns.** The composite is the window and whatever is below it in a RECT. Found
+on the first live run: a workspace switch that raced a harvest parked Messages
+between reading its frame and taking the composite, so the rect held the VS Code
+window that had just moved back under it, and the merge replaced every opaque
+pixel of Messages with VS Code. Far worse than grey. The frame is read again
+after the capture, and a composite of a window that moved or left the display is
+thrown away (`composite_is_of_the_window`).
+
+One exposure is left as it was: the harvest names a window by the server id
+folded into its `WindowId`. For the rare window Accessibility reports without a
+server id, rini falls back to a counter there, which could name another window.
+The hairline harvest before this had the same exposure. It runs in
+the framed capture (`capture_via_framed_with_dressing`), which the harvest after
+a flight, the resize reveal and the capture of a new window all use. The picture
+bakes in whatever was behind the window at that moment, which differs from the
+live blur only once the window has moved over something else.
+
+A picture carrying its blur is not replaced by a same-sized capture of the
+window alone, which would be grey again (`keeps_blur`). The cost is that a
+blurred window's picture only refreshes while the window is on screen.
 
 ### A tile is pixel-identical to its window, except for the shadow and the hairline
 

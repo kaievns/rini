@@ -10,7 +10,6 @@ use objc2_core_graphics::{
     CGColorSpace, CGContext, CGImage, CGImageAlphaInfo, CGWindowListOption,
 };
 
-use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
 
 /// Corner radius of a macOS window, measured. See "The hairline is composited outside every
@@ -95,20 +94,7 @@ const THUMBPRINT_SIDE: usize = 32;
 /// A small fingerprint of an image's content, for the reveal chase's settledness check.
 pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
     let side = THUMBPRINT_SIDE;
-    let space = CGColorSpace::new_device_rgb()?;
-    // SAFETY: a fresh context; CG owns and frees the backing store with it.
-    let ctx = unsafe {
-        CGBitmapContextCreate(
-            std::ptr::null_mut(),
-            side,
-            side,
-            8,
-            0,
-            Some(&space),
-            CGImageAlphaInfo::PremultipliedLast.0,
-        )
-    };
-    let ctx = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(ctx)?) };
+    let ctx = rgba_bitmap_context(side, side)?;
     CGContext::draw_image(
         Some(&ctx),
         CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(side as f64, side as f64)),
@@ -144,17 +130,6 @@ unsafe impl Send for EdgeDressing {}
 /// window keeps what it last wore, whether or not the capture's pixels were accepted.
 pub fn dressing_after_insert<D>(worn: Option<D>, harvested: Option<D>) -> Option<D> {
     harvested.or(worn)
-}
-
-/// Harvests the window's composited edge off the screen: a framed capture, cropped to the ring.
-/// `CGWindowListCreateImage` is the one capture API that composites window-server framing.
-pub fn harvest_edge_dressing(server_id: WindowServerId, scale: f64) -> Option<EdgeDressing> {
-    let frame = window_server::get_window(server_id)?.frame;
-    if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
-        return None;
-    }
-    let framed = capture_ring_expanded(server_id, frame, scale)?;
-    harvest_from_capture(&framed, frame.size, scale)
 }
 
 /// The window rect grown by one ring on every side, so a framed capture carries the outer dark
@@ -245,6 +220,24 @@ pub fn harvest_from_capture(framed: &CGImage, frame: CGSize, scale: f64) -> Opti
     Some(EdgeDressing { strips, corners })
 }
 
+/// A fresh `width` x `height` RGBA bitmap context, alpha last and premultiplied, owning its buffer.
+pub(crate) fn rgba_bitmap_context(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
+    let space = CGColorSpace::new_device_rgb()?;
+    // SAFETY: a fresh context; CG owns and frees the backing store with it.
+    let ctx = unsafe {
+        CGBitmapContextCreate(
+            std::ptr::null_mut(),
+            width,
+            height,
+            8,
+            0,
+            Some(&space),
+            CGImageAlphaInfo::PremultipliedLast.0,
+        )
+    };
+    unsafe { Some(CFRetained::from_raw(std::ptr::NonNull::new(ctx)?)) }
+}
+
 // Not bound by objc2-core-graphics 0.3, which only generates the adaptive variant.
 unsafe extern "C-unwind" {
     fn CGBitmapContextCreate(
@@ -272,20 +265,7 @@ fn copy_region(
     if w == 0 || h == 0 {
         return None;
     }
-    let space = CGColorSpace::new_device_rgb()?;
-    // SAFETY: a fresh context; CG owns and frees the backing store with it.
-    let ctx = unsafe {
-        CGBitmapContextCreate(
-            std::ptr::null_mut(),
-            w,
-            h,
-            8,
-            0,
-            Some(&space),
-            CGImageAlphaInfo::PremultipliedLast.0,
-        )
-    };
-    let ctx = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(ctx)?) };
+    let ctx = rgba_bitmap_context(w, h)?;
     // The context's origin is bottom-left; the region is measured from the top.
     let origin = CGPoint::new(-region.origin.x, -(img_h - region.origin.y - region.size.height));
     if let Some(radius) = rounded {
@@ -438,20 +418,7 @@ mod tests {
 
     /// A `w` x `h` pixel image filled with one colour at `alpha`.
     fn flat_image(w: usize, h: usize, alpha: f64) -> CFRetained<CGImage> {
-        let space = CGColorSpace::new_device_rgb().unwrap();
-        // SAFETY: a fresh context; CG owns and frees the backing store with it.
-        let ctx = unsafe {
-            CGBitmapContextCreate(
-                std::ptr::null_mut(),
-                w,
-                h,
-                8,
-                0,
-                Some(&space),
-                CGImageAlphaInfo::PremultipliedLast.0,
-            )
-        };
-        let ctx = unsafe { CFRetained::from_raw(std::ptr::NonNull::new(ctx).unwrap()) };
+        let ctx = rgba_bitmap_context(w, h).unwrap();
         CGContext::set_rgb_fill_color(Some(&ctx), 0.2, 0.4, 0.6, alpha);
         CGContext::fill_rect(Some(&ctx), rect(0.0, 0.0, w as f64, h as f64));
         CGBitmapContextCreateImage(Some(&ctx)).unwrap()

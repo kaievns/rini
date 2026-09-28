@@ -923,7 +923,9 @@ impl FlightEngine {
     }
 
     /// Harvests hairlines for `windows` on a plain thread: the service's completion queue must not
-    /// make capture calls (see `snapshot_service`). Results come back as `DressingReady`.
+    /// make capture calls (see `snapshot_service`). Results come back as `DressingReady`, or as a whole
+    /// `PictureReady` when the window has a blur the capture that just landed could not contain: the
+    /// harvest is the moment a window is on screen and at rest, which is when that can be put back.
     fn harvest_dressings(&self, windows: Vec<WindowId>) {
         if windows.is_empty() {
             return;
@@ -935,14 +937,18 @@ impl FlightEngine {
             .spawn(move || {
                 for window in windows {
                     let server_id = WindowServerId::from(window);
-                    let Some(dressing) =
-                        crate::animation::platform::edge_dressing::harvest_edge_dressing(
-                            server_id, scale,
-                        )
-                    else {
+                    let Some(snapshot) = capture_via_framed_with_dressing(server_id, scale) else {
                         continue;
                     };
-                    _ = tx.send(Event::DressingReady { window, dressing });
+                    if snapshot.carries_blur && snapshot.is_usable() {
+                        _ = tx.send(Event::PictureReady {
+                            window,
+                            snapshot,
+                            settled: true,
+                        });
+                    } else if let Some(dressing) = snapshot.dressing {
+                        _ = tx.send(Event::DressingReady { window, dressing });
+                    }
                 }
             })
             .ok();

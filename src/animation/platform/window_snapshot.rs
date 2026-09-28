@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::ffi::c_int;
 
-use objc2_core_foundation::{CFArray, CFRetained, CGSize};
+use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
@@ -47,6 +47,11 @@ pub struct WindowSnapshot {
     pub dressing: Option<crate::animation::platform::edge_dressing::EdgeDressing>,
     /// When the pixels were captured; staleness is a reason to re-warm.
     pub taken: std::time::Instant,
+    /// Whether this picture carries a blur its window's own surface lacks: taken as a composite with
+    /// what was below the window, and different from the window's own capture where it matters. A
+    /// picture like this is not given up for a same-sized capture of the window alone, which would
+    /// be flat grey exactly where the blur is. See [`crate::animation::domain::translucency`].
+    pub carries_blur: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,20 +73,7 @@ impl WindowSnapshot {
     }
 }
 
-/// Captures one window from the framebuffer through SkyLight. One window per call: a list returns
-/// a single flattened composite. `None` is normal (display asleep); callers fall back to the cache.
-pub fn capture_via_skylight(
-    window: WindowServerId,
-    window_size: (f64, f64),
-    scale: f64,
-) -> Option<WindowSnapshot> {
-    capture_list_via_skylight(&[window], window_size, scale)
-}
-
-/// One `SLSHWCaptureWindowList` call, for one window or several composited together.
-///
-/// The single-window and composite paths were the same thirty lines twice over, differing in
-/// whether the id array had one element.
+/// One `SLSHWCaptureWindowList` call, for several windows composited together.
 fn capture_list_via_skylight(
     windows: &[WindowServerId],
     covers: (f64, f64),
@@ -112,46 +104,22 @@ fn capture_list_via_skylight(
         source: SnapshotSource::SkyLight,
         dressing: None,
         taken: std::time::Instant::now(),
+        carries_blur: false,
     })
 }
 
-/// Captures one window through `CGWindowListCreateImage`, which only renders a composited window.
-/// See "The hairline is composited outside every capture" in `src/animation/docs/capture-overlay-research.md`.
-pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<WindowSnapshot> {
-    let frame = crate::windows::platform::window_server::get_window(window)?.frame;
-    if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
-        return None;
-    }
-    #[allow(deprecated)]
-    let image = objc2_core_graphics::CGWindowListCreateImage(
-        frame,
-        objc2_core_graphics::CGWindowListOption::OptionIncludingWindow,
-        window.as_u32(),
-        objc2_core_graphics::CGWindowImageOption::empty(),
-    )?;
-    let px_w = CGImage::width(Some(&image)) as f64;
-    let px_h = CGImage::height(Some(&image)) as f64;
-    let scale = if scale > 0.0 { scale } else { 1.0 };
-    Some(WindowSnapshot {
-        image: SnapshotImage::Bitmap(image),
-        coverage: Coverage {
-            covered: (px_w / scale, px_h / scale),
-            window: (frame.size.width, frame.size.height),
-        },
-        source: SnapshotSource::SkyLight,
-        dressing: None,
-        taken: std::time::Instant::now(),
-    })
-}
-
-/// One framed capture that yields the picture and its hairline: the reveal chase's capture.
-/// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+/// One framed capture that yields the picture and its hairline: the reveal chase's capture, and the
+/// harvest after a flight. See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+///
+/// For a window wholly on a display, the picture also gets its blur back: a second capture of the
+/// window with everything below it, merged in by `translucency::merge`. About 14ms, measured, which is
+/// why it is never taken for every tile at the start of a flight.
 pub fn capture_via_framed_with_dressing(
     window: WindowServerId,
     scale: f64,
 ) -> Option<WindowSnapshot> {
     use crate::animation::platform::edge_dressing::{
-        capture_ring_expanded, harvest_from_capture, picture_within_ring,
+        capture_ring_expanded, harvest_from_capture, picture_within_ring, ring_expanded,
     };
     let frame = crate::windows::platform::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
@@ -161,8 +129,23 @@ pub fn capture_via_framed_with_dressing(
     let px_w = CGImage::width(Some(&framed)) as f64;
     let px_h = CGImage::height(Some(&framed)) as f64;
     let inner = picture_within_ring(px_w, px_h, scale);
-    let image = CGImage::with_image_in_rect(Some(&framed), inner)?;
+    // The hairline is harvested from the window's own capture, before any merge.
     let dressing = harvest_from_capture(&framed, frame.size, scale);
+    let displays = active_display_bounds();
+    let composite = fully_on_a_display(frame, &displays)
+        .then(|| capture_below_and_including(window, ring_expanded(frame)))
+        .flatten()
+        .filter(|_| {
+            let after =
+                crate::windows::platform::window_server::get_window(window).map(|w| w.frame);
+            composite_is_of_the_window(frame, after, &displays)
+        });
+    let (picture, carries_blur) =
+        match composite.and_then(|composite| with_blur(&framed, &composite)) {
+            Some((merged, merge)) if merge.carries_blur => (merged, true),
+            _ => (framed.clone(), false),
+        };
+    let image = CGImage::with_image_in_rect(Some(&picture), inner)?;
     Some(WindowSnapshot {
         image: SnapshotImage::Bitmap(image),
         coverage: Coverage {
@@ -172,6 +155,122 @@ pub fn capture_via_framed_with_dressing(
         source: SnapshotSource::SkyLight,
         dressing,
         taken: std::time::Instant::now(),
+        carries_blur,
+    })
+}
+
+/// The window and everything below it on screen, cropped to `rect`. Leaves out every window above it,
+/// so neither an overlapping window nor rini's own overlay can end up in the picture.
+fn capture_below_and_including(
+    window: WindowServerId,
+    rect: CGRect,
+) -> Option<CFRetained<CGImage>> {
+    use objc2_core_graphics::{CGWindowImageOption, CGWindowListOption};
+    #[allow(deprecated)]
+    objc2_core_graphics::CGWindowListCreateImage(
+        rect,
+        CGWindowListOption::OptionOnScreenBelowWindow | CGWindowListOption::OptionIncludingWindow,
+        window.as_u32(),
+        CGWindowImageOption::empty(),
+    )
+}
+
+/// `own` with its blur put back from `composite`, and what the merge found. `None` when the two are
+/// not the same size, which a window moving between the two captures can cause.
+fn with_blur(
+    own: &CGImage,
+    composite: &CGImage,
+) -> Option<(
+    CFRetained<CGImage>,
+    crate::animation::domain::translucency::Merged,
+)> {
+    use crate::animation::domain::translucency::{Pictures, merge};
+    let (width, height) = (CGImage::width(Some(own)), CGImage::height(Some(own)));
+    if CGImage::width(Some(composite)) != width || CGImage::height(Some(composite)) != height {
+        return None;
+    }
+    let own_ctx = rgba_context(own, width, height)?;
+    let composite_ctx = rgba_context(composite, width, height)?;
+    let own_stride = objc2_core_graphics::CGBitmapContextGetBytesPerRow(Some(&own_ctx));
+    let composite_stride = objc2_core_graphics::CGBitmapContextGetBytesPerRow(Some(&composite_ctx));
+    let own_data = objc2_core_graphics::CGBitmapContextGetData(Some(&own_ctx)) as *mut u8;
+    let composite_data =
+        objc2_core_graphics::CGBitmapContextGetData(Some(&composite_ctx)) as *const u8;
+    if own_data.is_null() || composite_data.is_null() {
+        return None;
+    }
+    // SAFETY: both contexts were created at `width` x `height` with the strides read back above, own
+    // their buffers, and outlive these slices.
+    let (own_bytes, composite_bytes) = unsafe {
+        (
+            std::slice::from_raw_parts_mut(own_data, own_stride * height),
+            std::slice::from_raw_parts(composite_data, composite_stride * height),
+        )
+    };
+    let merged = merge(Pictures {
+        own: own_bytes,
+        own_stride,
+        composite: composite_bytes,
+        composite_stride,
+        width,
+        height,
+    })?;
+    let image = objc2_core_graphics::CGBitmapContextCreateImage(Some(&own_ctx))?;
+    Some((image, merged))
+}
+
+/// `image` drawn into a fresh RGBA context of its own size, alpha last and premultiplied. Premultiplied
+/// is harmless to the merge, which only rewrites fully opaque pixels.
+fn rgba_context(
+    image: &CGImage,
+    width: usize,
+    height: usize,
+) -> Option<CFRetained<objc2_core_graphics::CGContext>> {
+    use objc2_core_graphics::CGContext;
+    let ctx = crate::animation::platform::edge_dressing::rgba_bitmap_context(width, height)?;
+    CGContext::draw_image(
+        Some(&ctx),
+        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width as f64, height as f64)),
+        Some(image),
+    );
+    Some(ctx)
+}
+
+/// Every active display's bounds, in the window server's coordinates.
+fn active_display_bounds() -> Vec<CGRect> {
+    let mut ids = [0u32; 16];
+    let mut count = 0u32;
+    let err = unsafe {
+        objc2_core_graphics::CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count)
+    };
+    if err != objc2_core_graphics::CGError::Success {
+        return Vec::new();
+    }
+    ids[..count as usize]
+        .iter()
+        .map(|id| objc2_core_graphics::CGDisplayBounds(*id))
+        .collect()
+}
+
+/// Whether a composite taken of the window at `before` is a picture of the window at all.
+///
+/// Only if it is still there once the capture has returned. The composite is the window and whatever
+/// is below it in a RECT, so a window that moved away in between — parked by a workspace switch that
+/// raced the capture — leaves the rect showing whatever it was covering, and merging that in replaces
+/// every opaque pixel of the window with another window's. Measured: a Messages picture that came out
+/// as the VS Code window that had moved back under its old frame.
+fn composite_is_of_the_window(before: CGRect, after: Option<CGRect>, displays: &[CGRect]) -> bool {
+    after.is_some_and(|after| after == before && fully_on_a_display(after, displays))
+}
+
+/// Whether `frame` lies wholly inside one display. Only then is there a screen below all of it for the
+/// composite to have blurred; a window parked off the edge would come back part-empty.
+fn fully_on_a_display(frame: CGRect, displays: &[CGRect]) -> bool {
+    displays.iter().any(|display| {
+        frame.origin.x >= display.origin.x
+            && frame.origin.y >= display.origin.y
+            && frame.origin.x + frame.size.width <= display.origin.x + display.size.width
+            && frame.origin.y + frame.size.height <= display.origin.y + display.size.height
     })
 }
 
@@ -187,6 +286,11 @@ pub trait CarriesOver: Sized {
     fn inherit(&mut self, _previous: &Self) {}
     /// Called on the kept payload when `refused` lost to the replacement rule.
     fn absorb(&mut self, _refused: Self) {}
+    /// Whether this payload is worth more than `incoming` even though the coverage rule would replace
+    /// it.
+    fn keeps_over(&self, _incoming: &Self) -> bool {
+        false
+    }
 }
 
 impl HasCoverage for WindowSnapshot {
@@ -203,6 +307,28 @@ impl CarriesOver for WindowSnapshot {
     fn absorb(&mut self, refused: Self) {
         self.dressing = dressing_after_insert(self.dressing.take(), refused.dressing);
     }
+
+    /// A picture carrying its window's blur is kept over a capture of the window on its own at the
+    /// same size, which would be flat grey exactly where the blur is. A different size means the
+    /// window was resized and the old picture no longer fits it, so the new one is taken after all.
+    fn keeps_over(&self, incoming: &Self) -> bool {
+        keeps_blur(
+            self.carries_blur,
+            incoming.carries_blur,
+            self.coverage,
+            incoming.coverage,
+        )
+    }
+}
+
+/// The rule behind `keeps_over`, on plain values.
+pub fn keeps_blur(
+    held: bool,
+    incoming: bool,
+    held_coverage: Coverage,
+    incoming_coverage: Coverage,
+) -> bool {
+    held && !incoming && held_coverage.window == incoming_coverage.window
 }
 
 impl HasCoverage for Coverage {
@@ -243,7 +369,9 @@ impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
     /// deciding what survives of the rest either way.
     pub fn insert(&mut self, window: WindowId, mut snapshot: T) {
         if let Some(existing) = self.entries.get_mut(&window) {
-            if !should_replace(Some(existing.coverage()), snapshot.coverage()) {
+            if !should_replace(Some(existing.coverage()), snapshot.coverage())
+                || existing.keeps_over(&snapshot)
+            {
                 existing.absorb(snapshot);
                 return;
             }
@@ -335,6 +463,7 @@ pub(crate) fn test_snapshot(size: CGSize) -> WindowSnapshot {
         source: SnapshotSource::ScreenCaptureKit,
         dressing: None,
         taken: std::time::Instant::now(),
+        carries_blur: false,
     }
 }
 
@@ -343,6 +472,103 @@ mod tests {
     use std::num::NonZeroU32;
 
     use super::*;
+
+    fn size(w: f64, h: f64) -> Coverage {
+        Coverage {
+            covered: (w, h),
+            window: (w, h),
+        }
+    }
+
+    /// The reported flicker: a blurred window's picture, taken on screen with its blur, must not be
+    /// replaced by a later capture of the window on its own, which is flat grey where the blur is.
+    #[test]
+    fn a_picture_with_its_blur_is_kept_over_a_grey_one_of_the_same_size() {
+        let mut cache: SnapshotCache<WindowSnapshot> = SnapshotCache::new();
+        let window = WindowId::new(1, 1);
+        let mut blurred = test_snapshot(CGSize::new(859.0, 1081.0));
+        blurred.carries_blur = true;
+        cache.insert(window, blurred);
+
+        cache.insert(window, test_snapshot(CGSize::new(859.0, 1081.0)));
+
+        assert!(cache.get(window).unwrap().carries_blur, "the blur stays");
+    }
+
+    /// A resize means the old picture no longer fits the window, blur or not.
+    #[test]
+    fn a_resized_window_takes_the_new_picture_even_without_its_blur() {
+        assert!(!keeps_blur(
+            true,
+            false,
+            size(859.0, 1081.0),
+            size(1720.0, 1081.0)
+        ));
+        assert!(keeps_blur(true, false, size(859.0, 1081.0), size(859.0, 1081.0)));
+    }
+
+    /// A newer picture WITH its blur always replaces an older one, so an on-screen window refreshes.
+    #[test]
+    fn a_newer_blurred_picture_replaces_an_older_one() {
+        assert!(!keeps_blur(true, true, size(859.0, 1081.0), size(859.0, 1081.0)));
+        assert!(!keeps_blur(
+            false,
+            false,
+            size(859.0, 1081.0),
+            size(859.0, 1081.0)
+        ));
+    }
+
+    /// The reported failure: the window was parked between reading its frame and taking the composite,
+    /// so the rect showed another window. A composite is only kept if the window is where it was.
+    #[test]
+    fn a_composite_of_a_window_that_moved_is_thrown_away() {
+        let laptop = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
+        let at = |x, y| CGRect::new(CGPoint::new(x, y), CGSize::new(859.0, 1081.0));
+
+        assert!(composite_is_of_the_window(
+            at(4.0, 32.0),
+            Some(at(4.0, 32.0)),
+            &[laptop]
+        ));
+        assert!(
+            !composite_is_of_the_window(at(4.0, 32.0), Some(at(1727.0, 1065.0)), &[laptop]),
+            "parked"
+        );
+        assert!(
+            !composite_is_of_the_window(at(4.0, 32.0), Some(at(10.0, 32.0)), &[laptop]),
+            "moved"
+        );
+        assert!(
+            !composite_is_of_the_window(at(4.0, 32.0), None, &[laptop]),
+            "gone"
+        );
+    }
+
+    /// Only a window wholly on one display has a screen below all of it to have blurred; a parked
+    /// window's composite would come back part-empty.
+    #[test]
+    fn only_a_window_wholly_on_one_display_is_composited() {
+        let laptop = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
+        let external = CGRect::new(CGPoint::new(-670.0, -1692.0), CGSize::new(3008.0, 1692.0));
+        let displays = [laptop, external];
+        let at = |x, y, w, h| CGRect::new(CGPoint::new(x, y), CGSize::new(w, h));
+
+        assert!(fully_on_a_display(at(4.0, 32.0, 1720.0, 1081.0), &displays));
+        assert!(fully_on_a_display(at(0.0, -1600.0, 1200.0, 900.0), &displays));
+        assert!(
+            !fully_on_a_display(at(1727.0, 1085.0, 859.0, 1081.0), &displays),
+            "parked"
+        );
+        assert!(
+            !fully_on_a_display(at(100.0, -400.0, 800.0, 800.0), &displays),
+            "straddles two"
+        );
+        assert!(
+            !fully_on_a_display(at(4.0, 32.0, 100.0, 100.0), &[]),
+            "no displays known"
+        );
+    }
 
     fn wid(idx: u32) -> WindowId {
         WindowId {

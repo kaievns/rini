@@ -69,6 +69,27 @@ destination for a window already moving.
 rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
 `src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
 
+## Windows with blurred materials
+
+- A window whose sidebar, toolbar or background is a blurred material MUST fly with its blur, not the
+  flat grey every capture of the window on its own returns there. The grey against the live blur at
+  landing reads as a flicker, and blurred materials are now on most windows.
+- A captured blur MUST NOT pick up anything that was above the window: an overlapping window, the
+  switcher's popup, or rini's own overlay.
+- A window's rounded corners and any real per-pixel transparency MUST stay transparent in its picture.
+  A capture that contains the blur also fills the corners with whatever was behind them.
+- Once a window's picture carries its blur, a later capture of the same size that lacks it MUST NOT
+  replace it.
+- A picture MUST NOT be built from a capture of the window's rect taken while the window was somewhere
+  else. The rect then holds whatever the window was covering, and merging that in replaces the window
+  with another one — found on the first live run, and far worse than grey.
+
+> **Reported 2026-09-28.** "Screenshots for apps that use blur... currently they render with some grey
+> colour and cause flicker when the real window switches in... there are a lot of windows that use blur
+> here and there now, so it's quite prevalent and needs a better fix." Every per-window capture route
+> had already been measured returning the same flat grey. The window captured together with what is
+> below it carries the real blur and leaves out anything above it, measured the same day.
+
 ## Which windows come forward together
 
 - A flight MUST draw the front-to-back order the screen LANDS in. An order that only exists for the

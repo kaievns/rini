@@ -95,7 +95,8 @@ Six functions, ~89 lines, for two observed properties.
 
 ### 1.4 Two SkyLight capture paths
 
-**DONE — both call `capture_list_via_skylight` (`45adc4b`).**
+**DONE — both call `capture_list_via_skylight` (`45adc4b`).** `capture_via_skylight` was later
+deleted outright, having no callers left (2026-09-28).
 
 `src/animation/platform/window_snapshot.rs:73` `capture_via_skylight` (31 lines)
 and `:204` `capture_composite_via_skylight` (30 lines), 0.83 similar. The
