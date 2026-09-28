@@ -99,24 +99,30 @@ a placeholder. Age is not a reason to refuse one, though: a ten-minute-old pictu
 `--n1` for the plane it sits on, `--n3` for a tile with no picture yet, `--line` for the hairline,
 `--n11` for captions, and an `--ember-soft` fill inside a 2px `--ember` ring for the selection.
 
-**The blur needed something removed, not added.** The `NSVisualEffectView` was in place and doing
-nothing, because rini's own animation overlay sits ordered in at alpha 0 across the whole display at
-level 18 and declared itself OPAQUE. Opaque is a promise that nothing behind the window contributes to
+**The blur needed something removed, not added — once.** The first blurred backing was in place and
+doing nothing, because rini's own animation overlay sits ordered in at alpha 0 across the whole display
+at level 18 and declared itself OPAQUE. Opaque is a promise that nothing behind the window contributes to
 what is composited, and the window server keeps that promise for windows above it too — so the backdrop
 this panel samples was truncated at an empty black slab. Two rounds of tinting were spent on it before
 that was found; the tint was never the problem.
 
-**Blurred, not just translucent.** An `NSVisualEffectView` with the `HUDWindow` material behind the
-layer tree, blending `BehindWindow` so it samples the desktop, and a dark appearance pinned on the
-window rather than inherited — the material takes its colour from the appearance, so a machine in light
-mode would otherwise get a light frosted panel under a dark tint. Its state is pinned `Active` too:
-rini is an Accessory application and is never frontmost, so the default `FollowsWindowActiveState` would
-leave the material flat forever.
+**Clear glass, not a frosted slab.** The backing is `NSGlassEffectView` in its `Clear` style, which
+is what macOS's own switcher is made of. The `HUDWindow` visual-effect blur before it was working — shown
+by putting bright stripes behind the popup — but it blurs so heavily that over a dark desktop of editors
+and terminals it averages everything to one flat colour, and "the blur doesn't work" was an accurate
+description of what that looks like. The native switcher barely blurs: text behind it stays faintly
+readable. Clear glass keeps that shape.
 
-**The tint darkens with its colour, not its opacity.** This is the part that was wrong once: with the
-blur in place and a 0.62 wash over it, about a tenth of the backdrop survived and the panel read as an
-opaque slab — reported as the blur not working. So the wash dropped to 0.30 and moved a step down the
-spine to `--n0` instead. Same intent as the native switcher, a step darker.
+**The darkening is a layer inside the glass.** `--n0` at `PANEL_ALPHA` on the view the glass hosts. Not
+the glass's `tintColor`, which on clear glass shifts hue and barely touches brightness — three tints
+from 0.45 to 0.75 rendered almost the same. 0.40 was picked from screenshots of 0.35, 0.50 and 0.65 over
+this desktop as the native switcher a step darker. The appearance is pinned dark so a light-mode
+machine does not get light glass under a dark wash. The glass draws its own rim, so the panel has no
+hairline of its own.
+
+**Every tile has a faint edge.** A 1px `--n11` hairline at `TILE_EDGE_ALPHA`, drawn over the picture.
+Light rather than `--line`, because the tiles are mostly dark windows and a hairline darker than them
+disappears.
 
 Four deliberate departures from the defaults, all because a switcher is not a document. It sits on
 `--n0` rather than the content plane `--n2` — it floats OVER content rather than being content, and at

@@ -23,10 +23,9 @@ use objc2::DefinedClass;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameVibrantDark, NSBackingStoreType,
-    NSColor, NSEvent, NSPanel, NSRunningApplication, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSBackingStoreType, NSColor,
+    NSEvent, NSGlassEffectView, NSGlassEffectViewStyle, NSPanel, NSRunningApplication, NSView,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
@@ -58,16 +57,11 @@ const PANEL_LEVEL: isize = 101;
 
 /// `--n0`, the deepest step on the spine.
 ///
-/// The tint over the blur. Two steps below the content plane on purpose: this panel floats OVER content
-/// rather than being content, and the darkening has to be done with the COLOUR rather than with opacity,
-/// because opacity is what the blur needs left over to be visible at all. `--n1` at 0.62 was the
-/// previous answer and it read as an opaque slab.
+/// The darkening inside the glass. Two steps below the content plane on purpose: this panel floats
+/// OVER content rather than being content.
 const N0: (f64, f64, f64) = (0.059, 0.067, 0.075);
 /// `--n3`, raised. A tile with no picture yet is a surface sitting on the panel.
 const N3: (f64, f64, f64) = (0.133, 0.145, 0.153);
-/// `--line`, the hairline. "Borders are soft visible hairlines — never bright, never
-/// darker-than-panel voids."
-const LINE: (f64, f64, f64) = (0.184, 0.196, 0.208);
 /// `--n11`, primary text.
 const N11: (f64, f64, f64) = (0.882, 0.890, 0.898);
 /// `--ember`. Owns selection and active indicators, on a budget of one or two appearances per screen —
@@ -97,20 +91,14 @@ const TILE_CORNER: f64 = 11.0;
 /// ember's own remit covers "focused borders" as well as active bars. A whole outline says "this is
 /// the one" about a tile; an edge bar says "this is the current line" about a list.
 const FOCUS_RING: f64 = 2.0;
-/// The tint laid over the blurred backing.
-///
-/// Not a fill: the panel is blurred by an `NSVisualEffectView` behind this layer, and an opaque layer
-/// on top would hide it entirely. So this is a wash that darkens the blur rather than replacing it —
-/// the `HUDWindow` material is already dark, and this takes it the rest of the way.
-///
-/// The spec has no token for an overlay's translucency, so the number is a judgement. It has been 0.78
-/// and 0.90 as flat FILLS, and 0.62 over the blur — where it was still high enough that the blur was
-/// doing nothing visible, reported as the blur not working. A dark material under a 0.62 near-black wash
-/// leaves about a tenth of the backdrop, which is indistinguishable from an opaque slab.
-///
-/// So the darkening moved to the colour: `--n0` instead of `--n1`, at an opacity low enough that the
-/// blur is the thing you see. Same intent as the native switcher, a step darker.
-const PANEL_ALPHA: f64 = 0.30;
+/// How much `--n0` darkens the glass. The one value in the panel that is a judgement rather than a
+/// token: the system has none for an overlay's translucency. Chosen against screenshots of 0.35, 0.50
+/// and 0.65 over the same desktop as "the native switcher, a step darker" (`src/switcher/docs/README.md`).
+const PANEL_ALPHA: f64 = 0.40;
+/// A tile's default hairline: `--n11` faint enough to read as the window's edge rather than as a frame.
+/// Light rather than `--line`, because the tiles are mostly dark windows and a hairline darker than
+/// them disappears.
+const TILE_EDGE_ALPHA: f64 = 0.16;
 
 /// The app icon badged into a tile's corner. Small enough to read as a cue rather than as content,
 /// large enough to tell two apps apart at a glance.
@@ -214,8 +202,8 @@ struct LastDraw {
 /// The popup, alive for the lifetime of the process and ordered in only while a switch is open.
 pub struct SwitcherPanel {
     window: Retained<NSPanel>,
-    /// The blurred backing. Held because it has to be resized with the panel.
-    backing: Retained<NSVisualEffectView>,
+    /// The glass behind everything. Held because it has to be resized with the panel.
+    backing: Retained<NSGlassEffectView>,
     view: Retained<SwitcherView>,
     /// One layer per visible row, reused across opens. Rebuilt only when the row count changes, so
     /// stepping the selection moves a highlight rather than tearing down a layer tree.
@@ -283,30 +271,19 @@ impl SwitcherPanel {
                 | NSWindowCollectionBehavior::FullScreenAuxiliary,
         );
 
-        // Vibrant dark, pinned rather than inherited. The material's own colour comes from the
-        // appearance, so on a machine in light mode an inherited appearance would render a LIGHT frosted
-        // panel under a dark tint — the two fighting, and neither winning. Vibrancy is also what the
-        // blur samples through.
-        if let Some(dark) = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameVibrantDark }) {
+        // Dark, pinned rather than inherited, so a machine in light mode does not get a light glass
+        // under a dark wash.
+        if let Some(dark) = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }) {
             window.setAppearance(Some(&dark));
         }
 
-        // A blurred backing rather than a flat translucent fill. `HUDWindow` is the material macOS uses
-        // for exactly this kind of floating panel, and `BehindWindow` is what makes it sample the
-        // desktop rather than its own siblings. `Active` so it stays blurred while rini is not the
-        // frontmost application — which it never is, being an Accessory app, so the default
-        // `FollowsWindowActiveState` would leave the material flat.
-        let backing = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame);
-        backing.setMaterial(NSVisualEffectMaterial::HUDWindow);
-        backing.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        backing.setState(NSVisualEffectState::Active);
-        backing.setWantsLayer(true);
-        if let Some(layer) = backing.layer() {
-            // The blur has to be clipped to the same rounded rect as the panel, or its square corners
-            // show through underneath the layer tree's rounded ones.
-            layer.setCornerRadius(CORNER);
-            layer.setMasksToBounds(true);
-        }
+        // Clear Liquid Glass, which is what macOS's own switcher is made of: a light blur that keeps the
+        // shape of what is behind it. The heavy `HUDWindow` blur this replaced was working, and over a
+        // dark desktop it averaged everything to one flat slab. The glass rounds its own corners, and
+        // its `tintColor` shifts hue rather than brightness, so the darkening is a layer inside it.
+        let backing = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), frame);
+        backing.setStyle(NSGlassEffectViewStyle::Clear);
+        backing.setCornerRadius(CORNER);
         window.setContentView(Some(&backing));
 
         let view = SwitcherView::alloc(mtm).set_ivars(ViewIvars {
@@ -315,16 +292,15 @@ impl SwitcherPanel {
         });
         let view: Retained<SwitcherView> = unsafe { msg_send![super(view), initWithFrame: frame] };
         view.setWantsLayer(true);
-        backing.addSubview(&view);
+        backing.setContentView(Some(&view));
 
         let root = view.layer()?;
         let scale = backing_scale();
         root.setContentsScale(scale);
         root.setCornerRadius(CORNER);
         root.setMasksToBounds(true);
+        // No hairline of its own: the glass draws its edge.
         root.setBackgroundColor(Some(&token(N0, PANEL_ALPHA)));
-        root.setBorderWidth(1.0);
-        root.setBorderColor(Some(&token(LINE, 1.0)));
 
         // Under the tiles, so a tile's picture is never hidden by its own highlight.
         let highlight = CALayer::layer();
@@ -489,6 +465,9 @@ impl SwitcherPanel {
             tile.setZPosition(1.0);
             // The raised plane, so a row with no picture yet reads as a surface rather than as a hole.
             tile.setBackgroundColor(Some(&token(N3, 1.0)));
+            // Drawn over the picture, so every tile has an edge whatever its window looks like.
+            tile.setBorderWidth(1.0);
+            tile.setBorderColor(Some(&token(N11, TILE_EDGE_ALPHA)));
             root.addSublayer(&tile);
             self.tiles.push(tile);
 

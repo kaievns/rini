@@ -462,7 +462,7 @@ the window server that nothing behind the window contributes to what is
 composited, and that promise is kept for windows ABOVE it as well. Combined with
 the alpha-toggle decision below, which leaves the overlay ordered in at alpha 0
 between flights, it truncated the backdrop for every window above level 18 — the
-switcher's `NSVisualEffectView` blurred an empty black slab and looked like it was
+switcher's blurred backing blurred an empty black slab and looked like it was
 not blurring at all. The black background is what draws black; opaque never was.
 
 Its content view is a

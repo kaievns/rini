@@ -179,17 +179,19 @@ switcher answers "every window I have, wherever it is".
   target rather than a current line, and the ember's remit covers focused borders as well as active
   bars. A whole outline says "this is the one" about a tile; an edge bar says "this is where I am" about
   a list.
-- The panel MUST blur what is behind it rather than only tinting it. The target is macOS's own switcher,
-  a step darker: a dark frosted surface you can see shapes through, not a flat wash over live windows.
-- The tint over the blur MUST darken with its COLOUR rather than with its opacity, and MUST leave enough
-  transparency for the blur to read. A dark material under a near-opaque dark wash is indistinguishable
-  from an opaque slab, which is the failure this replaced. It takes `--n0`, two steps below the content
-  plane: the panel floats OVER content rather than being content.
-- The blur MUST stay active while rini is not the frontmost application. rini is an Accessory app and is
-  never frontmost, so a material that follows the window's active state would never blur at all.
-- The panel MUST pin a dark appearance rather than inheriting one. The material's colour comes from the
-  appearance, so on a machine in light mode an inherited appearance renders a light frosted panel under
-  a dark tint.
+- The panel MUST be made of the same material as macOS's own switcher, a step darker: a light blur that
+  keeps the shape of what is behind it. A heavy blur is not that. Over a desktop of dark editors and
+  terminals a heavy blur averages everything to one flat colour, which is indistinguishable from no
+  blur at all.
+- The darkening MUST be done by a layer on top of the glass, in `--n0`, two steps below the content
+  plane: the panel floats OVER content rather than being content. The glass's own tint shifts hue rather
+  than brightness and cannot darken it.
+- The blur MUST stay live while rini is not the frontmost application. rini is an Accessory app and is
+  never frontmost.
+- The panel MUST pin a dark appearance rather than inheriting one, so a machine in light mode does not
+  get light glass under a dark layer.
+- Every tile MUST have a faint default edge, light rather than dark, so a tile reads as a window whatever
+  the window looks like. The tiles are mostly dark windows, and a hairline darker than them disappears.
 - The panel's corner radius MUST follow macOS's floating surfaces rather than the design system's card
   radius. The system tops out at 7px with "corners stay crisp", which is right for a card in a document
   and wrong for a panel that sits beside Spotlight and the volume HUD.
@@ -219,6 +221,12 @@ switcher answers "every window I have, wherever it is".
   ordered by focus, so the two most recent windows trade places from one switch to the next; a layer
   that cross-fades from its previous picture to its new one makes the strip look like it is shuffling
   itself after it has already appeared.
+
+> **Reported 2026-09-28.** "The background blur is still broken. I think I want some faint default
+> borders for the thumbs." Measured before changing anything: over bright stripes the old blur worked;
+> over the real desktop it rendered as a flat slab, because it blurred heavily and the desktop was dark.
+> macOS's switcher over the same desktop left text faintly readable. It is clear Liquid Glass, which is
+> what the panel is now.
 
 > **Reported 2026-09-25.** "Good radius, blur still doesn't work. Also there is some weird z-layering
 > issue... when I trigger the app-switcher the popup doesn't show either, probably stuck behind something

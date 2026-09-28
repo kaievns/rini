@@ -397,8 +397,8 @@ impl TileOverlay {
         // NOT opaque, even though it is a black slab across the whole display when it is up. The
         // opaque flag is a promise to the window server that nothing behind this window contributes to
         // what is composited — and since the overlay stays ordered in at alpha 0 between animations,
-        // that promise was being kept for windows ABOVE it as well: the backdrop an
-        // NSVisualEffectView samples was truncated here, so the switcher's blur had nothing to blur.
+        // that promise was being kept for windows ABOVE it as well: the backdrop a
+        // blurred surface above it samples was truncated here, so the switcher's blur had nothing to blur.
         // The black comes from the background colour below, which is what fills an undrawn gap; being
         // opaque was never what did that.
         window.setOpaque(false);

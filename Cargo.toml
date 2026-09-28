@@ -130,7 +130,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 	"NSOpenPanel",
 	"NSPanel",
 	# The switcher popup's blurred backing. HUDWindow material behind the window.
-	"NSVisualEffectView",
+	"NSGlassEffectView",
 	"NSStringDrawing",
 	"NSResponder",
 	"NSRunningApplication",
