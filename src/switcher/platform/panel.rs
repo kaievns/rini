@@ -33,14 +33,14 @@ use objc2_foundation::NSString;
 use objc2_quartz_core::{
     CALayer, CAMediaTimingFunction, CATextLayer, CATransaction, kCAMediaTimingFunctionEaseOut,
 };
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::animation::platform::overlay::set_layer_contents;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::switcher::domain::layout::{Metrics, Strip, lay_out};
 use crate::switcher::domain::motion::{GLIDE_SECONDS, glides};
-use crate::windows::platform::app::NSRunningApplicationExt;
+use crate::windows::platform::app::{NSRunningApplicationExt, image_file_pixels};
 
 /// The pop-up menu level, which is where macOS draws its own switcher and its menus.
 ///
@@ -177,6 +177,8 @@ pub struct Row {
     pub title: String,
     pub app_name: String,
     pub is_minimized: bool,
+    /// An image configured to badge this row in place of its application's own icon.
+    pub icon: Option<std::path::PathBuf>,
 }
 
 /// What a draw does to the layers' geometry.
@@ -227,6 +229,9 @@ pub struct SwitcherPanel {
     /// Cached because reading one goes out to the application bundle, and a switch redraws on every
     /// step. `None` is cached too: an application with no icon must not be asked again on each redraw.
     app_icons: HashMap<rini_core::ids::pid_t, Option<Retained<objc2_core_graphics::CGImage>>>,
+    /// Configured icon files already read, by path. `None` is cached too, so a missing file is warned
+    /// about once rather than on every redraw.
+    file_icons: HashMap<std::path::PathBuf, Option<Retained<objc2_core_graphics::CGImage>>>,
     /// Pictures handed over by the animation engine, by window.
     ///
     /// Kept across opens: a picture that was good enough to draw last time is still better than a grey
@@ -339,6 +344,7 @@ impl SwitcherPanel {
             scale,
             pictures: HashMap::default(),
             app_icons: HashMap::default(),
+            file_icons: HashMap::default(),
             last: None,
         })
     }
@@ -521,11 +527,35 @@ impl SwitcherPanel {
         icon
     }
 
+    /// A configured icon file, read once and kept. A file that cannot be read falls back to the
+    /// application's own icon, with one warning.
+    fn file_icon(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Option<Retained<objc2_core_graphics::CGImage>> {
+        if let Some(cached) = self.file_icons.get(path) {
+            return cached.clone();
+        }
+        let icon = image_file_pixels(path, ICON * self.scale);
+        if icon.is_none() {
+            warn!(path = %path.display(), "switcher icon override is not a readable image; using the application's own");
+        }
+        self.file_icons.insert(path.to_path_buf(), icon.clone());
+        icon
+    }
+
     fn place(&mut self, strip: &Strip, rows: &[Row], selected: usize, movement: Move) {
         // Resolved before the drawing loops, which borrow the layer vectors: caching an icon needs
         // `&mut self` and a loop cannot hold both.
-        let badges: Vec<Option<Retained<objc2_core_graphics::CGImage>>> =
-            rows.iter().map(|row| self.app_icon(row.window.pid)).collect();
+        let badges: Vec<Option<Retained<objc2_core_graphics::CGImage>>> = rows
+            .iter()
+            .map(|row| {
+                row.icon
+                    .as_deref()
+                    .and_then(|path| self.file_icon(path))
+                    .or_else(|| self.app_icon(row.window.pid))
+            })
+            .collect();
 
         self.draw_contents(rows, &badges);
         if movement != Move::Leave {
@@ -694,6 +724,7 @@ mod tests {
             title: title.to_owned(),
             app_name: app.to_owned(),
             is_minimized: false,
+            icon: None,
         }
     }
 

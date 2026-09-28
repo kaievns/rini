@@ -180,6 +180,15 @@ haptic_pattern = "level_change"
 # to require greater overlap before a swap occurs.
 drag_swap_fraction = 0.3
 
+# Window switcher
+# - icons: an image (PNG, ICNS, anything macOS reads) to badge an application's
+#   tiles with instead of its own icon, keyed by bundle id. For applications that
+#   set their icon while running, which only the Dock can see; Ghostty's
+#   macos-icon is one. A path starting ~/ is under the home directory. An image
+#   that cannot be read falls back to the application's own icon.
+[settings.switcher.icons]
+# "com.mitchellh.ghostty" = "~/.config/rini/icons/ghostty.png"
+
 [virtual_workspaces]
 # Virtual workspaces
 # - enabled: if false, rini behaves like a simple tiling WM with a single space

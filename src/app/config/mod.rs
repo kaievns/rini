@@ -155,6 +155,8 @@ pub struct Settings {
     pub layout: LayoutSettings,
     #[serde(default)]
     pub gestures: GestureSettings,
+    #[serde(default)]
+    pub switcher: crate::switcher::settings::SwitcherSettings,
 
     #[serde(default)]
     pub window_snapping: WindowSnappingSettings,

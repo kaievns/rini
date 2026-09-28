@@ -175,6 +175,12 @@ the reactor, which selects that window in the one cursor, commits, and tells the
 The panel accepts the first click without becoming the key window, because it is never key and a click
 that only made it so would need a second one.
 
+**Icons can be overridden per application.** `[settings.switcher.icons]` maps a bundle identifier to
+an image file, because an application that sets its icon while running — Ghostty's `macos-icon` — hands
+it to the Dock alone, and every API rini can call returns the stock one. The reactor resolves the path
+onto the row; the panel reads the file once, caches the result by path, and falls back to the
+application's own icon with a single warning when the file is unreadable.
+
 **The popup is cosmetic.** The reactor holds the list and the cursor and runs on its own thread; the
 panel is a main-thread actor fed rows over a channel. A slow or missing panel delays a picture and
 nothing else, because the switch is already correct on the other side.

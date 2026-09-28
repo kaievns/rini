@@ -332,11 +332,7 @@ pub trait NSRunningApplicationExt {
     fn pid(&self) -> pid_t;
     fn bundle_id(&self) -> Option<Retained<NSString>>;
     fn localized_name(&self) -> Option<Retained<NSString>>;
-    /// The application's icon, as a `CGImage` a layer can draw.
-    ///
-    /// Converted here rather than handed out as an `NSImage`, because an `NSImage` is a description of
-    /// how to draw at some size and a layer wants pixels. `size` is the point size wanted; AppKit picks
-    /// the best representation for it.
+    /// The application's icon, as a `CGImage` a layer can draw; see `image_pixels`.
     ///
     /// `None` for an application with no icon and for one that has quit between being listed and being
     /// asked — the second is ordinary, since a switcher list is a moment old by the time it is drawn.
@@ -361,12 +357,32 @@ impl NSRunningApplicationExt for NSRunningApplication {
     }
 
     fn icon_image(&self, size: f64) -> Option<Retained<objc2_core_graphics::CGImage>> {
-        let icon = self.icon()?;
-        let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(size, size));
-        // A raw pointer, not `Some(&mut _)`: the parameter is `*mut NSRect` and AppKit writes the rect
-        // it actually chose back into it, which is why it cannot be a temporary.
-        unsafe { icon.CGImageForProposedRect_context_hints(&mut rect, None, None) }
+        image_pixels(&*self.icon()?, size)
     }
+}
+
+/// An image as pixels a layer can draw, at the best representation for `size` points square.
+///
+/// An `NSImage` is a description of how to draw at some size, and a layer wants pixels.
+pub fn image_pixels(
+    image: &objc2_app_kit::NSImage,
+    size: f64,
+) -> Option<Retained<objc2_core_graphics::CGImage>> {
+    let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(size, size));
+    // A raw pointer, not `Some(&mut _)`: the parameter is `*mut NSRect` and AppKit writes the rect it
+    // actually chose back into it, which is why it cannot be a temporary.
+    unsafe { image.CGImageForProposedRect_context_hints(&mut rect, None, None) }
+}
+
+/// The image in the file at `path` as pixels, or `None` when there is no readable image there.
+pub fn image_file_pixels(
+    path: &std::path::Path,
+    size: f64,
+) -> Option<Retained<objc2_core_graphics::CGImage>> {
+    let path = NSString::from_str(path.to_str()?);
+    let image =
+        objc2_app_kit::NSImage::initWithContentsOfFile(objc2_app_kit::NSImage::alloc(), &path)?;
+    image_pixels(&image, size)
 }
 
 impl From<&NSRunningApplication> for AppInfo {

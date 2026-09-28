@@ -2835,10 +2835,17 @@ impl Reactor {
             SwitchSignal::Open { backward, scope } => {
                 // No scope to resolve — an application switch with nothing focused — opens nothing,
                 // and the commit that follows finds no live switch and does nothing either.
-                let list = self
-                    .switch_scope(scope)
-                    .map(|scope| self.switch_candidates(scope))
-                    .unwrap_or_default();
+                let resolved = self.switch_scope(scope);
+                let list = resolved.map(|scope| self.switch_candidates(scope)).unwrap_or_default();
+                // At info, not debug: which window counted as focused and what the scope resolved to
+                // are the two facts a wrong list comes down to, and the release build logs at info.
+                info!(
+                    ?scope,
+                    ?resolved,
+                    focused = ?self.main_window(),
+                    rows = list.len(),
+                    "switch opened"
+                );
                 let start = opening_selection(&list);
                 self.live_switch = start.and_then(|index| {
                     let mut cursor = Selection::new(list.len(), index)?;
@@ -2850,12 +2857,6 @@ impl Reactor {
                     }
                     Some(LiveSwitch { list, cursor })
                 });
-                debug!(
-                    rows = self.live_switch.as_ref().map(|s| s.list.len()).unwrap_or(0),
-                    backward,
-                    ?scope,
-                    "switch opened"
-                );
                 self.draw_switch();
                 EventOutcome::no_change()
             }
@@ -2923,6 +2924,7 @@ impl Reactor {
         let Some(switch) = self.live_switch.as_ref() else {
             return;
         };
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let rows: Vec<crate::switcher::platform::panel::Row> = switch
             .list
             .iter()
@@ -2932,6 +2934,13 @@ impl Reactor {
                 title: candidate.title.clone(),
                 app_name: candidate.app_name.clone(),
                 is_minimized: candidate.is_minimized,
+                icon: self.config.settings.switcher.icon_for(
+                    self.app_manager
+                        .apps
+                        .get(&candidate.window.pid)
+                        .and_then(|app| app.info.bundle_id.as_deref()),
+                    home.as_deref(),
+                ),
             })
             .collect();
         // The display the switch is being driven from, so the popup appears where the user is looking

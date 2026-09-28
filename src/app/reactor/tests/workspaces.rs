@@ -1063,6 +1063,69 @@ fn a_workspace_switch_offers_that_workspace_on_every_display() {
     );
 }
 
+/// The reported case: the laptop showing ws2 and the external showing ws1, focus on a ws2 window on the
+/// laptop. The workspace switch is a hard filter on ws2: its windows on BOTH displays, including one
+/// parked on the external, and none of ws1's — whether ws1 is showing on the external or parked on the
+/// laptop.
+#[test]
+fn a_workspace_switch_is_a_hard_filter_whatever_the_other_display_shows() {
+    let mut reactor = test_reactor();
+    let laptop = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let external = CGRect::new(CGPoint::new(-670., -1692.), CGSize::new(3440., 1440.));
+    let (laptop_space, external_space) = (SpaceId::new(1), SpaceId::new(449));
+    let editor = WindowId::new(1, 1); // ws2, laptop, focused
+    let chrome = WindowId::new(2, 1); // ws1, laptop, parked
+    let slack = WindowId::new(3, 1); // ws1, external, showing
+    let terminal = WindowId::new(4, 1); // ws2, external, parked
+
+    set_space_membership(&[(laptop_space, &[901, 902]), (external_space, &[903, 904])]);
+    reactor.handle_event(space_state_event(
+        vec![laptop, external],
+        vec![Some(laptop_space), Some(external_space)],
+    ));
+    for pid in [1, 2, 3, 4] {
+        reactor.add_test_app(pid);
+    }
+    let ws = reactor.test_workspace_ids(laptop_space);
+    let (ws1, ws2) = (ws[0], ws[1]);
+    for (window, wsid, space, screen, workspace) in [
+        (editor, 901u32, laptop_space, laptop, ws2),
+        (chrome, 902, laptop_space, laptop, ws1),
+        (slack, 903, external_space, external, ws1),
+        (terminal, 904, external_space, external, ws2),
+    ] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    reactor.handle_test_layout_command(LayoutCommand::SwitchToWorkspace(1));
+    for window in [slack, chrome, terminal, editor] {
+        let space = if window == slack || window == terminal {
+            external_space
+        } else {
+            laptop_space
+        };
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
+    reactor.set_test_focus(editor);
+    assert_eq!(
+        reactor.test_workspace_for_window(laptop_space, editor),
+        Some(ws2)
+    );
+
+    let mut offered: Vec<WindowId> = reactor
+        .probe_switch_candidates(SwitchScope::Workspace)
+        .iter()
+        .map(|c| c.window)
+        .collect();
+    offered.sort();
+    assert_eq!(
+        offered,
+        vec![editor, terminal],
+        "ws2 on both displays, and nothing of ws1"
+    );
+}
+
 /// The application switcher offers the focused application's windows and nothing else, wherever
 /// they are, and a held switch over it commits within them.
 #[test]

@@ -17,6 +17,16 @@ switcher answers "every window I have, wherever it is".
   It is the same machinery with a narrower candidate set, never a second code path.
 - The workspace scope MUST cover that workspace on EVERY display, not the display the switch was opened
   on. A workspace is one context spread across displays.
+- The workspace scope MUST be a hard filter on the focused window's workspace. What another display is
+  showing MUST NOT add its windows: with the laptop on ws2 and the external on ws1, a switch from ws2
+  offers ws2's windows on both displays and none of ws1's.
+
+> **Reported 2026-09-28.** "When laptop is on ws 2 and external display is on ws1, and I'm focused on
+> an app in ws2 and I press cmd-tab, what I'm seeing is a merge of ws1 and ws2 windows in the popup."
+> Not reproduced. In the live state at the time — laptop on `comms`, external on `main`, focus in a
+> `comms` window — the popup offered `comms` alone, and a reactor test of the reported arrangement
+> with windows on both displays passes. Each open now logs the focused window it resolved and the
+> workspace it filtered on, so the next occurrence says which input was wrong.
 - A third scope — the focused application's windows, wherever they are — MUST be the same machinery
   too. It is cmd-`, and it replaced a separate cycler with its own list rather than sitting beside it.
 - With nothing focused there is no application to switch within, and the application switch MUST do
@@ -163,6 +173,18 @@ switcher answers "every window I have, wherever it is".
   MUST be in the background and MUST NOT touch any window.
 - Each row MUST carry its application's icon as a small badge, as a cue that is readable faster than a
   thumbnail or a title.
+- An application's badge MUST be replaceable by an image named in the config, per bundle identifier.
+  Some applications set their icon while running, and only the Dock can see it: every API another
+  process can call still returns the icon in the bundle, so the switcher would show the stock icon
+  where the rest of macOS shows the custom one.
+- An override image that cannot be read MUST fall back to the application's own icon, not fail the
+  config. A picture is not worth refusing every other setting over.
+
+> **Reported 2026-09-28.** "It picks up the wrong icon for Ghostty. It is picking up the default blue
+> one, where the rest of macOS uses a custom orange one." Ghostty's `macos-icon = custom-style` is drawn
+> at launch and handed to the Dock alone. Checked: `NSRunningApplication.icon`, the bundle's file icon,
+> Ghostty's own preferences (a description of the style, not an image) and the Dock's Accessibility
+> tree (no image attribute) all lack it.
 - A tile MUST be as wide as its window is, in proportion — a full-width window reading as wide and a
   third-width column as narrow is most of what tells two windows of one application apart at a glance.
   Widths MUST be clamped: a third-width column beside a maximised window is 86pt against 260pt at the
