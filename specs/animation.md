@@ -69,6 +69,22 @@ destination for a window already moving.
 rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
 `src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
 
+## Windows with no picture yet
+
+- A window with no picture MUST NOT leave a hole in the strip. A known window parked off this display —
+  every window after a restart, with the picture cache empty — MUST fly with a dark stand-in tile in its
+  place, moving exactly as its picture would.
+- The stand-in MUST keep the window's rounded corners, and MUST be replaced by the window's real picture
+  as soon as one lands, on the same tile, so nothing else in the flight is disturbed.
+- The stand-in MUST NOT be cached. Cached, it would be lent to the switcher as the window's picture and
+  taken for one by the next flight.
+- A genuinely new window, on this display with no picture, keeps its spawn capture and entrance.
+
+> **Reported 2026-09-28.** "When the initial image is missing (after a restart or whatnot) the
+> animations render a hole in the strip. I think having a default dark grey fallback image would be
+> better." A parked window with no picture took the reservation meant for a newly opened window, which
+> draws nothing in its slot until a picture lands.
+
 ## Windows with blurred materials
 
 - A window whose sidebar, toolbar or background is a blurred material MUST fly with its blur, not the

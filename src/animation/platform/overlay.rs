@@ -1412,6 +1412,32 @@ fn set_tile_content(
             set_layer_contents(&entry.picture, snapshot);
         }
     }
+    // Written on every install because tile layers are pooled: a layer that last held a stand-in must
+    // not stretch the next window's picture nine-slice.
+    entry.picture.setContentsCenter(stretch_region(snapshot));
+}
+
+/// The part of a tile's contents that stretches, in unit coordinates. All of it for a picture; for the
+/// stand-in only its middle, so the rounded corners keep the window's radius at any size.
+fn stretch_region(snapshot: &WindowSnapshot) -> CGRect {
+    use crate::animation::platform::window_snapshot::SnapshotSource;
+    let whole = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0));
+    let SnapshotImage::Bitmap(image) = &snapshot.image else {
+        return whole;
+    };
+    if snapshot.source != SnapshotSource::Placeholder {
+        return whole;
+    }
+    let side = objc2_core_graphics::CGImage::width(Some(image)) as f64;
+    if side < 3.0 {
+        return whole;
+    }
+    // The stand-in is a square of two corners and a two-pixel middle; see `placeholder_image`.
+    let corner = (side - 2.0) / 2.0;
+    CGRect::new(
+        CGPoint::new(corner / side, corner / side),
+        CGSize::new(2.0 / side, 2.0 / side),
+    )
 }
 
 /// Lays the crop grid out for the tile's current frame size.
@@ -1493,6 +1519,24 @@ fn primary_display_height() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stand-in stretches only its two-pixel middle, so its corners keep the window's radius; a real
+    /// picture stretches whole. Written every install, since tile layers are pooled.
+    #[test]
+    fn only_a_stand_in_stretches_nine_slice() {
+        use crate::animation::platform::window_snapshot::{
+            placeholder, placeholder_image, test_snapshot,
+        };
+        let (image, _) = placeholder_image(2.0).expect("drawn");
+        let stand_in = placeholder(CGSize::new(859.0, 1081.0), image);
+
+        let region = stretch_region(&stand_in);
+        assert!((region.origin.x - 20.0 / 42.0).abs() < 1e-9);
+        assert!((region.size.width - 2.0 / 42.0).abs() < 1e-9);
+
+        let whole = stretch_region(&test_snapshot(CGSize::new(859.0, 1081.0)));
+        assert_eq!(whole, CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
+    }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))

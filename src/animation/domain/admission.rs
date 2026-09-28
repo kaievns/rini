@@ -112,6 +112,22 @@ pub(in crate::animation) fn entrance_reservation(
     (PendingEntrance { window, to, floating }, Some((window, to.size)))
 }
 
+/// Whether a window with no picture flies with a stand-in rather than being reserved as a newcomer.
+///
+/// Only a window the window server knows to be somewhere OFF this display: parked by rini on a
+/// workspace nobody is looking at, or on another display. That is every window after a restart, with
+/// the picture cache empty, and the reservation a genuinely new window takes left each of them as a
+/// hole in the strip — nothing drawn in its slot until a picture landed, which for a parked window is
+/// usually never within the flight. A window on this display with no picture is new, and keeps the
+/// spawn capture and the reservation.
+pub(in crate::animation) fn stands_in(server_frame: Option<CGRect>, display: CGRect) -> bool {
+    server_frame.is_some_and(|frame| {
+        frame.size.width > 0.0
+            && frame.size.height > 0.0
+            && rini_geometry::is_off_screen(display, frame)
+    })
+}
+
 /// How a newly opened window enters a flight.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::animation) enum EntranceDecision {
@@ -473,5 +489,32 @@ mod tests {
         assert!(!holding);
         assert!(chase.is_empty());
         assert!(now.is_empty());
+    }
+
+    /// The reported hole: after a restart every parked window has no picture. Off this display, it
+    /// flies with a stand-in instead of being reserved as a newcomer.
+    #[test]
+    fn a_parked_window_with_no_picture_stands_in() {
+        let display = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
+        let parked = CGRect::new(CGPoint::new(1727.0, 1085.0), CGSize::new(859.0, 1081.0));
+        let elsewhere = CGRect::new(CGPoint::new(-2000.0, -1600.0), CGSize::new(1200.0, 900.0));
+        assert!(stands_in(Some(parked), display));
+        assert!(stands_in(Some(elsewhere), display), "on another display");
+    }
+
+    /// A window on this display with no picture is one that just opened, and keeps the spawn capture.
+    #[test]
+    fn a_window_on_this_display_is_a_newcomer_not_a_stand_in() {
+        let display = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
+        let spawned = CGRect::new(CGPoint::new(300.0, 200.0), CGSize::new(640.0, 480.0));
+        assert!(!stands_in(Some(spawned), display));
+        assert!(!stands_in(None, display), "no server frame at all");
+        assert!(
+            !stands_in(
+                Some(CGRect::new(CGPoint::new(1727.0, 1085.0), CGSize::new(0.0, 0.0))),
+                display
+            ),
+            "a zero frame is not a window to stand in for"
+        );
     }
 }

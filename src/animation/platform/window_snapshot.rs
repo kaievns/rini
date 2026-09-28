@@ -60,6 +60,9 @@ pub enum SnapshotSource {
     SkyLight,
     /// Captured from the window's own surface. Valid at any visibility, but expensive.
     ScreenCaptureKit,
+    /// Not a capture: the dark stand-in a window with no picture flies with, so its slot is never a
+    /// hole. Never cached.
+    Placeholder,
 }
 
 impl WindowSnapshot {
@@ -274,6 +277,53 @@ fn fully_on_a_display(frame: CGRect, displays: &[CGRect]) -> bool {
     })
 }
 
+/// `--n3`, the raised plane of the Okibi dark theme: the same stand-in the switcher draws for a row
+/// with no picture.
+const PLACEHOLDER_RGB: (f64, f64, f64) = (0.133, 0.145, 0.153);
+
+/// The stand-in for a window of `window` size with no picture.
+///
+/// Claims to cover NOTHING of the window, which is honest and is also what makes a flight treat it as
+/// a picture waiting for its reveal: the reveal chase follows the window, and the real picture replaces
+/// this one before the flight moves or, mid-flight, by the reveal swap.
+pub fn placeholder(window: CGSize, image: CFRetained<CGImage>) -> WindowSnapshot {
+    WindowSnapshot {
+        image: SnapshotImage::Bitmap(image),
+        coverage: Coverage {
+            covered: (0.0, 0.0),
+            window: (window.width, window.height),
+        },
+        source: SnapshotSource::Placeholder,
+        dressing: None,
+        taken: std::time::Instant::now(),
+        carries_blur: false,
+    }
+}
+
+/// The placeholder's pixels: a small rounded square in `PLACEHOLDER_RGB`, drawn nine-slice by the
+/// overlay so its corners keep the window's radius at any size. `(image, corner)`, the corner in pixels.
+///
+/// A small image rather than one at the window's size: a full-size bitmap of one flat colour would be
+/// 30MB for a maximised window at 2x.
+pub fn placeholder_image(scale: f64) -> Option<(CFRetained<CGImage>, f64)> {
+    use objc2_core_graphics::CGContext;
+    let corner = (crate::animation::platform::edge_dressing::CORNER_RADIUS * scale).ceil();
+    let side = (corner * 2.0 + 2.0) as usize;
+    let ctx = crate::animation::platform::edge_dressing::rgba_bitmap_context(side, side)?;
+    let rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(side as f64, side as f64));
+    let path = unsafe {
+        objc2_core_graphics::CGPath::with_rounded_rect(rect, corner, corner, std::ptr::null())
+    };
+    CGContext::add_path(Some(&ctx), Some(&path));
+    let (r, g, b) = PLACEHOLDER_RGB;
+    CGContext::set_rgb_fill_color(Some(&ctx), r, g, b, 1.0);
+    CGContext::fill_path(Some(&ctx));
+    Some((
+        objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx))?,
+        corner,
+    ))
+}
+
 /// Anything the cache can hold and judge, so the replacement policy can be tested on plain sizes.
 pub trait HasCoverage {
     fn coverage(&self) -> Coverage;
@@ -290,6 +340,10 @@ pub trait CarriesOver: Sized {
     /// it.
     fn keeps_over(&self, _incoming: &Self) -> bool {
         false
+    }
+    /// Whether this payload may be cached at all.
+    fn cacheable(&self) -> bool {
+        true
     }
 }
 
@@ -318,6 +372,12 @@ impl CarriesOver for WindowSnapshot {
             self.coverage,
             incoming.coverage,
         )
+    }
+
+    /// A stand-in is drawn and never kept: cached, it would be lent to the switcher as a picture and
+    /// taken for one by the next flight.
+    fn cacheable(&self) -> bool {
+        self.source != SnapshotSource::Placeholder
     }
 }
 
@@ -368,6 +428,9 @@ impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
     /// Stores a snapshot, subject to [`should_replace`] for its pixels, with [`CarriesOver`]
     /// deciding what survives of the rest either way.
     pub fn insert(&mut self, window: WindowId, mut snapshot: T) {
+        if !snapshot.cacheable() {
+            return;
+        }
         if let Some(existing) = self.entries.get_mut(&window) {
             if !should_replace(Some(existing.coverage()), snapshot.coverage())
                 || existing.keeps_over(&snapshot)
@@ -478,6 +541,25 @@ mod tests {
             covered: (w, h),
             window: (w, h),
         }
+    }
+
+    /// A stand-in never enters the cache, where it would be lent to the switcher as a picture.
+    #[test]
+    fn a_stand_in_is_never_cached() {
+        let mut cache: SnapshotCache<WindowSnapshot> = SnapshotCache::new();
+        let window = WindowId::new(1, 1);
+        cache.insert(window, placeholder(CGSize::new(859.0, 1081.0), test_bitmap()));
+        assert!(cache.get(window).is_none());
+    }
+
+    /// The stand-in's pixels are a small square: two corners at the window's radius and a middle to
+    /// stretch, so its size does not grow with the window's.
+    #[test]
+    fn the_stand_in_image_is_two_corners_and_a_middle() {
+        let (image, corner) = placeholder_image(2.0).expect("drawn");
+        assert_eq!(corner, 20.0, "10pt at 2x");
+        assert_eq!(CGImage::width(Some(&image)), 42);
+        assert_eq!(CGImage::height(Some(&image)), 42);
     }
 
     /// The reported flicker: a blurred window's picture, taken on screen with its blur, must not be

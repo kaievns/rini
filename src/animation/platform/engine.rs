@@ -599,6 +599,12 @@ pub struct FlightEngine {
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     lend_snapshots: Option<LendSnapshots>,
+    /// The stand-in's pixels and the scale they were drawn at, made once and redrawn only if the
+    /// display's scale changes.
+    placeholder_image: Option<(
+        f64,
+        objc2_core_foundation::CFRetained<objc2_core_graphics::CGImage>,
+    )>,
 }
 
 impl FlightEngine {
@@ -632,6 +638,7 @@ impl FlightEngine {
             bar_refresh: None,
             place_frames: None,
             lend_snapshots: None,
+            placeholder_image: None,
         }
     }
 
@@ -1153,6 +1160,19 @@ impl FlightEngine {
         true
     }
 
+    /// A stand-in for a window of `size`, never cached. `None` only if the pixels cannot be drawn.
+    fn placeholder_for(&mut self, size: CGSize, scale: f64) -> Option<WindowSnapshot> {
+        if self.placeholder_image.as_ref().is_none_or(|(at, _)| *at != scale) {
+            let (image, _) = crate::animation::platform::window_snapshot::placeholder_image(scale)?;
+            self.placeholder_image = Some((scale, image));
+        }
+        let (_, image) = self.placeholder_image.as_ref()?;
+        Some(crate::animation::platform::window_snapshot::placeholder(
+            size,
+            image.clone(),
+        ))
+    }
+
     /// The snapshot to draw for one window: any usable cached picture, whatever its shape; a
     /// wrong-shaped one is drawn cropped. See "Resizes through the overlay" in the doc.
     fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
@@ -1341,6 +1361,16 @@ impl FlightEngine {
                     "animation wanted a snapshot for this window and had none"
                 );
             }
+            // A known window off this display with no picture flies with a stand-in instead of
+            // leaving a hole; see `stands_in`. It covers nothing, so the arm below holds for its
+            // reveal like any grow, and the real picture replaces it.
+            let snapshot = snapshot.or_else(|| {
+                let frame = crate::windows::platform::window_server::get_window(request.server_id)
+                    .map(|info| info.frame);
+                crate::animation::domain::admission::stands_in(frame, display_frame)
+                    .then(|| self.placeholder_for(request.to.size, scale))
+                    .flatten()
+            });
             match snapshot {
                 Some(snapshot) => {
                     // A grow whose picture cannot cover the destination holds for the reveal.
@@ -4898,6 +4928,62 @@ mod tests {
                 assert_eq!(entrance.to, to);
                 assert_eq!(entrance.floating, floating);
             }
+        }
+
+        /// A parked window with no picture flies as a stand-in tile — no hole — held for like a grow,
+        /// and its real picture replaces the stand-in on the SAME tile when it lands at frame zero.
+        #[test]
+        fn a_stand_in_takes_its_real_picture_on_the_same_tile() {
+            use crate::animation::platform::window_snapshot::{placeholder, test_bitmap};
+            let parked = rect(-1720.0, 32.0, 859.0, 1081.0);
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut flight = flight(None);
+            let mut tile = stacked(wid(3), parked, slot, Some(2), false);
+            tile.snapshot = placeholder(slot.size, test_bitmap());
+            flight.tiles.push(tile);
+            flight.awaiting.push((wid(3), slot.size));
+
+            assert!(
+                matches!(
+                    flight.tile_state(wid(3), &test_snapshot(slot.size)),
+                    TileState::Reveal { fits: true }
+                ),
+                "held for like a grow"
+            );
+            let claimed = flight.claim(wid(3), &test_snapshot(slot.size));
+
+            assert_eq!(claimed, Some(Claimed::Released));
+            let tile = flight.tiles.iter().find(|t| t.window == wid(3)).expect("still one tile");
+            assert_ne!(
+                tile.snapshot.source,
+                crate::animation::platform::window_snapshot::SnapshotSource::Placeholder,
+                "the stand-in is gone"
+            );
+            assert_eq!((tile.from, tile.to), (parked, slot), "and it travels as it did");
+            assert!(
+                flight.entrances.is_empty(),
+                "never a newcomer's zero-width entrance"
+            );
+        }
+
+        /// Once the flight is moving without the picture, a stand-in still counts as a picture waiting
+        /// for its reveal, so a settled capture landing early enough replaces it rather than waiting
+        /// for the next flight.
+        #[test]
+        fn a_stand_in_mid_flight_is_swapped_for_its_picture() {
+            use crate::animation::platform::window_snapshot::{placeholder, test_bitmap};
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut flight = flight(Some(Instant::now()));
+            let mut tile = stacked(wid(3), slot, slot, Some(2), false);
+            tile.snapshot = placeholder(slot.size, test_bitmap());
+            flight.tiles.push(tile);
+
+            let state = flight.tile_state(wid(3), &test_snapshot(slot.size));
+            assert_eq!(state, TileState::Reveal { fits: true });
+            assert_eq!(
+                should_swap_mid_flight(state, true, false, false, Some(0.3)),
+                SwapDecision::Swap("reveal")
+            );
         }
 
         #[test]
