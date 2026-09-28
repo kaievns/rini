@@ -19,6 +19,9 @@ or layout: everything else depends on it and it depends on nothing.
 | **Frame transactions** | `domain/transaction.rs` — txids, so a frame report can be matched to the write that caused it |
 | **The port into a window** | `domain/request.rs` — `Request`/`Quiet`, what the per-app thread accepts |
 
+Two questions about raising and admission that were closed on evidence rather than code are in
+`admission-and-raise-findings.md`.
+
 `platform/` is the macOS side: `app_actor.rs` is the per-app Accessibility actor (one
 thread per application, observing and writing), `window_server.rs` the window-server
 reads, `carbon.rs` the front-app listener, `process.rs` the process watcher,

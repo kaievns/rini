@@ -21,14 +21,11 @@ Baseline at `9ea1079`: **57,796 non-test code lines, 1,287 tests, 0 warnings**, 
 
 ## Not on the list, and why
 
-- **`app_actor.rs:887`** — `RaiseCompleted` is sent without checking the raise landed, so it means
-  "we asked" rather than "it worked". A correctness gap above everything here on impact, but it needs
-  a retry policy decided first: how many attempts, what backoff, and whether a final failure reports
-  completion anyway or asks the reactor to re-drive. Its own piece of work.
-- **`app_actor.rs:1161`** — replacing the two-bundle allowlist in
-  `admissible::needs_title_element_to_be_standard` with a general rule. The TODO names the mechanism
-  it needs and `FakeAx` now IS that mechanism, so it is unblocked, but knowing what the general rule
-  is needs AX dumps from applications that currently misbehave. Investigation, not refactoring.
+- **The unverified `RaiseCompleted`** and **the two-bundle allowlist** in
+  `admissible::needs_title_element_to_be_standard` were listed here as open. Both were closed on
+  2026-09-28 without a code change, and this entry used to overstate the first as "a correctness gap
+  above everything here on impact": no raise failure has ever been observed. The evidence is in
+  `src/windows/docs/admission-and-raise-findings.md`.
 
 ## 1. The `?elem` FIXME
 

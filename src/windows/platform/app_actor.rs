@@ -884,8 +884,6 @@ impl<W: AxWorld> State<W> {
                 trace("raise", wid, || this.ax.raise(&window.elem))?;
             }
 
-            // TODO: Check the frontmost (layer 0) window of the window server and retry if necessary.
-
             trace!("Sending completion");
             this.send_event(Event::RaiseCompleted { window_id: wid, sequence_id });
 
@@ -1153,7 +1151,6 @@ impl<W: AxWorld> State<W> {
             return None;
         }
 
-        // TODO: improve this heuristic using ideas from AeroSpace(maybe implement a similar testing architecture based on ax dumps)
         if admissible::needs_title_element_to_be_standard(self.bundle_id.as_deref())
             && self.ax.read_attribute(&elem, "AXTitleUIElement").is_err()
         {

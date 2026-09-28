@@ -77,9 +77,9 @@ pub fn has_visible_peer(window_server_id_known: bool, server_reported: bool) -> 
 
 /// Applications whose AX tree lies about a window being standard unless it has a title element.
 ///
-/// A heuristic, and known to be one: `app_actor` carries a TODO about replacing it with something
-/// modelled on AeroSpace's AX dumps. Named here so the list is one place rather than a condition
-/// inside a ninety-line function.
+/// A list on purpose, not a heuristic waiting to be generalised: real windows from eight of nine
+/// applications measured have no title element at all, so as a general rule it would turn away nearly
+/// everything. See `src/windows/docs/admission-and-raise-findings.md`.
 pub fn needs_title_element_to_be_standard(bundle_id: Option<&str>) -> bool {
     matches!(
         bundle_id,

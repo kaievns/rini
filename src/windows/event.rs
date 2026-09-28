@@ -51,6 +51,8 @@ pub enum Event {
     WindowTitleChanged(WindowId, String),
     MenuOpened(pid_t),
     MenuClosed(pid_t),
+    /// A raise was issued. Not verified to have landed; see
+    /// `src/windows/docs/admission-and-raise-findings.md` for why it is not retried.
     RaiseCompleted {
         window_id: WindowId,
         sequence_id: u64,
