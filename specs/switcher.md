@@ -259,12 +259,37 @@ switcher answers "every window I have, wherever it is".
 > **Reported 2026-09-24.** "If it can't we can assign another key binding to it, I still want the
 > feature." Which is what made the trigger a configuration detail rather than a blocker.
 
+- The redirect MUST arrive as ordinary key events with the modifier genuinely held, so the hold, the
+  popup and the commit on release all come from the one session the tap already runs.
+
+  The keyboard layer sends Cmd+F17, Cmd+F18 and Cmd+F19 for the three switchers, from the same physical
+  keys under every Cmd hold. Nothing on macOS is bound to those, and rini binds them like any other
+  chord. The concrete mapping belongs to the keyboard layer's config, not to rini.
+
+  Three other routes were weighed and rejected:
+  - **The keyboard layer's TCP server** (kanata's `push-msg`). It is unauthenticated, and any local
+    process that connects can inject key presses and load an arbitrary config — a way round the
+    Input Monitoring and Accessibility permissions for every program on the machine.
+  - **The keyboard layer running `rini-cli`** on press and release. It would survive Secure Input, but
+    the installed kanata builds were compiled to refuse commands (checked with `--check`), and a
+    command-enabled build needs its input permissions granted again.
+  - **Switching the Dock's Cmd-Tab off** through the private symbolic-hotkey call, and back on under
+    Secure Input. It would give an automatic fallback, at the price of a private API and a dead Cmd-Tab
+    whenever rini is wedged. Declined as the less clean of two options with the same failure modes.
+
+> **Decided 2026-09-28.** "Let's just remap all three to F*. It's the same failure modes but cleaner."
+
 ## Honest limitation
 
 - Once the trigger chord is redirected upstream, rini CANNOT fail open to macOS's switcher: the reserved
   combination is no longer being sent. If rini is wedged, that key does nothing. This is the cost of the
   approach and MUST be stated rather than presented as graceful degradation. The CLI step is the
   mitigation.
+- While any application holds Secure Input, rini's event tap receives no key events at all, so all three
+  switchers are dead — and so is macOS's own Cmd-Tab, which the redirect no longer sends. Secure Input
+  cuts off every observer of the key stream; it does not stop keys reaching the focused field, which is
+  why remapped typing still works in a password box while the switchers do not. The CLI step still
+  works, because it does not go through the key stream.
 
 ## Where it lives
 
