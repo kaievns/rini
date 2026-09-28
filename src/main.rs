@@ -390,7 +390,16 @@ fn main() {
 
     // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
     // Animation require it. Idle until a switch opens, and it builds its window on first use.
-    let switcher_actor = rini::switcher::platform::actor::SwitcherActor::new(switcher_rx, mtm);
+    // A click on a popup row goes to the reactor, which owns the selection; wired here because the
+    // switcher may not name the app layer.
+    let switcher_actor = rini::switcher::platform::actor::SwitcherActor::new(
+        switcher_rx,
+        mtm,
+        std::rc::Rc::new({
+            let events_tx = events_tx.clone();
+            move |window| events_tx.send(reactor::Event::SwitchPicked(window))
+        }),
+    );
 
     let mission_control_native = NativeMissionControl::new(events_tx.clone());
 

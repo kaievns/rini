@@ -19,7 +19,7 @@ use objc2_core_foundation::CGRect;
 use rini_runloop::channel;
 
 use crate::switcher::domain::reveal::{Draw, Reveal};
-use crate::switcher::platform::panel::{Row, SwitcherPanel};
+use crate::switcher::platform::panel::{OnPick, Row, SwitcherPanel};
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
@@ -55,18 +55,22 @@ pub struct SwitcherActor {
     /// cannot create the window would log on every keypress.
     warned: bool,
     reveal: Reveal,
+    /// Where a click on a row goes. Installed by the app, which owns the reactor this feature may not
+    /// name.
+    on_pick: OnPick,
     /// The latest draw asked for while the hold is being waited out, drawn when it is up.
     waiting: Option<(Vec<Row>, usize, CGRect)>,
 }
 
 impl SwitcherActor {
-    pub fn new(requests: Receiver, mtm: MainThreadMarker) -> Self {
+    pub fn new(requests: Receiver, mtm: MainThreadMarker, on_pick: OnPick) -> Self {
         Self {
             requests,
             panel: None,
             mtm,
             warned: false,
             reveal: Reveal::default(),
+            on_pick,
             waiting: None,
         }
     }
@@ -135,7 +139,7 @@ impl SwitcherActor {
     /// so the first popup does not pay it either.
     fn ensure_panel(&mut self) {
         if self.panel.is_none() {
-            self.panel = SwitcherPanel::new(self.mtm);
+            self.panel = SwitcherPanel::new(self.mtm, self.on_pick.clone());
             if self.panel.is_none() {
                 if !self.warned {
                     warn!("could not create the switcher panel; switching will work without it");

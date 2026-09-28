@@ -63,6 +63,8 @@ pub enum Request {
     SetLowPowerMode(bool),
     /// The keys each switcher's session answers to; empty disables them all.
     SetSwitchKeys(Vec<SwitchKeys>),
+    /// A switch was committed from outside the tap — a click on the popup — so stop treating it as open.
+    EndSwitchSession,
 }
 
 pub struct InputTap {
@@ -428,6 +430,11 @@ impl InputTap {
                 // for may no longer exist, so nothing would be left to close it.
                 if let Some(signal) = state.switch.set_keys(keys) {
                     self.events.send(Event::Switch(signal));
+                }
+            }
+            Request::EndSwitchSession => {
+                if state.switch.close() {
+                    debug!("switcher session ended by a commit from outside the tap");
                 }
             }
             Request::KeyboardLayoutChanged => {

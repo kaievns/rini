@@ -163,6 +163,12 @@ flash of panel. The actor keeps the latest draw asked for while it waits and dra
 the window meanwhile so the first popup does not pay the 112ms either. A second draw while waiting —
 which only a step produces — draws at once.
 
+**A click is a commit, made where the selection lives.** The view hit-tests with `Strip::row_at`
+against the strip it last drew and hands the app the WINDOW under the pointer. The app forwards it to
+the reactor, which selects that window in the one cursor, commits, and tells the tap the switch is over.
+The panel accepts the first click without becoming the key window, because it is never key and a click
+that only made it so would need a second one.
+
 **The popup is cosmetic.** The reactor holds the list and the cursor and runs on its own thread; the
 panel is a main-thread actor fed rows over a channel. A slow or missing panel delays a picture and
 nothing else, because the switch is already correct on the other side.

@@ -1194,6 +1194,68 @@ fn a_held_switch_focuses_only_on_the_commit() {
     );
 }
 
+/// A click on a row commits THAT window, whatever the keyboard had selected, and only while a switch
+/// is open. A window the switch does not offer commits nothing rather than something nearby.
+#[test]
+fn a_click_on_a_row_commits_that_window() {
+    use crate::input::domain::switch_session::Signal;
+
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    let space = SpaceId::new(1);
+    let first = WindowId::new(1, 1);
+    let second = WindowId::new(1, 2);
+    let third = WindowId::new(1, 3);
+
+    set_space_membership(&[(space, &[901, 902, 903])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspace = reactor.test_workspace(space, 0);
+    for (window, wsid) in [(first, 901u32), (second, 902), (third, 903)] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    for window in [third, second, first] {
+        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
+    let raised = |outcome: &crate::app::reactor::EventOutcome| {
+        outcome.raise_requests.iter().find_map(|request| match request {
+            crate::windows::domain::raise::Event::RaiseRequest(request) => {
+                request.focus_window.map(|(window, _)| window)
+            }
+            _ => None,
+        })
+    };
+
+    assert_eq!(
+        raised(&reactor.dispatch_test_pick(third)),
+        None,
+        "no switch open: a click has nothing to commit"
+    );
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
+    assert_eq!(
+        raised(&reactor.dispatch_test_pick(WindowId::new(9, 9))),
+        None,
+        "a window the switch does not offer commits nothing"
+    );
+    assert_eq!(
+        raised(&reactor.dispatch_test_pick(third)),
+        Some(third),
+        "the keyboard had the second entry selected; the click wins"
+    );
+    assert_eq!(
+        raised(&reactor.dispatch_test_switch(Signal::Commit)),
+        None,
+        "and the modifier's release afterwards has nothing left to commit"
+    );
+}
+
 /// Escape leaves everything where it was.
 #[test]
 fn a_cancelled_switch_focuses_nothing() {

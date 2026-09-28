@@ -189,6 +189,12 @@ impl Reactor {
             .expect("switch signal should dispatch")
     }
 
+    /// Click a popup row the way the switcher panel does, returning the outcome.
+    pub(crate) fn dispatch_test_pick(&mut self, window: WindowId) -> EventOutcome {
+        self.dispatch_workflow(Event::SwitchPicked(window))
+            .expect("pick should dispatch")
+    }
+
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
         self.handle_event(Event::Command(crate::app::reactor::state::Command::Layout(
             command,

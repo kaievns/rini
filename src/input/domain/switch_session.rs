@@ -178,6 +178,15 @@ impl SwitchSession {
         self.live.take().map(|_| Signal::Commit)
     }
 
+    /// End a live session that the far side has already committed, with nothing to tell it.
+    ///
+    /// A click on a popup row commits from the reactor, not from here, so the tap has to stop treating
+    /// the switch as open: otherwise it would keep swallowing the arrow keys until the modifier is let
+    /// go, and send a second commit on that release. True when there was a session to end.
+    pub fn close(&mut self) -> bool {
+        self.live.take().is_some()
+    }
+
     /// The whole decision, for one key event.
     pub fn on_key(&mut self, event: KeyEvent) -> Verdict {
         if self.keys.is_empty() {
@@ -815,5 +824,28 @@ mod tests {
 
         let released = session.on_key(flags(Modifiers::CONTROL_LEFT, at(base, 60)));
         assert_eq!(released, Verdict::pass_with(Signal::Commit));
+    }
+
+    /// A switch committed by a click is over: the arrow keys go back to the application, and letting go
+    /// of the modifier sends nothing more.
+    #[test]
+    fn closing_a_session_ends_it_without_a_signal() {
+        let base = Instant::now();
+        let mut session = session();
+        session.on_key(down(KeyCode::KeyQ, Modifiers::CONTROL_LEFT, base));
+
+        assert!(session.close());
+        assert!(!session.is_live());
+        assert_eq!(
+            session.on_key(down(KeyCode::ArrowRight, Modifiers::CONTROL_LEFT, at(base, 40))),
+            Verdict::PASS,
+            "the arrow keys are the application's again"
+        );
+        assert_eq!(
+            session.on_key(flags(Modifiers::empty(), at(base, 80))),
+            Verdict::PASS,
+            "and the release commits nothing a second time"
+        );
+        assert!(!session.close(), "nothing left to close");
     }
 }

@@ -269,6 +269,8 @@ pub enum Event {
     MouseUp,
     /// A switcher session opened, moved, committed or was cancelled.
     Switch(crate::input::domain::switch_session::Signal),
+    /// A row of the switcher popup was clicked: select that window and commit.
+    SwitchPicked(WindowId),
     /// Sent by the event tap only when the cursor enters a different window.
     /// Window resolution and transition deduplication stay on the input
     /// thread; the reactor only applies the model-dependent focus/raise work.
@@ -1455,6 +1457,9 @@ impl Reactor {
             }
             Event::Switch(signal) => {
                 return Ok(self.handle_switch_signal(signal));
+            }
+            Event::SwitchPicked(window) => {
+                return Ok(self.pick_switch(window));
             }
             Event::Command(Command::Reactor(ReactorCommand::SwitchWindow { backward, scope })) => {
                 return Ok(self.switch_window(backward, scope));
@@ -2881,6 +2886,30 @@ impl Reactor {
                 EventOutcome::no_change()
             }
         }
+    }
+
+    /// A click on a popup row: select that window and commit, exactly as releasing the modifier would.
+    ///
+    /// Through the one cursor every other selection change goes through, by window rather than by row
+    /// index, so a click can never land on a different entry from the one drawn under the pointer. A
+    /// window the open switch does not offer commits nothing: guessing would focus something the user
+    /// did not point at.
+    ///
+    /// The tap is told the switch is over, or it would keep swallowing the arrow keys until the modifier
+    /// is let go and then send a second commit on that release.
+    fn pick_switch(&mut self, window: WindowId) -> EventOutcome {
+        let Some(switch) = self.live_switch.as_mut() else {
+            return EventOutcome::no_change();
+        };
+        let Some(index) = switch.list.iter().position(|candidate| candidate.window == window)
+        else {
+            return EventOutcome::no_change();
+        };
+        switch.cursor.select(index);
+        if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {
+            _ = event_tap_tx.send(crate::input::platform::input_tap::Request::EndSwitchSession);
+        }
+        self.handle_switch_signal(SwitchSignal::Commit)
     }
 
     /// Ask the main thread to draw the open switch.

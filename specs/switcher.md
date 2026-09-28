@@ -131,6 +131,18 @@ switcher answers "every window I have, wherever it is".
   a blurred surface above it samples — which is what stopped the switcher's blur working at all.
 - A click in a gap or the padding MUST select nothing. Guessing at the nearest row selects a window the
   user did not point at.
+- A click on a row MUST commit that window, whatever the keyboard had selected, through the same cursor
+  every other selection change uses. It MUST identify the window rather than the row's position, so a
+  click can never commit a different entry from the one drawn under the pointer.
+- The first click MUST count. The panel is never the key window, and a click that only made it key
+  would need a second click to do anything.
+- A click MUST NOT make the panel the key window, or the keys typed next go to the panel rather than to
+  the window the click committed to.
+- A switch committed by a click MUST end the tap's session, or the tap keeps swallowing the arrow keys
+  until the modifier is let go and then commits a second time on that release.
+
+> **Asked 2026-09-24, built 2026-09-28.** "It should also accept arrow keys and mouse clicks too like a
+> normal window switcher popup."
 
 ## The pictures
 

@@ -2,7 +2,7 @@
 //!
 //! Its own window rather than the animation overlay's, for four reasons each sufficient on its own.
 //! The overlay is opaque black across the WHOLE display and is only ever shown with a captured desktop
-//! behind it; it sets `ignoresMouseEvents(true)`, which a switcher eventually must not; it sits at
+//! behind it; it sets `ignoresMouseEvents(true)`, which a switcher that takes clicks must not; it sits at
 //! level 18 under a layer tree keyed by flight groups; and it is shown by fading its alpha, which a
 //! window that accepts clicks cannot do — an alpha-0 window still hit-tests, so the overlay's trick
 //! would leave a permanent invisible click-eating rectangle wherever the strip sits.
@@ -14,13 +14,17 @@
 //! Created once and kept, because creating a window costs about 112ms against 14ms to order one in.
 //! Shown by ordering in and out rather than by alpha, for the hit-testing reason above.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use rustc_hash::FxHashMap as HashMap;
 
+use objc2::DefinedClass;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameVibrantDark, NSBackingStoreType,
-    NSColor, NSPanel, NSRunningApplication, NSView, NSVisualEffectBlendingMode,
+    NSColor, NSEvent, NSPanel, NSRunningApplication, NSView, NSVisualEffectBlendingMode,
     NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
     NSWindowStyleMask,
 };
@@ -115,17 +119,58 @@ const ICON: f64 = 38.0;
 /// as part of it.
 const ICON_INSET: f64 = 7.0;
 
+/// Where to send a click on a row: the window it was drawn for.
+pub type OnPick = Rc<dyn Fn(rini_core::ids::WindowId)>;
+
+/// Where the rows are and which window each one is, as last drawn, for the view's hit test.
+#[derive(Default)]
+struct Hits {
+    strip: Option<Strip>,
+    windows: Vec<rini_core::ids::WindowId>,
+}
+
+struct ViewIvars {
+    hits: RefCell<Hits>,
+    on_pick: OnPick,
+}
+
 define_class!(
-    /// Top-left origin, so the layer tree agrees with the geometry in `domain::layout`.
+    /// Top-left origin, so the layer tree agrees with the geometry in `domain::layout`, and a click lands
+    /// in the same coordinates the rows were laid out in.
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
     #[name = "RiniSwitcherView"]
+    #[ivars = ViewIvars]
     struct SwitcherView;
 
     impl SwitcherView {
         #[unsafe(method(isFlipped))]
         fn is_flipped(&self) -> bool {
             true
+        }
+
+        /// The panel is never the key window, so without this the first click would only be taken as
+        /// a request to become key, and the row under it would need a second click.
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
+            true
+        }
+
+        /// A click on a row picks that row's window. A click in a gap or the padding picks nothing,
+        /// which `Strip::row_at` decides exactly rather than by nearest row.
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            let point = self.convertPoint_fromView(event.locationInWindow(), None);
+            let picked = {
+                let hits = self.ivars().hits.borrow();
+                hits.strip
+                    .as_ref()
+                    .and_then(|strip| strip.row_at(point))
+                    .and_then(|row| hits.windows.get(row).copied())
+            };
+            if let Some(window) = picked {
+                (self.ivars().on_pick)(window);
+            }
         }
     }
 );
@@ -202,7 +247,7 @@ pub struct SwitcherPanel {
 }
 
 impl SwitcherPanel {
-    pub fn new(mtm: MainThreadMarker) -> Option<Self> {
+    pub fn new(mtm: MainThreadMarker, on_pick: OnPick) -> Option<Self> {
         // A placeholder frame: every open recomputes it from the screen it is showing on.
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(600.0, 200.0));
         let window: Retained<NSPanel> = unsafe {
@@ -219,10 +264,12 @@ impl SwitcherPanel {
         let clear = NSColor::clearColor();
         window.setBackgroundColor(Some(&clear));
         window.setHasShadow(true);
-        // Clicks come later, and until they do the panel must not be able to take one: rini is an
-        // Accessory application, so a click would activate it and deactivate whatever is being
-        // switched away from.
-        window.setIgnoresMouseEvents(true);
+        // Takes clicks without activating rini, which `NonactivatingPanel` is for: rini is an Accessory
+        // application, and activating it would deactivate whatever is being switched away from. And
+        // never becomes the key window for one, or the keys typed next would go to the panel rather
+        // than to the window the click just committed to.
+        window.setIgnoresMouseEvents(false);
+        window.setBecomesKeyOnlyIfNeeded(true);
         window.setLevel(PANEL_LEVEL);
         // FullScreenAuxiliary, NOT FullScreenNone. They sound like the same statement — this window is
         // never itself full screen — but FullScreenNone also means the window is never shown ON a full
@@ -262,8 +309,11 @@ impl SwitcherPanel {
         }
         window.setContentView(Some(&backing));
 
-        let view: Retained<SwitcherView> =
-            unsafe { msg_send![SwitcherView::alloc(mtm), initWithFrame: frame] };
+        let view = SwitcherView::alloc(mtm).set_ivars(ViewIvars {
+            hits: RefCell::new(Hits::default()),
+            on_pick,
+        });
+        let view: Retained<SwitcherView> = unsafe { msg_send![super(view), initWithFrame: frame] };
         view.setWantsLayer(true);
         backing.addSubview(&view);
 
@@ -356,6 +406,10 @@ impl SwitcherPanel {
             Move::Snap
         };
         self.place(&strip, rows, selected, movement);
+        self.view.ivars().hits.replace(Hits {
+            strip: Some(strip.clone()),
+            windows: rows.iter().map(|row| row.window).collect(),
+        });
         self.last = Some(LastDraw {
             strip,
             rows: rows.to_vec(),
@@ -403,6 +457,7 @@ impl SwitcherPanel {
         }
         self.window.orderOut(None);
         self.visible = false;
+        self.view.ivars().hits.take();
     }
 
     /// Match the layer count to the row count, reusing what is already there.
