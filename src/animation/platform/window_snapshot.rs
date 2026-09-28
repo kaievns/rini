@@ -137,12 +137,10 @@ pub fn capture_via_framed_with_dressing(
     let displays = active_display_bounds();
     let composite = fully_on_a_display(frame, &displays)
         .then(|| capture_below_and_including(window, ring_expanded(frame)))
-        .flatten()
-        .filter(|_| {
-            let after =
-                crate::windows::platform::window_server::get_window(window).map(|w| w.frame);
-            composite_is_of_the_window(frame, after, &displays)
-        });
+        .flatten();
+    let after = crate::windows::platform::window_server::get_window(window).map(|w| w.frame);
+    let whole = stayed_wholly_on_a_display(frame, after, &displays);
+    let composite = composite.filter(|_| whole);
     let (picture, carries_blur) =
         match composite.and_then(|composite| with_blur(&framed, &composite)) {
             Some((merged, merge)) if merge.carries_blur => (merged, true),
@@ -151,10 +149,11 @@ pub fn capture_via_framed_with_dressing(
     let image = CGImage::with_image_in_rect(Some(&picture), inner)?;
     Some(WindowSnapshot {
         image: SnapshotImage::Bitmap(image),
-        coverage: Coverage {
-            covered: (inner.size.width / scale, inner.size.height / scale),
-            window: (frame.size.width, frame.size.height),
-        },
+        coverage: framed_coverage(
+            (inner.size.width / scale, inner.size.height / scale),
+            (frame.size.width, frame.size.height),
+            whole,
+        ),
         source: SnapshotSource::SkyLight,
         dressing,
         taken: std::time::Instant::now(),
@@ -261,15 +260,22 @@ fn active_display_bounds() -> Vec<CGRect> {
         .collect()
 }
 
-/// Whether a composite taken of the window at `before` is a picture of the window at all.
-///
-/// Only if it is still there once the capture has returned. The composite is the window and whatever
-/// is below it in a RECT, so a window that moved away in between — parked by a workspace switch that
-/// raced the capture — leaves the rect showing whatever it was covering, and merging that in replaces
-/// every opaque pixel of the window with another window's. Measured: a Messages picture that came out
-/// as the VS Code window that had moved back under its old frame.
-fn composite_is_of_the_window(before: CGRect, after: Option<CGRect>, displays: &[CGRect]) -> bool {
+/// Whether the window was where it was read, wholly on one display, when its captures were taken. A
+/// composite of a window that moved shows what it was covering; a framed capture of a window partly
+/// off every display is transparent there.
+fn stayed_wholly_on_a_display(before: CGRect, after: Option<CGRect>, displays: &[CGRect]) -> bool {
     after.is_some_and(|after| after == before && fully_on_a_display(after, displays))
+}
+
+/// What a framed capture covers. The window server returns the full requested rect whatever is on
+/// screen, with the part off every display transparent, so the image's size says nothing: only a
+/// window that stayed wholly on a display is covered. The rest is a hairline to harvest, not a
+/// picture to draw.
+fn framed_coverage(inner: (f64, f64), window: (f64, f64), whole: bool) -> Coverage {
+    Coverage {
+        covered: if whole { inner } else { (0.0, 0.0) },
+        window,
+    }
 }
 
 /// Whether `frame` lies wholly inside one display. Only then is there a screen below all of it for the
@@ -613,27 +619,51 @@ mod tests {
     /// The reported failure: the window was parked between reading its frame and taking the composite,
     /// so the rect showed another window. A composite is only kept if the window is where it was.
     #[test]
-    fn a_composite_of_a_window_that_moved_is_thrown_away() {
+    fn a_capture_of_a_window_that_moved_is_thrown_away() {
         let laptop = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
         let at = |x, y| CGRect::new(CGPoint::new(x, y), CGSize::new(859.0, 1081.0));
 
-        assert!(composite_is_of_the_window(
+        assert!(stayed_wholly_on_a_display(
             at(4.0, 32.0),
             Some(at(4.0, 32.0)),
             &[laptop]
         ));
         assert!(
-            !composite_is_of_the_window(at(4.0, 32.0), Some(at(1727.0, 1065.0)), &[laptop]),
+            !stayed_wholly_on_a_display(at(4.0, 32.0), Some(at(1727.0, 1065.0)), &[laptop]),
             "parked"
         );
         assert!(
-            !composite_is_of_the_window(at(4.0, 32.0), Some(at(10.0, 32.0)), &[laptop]),
+            !stayed_wholly_on_a_display(at(4.0, 32.0), Some(at(10.0, 32.0)), &[laptop]),
             "moved"
         );
         assert!(
-            !composite_is_of_the_window(at(4.0, 32.0), None, &[laptop]),
+            !stayed_wholly_on_a_display(at(4.0, 32.0), None, &[laptop]),
             "gone"
         );
+    }
+
+    /// The reported regression: during a strip pan the real windows move while the flight flies, and
+    /// a framed capture of one half past the display edge came back full-size, half transparent, and
+    /// was cut onto its tile as a half-missing window. It must not count as covering the window.
+    #[test]
+    fn a_framed_capture_of_a_window_not_wholly_on_a_display_covers_nothing() {
+        let laptop = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
+        let half_off = CGRect::new(CGPoint::new(1300.0, 32.0), CGSize::new(859.0, 1081.0));
+        let slot = CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(859.0, 1081.0));
+        let size = (859.0, 1081.0);
+
+        let whole = stayed_wholly_on_a_display(slot, Some(slot), &[laptop]);
+        assert!(framed_coverage(size, size, whole).is_usable());
+
+        for (before, after, why) in [
+            (half_off, Some(half_off), "half past the edge"),
+            (slot, Some(half_off), "moved during the capture"),
+        ] {
+            let whole = stayed_wholly_on_a_display(before, after, &[laptop]);
+            let coverage = framed_coverage(size, size, whole);
+            assert!(!coverage.is_usable(), "{why}");
+            assert!(!fits_frame(coverage.covered, size), "{why}");
+        }
     }
 
     /// Only a window wholly on one display has a screen below all of it to have blurred; a parked

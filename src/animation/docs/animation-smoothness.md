@@ -222,7 +222,10 @@ display edge goes to the service instead, because a framed capture returns
 only the visible sliver ("A clipped destination needs ScreenCaptureKit, not
 SkyLight" in `capture-overlay-research.md`).
 A strip pan places the real windows at frame zero, so by the first pass both
-ends are usually where they land. One case still changes at rest: a clipped
+ends are usually where they land. Usually: the placing is still in progress,
+so a window read as on screen can be past the edge by the time it is
+captured. That pass then gets nothing for it (`framed_coverage`), rather than
+a full-size picture with the off-screen part transparent. One case still changes at rest: a clipped
 window whose picture carries its blur, where the service's grey capture is
 refused by the cache and so never cut in.
 

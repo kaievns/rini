@@ -117,12 +117,19 @@ rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation si
 - A picture the cache refuses MUST NOT reach a tile either. The flight would draw what the next one
   will not.
 - A flight that moves focus nowhere MUST NOT recapture anything.
+- A picture of a window that was not wholly on one display while it was captured MUST NOT be drawn,
+  cached as a picture, or cut onto a tile. The capture comes back full-size with the off-screen part
+  transparent, and drawn it is a half or fully missing window.
 
 > **Reported 2026-09-28.** "The old window stays in its old active state throughout the entire
 > transition and then flickers in in its inactive state once the animation finished. Would be great if
 > we could swap the image during the animation itself if it's available." The recapture already
 > covered both ends, but at 0.5 through the background service. Its pictures landed at 0.82 to 1.16 of
 > the flight, measured the same day, past the 0.6 cutoff it had then, so neither end was ever cut in.
+
+> **Reported 2026-09-28**, against the fix above. "Windows half cut by the display cause all sorts of
+> random issues, it displays half or fully missing frame during transitions constantly." The refresh
+> judged a window wholly on screen, and the strip pan moved it past the edge before the capture ran.
 
 ## Which windows come forward together
 

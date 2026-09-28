@@ -1582,7 +1582,20 @@ between reading its frame and taking the composite, so the rect held the VS Code
 window that had just moved back under it, and the merge replaced every opaque
 pixel of Messages with VS Code. Far worse than grey. The frame is read again
 after the capture, and a composite of a window that moved or left the display is
-thrown away (`composite_is_of_the_window`).
+thrown away (`stayed_wholly_on_a_display`).
+
+**The window's own framed capture needs the same check.** The window server
+returns the full requested rect whatever is on screen, with the part off every
+display transparent (a parked window's hairline reads alpha 0, "Window borders
+during animations" in `animation-smoothness.md`), so the image's size says nothing about how much of the window it
+holds. Found on the first live run of the mid-flight focus refresh: a strip pan
+moves the real windows while the flight flies, and a window read as wholly on
+screen was captured half past the edge, or already parked, then cut onto its
+tile as a half or fully missing window. A framed capture now covers the window
+only if it stayed wholly on one display through both captures
+(`framed_coverage`). Otherwise it holds a hairline to harvest and nothing to
+draw. The resize chase and the capture of a new window had the same exposure,
+for a window partly off the display.
 
 One exposure is left as it was: the harvest names a window by the server id
 folded into its `WindowId`. For the rare window Accessibility reports without a
