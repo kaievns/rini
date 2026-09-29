@@ -17,6 +17,20 @@ preferring one on each workspace switch buries the columns the user switched to 
 Tier 2 is what makes switching away and back feel like returning rather than arriving, and is worth
 more than a "correct" choice by the layout.
 
+## Which window is focused
+
+- When macOS names a window rini knows and does not manage as focused, a panel the app floats over
+  the window the user is in, the focus MUST count as the app's main window. That holds for recency,
+  for the window a switch treats as current, and when the app reports its new main window after the
+  panel. Leaving the app ends it: a main-window change there afterwards moves nothing.
+
+> **Reported 2026-09-29.** "the main window always ends up at the beginning and the actual call window
+> is somewhere way back in the list... if i try to cmd-tilda between the main and the call windows...
+> i always cmd-tilda into the call window because that's the next on the app list". Zoom's meeting
+> controls, a 301×45 panel, took every focus report while Accessibility named the call window main and
+> focused. The call window never entered the recency order, and cmd-` never found it as the current
+> window to rotate from.
+
 ## Cycling
 
 - Cycling through a workspace's windows MUST wrap at both ends, in both directions.

@@ -83,6 +83,12 @@ pub enum FocusEvent {
     ApplicationMainWindowChanged(pid_t, Option<WindowId>, Quiet),
     /// WindowServer's key window: authoritative once seen, AX reports are metadata after it.
     WindowServerFocusChanged(WindowId),
+    /// WindowServer named a window rini knows and does not manage as focused.
+    ///
+    /// An app can float a panel of its own above the window the user is in, and macOS names the panel:
+    /// Zoom's meeting controls take the report while Accessibility names the call window main and
+    /// focused. A panel is no window to switch to, so the report stands for the app's main window.
+    PanelFocused(WindowId),
 }
 
 #[derive(Default)]
@@ -106,6 +112,9 @@ pub struct MainWindowTracker {
     /// choice of main window a few milliseconds later, and the pre-activation window is what tells rini
     /// whether that choice matches where the user actually was.
     pending_activation: Option<(pid_t, Option<WindowId>)>,
+    /// The app whose panel WindowServer last named, so a main-window report arriving after it still
+    /// moves the focus.
+    panel_focused: Option<pid_t>,
 }
 
 struct AppState {
@@ -200,13 +209,22 @@ impl MainWindowTracker {
             FocusEvent::ApplicationMainWindowChanged(pid, wid, quiet) => {
                 let app = self.apps.get_mut(&pid)?;
                 app.main_window = wid;
+                if let Some(wid) = wid
+                    && self.panel_focused == Some(pid)
+                {
+                    self.window_server_focused(wid);
+                }
                 (pid, quiet)
             }
             FocusEvent::WindowServerFocusChanged(wid) => {
-                self.window_server_focus_authoritative = true;
-                self.window_server_focus = Some(wid);
-                self.last_focused_by_app.insert(wid.pid, wid);
-                self.focus_order.touch(wid);
+                self.panel_focused = None;
+                self.window_server_focused(wid);
+                return None;
+            }
+            FocusEvent::PanelFocused(panel) => {
+                self.panel_focused = Some(panel.pid);
+                let main = self.apps.get(&panel.pid).and_then(|app| app.main_window);
+                self.window_server_focused(main.unwrap_or(panel));
                 return None;
             }
         };
@@ -228,6 +246,13 @@ impl MainWindowTracker {
             }
         }
         None
+    }
+
+    fn window_server_focused(&mut self, wid: WindowId) {
+        self.window_server_focus_authoritative = true;
+        self.window_server_focus = Some(wid);
+        self.last_focused_by_app.insert(wid.pid, wid);
+        self.focus_order.touch(wid);
     }
 
     /// Every window in the order it was last focused, most recent first.
@@ -470,6 +495,48 @@ mod tests {
         let parked = WindowId::new(954, 11333);
         assert_eq!(activation_focus_target(parked, false, None, false), None);
         assert_eq!(activation_focus_target(parked, false, Some(parked), true), None);
+    }
+
+    fn launched(tracker: &mut MainWindowTracker, pid: pid_t, main_window: Option<WindowId>) {
+        let _ = tracker.handle_event(FocusEvent::ApplicationLaunched {
+            pid,
+            is_frontmost: false,
+            main_window,
+        });
+    }
+
+    /// Leaving the app ends the panel's claim: a main-window change there afterwards is the app
+    /// rearranging itself in the background, not the user coming back.
+    #[test]
+    fn a_main_window_change_after_leaving_the_app_moves_nothing() {
+        let mut tracker = MainWindowTracker::default();
+        let (main, call, panel) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+        let elsewhere = WindowId::new(2, 1);
+        launched(&mut tracker, 1, Some(main));
+        launched(&mut tracker, 2, Some(elsewhere));
+
+        let _ = tracker.handle_event(FocusEvent::PanelFocused(panel));
+        let _ = tracker.handle_event(FocusEvent::WindowServerFocusChanged(elsewhere));
+        let _ = tracker.handle_event(FocusEvent::ApplicationMainWindowChanged(
+            1,
+            Some(call),
+            Quiet::No,
+        ));
+
+        assert_eq!(tracker.window_server_focus, Some(elsewhere));
+        assert_eq!(tracker.focus_order.position(call), None);
+    }
+
+    /// With no main window known, the panel is all there is to record.
+    #[test]
+    fn a_panel_of_an_app_with_no_main_window_is_recorded_as_itself() {
+        let mut tracker = MainWindowTracker::default();
+        let panel = WindowId::new(1, 3);
+        launched(&mut tracker, 1, None);
+
+        let _ = tracker.handle_event(FocusEvent::PanelFocused(panel));
+
+        assert_eq!(tracker.window_server_focus, Some(panel));
     }
 
     #[test]

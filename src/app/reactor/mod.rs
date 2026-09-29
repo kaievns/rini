@@ -1213,6 +1213,23 @@ impl Reactor {
         }
     }
 
+    /// A focus report naming a window rini knows and does not manage is a panel's; see
+    /// [`FocusEvent::PanelFocused`].
+    fn recognise_panel(&self, focus: FocusEvent) -> FocusEvent {
+        match focus {
+            FocusEvent::WindowServerFocusChanged(window)
+                if self
+                    .state
+                    .windows
+                    .window(window)
+                    .is_some_and(|state| !state.is_effectively_manageable()) =>
+            {
+                FocusEvent::PanelFocused(window)
+            }
+            other => other,
+        }
+    }
+
     fn dispatch_workflow(&mut self, event: Event) -> anyhow::Result<EventOutcome> {
         self.log_event(&event);
         self.recording_manager.record.on_event(&event);
@@ -1230,6 +1247,7 @@ impl Reactor {
 
         let raised_window = event
             .focus_event()
+            .map(|focus| self.recognise_panel(focus))
             .and_then(|focus| self.main_window_tracker.handle_event(focus));
         match event {
             Event::ApplicationLaunched {

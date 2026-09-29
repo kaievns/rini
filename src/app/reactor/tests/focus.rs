@@ -892,3 +892,122 @@ mod main_window_tracking {
         );
     }
 }
+
+/// An app with a main window, a call window, and a panel of its own that macOS names as focused
+/// while the user is in the call window — Zoom and its meeting controls. Plus one window elsewhere.
+mod a_panel_taking_the_focus_report {
+    use rini_ipc::protocol::SwitchScope;
+    use test_log::test;
+
+    use super::*;
+    use crate::windows::domain::focus::FocusEvent;
+    use crate::windows::domain::request::Quiet;
+
+    fn main() -> WindowId {
+        WindowId::new(1, 1)
+    }
+    fn call() -> WindowId {
+        WindowId::new(1, 2)
+    }
+    fn panel() -> WindowId {
+        WindowId::new(1, 3)
+    }
+    fn elsewhere() -> WindowId {
+        WindowId::new(2, 1)
+    }
+
+    fn zoom() -> (Reactor, SpaceId) {
+        let mut reactor = test_reactor();
+        let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+        let space = SpaceId::new(1);
+        set_space_membership(&[(space, &[901, 902, 903, 904])]);
+        reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+        reactor.add_test_app(1);
+        reactor.add_test_app(2);
+        let workspace = reactor.test_workspace(space, 0);
+        for (window, wsid) in [(main(), 901u32), (call(), 902), (elsewhere(), 904)] {
+            reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+            assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+            reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+        }
+        let pill = CGRect::new(CGPoint::new(700., 200.), CGSize::new(301., 45.));
+        reactor.add_test_window_with_manageability(
+            panel(),
+            WindowServerId::new(903),
+            Some(space),
+            pill,
+            false,
+        );
+        // What the app thread reports at launch; `add_test_app` registers the app with the reactor only.
+        for (pid, main_window) in [(1, main()), (2, elsewhere())] {
+            let _ = reactor.main_window_tracker.handle_event(FocusEvent::ApplicationLaunched {
+                pid,
+                is_frontmost: pid == 1,
+                main_window: Some(main_window),
+            });
+        }
+        reactor.handle_event(Event::ApplicationGloballyActivated(1));
+        reactor.handle_event(Event::ApplicationMainWindowChanged(1, Some(main()), Quiet::No));
+        reactor.handle_event(Event::WindowServerFocusChanged(main(), space));
+        (reactor, space)
+    }
+
+    fn order(reactor: &mut Reactor, scope: SwitchScope) -> Vec<WindowId> {
+        reactor.probe_switch_candidates(scope).iter().map(|c| c.window).collect()
+    }
+
+    fn quick_tap(reactor: &mut Reactor, scope: SwitchScope) -> Option<WindowId> {
+        let outcome = reactor.probe_switch_window(false, scope);
+        outcome.raise_requests.iter().find_map(|request| match request {
+            crate::windows::domain::raise::Event::RaiseRequest(request) => {
+                request.focus_window.map(|(window, _)| window)
+            }
+            _ => None,
+        })
+    }
+
+    fn leave_for_elsewhere(reactor: &mut Reactor, space: SpaceId) {
+        reactor.handle_event(Event::ApplicationGloballyActivated(2));
+        reactor.handle_event(Event::WindowServerFocusChanged(elsewhere(), space));
+    }
+
+    /// The reported case: from the call window to another app and back landed on the main window.
+    #[test]
+    fn the_call_window_is_the_one_a_quick_tap_returns_to() {
+        let (mut reactor, space) = zoom();
+        reactor.handle_event(Event::ApplicationMainWindowChanged(1, Some(call()), Quiet::No));
+        reactor.handle_event(Event::WindowServerFocusChanged(panel(), space));
+        leave_for_elsewhere(&mut reactor, space);
+
+        assert_eq!(
+            order(&mut reactor, SwitchScope::Everything),
+            vec![elsewhere(), call(), main()]
+        );
+        assert_eq!(quick_tap(&mut reactor, SwitchScope::Everything), Some(call()));
+    }
+
+    /// The same, with macOS reporting the panel before the app reports its new main window.
+    #[test]
+    fn the_call_window_counts_when_the_main_window_report_comes_second() {
+        let (mut reactor, space) = zoom();
+        reactor.handle_event(Event::WindowServerFocusChanged(panel(), space));
+        reactor.handle_event(Event::ApplicationMainWindowChanged(1, Some(call()), Quiet::No));
+        leave_for_elsewhere(&mut reactor, space);
+
+        assert_eq!(
+            order(&mut reactor, SwitchScope::Everything),
+            vec![elsewhere(), call(), main()]
+        );
+    }
+
+    /// The reported cmd-` case: in the call window, a quick tap stayed in the call window.
+    #[test]
+    fn cmd_backtick_from_the_call_window_goes_to_the_main_window() {
+        let (mut reactor, space) = zoom();
+        reactor.handle_event(Event::ApplicationMainWindowChanged(1, Some(call()), Quiet::No));
+        reactor.handle_event(Event::WindowServerFocusChanged(panel(), space));
+
+        assert_eq!(order(&mut reactor, SwitchScope::App), vec![call(), main()]);
+        assert_eq!(quick_tap(&mut reactor, SwitchScope::App), Some(main()));
+    }
+}
