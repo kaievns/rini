@@ -636,3 +636,41 @@ fn floating_window_toggles_to_fullscreen_within_gaps() {
         "expected {expected:?}, got {laid_out:?}"
     );
 }
+
+/// The reported case: Zoom's call window went fullscreen and came back, and from then on no switcher
+/// offered it. macOS reported it arriving back on its space BEFORE reporting it gone from the
+/// fullscreen one, and the second report was read as the window entering fullscreen again.
+#[test]
+fn a_window_back_from_fullscreen_is_still_offered_when_its_fullscreen_space_reports_it_gone() {
+    use rini_ipc::protocol::SwitchScope;
+
+    let (mut apps, mut reactor) = test_context();
+    let frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1000., 1000.));
+    let user_space = SpaceId::new(1);
+    let fullscreen_space = SpaceId::new(0x400000000 + user_space.get());
+    let call = WindowId::new(1, 1);
+    let main = WindowId::new(1, 2);
+    reactor.handle_event(space_state_event(vec![frame], vec![Some(user_space)]));
+    make_active_app(&mut apps, &mut reactor, 1, make_windows(2), Some(main));
+    let wsid = reactor.test_window_server_id(call);
+
+    window_server_appeared(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    apps.simulate_until_quiet(&mut reactor);
+    window_server_appeared(&mut reactor, wsid, user_space, SpaceEventKind::User);
+    apps.simulate_until_quiet(&mut reactor);
+    window_server_destroyed(&mut reactor, wsid, fullscreen_space, SpaceEventKind::Fullscreen);
+    apps.simulate_until_quiet(&mut reactor);
+
+    assert!(
+        has_window_in_layout(&mut reactor, user_space, frame, call),
+        "leaving a fullscreen space is not entering one"
+    );
+    assert!(!reactor.state.windows.is_window_native_fullscreen_suspended(call));
+
+    let offered: Vec<WindowId> = reactor
+        .probe_switch_candidates(SwitchScope::Everything)
+        .iter()
+        .map(|candidate| candidate.window)
+        .collect();
+    assert!(offered.contains(&call), "the switcher offers the window again");
+}

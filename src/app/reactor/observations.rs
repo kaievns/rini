@@ -146,7 +146,6 @@ impl Reactor {
             mission_control_active: self.is_mission_control_active(),
             ordered_in: window_server::window_ordered_in(wsid),
             assigned_space: context.assigned_space,
-            last_known_user_space: context.last_known_user_space,
         };
         topology_workflow::handle_window_server_destroyed(
             &mut self.state,

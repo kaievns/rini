@@ -32,7 +32,6 @@ pub struct WindowServerDestroyedObservations {
     pub mission_control_active: bool,
     pub ordered_in: Option<bool>,
     pub assigned_space: Option<SpaceId>,
-    pub last_known_user_space: Option<SpaceId>,
 }
 
 #[derive(Debug)]
@@ -68,42 +67,14 @@ pub fn handle_window_server_destroyed(
         mission_control_active,
         ordered_in,
         assigned_space,
-        last_known_user_space,
     } = observations;
     let mut outcome = EventOutcome::default();
     if matches!(kind, SpaceEventKind::Fullscreen) {
-        let mut layout_changed = false;
-        let (_pid, window_id) = if let Some(wid) = state.windows.tracked_window_id(wsid) {
-            (wid.pid, Some(wid))
-        } else if let Some(info) = state.windows.get_window_server_info(wsid) {
-            (info.pid, None)
-        } else {
-            // We don't know who owned this fullscreen window.
-            return Ok(EventOutcome::default());
-        };
-
-        record_fullscreen_window(
-            state,
-            sid,
-            Some(_pid),
-            window_id,
-            Some(wsid),
-            last_known_user_space,
-        );
-        if let Some((wid, from_space)) =
-            fullscreen_departure(window_id, assigned_space, last_known_user_space)
-        {
-            outcome = outcome.with_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
-            layout_changed = from_space.is_some_and(|space| active_spaces.contains(&space));
-        }
-        if layout_changed && !mission_control_active {
-            outcome = outcome.with_arrange_passes(1);
-        }
-
-        if let Some(wid) = window_id {
+        // Leaving a fullscreen space is not entering one: macOS can report it after the window is
+        // already back on its user space. The window may be closing, so its app is asked.
+        if let Some(wid) = state.windows.tracked_window_id(wsid) {
             outcome = outcome.with_app_request(wid.pid, Request::WindowMaybeDestroyed(wid));
         }
-
         return Ok(outcome);
     } else if matches!(kind, SpaceEventKind::User) {
         if resolved_space.is_some_and(|space| space != sid) {

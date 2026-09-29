@@ -101,6 +101,15 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > **Reported 2026-09-22.** "When macOS takes a window fullscreen it should go off-strip and stop being
 > managed by rini."
 
+- Only a window arriving on a fullscreen space goes fullscreen. A window leaving one MUST NOT be taken
+  off the strip for it, because macOS can report the departure after the window is already back on
+  its user space. Read as an entry, that report pulled the window off again for good, and no
+  switcher offered it.
+
+> **Reported 2026-09-29.** "zoom shows as a single window on the app switcher, can't switch between
+> the main window and the call window for example. it only shows the main window in all the
+> switchers". The call window had been fullscreen and back.
+
 ## Where it lives
 
 `src/layout/domain/scrolling.rs` is the layout, `src/layout/domain/constraints.rs` the widths,
