@@ -2014,6 +2014,7 @@ impl FlightEngine {
     }
 
     fn step(&mut self) {
+        self.trace_presented();
         let (done, place_now, refresh_now) = {
             let Some(running) = self.running.as_mut() else { return };
             let progress = running.progress();
@@ -2069,6 +2070,25 @@ impl FlightEngine {
         }
         if done {
             self.finish();
+        }
+    }
+
+    /// Where each container is drawn, every tick, under `rini::animation::trace` at trace level: the
+    /// measurement behind "One flight however many presses" in
+    /// `src/animation/docs/animation-smoothness.md`. Off, it reads nothing.
+    fn trace_presented(&self) {
+        if !tracing::enabled!(target: "rini::animation::trace", tracing::Level::TRACE) {
+            return;
+        }
+        let Some(overlay) = self.overlay.as_ref() else { return };
+        for (key, at) in overlay.presented_positions() {
+            tracing::trace!(
+                target: "rini::animation::trace",
+                key = format!("{key:?}"),
+                x = format!("{:.1}", at.x),
+                y = format!("{:.1}", at.y),
+                "presented"
+            );
         }
     }
 
