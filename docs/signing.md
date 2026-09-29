@@ -1,7 +1,7 @@
 # Why the build is signed, and how to redo it
 
-Accessibility is granted to a **code identity**, not to a path. Cargo leaves an ad-hoc signature, and
-for ad-hoc code that identity is the hash of the binary:
+Accessibility is granted to a **code identity at a path**: both have to match. Cargo leaves an ad-hoc
+signature, and for ad-hoc code that identity is the hash of the binary:
 
 ```
 $ codesign -d -r- target/release/rini
@@ -14,8 +14,9 @@ half-minute of rini not managing windows.
 
 Two dead ends, both checked rather than assumed:
 
-- **A stable path does not help.** `~/.local/bin/rini` and `target/release/rini` behave identically,
-  because the path is not the identity.
+- **A stable path does not help on its own.** With an ad-hoc signature, `~/.local/bin/rini` and
+  `target/release/rini` behave identically: the hash changes on every rebuild, wherever the binary
+  sits.
 - **Removing the signature does not help.** arm64 binaries must be signed to execute at all; a copy
   with `codesign --remove-signature` applied is killed on launch.
 
@@ -84,5 +85,11 @@ changes. Everything after that is free.
 ## When the grant does still have to be re-given
 
 - The certificate is replaced or removed.
-- The binary is signed ad-hoc again, which is what a bare `cargo build --release` does. Use
-  `bin/build.sh`.
+- The binary is signed ad-hoc again: a build without the certificate in the keychain, which the
+  rustc wrapper skips silently. `bin/build.sh` fails loudly instead.
+- **The service is pointed at a binary at another path**, however it is signed. Measured
+  2026-09-28: the agent moved from `target/release/rini` to a build of an older revision in its own
+  target directory, signed with the same certificate and identifier (`certificate leaf` present),
+  and its first start logged
+  `Accessibility permission is not granted; prompting user for permission now.` So a rollback or an
+  A/B build is moved into `target/release/rini`, never run from where it was built.

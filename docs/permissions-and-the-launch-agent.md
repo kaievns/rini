@@ -125,7 +125,7 @@ lookup gone it no longer needs to.
 ## Current state
 
 rini runs as the launchd agent, deployed with `target/release/rini service restart`, with its
-own Accessibility and Screen Recording grants keyed to the signed binary
+own Accessibility and Screen Recording grants keyed to the signed binary at that path
 (`docs/signing.md`). The CLI and sketchybar hooks reach it. Whether the grants
 survive a reboot has not been measured since the signing identity was
 introduced.
