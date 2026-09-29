@@ -1,5 +1,6 @@
 dev
 target
+target-*
 rini.toml
 src/bin/dev.rs
 .kiro
