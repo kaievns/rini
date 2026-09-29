@@ -64,6 +64,9 @@ the bar reads the ink from the pixels instead.
 
 ## A pass
 
+The same thread pictures the desktop behind each bar for its ground, once a minute; see "The ground
+is a still picture" in `README.md`.
+
 Once a second the `bar-extras` thread lists the status windows, keeps the active menu bar's, selects,
 captures the selection in one call and cuts it apart. The composite is the union of the selection's
 bounds at one scale: 892 x 66 pixels for 12 extras over 446 x 33pt at 2x, every one cut out whole.

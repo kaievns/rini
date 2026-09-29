@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use objc2::MainThreadMarker;
+use objc2_core_foundation::CGRect;
 use objc2_core_graphics::CGDisplayBounds;
 use objc2_quartz_core::CATransaction;
 use rini_runloop::channel;
@@ -20,7 +21,8 @@ use crate::bar::domain::layout::{self, Target};
 use crate::bar::domain::model::{Action, BarModel};
 use crate::bar::domain::motion::{Fade, Folding, fade_length};
 use crate::bar::domain::pieces::{self, Click, Clock, Context, Timepiece};
-use crate::bar::platform::menu_extras::{Extras, Watcher};
+use crate::bar::platform::ground::Ground;
+use crate::bar::platform::menu_extras::{Extras, Sinks, Watcher};
 use crate::bar::platform::panel::{BarPanel, OnClick, SCALE};
 use crate::bar::platform::text::Text;
 
@@ -35,6 +37,8 @@ pub enum Event {
     Model(BarModel),
     /// The menu extras as last pictured, sent by the watcher thread when a picture changed.
     Extras(Extras),
+    /// A display's ground, sent by the watcher thread when the desktop behind the bar changed.
+    Ground(Ground),
     /// A flight started (`true`), or the last one has settled (`false`).
     Flight(bool),
     /// The machine woke or the clock was changed, so the time is read again now.
@@ -51,6 +55,10 @@ pub struct BarActor {
     clicked: channel::Receiver<(String, Target)>,
     model: BarModel,
     extras: Extras,
+    /// By display uuid, as last pictured.
+    grounds: HashMap<String, Ground>,
+    /// The displays the watcher was last told to picture grounds for, with their bounds.
+    ground_displays: Vec<(String, CGRect)>,
     clock: Timepiece,
     flight: bool,
     folding: Folding,
@@ -83,6 +91,8 @@ impl BarActor {
             clicked,
             model: BarModel::default(),
             extras: Extras::default(),
+            grounds: HashMap::default(),
+            ground_displays: Vec::new(),
             clock: Timepiece::new(read_clock(), Instant::now()),
             flight: false,
             folding: Folding::default(),
@@ -135,11 +145,18 @@ impl BarActor {
                 self.model = model;
                 self.start_watcher();
                 self.pause_watcher();
+                self.point_grounds();
                 self.redraw();
             }
             Event::Extras(extras) => {
                 self.extras = extras;
                 self.redraw();
+            }
+            Event::Ground(ground) => {
+                if let Some(panel) = self.panels.get_mut(&ground.display) {
+                    cut(|| panel.set_ground(&ground));
+                }
+                self.grounds.insert(ground.display.clone(), ground);
             }
             Event::Flight(flight) => {
                 self.flight = flight;
@@ -229,6 +246,9 @@ impl BarActor {
             if !panel.place(display) {
                 continue;
             }
+            if let Some(ground) = self.grounds.get(&bar.uuid) {
+                panel.set_ground(ground);
+            }
             let fold = layout::fold(bar.glyphs.len(), self.folding.expanded());
             let context = Context {
                 fold: &fold,
@@ -252,11 +272,30 @@ impl BarActor {
         if self.watcher.is_some() || self.model.displays.is_empty() {
             return;
         }
-        let sender = self.sender.clone();
-        self.watcher = Some(Watcher::spawn(Box::new(move |extras| {
-            sender.send(Event::Extras(extras))
-        })));
+        let (extras, ground) = (self.sender.clone(), self.sender.clone());
+        self.watcher = Some(Watcher::spawn(Sinks {
+            extras: Box::new(move |pictured| extras.send(Event::Extras(pictured))),
+            ground: Box::new(move |pictured| ground.send(Event::Ground(pictured))),
+        }));
         self.paused = false;
+    }
+
+    /// Tells the watcher which displays' grounds to picture, when that changed.
+    fn point_grounds(&mut self) {
+        let Some(watcher) = &self.watcher else {
+            return;
+        };
+        let displays: Vec<(String, CGRect)> = self
+            .model
+            .displays
+            .iter()
+            .map(|bar| (bar.uuid.clone(), CGDisplayBounds(bar.screen)))
+            .filter(|(_, bounds)| bounds.size.width > 0.0)
+            .collect();
+        if displays != self.ground_displays {
+            watcher.set_grounds(displays.clone());
+            self.ground_displays = displays;
+        }
     }
 
     fn pause_watcher(&mut self) {

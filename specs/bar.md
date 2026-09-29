@@ -17,10 +17,18 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 
 - There MUST be one bar per display, 32pt tall, across the top. `[settings.bar] enabled = false`
   turns every bar off.
-- What shows through the bar's ground MUST be blurred, with the ground's colour kept.
+- The bar's ground MUST be the desktop behind it, blurred, under the ground's colour. It MUST be a
+  still picture, taken again when the display or the wallpaper changes and never while a flight
+  runs, so nothing is blurred again as windows move. Windows passing under the bar are not seen
+  through it.
 
 > **Reported 2026-09-29.** "make the bar background to use blur". Until then the wallpaper showed
-> through the 88% ground in sharp detail.
+> through the 88% ground in sharp detail. The first answer had the window server blur the desktop
+> behind the bar live.
+>
+> **Asked 2026-09-29, after that.** "can you just take blurred background picture and use a static
+> behind the menu bar?" A live blur is done again on every frame something moves behind the bar,
+> and the flight overlay moves behind it on every frame of a flight.
 - No window MAY sit under the bar on any display. The band MUST be kept clear on every display, not
   only on the one whose notch macOS already keeps clear. A per-display gap that made room for the old
   bar on the external display is no longer needed, and left in place it doubles the band.

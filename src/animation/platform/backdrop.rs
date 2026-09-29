@@ -12,17 +12,23 @@ use objc2_core_graphics::{
 use rini_core::ids::WindowServerId;
 use rini_geometry::CGRectExt;
 
-/// The windows making up the desktop backdrop, and whether the wallpaper is among them.
+/// The windows making up the desktop backdrop, and which of them are the wallpaper.
 pub struct DesktopBackdrop {
     pub windows: Vec<WindowServerId>,
+    pub wallpaper: Vec<WindowServerId>,
+}
+
+impl DesktopBackdrop {
     /// macOS recreates the wallpaper window; a listing without it composites to black.
-    pub has_wallpaper: bool,
+    pub fn has_wallpaper(&self) -> bool {
+        !self.wallpaper.is_empty()
+    }
 }
 /// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
 /// See "The wallpaper is not reliably a window" in `src/animation/docs/capture-overlay-research.md`.
 pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
     let mut windows = Vec::new();
-    let mut has_wallpaper = false;
+    let mut wallpaper = Vec::new();
     for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
         CGWindowListOption::OptionOnScreenOnly,
         kCGNullWindowID,
@@ -51,14 +57,15 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
         // Owner "Wallpaper" (wallpaper agent) or owner "Dock" with name "Wallpaper-<uuid>".
         let names_wallpaper =
             |key| get_string(&window, key).is_some_and(|value: String| value.contains("Wallpaper"));
+        let id = WindowServerId::new(id as u32);
         if names_wallpaper(unsafe { kCGWindowOwnerName })
             || names_wallpaper(unsafe { kCGWindowName })
         {
-            has_wallpaper = true;
+            wallpaper.push(id);
         }
-        windows.push(WindowServerId::new(id as u32));
+        windows.push(id);
     }
-    DesktopBackdrop { windows, has_wallpaper }
+    DesktopBackdrop { windows, wallpaper }
 }
 /// Anything at or below this level is the desktop behind every app window.
 const DESKTOP_CEILING: i64 = -2147483600;

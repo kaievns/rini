@@ -1,11 +1,12 @@
-//! The thread that pictures macOS's menu extras for the bar: every extra in one capture a tick, cut
-//! apart, compared with what was last sent, and sent on only when something changed. See
-//! `src/bar/docs/menu-extras.md`.
+//! The thread that pictures what the bar shows of macOS: every menu extra in one capture a tick, cut
+//! apart, compared with what was last sent, and sent on only when something changed; and the desktop
+//! behind each bar, for its ground, once a minute. See `src/bar/docs/menu-extras.md`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
+use std::collections::HashMap;
 use std::time::Instant;
 
 use objc2_app_kit::NSStatusWindowLevel;
@@ -20,6 +21,8 @@ use tracing::debug;
 
 use crate::animation::platform::edge_dressing::rgba_bitmap_context;
 use crate::bar::domain::extras::{self, Command, Composite, Kind, Schedule, Stamp, StatusWindow};
+use crate::bar::domain::ground::Timer;
+use crate::bar::platform::ground::{Ground, picture_ground};
 use crate::displays::screen::active_menu_bar_display_id;
 use crate::windows::platform::window_server::{
     bounds_from_dict, get_num, get_string, get_windows_raw,
@@ -49,22 +52,35 @@ pub struct Extras {
     pub items: Vec<Extra>,
 }
 
+/// What the thread is told.
+enum Message {
+    Extras(Command),
+    /// The displays to picture the ground behind, by uuid, with their bounds.
+    Grounds(Vec<(String, CGRect)>),
+}
+
+/// Where the thread's pictures go.
+pub struct Sinks {
+    pub extras: Box<dyn Fn(Extras) + Send>,
+    pub ground: Box<dyn Fn(Ground) + Send>,
+}
+
 /// The running thread. It ends when this is dropped.
 pub struct Watcher {
-    commands: mpsc::Sender<Command>,
+    commands: mpsc::Sender<Message>,
     /// Read by the thread just before it captures, so a pause stops a pass already under way.
     paused: Arc<AtomicBool>,
 }
 
 impl Watcher {
-    /// Starts the thread. `send` is called from it with the extras whenever a picture changed.
-    pub fn spawn(send: Box<dyn Fn(Extras) + Send>) -> Watcher {
+    /// Starts the thread. The sinks are called from it whenever a picture changed.
+    pub fn spawn(sinks: Sinks) -> Watcher {
         let (commands, inbox) = mpsc::channel();
         let paused = Arc::new(AtomicBool::new(false));
         let read = Arc::clone(&paused);
         thread::Builder::new()
             .name("bar-extras".to_string())
-            .spawn(move || run(&inbox, &read, &*send))
+            .spawn(move || run(&inbox, &read, &sinks))
             .expect("failed to spawn bar-extras thread");
         Watcher { commands, paused }
     }
@@ -72,12 +88,17 @@ impl Watcher {
     /// No captures while paused: during a flight, and while no bar is up.
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Relaxed);
-        let _ = self.commands.send(Command::Pause(paused));
+        let _ = self.commands.send(Message::Extras(Command::Pause(paused)));
     }
 
-    /// Picture now rather than at the next tick.
+    /// Picture now rather than at the next tick, the grounds too.
     pub fn refresh(&self) {
-        let _ = self.commands.send(Command::Refresh);
+        let _ = self.commands.send(Message::Extras(Command::Refresh));
+    }
+
+    /// The displays whose grounds to picture, pictured at the next chance.
+    pub fn set_grounds(&self, displays: Vec<(String, CGRect)>) {
+        let _ = self.commands.send(Message::Grounds(displays));
     }
 }
 
@@ -87,25 +108,27 @@ struct Sent {
     items: Vec<Extra>,
 }
 
-fn run(inbox: &Receiver<Command>, paused: &AtomicBool, send: &dyn Fn(Extras)) {
+fn run(inbox: &Receiver<Message>, paused: &AtomicBool, sinks: &Sinks) {
     let mut schedule = Schedule::new(Instant::now());
     let mut last: Option<Sent> = None;
+    let mut grounds = Grounds { displays: Vec::new(), timer: Timer::new(Instant::now()), hashes: HashMap::new() };
     loop {
-        let command = match schedule.wait(Instant::now()) {
+        let message = match schedule.wait(Instant::now()) {
             Some(timeout) => inbox.recv_timeout(timeout),
             None => inbox.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
-        match command {
-            Ok(command) => schedule.on(command, Instant::now()),
+        match message {
+            Ok(message) => grounds.on(message, &mut schedule, Instant::now()),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
-        for command in inbox.try_iter() {
-            schedule.on(command, Instant::now());
+        for message in inbox.try_iter() {
+            grounds.on(message, &mut schedule, Instant::now());
         }
         if !schedule.take(Instant::now()) {
             continue;
         }
+        grounds.picture(paused, &*sinks.ground);
         let may_capture = || schedule.may_capture(paused.load(Ordering::Relaxed), Instant::now());
         let Some((mut extras, stamps)) = picture(may_capture) else {
             continue;
@@ -121,7 +144,51 @@ fn run(inbox: &Receiver<Command>, paused: &AtomicBool, send: &dyn Fn(Extras)) {
             }
         }
         last = Some(Sent { stamps, items: extras.items.clone() });
-        send(extras);
+        (sinks.extras)(extras);
+    }
+}
+
+/// The displays whose grounds are pictured, when next, and what each last looked like.
+struct Grounds {
+    displays: Vec<(String, CGRect)>,
+    timer: Timer,
+    hashes: HashMap<String, u64>,
+}
+
+impl Grounds {
+    fn on(&mut self, message: Message, schedule: &mut Schedule, now: Instant) {
+        match message {
+            Message::Extras(command) => {
+                if command == Command::Refresh {
+                    self.timer.now(now);
+                }
+                schedule.on(command, now);
+            }
+            Message::Grounds(displays) => {
+                self.displays = displays;
+                self.timer.now(now);
+            }
+        }
+    }
+
+    /// Pictures every display's ground if one is due, and sends the ones that changed. A pause that
+    /// lands meanwhile stops it, and the rest stay due.
+    fn picture(&mut self, paused: &AtomicBool, send: &dyn Fn(Ground)) {
+        if !self.timer.take(Instant::now()) {
+            return;
+        }
+        for (display, bounds) in &self.displays {
+            if paused.load(Ordering::Relaxed) {
+                self.timer.now(Instant::now());
+                return;
+            }
+            let Some((picture, scale, hash)) = picture_ground(*bounds) else {
+                continue;
+            };
+            if self.hashes.insert(display.clone(), hash) != Some(hash) {
+                send(Ground { display: display.clone(), picture, scale });
+            }
+        }
     }
 }
 
@@ -146,7 +213,7 @@ fn picture(may_capture: impl FnOnce() -> bool) -> Option<(Extras, Vec<Stamp>)> {
     if !may_capture() {
         return None;
     }
-    let image = capture(&ids)?;
+    let image = capture(&ids, NULL_RECT)?;
     let composite = Composite::new(&bounds, (CGImage::width(Some(&image)), CGImage::height(Some(&image))))?;
     cut(&image, composite, &chosen)
 }
@@ -178,10 +245,12 @@ fn status_windows() -> (Vec<StatusWindow>, Vec<Placed>) {
         .unzip()
 }
 
-/// One picture of every window in `ids`, over the union of their bounds.
-fn capture(ids: &[u32]) -> Option<CFRetained<CGImage>> {
-    // CGRectNull, which the bindings leave out.
-    let null = CGRect::new(CGPoint::new(f64::INFINITY, f64::INFINITY), CGSize::ZERO);
+/// CGRectNull, which the bindings leave out: the union of the windows captured.
+const NULL_RECT: CGRect = CGRect::new(CGPoint::new(f64::INFINITY, f64::INFINITY), CGSize::ZERO);
+
+/// One picture of every window in `ids`, over `rect` in global coordinates or, with `NULL_RECT`, the
+/// union of their bounds.
+pub(super) fn capture(ids: &[u32], rect: CGRect) -> Option<CFRetained<CGImage>> {
     let mut image: *mut CGImage = std::ptr::null_mut();
     // SAFETY: `ids` outlives the call and holds `ids.len()` window ids; the image comes back retained.
     let err = unsafe {
@@ -189,7 +258,7 @@ fn capture(ids: &[u32]) -> Option<CFRetained<CGImage>> {
             *G_CONNECTION,
             ids.as_ptr(),
             ids.len() as i32,
-            null,
+            rect,
             CAPTURE_OPTIONS,
             &mut image,
         )

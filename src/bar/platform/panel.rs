@@ -17,15 +17,13 @@ use objc2_app_kit::{
     NSEvent, NSPanel, NSScreen, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGColor, CGError, CGImage};
+use objc2_core_graphics::{CGColor, CGImage};
 use objc2_foundation::{NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, kCAFillModeBackwards,
     kCAGravityLeft, kCAMediaTimingFunctionEaseInEaseOut, kCAMediaTimingFunctionEaseOut,
 };
-use rini_skylight_sys::{G_CONNECTION, SLSSetWindowBackgroundBlurRadius};
 use rustc_hash::FxHashMap as HashMap;
-use tracing::warn;
 
 use crate::animation::platform::overlay::set_contents;
 use crate::bar::domain::extras::Kind;
@@ -36,6 +34,7 @@ use crate::bar::domain::palette::{self, Colour};
 use crate::bar::domain::pieces::{self, Context};
 use crate::bar::domain::placement::{self, RULE_WIDTH};
 use crate::bar::domain::style;
+use crate::bar::platform::ground::Ground;
 use crate::bar::platform::menu_extras::{Extra, Extras};
 use crate::bar::platform::text::{Picture, Text};
 use crate::displays::domain::screen::CoordinateConverter;
@@ -150,6 +149,11 @@ pub struct BarPanel {
     root: Retained<CALayer>,
     /// One layer per piece, reused across draws and hidden while its piece is not drawn.
     layers: HashMap<Piece, Drawn>,
+    /// The desktop behind the bar, blurred under the ground colour. Until one is pictured the root's
+    /// own colour, the same ground over the live desktop, shows instead.
+    ground: Retained<CALayer>,
+    /// The picture it shows, by address, as `Shows::Picture`.
+    ground_shows: Option<usize>,
     /// What the tray is drawn through. It clips the tray's pictures, and its bounds slide them into
     /// the chevron.
     tray: Retained<CALayer>,
@@ -192,17 +196,6 @@ impl BarPanel {
         if let Some(dark) = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }) {
             window.setAppearance(Some(&dark));
         }
-        // SAFETY: plain values into SkyLight, for a window this process owns.
-        let blurred = unsafe {
-            SLSSetWindowBackgroundBlurRadius(
-                *G_CONNECTION,
-                window.windowNumber() as u32,
-                palette::BAR_GROUND_BLUR,
-            )
-        };
-        if blurred != CGError::Success {
-            warn!(error = ?blurred, "could not blur the bar's ground");
-        }
 
         let view = BarView::alloc(mtm).set_ivars(ViewIvars {
             scene: RefCell::default(),
@@ -216,6 +209,7 @@ impl BarPanel {
         root.setContentsScale(SCALE);
         root.setBackgroundColor(Some(&cg_colour(palette::N1, palette::BAR_GROUND_ALPHA)));
 
+        let ground = sublayer(&root);
         let tray = sublayer(&root);
         tray.setMasksToBounds(true);
         tray.setHidden(true);
@@ -228,6 +222,8 @@ impl BarPanel {
             view,
             root,
             layers: HashMap::default(),
+            ground,
+            ground_shows: None,
             tray,
             tray_drawn: None,
             underline,
@@ -249,9 +245,20 @@ impl BarPanel {
             let bounds = CGRect::new(CGPoint::new(0.0, 0.0), strip.size);
             self.view.setFrame(bounds);
             self.root.setFrame(bounds);
+            self.ground.setFrame(bounds);
             self.strip = Some(strip);
         }
         self.strip.is_some()
+    }
+
+    /// Shows `ground` behind everything, if it is not what shows already.
+    pub fn set_ground(&mut self, ground: &Ground) {
+        let shows = address(&ground.picture);
+        if self.ground_shows != Some(shows) {
+            set_contents(&self.ground, &ground.picture);
+            self.ground.setContentsScale(ground.scale);
+            self.ground_shows = Some(shows);
+        }
     }
 
     pub fn show(&mut self) {

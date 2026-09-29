@@ -503,8 +503,6 @@ unsafe extern "C" {
     ) -> CGError;
 
     pub fn SLSSetWindowLevel(cid: cid_t, wid: u32, level: c_int) -> CGError;
-    /// Blurs what shows through a window's transparent and translucent pixels, by `radius`.
-    pub fn SLSSetWindowBackgroundBlurRadius(cid: cid_t, wid: u32, radius: u32) -> CGError;
     pub fn SLSOrderWindow(cid: cid_t, wid: u32, order: c_int, relative_to: u32) -> CGError;
 }
 

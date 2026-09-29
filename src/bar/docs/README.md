@@ -14,6 +14,7 @@ the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 | **What each piece says, and what a click does** | `domain/pieces.rs` |
 | **How each piece is set** | `domain/style.rs` and `domain/palette.rs` |
 | **The two movements** | `domain/motion.rs`: the fold's states and the fades' timing |
+| **The ground** | `domain/ground.rs`: what is pictured, the blur, the tint, and when; `platform/ground.rs` pictures it |
 | **Which menu extras are drawn** | `domain/extras.rs`: vitals, tray and skipped, the twin-block rule, which display's, ink columns, cutting a capture apart, the change test, the pictures kept, and the tick |
 | **The words** | `domain/format.rs`, and `domain/glyphs.rs` with its table `domain/app_glyphs.tsv` |
 | **The windows** | `platform/actor.rs` on the main thread, `platform/panel.rs`, `platform/text.rs` |
@@ -87,7 +88,8 @@ native fullscreen space. A panel hides whenever its app deactivates unless told 
 which costs about 112ms, and kept; a display that leaves the model has its bar ordered out.
 
 ```text
-root         the ground: n1 at 0.88, over a blur of what is behind the window
+root         n1 at 0.88, the ground until the first picture of it arrives
+├── ground   the desktop behind the bar, blurred, under n1 at 0.88: one still picture
 ├── one layer per piece: a picture of its string, a hairline, or a vital's picture
 ├── tray     masks to its bounds, from the first tray icon to the chevron's ink
 │   └── one layer per tray extra
@@ -98,16 +100,28 @@ root         the ground: n1 at 0.88, over a blur of what is behind the window
 `domain/motion.rs` how the two movements run. `platform/panel.rs` sets the layers and
 `platform/text.rs` draws the words.
 
-**The blur is the window server's.** `SLSSetWindowBackgroundBlurRadius`, at radius 30, blurs what
-shows through the window's translucent ground, which is what sketchybar's `blur_radius` calls.
-AppKit's `NSVisualEffectView` was not used, because its materials bring their own tint and the
-ground's colour is the palette's. Measured 2026-09-29 on the built-in display, over an empty stretch
-of the ground: the luma difference between neighbouring pixels fell from 0.554 to 0.058 and the mean
-stayed at 32, so the wallpaper reads as a tint and the colour is unchanged. The flight overlay moves
-behind the bar, so a flight has the window server blur the strip again each frame. Over bursts of six
-workspace switches, the same build with and without the blur measured 92% and 100% of a core of
-WindowServer against 95% and 94%, and 1.80s and 1.60s of rini's CPU against 1.64s and 1.46s: no
-difference beyond the spread between runs.
+**The ground is a still picture.** The thread that pictures the menu extras also pictures the
+wallpaper behind each bar: the wallpaper window alone, so the desktop's icons and widgets stay out,
+over the bar's strip and three blur spreads below it, in one `SLSCaptureWindowsContentsToRectWithOptions`
+call cropped to that rect. It blurs that with three box blurs each way, about a Gaussian of 12pt,
+lays n1 at 0.88 over it, keeps the bar's own rows and sends the picture. It does this when the
+displays change, on waking, and once a minute for a wallpaper that follows the time of day, never
+while a flight runs, and sends a picture only when the wallpaper's pixels changed. One picture of the
+built-in display measured 25ms at the median and 194ms the first time, 2026-09-29, for 3456 by 64
+pixels.
+
+It replaced a live blur. `SLSSetWindowBackgroundBlurRadius`, sketchybar's `blur_radius`, has the
+window server blur what shows through the window, and does it again on every frame something moves
+behind the bar, which is every frame of a flight, since the overlay moves behind it. Over bursts of
+six workspace switches the same build with and without the live blur measured 92% and 100% of a core
+of WindowServer against 95% and 94%, within the spread between runs, but the work was there to be
+done, and a still picture does none. Both measured the same smoothness over an empty stretch of the
+ground: the luma difference between neighbouring pixels was 0.058 live and 0.054 still, against 0.554
+unblurred, with the mean at 32 each time. AppKit's `NSVisualEffectView` was not used, because its
+materials bring their own tint and the ground's colour is the palette's.
+
+The cost of a still picture: the bar is opaque, so a window sliding up under it in a vertical switch
+goes behind it rather than showing faintly through the 12% the ground let through.
 
 **Every string is a picture.** Each is drawn once per string, face and colour into a bitmap of its
 ink plus a 2pt margin, and kept while some bar still says it. A `CATextLayer` cannot say where its

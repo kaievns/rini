@@ -2233,7 +2233,7 @@ impl FlightEngine {
         let usable = composite.filter(|snapshot| {
             crate::animation::platform::window_snapshot::is_backdrop_worth_drawing(
                 self.pictures.drawn_once,
-                desktop.has_wallpaper,
+                desktop.has_wallpaper(),
                 snapshot.coverage.covered,
                 display_size,
             )
@@ -2246,7 +2246,7 @@ impl FlightEngine {
             None => {
                 debug!(
                     windows = desktop.windows.len(),
-                    has_wallpaper = desktop.has_wallpaper,
+                    has_wallpaper = desktop.has_wallpaper(),
                     wanted = format!("{:.0}x{:.0}", display_size.0, display_size.1),
                     "no drawable desktop yet; keeping whatever the backdrop already holds"
                 );

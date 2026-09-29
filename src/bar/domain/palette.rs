@@ -48,9 +48,6 @@ pub const EMBER_SOFT: Colour = Colour(0x3f2d28);
 
 /// The bar's ground is `N1` at this opacity, so the wallpaper reads faintly through the chrome.
 pub const BAR_GROUND_ALPHA: f64 = 0.88;
-/// What shows through the ground is blurred by this radius, so it reads as a tint rather than as
-/// detail.
-pub const BAR_GROUND_BLUR: u32 = 30;
 
 #[cfg(test)]
 mod tests {
