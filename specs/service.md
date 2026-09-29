@@ -5,7 +5,8 @@ rini runs as a per-user launchd agent. This is what starting and restarting it m
 ## Which build runs
 
 - `rini service start` and `rini service restart` MUST put the service on the build that runs the
-  command — the same file, with any symlink resolved — and on no other. Looking the binary up
+  command — the same file, with any symlink resolved — and on no other, within the path rule below.
+  Looking the binary up
   anywhere else can find a stale copy, and a stale copy is a different code identity: macOS then
   treats it as a client it never granted Accessibility or Screen Recording to, and it runs month-old
   behaviour while every check against the new build passes.
@@ -16,6 +17,15 @@ rini runs as a per-user launchd agent. This is what starting and restarting it m
   definition has to be unloaded and loaded again — restarting the loaded one runs the old build.
 - Starting a service that is already running on the right build MUST leave it running. A start is not
   a restart.
+- A start or restart from a binary at another path than the one the service runs MUST refuse, name
+  both paths, and say what moving costs, unless it is given `--move`. macOS ties the grants to the
+  path as well as the signature, so a build at a new path is a client it never granted, even signed
+  with the same certificate and identifier. A service with no installed binary has no path to
+  protect.
+
+> **Reported 2026-09-29.** "you switched from a dev build to another thing that requires permission
+> regrants. this happened like 10 times already". The latest was a rollback that pointed the service
+> at an older build in `target-3ad0d60/` instead of moving that build into `target/release/rini`.
 
 > **Reported 2026-09-28.** "rini service start should pick the build we're running on now." Two
 > deploys had run a stale `~/.local/bin/rini` found on the search path, one on 2026-09-15 and one on

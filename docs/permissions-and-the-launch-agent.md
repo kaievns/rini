@@ -122,6 +122,11 @@ binary again. Both commands reload in that case (`launch_plan`). `restart` used
 to leave the plist alone on purpose, as the safe path around the lookup; with the
 lookup gone it no longer needs to.
 
+Running the command from another binary is the remaining way to move the service,
+and each move is a re-grant (`docs/signing.md`). So both commands refuse when the
+plist already runs a binary at another path, and name both paths; `--move` makes
+the move deliberate (`check_binary_move`).
+
 ## Current state
 
 rini runs as the launchd agent, deployed with `target/release/rini service restart`, with its

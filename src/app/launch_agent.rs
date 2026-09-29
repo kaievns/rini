@@ -20,11 +20,19 @@ pub enum ServiceCommands {
     /// Uninstall the per-user launchd service
     Uninstall,
     /// Start (or bootstrap) the service
-    Start,
+    Start {
+        /// Move the service to this binary when it runs one at another path
+        #[arg(long = "move")]
+        allow_move: bool,
+    },
     /// Stop (or bootout/kill) the service
     Stop,
     /// Restart the service (kickstart -k)
-    Restart,
+    Restart {
+        /// Move the service to this binary when it runs one at another path
+        #[arg(long = "move")]
+        allow_move: bool,
+    },
 }
 
 pub fn handle_service_command(cmd: &ServiceCommands) -> Result<&'static str, String> {
@@ -35,13 +43,13 @@ pub fn handle_service_command(cmd: &ServiceCommands) -> Result<&'static str, Str
         ServiceCommands::Uninstall => service_uninstall()
             .map(|_| "Service uninstalled.")
             .map_err(|e| format!("Failed to uninstall service: {}", e)),
-        ServiceCommands::Start => service_start()
+        ServiceCommands::Start { allow_move } => service_start(*allow_move)
             .map(|_| "Service started.")
             .map_err(|e| format!("Failed to start service: {}", e)),
         ServiceCommands::Stop => service_stop()
             .map(|_| "Service stopped.")
             .map_err(|e| format!("Failed to stop service: {}", e)),
-        ServiceCommands::Restart => service_restart()
+        ServiceCommands::Restart { allow_move } => service_restart(*allow_move)
             .map(|_| "Service restarted.")
             .map_err(|e| format!("Failed to restart service: {}", e)),
     }
@@ -139,11 +147,38 @@ fn launch(plan: Launch, plist_path: &Path) -> io::Result<()> {
 ///
 /// Skipped without `USER` and `PATH` in the environment, which the plist is built from; an existing
 /// plist is then left as it is rather than rewritten with gaps.
-fn refresh_plist(plist_path: &Path) -> io::Result<bool> {
+fn refresh_plist(plist_path: &Path, allow_move: bool) -> io::Result<bool> {
     if env::var_os("USER").is_some() && env::var_os("PATH").is_some() {
-        ensure_plist_up_to_date(plist_path)
+        ensure_plist_up_to_date(plist_path, allow_move)
     } else {
         Ok(false)
+    }
+}
+
+/// The binary a plist written by `plist_xml` runs.
+fn program_in_plist(plist: &str) -> Option<&str> {
+    let after_key = &plist[plist.find("<key>ProgramArguments</key>")?..];
+    let start = after_key.find("<string>")? + "<string>".len();
+    let len = after_key[start..].find("</string>")?;
+    Some(&after_key[start..start + len])
+}
+
+/// Refuses to move the service to a binary at another path unless asked to.
+///
+/// macOS ties Accessibility and Screen Recording to the binary's path as well as its signature, so a
+/// move costs a re-grant of both even for a build signed the same way. See `docs/signing.md`.
+fn check_binary_move(
+    installed: Option<&str>,
+    invoked: &str,
+    allow_move: bool,
+) -> Result<(), String> {
+    match installed {
+        Some(installed) if installed != invoked && !allow_move => Err(format!(
+            "the service runs {installed}, and this binary is {invoked}. macOS ties Accessibility \
+             and Screen Recording to the binary's path, so moving the service means granting both \
+             again. Run `{installed} service ...` instead, or pass --move to move it."
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -280,11 +315,14 @@ pub fn service_install_internal(plist_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn ensure_plist_up_to_date(plist_path: &Path) -> io::Result<bool> {
+fn ensure_plist_up_to_date(plist_path: &Path, allow_move: bool) -> io::Result<bool> {
     let desired = plist_contents()?;
     match fs::read_to_string(plist_path) {
         Ok(existing) if existing == desired => Ok(false),
-        Ok(_) => {
+        Ok(existing) => {
+            let invoked = program_in_plist(&desired).unwrap_or_default();
+            check_binary_move(program_in_plist(&existing), invoked, allow_move)
+                .map_err(|message| io::Error::new(io::ErrorKind::PermissionDenied, message))?;
             write_file_atomic(plist_path, &desired)?;
             Ok(true)
         }
@@ -326,7 +364,7 @@ pub fn service_uninstall() -> io::Result<()> {
 }
 
 /// Start the service on the build running this command.
-pub fn service_start() -> io::Result<()> {
+pub fn service_start(allow_move: bool) -> io::Result<()> {
     let plist_path = plist_path()?;
     if !plist_path.is_file() {
         service_install_internal(&plist_path).map_err(|e| {
@@ -340,7 +378,7 @@ pub fn service_start() -> io::Result<()> {
             )
         })?;
     }
-    let plist_changed = refresh_plist(&plist_path)?;
+    let plist_changed = refresh_plist(&plist_path, allow_move)?;
     launch(
         launch_plan(service_is_loaded(), plist_changed, false),
         &plist_path,
@@ -348,7 +386,7 @@ pub fn service_start() -> io::Result<()> {
 }
 
 /// Restart the service on the build running this command.
-pub fn service_restart() -> io::Result<()> {
+pub fn service_restart(allow_move: bool) -> io::Result<()> {
     let plist_path = plist_path()?;
     if !plist_path.is_file() {
         return Err(io::Error::new(
@@ -356,7 +394,7 @@ pub fn service_restart() -> io::Result<()> {
             format!("service file '{}' is not installed", plist_path.display()),
         ));
     }
-    let plist_changed = refresh_plist(&plist_path)?;
+    let plist_changed = refresh_plist(&plist_path, allow_move)?;
     launch(
         launch_plan(service_is_loaded(), plist_changed, true),
         &plist_path,
@@ -467,6 +505,51 @@ mod tests {
         );
         assert!(plist.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
         assert!(plist.contains("<plist version=\"1.0\">"));
+    }
+
+    /// The reported case: a rollback pointed the service at a build in another directory, and every
+    /// such move cost a re-grant. Refused unless asked for, naming both paths.
+    #[test]
+    fn a_binary_at_another_path_does_not_take_over_the_service_unasked() {
+        let installed = "/Users/k/projects/rini/target/release/rini";
+        let other = "/Users/k/projects/rini/target-3ad0d60/release/rini";
+
+        let refused = check_binary_move(Some(installed), other, false).unwrap_err();
+        assert!(refused.contains(installed) && refused.contains(other));
+        assert!(refused.contains("--move"));
+        assert_eq!(check_binary_move(Some(installed), other, true), Ok(()));
+    }
+
+    /// Refused before anything is written: the plist still runs the binary it did.
+    #[test]
+    fn a_refused_move_leaves_the_installed_plist_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plist_path = tmp.path().join("git.kaievns.rini.plist");
+        let installed = plist_xml("/somewhere/else/rini", "/usr/bin", "kai");
+        fs::write(&plist_path, &installed).unwrap();
+
+        let refused = ensure_plist_up_to_date(&plist_path, false).unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&plist_path).unwrap(), installed);
+
+        assert!(ensure_plist_up_to_date(&plist_path, true).unwrap());
+        let moved = fs::read_to_string(&plist_path).unwrap();
+        assert_ne!(program_in_plist(&moved), Some("/somewhere/else/rini"));
+    }
+
+    /// The same path is not a move, and a plist naming no binary has none to protect.
+    #[test]
+    fn the_same_binary_or_no_installed_one_is_not_a_move() {
+        let rini = "/Users/k/projects/rini/target/release/rini";
+        assert_eq!(check_binary_move(Some(rini), rini, false), Ok(()));
+        assert_eq!(check_binary_move(None, rini, false), Ok(()));
+    }
+
+    #[test]
+    fn the_installed_binary_is_read_back_from_the_plist() {
+        let plist = plist_xml("/opt/homebrew/bin/rini", "/usr/bin:/bin", "kai");
+        assert_eq!(program_in_plist(&plist), Some("/opt/homebrew/bin/rini"));
+        assert_eq!(program_in_plist("<plist></plist>"), None);
     }
 
     #[test]
