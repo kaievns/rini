@@ -22,6 +22,8 @@ this crate just to hold a number.
 ## Measured behaviour
 
 Levels, capture options and notification semantics are recorded in
-[`src/animation/docs/capture-overlay-research.md`](../../../src/animation/docs/capture-overlay-research.md).
+[`src/animation/docs/capture-overlay-research.md`](../../../src/animation/docs/capture-overlay-research.md),
+and `SLSCaptureWindowsContentsToRectWithOptions` on the menu extras in
+[`src/bar/docs/menu-extras.md`](../../../src/bar/docs/menu-extras.md).
 Private API behaviour is measured rather than documented upstream, so a claim here
 without a measurement behind it should be distrusted.

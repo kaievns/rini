@@ -492,6 +492,15 @@ unsafe extern "C" {
         window_count: c_int,
         options: u32,
     ) -> *mut CFArray<CGImage>;
+    /// One picture of the windows, off-screen ones included; with `rect` `CGRectNull`, of their union.
+    pub fn SLSCaptureWindowsContentsToRectWithOptions(
+        cid: cid_t,
+        window_list: *const u32,
+        window_count: c_int,
+        rect: CGRect,
+        options: u32,
+        image: *mut *mut CGImage,
+    ) -> CGError;
 
     pub fn SLSSetWindowLevel(cid: cid_t, wid: u32, level: c_int) -> CGError;
     pub fn SLSOrderWindow(cid: cid_t, wid: u32, order: c_int, relative_to: u32) -> CGError;

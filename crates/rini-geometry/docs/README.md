@@ -6,7 +6,7 @@ every layout decision needs. Pure, and the only crate that tests without linking
 
 ## What it owns
 
-`CGRectExt` (`mid`, `intersection`, `area`, `contains`, `contains_rect`), `Round`,
+`CGRectExt` (`mid`, `intersection`, `union`, `area`, `contains`, `contains_rect`), `Round`,
 `SameAs` and `IsWithin` for float comparison, `centered_in`, `is_off_screen` and
 `park_entry_frame`.
 

@@ -504,6 +504,10 @@ pub fn get_num(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) ->
     dict.get(key)?.downcast::<CFNumber>().ok()?.as_i64()
 }
 
+pub fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
+    Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
+}
+
 /// Reads a `kCGWindowBounds` dictionary, whose keys are the plain strings X, Y, Width and Height.
 ///
 /// Parsed by hand because the geometry helper that would do this is not exposed by the bindings in

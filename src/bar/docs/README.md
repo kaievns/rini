@@ -12,7 +12,7 @@ the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 | **What each bar shows** | `domain/model.rs`: `BarInput` in from the reactor, `BarModel` out, `Action` back |
 | **Where each piece goes** | `domain/layout.rs`: spans by ink, the underline, and the hit test |
 | **How each piece is set** | `domain/style.rs` and `domain/palette.rs` |
-| **Which menu extras are drawn** | `domain/extras.rs`: vitals, tray and skipped, the twin-block rule, ink columns |
+| **Which menu extras are drawn** | `domain/extras.rs`: vitals, tray and skipped, the twin-block rule, ink columns, cutting a capture apart, the change test and the tick |
 | **The words** | `domain/format.rs`, and `domain/glyphs.rs` with its table `domain/app_glyphs.tsv` |
 | **The windows** | `platform/actor.rs` on the main thread, `platform/panel.rs`, `platform/text.rs` |
 | **The menu extras' pictures** | `platform/menu_extras.rs`, a thread of its own |
