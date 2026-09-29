@@ -28,11 +28,15 @@ pid, and its only property is the title. The owning app's Accessibility `AXExtra
 it. Each child's centre x equals the window's centre x, and the sweep costs 295ms over the 12 apps
 that have extras. The bar does not use this yet.
 
-**Which display's.** The bar keeps the windows whose centre x is within the main display's width
-(`CGMainDisplayID`), then selects. That rule is inferred, not measured: only the built-in display
-was attached. Two things are unchecked. One is whether a second display's menu bar carries its own
-set of extras. The other is a display above or below the main one: it shares the main display's x
-range, so its extras would pass the rule too.
+**Which display's.** The bar keeps the windows on the display whose menu bar is active
+(`SLSCopyActiveMenuBarDisplayIdentifier`, or `CGMainDisplayID` when that cannot be read), then
+selects. A window is on it when its centre x is within the display's width and its top edge is in
+the band along the display's top: from the window's height above it, where a hidden menu bar keeps
+it (`y = -33` here), down to the top itself. The band is what tells two stacked displays apart,
+since they share an x range. Only the built-in display was attached, so three things are inferred,
+not measured: that the extras move to whichever display's menu bar is active, that a shown menu
+bar's extras sit at the display's top, and that a second display's menu bar carries no set of its
+own.
 
 ## Capturing them
 
@@ -60,15 +64,26 @@ the bar reads the ink from the pixels instead.
 
 ## A pass
 
-Once a second the `bar-extras` thread lists the status windows, keeps the main display's, selects,
+Once a second the `bar-extras` thread lists the status windows, keeps the active menu bar's, selects,
 captures the selection in one call and cuts it apart. The composite is the union of the selection's
 bounds at one scale: 892 x 66 pixels for 12 extras over 446 x 33pt at 2x, every one cut out whole.
 Its pixels are read once into an RGBA bitmap of the bar's own. That gives each extra's columns, and
 so its ink, and a hash of its pixels. An extra with no ink is left out.
 
 The extras are sent only when the windows, their kinds or their order differ from the last send, or
-any hash does. The first pass always sends; a failed capture sends nothing, and the next tick tries
-again. Paused, the thread waits on its channel and neither lists nor captures.
+any hash does. An extra whose window, kind and hash match one in the last send goes with the picture
+sent then. The bar sets a layer's contents only when its picture is another one, so only the extras
+that changed are redrawn. A kept picture holds on to the capture it was cut from, since a crop of a
+`CGImage` refers to its parent: at most one capture per extra drawn, each 892 x 66 pixels, 235KB at
+4 bytes a pixel, for the 12 above. The first pass always sends; a failed capture sends nothing, and
+the next tick tries again.
+
+Paused, the thread waits on its channel and neither lists nor captures. The pause is also a flag the
+thread reads just before it captures, so a flight that starts after a pass has listed calls that
+capture off, and the picture is taken as soon as the flight settles. The flag is set when the bar's
+actor hears of the flight, on the main thread's next turn after the flight engine reports it. A
+capture already inside its call when the flag is set runs to its end, one to three frames; nothing
+short of holding the flight back could stop it.
 
 Medians over 10 passes, with sketchybar still capturing its own copies, at a load average of 9 to
 11:
