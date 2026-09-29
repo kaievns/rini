@@ -120,10 +120,12 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 	"NSCursor",
 	"NSEvent",
 	"NSFont",
+	# NSFont::monospacedSystemFontOfSize_weight and the weight constants, the bar's stand-in face.
+	"NSFontDescriptor",
 	"NSGraphics",
 	"NSGraphicsContext",
 	"NSImage",
-	# Gates NSImage::CGImageForProposedRect, which turns an app icon into pixels a layer can draw.
+	# Enables NSImage::CGImageForProposedRect, which turns an app icon into pixels a layer can draw.
 	"NSImageRep",
 	"NSMenu",
 	"NSMenuItem",
@@ -193,7 +195,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 	"NSEnumerator",
 	"NSAttributedString",
 	"NSDistributedNotificationCenter",
-	# NSGeometry plus objc2-core-foundation gate NSValue::valueWithPoint, which is how a CGPoint is
+	# NSGeometry plus objc2-core-foundation enable NSValue::valueWithPoint, which is how a CGPoint is
 	# handed to a CABasicAnimation's from/to values for the Core Animation-driven canvas movement.
 	"NSGeometry",
 	"NSString",
@@ -236,7 +238,7 @@ objc2-core-media = { version = "0.3.2", default-features = false, features = [
 	"objc2-core-video",
 ] }
 objc2-core-video = { version = "0.3.2", default-features = false, features = [
-	# CVBase and CVReturn gate CVPixelBufferLockBaseAddress, which the capture-fill check reads through.
+	# CVBase and CVReturn enable CVPixelBufferLockBaseAddress, which the capture-fill check reads through.
 	"CVBase",
 	"CVBuffer",
 	"CVReturn",
@@ -247,7 +249,7 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-io-surface = { version = "0.3.2", default-features = false, features = [
 	"IOSurfaceRef",
-	# IOSurfaceTypes and libc gate IOSurfaceLock, which the capture copy (`own_copy` in
+	# IOSurfaceTypes and libc enable IOSurfaceLock, which the capture copy (`own_copy` in
 	# snapshot_service.rs) needs to read the pool's surface and write ours.
 	"IOSurfaceTypes",
 	"libc",
