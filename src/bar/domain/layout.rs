@@ -21,9 +21,9 @@ pub const HEIGHT: f64 = 32.0;
 /// Applications drawn for the shown workspace before the rest fold behind a count.
 pub const MAX_GLYPHS: usize = 5;
 
-/// Baselines, from the bar's top edge. Numerals are 14pt and sit lower than the 12-13pt text.
-pub const NUMERAL_BASELINE: f64 = 22.0;
-pub const TEXT_BASELINE: f64 = 20.0;
+/// Baselines, from the bar's top edge. The 14pt numerals sit a point higher than the 12-13pt text.
+pub const NUMERAL_BASELINE: f64 = 20.0;
+pub const TEXT_BASELINE: f64 = 21.0;
 /// Application glyphs are marks, not letters, so they are centred on their own ink at this height.
 pub const GLYPH_CENTRE: f64 = 15.75;
 /// The hairlines between zones: top and height.
@@ -32,15 +32,15 @@ pub const HAIRLINE_HEIGHT: f64 = 14.0;
 /// The shown workspace's rule, flush with the bottom edge.
 pub const UNDERLINE_HEIGHT: f64 = 2.0;
 
-/// Screen edge to the first numeral's ink: the bar's own 8pt inset and the numeral's 8pt padding.
-const LEFT_EDGE: f64 = 8.0;
+/// Screen edge to where the first numeral's padding starts.
+const LEFT_EDGE: f64 = 9.5;
 /// Between one workspace's group and the next.
 const GROUP_GAP: f64 = 5.0;
 
 /// Screen edge to the end of the time's ink.
 const TIME_TO_EDGE: f64 = 27.0;
-const DATE_TO_TIME: f64 = 14.0;
-const DIVIDER_TO_DATE: f64 = 10.0;
+const DATE_TO_TIME: f64 = 16.0;
+const DIVIDER_TO_DATE: f64 = 11.5;
 const VITAL_TO_DIVIDER: f64 = 10.0;
 /// Between the vitals, and either side of the chevron. The old bar measured 17.5 and 14 between the
 /// vitals and 16 and 22 either side of the chevron; its padding could not be made even, this can.
@@ -176,13 +176,13 @@ pub fn lay_out(
 /// padding and the second's left, plus `GROUP_GAP` after each workspace.
 fn pads(piece: Piece, bar: &DisplayBar) -> (f64, f64) {
     match piece {
-        Piece::Numeral(_) => (8.0, 8.0),
-        Piece::Glyph(index) if bar.glyphs.get(index).is_some_and(|glyph| glyph.lit) => (8.0, 8.0),
-        Piece::Glyph(_) => (2.0, 2.0),
+        Piece::Numeral(_) => (8.5, 8.5),
+        Piece::Glyph(index) if bar.glyphs.get(index).is_some_and(|glyph| glyph.lit) => (8.0, 9.0),
+        Piece::Glyph(_) => (2.5, 2.5),
         Piece::More => (0.0, 8.0),
-        Piece::PlaceDivider => (5.0, 5.0),
-        Piece::FocusApp => (8.0, 8.0),
-        Piece::FocusDot => (5.0, 3.0),
+        Piece::PlaceDivider => (4.5, 5.0),
+        Piece::FocusApp => (9.0, 8.0),
+        Piece::FocusDot => (8.0, 3.0),
         Piece::FocusTitle => (3.0, 8.0),
         _ => (0.0, 0.0),
     }
@@ -339,38 +339,38 @@ mod tests {
         scene.span(b).unwrap().x0 - scene.span(a).unwrap().x1
     }
 
-    /// The left zone's rhythm, against the old bar: 16 from the edge, 21 between numerals, 16 from
-    /// the shown numeral to the lit glyph, 10 then 4 between glyphs.
+    /// The left zone's rhythm, against the old bar: 18 from the edge, 22 between numerals, 16.5 from
+    /// the shown numeral to the lit glyph, 11.5 then 5 between glyphs.
     #[test]
     fn the_left_zone_keeps_the_measured_rhythm() {
         let scene = scene();
-        assert_eq!(scene.span(Piece::Numeral(0)).unwrap().x0, 16.0);
-        assert_eq!(gap(&scene, Piece::Numeral(0), Piece::Numeral(1)), 21.0);
-        assert_eq!(gap(&scene, Piece::Numeral(1), Piece::Glyph(0)), 16.0);
-        assert_eq!(gap(&scene, Piece::Glyph(0), Piece::Glyph(1)), 10.0);
-        assert_eq!(gap(&scene, Piece::Glyph(1), Piece::Glyph(2)), 4.0);
-        assert_eq!(gap(&scene, Piece::Glyph(3), Piece::Numeral(2)), 15.0);
-        assert_eq!(gap(&scene, Piece::Numeral(2), Piece::Numeral(3)), 21.0);
+        assert_eq!(scene.span(Piece::Numeral(0)).unwrap().x0, 18.0);
+        assert_eq!(gap(&scene, Piece::Numeral(0), Piece::Numeral(1)), 22.0);
+        assert_eq!(gap(&scene, Piece::Numeral(1), Piece::Glyph(0)), 16.5);
+        assert_eq!(gap(&scene, Piece::Glyph(0), Piece::Glyph(1)), 11.5);
+        assert_eq!(gap(&scene, Piece::Glyph(1), Piece::Glyph(2)), 5.0);
+        assert_eq!(gap(&scene, Piece::Glyph(3), Piece::Numeral(2)), 16.0);
+        assert_eq!(gap(&scene, Piece::Numeral(2), Piece::Numeral(3)), 22.0);
     }
 
-    /// Divider, application, dot and title: 18, 13, 13, 6.
+    /// Divider, application, dot and title: 18, 14, 16, 6.
     #[test]
     fn the_focus_zone_follows_the_workspaces() {
         let scene = scene();
         assert_eq!(gap(&scene, Piece::Numeral(3), Piece::PlaceDivider), 18.0);
-        assert_eq!(gap(&scene, Piece::PlaceDivider, Piece::FocusApp), 13.0);
-        assert_eq!(gap(&scene, Piece::FocusApp, Piece::FocusDot), 13.0);
+        assert_eq!(gap(&scene, Piece::PlaceDivider, Piece::FocusApp), 14.0);
+        assert_eq!(gap(&scene, Piece::FocusApp, Piece::FocusDot), 16.0);
         assert_eq!(gap(&scene, Piece::FocusDot, Piece::FocusTitle), 6.0);
     }
 
-    /// The right zone from the edge in: 27, 14, 10, 10, then an even 16 between the vitals and either
-    /// side of the chevron, and 15 through the tray.
+    /// The right zone from the edge in: 27, 16, 11.5, 10, then an even 16 between the vitals and
+    /// either side of the chevron, and 15 through the tray.
     #[test]
     fn the_right_zone_keeps_the_measured_rhythm() {
         let scene = scene();
         assert_eq!(WIDTH - scene.span(Piece::Time).unwrap().x1, 27.0);
-        assert_eq!(gap(&scene, Piece::Date, Piece::Time), 14.0);
-        assert_eq!(gap(&scene, Piece::ClockDivider, Piece::Date), 10.0);
+        assert_eq!(gap(&scene, Piece::Date, Piece::Time), 16.0);
+        assert_eq!(gap(&scene, Piece::ClockDivider, Piece::Date), 11.5);
         assert_eq!(gap(&scene, Piece::Vital(Vital::Battery), Piece::ClockDivider), 10.0);
         assert_eq!(gap(&scene, Piece::Vital(Vital::Sound), Piece::Vital(Vital::Battery)), 16.0);
         assert_eq!(gap(&scene, Piece::Vital(Vital::WiFi), Piece::Vital(Vital::Sound)), 16.0);
@@ -384,8 +384,8 @@ mod tests {
     fn the_underline_spans_the_shown_group() {
         let scene = scene();
         let underline = scene.underline.unwrap();
-        assert_eq!(underline.x0, scene.span(Piece::Numeral(1)).unwrap().x0 - 8.0);
-        assert_eq!(underline.x1, scene.span(Piece::Glyph(3)).unwrap().x1 + 2.0);
+        assert_eq!(underline.x0, scene.span(Piece::Numeral(1)).unwrap().x0 - 8.5);
+        assert_eq!(underline.x1, scene.span(Piece::Glyph(3)).unwrap().x1 + 2.5);
     }
 
     #[test]
@@ -436,7 +436,7 @@ mod tests {
         let scene = lay_out(WIDTH, &bar, &fold(8, false), &right(), ink);
         assert!(scene.span(Piece::Glyph(5)).is_none());
         let more = scene.span(Piece::More).unwrap();
-        assert_eq!(gap(&scene, Piece::Glyph(4), Piece::More), 2.0);
+        assert_eq!(gap(&scene, Piece::Glyph(4), Piece::More), 2.5);
         assert_eq!(scene.hit(more.x0 + 1.0), Some(Target::Fold));
         assert_eq!(scene.underline.unwrap().x1, more.x1 + 8.0);
     }

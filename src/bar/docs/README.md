@@ -41,29 +41,35 @@ only what changed. It stops while a flight runs. See `menu-extras.md`.
 ## Measured
 
 The spacing was read off the old bar's pixels on 2026-09-29, from a 2x capture of the built-in
-display, as ink runs above a luma threshold. Ink to ink, in points:
+display, as ink runs above a luma threshold, and this bar was measured the same way against it. Ink
+to ink, in points:
 
-| between | measured | used |
+| between | old bar | token |
 |---|---|---|
-| screen edge and the first numeral | 17.5 | 16 |
-| numerals | 21.5 | 21 |
-| the shown numeral and the lit glyph | 15.5 | 16 |
-| the lit glyph and the next, then glyphs | 11, then 4.5 to 5 | 10, then 4 |
+| screen edge and the first numeral | 17.5 | 18 |
+| numerals | 21.5 | 22 |
+| the shown numeral and the lit glyph | 15.5 | 16.5 |
+| the lit glyph and the next, then glyphs | 11, then 4.5 to 5 | 11.5, then 5 |
+| the last glyph and the next numeral | 17 | 16 |
 | the last numeral and the divider | 17.5 | 18 |
-| the divider and the application | 13.5 | 13 |
-| the application and the dot, the dot and the title | 15.5, 5.5 | 13, 6 |
+| the divider and the application | 13.5 | 14 |
+| the application and the dot, the dot and the title | 15.5, 5.5 | 16, 6 |
 | tray icons | 12.5 to 17, mean 14.4 | 15 |
 | either side of the chevron | 22, 16 | 16, 16 |
 | the vitals | 17.5, 14 | 16 |
-| the battery, the divider and the date | 10.5, 11 | 10, 10 |
-| the date and the time | 15.5 | 14 |
+| the battery, the divider and the date | 10.5, 11 | 10, 11.5 |
+| the date and the time | 15.5 | 16 |
 | the time and the screen edge | 27 | 27 |
 
-The measured figures run up to 1.5pt wide of the tokens because anti-aliased edges fall below the
-threshold. Where the old bar was uneven (the vitals, the chevron) the tokens are even on purpose.
+A text token is the old figure plus half a point: AppKit's device-metric ink runs about that far past
+the pixels the threshold keeps, so the first render, spaced to the old figures, measured half a point
+tight. Tray icons are spaced by ink read from their own pixels, so their token is the figure. Where
+the old bar was uneven (the vitals, the chevron) the tokens are even on purpose.
 
-Vertically, digit ink sat at 12 to 22pt from the top for the 14pt numerals and 11 to 20pt for the
-12-13pt text, which is where the baselines in `domain/layout.rs` come from.
+Vertically the old bar's digits sat 10 to 20pt from the top and its 12-13pt text 12 to 21pt, which
+is where the baselines in `domain/layout.rs` come from. An earlier reading had them upside down, 12
+to 22 and 11 to 20: its scan counted pixel rows from the bottom, which the ember underline, found at
+the top, gave away.
 
 ## Drawing
 
