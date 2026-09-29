@@ -80,6 +80,8 @@ impl SameAs for ic::CGSize {}
 
 pub trait CGRectExt {
     fn intersection(&self, other: &Self) -> Self;
+    /// The smallest rect holding both.
+    fn union(&self, other: &Self) -> Self;
     fn contains(&self, point: ic::CGPoint) -> bool;
     fn contains_rect(&self, other: Self) -> bool;
     fn area(&self) -> f64;
@@ -94,6 +96,17 @@ impl CGRectExt for ic::CGRect {
         ic::CGRect {
             origin: ic::CGPoint::new(min_x, min_y),
             size: ic::CGSize::new(f64::max(max_x - min_x, 0.), f64::max(max_y - min_y, 0.)),
+        }
+    }
+
+    fn union(&self, other: &Self) -> Self {
+        let min_x = f64::min(self.min().x, other.min().x);
+        let max_x = f64::max(self.max().x, other.max().x);
+        let min_y = f64::min(self.min().y, other.min().y);
+        let max_y = f64::max(self.max().y, other.max().y);
+        ic::CGRect {
+            origin: ic::CGPoint::new(min_x, min_y),
+            size: ic::CGSize::new(max_x - min_x, max_y - min_y),
         }
     }
 
@@ -235,6 +248,16 @@ mod tests {
         let i = a.intersection(&b);
         assert_eq!((i.size.width, i.size.height), (0.0, 0.0));
         assert_eq!(a.intersection(&rect(5.0, 5.0, 10.0, 10.0)).area(), 25.0);
+    }
+
+    #[test]
+    fn union_spans_both_rects_and_the_gap_between() {
+        let u = rect(0.0, -33.0, 38.0, 33.0).union(&rect(100.0, -33.0, 40.0, 33.0));
+        assert_eq!(u, rect(0.0, -33.0, 140.0, 33.0));
+        assert_eq!(
+            rect(5.0, 5.0, 1.0, 1.0).union(&rect(0.0, 0.0, 10.0, 10.0)),
+            rect(0.0, 0.0, 10.0, 10.0)
+        );
     }
 
     #[test]

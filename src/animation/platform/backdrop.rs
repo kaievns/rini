@@ -2,7 +2,7 @@
 //! the tiles. See "The wallpaper is not reliably a window" and "The bar has to be captured on its
 //! own" in `src/animation/docs/capture-overlay-research.md`.
 use crate::windows::platform::window_server::{
-    bounds_from_dict, get_num, get_windows_raw, overlaps,
+    bounds_from_dict, get_num, get_string, get_windows_raw, overlaps,
 };
 use objc2_core_foundation::{CFDictionary, CFString, CFType, CGRect};
 use objc2_core_graphics::{
@@ -10,10 +10,7 @@ use objc2_core_graphics::{
     kCGWindowNumber, kCGWindowOwnerName,
 };
 use rini_core::ids::WindowServerId;
-
-fn get_string(dict: &CFDictionary<CFString, CFType>, key: &'static CFString) -> Option<String> {
-    Some(dict.get(key)?.downcast::<CFString>().ok()?.to_string())
-}
+use rini_geometry::CGRectExt;
 
 /// The windows making up the desktop backdrop, and whether the wallpaper is among them.
 pub struct DesktopBackdrop {
@@ -113,23 +110,12 @@ pub fn bar_strip(display: CGRect) -> BarStrip {
             continue;
         };
         bounds = Some(match bounds {
-            Some(union) => union_rect(union, frame),
+            Some(union) => union.union(&frame),
             None => frame,
         });
         windows.push(WindowServerId::new(id as u32));
     }
     BarStrip { windows, bounds }
-}
-/// Smallest rect containing both.
-fn union_rect(a: CGRect, b: CGRect) -> CGRect {
-    let x0 = a.origin.x.min(b.origin.x);
-    let y0 = a.origin.y.min(b.origin.y);
-    let x1 = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
-    let y1 = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
-    CGRect::new(
-        objc2_core_foundation::CGPoint::new(x0, y0),
-        objc2_core_foundation::CGSize::new(x1 - x0, y1 - y0),
-    )
 }
 
 #[cfg(test)]
