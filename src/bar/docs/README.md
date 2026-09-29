@@ -124,11 +124,16 @@ matched to the display the way the ground's colour is.
 
 **The two movements.** Unfolding fades the newly shown glyphs in, 14/60s each, staggered 0.035s from
 the left, each held transparent until its turn. Folding fades them out from the right and only then
-folds. A click during that fade brings them back. Closing the tray slides the tray layer's bounds a
-whole tray's width to the right in 0.2s, eased out, so the icons go into the chevron and are clipped
-there; opening slides them back. The chevron does not move, and its glyph changes at once.
+folds. A click during either fade turns it round: each glyph goes on from the opacity on screen,
+held there until its turn, where starting from the far end would blink it first. Closing the tray
+slides the tray layer's bounds a whole tray's width to the right in 0.2s, eased out, so the icons go
+into the chevron and are clipped there; opening slides them back. The chevron does not move, and its
+glyph changes at once.
 
 **At rest** the actor holds one timer, for the minute. A second runs only while a fold fades out.
+Every wake reads the clock, one `localtime_r`, and redraws only if its minute moved, so a wake that
+crosses the boundary cannot leave the time a minute behind, and a bar coming back up is drawn with
+the time it woke to.
 
 **A missing font** is stood in for by the system's monospaced face at the same size and weight, and
 an application's glyph by its first letter. Each missing face is logged once.
