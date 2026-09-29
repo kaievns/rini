@@ -68,6 +68,7 @@ pub struct RaiseManager {
     /// Queued sequences waiting to be processed
     queued_sequences: VecDeque<RaiseRequest>,
     next_sequence_id: u64,
+    requests_seen: u64,
     warp: Box<dyn Fn(CGPoint)>,
 }
 
@@ -103,7 +104,17 @@ impl RaiseManager {
             }
         };
 
+        let mut was_busy = false;
         loop {
+            // Reported through the reactor, which reads the end of its own raises' focus echoes off it.
+            let busy = raise_manager.is_busy();
+            if was_busy && !busy {
+                events.send(WindowsEvent::RaisesIdle {
+                    requests_seen: raise_manager.requests_seen,
+                });
+            }
+            was_busy = busy;
+
             // Calculate next timeout timer if we have an active sequence.
             let timeout = if let Some(sequence) = &raise_manager.active_sequence {
                 sequence_timeout(sequence)
@@ -136,11 +147,16 @@ impl RaiseManager {
         }
     }
 
+    fn is_busy(&self) -> bool {
+        self.active_sequence.is_some() || !self.queued_sequences.is_empty()
+    }
+
     fn new(warp: impl Fn(CGPoint) + 'static) -> Self {
         Self {
             active_sequence: None,
             queued_sequences: VecDeque::new(),
             next_sequence_id: 1,
+            requests_seen: 0,
             warp: Box::new(warp),
         }
     }
@@ -148,6 +164,7 @@ impl RaiseManager {
     fn handle_message(&mut self, msg: Event) {
         match msg {
             Event::RaiseRequest(request) => {
+                self.requests_seen += 1;
                 debug!(
                     "Processing layout response with {} raise_windows",
                     request.raise_windows.len()
@@ -713,6 +730,34 @@ mod tests {
                 .map(|queued| queued.focus_window.map(|(window, _)| window))
                 .collect();
             assert_eq!(waiting, vec![Some(WindowId::new(1, 3))]);
+        });
+    }
+
+    /// Busy from the first request until the last focus raise completes, which is when the reactor
+    /// stops taking the focus reports that follow for its own.
+    #[test]
+    fn the_manager_is_idle_once_every_sequence_has_run() {
+        Executor::run(async {
+            let mut raise_manager = RaiseManager::new(|_| {});
+            let (app_handles, _app_rx) = create_test_app_handles();
+            assert!(!raise_manager.is_busy());
+
+            raise_manager.handle_message(create_layout_response(
+                vec![WindowId::new(1, 1)],
+                Some((WindowId::new(1, 2), None)),
+                app_handles,
+                Quiet::Yes,
+            ));
+            assert!(raise_manager.is_busy());
+            assert_eq!(raise_manager.requests_seen, 1);
+
+            for window in [WindowId::new(1, 1), WindowId::new(1, 2)] {
+                raise_manager.handle_message(Event::RaiseCompleted {
+                    window_id: window,
+                    sequence_id: 1,
+                });
+            }
+            assert!(!raise_manager.is_busy());
         });
     }
 

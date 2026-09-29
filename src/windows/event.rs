@@ -61,6 +61,11 @@ pub enum Event {
     RaiseTimeout {
         sequence_id: u64,
     },
+    /// The raise manager has nothing running or waiting, having received `requests_seen` raise
+    /// requests in all.
+    RaisesIdle {
+        requests_seen: u64,
+    },
 }
 
 /// Where the per-app actor delivers its events. Implemented for any channel whose message type

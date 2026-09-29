@@ -14,16 +14,19 @@ use rini_core::ids::{WindowId, pid_t};
 /// The window meant to end up focused is never swallowed. Cascade measured in
 /// `src/animation/docs/capture-overlay-research.md`, "The offset is honest, and it still moved eight times per press".
 ///
-/// A raise a newer one replaced still echoes: raises run one at a time, so in a burst of presses an old
-/// one runs late and macOS reports its windows after the newer raise was recorded. Those reports are
-/// swallowed for `SUPERSEDED` after the replacement, unless the window is the newest raise's target.
+/// Raises run one at a time, so in a burst of presses they run late, and a raise a newer one replaced
+/// still echoes. So every window rini's raises touched or focused since the raise manager was last idle
+/// is an echo until it goes idle again and the cascade has had `WINDOW` to finish. See "Rapid presses"
+/// in `specs/focus.md`.
 #[derive(Debug, Default)]
 pub struct RaiseEcho {
     windows: Vec<WindowId>,
     since: Option<Instant>,
     target: Option<WindowId>,
-    /// Every window an earlier raise touched or focused, with when a newer raise replaced it.
-    superseded: Vec<(WindowId, Instant)>,
+    /// Raise requests sent, so an idle report the raise manager made before seeing the latest one is
+    /// not taken for the end of it.
+    sent: u64,
+    idle_at: Option<Instant>,
 }
 
 impl RaiseEcho {
@@ -31,9 +34,17 @@ impl RaiseEcho {
     /// that follows the keystroke.
     const WINDOW: Duration = Duration::from_millis(400);
 
-    /// How long a replaced raise's reports stay echoes. Late reports arrived up to 0.9s after their
-    /// press in a replayed burst; see "Rapid presses" in `specs/focus.md`.
-    const SUPERSEDED: Duration = Duration::from_secs(1);
+    /// How long echoes are believed if the raise manager never reports idle. The longest drain seen
+    /// after a burst was 2.3s past the last press.
+    const BUSY_LIMIT: Duration = Duration::from_secs(5);
+
+    fn believed_until(&self) -> Option<Instant> {
+        let since = self.since?;
+        Some(match self.idle_at {
+            Some(idle) => idle.max(since) + Self::WINDOW,
+            None => since + Self::BUSY_LIMIT,
+        })
+    }
 
     /// Records the windows a raise is about to touch, superseding the previous raise.
     pub fn expect(
@@ -42,31 +53,32 @@ impl RaiseEcho {
         target: Option<WindowId>,
         now: Instant,
     ) {
-        let replaced: Vec<WindowId> =
-            std::mem::take(&mut self.windows).into_iter().chain(self.target).collect();
-        for window in replaced {
-            match self.superseded.iter_mut().find(|(w, _)| *w == window) {
-                Some(entry) => entry.1 = now,
-                None => self.superseded.push((window, now)),
+        if self.believed_until().is_none_or(|until| now >= until) {
+            self.windows.clear();
+        }
+        let replaced = self.target.take();
+        for window in raised.chain(replaced) {
+            if !self.windows.contains(&window) {
+                self.windows.push(window);
             }
         }
-        self.superseded.retain(|&(window, at)| {
-            Some(window) != target && now.duration_since(at) < Self::SUPERSEDED
-        });
-        self.windows = raised.filter(|window| Some(*window) != target).collect();
+        self.windows.retain(|window| Some(*window) != target);
         self.since = Some(now);
         self.target = target;
+        self.sent += 1;
+        self.idle_at = None;
+    }
+
+    /// The raise manager has nothing running or waiting, having received `seen` requests.
+    pub fn idle(&mut self, seen: u64, now: Instant) {
+        if seen >= self.sent {
+            self.idle_at = Some(now);
+        }
     }
 
     /// Whether this focus report is rini's own raise coming back, rather than the user going somewhere.
     pub fn swallows(&self, window: WindowId, now: Instant) -> bool {
-        let this_raise = self.since.is_some_and(|since| now.duration_since(since) < Self::WINDOW)
-            && self.windows.contains(&window);
-        let a_replaced_raise = self
-            .superseded
-            .iter()
-            .any(|&(w, at)| w == window && now.duration_since(at) < Self::SUPERSEDED);
-        this_raise || a_replaced_raise
+        self.believed_until().is_some_and(|until| now < until) && self.windows.contains(&window)
     }
 }
 
@@ -460,6 +472,7 @@ mod tests {
             let now = Instant::now();
             let mut echo = RaiseEcho::default();
             echo.expect([wid(68)].into_iter(), Some(wid(58)), now);
+            echo.idle(1, now + Duration::from_millis(20));
             assert!(echo.swallows(wid(68), now + Duration::from_millis(276)));
             assert!(!echo.swallows(wid(68), now + Duration::from_millis(500)));
         }
@@ -488,8 +501,8 @@ mod tests {
             base + Duration::from_millis(millis)
         }
 
-        /// The reported case: three presses, three raises. The first one's target is reported after
-        /// the third raise was recorded, and must not pull the focus back to it.
+        /// The reported case: three presses, three raises, run late. The earlier targets are reported
+        /// after the third raise was recorded, while the raise manager is still working through them.
         #[test]
         fn a_replaced_raises_target_reported_late_is_an_echo() {
             let base = Instant::now();
@@ -499,24 +512,39 @@ mod tests {
             echo.expect([a, b, c].into_iter(), Some(b), at(base, 150));
             echo.expect([a, b, c].into_iter(), Some(c), at(base, 300));
 
-            assert!(echo.swallows(a, at(base, 900)), "a's late report");
-            assert!(echo.swallows(b, at(base, 900)), "b's late report");
+            assert!(echo.swallows(a, at(base, 2300)), "a's report, 2s late");
+            assert!(echo.swallows(b, at(base, 2300)), "b's report");
             assert!(
-                !echo.swallows(c, at(base, 900)),
+                !echo.swallows(c, at(base, 2300)),
                 "the newest target always lands"
             );
         }
 
-        /// Once the burst is well over, a report for any of those windows is the user again.
+        /// Once the raise manager is idle and the cascade is over, a report is the user again.
         #[test]
-        fn a_replaced_raise_stops_echoing_after_a_second() {
+        fn the_echoes_end_once_the_raises_have_run() {
             let base = Instant::now();
             let (a, b) = (WindowId::new(1, 1), WindowId::new(1, 2));
             let mut echo = RaiseEcho::default();
             echo.expect([a, b].into_iter(), Some(a), base);
             echo.expect([a, b].into_iter(), Some(b), at(base, 100));
+            echo.idle(2, at(base, 2000));
 
-            assert!(!echo.swallows(a, at(base, 1200)));
+            assert!(echo.swallows(a, at(base, 2300)), "still inside the cascade");
+            assert!(!echo.swallows(a, at(base, 2500)));
+        }
+
+        /// An idle report made before the raise manager saw the newest request is not the end of it.
+        #[test]
+        fn an_idle_report_from_before_the_newest_raise_is_ignored() {
+            let base = Instant::now();
+            let (a, b) = (WindowId::new(1, 1), WindowId::new(1, 2));
+            let mut echo = RaiseEcho::default();
+            echo.expect([a, b].into_iter(), Some(a), base);
+            echo.expect([a, b].into_iter(), Some(b), at(base, 100));
+            echo.idle(1, at(base, 120));
+
+            assert!(echo.swallows(a, at(base, 1500)));
         }
 
         /// Going back to a window is a new raise with it as the target, which always lands.
@@ -531,6 +559,19 @@ mod tests {
 
             assert!(!echo.swallows(a, at(base, 300)));
             assert!(echo.swallows(b, at(base, 300)), "b is now the replaced one");
+        }
+
+        /// A new burst after the last one settled starts clean: nothing from before is an echo.
+        #[test]
+        fn a_burst_after_the_raises_settled_starts_clean() {
+            let base = Instant::now();
+            let (a, b, c) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+            let mut echo = RaiseEcho::default();
+            echo.expect([a].into_iter(), Some(b), base);
+            echo.idle(1, at(base, 100));
+            echo.expect([c].into_iter(), Some(c), at(base, 3000));
+
+            assert!(!echo.swallows(a, at(base, 3100)));
         }
     }
 

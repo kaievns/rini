@@ -38,16 +38,21 @@ more than a "correct" choice by the layout.
   each waited up to 250ms for its app. So:
   - a raise still waiting when a newer focus raise covers all its windows MUST be dropped rather than
     run late;
-  - a focus report for any window an earlier raise touched or focused MUST count as rini's own echo
-    for a second after a newer raise replaced it, unless that window is the newest raise's target.
-- A click on one of those windows within that second focuses it without the strip following. That is
-  the cost of the rule.
+  - a focus report for any window rini's raises touched or focused MUST count as rini's own echo
+    until the raise manager has nothing left running or waiting, and 400ms more for the cascade,
+    unless that window is the newest raise's target. If the raise manager never reports that, the
+    echoes stop being believed 5s after the newest raise.
+- A click on one of those windows before then focuses it without the strip following. That is the
+  cost of the rule.
 
 > **Reported 2026-09-28.** "a rapid pressing of ctrl-j/l to navigate creates back and fourth jerking
 > mode". **Reported again 2026-09-29.** "now fix the rapid navigation buttons pressing animation
 > confusion". Replaying one of the reported bursts as real Ctrl-J/L key events (Right ×13, then Left ×6,
 > 60–570ms apart) turned the strip back three times. Each time it was a late report for a window an
 > earlier press had focused. The worst came 1.2s after the last press, a 3732pt flight backwards.
+> A first fix kept a replaced raise's windows as echoes for 1s. Replaying the same burst on it, the
+> strip no longer turned back mid-burst, but raises were still running 2.3s after the last press and
+> their reports moved it twice more. So the echo now lasts until the raises have run.
 
 ## Cycling
 

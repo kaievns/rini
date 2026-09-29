@@ -1082,11 +1082,22 @@ then Left x6, 60-570ms apart) on nine windows:
              last press
 ```
 
-Two changes, both in the same commit. A waiting raise is dropped when a newer focus
-raise covers all its windows, so a burst no longer queues one late focus per press.
-And `RaiseEcho` keeps every window a replaced raise touched or focused as an echo for
-1s after the replacement, unless it is the newest target. The cost grows to match: a
-click on one of those windows within that second does not scroll the strip to it.
+Two changes. A waiting raise is dropped when a newer focus raise covers all its
+windows. That rarely fires in a strip: each press raises only the windows on screen at
+its own scroll position, so consecutive raises cover different windows. The change that
+holds is in `RaiseEcho`: every window rini's raises touched or focused stays an echo
+until the raise manager reports it has nothing running or waiting (`RaisesIdle`), plus
+the 400ms cascade, unless it is the newest target.
+
+A fixed window was tried first. Echoes from replaced raises lasted 1s after the
+replacement. Replayed on the same burst, the strip stopped turning back mid-burst, but
+sequences were still timing out 2.3s after the last press (sequence 19 at 2:42:27.063)
+and two of their reports moved it after the burst. Any fixed window is a guess at how
+long the queue takes to drain; the raise manager knows.
+
+The idle report carries how many requests the manager had received, and the reactor
+ignores one that predates its latest raise. The cost: a click on a window rini just
+raised, before its raises finish, focuses it without the strip following.
 
 ## A workspace switch is not a strip movement
 

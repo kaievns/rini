@@ -312,6 +312,11 @@ pub enum Event {
         sequence_id: u64,
     },
 
+    /// The raise manager has nothing running or waiting. See `RaiseEcho::idle`.
+    RaisesIdle {
+        requests_seen: u64,
+    },
+
     #[serde(skip)]
     Query(query::QueryRequest),
 
@@ -403,6 +408,7 @@ impl From<crate::windows::event::Event> for Event {
                 Event::RaiseCompleted { window_id, sequence_id }
             }
             W::RaiseTimeout { sequence_id } => Event::RaiseTimeout { sequence_id },
+            W::RaisesIdle { requests_seen } => Event::RaisesIdle { requests_seen },
         }
     }
 }
@@ -1411,6 +1417,10 @@ impl Reactor {
             }
             Event::RaiseTimeout { sequence_id } => {
                 return Ok(system_workflow::handle_raise_timeout(sequence_id)?);
+            }
+            Event::RaisesIdle { requests_seen } => {
+                self.raise_echo.idle(requests_seen, std::time::Instant::now());
+                return Ok(EventOutcome::no_change());
             }
             Event::ConfigUpdated(new_cfg) => {
                 return command_workflow::handle_config_updated(

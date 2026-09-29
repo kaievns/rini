@@ -1044,3 +1044,28 @@ fn a_late_report_for_an_earlier_press_does_not_pull_the_focus_back() {
         Some(third)
     );
 }
+
+/// When the raise manager reports it has finished, a report is the user again once the cascade is
+/// over, even for a window a press just raised.
+#[test]
+fn a_report_after_the_raises_have_run_is_followed() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let (first, second) = (WindowId::new(1, 1), WindowId::new(1, 2));
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+
+    reactor.handle_event(Event::RaisesIdle { requests_seen: u64::MAX });
+    std::thread::sleep(std::time::Duration::from_millis(450));
+    reactor.handle_event(Event::WindowServerFocusChanged(second, space));
+
+    assert_eq!(
+        reactor.layout_manager.layout_engine.focused_window(),
+        Some(second)
+    );
+}
