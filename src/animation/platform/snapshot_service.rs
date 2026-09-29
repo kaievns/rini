@@ -185,8 +185,11 @@ struct ServiceState {
 #[derive(Clone)]
 pub struct SnapshotService {
     state: Arc<Mutex<ServiceState>>,
-    /// Bumped on display or scale changes; results captured against an older revision are dropped.
+    /// Bumped on a scale change; window captures taken against an older revision are dropped.
     revision: Arc<AtomicU64>,
+    /// Bumped on a display change or a scale change; the desktop render only. A window's picture
+    /// belongs to no display.
+    desktop_revision: Arc<AtomicU64>,
     scale: Arc<Mutex<f64>>,
     /// Called on the capturing queue when a result has landed.
     notify: Arc<dyn Fn() + Send + Sync>,
@@ -197,15 +200,16 @@ impl SnapshotService {
         Self {
             state: Arc::new(Mutex::new(ServiceState::default())),
             revision: Arc::new(AtomicU64::new(0)),
+            desktop_revision: Arc::new(AtomicU64::new(0)),
             scale: Arc::new(Mutex::new(scale)),
             notify,
         }
     }
 
-    /// Invalidates everything in flight on a display change. See "A render of the wrong display,
-    /// drawn at its own size" in `src/animation/docs/capture-overlay-research.md`.
-    pub fn invalidate(&self) {
-        self.revision.fetch_add(1, Ordering::Release);
+    /// Invalidates the desktop render in flight on a display change. See "A render of the wrong
+    /// display, drawn at its own size" in `src/animation/docs/capture-overlay-research.md`.
+    pub fn invalidate_desktop(&self) {
+        self.desktop_revision.fetch_add(1, Ordering::Release);
     }
 
     /// Invalidates everything in flight when the backing scale changes.
@@ -216,6 +220,7 @@ impl SnapshotService {
         }
         *current = scale;
         self.revision.fetch_add(1, Ordering::Release);
+        self.desktop_revision.fetch_add(1, Ordering::Release);
     }
 
     fn scale(&self) -> f64 {
@@ -340,7 +345,7 @@ impl SnapshotService {
             state.desktop_in_flight = true;
         }
 
-        let revision = self.revision.load(Ordering::Acquire);
+        let revision = self.desktop_revision.load(Ordering::Acquire);
         let service = self.clone();
         let scale = self.scale();
         let block = RcBlock::new(move |content: *mut SCShareableContent, _error: *mut NSError| {
@@ -425,7 +430,7 @@ impl SnapshotService {
             let mut state = self.state.lock().unwrap();
             state.desktop_in_flight = false;
             match surface {
-                Some(surface) if revision == self.revision.load(Ordering::Acquire) => {
+                Some(surface) if revision == self.desktop_revision.load(Ordering::Acquire) => {
                     let Some(surface) = own_copy(&surface) else {
                         return;
                     };
@@ -661,6 +666,33 @@ mod tests {
     #[test]
     fn collect_is_empty_before_anything_lands() {
         assert!(service().collect().is_empty());
+    }
+
+    /// The reported case: with a second display attached, every flight on the other one changed the
+    /// engine's display, and the change dropped every window capture in flight, so windows went on
+    /// flying with no picture. Only the desktop render belongs to a display.
+    #[test]
+    fn a_display_change_drops_the_desktop_render_and_keeps_window_captures() {
+        let service = service();
+        let (windows, desktop) = (
+            service.revision.load(Ordering::Acquire),
+            service.desktop_revision.load(Ordering::Acquire),
+        );
+        service.invalidate_desktop();
+        assert_eq!(service.revision.load(Ordering::Acquire), windows);
+        assert!(service.desktop_revision.load(Ordering::Acquire) > desktop);
+    }
+
+    #[test]
+    fn a_scale_change_drops_both() {
+        let service = service();
+        let (windows, desktop) = (
+            service.revision.load(Ordering::Acquire),
+            service.desktop_revision.load(Ordering::Acquire),
+        );
+        service.set_scale(1.0);
+        assert!(service.revision.load(Ordering::Acquire) > windows);
+        assert!(service.desktop_revision.load(Ordering::Acquire) > desktop);
     }
 
     #[test]

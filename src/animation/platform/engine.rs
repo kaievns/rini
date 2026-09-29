@@ -875,8 +875,8 @@ impl FlightEngine {
         if first || changed {
             self.warm_cache();
             self.warm_desktop();
-            // Anything in flight, and the desktop render, belong to the display just left.
-            self.service.invalidate();
+            // The desktop render in flight belongs to the display just left; window captures do not.
+            self.service.invalidate_desktop();
             self.pictures.forget();
             self.arm_bar_refresh();
         }

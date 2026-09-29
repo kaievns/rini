@@ -79,6 +79,9 @@ destination for a window already moving.
   before anything flies. After a restart nothing moves, and a pass that moves nothing asked for no
   pictures, so the first flights had none to draw. Per window, not per display: apps are found one
   by one at startup, and the first pass on the display knew one window of 21.
+- A change of display MUST NOT drop the window pictures being captured. Only the desktop render belongs
+  to a display; with a second display attached, every flight on the other one threw the window captures
+  in flight away.
 
 > **Reported 2026-09-29.** "i also occassionally run into issues where windows are missing during the
 > animation, or maybe have holes in their screenshots... i just notice momentary gaps where only the

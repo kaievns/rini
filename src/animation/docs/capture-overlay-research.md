@@ -1863,8 +1863,13 @@ of:
 - `SnapshotService::set_scale` was the only invalidation, and it acts on the backing
   scale. Both displays here are 2x, so moving the overlay between them invalidated
   nothing, and a render already in flight for one display landed as the cached
-  desktop for the other. `SnapshotService::invalidate` now bumps a revision on a
-  display change so such a render cannot land, and the engine keeps the backdrop,
+  desktop for the other. `SnapshotService::invalidate_desktop` bumps the desktop
+  render's revision on a display change so such a render cannot land. It first
+  bumped the one revision every capture carried, which dropped every window
+  capture in flight too; a window's picture belongs to no display, and with two
+  displays attached each flight on the other one threw them away (2026-09-29:
+  the first layout passes after a restart asked for 51 pictures, and 14 windows
+  had one 11s later). The engine keeps the backdrop,
   desktop render and bar picture in one `DisplayPictures` forgotten as a unit: a
   display change used to clear only the bar, and the overlay drew an external
   display's 3008x1692 desktop behind a built-in display's strips on a 1728x1117
