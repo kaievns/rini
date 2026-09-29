@@ -1011,3 +1011,36 @@ mod a_panel_taking_the_focus_report {
         assert_eq!(quick_tap(&mut reactor, SwitchScope::App), Some(main()));
     }
 }
+
+/// The reported case: rapid Ctrl-L. An earlier press's target is reported focused after the next
+/// press, because its raise ran late, and the strip followed it backwards.
+#[test]
+fn a_late_report_for_an_earlier_press_does_not_pull_the_focus_back() {
+    let (mut apps, mut reactor) = test_context();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(3));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    assert_eq!(
+        reactor.layout_manager.layout_engine.focused_window(),
+        Some(third)
+    );
+
+    reactor.handle_event(Event::WindowServerFocusChanged(second, space));
+    assert_eq!(
+        reactor.layout_manager.layout_engine.focused_window(),
+        Some(third),
+        "the first press's late report is an echo"
+    );
+    reactor.handle_event(Event::WindowServerFocusChanged(third, space));
+    assert_eq!(
+        reactor.layout_manager.layout_engine.focused_window(),
+        Some(third)
+    );
+}

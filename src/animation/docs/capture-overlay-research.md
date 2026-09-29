@@ -1055,10 +1055,9 @@ target's own report is never dropped, so the press still lands. Costs: a click t
 lands on a just-raised window within 400ms of a keystroke does not scroll the strip
 to it.
 
-### What the remaining delay is
+### Late reports from raises a newer one replaced
 
-Worth recording so it is not mistaken for rini. Pressing right three times quickly
-produced a fourth animation a second later, and the log names the cause:
+Pressing right three times quickly produced a fourth animation a second later:
 
 ```
 1:04:45.347  cmd=MoveFocus(Right)
@@ -1066,8 +1065,28 @@ produced a fourth animation a second later, and the log names the cause:
 1:04:46.403  canvas animation
 ```
 
-macOS took most of a second to make the app frontmost. rini follows focus, so the
-strip moves when the activation lands, not when the key is pressed.
+This was first filed as macOS being slow and not rini's doing. It is rini's doing.
+The raise manager runs raise sequences one at a time, and each waits up to 250ms for
+its app to report back (`TIMEOUT_DURATION` in `src/windows/domain/raise.rs`). In a
+burst, one sequence queued per press, and each ran late. macOS then reported the old
+target focused, after the newer raise had replaced it in `RaiseEcho`, so rini read it
+as the user moving and the strip flew back to it.
+
+Measured 2026-09-29, replaying a reported burst as real Ctrl-J/L key events (Right x13,
+then Left x6, 60-570ms apart) on nine windows:
+
+```
+2:30:56.214  report for 14908:5556, mid Right run    strip -1787 -> 861   (back 3 columns)
+2:30:57.499  report for 2101:65, mid Left run        strip   813 -> 0     (against the run)
+2:30:59.061  report for 14908:5556, 1.2s after the   strip  4593 -> 861   (3732pt back)
+             last press
+```
+
+Two changes, both in the same commit. A waiting raise is dropped when a newer focus
+raise covers all its windows, so a burst no longer queues one late focus per press.
+And `RaiseEcho` keeps every window a replaced raise touched or focused as an echo for
+1s after the replacement, unless it is the newest target. The cost grows to match: a
+click on one of those windows within that second does not scroll the strip to it.
 
 ## A workspace switch is not a strip movement
 

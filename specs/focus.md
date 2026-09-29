@@ -31,6 +31,24 @@ more than a "correct" choice by the layout.
 > focused. The call window never entered the recency order, and cmd-` never found it as the current
 > window to rotate from.
 
+## Rapid presses
+
+- A press MUST move focus from where the previous press put it, and a burst MUST NOT carry the strip
+  backwards. macOS reports focus for rini's own raises late: raises run one at a time, and in a burst
+  each waited up to 250ms for its app. So:
+  - a raise still waiting when a newer focus raise covers all its windows MUST be dropped rather than
+    run late;
+  - a focus report for any window an earlier raise touched or focused MUST count as rini's own echo
+    for a second after a newer raise replaced it, unless that window is the newest raise's target.
+- A click on one of those windows within that second focuses it without the strip following. That is
+  the cost of the rule.
+
+> **Reported 2026-09-28.** "a rapid pressing of ctrl-j/l to navigate creates back and fourth jerking
+> mode". **Reported again 2026-09-29.** "now fix the rapid navigation buttons pressing animation
+> confusion". Replaying one of the reported bursts as real Ctrl-J/L key events (Right ×13, then Left ×6,
+> 60–570ms apart) turned the strip back three times. Each time it was a late report for a window an
+> earlier press had focused. The worst came 1.2s after the last press, a 3732pt flight backwards.
+
 ## Cycling
 
 - Cycling through a workspace's windows MUST wrap at both ends, in both directions.

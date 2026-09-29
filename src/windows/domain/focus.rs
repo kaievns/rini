@@ -13,16 +13,27 @@ use rini_core::ids::{WindowId, pid_t};
 /// macOS reports a focus change for every window a raise touches, and a raise walks the whole workspace.
 /// The window meant to end up focused is never swallowed. Cascade measured in
 /// `src/animation/docs/capture-overlay-research.md`, "The offset is honest, and it still moved eight times per press".
+///
+/// A raise a newer one replaced still echoes: raises run one at a time, so in a burst of presses an old
+/// one runs late and macOS reports its windows after the newer raise was recorded. Those reports are
+/// swallowed for `SUPERSEDED` after the replacement, unless the window is the newest raise's target.
 #[derive(Debug, Default)]
 pub struct RaiseEcho {
     windows: Vec<WindowId>,
     since: Option<Instant>,
+    target: Option<WindowId>,
+    /// Every window an earlier raise touched or focused, with when a newer raise replaced it.
+    superseded: Vec<(WindowId, Instant)>,
 }
 
 impl RaiseEcho {
     /// Long enough to outlast the cascade, which measured 276ms, and short enough not to swallow a click
     /// that follows the keystroke.
     const WINDOW: Duration = Duration::from_millis(400);
+
+    /// How long a replaced raise's reports stay echoes. Late reports arrived up to 0.9s after their
+    /// press in a replayed burst; see "Rapid presses" in `specs/focus.md`.
+    const SUPERSEDED: Duration = Duration::from_secs(1);
 
     /// Records the windows a raise is about to touch, superseding the previous raise.
     pub fn expect(
@@ -31,14 +42,31 @@ impl RaiseEcho {
         target: Option<WindowId>,
         now: Instant,
     ) {
+        let replaced: Vec<WindowId> =
+            std::mem::take(&mut self.windows).into_iter().chain(self.target).collect();
+        for window in replaced {
+            match self.superseded.iter_mut().find(|(w, _)| *w == window) {
+                Some(entry) => entry.1 = now,
+                None => self.superseded.push((window, now)),
+            }
+        }
+        self.superseded.retain(|&(window, at)| {
+            Some(window) != target && now.duration_since(at) < Self::SUPERSEDED
+        });
         self.windows = raised.filter(|window| Some(*window) != target).collect();
         self.since = Some(now);
+        self.target = target;
     }
 
     /// Whether this focus report is rini's own raise coming back, rather than the user going somewhere.
     pub fn swallows(&self, window: WindowId, now: Instant) -> bool {
-        self.since.is_some_and(|since| now.duration_since(since) < Self::WINDOW)
-            && self.windows.contains(&window)
+        let this_raise = self.since.is_some_and(|since| now.duration_since(since) < Self::WINDOW)
+            && self.windows.contains(&window);
+        let a_replaced_raise = self
+            .superseded
+            .iter()
+            .any(|&(w, at)| w == window && now.duration_since(at) < Self::SUPERSEDED);
+        this_raise || a_replaced_raise
     }
 }
 
@@ -437,7 +465,8 @@ mod tests {
         }
 
         /// Rapid presses: the second raise supersedes the first, and its own target must get through even
-        /// though the previous raise had it down as an echo.
+        /// though the previous raise had it down as an echo. The first raise is not forgotten: raises run
+        /// one at a time, so it can still run late and report the windows it touched.
         #[test]
         fn a_newer_raise_supersedes_the_one_before_it() {
             let now = Instant::now();
@@ -447,12 +476,61 @@ mod tests {
             echo.expect([wid(58), wid(92)].into_iter(), Some(wid(92)), later);
             assert!(!echo.swallows(wid(92), later), "the new target gets through");
             assert!(echo.swallows(wid(58), later), "and the new echoes are swallowed");
-            assert!(!echo.swallows(wid(68), later), "the old raise is forgotten");
+            assert!(echo.swallows(wid(68), later), "the replaced raise still echoes");
         }
 
         #[test]
         fn nothing_is_swallowed_before_any_raise() {
             assert!(!RaiseEcho::default().swallows(wid(68), Instant::now()));
+        }
+
+        fn at(base: Instant, millis: u64) -> Instant {
+            base + Duration::from_millis(millis)
+        }
+
+        /// The reported case: three presses, three raises. The first one's target is reported after
+        /// the third raise was recorded, and must not pull the focus back to it.
+        #[test]
+        fn a_replaced_raises_target_reported_late_is_an_echo() {
+            let base = Instant::now();
+            let (a, b, c) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+            let mut echo = RaiseEcho::default();
+            echo.expect([a, b, c].into_iter(), Some(a), base);
+            echo.expect([a, b, c].into_iter(), Some(b), at(base, 150));
+            echo.expect([a, b, c].into_iter(), Some(c), at(base, 300));
+
+            assert!(echo.swallows(a, at(base, 900)), "a's late report");
+            assert!(echo.swallows(b, at(base, 900)), "b's late report");
+            assert!(
+                !echo.swallows(c, at(base, 900)),
+                "the newest target always lands"
+            );
+        }
+
+        /// Once the burst is well over, a report for any of those windows is the user again.
+        #[test]
+        fn a_replaced_raise_stops_echoing_after_a_second() {
+            let base = Instant::now();
+            let (a, b) = (WindowId::new(1, 1), WindowId::new(1, 2));
+            let mut echo = RaiseEcho::default();
+            echo.expect([a, b].into_iter(), Some(a), base);
+            echo.expect([a, b].into_iter(), Some(b), at(base, 100));
+
+            assert!(!echo.swallows(a, at(base, 1200)));
+        }
+
+        /// Going back to a window is a new raise with it as the target, which always lands.
+        #[test]
+        fn returning_to_a_replaced_target_is_not_swallowed() {
+            let base = Instant::now();
+            let (a, b) = (WindowId::new(1, 1), WindowId::new(1, 2));
+            let mut echo = RaiseEcho::default();
+            echo.expect([a, b].into_iter(), Some(a), base);
+            echo.expect([a, b].into_iter(), Some(b), at(base, 100));
+            echo.expect([a, b].into_iter(), Some(a), at(base, 200));
+
+            assert!(!echo.swallows(a, at(base, 300)));
+            assert!(echo.swallows(b, at(base, 300)), "b is now the replaced one");
         }
     }
 

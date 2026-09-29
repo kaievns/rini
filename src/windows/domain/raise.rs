@@ -42,6 +42,26 @@ pub struct RaiseRequest {
     pub focus_quiet: Quiet,
 }
 
+impl RaiseRequest {
+    fn windows(&self) -> impl Iterator<Item = WindowId> + '_ {
+        self.raise_windows
+            .iter()
+            .flatten()
+            .copied()
+            .chain(self.focus_window.map(|(w, _)| w))
+    }
+
+    /// Whether this request makes `older` pointless: it focuses a window, and it raises every
+    /// window `older` would have.
+    fn supersedes(&self, older: &RaiseRequest) -> bool {
+        if self.focus_window.is_none() {
+            return false;
+        }
+        let covered: HashSet<WindowId> = self.windows().collect();
+        older.windows().all(|window| covered.contains(&window))
+    }
+}
+
 pub struct RaiseManager {
     /// The currently active sequence, if any
     active_sequence: Option<ActiveSequence>,
@@ -127,24 +147,15 @@ impl RaiseManager {
 
     fn handle_message(&mut self, msg: Event) {
         match msg {
-            Event::RaiseRequest(RaiseRequest {
-                raise_windows,
-                focus_window,
-                app_handles,
-                focus_quiet,
-            }) => {
+            Event::RaiseRequest(request) => {
                 debug!(
                     "Processing layout response with {} raise_windows",
-                    raise_windows.len()
+                    request.raise_windows.len()
                 );
-
-                // Always queue the sequence
-                self.queued_sequences.push_back(RaiseRequest {
-                    raise_windows,
-                    focus_window,
-                    app_handles,
-                    focus_quiet,
-                });
+                // Run late, a waiting raise only hands macOS an old focus to report back, and the
+                // strip followed it backwards. See "Rapid presses" in `specs/focus.md`.
+                self.queued_sequences.retain(|queued| !request.supersedes(queued));
+                self.queued_sequences.push_back(request);
             }
             Event::RaiseCompleted { window_id, sequence_id } => {
                 trace!("Raise completed for {:?} in sequence {}", window_id, sequence_id);
@@ -668,6 +679,64 @@ mod tests {
             // Verify all sequences completed
             assert!(raise_manager.active_sequence.is_none());
             assert!(collect_requests(&mut app_rx).is_empty());
+        });
+    }
+
+    /// The reported case: a burst of presses queued one focus raise per press, each ran late, and
+    /// each late focus pulled the strip back. Only the newest waiting raise is kept.
+    #[test]
+    fn a_waiting_raise_is_dropped_when_a_newer_focus_raise_covers_it() {
+        Executor::run(async {
+            let mut raise_manager = RaiseManager::new(|_| {});
+            let (app_handles, _app_rx) = create_test_app_handles();
+            let strip = || {
+                vec![
+                    WindowId::new(1, 1),
+                    WindowId::new(1, 2),
+                    WindowId::new(1, 3),
+                ]
+            };
+
+            for focus in strip() {
+                raise_manager.handle_message(create_layout_response(
+                    strip(),
+                    Some((focus, None)),
+                    app_handles.clone(),
+                    Quiet::Yes,
+                ));
+            }
+
+            assert_eq!(raise_manager.active_sequence.as_ref().unwrap().sequence_id, 1);
+            let waiting: Vec<_> = raise_manager
+                .queued_sequences
+                .iter()
+                .map(|queued| queued.focus_window.map(|(window, _)| window))
+                .collect();
+            assert_eq!(waiting, vec![Some(WindowId::new(1, 3))]);
+        });
+    }
+
+    /// A waiting raise the newer one does not cover still runs: it may be ordering windows the
+    /// newer raise never touches.
+    #[test]
+    fn a_waiting_raise_over_other_windows_still_runs() {
+        Executor::run(async {
+            let mut raise_manager = RaiseManager::new(|_| {});
+            let (app_handles, _app_rx) = create_test_app_handles();
+            for (windows, focus) in [
+                (vec![WindowId::new(1, 1)], WindowId::new(1, 2)),
+                (vec![WindowId::new(1, 3)], WindowId::new(1, 4)),
+                (vec![WindowId::new(1, 5)], WindowId::new(1, 6)),
+            ] {
+                raise_manager.handle_message(create_layout_response(
+                    windows,
+                    Some((focus, None)),
+                    app_handles.clone(),
+                    Quiet::Yes,
+                ));
+            }
+
+            assert_eq!(raise_manager.queued_sequences.len(), 2);
         });
     }
 
