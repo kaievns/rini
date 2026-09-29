@@ -38,7 +38,8 @@ impl Reactor {
         self.bar.sent = Some(model);
     }
 
-    /// The machine woke, so the time the bars show is read again rather than at the next minute.
+    /// The machine woke, or the clock or time zone was changed, so the time the bars show is read
+    /// again rather than at the next minute.
     pub(super) fn bar_clock_changed(&self) {
         if let Some(tx) = &self.bar.tx {
             tx.send(BarEvent::ClockChanged);
@@ -78,6 +79,7 @@ impl Reactor {
                 Some(DisplayInput {
                     uuid: screen.display_uuid.clone(),
                     screen: screen.id.as_u32(),
+                    frame: screen.frame,
                     occupied,
                     shown: workspaces.active_workspace_idx(space).map(|index| index as usize),
                     windows,

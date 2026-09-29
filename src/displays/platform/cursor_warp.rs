@@ -69,9 +69,10 @@
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect};
-use objc2_core_graphics::{CGError, CGEvent};
+use objc2_core_graphics::{CGDisplayBounds, CGError, CGEvent};
 use tracing::{debug, info};
 
+use rini_core::ids::ScreenId;
 use rini_geometry::CGRectExt;
 use rini_runloop::channel;
 use serde::{Deserialize, Serialize};
@@ -283,7 +284,7 @@ fn warp_target(
         },
         cursor.y,
     );
-    if display_containing(screens, beyond).is_some() {
+    if display_under(screens, beyond).is_some() {
         return None;
     }
 
@@ -381,18 +382,28 @@ fn mapped_y(
     to.frame.origin.y + to_fraction_from_top * to.frame.size.height
 }
 
-/// The display containing `point`.
-///
-/// Outset by half a point: a cursor clamped at `maxX - 1` still belongs to its display,
-/// and without the slack a point exactly on a shared edge belongs to neither.
+/// The display containing `point`: the one it is on, else one within half a point of it, so a
+/// cursor clamped at an outer edge still belongs to its display.
 fn display_containing(screens: &[WarpScreen], point: CGPoint) -> Option<WarpScreen> {
+    display_under(screens, point).or_else(|| {
+        screens.iter().copied().find(|screen| {
+            let frame = screen.frame;
+            let padded = CGRect::new(
+                CGPoint::new(frame.origin.x - 0.5, frame.origin.y - 0.5),
+                objc2_core_foundation::CGSize::new(frame.size.width + 1.0, frame.size.height + 1.0),
+            );
+            padded.contains(point)
+        })
+    })
+}
+
+/// The display `point` is on, as `CGRectContainsPoint` counts it: a point on an edge two displays
+/// share is on the one whose origin is there.
+fn display_under(screens: &[WarpScreen], point: CGPoint) -> Option<WarpScreen> {
     screens.iter().copied().find(|screen| {
         let frame = screen.frame;
-        let padded = CGRect::new(
-            CGPoint::new(frame.origin.x - 0.5, frame.origin.y - 0.5),
-            objc2_core_foundation::CGSize::new(frame.size.width + 1.0, frame.size.height + 1.0),
-        );
-        padded.contains(point)
+        (frame.origin.x..frame.max().x).contains(&point.x)
+            && (frame.origin.y..frame.max().y).contains(&point.y)
     })
 }
 
@@ -411,8 +422,8 @@ fn vertical_neighbour(
             if other.frame.origin == frame.origin && other.frame.size == frame.size {
                 return false;
             }
-            // 1pt tolerance: stacked displays usually share an edge exactly, but a menu bar
-            // inset or a rounding difference should not disqualify a neighbour.
+            // 1pt tolerance: stacked displays usually share an edge exactly, but a rounding
+            // difference should not disqualify a neighbour.
             if going_up {
                 other.frame.max().y <= frame.origin.y + 1.0
             } else {
@@ -446,19 +457,29 @@ pub struct WarpScreen {
 
 /// Every attached screen with its physical height, for `Request::ScreensChanged`.
 pub fn screens_of(screens: &[ScreenInfo]) -> Vec<WarpScreen> {
+    warp_screens(screens, |id| CGDisplayBounds(id.as_u32()), physical_height_mm)
+}
+
+/// Each screen as the pointer can reach it: the display's whole bounds, not `ScreenInfo::frame`,
+/// which is what the menu bar, the bar's band and the Dock leave for windows.
+fn warp_screens(
+    screens: &[ScreenInfo],
+    bounds_of: impl Fn(ScreenId) -> CGRect,
+    height_mm_of: impl Fn(ScreenId) -> f64,
+) -> Vec<WarpScreen> {
     screens
         .iter()
         .map(|screen| WarpScreen {
-            frame: screen.frame,
-            physical_height_mm: physical_height_mm(screen),
+            frame: bounds_of(screen.id),
+            physical_height_mm: height_mm_of(screen.id),
         })
         .collect()
 }
 
 /// Physical height of a display in millimetres, or 0.0 when the display does not report it.
-fn physical_height_mm(screen: &ScreenInfo) -> f64 {
+fn physical_height_mm(id: ScreenId) -> f64 {
     // SAFETY: plain-value FFI into CoreGraphics with a display id.
-    let size = unsafe { rini_skylight_sys::CGDisplayScreenSize(screen.id.as_u32()) };
+    let size = unsafe { rini_skylight_sys::CGDisplayScreenSize(id.as_u32()) };
     if size.height.is_finite() && size.height > 0.0 {
         size.height
     } else {
@@ -476,11 +497,11 @@ mod tests {
         CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
     }
 
-    /// The real arrangement, read from `rini-cli query displays` and `CGDisplayScreenSize`:
-    /// the 31.6" external logically ABOVE the 16.1" built-in, while physically sitting to its LEFT.
+    /// The real arrangement, read from `CGDisplayBounds` and `CGDisplayScreenSize`: the 31.6"
+    /// external logically ABOVE the 16.1" built-in, while physically sitting to its LEFT.
     fn built_in() -> WarpScreen {
         WarpScreen {
-            frame: rect(0.0, 32.0, 1728.0, 1085.0),
+            frame: rect(0.0, 0.0, 1728.0, 1117.0),
             physical_height_mm: 223.0,
         }
     }
@@ -625,12 +646,12 @@ mod tests {
     #[test]
     fn unknown_physical_size_falls_back_to_proportional() {
         let lap = WarpScreen {
-            frame: rect(0.0, 32.0, 1728.0, 1085.0),
             physical_height_mm: 0.0,
+            ..built_in()
         };
         let ext = WarpScreen {
-            frame: rect(-670.0, -1692.0, 3008.0, 1692.0),
             physical_height_mm: 0.0,
+            ..external()
         };
         let screens = vec![lap, ext];
         let cursor = CGPoint::new(
@@ -736,5 +757,68 @@ mod tests {
             mostly.frame.max().x - ENTRY_INSET,
             "expected the display with the greater horizontal overlap"
         );
+    }
+
+    /// The screens as the reactor has them: each frame 32pt short at the top, where the bar's band
+    /// is kept clear of windows.
+    fn banded() -> Vec<ScreenInfo> {
+        let screen = |id: u32, frame: CGRect| ScreenInfo {
+            id: ScreenId::new(id),
+            frame,
+            display_uuid: format!("display-{id}"),
+            name: None,
+            space: None,
+            is_builtin: id == 1,
+        };
+        vec![
+            screen(1, rect(0.0, 32.0, 1728.0, 1085.0)),
+            screen(2, rect(-670.0, -1660.0, 3008.0, 1660.0)),
+        ]
+    }
+
+    fn bounds(id: ScreenId) -> CGRect {
+        match id.as_u32() {
+            1 => built_in().frame,
+            _ => external().frame,
+        }
+    }
+
+    fn height_mm(id: ScreenId) -> f64 {
+        match id.as_u32() {
+            1 => built_in().physical_height_mm,
+            _ => external().physical_height_mm,
+        }
+    }
+
+    /// The pointer goes where the display is, band and all, so the warp takes the display's
+    /// bounds rather than the frame windows are kept in.
+    #[test]
+    fn a_banded_screen_warps_over_its_whole_bounds() {
+        assert_eq!(
+            warp_screens(&banded(), bounds, height_mm),
+            vec![built_in(), external()]
+        );
+    }
+
+    /// With whole bounds the built-in's top row, y = 0, is also the external's bottom edge. It is
+    /// the built-in's, whichever display is listed first, so pushing left there warps rather than
+    /// finding the external beyond the edge.
+    #[test]
+    fn the_top_row_of_the_lower_display_is_its_own() {
+        let cursor = CGPoint::new(built_in().frame.origin.x + 1.0, 0.0);
+        for screens in [vec![built_in(), external()], vec![external(), built_in()]] {
+            let target = warp(&screens, cursor).expect("should warp");
+            assert_eq!(target.x, external().frame.max().x - ENTRY_INSET);
+        }
+    }
+
+    /// The top of the external, under the bar's band, is no dead zone: pushing right there still
+    /// crosses onto the built-in.
+    #[test]
+    fn the_top_band_still_warps() {
+        let screens = warp_screens(&banded(), bounds, height_mm);
+        let cursor = CGPoint::new(external().frame.max().x - 1.0, -1680.0);
+        let target = warp(&screens, cursor).expect("should warp");
+        assert_eq!(target.x, built_in().frame.origin.x + ENTRY_INSET);
     }
 }

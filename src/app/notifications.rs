@@ -103,8 +103,21 @@ define_class! {
             trace!("{notif:#?}");
             self.send_event(WmEvent::KeyboardLayoutChanged);
         }
+
+        #[unsafe(method(recvClockChanged:))]
+        fn recv_clock_changed(&self, notif: &NSNotification) {
+            trace!("{notif:#?}");
+            self.send_event(WmEvent::ClockChanged);
+        }
     }
 }
+
+/// `NSSystemClockDidChangeNotification` and `NSSystemTimeZoneDidChangeNotification`, by value. The
+/// time zone's is Core Foundation's name.
+const CLOCK_CHANGED: [&str; 2] = [
+    "NSSystemClockDidChangeNotification",
+    "kCFTimeZoneSystemTimeZoneDidChangeNotification",
+];
 
 impl NotificationCenterInner {
     fn new(events_tx: wm_controller::Sender, spaces_tx: spaces::Sender) -> Retained<Self> {
@@ -416,6 +429,14 @@ impl NotificationCenter {
                 )),
                 None,
             );
+            for name in CLOCK_CHANGED {
+                default_center.addObserver_selector_name_object(
+                    &handler,
+                    sel!(recvClockChanged:),
+                    Some(&NSString::from_str(name)),
+                    None,
+                );
+            }
             distributed_center.addObserver_selector_name_object_suspensionBehavior(
                 &handler,
                 sel!(recvKeyboardLayoutChanged:),
@@ -466,7 +487,30 @@ impl NotificationCenter {
 
 #[cfg(test)]
 mod tests {
-    use super::should_leave_session_inactive_after_non_login_activation;
+    use objc2_foundation::NSString;
+
+    use super::{CLOCK_CHANGED, should_leave_session_inactive_after_non_login_activation};
+
+    unsafe extern "C" {
+        static NSSystemClockDidChangeNotification: &'static NSString;
+        static NSSystemTimeZoneDidChangeNotification: &'static NSString;
+    }
+
+    /// The names observed are Foundation's own constants. The time zone's is not its symbol's name.
+    #[test]
+    fn the_clock_notifications_are_foundations_own() {
+        // SAFETY: both are immutable `NSString` constants exported by Foundation.
+        let foundation = unsafe {
+            [
+                NSSystemClockDidChangeNotification,
+                NSSystemTimeZoneDidChangeNotification,
+            ]
+        };
+        assert_eq!(
+            foundation.map(|name| name.to_string()),
+            CLOCK_CHANGED.map(String::from)
+        );
+    }
 
     #[test]
     fn unlock_fallback_requires_session_to_be_marked_inactive() {
