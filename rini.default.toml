@@ -189,6 +189,16 @@ drag_swap_fraction = 0.3
 [settings.switcher.icons]
 # "com.mitchellh.ghostty" = "~/.config/rini/icons/ghostty.png"
 
+# The bar
+# - enabled: draw rini's own 32pt bar across the top of every display: the
+#   workspaces, the shown workspace's applications, the focused window, the menu
+#   extras and the time. While it is on, every display keeps its top 32pt clear of
+#   windows, so no gaps.outer.top is needed to make room for it. Off, no bar is
+#   drawn and the top keeps only what the menu bar and the notch keep, for running
+#   another bar in its place.
+[settings.bar]
+enabled = true
+
 [virtual_workspaces]
 # Virtual workspaces
 # - enabled: if false, rini behaves like a simple tiling WM with a single space

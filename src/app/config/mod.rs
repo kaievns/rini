@@ -157,6 +157,8 @@ pub struct Settings {
     pub gestures: GestureSettings,
     #[serde(default)]
     pub switcher: crate::switcher::settings::SwitcherSettings,
+    #[serde(default)]
+    pub bar: crate::bar::settings::BarSettings,
 
     #[serde(default)]
     pub window_snapping: WindowSnappingSettings,
@@ -169,6 +171,16 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// What every display keeps clear of windows at its top: the bar's height while it is drawn, and
+    /// nothing when it is off, so another bar can have the band.
+    pub fn top_band(&self) -> f64 {
+        if self.bar.enabled {
+            crate::bar::domain::layout::HEIGHT
+        } else {
+            0.0
+        }
+    }
+
     pub fn validate(&self) -> Vec<String> {
         let mut issues = Vec::new();
 
@@ -672,6 +684,21 @@ mod tests {
     #[test]
     fn the_default_config_validates_clean() {
         assert_eq!(Config::default().validate(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_bar_keeps_its_band_clear_until_it_is_turned_off() {
+        let mut settings = Config::default().settings;
+        assert!(settings.bar.enabled);
+        assert_eq!(settings.top_band(), crate::bar::domain::layout::HEIGHT);
+        settings.bar.enabled = false;
+        assert_eq!(settings.top_band(), 0.0);
+    }
+
+    #[test]
+    fn the_bar_is_turned_off_under_settings_bar() {
+        let config = Config::parse("[settings.bar]\nenabled = false\n[keys]\n").expect("parses");
+        assert!(!config.settings.bar.enabled);
     }
 
     #[test]

@@ -14,7 +14,7 @@ use rini::app::notifications::NotificationCenter;
 use rini::app::reactor::{self, Reactor};
 use rini::app::startup::execute_startup_commands;
 use rini::displays::platform::mission_control::NativeMissionControl;
-use rini::displays::platform::spaces::SpacesActor;
+use rini::displays::platform::spaces::{Notification as SpacesNotification, SpacesActor};
 use rini::displays::platform::window_notify as window_notify_actor;
 use rini::displays::screen::displays_have_separate_spaces;
 use rini::input::platform::gesture_tap::GestureTap;
@@ -238,6 +238,8 @@ fn main() {
     let (cursor_warp_tx, cursor_warp_rx) = rini::app::channels::channel();
     let (workspace_animation_tx, workspace_animation_rx) = rini::app::channels::channel();
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
+    let (bar_tx, bar_rx) = rini::app::channels::channel();
+    let (spaces_tx, spaces_rx) = rini::app::channels::channel();
 
     let reactor = Reactor::spawn(
         config.clone(),
@@ -249,17 +251,24 @@ fn main() {
         Some(cursor_warp_tx.clone()),
         Some(workspace_animation_tx.clone()),
         Some(switcher_tx.clone()),
+        Some(bar_tx.clone()),
         Some((wnd_tx.clone(), window_tx_store.clone())),
         Some(gesture_tap_tx.clone()),
         opt.one,
     );
     let events_tx = reactor.sender();
 
+    // The band the bar keeps clear is the spaces actor's to apply, so it hears of every accepted
+    // change directly rather than through the reactor.
     let config_tx = ConfigActor::spawn_with_path(
         config.clone(),
         Box::new({
             let events_tx = events_tx.clone();
-            move |config| events_tx.send(reactor::Event::ConfigUpdated(config))
+            let spaces_tx = spaces_tx.clone();
+            move |config| {
+                spaces_tx.send(SpacesNotification::TopBandChanged(config.settings.top_band()));
+                events_tx.send(reactor::Event::ConfigUpdated(config))
+            }
         }),
         config_path.clone(),
     );
@@ -311,7 +320,12 @@ fn main() {
 
     let _ = events_tx.send(reactor::Event::RegisterWmSender(wm_controller_sender.clone()));
 
-    let (spaces_actor, spaces_tx) = SpacesActor::new(Box::new(wm_controller_sender.clone()));
+    let spaces_actor = SpacesActor::new(
+        spaces_rx,
+        spaces_tx.clone(),
+        Box::new(wm_controller_sender.clone()),
+        config.settings.top_band(),
+    );
     let wn_actor = window_notify_actor::WindowNotify::new(
         events_tx.clone(),
         events_tx.clone(),
@@ -387,6 +401,11 @@ fn main() {
         let switcher_tx = switcher_tx.clone();
         move |pictures| switcher_tx.send(rini::switcher::platform::actor::Event::Pictures(pictures))
     }));
+    // The bar stops picturing the menu extras while a flight runs and settles.
+    flight_engine.set_on_flight(Box::new({
+        let bar_tx = bar_tx.clone();
+        move |flying| bar_tx.send(rini::bar::platform::actor::Event::Flight(flying))
+    }));
 
     // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
     // Animation require it. Idle until a switch opens, and it builds its window on first use.
@@ -398,6 +417,18 @@ fn main() {
         std::rc::Rc::new({
             let events_tx = events_tx.clone();
             move |window| events_tx.send(reactor::Event::SwitchPicked(window))
+        }),
+    );
+
+    // Every display's bar, on the main thread for AppKit. It is sent what it shows by the reactor, and
+    // a click on it goes back there; wired here because the bar may not name the app layer.
+    let bar_actor = rini::bar::platform::actor::BarActor::new(
+        bar_rx,
+        bar_tx,
+        mtm,
+        std::rc::Rc::new({
+            let events_tx = events_tx.clone();
+            move |action| events_tx.send(reactor::Event::BarAction(action))
         }),
     );
 
@@ -441,6 +472,7 @@ fn main() {
             supervise("cursor_warp", cursor_warp.run()),
             supervise("flight_engine", flight_engine.run()),
             supervise("switcher", switcher_actor.run()),
+            supervise("bar", bar_actor.run()),
         );
     });
 }

@@ -9,7 +9,7 @@ windows are on this space" is a window-server query over window ids.
 | | |
 |---|---|
 | `domain/topology.rs` | `ForwardedSpaceState`: one coherent snapshot of screens, spaces and their windows. `analyze_space_snapshot` says what an incoming snapshot changes; `display_set_delta` says which displays arrived, which departed, and whether the set is settled |
-| `domain/screen.rs` | `ScreenInfo`, `CoordinateConverter`, `usable_frame` (what the menu bar and Dock leave), `menu_bar_inset`, the visible-space ordering |
+| `domain/screen.rs` | `ScreenInfo`, `CoordinateConverter`, `usable_frame` (what the menu bar and Dock leave), `menu_bar_inset`, `top_inset` (the menu bar's inset or a band reserved at the top, whichever is taller), the visible-space ordering |
 | `domain/space_activation.rs` | Which spaces rini manages, and how activation transfers when macOS mints a new space id |
 | `platform/spaces.rs` | The spaces actor: the only thing that turns macOS lifecycle signals into a snapshot |
 | `platform/space_switch.rs`, `space_query.rs` | Switching to a space, and asking what one is |

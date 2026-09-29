@@ -55,6 +55,16 @@ pub fn menu_bar_inset(hidden: bool, height: f64, notch_height: f64) -> f64 {
     }
 }
 
+/// How much of a display's top windows keep clear of: the menu bar's inset, or `band` when that is
+/// taller.
+///
+/// The taller of the two, never their sum. A band drawn across the top sits where the menu bar and
+/// the notch already are, so a 32pt band on a display whose notch keeps 32pt clear costs nothing more,
+/// and on a display that keeps nothing clear it costs the band.
+pub fn top_inset(menu_bar_inset: f64, band: f64) -> f64 {
+    menu_bar_inset.max(band)
+}
+
 pub fn rects_intersect(a: &CGRect, b: &CGRect) -> bool {
     let ax2 = a.origin.x + a.size.width;
     let ay2 = a.origin.y + a.size.height;
@@ -197,6 +207,28 @@ mod tests {
     #[test]
     fn visible_menu_bar_reserves_its_reported_height() {
         assert_eq!(super::menu_bar_inset(false, 24.0, 0.0), 25.0);
+    }
+
+    /// The notch already keeps the bar's 32pt clear, so the built-in stays at 32; the external, which
+    /// keeps nothing clear with the menu bar hidden, gets the band.
+    #[test]
+    fn a_band_is_the_taller_of_it_and_the_menu_bar_not_their_sum() {
+        let builtin = super::menu_bar_inset(true, 37.0, 32.0);
+        let external = super::menu_bar_inset(true, 24.0, 0.0);
+        assert_eq!(top_inset(builtin, 32.0), 32.0);
+        assert_eq!(top_inset(external, 32.0), 32.0);
+    }
+
+    #[test]
+    fn a_menu_bar_taller_than_the_band_keeps_its_own_inset() {
+        let shown_with_notch = super::menu_bar_inset(false, 37.0, 32.0);
+        assert_eq!(top_inset(shown_with_notch, 32.0), 38.0);
+    }
+
+    #[test]
+    fn no_band_leaves_the_menu_bar_inset_alone() {
+        assert_eq!(top_inset(0.0, 0.0), 0.0);
+        assert_eq!(top_inset(25.0, 0.0), 25.0);
     }
 
     #[test]

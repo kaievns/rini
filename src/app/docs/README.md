@@ -16,6 +16,7 @@ knows the features and converts what they emit.
 | `reactor/space_resolution.rs` | Which space a window is on — the rules, pure |
 | `reactor/query.rs` | Answers from a borrowed `StateView` |
 | `reactor/present.rs` | The frame-writing capability: record a destination, number the write |
+| `reactor/bar.rs` | The bar's half here: its model built from the stores after every batch and sent only when it changed, and what a click on it asks for |
 | `reactor/managers.rs` | The handles: eight manager structs plus the layout manager |
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
 | `config/` | `config.toml`: parsing into each feature's settings, validation that spans features, watching and reload |
@@ -62,6 +63,7 @@ file you open to change one is the size of that subject rather than of the react
 | `spaces.rs` | which space is current, what happens while that is unknown, space membership |
 | `lifecycle.rs` | windows and apps appearing, disappearing, dying, and surviving a restart |
 | `windows.rs` | which windows rini takes on and which it refuses |
+| `bar.rs` | what each display's bar is sent after a batch, and what a click on it does |
 | `fixtures.rs` | the reactors, apps and windows the cases are built on |
 
 `tiling.rs` is not `layout.rs` because a module named `layout` inside `tests` shadows the

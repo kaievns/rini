@@ -52,6 +52,8 @@ pub enum Notification {
     SpaceDestroyed(SpaceId),
     WindowServerAppeared(WindowServerId, SpaceId),
     WindowServerDestroyed(WindowServerId, SpaceId),
+    /// Keep this many points clear at the top of every display, over what the menu bar keeps.
+    TopBandChanged(f64),
     ProcessScreenRefresh {
         attempt: u8,
     },
@@ -62,7 +64,7 @@ pub enum Notification {
 }
 
 pub type Sender = channel::Sender<Notification>;
-type Receiver = channel::Receiver<Notification>;
+pub type Receiver = channel::Receiver<Notification>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DisplayTopologyFingerprint(Vec<(String, u64, u64, u64, u64, Option<u64>)>);
@@ -253,9 +255,11 @@ impl AuthorityState {
         self.sleeping || self.session_inactive || self.display_churn_active
     }
 
-    fn runtime() -> Self {
+    fn runtime(top_band: f64) -> Self {
         let mut state = Self::default();
-        state.screen_cache = Some(ScreenCache::new(MainThreadMarker::new().unwrap()));
+        let mut screen_cache = ScreenCache::new(MainThreadMarker::new().unwrap());
+        let _ = screen_cache.set_top_band(top_band);
+        state.screen_cache = Some(screen_cache);
         state.space_kinds = SpaceKinds::from_window_server();
         state.live = LiveDisplays::from_window_server();
         state
@@ -270,10 +274,22 @@ pub struct SpacesActor {
 }
 
 impl SpacesActor {
-    pub fn new(events: Box<dyn EventSink>) -> (Self, Sender) {
-        Self::new_with_state(events, AuthorityState::runtime())
+    /// `top_band` is what the screens start with; `Notification::TopBandChanged` changes it.
+    pub fn new(
+        receiver: Receiver,
+        sender: Sender,
+        events: Box<dyn EventSink>,
+        top_band: f64,
+    ) -> Self {
+        Self {
+            sender,
+            receiver,
+            events,
+            state: AuthorityState::runtime(top_band),
+        }
     }
 
+    #[cfg(test)]
     fn new_with_state(events: Box<dyn EventSink>, state: AuthorityState) -> (Self, Sender) {
         let (sender, receiver) = channel::channel();
         (
@@ -459,6 +475,16 @@ impl SpacesActor {
                         }
                         self.events.send(OutEvent::WindowServerDestroyed(wsid, sid, kind));
                     }
+                }
+            }
+            Notification::TopBandChanged(band) => {
+                if self
+                    .state
+                    .screen_cache
+                    .as_mut()
+                    .is_some_and(|screen_cache| screen_cache.set_top_band(band))
+                {
+                    self.schedule_screen_refresh();
                 }
             }
             Notification::ProcessScreenRefresh { attempt } => {

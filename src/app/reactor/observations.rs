@@ -36,8 +36,8 @@ use super::events::window as window_workflow;
 use super::{Event, Reactor};
 
 impl Reactor {
-    /// The six events that only move the refresh quarantine: sleep, wake, session activation and
-    /// display churn.
+    /// The six events that move the refresh quarantine: sleep, wake, session activation and display
+    /// churn. Wake also has the bars read the clock again.
     ///
     /// They are answered before focus tracking runs, because none of them is a focus change and the
     /// quarantine has to close before the snapshot that follows is trusted. `None` means the event is
@@ -63,6 +63,7 @@ impl Reactor {
                 quarantine.awaiting_post_wake_snapshot = true;
                 let outcome = system_workflow::handle_system_woke();
                 self.defer_visible_refresh(true);
+                self.bar_clock_changed();
                 Some(outcome.map_err(Into::into))
             }
             Event::SessionDidResignActive => {

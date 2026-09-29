@@ -16,7 +16,7 @@ use objc2_foundation::{MainThreadMarker, NSArray, NSNumber, ns_string};
 use tracing::{debug, warn};
 
 use crate::displays::domain::screen::{
-    CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, usable_frame,
+    CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, top_inset, usable_frame,
 };
 use rini_core::ids::{ScreenId, SpaceId};
 use rini_skylight_sys::{
@@ -42,6 +42,8 @@ pub struct ScreenCache<S: System = Actual> {
     pending_generation: u64,
     processed_generation: u64,
     sleeping: bool,
+    /// Kept clear at the top of every display over what the menu bar keeps; see `top_inset`.
+    top_band: f64,
 }
 
 impl ScreenCache<Actual> {
@@ -59,7 +61,19 @@ impl<S: System> ScreenCache<S> {
             pending_generation: 0,
             processed_generation: 0,
             sleeping: false,
+            top_band: 0.0,
         }
+    }
+
+    /// Whether `band` differs from the band in force. A change rebuilds every screen at the next
+    /// refresh, so the layouts move with it.
+    pub fn set_top_band(&mut self, band: f64) -> bool {
+        let changed = self.top_band != band;
+        if changed {
+            self.top_band = band;
+            self.mark_dirty();
+        }
+        changed
     }
 
     pub fn mark_dirty(&mut self) {
@@ -168,7 +182,8 @@ impl<S: System> ScreenCache<S> {
             .enumerate()
             .map(|(idx, &CGScreenInfo { cg_id, bounds })| {
                 let notch_height = self.system.notch_height(cg_id.as_u32());
-                let frame = constrain_display_bounds(cg_id.as_u32(), bounds, notch_height);
+                let frame =
+                    constrain_display_bounds(cg_id.as_u32(), bounds, notch_height, self.top_band);
                 let display_uuid =
                     uuid_strings.get(idx).cloned().filter(|uuid| !uuid.is_empty()).unwrap_or_else(
                         || {
@@ -281,8 +296,11 @@ fn dock_display_id() -> Option<u32> {
 
 /// Reads the live menu bar and Dock, then asks `domain::screen::usable_frame` what is left of `raw`.
 /// A dock on another display, or an auto-hidden one not currently shown, covers nothing here.
-fn constrain_display_bounds(did: u32, raw: CGRect, notch_height: f64) -> CGRect {
-    let inset = menu_bar_inset(menu_bar_hidden(), menu_bar_height(did), notch_height);
+fn constrain_display_bounds(did: u32, raw: CGRect, notch_height: f64, top_band: f64) -> CGRect {
+    let inset = top_inset(
+        menu_bar_inset(menu_bar_hidden(), menu_bar_height(did), notch_height),
+        top_band,
+    );
     let (dock, dock_reason) = dock_rect_with_reason();
     let on_this_display = dock_display_id().is_some_and(|dock_did| dock_did == did);
     let shown = (!dock_hidden() || dock_reason == 0) && on_this_display;
@@ -709,6 +727,7 @@ mod test {
                 1,
                 CGRect::new(CGPoint::new(3840.0, 1080.0), CGSize::new(1512.0, 982.0)),
                 0.0,
+                0.0,
             )
         );
 
@@ -718,6 +737,7 @@ mod test {
             super::constrain_display_bounds(
                 3,
                 CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(3840.0, 2160.0)),
+                0.0,
                 0.0,
             )
         );
@@ -759,6 +779,43 @@ mod test {
         assert!(screens.is_empty());
         assert!(cache.uuids.is_empty());
         assert!(converter.convert_point(CGPoint::new(0.0, 0.0)).is_none());
+    }
+
+    /// The external keeps nothing clear with the menu bar hidden, so a band reserved for a bar has to
+    /// reach it through the cache, and a change has to rebuild what the cache already holds.
+    #[test]
+    fn a_top_band_rebuilds_the_screens_and_keeps_its_height_clear() {
+        let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1440.0, 900.0));
+        let screen = CGScreenInfo {
+            cg_id: ScreenId::new(1),
+            bounds,
+        };
+        let ns_screen = NSScreenInfo {
+            cg_id: ScreenId::new(1),
+            frame: bounds,
+            visible_frame: bounds,
+            name: None,
+        };
+        let system = SequenceSystem::new(
+            vec![vec![screen.clone()], vec![screen]],
+            vec![vec![ns_screen.clone()], vec![ns_screen]],
+            vec![CFString::from_str("uuid-1"), CFString::from_str("uuid-1")],
+        );
+        let mut cache = ScreenCache::new_with(system);
+        cache.refresh().unwrap();
+
+        assert!(cache.set_top_band(32.0));
+        let (screens, _) = cache.refresh().unwrap();
+        assert!(
+            cache.system.cg_screens.borrow().is_empty(),
+            "the band change rebuilt the screens"
+        );
+        assert!(screens[0].frame.origin.y >= 32.0);
+        assert!(screens[0].frame.size.height <= 900.0 - 32.0);
+
+        assert!(!cache.set_top_band(32.0));
+        let (screens, _) = cache.refresh().unwrap();
+        assert_eq!(screens.len(), 1, "the same band again rebuilt nothing");
     }
 }
 

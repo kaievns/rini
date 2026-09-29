@@ -399,6 +399,27 @@ pub(in crate::animation) fn group_of(
     }
 }
 
+/// What whoever installed `on_flight` is told: `true` when an overlay goes up, `false` once flying has
+/// settled. Settled is the quiet period after a lift (`SETTLE_BEFORE_CAPTURES`), not the lift, so a
+/// burst of flights reads as one: a flight beginning inside the quiet period says nothing, and the
+/// `false` waits for its own settle.
+#[derive(Debug, Default)]
+pub(in crate::animation) struct FlightReport {
+    flying: bool,
+}
+
+impl FlightReport {
+    /// An overlay went up. `Some(true)` unless a flight is already reported.
+    pub(in crate::animation) fn overlay_up(&mut self) -> Option<bool> {
+        (!std::mem::replace(&mut self.flying, true)).then_some(true)
+    }
+
+    /// The quiet period after the last lift ran out. `Some(false)` unless no flight was reported.
+    pub(in crate::animation) fn settled(&mut self) -> Option<bool> {
+        std::mem::replace(&mut self.flying, false).then_some(false)
+    }
+}
+
 /// A stable [`WindowId`] derived from a window server id. Pid 0 keeps it clear of real ids.
 pub(in crate::animation) fn synthetic_window_id(server_id: WindowServerId) -> WindowId {
     WindowId {
@@ -511,5 +532,34 @@ mod tests {
         assert!(!refresh.take_pass(0.4, true));
         assert!(refresh.take_pass(0.55, true));
         assert!(!refresh.take_pass(1.0, true), "spent");
+    }
+
+    #[test]
+    fn a_flight_is_reported_once_up_and_once_settled() {
+        let mut report = FlightReport::default();
+        assert_eq!(report.overlay_up(), Some(true));
+        assert_eq!(report.settled(), Some(false));
+        assert_eq!(report.settled(), None, "nothing is flying to settle");
+    }
+
+    /// A second flight lifting off before the first has settled cancels that settle, so the burst is
+    /// one `true` and one `false`, the `false` at the last flight's settle.
+    #[test]
+    fn a_flight_inside_the_quiet_period_continues_the_one_reported() {
+        let mut report = FlightReport::default();
+        assert_eq!(report.overlay_up(), Some(true));
+        assert_eq!(report.overlay_up(), None);
+        assert_eq!(report.overlay_up(), None);
+        assert_eq!(report.settled(), Some(false));
+        assert_eq!(
+            report.overlay_up(),
+            Some(true),
+            "a flight after the settle is a new one"
+        );
+    }
+
+    #[test]
+    fn a_settle_with_no_flight_says_nothing() {
+        assert_eq!(FlightReport::default().settled(), None);
     }
 }

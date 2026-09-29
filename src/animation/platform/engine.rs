@@ -121,6 +121,10 @@ pub enum Event {
 /// Called with real-window frames to apply while the overlay covers them.
 pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, CGRect)>)>;
 
+/// Called with `true` when an overlay goes up and `false` once flying has settled; see
+/// `domain::flight::FlightReport`.
+pub type OnFlight = Box<dyn Fn(bool)>;
+
 /// Called with the pictures this engine holds for the windows `LendSnapshots` asked about.
 ///
 /// Only windows with a picture worth drawing appear; the rest are absent rather than present and
@@ -591,6 +595,8 @@ pub struct FlightEngine {
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     lend_snapshots: Option<LendSnapshots>,
+    on_flight: Option<OnFlight>,
+    flight_report: FlightReport,
     /// The stand-in's pixels and the scale they were drawn at, made once and redrawn only if the
     /// display's scale changes.
     placeholder_image: Option<(
@@ -632,6 +638,8 @@ impl FlightEngine {
             bar_refresh: None,
             place_frames: None,
             lend_snapshots: None,
+            on_flight: None,
+            flight_report: FlightReport::default(),
             placeholder_image: None,
             bouncing_until: None,
         }
@@ -643,6 +651,16 @@ impl FlightEngine {
 
     pub fn set_place_frames(&mut self, place: PlaceFrames) {
         self.place_frames = Some(place);
+    }
+
+    pub fn set_on_flight(&mut self, on_flight: OnFlight) {
+        self.on_flight = Some(on_flight);
+    }
+
+    fn report_flight(&self, edge: Option<bool>) {
+        if let (Some(flying), Some(on_flight)) = (edge, &self.on_flight) {
+            on_flight(flying);
+        }
     }
 
     pub async fn run(mut self) {
@@ -1741,6 +1759,8 @@ impl FlightEngine {
         overlay.install(&plan, &tiles, &band_plan(&plan, &tiles, focus));
         // Shown at once, so the real windows can be placed underneath without a visible jump.
         overlay.show();
+        let edge = self.flight_report.overlay_up();
+        self.report_flight(edge);
 
         let tx = self.tx.clone();
         let clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
@@ -2373,6 +2393,8 @@ impl FlightEngine {
         if self.running.is_some() {
             return;
         }
+        let edge = self.flight_report.settled();
+        self.report_flight(edge);
         let Some(after) = self.after_flight.take() else { return };
         let animated: Vec<WindowId> = after.targets.iter().map(|target| target.window).collect();
         let requested = if after.targets.is_empty() {

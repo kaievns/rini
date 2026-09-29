@@ -10,6 +10,7 @@
 
 mod fixtures;
 
+mod bar;
 mod displays;
 mod focus;
 mod fullscreen;

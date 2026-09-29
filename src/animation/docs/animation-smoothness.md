@@ -315,10 +315,13 @@ window captures and the desktop render), so a press inside that window flew
 the next flight against a busy compositor: frame-difference profiles of a
 screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
 beginning inside the quiet period cancels the timer; the work carries over to
-its own lift. The bar is recaptured `BAR_REFRESH_DELAY` (250ms) after a
-flight, never at the start of one: a bar composite measures 31ms median,
-and the delay lets the compositor drop the hidden overlay from the
-framebuffer and folds a burst of switches into one capture, at the end.
+its own lift. The same quiet period is what `set_on_flight` reports as settled
+(`FlightReport`): `true` when an overlay goes up, `false` at `Event::Quiet`, so
+a burst of flights is one `true` and one `false`. The bar is recaptured
+`BAR_REFRESH_DELAY` (250ms) after a flight, never at the start of one: a bar
+composite measures 31ms median, and the delay lets the compositor drop the
+hidden overlay from the framebuffer and folds a burst of switches into one
+capture, at the end.
 
 **Real windows land before lift.** Frames go out on-screen destinations
 first, parks last (`frame_send_order`): a park write nobody sees no longer

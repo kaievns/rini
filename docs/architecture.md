@@ -13,6 +13,8 @@ src/layout/       the scrolling strip
 src/workspaces/   virtual workspaces and their persistence
 src/input/        keys, bindings, gestures, drags
 src/animation/    movement on screen
+src/switcher/     the window switcher popup
+src/bar/          the menu bar across the top of every display
 
 crates/rini-core/           identity types and file locations
 crates/rini-geometry/       rect arithmetic
@@ -41,11 +43,13 @@ touches nothing outside itself.
 | feature | domain language | owns |
 |---|---|---|
 | `windows` | windows and the apps that own them | `AppInfo`, `WindowInfo`, `WindowServerInfo`, the window records, app rules and what counts as manageable, frame transaction ids, focus tracking (`MainWindowTracker` over `FocusEvent`) with the raise-echo and activation-focus rules, the raise manager, and the `Request`/`Quiet` port into the per-app thread. `platform/`: the per-app AX actor (observe, move, resize, raise, close), window-server reads (ids, order, levels), the Carbon front-app listener, the process watcher, the SkyLight sub-level port. Emits `windows::event::Event` |
-| `displays` | screens, native spaces, coordinates, which windows sit on which space | `ScreenInfo`, `CoordinateConverter`, `usable_frame` (what the menu bar and Dock leave), the topology snapshot (`ForwardedSpaceState`) and screen selection over it, the space activation policy. `platform/`: CGDisplay/NSScreen/SLS-space adapters, space switching, display churn, the spaces actor, the cursor-warp actor, the CGS notification stream. Emits `displays::event::Event` |
+| `displays` | screens, native spaces, coordinates, which windows sit on which space | `ScreenInfo`, `CoordinateConverter`, `usable_frame` (what the menu bar, a band reserved at the top, and the Dock leave), the topology snapshot (`ForwardedSpaceState`) and screen selection over it, the space activation policy. `platform/`: CGDisplay/NSScreen/SLS-space adapters, space switching, display churn, the spaces actor, the cursor-warp actor, the CGS notification stream. Emits `displays::event::Event` |
 | `layout` | strips, columns, the scrolling layout | the layout tree and its operations, gaps, insertion; `ScrollingLayoutSystem` is the seam; tiling settings |
 | `workspaces` | virtual workspaces | assignment of windows to workspaces, activation, stacked-workspace geometry, `WindowStore`; `layout.ron` save/restore in `engine/persistence/`, launch memory, floating positions; workspace settings |
 | `input` | what the user asked for | `Modifiers`, `KeyCode` and `Hotkey`, the token and spec parsing that needs no keyboard, the binding table, gesture and drag-swap recognition, and the rules the taps apply (`domain::gesture`, `domain::hotkey`). `platform/`: CGEventTap adapters, the layout-dependent `FromStr` impls (`platform::keyboard`), Carbon hotkeys, the haptic engine, the cursor. Emits `rini-ipc` commands, so the reactor cannot tell a hotkey from a CLI call |
 | `animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`domain::pass`), which final frame writes go out, the `AnimationRequest`/`SnapshotTarget` ports, and the flight engine's own decisions: when work happens (`domain::timing`), what a flight is and when it may capture (`domain::flight`), and how a request arriving mid-flight is admitted (`domain::admission`). `platform/`: window snapshots and capture (ScreenCaptureKit, SkyLight), the Core Animation tile overlay, the flight engine |
+| `switcher` | the window switcher: every window, in the order you last used them | who a switch offers and in what order (`domain::candidates`), the cursor over the list (`domain::selection`), each switcher's session keys (`domain::trigger`), where the rows go and the hit test (`domain::layout`), how the ring moves (`domain::motion`), when the popup appears (`domain::reveal`); switcher settings. `platform/`: the popup `NSPanel` and its layer tree, and the main-thread actor that draws it. Focus order is `windows`' and is read here |
+| `bar` | the menu bar across the top of every display | what each display's bar shows (`domain::model`: `BarInput` in, `BarModel` out, `Action` back), where each piece goes by its ink and the hit test (`domain::layout`), how each piece is set (`domain::style`, `domain::palette`), which menu extras are drawn (`domain::extras`), the words (`domain::format`, `domain::glyphs`); bar settings. `platform/`: the main-thread actor that owns every display's bar window, and the thread that pictures the menu extras. Sent its model by the reactor, never asks |
 
 ## The application layer
 
@@ -87,7 +91,8 @@ permission, builds every actor and joins them.
    upstream: it knows nothing about screens. `displays` depends on it, because
    "which windows are on this space" is a window-server query over window ids.
    `layout` and `workspaces` sit above both; `input` and `animation` beside them,
-   reaching only for ids and frames.
+   reaching only for ids and frames. `switcher` and `bar` are the most downstream:
+   they draw what the reactor sends them, and no feature depends on either.
 4. **Nothing in `crates/` knows what a workspace is.** A crate there is a
    library: identity, geometry, a run loop, a wire protocol, two FFI surfaces.
    `rini-cli` is the client binary and depends on `rini-core` and `rini-ipc`

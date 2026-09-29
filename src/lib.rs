@@ -12,6 +12,8 @@
 //! src/workspaces/   virtual workspaces and their persistence
 //! src/input/        keys, bindings, gestures, drags
 //! src/animation/    movement on screen
+//! src/switcher/     the window switcher popup
+//! src/bar/          the menu bar across the top of every display
 //! ```
 //!
 //! The rules this layout is held to, and what enforces each, are in

@@ -1,6 +1,6 @@
 //! What the flags and the config file say, decided before anything is built.
 //!
-//! `main` is one long function by nature — it assembles nine actors and hands them to each other —
+//! `main` is one long function by nature — it assembles eleven actors and hands them to each other —
 //! but the two DECISIONS in it are not, and both have a recorded history behind them. They were
 //! reachable only by running the binary, so neither was tested.
 

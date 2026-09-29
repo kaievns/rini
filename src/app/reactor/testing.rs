@@ -195,6 +195,28 @@ impl Reactor {
             .expect("pick should dispatch")
     }
 
+    /// Handle `events` as one batch of the reactor loop, which ends by sending the bars what the batch
+    /// changed.
+    pub fn handle_test_batch(&mut self, events: Vec<Event>) {
+        self.handle_batch(events.into_iter().map(|event| (tracing::Span::none(), event)));
+    }
+
+    /// Wire in a bar, returning what it is sent.
+    pub fn connect_test_bar(&mut self) -> crate::bar::platform::actor::Receiver {
+        let (tx, rx) = channels::channel();
+        self.bar.tx = Some(tx);
+        rx
+    }
+
+    /// Click the bar the way its actor does, returning the outcome.
+    pub(crate) fn dispatch_test_bar_action(
+        &mut self,
+        action: crate::bar::domain::model::Action,
+    ) -> EventOutcome {
+        self.dispatch_workflow(Event::BarAction(action))
+            .expect("bar action should dispatch")
+    }
+
     pub fn handle_test_layout_command(&mut self, command: LayoutCommand) {
         self.handle_event(Event::Command(crate::app::reactor::state::Command::Layout(
             command,

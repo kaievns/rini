@@ -5,6 +5,7 @@
 //! changes by sending requests out to the other actors in the system.
 
 mod animation;
+mod bar;
 mod commands;
 mod diagnostics;
 mod events;
@@ -271,6 +272,9 @@ pub enum Event {
     Switch(crate::input::domain::switch_session::Signal),
     /// A row of the switcher popup was clicked: select that window and commit.
     SwitchPicked(WindowId),
+    /// Something on a bar was clicked.
+    #[serde(skip)]
+    BarAction(crate::bar::domain::model::Action),
     /// Sent by the event tap only when the cursor enters a different window.
     /// Window resolution and transition deduplication stay on the input
     /// thread; the reactor only applies the model-dependent focus/raise work.
@@ -460,6 +464,7 @@ pub struct Reactor {
     /// Where the popup is drawn. `None` until the main thread registers itself, and absent entirely in
     /// tests — the switch works without it, which is what keeps the popup cosmetic.
     switcher_tx: Option<crate::switcher::platform::actor::Sender>,
+    bar: bar::BarFeed,
     app_manager: managers::AppManager,
     layout_manager: managers::LayoutManager,
     pub(crate) state: RiniState,
@@ -529,6 +534,7 @@ impl Reactor {
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
         workspace_animation_tx: Option<crate::animation::platform::engine::Sender>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
+        bar_tx: Option<crate::bar::platform::actor::Sender>,
         window_notify: Option<(crate::displays::platform::window_notify::Sender, WindowTxStore)>,
         gesture_tap_tx: Option<gesture_tap::Sender>,
         one_space: bool,
@@ -548,6 +554,7 @@ impl Reactor {
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
         reactor.communication_manager.workspace_animation_tx = workspace_animation_tx;
         reactor.switcher_tx = switcher_tx;
+        reactor.bar.tx = bar_tx;
         reactor.communication_manager.gesture_tap_tx = gesture_tap_tx;
         reactor.communication_manager.events_tx = Some(events_tx_clone.clone());
         let query_handle = ReactorQueryHandle::new(events_tx_clone.clone());
@@ -581,6 +588,7 @@ impl Reactor {
         let reactor = Reactor {
             live_switch: None,
             switcher_tx: None,
+            bar: bar::BarFeed::default(),
             config: config.clone(),
             one_space,
             app_manager: managers::AppManager::new(),
@@ -956,6 +964,15 @@ impl Reactor {
         self.reconcile_windows_with_authoritative_spaces();
     }
 
+    /// The localised name of the application `window` belongs to, empty when rini has none.
+    fn app_name(&self, window: WindowId) -> String {
+        self.app_manager
+            .apps
+            .get(&window.pid)
+            .and_then(|app| app.info.localized_name.clone())
+            .unwrap_or_default()
+    }
+
     fn is_login_window_pid(&self, pid: pid_t) -> bool {
         self.app_manager.apps.get(&pid).and_then(|a| a.info.bundle_id.as_deref())
             == Some("com.apple.loginwindow")
@@ -1053,18 +1070,20 @@ impl Reactor {
     async fn run_reactor_loop(mut reactor: Reactor, mut events: Receiver) {
         const MAX_EVENT_BATCH: usize = 64;
 
-        while let Some((span, event)) = events.recv().await {
-            let _guard = span.enter();
-            reactor.handle_loop_event(event);
+        while let Some(first) = events.recv().await {
             // Drain a bounded batch to reduce recv/select overhead.
-            for _ in 1..MAX_EVENT_BATCH {
-                let Ok((span, event)) = events.try_recv() else {
-                    break;
-                };
-                let _guard = span.enter();
-                reactor.handle_loop_event(event);
-            }
+            let rest = std::iter::from_fn(|| events.try_recv().ok()).take(MAX_EVENT_BATCH - 1);
+            reactor.handle_batch(std::iter::once(first).chain(rest));
         }
+    }
+
+    /// One batch of the loop's events, then what the batch changed on the bar.
+    fn handle_batch(&mut self, batch: impl IntoIterator<Item = (tracing::Span, Event)>) {
+        for (span, event) in batch {
+            let _guard = span.enter();
+            self.handle_loop_event(event);
+        }
+        self.publish_bar();
     }
 
     fn handle_loop_event(&mut self, event: Event) {
@@ -1495,6 +1514,9 @@ impl Reactor {
             }
             Event::SwitchPicked(window) => {
                 return Ok(self.pick_switch(window));
+            }
+            Event::BarAction(action) => {
+                return self.on_bar_action(action);
             }
             Event::Command(Command::Reactor(ReactorCommand::SwitchWindow { backward, scope })) => {
                 return Ok(self.switch_window(backward, scope));
@@ -3058,12 +3080,7 @@ impl Reactor {
             let Some(state) = self.state.windows.window(window) else {
                 continue;
             };
-            let app_name = self
-                .app_manager
-                .apps
-                .get(&window.pid)
-                .and_then(|app| app.info.localized_name.clone())
-                .unwrap_or_default();
+            let app_name = self.app_name(window);
             candidates.push(Candidate {
                 window,
                 space,
@@ -3483,12 +3500,6 @@ impl Reactor {
         ));
     }
 
-    /// Send the active display's usable frame to the animation actor.
-    ///
-    /// The frame must exclude the menu bar strip. sketchybar sits at CG layer -20, below normal
-    /// windows, and is visible only because nothing occupies that strip, so an overlay covering it
-    /// would make the user's bar flicker on every switch. `ScreenInfo::frame` is already the usable
-    /// frame, which is what makes this a straight pass-through.
     /// Places windows at their final frames immediately, with no animation.
     ///
     /// Called when the overlay animation is far enough along that the real windows are hidden behind

@@ -2,7 +2,7 @@
 
 Every thread that owns a `CFRunLoop` in rini drives one future from it:
 `executor::Executor::run` (or `run_main`, which calls `NSApp.run()` instead of
-`CFRunLoop::run`). The main thread joins nine such loops; the reactor, the
+`CFRunLoop::run`). The main thread joins eleven such loops; the reactor, the
 config actor, the input tap and each observed application have their own thread
 and their own loop.
 

@@ -181,6 +181,16 @@ impl Reactor {
         command: LayoutCommand,
     ) -> anyhow::Result<EventOutcome> {
         let command_space = self.command_context_space();
+        self.on_layout_command_in(command, command_space)
+    }
+
+    /// `command` carried out on `command_space` rather than on whichever display the command came
+    /// from.
+    pub(super) fn on_layout_command_in(
+        &mut self,
+        command: LayoutCommand,
+        command_space: Option<rini_core::ids::SpaceId>,
+    ) -> anyhow::Result<EventOutcome> {
         let (visible_spaces, visible_space_centers) = self.visible_spaces_for_layout(false);
         command_workflow::handle_command_layout(
             &mut self.state,
