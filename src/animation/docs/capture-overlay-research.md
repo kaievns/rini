@@ -1082,12 +1082,14 @@ then Left x6, 60-570ms apart) on nine windows:
              last press
 ```
 
-Two changes. A waiting raise is dropped when a newer focus raise covers all its
-windows. That rarely fires in a strip: each press raises only the windows on screen at
-its own scroll position, so consecutive raises cover different windows. The change that
-holds is in `RaiseEcho`: every window rini's raises touched or focused stays an echo
-until the raise manager reports it has nothing running or waiting (`RaisesIdle`), plus
-the 400ms cascade, unless it is the newest target.
+Two changes. First, a newer focus raise cancels a running raise that focuses and drops
+every waiting one that focuses, so a window the presses moved past is never raised.
+Dropping only a waiting raise the newer one covered was tried first and rarely fired:
+each press raises only the windows on screen at its own scroll position, so consecutive
+raises cover different windows. Second, in `RaiseEcho`, every window rini's raises
+touched or focused stays an echo until the raise manager reports it has nothing
+running or waiting (`RaisesIdle`), plus the 400ms cascade, unless it is the newest
+target.
 
 A fixed window was tried first. Echoes from replaced raises lasted 1s after the
 replacement. Replayed on the same burst, the strip stopped turning back mid-burst, but

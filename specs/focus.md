@@ -36,8 +36,11 @@ more than a "correct" choice by the layout.
 - A press MUST move focus from where the previous press put it, and a burst MUST NOT carry the strip
   backwards. macOS reports focus for rini's own raises late: raises run one at a time, and in a burst
   each waited up to 250ms for its app. So:
-  - a raise still waiting when a newer focus raise covers all its windows MUST be dropped rather than
-    run late;
+  - a newer focus raise MUST cancel a running raise that focuses, and drop every waiting raise that
+    focuses. A window the presses moved past is never raised or focused, and the last press's window
+    is focused as soon as its own raise can run;
+  - a waiting raise that only restacks windows still runs, unless the newer raise covers every
+    window it would raise;
   - a focus report for any window rini's raises touched or focused MUST count as rini's own echo
     until the raise manager has nothing left running or waiting, and 400ms more for the cascade,
     unless that window is the newest raise's target. If the raise manager never reports that, the
@@ -53,6 +56,22 @@ more than a "correct" choice by the layout.
 > A first fix kept a replaced raise's windows as echoes for 1s. Replaying the same burst on it, the
 > strip no longer turned back mid-burst, but raises were still running 2.3s after the last press and
 > their reports moved it twice more. So the echo now lasts until the raises have run.
+>
+> **Reported 2026-09-29, after that.** "when i press rapidly several times, it seems like rini tries to
+> keep executing every single instruction after i stopped tapping... we probably should skip focusing
+> some windows entirely if the rapid fire moved past them". Every press's raise still ran, one at a
+> time: the last queued raise timed out 2.6s after the burst, so keyboard focus reached the last
+> window that late.
+
+- Navigating a strip MUST NOT move a window to another display or another workspace.
+
+> **Reported 2026-09-29.** "when an exetrnal monitor is attached i frequently see windows being
+> evacuated to the external screen and reattached to whatever workspace that happend to have when i
+> rapidly press j/l". The Ghostty window left of this one on workspace 2 ended up tiled on the
+> external display's active workspace. rini moves a window when the window server reports it in
+> another display's space; what put it there is not established. A stale raise activating a parked
+> window is the leading guess, and cancelling stale raises removes it. Each such move is now logged
+> as "window moved to the space the window server has it on".
 
 ## Cycling
 

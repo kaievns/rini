@@ -3341,6 +3341,15 @@ impl Reactor {
         if assigned_space == Some(authoritative_space) {
             return self.restore_window_to_active_layout_if_visible(wid, authoritative_space);
         }
+        let frame = self.state.windows.window(wid).map(|window| window.frame_monotonic);
+        info!(
+            pid = wid.pid,
+            idx = wid.idx.get(),
+            from = ?assigned_space,
+            to = ?authoritative_space,
+            frame = ?frame,
+            "window moved to the space the window server has it on"
+        );
 
         self.send_layout_event(LayoutEvent::WindowRemovedPreserveFloating(wid));
 
