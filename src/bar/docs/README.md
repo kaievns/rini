@@ -87,7 +87,7 @@ native fullscreen space. A panel hides whenever its app deactivates unless told 
 which costs about 112ms, and kept; a display that leaves the model has its bar ordered out.
 
 ```text
-root         the ground: n1 at 0.88
+root         the ground: n1 at 0.88, over a blur of what is behind the window
 ├── one layer per piece: a picture of its string, a hairline, or a vital's picture
 ├── tray     masks to its bounds, from the first tray icon to the chevron's ink
 │   └── one layer per tray extra
@@ -97,6 +97,17 @@ root         the ground: n1 at 0.88
 `domain/pieces.rs` says what each piece shows, `domain/placement.rs` where its picture goes, and
 `domain/motion.rs` how the two movements run. `platform/panel.rs` sets the layers and
 `platform/text.rs` draws the words.
+
+**The blur is the window server's.** `SLSSetWindowBackgroundBlurRadius`, at radius 30, blurs what
+shows through the window's translucent ground, which is what sketchybar's `blur_radius` calls.
+AppKit's `NSVisualEffectView` was not used, because its materials bring their own tint and the
+ground's colour is the palette's. Measured 2026-09-29 on the built-in display, over an empty stretch
+of the ground: the luma difference between neighbouring pixels fell from 0.554 to 0.058 and the mean
+stayed at 32, so the wallpaper reads as a tint and the colour is unchanged. The flight overlay moves
+behind the bar, so a flight has the window server blur the strip again each frame. Over bursts of six
+workspace switches, the same build with and without the blur measured 92% and 100% of a core of
+WindowServer against 95% and 94%, and 1.80s and 1.60s of rini's CPU against 1.64s and 1.46s: no
+difference beyond the spread between runs.
 
 **Every string is a picture.** Each is drawn once per string, face and colour into a bitmap of its
 ink plus a 2pt margin, and kept while some bar still says it. A `CATextLayer` cannot say where its

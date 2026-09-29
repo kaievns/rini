@@ -17,6 +17,10 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 
 - There MUST be one bar per display, 32pt tall, across the top. `[settings.bar] enabled = false`
   turns every bar off.
+- What shows through the bar's ground MUST be blurred, with the ground's colour kept.
+
+> **Reported 2026-09-29.** "make the bar background to use blur". Until then the wallpaper showed
+> through the 88% ground in sharp detail.
 - No window MAY sit under the bar on any display. The band MUST be kept clear on every display, not
   only on the one whose notch macOS already keeps clear. A per-display gap that made room for the old
   bar on the external display is no longer needed, and left in place it doubles the band.

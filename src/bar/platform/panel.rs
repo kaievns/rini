@@ -17,13 +17,15 @@ use objc2_app_kit::{
     NSEvent, NSPanel, NSScreen, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGColor, CGImage};
+use objc2_core_graphics::{CGColor, CGError, CGImage};
 use objc2_foundation::{NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, kCAFillModeBackwards,
     kCAGravityLeft, kCAMediaTimingFunctionEaseInEaseOut, kCAMediaTimingFunctionEaseOut,
 };
+use rini_skylight_sys::{G_CONNECTION, SLSSetWindowBackgroundBlurRadius};
 use rustc_hash::FxHashMap as HashMap;
+use tracing::warn;
 
 use crate::animation::platform::overlay::set_contents;
 use crate::bar::domain::extras::Kind;
@@ -189,6 +191,17 @@ impl BarPanel {
         );
         if let Some(dark) = NSAppearance::appearanceNamed(unsafe { NSAppearanceNameDarkAqua }) {
             window.setAppearance(Some(&dark));
+        }
+        // SAFETY: plain values into SkyLight, for a window this process owns.
+        let blurred = unsafe {
+            SLSSetWindowBackgroundBlurRadius(
+                *G_CONNECTION,
+                window.windowNumber() as u32,
+                palette::BAR_GROUND_BLUR,
+            )
+        };
+        if blurred != CGError::Success {
+            warn!(error = ?blurred, "could not blur the bar's ground");
         }
 
         let view = BarView::alloc(mtm).set_ivars(ViewIvars {
