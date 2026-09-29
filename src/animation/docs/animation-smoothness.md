@@ -153,6 +153,29 @@ curve. Starting from the leg rather than the presentation layer also keeps an
 edge bounce out of it: the presented position includes the bounce's additive
 offset, and a leg begun there carried the bounce twice. The flight's clock
 covers the longest spring (`running.duration`).
+
+Measured 2026-09-29 by tracing where each container is drawn every tick
+(`trace_presented`, enabled with `rini::animation::trace=trace` in `RUST_LOG`)
+through one replayed burst of real Ctrl-J/L key events, Right x13 then Left x6,
+60-570ms apart. Speed is only compared within a flight: each new flight re-bases
+its container, so positions jump between flights without anything moving.
+
+```
+change of speed in one tick   old retarget   spring
+largest                        28,338pt/s    9,239pt/s
+p99                            20,010pt/s    8,328pt/s
+```
+
+A retarget now accelerates over about 30ms from the speed it was at (210, 4163,
+8489, 9433pt/s on consecutive ticks) instead of jumping. What still reads as
+separate pulses at 300-570ms between presses is separate flights: the first
+leg is 97% home by half time, so the strip is at rest before the next press.
+The same trace showed the engine's thread stalling mid-flight, so a press
+landed after the strip had stopped; reading every window's frame in one query
+when a surface flight starts and at handover took the stalls over 30ms in that
+burst from 14 (909ms in all, longest 178ms) to 9 (424ms, longest 99ms). Most of
+what is left is the two full window lists and the desktop and bar captures a
+new flight takes.
 The overlay applies the delta in one transaction (`retarget`): reads of
 every container's presented position first, then reparents, container
 animations, joins, loose retargets. Without this a pan merging 56ms after
