@@ -240,6 +240,7 @@ mod tests {
         let bar = DisplayBar {
             uuid: "d".into(),
             screen: 1,
+            frame: CGRect::ZERO,
             rows: vec![Row::Shown, Row::Occupied],
             glyphs: vec![],
             focus: None,

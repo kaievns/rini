@@ -78,6 +78,7 @@ mod tests {
         DisplayBar {
             uuid: "d".into(),
             screen: 1,
+            frame: objc2_core_foundation::CGRect::ZERO,
             rows: vec![Row::Occupied, Row::Shown, Row::Empty],
             glyphs: vec![
                 Glyph { app: "Code".into(), window: WindowId::new(1, 1), lit: true },

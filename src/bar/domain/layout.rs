@@ -306,6 +306,7 @@ mod tests {
         DisplayBar {
             uuid: "d".into(),
             screen: 1,
+            frame: objc2_core_foundation::CGRect::ZERO,
             rows: vec![Row::Occupied, Row::Shown, Row::Empty, Row::Empty],
             glyphs: vec![glyph(1, true), glyph(2, false), glyph(3, false), glyph(4, false)],
             focus: Some(FocusLabel { app: "Code".into(), title: "lib.rs — rini".into() }),

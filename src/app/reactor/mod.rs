@@ -286,6 +286,8 @@ pub enum Event {
     /// WindowServer notifications once the topology authority says wake
     /// processing has advanced.
     SystemWoke,
+    /// The system clock was set, or the time zone changed.
+    ClockChanged,
     #[serde(skip)]
     SystemWillSleep,
     #[serde(skip)]
@@ -1517,6 +1519,10 @@ impl Reactor {
             }
             Event::BarAction(action) => {
                 return self.on_bar_action(action);
+            }
+            Event::ClockChanged => {
+                self.bar_clock_changed();
+                return Ok(EventOutcome::no_change());
             }
             Event::Command(Command::Reactor(ReactorCommand::SwitchWindow { backward, scope })) => {
                 return Ok(self.switch_window(backward, scope));

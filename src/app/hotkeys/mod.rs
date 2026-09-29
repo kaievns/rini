@@ -44,6 +44,8 @@ pub enum WmEvent {
     Input(crate::input::event::Event),
     PowerStateChanged(bool),
     KeyboardLayoutChanged,
+    /// The system clock was set, or the time zone changed.
+    ClockChanged,
     ConfigUpdated(crate::app::config::Config),
     Command(WmCommand),
 }
@@ -224,6 +226,7 @@ impl WmController {
             KeyboardLayoutChanged => {
                 _ = self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
             }
+            ClockChanged => self.events_tx.send(Event::ClockChanged),
             // Every binding alias is a translation; `lower` is that translation and is tested on
             // its own. What is left here is the two things only the controller can carry out.
             Command(Wm(cmd)) => {
@@ -351,5 +354,28 @@ impl WmController {
                 error!("stderr: {}", String::from_utf8_lossy(&*output.stderr));
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clock_change_is_passed_to_the_reactor() {
+        let (config_tx, _config_rx) = channels::channel();
+        let (events_tx, mut events_rx) = channels::channel();
+        let (event_tap_tx, _event_tap_rx) = channels::channel();
+        let config = Config {
+            restore_file: PathBuf::new(),
+            config: crate::app::config::Config::default(),
+        };
+        let (mut controller, _sender) =
+            WmController::new(config, config_tx, events_tx, event_tap_tx, None, None);
+        controller.handle_event(WmEvent::ClockChanged);
+        assert!(matches!(
+            events_rx.try_recv(),
+            Ok((_, reactor::Event::ClockChanged))
+        ));
     }
 }

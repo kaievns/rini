@@ -24,6 +24,7 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 - The bar MUST NOT be tiled, focused, counted as a window, or offered by a switcher.
 - A display that sleeps MUST keep its bar. A display that is plugged in gets one; one unplugged
   loses it.
+- A display whose resolution or arrangement changes MUST have its bar follow it at once.
 - The bar MUST NOT be drawn over a native fullscreen space.
 
 ## What it costs
@@ -56,6 +57,7 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 
 - The time MUST read 24-hour `HH:MM` and change on the minute, whatever else wakes the bar first. A
   bar that comes back up MUST show the time it came back to. The date reads like "Tue 29th".
+- A change of the system clock or time zone MUST show on the bar at once.
 - Wi-Fi, sound and battery MUST be macOS's own icons, so they show what macOS shows: signal, level,
   charge, and charging.
 - Every other menu extra MUST be drawn in the tray, in menu-bar order, with the app's own icon. The

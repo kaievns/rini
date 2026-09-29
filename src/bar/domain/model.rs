@@ -4,6 +4,7 @@
 //! `BarModel`, and the bar is sent the model only when it differs from the last one. So the bar never
 //! asks for anything, and a burst of events that changes nothing on it costs it nothing.
 
+use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowId;
 
 use super::format::truncate;
@@ -25,6 +26,8 @@ pub struct DisplayInput {
     pub uuid: String,
     /// The CoreGraphics display id, which is what the bar's window is placed by.
     pub screen: u32,
+    /// The display's frame, which changes with its resolution and arrangement.
+    pub frame: CGRect,
     /// Whether each workspace holds a window on this display, in workspace order.
     pub occupied: Vec<bool>,
     /// Which workspace this display shows.
@@ -59,6 +62,8 @@ pub struct BarModel {
 pub struct DisplayBar {
     pub uuid: String,
     pub screen: u32,
+    /// Never drawn. A display that is resized or moved makes a new model, and so is placed again.
+    pub frame: CGRect,
     /// One per workspace, in workspace order.
     pub rows: Vec<Row>,
     /// The shown workspace's applications, the focused window's first.
@@ -124,6 +129,7 @@ fn display_bar(display: &DisplayInput, focus: Option<&FocusInput>) -> DisplayBar
     DisplayBar {
         uuid: display.uuid.clone(),
         screen: display.screen,
+        frame: display.frame,
         rows,
         glyphs: glyphs(&display.windows, focus_here.map(|focus| focus.window)),
         focus: focus_here.filter(|focus| !focus.app.is_empty()).map(|focus| FocusLabel {
@@ -152,6 +158,8 @@ fn glyphs(windows: &[WindowInput], focused: Option<WindowId>) -> Vec<Glyph> {
 
 #[cfg(test)]
 mod tests {
+    use objc2_core_foundation::{CGPoint, CGSize};
+
     use super::*;
 
     const BUILTIN: &str = "37D8832A-2D66-02CA-B9F7-8F30A301B230";
@@ -169,6 +177,7 @@ mod tests {
                 DisplayInput {
                     uuid: BUILTIN.into(),
                     screen: 1,
+                    frame: CGRect::new(CGPoint::new(0.0, 32.0), CGSize::new(1728.0, 1085.0)),
                     occupied: vec![true, false, false, true],
                     shown: Some(3),
                     windows: vec![
@@ -183,6 +192,7 @@ mod tests {
                 DisplayInput {
                     uuid: EXTERNAL.into(),
                     screen: 2,
+                    frame: CGRect::new(CGPoint::new(-670.0, -1660.0), CGSize::new(3008.0, 1660.0)),
                     occupied: vec![false, false, false, false],
                     shown: Some(0),
                     windows: vec![],
@@ -290,6 +300,18 @@ mod tests {
         let rows = &build(&input).displays[0].rows;
         assert_eq!(rows.len(), 9);
         assert_eq!(rows[8], Row::Shown);
+    }
+
+    /// A display that changes resolution or moves, and nothing else, still makes a different model,
+    /// so the change is sent and its bar is placed again.
+    #[test]
+    fn a_resized_display_is_a_different_model() {
+        let before = build(&input());
+        let mut input = input();
+        input.displays[1].frame.size = CGSize::new(3840.0, 2128.0);
+        let after = build(&input);
+        assert_eq!(after.displays[1].frame, input.displays[1].frame);
+        assert_ne!(after, before);
     }
 
     /// A model with nothing in it is what takes the bars down.

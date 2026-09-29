@@ -214,6 +214,7 @@ mod tests {
         DisplayBar {
             uuid: "d".into(),
             screen: 1,
+            frame: objc2_core_foundation::CGRect::ZERO,
             rows: vec![Row::Occupied, Row::Shown, Row::Empty],
             glyphs: ["Code", "Ghostty", "Zen", "Slack", "Mail", "Notes", "Music"]
                 .iter()

@@ -51,13 +51,20 @@ fn right_ghostty() -> WindowId {
     WindowId::new(GHOSTTY, 2)
 }
 
+fn left_frame() -> CGRect {
+    CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.))
+}
+
+fn right_frame() -> CGRect {
+    CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.))
+}
+
 fn desk() -> Desk {
     let mut reactor = test_reactor();
     let bar = reactor.connect_test_bar();
     let left = SpaceId::new(1);
     let right = SpaceId::new(2);
-    let left_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
-    let right_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
+    let (left_frame, right_frame) = (left_frame(), right_frame());
     set_space_membership(&[(left, &[901, 902]), (right, &[903, 904])]);
     reactor.handle_test_batch(vec![space_state_event(
         vec![left_frame, right_frame],
@@ -298,11 +305,9 @@ fn each_display_is_told_its_own_shown_windows() {
 #[test]
 fn a_display_without_a_user_space_has_no_bar() {
     let mut desk = desk();
-    let left_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
-    let right_frame = CGRect::new(CGPoint::new(1440., 0.), CGSize::new(1440., 900.));
     let left = desk.left;
     desk.reactor.handle_test_batch(vec![space_state_event(
-        vec![left_frame, right_frame],
+        vec![left_frame(), right_frame()],
         vec![Some(left), None],
     )]);
     let sent = models(&mut desk.bar).pop().expect("the lost bar is sent");
@@ -310,13 +315,62 @@ fn a_display_without_a_user_space_has_no_bar() {
     assert_eq!(uuids, vec![LEFT]);
 }
 
+/// The same display, the same space, a new frame: the display changed resolution or was moved, and
+/// its bar has to be placed again.
+#[test]
+fn a_display_that_changes_its_frame_sends_a_model() {
+    let mut desk = desk();
+    let (left, right) = (desk.left, desk.right);
+    let wider = CGRect::new(right_frame().origin, CGSize::new(1920., 1080.));
+    desk.reactor.handle_test_batch(vec![space_state_event(
+        vec![left_frame(), wider],
+        vec![Some(left), Some(right)],
+    )]);
+    let sent = models(&mut desk.bar);
+    assert_eq!(sent.len(), 1, "one resize, one model");
+    assert_eq!(sent[0].displays[1].uuid, RIGHT);
+    assert_eq!(sent[0].displays[1].frame, wider);
+
+    let moved = CGRect::new(CGPoint::new(0., -1080.), wider.size);
+    desk.reactor.handle_test_batch(vec![space_state_event(
+        vec![left_frame(), moved],
+        vec![Some(left), Some(right)],
+    )]);
+    let sent = models(&mut desk.bar);
+    assert_eq!(sent.len(), 1, "one move, one model");
+    assert_eq!(sent[0].displays[1].frame, moved);
+}
+
+#[test]
+fn a_display_reported_with_the_same_frame_sends_nothing() {
+    let mut desk = desk();
+    let (left, right) = (desk.left, desk.right);
+    desk.reactor.handle_test_batch(vec![space_state_event(
+        vec![left_frame(), right_frame()],
+        vec![Some(left), Some(right)],
+    )]);
+    assert!(models(&mut desk.bar).is_empty());
+}
+
+/// Whether the bar has been told to read the clock again since the last look.
+fn told_the_time(bar: &mut Receiver) -> bool {
+    let mut clock_changed = false;
+    while let Ok((_, event)) = bar.try_recv() {
+        clock_changed |= matches!(event, BarEvent::ClockChanged);
+    }
+    clock_changed
+}
+
 #[test]
 fn waking_has_the_bars_read_the_clock() {
     let mut desk = desk();
     desk.reactor.handle_test_batch(vec![Event::SystemWoke]);
-    let mut clock_changed = false;
-    while let Ok((_, event)) = desk.bar.try_recv() {
-        clock_changed |= matches!(event, BarEvent::ClockChanged);
-    }
-    assert!(clock_changed);
+    assert!(told_the_time(&mut desk.bar));
+}
+
+#[test]
+fn a_clock_or_time_zone_change_has_the_bars_read_the_clock() {
+    let mut desk = desk();
+    desk.reactor.handle_test_batch(vec![Event::ClockChanged]);
+    assert!(told_the_time(&mut desk.bar));
 }
