@@ -36,6 +36,9 @@ pub const UNDERLINE_HEIGHT: f64 = 2.0;
 const LEFT_EDGE: f64 = 9.5;
 /// Between one workspace's group and the next.
 const GROUP_GAP: f64 = 5.0;
+/// More air after the shown workspace's last glyph: the old bar measured 17.5 from it to the next
+/// numeral, against 22 between numerals.
+const AFTER_GLYPHS: f64 = 1.5;
 
 /// Screen edge to the end of the time's ink.
 const TIME_TO_EDGE: f64 = 27.0;
@@ -177,7 +180,7 @@ pub fn lay_out(
 fn pads(piece: Piece, bar: &DisplayBar) -> (f64, f64) {
     match piece {
         Piece::Numeral(_) => (8.5, 8.5),
-        Piece::Glyph(index) if bar.glyphs.get(index).is_some_and(|glyph| glyph.lit) => (8.0, 9.0),
+        Piece::Glyph(index) if bar.glyphs.get(index).is_some_and(|glyph| glyph.lit) => (7.5, 9.0),
         Piece::Glyph(_) => (2.5, 2.5),
         Piece::More => (0.0, 8.0),
         Piece::PlaceDivider => (4.5, 5.0),
@@ -226,6 +229,9 @@ fn lay_out_left(
                 scene.hits.push((span.grown(0.0, 8.0), Target::Fold));
             }
             scene.underline = Some(Span { x0: start, x1: cursor });
+            if matches!(scene.pieces.last(), Some((Piece::Glyph(_), _))) {
+                cursor += AFTER_GLYPHS;
+            }
         }
         cursor += GROUP_GAP;
     }
@@ -339,17 +345,17 @@ mod tests {
         scene.span(b).unwrap().x0 - scene.span(a).unwrap().x1
     }
 
-    /// The left zone's rhythm, against the old bar: 18 from the edge, 22 between numerals, 16.5 from
-    /// the shown numeral to the lit glyph, 11.5 then 5 between glyphs.
+    /// The left zone's rhythm, against the old bar: 18 from the edge, 22 between numerals, 16 from
+    /// the shown numeral to the lit glyph, 11.5 then 5 between glyphs, and 17.5 on to the next numeral.
     #[test]
     fn the_left_zone_keeps_the_measured_rhythm() {
         let scene = scene();
         assert_eq!(scene.span(Piece::Numeral(0)).unwrap().x0, 18.0);
         assert_eq!(gap(&scene, Piece::Numeral(0), Piece::Numeral(1)), 22.0);
-        assert_eq!(gap(&scene, Piece::Numeral(1), Piece::Glyph(0)), 16.5);
+        assert_eq!(gap(&scene, Piece::Numeral(1), Piece::Glyph(0)), 16.0);
         assert_eq!(gap(&scene, Piece::Glyph(0), Piece::Glyph(1)), 11.5);
         assert_eq!(gap(&scene, Piece::Glyph(1), Piece::Glyph(2)), 5.0);
-        assert_eq!(gap(&scene, Piece::Glyph(3), Piece::Numeral(2)), 16.0);
+        assert_eq!(gap(&scene, Piece::Glyph(3), Piece::Numeral(2)), 17.5);
         assert_eq!(gap(&scene, Piece::Numeral(2), Piece::Numeral(3)), 22.0);
     }
 

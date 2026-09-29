@@ -92,7 +92,8 @@ permission, builds every actor and joins them.
    "which windows are on this space" is a window-server query over window ids.
    `layout` and `workspaces` sit above both; `input` and `animation` beside them,
    reaching only for ids and frames. `switcher` and `bar` are the most downstream:
-   they draw what the reactor sends them, and no feature depends on either.
+   they draw what the reactor sends them. `switcher` takes its colours from
+   `bar::domain::palette`, and no other feature depends on either.
 4. **Nothing in `crates/` knows what a workspace is.** A crate there is a
    library: identity, geometry, a run loop, a wire protocol, two FFI surfaces.
    `rini-cli` is the client binary and depends on `rini-core` and `rini-ipc`

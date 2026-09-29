@@ -317,7 +317,9 @@ screen recording showed 50-130ms freezes followed by catch-up jumps. A flight
 beginning inside the quiet period cancels the timer; the work carries over to
 its own lift. The same quiet period is what `set_on_flight` reports as settled
 (`FlightReport`): `true` when an overlay goes up, `false` at `Event::Quiet`, so
-a burst of flights is one `true` and one `false`. The bar is recaptured
+a burst of flights is one `true` and one `false`. rini's own bar sits above the
+overlay and is never pictured, so with it on a flight looks for no bar at all.
+Another app's bar, under the overlay with rini's off, is recaptured
 `BAR_REFRESH_DELAY` (250ms) after a flight, never at the start of one: a bar
 composite measures 31ms median, and the delay lets the compositor drop the
 hidden overlay from the framebuffer and folds a burst of switches into one

@@ -4082,6 +4082,7 @@ impl Reactor {
             // Retina, and a wrong scale only affects bitmap crispness rather than geometry, so 2.0
             // is a safe default until there is a reason to plumb the real value through.
             scale: 2.0,
+            picture_bar: !self.config.settings.bar.enabled,
         });
     }
 

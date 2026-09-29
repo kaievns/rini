@@ -43,9 +43,15 @@ pub enum Event {
         focus: Option<WindowId>,
         duration: Duration,
     },
-    /// Display geometry for the overlay. Must be the USABLE frame, excluding the menu bar strip,
-    /// so the user's bar is not covered and made to flicker.
-    SetDisplay { id: u32, frame: CGRect, scale: f64 },
+    /// Display geometry for the overlay: the display's whole bounds. `picture_bar` says whether a
+    /// bar under the overlay is pictured and drawn over flights; it is off while rini draws its own
+    /// bar above the overlay, which leaves nothing there to picture.
+    SetDisplay {
+        id: u32,
+        frame: CGRect,
+        scale: f64,
+        picture_bar: bool,
+    },
     /// Drop snapshots for windows that no longer exist, so the cache cannot grow without bound.
     ForgetWindow(WindowId),
     /// Slide every currently visible window in from an offset, purely to evaluate animation quality
@@ -592,6 +598,8 @@ pub struct FlightEngine {
     pictures: DisplayPictures,
     /// Fires once after an animation, to recapture the bar away from the critical path.
     bar_refresh: Option<RepeatingTimer>,
+    /// Whether a bar under the overlay is pictured; see `Event::SetDisplay`.
+    picture_bar: bool,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     lend_snapshots: Option<LendSnapshots>,
@@ -636,6 +644,7 @@ impl FlightEngine {
             last_focus: None,
             pictures: DisplayPictures::default(),
             bar_refresh: None,
+            picture_bar: true,
             place_frames: None,
             lend_snapshots: None,
             on_flight: None,
@@ -672,7 +681,12 @@ impl FlightEngine {
 
     fn handle(&mut self, event: Event) {
         match event {
-            Event::SetDisplay { id, frame, scale } => self.set_display(id, frame, scale),
+            Event::SetDisplay {
+                id,
+                frame,
+                scale,
+                picture_bar,
+            } => self.set_display(id, frame, scale, picture_bar),
             Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
             Event::AnimateSurface {
                 windows,
@@ -881,7 +895,11 @@ impl FlightEngine {
         self.service.request(targets);
     }
 
-    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64) {
+    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, picture_bar: bool) {
+        if !picture_bar {
+            self.pictures.bar = None;
+        }
+        self.picture_bar = picture_bar;
         let first = self.display.is_none();
         let changed = self.display != Some((frame, scale)) || self.display_id != Some(id);
         self.display = Some((frame, scale));
@@ -2270,7 +2288,7 @@ impl FlightEngine {
     /// The bar's held picture and where it sits in overlay coordinates. Only the very first call
     /// captures inline; [`Self::refresh_bar`] pays for the rest after an animation.
     fn bar_picture(&mut self) -> (Option<WindowSnapshot>, Option<CGRect>) {
-        let Some((display_frame, _)) = self.display else {
+        let Some((display_frame, _)) = self.display.filter(|_| self.picture_bar) else {
             return (None, None);
         };
         let strip = crate::animation::platform::backdrop::bar_strip(display_frame);
@@ -2293,6 +2311,9 @@ impl FlightEngine {
     /// Asks for the bar to be recaptured after `BAR_REFRESH_DELAY`: a capture taken as the overlay
     /// hides still reads the overlay's own pixels out of the framebuffer.
     fn arm_bar_refresh(&mut self) {
+        if !self.picture_bar {
+            return;
+        }
         let tx = self.tx.clone();
         self.bar_refresh = RepeatingTimer::every(BAR_REFRESH_DELAY, move || {
             _ = tx.send(Event::RefreshBar);

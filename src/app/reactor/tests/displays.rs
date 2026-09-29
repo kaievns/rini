@@ -2252,3 +2252,28 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
         "with no space in mind the active display is still the right answer"
     );
 }
+
+/// With rini's own bar above the overlay there is no bar under it to picture, so a flight spends
+/// nothing looking for one. Turned off, another bar may sit there and is pictured as before.
+#[test]
+fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
+    let (_apps, mut reactor) = test_context();
+    reactor.handle_event(space_state_event(
+        vec![CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.))],
+        vec![Some(SpaceId::new(1))],
+    ));
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    let mut picture_bar = |reactor: &mut Reactor| {
+        reactor.publish_animation_display();
+        match animation_rx.try_recv().expect("a display should be published").1 {
+            crate::animation::platform::engine::Event::SetDisplay { picture_bar, .. } => picture_bar,
+            other => panic!("expected SetDisplay, got {other:?}"),
+        }
+    };
+    reactor.config.settings.bar.enabled = true;
+    assert!(!picture_bar(&mut reactor));
+    reactor.config.settings.bar.enabled = false;
+    assert!(picture_bar(&mut reactor));
+}

@@ -446,6 +446,11 @@ beneath the bar, which is exactly where a workspace is supposed to slide out of
 view. So the overlay covers the whole display and redraws the bar on top of
 itself instead. See "The bar is dozens of windows" for what that costs.
 
+That is for a bar under the overlay, which is another app's since rini draws its
+own. rini's bar is at level 20, above the overlay, so it stays live through a
+flight and nothing pictures it; the engine looks for a bar under the overlay only
+while `[settings.bar] enabled = false`. See `src/bar/docs/README.md`.
+
 The relevant layers on this machine:
 
 ```
@@ -694,6 +699,8 @@ frames=87  elapsed=1501ms  duration=1500ms  travel="0,1117 -> 0,0"
 60fps in every case, and travel proportional to the number of rows crossed.
 
 ## The bar has to be captured on its own, at the union's origin
+
+This is about a bar under the overlay, which rini's own is not; see above.
 
 sketchybar is not one window. Measured here: 24 windows at layer -20 across the
 strip, most 14pt to 131pt wide, plus more parked at -9999,-9999.

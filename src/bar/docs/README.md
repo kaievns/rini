@@ -10,8 +10,10 @@ the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 | | |
 |---|---|
 | **What each bar shows** | `domain/model.rs`: `BarInput` in from the reactor, `BarModel` out, `Action` back |
-| **Where each piece goes** | `domain/layout.rs`: spans by ink, the underline, and the hit test |
+| **Where each piece goes** | `domain/layout.rs`: spans by ink, the underline, and the hit test; `domain/placement.rs`: where each picture goes so its ink lands on its span |
+| **What each piece says, and what a click does** | `domain/pieces.rs` |
 | **How each piece is set** | `domain/style.rs` and `domain/palette.rs` |
+| **The two movements** | `domain/motion.rs`: the fold's states and the fades' timing |
 | **Which menu extras are drawn** | `domain/extras.rs`: vitals, tray and skipped, the twin-block rule, ink columns, cutting a capture apart, the change test and the tick |
 | **The words** | `domain/format.rs`, and `domain/glyphs.rs` with its table `domain/app_glyphs.tsv` |
 | **The windows** | `platform/actor.rs` on the main thread, `platform/panel.rs`, `platform/text.rs` |
@@ -48,9 +50,9 @@ to ink, in points:
 |---|---|---|
 | screen edge and the first numeral | 17.5 | 18 |
 | numerals | 21.5 | 22 |
-| the shown numeral and the lit glyph | 15.5 | 16.5 |
+| the shown numeral and the lit glyph | 15.5 | 16 |
 | the lit glyph and the next, then glyphs | 11, then 4.5 to 5 | 11.5, then 5 |
-| the last glyph and the next numeral | 17 | 16 |
+| the last glyph and the next numeral | 17 | 17.5 |
 | the last numeral and the divider | 17.5 | 18 |
 | the divider and the application | 13.5 | 14 |
 | the application and the dot, the dot and the title | 15.5, 5.5 | 16, 6 |
@@ -63,8 +65,10 @@ to ink, in points:
 
 A text token is the old figure plus half a point: AppKit's device-metric ink runs about that far past
 the pixels the threshold keeps, so the first render, spaced to the old figures, measured half a point
-tight. Tray icons are spaced by ink read from their own pixels, so their token is the figure. Where
-the old bar was uneven (the vitals, the chevron) the tokens are even on purpose.
+tight. Two are not: the time's 27 to the screen edge measured 27 on both bars, and the battery's 10
+to the divider is an icon's ink, read from pixels. Tray icons are spaced by ink read from their own
+pixels too, so their token is the figure. Where the old bar was uneven (the vitals, the chevron) the
+tokens are even on purpose.
 
 Vertically the old bar's digits sat 10 to 20pt from the top and its 12-13pt text 12 to 21pt, which
 is where the baselines in `domain/layout.rs` come from. An earlier reading had them upside down, 12

@@ -59,6 +59,9 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
   charge, and charging.
 - Every other menu extra MUST be drawn in the tray, in menu-bar order, with the app's own icon. The
   tray MUST be open to begin with, and the chevron beside it opens and closes it.
+- Left out on purpose: the clock extra (the time is drawn as text), Control Center's own button,
+  Now Playing, Apple's other extras, and the print queue and DisplayLink when macOS names them. macOS
+  names third-party extras only in some sessions, so those two show in the others.
 - Icons MUST be evenly spaced by their ink, not by their pictures, whose margins differ from one
   extra to the next.
 
