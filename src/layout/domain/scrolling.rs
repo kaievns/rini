@@ -79,6 +79,10 @@ struct LayoutState {
     last_screen_width: AtomicU64,
     #[serde(skip, default = "default_atomic")]
     last_gap_x: AtomicU64,
+    /// Where the selected column's start sat against the scroll offset after the last layout, or NaN
+    /// before the first. A change of gap re-spaces the strip around it, so the column stays put.
+    #[serde(skip, default = "default_atomic_unset")]
+    last_selected_rel_px: AtomicU64,
     #[serde(skip, default = "default_atomic")]
     last_step_px: AtomicU64,
     #[serde(skip, default = "default_atomic")]
@@ -104,6 +108,7 @@ impl LayoutState {
             center_override_window: None,
             last_screen_width: AtomicU64::new(0.0f64.to_bits()),
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
+            last_selected_rel_px: default_atomic_unset(),
             last_step_px: AtomicU64::new(0.0f64.to_bits()),
             last_center_offset_delta_px: AtomicU64::new(0.0f64.to_bits()),
             overscroll_accumulation: AtomicU64::new(0.0f64.to_bits()),
@@ -488,6 +493,7 @@ impl Clone for LayoutState {
             center_override_window: self.center_override_window,
             last_screen_width: AtomicU64::new(self.last_screen_width.load(Ordering::Relaxed)),
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
+            last_selected_rel_px: AtomicU64::new(self.last_selected_rel_px.load(Ordering::Relaxed)),
             last_step_px: AtomicU64::new(self.last_step_px.load(Ordering::Relaxed)),
             last_center_offset_delta_px: AtomicU64::new(
                 self.last_center_offset_delta_px.load(Ordering::Relaxed),
@@ -509,6 +515,18 @@ fn default_atomic_i8() -> AtomicI8 {
 }
 fn default_atomic() -> AtomicU64 {
     AtomicU64::new(0.0f64.to_bits())
+}
+
+fn default_atomic_unset() -> AtomicU64 {
+    AtomicU64::new(f64::NAN.to_bits())
+}
+
+/// The scroll offset that keeps the selected column where it was on screen after the gap between
+/// columns changed. The offset is in strip points and every column start includes the gaps before
+/// it, so a wider gap slides the selected column right by one gap change per column ahead of it
+/// unless the offset follows. `None` when the gap is unchanged or nothing was laid out before.
+fn rebased_offset(previous_gap: f64, gap: f64, previous_rel: f64, selected_start: f64) -> Option<f64> {
+    (gap != previous_gap && previous_rel.is_finite()).then(|| selected_start - previous_rel)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1003,6 +1021,16 @@ impl ScrollingLayoutSystem {
             .copied()
             .unwrap_or((tiling.size.width * base_ratio).max(1.0));
         let step = selected_width + gap_x;
+        let previous_gap = f64::from_bits(state.last_gap_x.load(Ordering::Relaxed));
+        let previous_rel = f64::from_bits(state.last_selected_rel_px.load(Ordering::Relaxed));
+        if let Some(offset) = rebased_offset(
+            previous_gap,
+            gap_x,
+            previous_rel,
+            column_starts.get(selected_col_idx).copied().unwrap_or(0.0),
+        ) {
+            state.scroll_offset_px.store(offset.to_bits(), Ordering::Relaxed);
+        }
         state.last_screen_width.store(tiling.size.width.to_bits(), Ordering::Relaxed);
         state.last_gap_x.store(gap_x.to_bits(), Ordering::Relaxed);
         state.last_step_px.store(step.to_bits(), Ordering::Relaxed);
@@ -1080,6 +1108,8 @@ impl ScrollingLayoutSystem {
         };
         let clamped = current.clamp(min_offset, max_offset);
         state.scroll_offset_px.store(clamped.to_bits(), Ordering::Relaxed);
+        let selected_rel = column_starts.get(selected_col_idx).copied().unwrap_or(0.0) - clamped;
+        state.last_selected_rel_px.store(selected_rel.to_bits(), Ordering::Relaxed);
 
         let mut out = Vec::new();
         for (col_idx, col) in state.columns.iter().enumerate() {
@@ -1942,7 +1972,7 @@ mod tests {
 
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-    use super::{Column, ScrollingLayoutSystem};
+    use super::{Column, ScrollingLayoutSystem, rebased_offset};
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::layout::settings::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
@@ -3338,6 +3368,45 @@ mod tests {
             state.columns[0].windows.contains(&w1) && state.columns[0].windows.contains(&w2),
             "both windows should share one column"
         );
+    }
+
+    /// Only a changed gap re-bases the offset, and only once a layout has recorded where the selected
+    /// column sat.
+    #[test]
+    fn only_a_changed_gap_rebases_the_offset() {
+        assert_eq!(rebased_offset(2.0, 4.0, -4.0, 1726.0), Some(1730.0));
+        assert_eq!(rebased_offset(4.0, 4.0, -4.0, 1726.0), None, "the same gap");
+        assert_eq!(rebased_offset(2.0, 4.0, f64::NAN, 1726.0), None, "never laid out");
+    }
+
+    /// Found 2026-09-30: raising the gap between windows from 2 to 4 left a full-width column two
+    /// columns along the strip at left 6 / right 2 instead of 4 / 4. The scroll offset is in strip
+    /// points and each column's start includes the gaps before it, so the columns ahead of the
+    /// selected one pushed it right. The selected column MUST stay where it was on screen.
+    #[test]
+    fn a_gap_change_leaves_the_selected_column_in_place() {
+        let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
+        let w3 = wid(1, 3);
+        system.add_window_after_selection(layout, w3);
+        assert!(system.select_window(layout, w3));
+        system.resize_selection_by(layout, 0.5, ResizeOrientation::Horizontal);
+        let screen = screen(1728.0, 1117.0);
+        let mut gaps = GapSettings::default();
+        gaps.outer.left = 4.0;
+        gaps.outer.right = 4.0;
+        gaps.inner.horizontal = 2.0;
+
+        let before = frame_for(&render(&system, layout, screen, &gaps), w3);
+        assert_eq!(before.origin.x, 4.0, "the full-width column starts at the left margin");
+
+        gaps.inner.horizontal = 4.0;
+        let frames = render(&system, layout, screen, &gaps);
+        let after = frame_for(&frames, w3);
+        assert_eq!(after.origin.x, 4.0, "it stays at the left margin");
+        assert_eq!(after.origin.x + after.size.width, 1724.0, "and ends at the right one");
+        // The columns ahead of it are re-spaced with the new gap, one gap to its left.
+        assert_eq!(frame_for(&frames, w2).origin.x + frame_for(&frames, w2).size.width, 0.0);
+        let _ = w1;
     }
 
     /// Changing the default column ratio must not leave restored columns at their

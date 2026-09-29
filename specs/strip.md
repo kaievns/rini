@@ -17,6 +17,14 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   neighbours along.
 - The inner gap comes out of the columns, not from between them, so two half-width columns plus the gap
   between them add up to exactly the viewport.
+- Changing the gap between windows MUST leave the focused column where it was on screen, with the
+  columns around it re-spaced by the new gap.
+
+> **Found 2026-09-30, while acting on a report.** "can you check the gap between windos is 50/50
+> configurations? i think it's smaller than other gaps". It was: 2pt between windows against 4pt at
+> the edges. Raising it to 4 in the config left a full-width column two columns along the strip at
+> left 6 / right 2, because the scroll position is kept in points and each column's start includes
+> the gaps before it.
 - `ctrl-R` steps through the configured preset widths in order and wraps: a third, a half, two thirds,
   full, then a third again. A column at a width that is no preset — what the incremental resize keys
   leave behind — MUST join the cycle at the first preset above it rather than at the start.
