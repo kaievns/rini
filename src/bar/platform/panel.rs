@@ -14,7 +14,7 @@ use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSBackingStoreType, NSColor,
-    NSEvent, NSPanel, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSEvent, NSPanel, NSScreen, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColor, CGImage};
@@ -91,6 +91,22 @@ define_class!(
     }
 );
 
+define_class!(
+    /// AppKit keeps a window out of the menu-bar band by moving it down, which put the bar 32pt below
+    /// the top edge, over the windows. The bar's frame is taken as given.
+    #[unsafe(super(NSPanel))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "RiniBarPanel"]
+    struct BarWindow;
+
+    impl BarWindow {
+        #[unsafe(method(constrainFrameRect:toScreen:))]
+        fn constrain_frame_rect(&self, frame: CGRect, _screen: Option<&NSScreen>) -> CGRect {
+            frame
+        }
+    }
+);
+
 /// What a piece is drawn with.
 enum Look<'a> {
     Text(Rc<Picture>),
@@ -126,7 +142,7 @@ struct Drawn {
 
 /// One display's bar, kept for the life of the process once made.
 pub struct BarPanel {
-    window: Retained<NSPanel>,
+    window: Retained<BarWindow>,
     view: Retained<BarView>,
     root: Retained<CALayer>,
     /// One layer per piece, reused across draws and hidden while its piece is not drawn.
@@ -146,9 +162,9 @@ impl BarPanel {
     pub fn new(mtm: MainThreadMarker, on_click: OnClick) -> Option<Self> {
         // A placeholder frame: `place` puts it on its display.
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, layout::HEIGHT));
-        let window: Retained<NSPanel> = unsafe {
+        let window: Retained<BarWindow> = unsafe {
             msg_send![
-                NSPanel::alloc(mtm),
+                BarWindow::alloc(mtm),
                 initWithContentRect: frame,
                 styleMask: NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
                 backing: NSBackingStoreType::Buffered,
