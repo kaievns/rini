@@ -112,8 +112,9 @@ The two entry points feed the same `begin_group`:
 Mid-flight passes go through `merge_plans` (pure, tested), which retargets
 containers, not tiles. A rigid member of the incoming pass votes for its
 group's new position (`p = to - rel`); the largest cluster keeps the
-container, which bends from its presented position to the new destination
-under the same animation key (`GROUP_ANIMATION_KEY`, `"rini.group.move"`). Members voting
+container, which carries on toward the new destination under the same
+animation key (`GROUP_ANIMATION_KEY`, `"rini.group.move"`); see "One flight
+however many presses" below. Members voting
 elsewhere are reparented at the frame they are drawn at, into a group whose
 remaining travel matches theirs, or into a new one. A member the pass sends
 off the viewport does not vote while its container moves (`rides_out`): it
@@ -133,6 +134,25 @@ empty `PlanDelta`: nothing is touched, and rapid presses neither restart
 nor extend the flight. Any real change restarts the orchestration clock so
 the frame placement and teardown cover the newest legs. Reserved entrances
 still waiting for a picture take the pass's slot (`retarget_entrances`).
+
+**One flight however many presses.** A retargeted container used to restart
+`MOTION_CURVE` from its presented position. That curve leaves at 6.25x its
+average speed and is 97% home by half time, so under a burst the strip had
+nearly stopped by each press and the restart kicked it: 150ms into a column's
+travel it moves at about 890pt/s, and the restart put it at 15,375pt/s in one
+frame. Reported as a series of jerky movements. Now each container keeps its
+current leg (`Leg` in `src/animation/domain/motion/glide.rs`), and a new
+destination starts a critically damped spring from where the leg is and as fast
+as it is going. The spring's stiffness follows `animation_duration`: 97% home
+from rest at half the duration, where the curve is, so a chained leg lands like
+a fresh one. Core Animation cannot take a spring with a starting velocity in
+two dimensions as one timing function, so the leg is handed over as keyframes
+sampled from `Leg` every 1/120s (`leg_animation`); the render server and the
+next retarget read the same motion. The first leg of a flight is still the
+curve. Starting from the leg rather than the presentation layer also keeps an
+edge bounce out of it: the presented position includes the bounce's additive
+offset, and a leg begun there carried the bounce twice. The flight's clock
+covers the longest spring (`running.duration`).
 The overlay applies the delta in one transaction (`retarget`): reads of
 every container's presented position first, then reparents, container
 animations, joins, loose retargets. Without this a pan merging 56ms after

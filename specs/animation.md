@@ -50,7 +50,14 @@ destination for a window already moving.
 - A pass repeating a destination MUST be treated as redundant, not as a new flight. Otherwise a held
   key restarts the animation on every repeat and it never lands.
 - A pass with a new destination for a moving window MUST bend that window toward it rather than
-  restarting.
+  restarting: it continues from where it is drawn, at the speed it is moving. Its speed MUST NOT jump,
+  so a burst of presses reads as one movement that settles after the last.
+
+> **Reported 2026-09-29.** "as a general rule animation should not get interrupted mid-filight and
+> restarted a new, the target should fluidly move to the next window and feel like one smooth extended
+> flight". Each press restarted the motion curve from wherever the strip was drawn. The curve leaves
+> at 6.25x its average speed, so a strip that had nearly stopped was thrown forward again: about
+> 890pt/s to 15,375pt/s in one frame at a typical interval between presses.
 - A window the flight has not seen MUST be able to join it.
 
 ## A window that has just opened

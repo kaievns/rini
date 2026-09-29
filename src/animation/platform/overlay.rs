@@ -23,6 +23,7 @@ use objc2_quartz_core::{
 pub use crate::animation::domain::motion::easing::{
     BOUNCE_TURN, CubicBezier, MOTION_CURVE, bounce_displacement, ease,
 };
+use crate::animation::domain::motion::glide::{Leg, spring_omega};
 pub(crate) use crate::animation::domain::motion::plan::{
     AnimationTarget, animation_targets, bounce_carries,
 };
@@ -224,6 +225,31 @@ fn position_animation(from: CGPoint, to: CGPoint, timing: Timing) -> Retained<CA
     animation
 }
 
+/// Keyframe spacing for a leg Core Animation cannot express as one curve: a 120Hz frame.
+const LEG_STEP: f64 = 1.0 / 120.0;
+
+/// A container's leg as evenly spaced keyframes sampled from `Leg` itself, so what the render
+/// server draws and what the next retarget reads the velocity off are the same motion.
+fn leg_animation(leg: &Leg) -> Retained<CAKeyframeAnimation> {
+    let (points, seconds) = leg.samples(LEG_STEP);
+    let animation =
+        CAKeyframeAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
+    // SAFETY: NSValues holding CGPoints are the value type Core Animation expects for "position".
+    unsafe {
+        let values: Vec<Retained<objc2::runtime::AnyObject>> = points
+            .into_iter()
+            .map(|p| Retained::into_super(Retained::into_super(NSValue::valueWithPoint(p))))
+            .collect();
+        animation.setValues(Some(&NSArray::from_retained_slice(&values)));
+    }
+    animation.setDuration(seconds);
+    let begin = match *leg {
+        Leg::Curve { begin, .. } | Leg::Spring { begin, .. } => begin,
+    };
+    animation.setBeginTime(begin);
+    animation
+}
+
 /// One key per container bounce, separate from the movement's so the two compose.
 const BOUNCE_ANIMATION_KEY: &str = "rini.group.bounce";
 
@@ -353,6 +379,8 @@ pub struct TileOverlay {
     /// One layer per rigid piece of a flight; a container's `position` is the only animated
     /// translation its members get.
     containers: HashMap<GroupKey, Retained<CALayer>>,
+    /// Each moving container's current leg, so a new destination continues it rather than restarting.
+    legs: HashMap<GroupKey, Leg>,
     /// The floating container's twin, drawn in front of the strip: where the floating windows that come
     /// forward with the focus are drawn (`Banding::lifted`).
     ///
@@ -452,6 +480,7 @@ impl TileOverlay {
             bar,
             bar_drawn: false,
             containers: HashMap::new(),
+            legs: HashMap::new(),
             lifted: None,
             tile_layers: HashMap::new(),
             frame,
@@ -701,6 +730,7 @@ impl TileOverlay {
             layer.setBounds(CGRect::new(CGPoint::new(0.0, 0.0), self.frame.size));
             layer.setPosition(CGPoint::new(0.0, 0.0));
         }
+        self.legs.remove(&key);
         layer
     }
 
@@ -729,6 +759,7 @@ impl TileOverlay {
                 layer.removeFromSuperlayer();
             }
             self.containers.remove(&key);
+            self.legs.remove(&key);
             if key == GroupKey::Floating {
                 self.lifted = None;
             }
@@ -755,6 +786,7 @@ impl TileOverlay {
                             );
                         }
                     }
+                    self.record_leg(key, from, to, timing, duration);
                 }
                 AnimationTarget::Tile { window, from, to } => {
                     let Some(entry) = self.tile_layers.get(&window) else {
@@ -930,9 +962,10 @@ impl TileOverlay {
         tiles: &[OverlayTile],
         banding: &Banding,
         duration: Duration,
-    ) {
+    ) -> Duration {
         let timing = Timing::starting_now(duration);
         let presented = self.presented_positions();
+        let mut longest = Duration::ZERO;
         let find = |window: WindowId| tiles.iter().find(|t| t.window == window);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
@@ -973,24 +1006,50 @@ impl TileOverlay {
             placed.push(window);
         }
 
+        // The container carries on from its own leg: where it is and as fast as it is going. See "One
+        // flight however many presses" in `src/animation/docs/animation-smoothness.md`.
+        let now = timing.begin;
+        let omega = spring_omega(duration.as_secs_f64());
         for &(key, to) in &delta.retargeted_groups {
+            let to = whole_point(to);
+            let leg = match self.legs.get(&key) {
+                Some(leg) => leg.retarget(to, now, omega),
+                None => {
+                    let from = presented
+                        .get(&key)
+                        .copied()
+                        .or_else(|| self.containers.get(&key).map(|layer| layer.position()))
+                        .unwrap_or(to);
+                    Leg::Spring {
+                        from,
+                        to,
+                        velocity: CGPoint::new(0.0, 0.0),
+                        begin: now,
+                        omega,
+                    }
+                }
+            };
             for layer in self.layers_of(key) {
-                let from = presented.get(&key).copied().unwrap_or(layer.position());
-                let to = whole_point(to);
                 layer.setPosition(to);
                 if !duration.is_zero() {
-                    let animation = position_animation(from, to, timing);
+                    let animation = leg_animation(&leg);
                     layer.addAnimation_forKey(
                         &animation,
                         Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
                     );
                 }
             }
+            if duration.is_zero() {
+                self.legs.remove(&key);
+            } else {
+                longest = longest.max(Duration::from_secs_f64(leg.samples(LEG_STEP).1));
+                self.legs.insert(key, leg);
+            }
         }
         for &(key, install) in &delta.new_groups {
+            let to = whole_point(plan.positions.get(&key).copied().unwrap_or(install));
+            let install = whole_point(install);
             for layer in self.layers_of(key) {
-                let to = whole_point(plan.positions.get(&key).copied().unwrap_or(install));
-                let install = whole_point(install);
                 layer.setPosition(to);
                 if !duration.is_zero() && !install.same_as(to) {
                     let animation = position_animation(install, to, timing);
@@ -1000,6 +1059,7 @@ impl TileOverlay {
                     );
                 }
             }
+            self.record_leg(key, install, to, timing, duration);
         }
 
         for &(window, key) in &delta.joined_tiles {
@@ -1044,6 +1104,31 @@ impl TileOverlay {
         self.remove_stale(&tiles.iter().map(|t| t.window).collect::<Vec<_>>());
         self.rebank(banding);
         commit_now();
+        longest
+    }
+
+    /// Remembers the leg a container was just given, or forgets it when it was placed outright.
+    fn record_leg(
+        &mut self,
+        key: GroupKey,
+        from: CGPoint,
+        to: CGPoint,
+        timing: Timing,
+        duration: Duration,
+    ) {
+        if duration.is_zero() || from.same_as(to) {
+            self.legs.remove(&key);
+        } else {
+            self.legs.insert(
+                key,
+                Leg::Curve {
+                    from,
+                    to,
+                    begin: timing.begin,
+                    seconds: timing.seconds,
+                },
+            );
+        }
     }
 
     /// Places one tile's model at its destination and installs the movement animation on both of
@@ -1173,6 +1258,7 @@ impl TileOverlay {
         for (_, container) in self.containers.drain() {
             container.removeFromSuperlayer();
         }
+        self.legs.clear();
         if let Some(lifted) = self.lifted.take() {
             lifted.removeFromSuperlayer();
         }

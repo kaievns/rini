@@ -40,28 +40,23 @@ impl CubicBezier {
         )
     }
 
-    /// Progress at time `t` in `[0, 1]`: the `y` where the curve's `x` is `t`. Newton's method from
-    /// `s = t`, bisection when it strays; both converge fast because `x(s)` is monotone for control
-    /// x's inside `[0, 1]`.
-    pub fn ease(&self, t: f64) -> f64 {
-        let t = t.clamp(0.0, 1.0);
-        if t == 0.0 || t == 1.0 {
-            return t;
-        }
+    fn derivative(s: f64, p1: f64, p2: f64) -> f64 {
+        let inv = 1.0 - s;
+        3.0 * inv * inv * p1 + 6.0 * inv * s * (p2 - p1) + 3.0 * s * s * (1.0 - p2)
+    }
+
+    /// The curve parameter where `x` is `t`, for `t` inside `(0, 1)`. Newton's method from `s = t`,
+    /// bisection when it strays; both converge fast because `x(s)` is monotone for control x's
+    /// inside `[0, 1]`.
+    fn parameter_at(&self, t: f64) -> f64 {
         let x = |s: f64| Self::coordinate(s, self.x1, self.x2);
-        let dx = |s: f64| {
-            let inv = 1.0 - s;
-            3.0 * inv * inv * self.x1
-                + 6.0 * inv * s * (self.x2 - self.x1)
-                + 3.0 * s * s * (1.0 - self.x2)
-        };
         let mut s = t;
         for _ in 0..8 {
             let error = x(s) - t;
             if error.abs() < 1e-7 {
-                return Self::coordinate(s, self.y1, self.y2);
+                return s;
             }
-            let slope = dx(s);
+            let slope = Self::derivative(s, self.x1, self.x2);
             if slope.abs() < 1e-6 {
                 break;
             }
@@ -82,7 +77,30 @@ impl CubicBezier {
                 break;
             }
         }
-        Self::coordinate(s, self.y1, self.y2)
+        s
+    }
+
+    /// Progress at time `t` in `[0, 1]`: the `y` where the curve's `x` is `t`.
+    pub fn ease(&self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        if t == 0.0 || t == 1.0 {
+            return t;
+        }
+        Self::coordinate(self.parameter_at(t), self.y1, self.y2)
+    }
+
+    /// How fast progress is changing at time `t`, in progress per unit time: `dy/dx`. Zero once the
+    /// curve is done.
+    pub fn slope(&self, t: f64) -> f64 {
+        if t >= 1.0 {
+            return 0.0;
+        }
+        let s = if t <= 0.0 { 0.0 } else { self.parameter_at(t) };
+        let dx = Self::derivative(s, self.x1, self.x2);
+        if dx.abs() < 1e-9 {
+            return 0.0;
+        }
+        Self::derivative(s, self.y1, self.y2) / dx
     }
 }
 
@@ -118,6 +136,24 @@ pub fn bounce_displacement(t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The curve leaves at `y1 / x1` and arrives at rest.
+    #[test]
+    fn the_slope_starts_steep_and_ends_at_rest() {
+        assert!((MOTION_CURVE.slope(0.0) - 1.0 / 0.16).abs() < 1e-9);
+        assert_eq!(MOTION_CURVE.slope(1.0), 0.0);
+        assert!(MOTION_CURVE.slope(0.5) < 0.3, "{}", MOTION_CURVE.slope(0.5));
+    }
+
+    /// The slope is the derivative of `ease`, checked by finite difference.
+    #[test]
+    fn the_slope_is_the_rate_of_progress() {
+        for t in [0.05, 0.2, 0.4, 0.7] {
+            let h = 1e-6;
+            let numeric = (ease(t + h) - ease(t - h)) / (2.0 * h);
+            assert!((MOTION_CURVE.slope(t) - numeric).abs() < 1e-3, "t={t}");
+        }
+    }
 
     #[test]
     fn easing_is_pinned_at_both_ends() {

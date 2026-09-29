@@ -3,6 +3,7 @@
 pub mod easing;
 pub mod fit;
 pub mod frame_writes;
+pub mod glide;
 pub mod plan;
 pub mod strip_stack;
 pub mod surface;

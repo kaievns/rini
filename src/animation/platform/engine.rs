@@ -1655,15 +1655,17 @@ impl FlightEngine {
                         );
                     }
                 }
+                let mut legs = Duration::ZERO;
                 if let Some(overlay) = overlay.as_mut() {
                     let banding = band_plan(&running.plan, &running.tiles, running.focus);
-                    overlay.retarget(&delta, &running.plan, &running.tiles, &banding, duration);
+                    legs =
+                        overlay.retarget(&delta, &running.plan, &running.tiles, &banding, duration);
                 }
                 let changed = delta.moves_anything();
                 if changed {
                     // The orchestration clock restarts so placement and teardown cover the new legs.
                     running.started = Some(Instant::now());
-                    running.duration = duration;
+                    running.duration = duration.max(legs);
                 }
                 running.absorb_in_flight_change(changed, frames_changed);
                 // A grow joining mid-flight cannot hold; its chase lands as `Swap("reveal")`.
