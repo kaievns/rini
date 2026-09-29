@@ -276,21 +276,27 @@ fn dock_rect_with_reason() -> (CGRect, i32) {
 }
 
 fn dock_display_id() -> Option<u32> {
+    // SAFETY: the copied uuid is ours, and `CFRetained` releases it.
+    let uuid = unsafe {
+        CFRetained::<CFString>::from_raw(NonNull::new(CGSCopyBestManagedDisplayForRect(
+            *G_CONNECTION,
+            dock_rect(),
+        ))?)
+    };
+    display_id_of_uuid(&uuid)
+}
+
+/// The CoreGraphics id of the display with this uuid, `None` when no display has it.
+fn display_id_of_uuid(uuid: &CFString) -> Option<u32> {
+    // SAFETY: `uuid` is live for the call, and the CFUUID made from it is released here.
     unsafe {
-        let dock = dock_rect();
-        let uuid_ref = CGSCopyBestManagedDisplayForRect(*G_CONNECTION, dock);
-        if uuid_ref.is_null() {
+        let parsed = CFUUIDCreateFromString(std::ptr::null_mut(), uuid as *const CFString as *mut _);
+        if parsed.is_null() {
             return None;
         }
-        let uuid = CFUUIDCreateFromString(std::ptr::null_mut(), uuid_ref);
-        if uuid.is_null() {
-            CFRelease(uuid_ref as *mut _);
-            return None;
-        }
-        let did = CGDisplayGetDisplayIDFromUUID(uuid);
-        CFRelease(uuid as *mut _);
-        CFRelease(uuid_ref as *mut _);
-        if did == 0 { None } else { Some(did) }
+        let did = CGDisplayGetDisplayIDFromUUID(parsed);
+        CFRelease(parsed);
+        (did != 0).then_some(did)
     }
 }
 
@@ -479,14 +485,20 @@ pub fn get_active_space_number() -> Option<SpaceId> {
 }
 
 pub fn active_menu_bar_display_uuid() -> Option<String> {
-    Some(
-        unsafe {
-            CFRetained::<CFString>::from_raw(NonNull::new(SLSCopyActiveMenuBarDisplayIdentifier(
-                SLSMainConnectionID(),
-            ))?)
-        }
-        .to_string(),
-    )
+    active_menu_bar_display().map(|uuid| uuid.to_string())
+}
+
+/// The CoreGraphics id of the display whose menu bar is active.
+pub fn active_menu_bar_display_id() -> Option<u32> {
+    active_menu_bar_display().and_then(|uuid| display_id_of_uuid(&uuid))
+}
+
+fn active_menu_bar_display() -> Option<CFRetained<CFString>> {
+    // SAFETY: the copied identifier is ours, and `CFRetained` releases it.
+    unsafe {
+        NonNull::new(SLSCopyActiveMenuBarDisplayIdentifier(SLSMainConnectionID()))
+            .map(|uuid| CFRetained::from_raw(uuid))
+    }
 }
 
 pub fn current_space_for_display_uuid(display_uuid: &str) -> Option<SpaceId> {

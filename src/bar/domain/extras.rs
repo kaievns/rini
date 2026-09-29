@@ -61,7 +61,10 @@ pub struct StatusWindow {
     pub name: String,
     /// Left edge on the menu bar, which is the order the extras are drawn in.
     pub x: f64,
+    /// Top edge: the display's top while its menu bar shows, the window's height above it while hidden.
+    pub y: f64,
     pub width: f64,
+    pub height: f64,
 }
 
 pub fn kind(window: &StatusWindow) -> Kind {
@@ -138,11 +141,16 @@ pub fn ink_span(column_alpha: &[u8], scale: f64) -> Option<(f64, f64)> {
 }
 
 /// Whether a status window is on the menu bar of the display with these bounds: its centre is within
-/// the display's width. Only x is compared, since the extras sit above the display's top edge while the
-/// menu bar is hidden.
+/// the display's width, and it is in the band along the display's top edge, from its own height above
+/// the edge (the menu bar hidden) down to the edge (shown). A display stacked above or below another
+/// shares its x range, so x alone would take the other's extras too.
 pub fn on_display(window: &StatusWindow, display: CGRect) -> bool {
     let centre = window.x + window.width / 2.0;
-    display.origin.x <= centre && centre < display.origin.x + display.size.width
+    let top = display.origin.y;
+    display.origin.x <= centre
+        && centre < display.origin.x + display.size.width
+        && top - window.height <= window.y
+        && window.y <= top
 }
 
 /// A rectangle of whole pixels, from a picture's top-left corner.
@@ -243,6 +251,13 @@ pub fn changed(last: Option<&[Stamp]>, now: &[Stamp]) -> bool {
     last != Some(now)
 }
 
+/// For each extra now, the index of the one last sent with the same stamp, whose picture it is sent
+/// with again. The bar sets a layer's contents only when its picture is another one, so a fresh copy
+/// of the same pixels would redraw it.
+pub fn reused(last: &[Stamp], now: &[Stamp]) -> Vec<Option<usize>> {
+    now.iter().map(|stamp| last.iter().position(|sent| sent == stamp)).collect()
+}
+
 /// How often the extras are pictured. sketchybar pictured each one once a second; one batched capture
 /// a second costs WindowServer about 0.8ms.
 pub const TICK: Duration = Duration::from_secs(1);
@@ -287,14 +302,26 @@ impl Schedule {
         self.due = now + TICK;
         true
     }
+
+    /// Whether a pass taken may go on to capture, given the pause as it stands now rather than as the
+    /// last command read said. A pause that landed since calls the capture off and holds from here,
+    /// and the picture stays due for when it ends.
+    pub fn may_capture(&mut self, paused: bool, now: Instant) -> bool {
+        if paused {
+            self.paused = true;
+            self.due = now;
+        }
+        !paused
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// On the built-in display's hidden menu bar.
     fn status(name: &str, x: f64) -> StatusWindow {
-        StatusWindow { owner: HOST.into(), name: name.into(), x, width: 38.0 }
+        StatusWindow { owner: HOST.into(), name: name.into(), x, y: -33.0, width: 38.0, height: 33.0 }
     }
 
     fn names(windows: &[StatusWindow]) -> Vec<(&str, Kind)> {
@@ -431,8 +458,42 @@ mod tests {
         assert!(on_display(&window, builtin));
         assert!(!on_display(&window, external));
         window.x = 1710.0;
+        window.y = -333.0;
         assert!(!on_display(&window, builtin), "centre at 1729");
         assert!(on_display(&window, external));
+    }
+
+    fn at(x: f64, y: f64) -> StatusWindow {
+        StatusWindow { y, ..status("WiFi", x) }
+    }
+
+    /// The external display stacked above the built-in, wider on both sides.
+    fn stacked() -> (CGRect, CGRect) {
+        (rect(0.0, 0.0, 1728.0, 1117.0), rect(-670.0, -1692.0, 3008.0, 1692.0))
+    }
+
+    /// Stacked, the two share an x range, so an extra belongs to the display whose top edge it is on.
+    #[test]
+    fn a_stacked_display_keeps_only_the_extras_on_its_own_top_edge() {
+        let (builtin, external) = stacked();
+        assert!(on_display(&at(2200.0, -1725.0), external));
+        assert!(!on_display(&at(2200.0, -1725.0), builtin), "right of the built-in");
+        assert!(on_display(&at(1500.0, -33.0), builtin));
+        assert!(!on_display(&at(1500.0, -33.0), external), "under the external, at the built-in's top");
+        assert!(on_display(&at(500.0, -1725.0), external));
+        assert!(!on_display(&at(500.0, -1725.0), builtin), "over the built-in, at the external's top");
+    }
+
+    /// Hidden a window's height above the top edge, shown at it, and anywhere between as it slides.
+    #[test]
+    fn an_extra_is_on_its_display_hidden_shown_or_sliding() {
+        let (builtin, external) = stacked();
+        assert!(on_display(&at(1500.0, -33.0), builtin), "hidden");
+        assert!(on_display(&at(1500.0, 0.0), builtin), "shown");
+        assert!(on_display(&at(1500.0, -16.0), builtin), "sliding");
+        assert!(!on_display(&at(1500.0, -34.0), builtin));
+        assert!(!on_display(&at(1500.0, 1.0), builtin));
+        assert!(on_display(&at(1500.0, -1692.0), external), "shown");
     }
 
     /// The hidden menu bar's items at 2x: 14 windows, 33pt tall, at y = -33.
@@ -556,6 +617,22 @@ mod tests {
         assert!(changed(Some(&last), &[last[0], stamp(10, Kind::Vital(Vital::WiFi), 2)]));
     }
 
+    /// An extra is sent with the picture last sent for it unless its window, kind or pixels changed,
+    /// wherever it now is in the row.
+    #[test]
+    fn an_unchanged_extra_keeps_the_picture_last_sent() {
+        let last = [stamp(7, Kind::Tray, 1), stamp(9, Kind::Vital(Vital::WiFi), 2)];
+        let now = [
+            stamp(9, Kind::Vital(Vital::WiFi), 2),
+            stamp(7, Kind::Tray, 5),
+            stamp(11, Kind::Tray, 1),
+            stamp(9, Kind::Tray, 2),
+        ];
+        assert_eq!(reused(&last, &now), vec![Some(1), None, None, None]);
+        assert_eq!(reused(&last, &last), vec![Some(0), Some(1)]);
+        assert_eq!(reused(&[], &last), vec![None, None]);
+    }
+
     #[test]
     fn the_extras_are_pictured_at_once_and_then_every_tick() {
         let start = Instant::now();
@@ -581,6 +658,32 @@ mod tests {
         assert!(!schedule.take(start + TICK * 5));
         schedule.on(Command::Pause(false), start + TICK * 6);
         assert!(schedule.take(start + TICK * 6), "the picture that fell due while paused");
+    }
+
+    /// A flight that starts between a pass's listing and its capture calls the capture off. The thread
+    /// then waits for commands, and the picture is taken as soon as the pause ends.
+    #[test]
+    fn a_pause_that_lands_after_the_listing_stops_the_capture() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start));
+        let listed = start + TICK / 100;
+        assert!(!schedule.may_capture(true, listed));
+        assert_eq!(schedule.wait(listed), None);
+        assert!(!schedule.take(start + TICK * 3));
+        schedule.on(Command::Pause(true), listed);
+        schedule.on(Command::Pause(false), start + TICK / 2);
+        assert!(schedule.take(start + TICK / 2), "the pass called off, at once");
+    }
+
+    #[test]
+    fn with_no_pause_the_capture_goes_ahead_and_keeps_its_tick() {
+        let start = Instant::now();
+        let mut schedule = Schedule::new(start);
+        assert!(schedule.take(start));
+        assert!(schedule.may_capture(false, start));
+        assert!(!schedule.take(start + TICK / 2));
+        assert!(schedule.take(start + TICK));
     }
 
     #[test]

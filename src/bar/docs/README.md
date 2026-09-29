@@ -14,7 +14,7 @@ the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 | **What each piece says, and what a click does** | `domain/pieces.rs` |
 | **How each piece is set** | `domain/style.rs` and `domain/palette.rs` |
 | **The two movements** | `domain/motion.rs`: the fold's states and the fades' timing |
-| **Which menu extras are drawn** | `domain/extras.rs`: vitals, tray and skipped, the twin-block rule, ink columns, cutting a capture apart, the change test and the tick |
+| **Which menu extras are drawn** | `domain/extras.rs`: vitals, tray and skipped, the twin-block rule, which display's, ink columns, cutting a capture apart, the change test, the pictures kept, and the tick |
 | **The words** | `domain/format.rs`, and `domain/glyphs.rs` with its table `domain/app_glyphs.tsv` |
 | **The windows** | `platform/actor.rs` on the main thread, `platform/panel.rs`, `platform/text.rs` |
 | **The menu extras' pictures** | `platform/menu_extras.rs`, a thread of its own |
@@ -37,8 +37,10 @@ flight pictured it and redrew the picture on top of itself.
 air and icons with different margins space evenly. See `domain/layout.rs`.
 
 **The menu extras are pictures.** macOS's own Wi-Fi, speaker and battery icons carry the levels,
-which no font here can. A thread pictures every extra in one batched capture, compares, and sends
-only what changed. It stops while a flight runs. See `menu-extras.md`.
+which no font here can. A thread pictures every extra in one batched capture and compares. It sends
+them on only when one changed, and only a changed one carries a new picture, so only its layers are
+redrawn. No capture starts once the bar hears of a flight; one already under way runs to its end.
+See `menu-extras.md`.
 
 ## Measured
 

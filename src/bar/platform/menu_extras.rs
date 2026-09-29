@@ -2,6 +2,8 @@
 //! apart, compared with what was last sent, and sent on only when something changed. See
 //! `src/bar/docs/menu-extras.md`.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::Instant;
@@ -18,6 +20,7 @@ use tracing::debug;
 
 use crate::animation::platform::edge_dressing::rgba_bitmap_context;
 use crate::bar::domain::extras::{self, Command, Composite, Kind, Schedule, Stamp, StatusWindow};
+use crate::displays::screen::active_menu_bar_display_id;
 use crate::windows::platform::window_server::{
     bounds_from_dict, get_num, get_string, get_windows_raw,
 };
@@ -27,6 +30,7 @@ use crate::windows::platform::window_server::{
 const CAPTURE_OPTIONS: u32 = 1 << 8;
 
 /// One extra's picture.
+#[derive(Clone)]
 pub struct Extra {
     /// The status window's id, stable for as long as the extra is.
     pub window: u32,
@@ -48,21 +52,26 @@ pub struct Extras {
 /// The running thread. It ends when this is dropped.
 pub struct Watcher {
     commands: mpsc::Sender<Command>,
+    /// Read by the thread just before it captures, so a pause stops a pass already under way.
+    paused: Arc<AtomicBool>,
 }
 
 impl Watcher {
     /// Starts the thread. `send` is called from it with the extras whenever a picture changed.
     pub fn spawn(send: Box<dyn Fn(Extras) + Send>) -> Watcher {
         let (commands, inbox) = mpsc::channel();
+        let paused = Arc::new(AtomicBool::new(false));
+        let read = Arc::clone(&paused);
         thread::Builder::new()
             .name("bar-extras".to_string())
-            .spawn(move || run(&inbox, &*send))
+            .spawn(move || run(&inbox, &read, &*send))
             .expect("failed to spawn bar-extras thread");
-        Watcher { commands }
+        Watcher { commands, paused }
     }
 
     /// No captures while paused: during a flight, and while no bar is up.
     pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
         let _ = self.commands.send(Command::Pause(paused));
     }
 
@@ -72,9 +81,15 @@ impl Watcher {
     }
 }
 
-fn run(inbox: &Receiver<Command>, send: &dyn Fn(Extras)) {
+/// What was last sent, kept so an extra that did not change is sent with the same picture.
+struct Sent {
+    stamps: Vec<Stamp>,
+    items: Vec<Extra>,
+}
+
+fn run(inbox: &Receiver<Command>, paused: &AtomicBool, send: &dyn Fn(Extras)) {
     let mut schedule = Schedule::new(Instant::now());
-    let mut last: Option<Vec<Stamp>> = None;
+    let mut last: Option<Sent> = None;
     loop {
         let command = match schedule.wait(Instant::now()) {
             Some(timeout) => inbox.recv_timeout(timeout),
@@ -91,13 +106,22 @@ fn run(inbox: &Receiver<Command>, send: &dyn Fn(Extras)) {
         if !schedule.take(Instant::now()) {
             continue;
         }
-        let Some((extras, stamps)) = picture() else {
+        let may_capture = || schedule.may_capture(paused.load(Ordering::Relaxed), Instant::now());
+        let Some((mut extras, stamps)) = picture(may_capture) else {
             continue;
         };
-        if extras::changed(last.as_deref(), &stamps) {
-            last = Some(stamps);
-            send(extras);
+        if !extras::changed(last.as_ref().map(|sent| sent.stamps.as_slice()), &stamps) {
+            continue;
         }
+        if let Some(sent) = &last {
+            for (item, from) in extras.items.iter_mut().zip(extras::reused(&sent.stamps, &stamps)) {
+                if let Some(index) = from {
+                    *item = sent.items[index].clone();
+                }
+            }
+        }
+        last = Some(Sent { stamps, items: extras.items.clone() });
+        send(extras);
     }
 }
 
@@ -108,8 +132,9 @@ struct Placed {
     bounds: CGRect,
 }
 
-/// Every extra drawn and what it is compared by, or `None` when the capture failed.
-fn picture() -> Option<(Extras, Vec<Stamp>)> {
+/// Every extra drawn and what it is compared by. `None` when the capture failed, or `may_capture`
+/// called it off after the listing.
+fn picture(may_capture: impl FnOnce() -> bool) -> Option<(Extras, Vec<Stamp>)> {
     let (windows, placed) = status_windows();
     let chosen: Vec<(Placed, Kind)> =
         extras::select(&windows).into_iter().map(|(index, kind)| (placed[index], kind)).collect();
@@ -118,14 +143,18 @@ fn picture() -> Option<(Extras, Vec<Stamp>)> {
     }
     let ids: Vec<u32> = chosen.iter().map(|(placed, _)| placed.window).collect();
     let bounds: Vec<CGRect> = chosen.iter().map(|(placed, _)| placed.bounds).collect();
+    if !may_capture() {
+        return None;
+    }
     let image = capture(&ids)?;
     let composite = Composite::new(&bounds, (CGImage::width(Some(&image)), CGImage::height(Some(&image))))?;
     cut(&image, composite, &chosen)
 }
 
-/// The status-level windows on the main display's menu bar, and where each is.
+/// The status-level windows on the active menu bar, and where each is. The main display's when which
+/// menu bar is active cannot be read.
 fn status_windows() -> (Vec<StatusWindow>, Vec<Placed>) {
-    let display = CGDisplayBounds(CGMainDisplayID());
+    let display = CGDisplayBounds(active_menu_bar_display_id().unwrap_or_else(|| CGMainDisplayID()));
     get_windows_raw::<CFDictionary<CFString, CFType>>(CGWindowListOption::OptionAll, kCGNullWindowID)
         .iter()
         .filter(|window| get_num(window, unsafe { kCGWindowLayer }) == Some(NSStatusWindowLevel as i64))
@@ -139,7 +168,9 @@ fn status_windows() -> (Vec<StatusWindow>, Vec<Placed>) {
                 owner: get_string(&window, unsafe { kCGWindowOwnerName }).unwrap_or_default(),
                 name: get_string(&window, unsafe { kCGWindowName }).unwrap_or_default(),
                 x: bounds.origin.x,
+                y: bounds.origin.y,
                 width: bounds.size.width,
+                height: bounds.size.height,
             };
             Some((status, Placed { window: id, bounds }))
         })
