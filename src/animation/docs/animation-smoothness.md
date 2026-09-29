@@ -367,7 +367,10 @@ the model positions stay put; `settled` reads false until it is home, which
 holds the lift. The floating container rides only a vertical bounce
 (`bounce_carries`), the rule a pan (pinned) and a switch (carried) already
 follow. Real windows never move. The shape is `bounce_displacement`, pinned
-by `a_bounce_goes_out_once_and_comes_home`.
+by `a_bounce_goes_out_once_and_comes_home`. A push while a bounce is still
+playing starts none (`starts_a_bounce`): each one restarted the keyframes under
+the same key, so a burst of presses at the wall bounced once per press, and the
+presses the reactor reached late kept bouncing after the pressing had stopped.
 
 ## Resizes through the overlay
 

@@ -109,6 +109,13 @@ pub(in crate::animation) fn clock_for_bounce(
     duration.max(needed)
 }
 
+/// Whether a push against an end starts a bounce: not while one is still playing, or a burst of
+/// presses at the wall replays the bounce once per press. See "Edge bounce" in
+/// `src/animation/docs/animation-smoothness.md`.
+pub(in crate::animation) fn starts_a_bounce(now: Instant, bouncing_until: Option<Instant>) -> bool {
+    bouncing_until.is_none_or(|until| now >= until)
+}
+
 /// Whether the overlay lifts now: clock done AND (presented and landed, or `LIFT_GRACE` overdue).
 pub(in crate::animation) fn lift_now(
     clock_done: bool,
@@ -122,3 +129,29 @@ pub(in crate::animation) fn lift_now(
 /// How many new windows one pass captures synchronously at spawn; the rest take a reservation.
 /// See "A window that opens travels from its spawn frame" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) const MAX_SYNC_ENTRANCE_CAPTURES: usize = 4;
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    /// The reported case: presses at the end of the strip kept the view bouncing off the wall, once
+    /// per press, after the pressing had stopped.
+    #[test]
+    fn a_press_at_the_wall_during_a_bounce_starts_none() {
+        let now = Instant::now();
+        let until = now + Duration::from_millis(350);
+        assert!(!starts_a_bounce(now + Duration::from_millis(100), Some(until)));
+    }
+
+    #[test]
+    fn a_press_at_the_wall_after_the_bounce_starts_one() {
+        let now = Instant::now();
+        assert!(starts_a_bounce(now, None));
+        assert!(starts_a_bounce(
+            now + Duration::from_millis(350),
+            Some(now + Duration::from_millis(350))
+        ));
+    }
+}

@@ -597,6 +597,8 @@ pub struct FlightEngine {
         f64,
         objc2_core_foundation::CFRetained<objc2_core_graphics::CGImage>,
     )>,
+    /// When the edge bounce playing now comes home. See `starts_a_bounce`.
+    bouncing_until: Option<Instant>,
 }
 
 impl FlightEngine {
@@ -631,6 +633,7 @@ impl FlightEngine {
             place_frames: None,
             lend_snapshots: None,
             placeholder_image: None,
+            bouncing_until: None,
         }
     }
 
@@ -1927,14 +1930,25 @@ impl FlightEngine {
         focus: Option<WindowId>,
         duration: Duration,
     ) {
+        let now = Instant::now();
+        if !starts_a_bounce(now, self.bouncing_until) {
+            debug!("edge bounce skipped: one is still playing");
+            return;
+        }
         if self.running.is_none() {
             let at_rest = CGPoint::new(0.0, 0.0);
             self.start_surface(windows, at_rest, at_rest, final_frames, focus, duration);
         }
-        let Self { overlay, running, .. } = self;
+        let Self {
+            overlay,
+            running,
+            bouncing_until,
+            ..
+        } = self;
         let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
             return;
         };
+        *bouncing_until = Some(now + duration);
         running.duration = clock_for_bounce(running.started, running.duration, duration);
         overlay.bounce(overshoot, duration);
         debug!(

@@ -29,6 +29,12 @@ only the transitions are missing.
   untouched throughout.
 - A request that simply cannot be honoured — a workspace named by an index that does not exist — is NOT
   an end and MUST NOT bounce. Bouncing would claim the stack has an edge in a direction nobody named.
+- A push against an end while the bounce is still playing MUST NOT start another. Presses at the wall
+  bounce once, not once per press.
+
+> **Reported 2026-09-29.** "espcecially visible when you hit the end of the strip and it just bounces
+> off the wall several times". Each press at the wall restarted the bounce, and presses the reactor
+> handled late went on bouncing after the pressing stopped.
 
 > **Reported 2026-09-24.** "The little bounce animation when navigation reaches an end of strip or
 > workspaces stack is neat but a bit too small, I need a little more swing. Also when I'm moving a window
