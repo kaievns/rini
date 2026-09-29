@@ -13,7 +13,6 @@ use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
@@ -38,6 +37,7 @@ use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::platform::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::animation::platform::window_snapshot::{SnapshotImage, WindowSnapshot};
 use crate::displays::domain::screen::CoordinateConverter;
+use crate::displays::screen::primary_display_height;
 use rini_core::ids::WindowId;
 use rini_geometry::{Round, SameAs};
 
@@ -1594,12 +1594,6 @@ pub(crate) fn set_layer_contents(layer: &CALayer, snapshot: &WindowSnapshot) {
             }
         }
     }
-}
-
-/// The primary display's bottom edge, which AppKit's bottom-left coordinates are anchored to.
-fn primary_display_height() -> f64 {
-    let bounds = CGDisplayBounds(CGMainDisplayID());
-    bounds.origin.y + bounds.size.height
 }
 
 #[cfg(test)]

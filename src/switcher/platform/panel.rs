@@ -28,7 +28,6 @@ use objc2_app_kit::{
     NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGDisplayBounds, CGMainDisplayID};
 use objc2_foundation::NSString;
 use objc2_quartz_core::{
     CALayer, CAMediaTimingFunction, CATextLayer, CATransaction, kCAMediaTimingFunctionEaseOut,
@@ -39,6 +38,7 @@ use crate::animation::platform::overlay::set_layer_contents;
 use crate::bar::domain::palette;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
+use crate::displays::screen::primary_display_height;
 use crate::switcher::domain::layout::{Metrics, Strip, lay_out};
 use crate::switcher::domain::motion::{GLIDE_SECONDS, glides};
 use crate::windows::platform::app::{NSRunningApplicationExt, image_file_pixels};
@@ -698,11 +698,6 @@ fn caption_text(row: &Row) -> String {
         return row.app_name.clone();
     }
     format!("{}\n{}", row.app_name, title)
-}
-
-fn primary_display_height() -> f64 {
-    let bounds = CGDisplayBounds(CGMainDisplayID());
-    bounds.origin.y + bounds.size.height
 }
 
 /// The backing scale to draw at.

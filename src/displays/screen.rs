@@ -449,6 +449,13 @@ impl NSScreenExt for NSScreen {
     }
 }
 
+/// The primary display's bottom edge, which AppKit's bottom-left coordinates are anchored to: the
+/// height a `CoordinateConverter` needs to place a window.
+pub fn primary_display_height() -> f64 {
+    let bounds = CGDisplayBounds(CGMainDisplayID());
+    bounds.origin.y + bounds.size.height
+}
+
 pub fn get_active_space_number() -> Option<SpaceId> {
     active_menu_bar_display_uuid().and_then(|uuid| current_space_for_display_uuid(&uuid))
 }
