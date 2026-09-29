@@ -42,9 +42,6 @@ pub enum Event {
     ClockChanged,
 }
 
-// SAFETY: the one member that is not `Send` is the extras' `CGImage`s, and a CGImage is immutable.
-unsafe impl Send for Event {}
-
 pub struct BarActor {
     requests: Receiver,
     sender: Sender,
