@@ -43,6 +43,28 @@ pub fn frame_write_needed(real: Option<CGRect>, target: CGRect, display: CGRect)
     !real.is_some_and(|real| is_park_to_park(real, target, display))
 }
 
+/// The writes to send, in send order, and how many park-to-park moves were left out.
+///
+/// `real` answers where the window server has each window now. It is a lookup rather than a query
+/// per window: one round trip per window cost a burst of presses 60ms a press. See "Rapid presses"
+/// in `specs/focus.md`.
+pub fn writes_to_send(
+    frames: Vec<(WindowId, CGRect)>,
+    display: CGRect,
+    real: impl Fn(WindowId) -> Option<CGRect>,
+) -> (Vec<(WindowId, CGRect)>, usize) {
+    let mut skipped = 0;
+    let writes = frame_send_order(frames, display)
+        .into_iter()
+        .filter(|&(window, target)| {
+            let needed = frame_write_needed(real(window), target, display);
+            skipped += usize::from(!needed);
+            needed
+        })
+        .collect();
+    (writes, skipped)
+}
+
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
@@ -231,5 +253,26 @@ mod tests {
             assert_eq!(given_parks, sent_parks, "seed 98: park order changed");
         }
         assert!(mixed_runs > 0, "generator sanity: no mixed run");
+    }
+
+    /// Parks stay parked without a write, on-screen slots are written first, and a window the
+    /// window server did not answer for is written anyway.
+    #[test]
+    fn writes_leave_out_park_to_park_moves_and_keep_the_send_order() {
+        let (parked, arriving, unknown) =
+            (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+        let park = rect(1727.0, 1116.0, 859.0, 1081.0);
+        let other_park = rect(-858.0, 1116.0, 859.0, 1081.0);
+        let slot = rect(4.0, 32.0, 859.0, 1081.0);
+        let real = |window: WindowId| (window == parked).then_some(other_park);
+
+        let (writes, skipped) = writes_to_send(
+            vec![(parked, park), (unknown, park), (arriving, slot)],
+            display(),
+            real,
+        );
+
+        assert_eq!(ids(&writes), vec![arriving, unknown]);
+        assert_eq!(skipped, 1);
     }
 }

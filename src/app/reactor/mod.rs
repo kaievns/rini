@@ -480,6 +480,7 @@ pub struct Reactor {
     /// The focus reports rini's own raises are about to produce, so they are not mistaken for the user
     /// moving. See [`crate::windows::domain::focus::RaiseEcho`].
     raise_echo: crate::windows::domain::focus::RaiseEcho,
+    live_spaces: space_affinity::LiveSpaces,
     /// The strip windows the current event's regroup already raised, so the post-layout judgment does
     /// not raise them a second time. See `regroup_after_layout`.
     regroup_raised: Vec<WindowId>,
@@ -591,6 +592,7 @@ impl Reactor {
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
             raise_echo: crate::windows::domain::focus::RaiseEcho::default(),
+            live_spaces: space_affinity::LiveSpaces::default(),
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
@@ -669,6 +671,7 @@ impl Reactor {
             transactions: &self.transaction_manager,
             active_spaces: &self.active_spaces,
             space_kinds: self.space_kinds,
+            live_spaces: &self.live_spaces,
         }
     }
 
@@ -1237,6 +1240,7 @@ impl Reactor {
     }
 
     fn dispatch_workflow(&mut self, event: Event) -> anyhow::Result<EventOutcome> {
+        self.live_spaces.clear();
         self.log_event(&event);
         self.recording_manager.record.on_event(&event);
 
@@ -3495,25 +3499,32 @@ impl Reactor {
             .find(|screen| screen.space == self.active_display_space())
             .or_else(|| self.space_state.screens.first())
             .map_or(CGRect::ZERO, |screen| screen.frame);
-        let mut skipped = 0usize;
-        for (wid, frame) in
-            crate::animation::domain::motion::frame_writes::frame_send_order(frames, display)
-        {
+        // A park-to-park move is not sent: nothing visible changes, and the app's repaint would
+        // stall the compositor under the flight. Judged from where the window server says the
+        // window IS, not from the model: a write the app dropped leaves the model saying "parked"
+        // while the window sits on screen, and skipping on the model kept it there. One query for
+        // every window rather than one each.
+        let server_ids: Vec<WindowServerId> = frames
+            .iter()
+            .filter_map(|(wid, _)| self.state.windows.window(*wid)?.info.sys_id)
+            .collect();
+        let real: HashMap<WindowServerId, CGRect> = window_server::get_windows(&server_ids)
+            .into_iter()
+            .map(|info| (info.id, info.frame))
+            .collect();
+        let (writes, skipped) = crate::animation::domain::motion::frame_writes::writes_to_send(
+            frames,
+            display,
+            |wid| {
+                let wsid = self.state.windows.window(wid)?.info.sys_id?;
+                real.get(&wsid).copied()
+            },
+        );
+        for (wid, frame) in writes {
             let Some(window) = self.state.windows.window_mut(wid) else {
                 continue;
             };
-            // A park-to-park move is not sent: nothing visible changes, and the app's repaint would
-            // stall the compositor under the flight. Judged from where the window server says the
-            // window IS, not from the model: a write the app dropped leaves the model saying
-            // "parked" while the window sits on screen, and skipping on the model kept it there.
             let wsid = window.info.sys_id;
-            let real = wsid.and_then(|wsid| window_server::get_window(wsid)).map(|info| info.frame);
-            if !crate::animation::domain::motion::frame_writes::frame_write_needed(
-                real, frame, display,
-            ) {
-                skipped += 1;
-                continue;
-            }
             window.frame_monotonic = frame;
             let txid = wsid
                 .map(|wsid| self.transaction_manager.generate_next_txid(wsid))

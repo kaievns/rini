@@ -63,6 +63,12 @@ more than a "correct" choice by the layout.
 > time: the last queued raise timed out 2.6s after the burst, so keyboard focus reached the last
 > window that late.
 
+- A press MUST NOT wait behind a window-server round trip per window. rini reads where every window
+  is from the window server, and asking one window at a time cost a burst about 130ms a press on the
+  reactor: presses reached the layout up to 330ms after the key, and the flights trailed the keys.
+  The frames of the windows being placed are read in one query, and each window's space at most
+  once per event.
+
 - Navigating a strip MUST NOT move a window to another display or another workspace.
 
 > **Reported 2026-09-29.** "when an exetrnal monitor is attached i frequently see windows being

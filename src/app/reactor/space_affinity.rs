@@ -14,6 +14,36 @@ use crate::windows::domain::transaction::TransactionManager;
 use crate::windows::platform::window_server;
 use crate::workspaces::{LayoutEngine, WindowStore};
 
+/// The window server's answer for which space each window is on, read once per reactor event.
+///
+/// One event asked the same windows several times over: a burst of presses spent 73ms a press in
+/// these reads, one round trip each. Nothing rini does inside an event moves a window between spaces,
+/// so the answer cannot change before the next event, when the reactor clears it. See "Rapid
+/// presses" in `specs/focus.md`.
+#[derive(Default)]
+pub(crate) struct LiveSpaces(
+    std::cell::RefCell<rustc_hash::FxHashMap<WindowServerId, Option<SpaceId>>>,
+);
+
+impl LiveSpaces {
+    pub(crate) fn get(
+        &self,
+        wsid: WindowServerId,
+        read: impl FnOnce(WindowServerId) -> Option<SpaceId>,
+    ) -> Option<SpaceId> {
+        if let Some(&space) = self.0.borrow().get(&wsid) {
+            return space;
+        }
+        let space = read(wsid);
+        self.0.borrow_mut().insert(wsid, space);
+        space
+    }
+
+    pub(crate) fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
+}
+
 pub(crate) struct SpaceAffinity<'a> {
     pub(crate) windows: &'a WindowStore,
     pub(crate) spaces: &'a ForwardedSpaceState,
@@ -21,6 +51,7 @@ pub(crate) struct SpaceAffinity<'a> {
     pub(crate) transactions: &'a TransactionManager,
     pub(crate) active_spaces: &'a HashSet<SpaceId>,
     pub(crate) space_kinds: SpaceKinds,
+    pub(crate) live_spaces: &'a LiveSpaces,
 }
 
 impl SpaceAffinity<'_> {
@@ -151,7 +182,7 @@ impl SpaceAffinity<'_> {
         observation: Option<SpaceId>,
     ) -> Option<SpaceId> {
         let pending = self.pending_target_space_for_window_server_id(wsid);
-        let live = window_server::window_space(wsid);
+        let live = self.live_spaces.get(wsid, window_server::window_space);
         let prior = self.windows.window_server_space(wsid);
 
         let resolved = match (observation, pending) {
@@ -295,6 +326,7 @@ mod tests {
         );
         let transactions = TransactionManager::new(WindowTxStore::new());
         let active_spaces: HashSet<SpaceId> = spaces.iter_known_spaces().collect();
+        let live_spaces = LiveSpaces::default();
         f(SpaceAffinity {
             windows: &windows,
             spaces,
@@ -302,6 +334,7 @@ mod tests {
             transactions: &transactions,
             active_spaces: &active_spaces,
             space_kinds: SpaceKinds::for_tests(),
+            live_spaces: &live_spaces,
         })
     }
 
@@ -345,5 +378,49 @@ mod tests {
             );
             assert_eq!(view.best_space_for_window_id(WindowId::new(1, 1)), None);
         });
+    }
+}
+
+#[cfg(test)]
+mod live_spaces_tests {
+    use std::cell::Cell;
+
+    use rini_core::ids::{SpaceId, WindowServerId};
+
+    use super::LiveSpaces;
+
+    /// Asked twice in one event, the window server is asked once; after the event, it is asked again.
+    #[test]
+    fn a_window_s_space_is_read_once_per_event() {
+        let live = LiveSpaces::default();
+        let reads = Cell::new(0);
+        let read = |_| {
+            reads.set(reads.get() + 1);
+            Some(SpaceId::new(1))
+        };
+        let wsid = WindowServerId::new(7);
+
+        assert_eq!(live.get(wsid, read), Some(SpaceId::new(1)));
+        assert_eq!(live.get(wsid, read), Some(SpaceId::new(1)));
+        assert_eq!(reads.get(), 1);
+
+        live.clear();
+        live.get(wsid, read);
+        assert_eq!(reads.get(), 2);
+    }
+
+    /// "Not on any space" is an answer too, and is not asked again within the event.
+    #[test]
+    fn no_space_is_remembered_as_well() {
+        let live = LiveSpaces::default();
+        let reads = Cell::new(0);
+        let read = |_| {
+            reads.set(reads.get() + 1);
+            None
+        };
+        let wsid = WindowServerId::new(7);
+        live.get(wsid, read);
+        live.get(wsid, read);
+        assert_eq!(reads.get(), 1);
     }
 }
