@@ -65,6 +65,68 @@ threshold. Where the old bar was uneven (the vitals, the chevron) the tokens are
 Vertically, digit ink sat at 12 to 22pt from the top for the 14pt numerals and 11 to 20pt for the
 12-13pt text, which is where the baselines in `domain/layout.rs` come from.
 
+## Drawing
+
+One `NSPanel` per display, at level 20: over the flight overlay at 18, under notification banners at
+21 and the menu bar at 24. It is non-activating, so a click never activates rini. It is ordered out
+rather than faded, because an alpha-0 window still takes clicks. `FullScreenNone` keeps it off a
+native fullscreen space. A panel hides whenever its app deactivates unless told not to, so
+`hidesOnDeactivate` and `canHide` are off. A panel is made the first time a model names its display,
+which costs about 112ms, and kept; a display that leaves the model has its bar ordered out.
+
+```text
+root         the ground: n1 at 0.88
+├── one layer per piece: a picture of its string, a hairline, or a vital's picture
+├── tray     masks to its bounds, from the first tray icon to the chevron's ink
+│   └── one layer per tray extra
+└── underline
+```
+
+`domain/pieces.rs` says what each piece shows, `domain/placement.rs` where its picture goes, and
+`domain/motion.rs` how the two movements run. `platform/panel.rs` sets the layers and
+`platform/text.rs` draws the words.
+
+**Every string is a picture.** Each is drawn once per string, face and colour into a bitmap of its
+ink plus a 2pt margin, and kept while some bar still says it. A `CATextLayer` cannot say where its
+ink is, and the layout places by ink. A layer is touched only when its picture or its place changed,
+and each update is one transaction with implicit animation off.
+
+**Measured by ink.** `boundingRectWithSize:options:` with `UsesDeviceMetrics` and without
+`UsesLineFragmentOrigin` gives the ink from the pen on the baseline, y up. Drawn with
+`drawWithRect:options:` from the same pen into a 2x bitmap, the scanned ink matched the measurement
+to within its anti-aliased edge, one pixel. Measured 2026-09-29, in points:
+
+| string | face | ink x | ink width | ink height |
+|---|---|---|---|---|
+| `1` | Ioskeley Mono Term Medium 14 | 1.484 | 3.808 | 9.660 |
+| `2` | Ioskeley Mono Term Medium 14 | 1.162 | 6.104 | 9.772 |
+| `Tue 29th` | Ioskeley Mono Term 13 | 1.027 | 60.268 | 9.724 |
+| `:ghostty:` | sketchybar-app-font 14 | 0 | 11.410 | 13.902 |
+
+The token's typographic width was 19.754 against 11.41 of ink, so the ligature forms through an
+`NSAttributedString` with default attributes.
+
+**Placed on whole pixels.** Baseline text keeps its baseline on a whole pixel, so numerals of
+different ink heights share one. Everything else is snapped to the pixel grid, at most a quarter
+point from its span. Vitals and tray icons are the watcher's pictures, placed so their ink starts on
+the span and centred on the bar. About 33pt tall, they hang half a point over each edge, with their
+ink inside.
+
+**Colour.** The bitmaps are device RGB, which took the palette's sRGB bytes unchanged: ember drew as
+`ff7c50` in a device RGB and an sRGB bitmap alike. Each picture is then tagged sRGB, so it is
+matched to the display the way the ground's colour is.
+
+**The two movements.** Unfolding fades the newly shown glyphs in, 14/60s each, staggered 0.035s from
+the left, each held transparent until its turn. Folding fades them out from the right and only then
+folds. A click during that fade brings them back. Closing the tray slides the tray layer's bounds a
+whole tray's width to the right in 0.2s, eased out, so the icons go into the chevron and are clipped
+there; opening slides them back. The chevron does not move, and its glyph changes at once.
+
+**At rest** the actor holds one timer, for the minute. A second runs only while a fold fades out.
+
+**A missing font** is stood in for by the system's monospaced face at the same size and weight, and
+an application's glyph by its first letter. Each missing face is logged once.
+
 ## Not in this iteration
 
 - The vitals' popups: Wi-Fi details, battery details, the volume slider. A click on a vital does
