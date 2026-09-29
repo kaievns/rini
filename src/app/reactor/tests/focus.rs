@@ -1071,10 +1071,10 @@ fn a_report_after_the_raises_have_run_is_followed() {
 }
 
 /// The reported case: after a restart nothing moves, so no layout pass asked for a single picture,
-/// and the first flights drew windows with nothing in them. The first pass on a space asks for every
-/// window on every one of its workspaces, including ones that never move.
+/// and the first flights drew windows with nothing in them. The first pass that lays a window out
+/// asks for its picture, on any workspace, including a window that never moves.
 #[test]
-fn the_first_pass_on_a_space_pictures_every_workspace() {
+fn the_first_pass_to_lay_a_window_out_pictures_it() {
     let mut reactor = test_reactor();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -1094,7 +1094,7 @@ fn the_first_pass_on_a_space_pictures_every_workspace() {
     // Settled, as a restart finds it: every window already where the saved layout puts it.
     reactor.update_layout_or_warn(false, false, None);
     reactor.update_layout_or_warn(false, false, None);
-    reactor.pictured_spaces.clear();
+    reactor.pictured_windows.clear();
     let (animation_tx, mut animation_rx) = channels::channel();
     reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
     let mut warmed_by_pass = || {
@@ -1111,4 +1111,47 @@ fn the_first_pass_on_a_space_pictures_every_workspace() {
     let first = warmed_by_pass();
     assert!(first.contains(&here) && first.contains(&elsewhere), "{first:?}");
     assert!(warmed_by_pass().is_empty(), "once, not on every pass");
+}
+
+/// At startup apps are found one by one, and each one's windows are already where the saved layout
+/// puts them: a window found after the first pass is pictured the first time a pass lays it out,
+/// though nothing moves it.
+#[test]
+fn a_window_found_after_the_first_pass_is_pictured_too() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let (early, late) = (WindowId::new(1, 1), WindowId::new(2, 1));
+    set_space_membership(&[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    reactor.add_test_app(2);
+    let workspaces = reactor.test_workspace_ids(space);
+    let add = |reactor: &mut Reactor, window: WindowId, wsid: u32, workspace| {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    };
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx.clone());
+    add(&mut reactor, early, 901, workspaces[0]);
+    reactor.update_layout_or_warn(false, false, None);
+
+    // The late window arrives and is settled into place with no engine listening.
+    reactor.communication_manager.workspace_animation_tx = None;
+    add(&mut reactor, late, 902, workspaces[1]);
+    reactor.update_layout_or_warn(false, false, None);
+    reactor.update_layout_or_warn(false, false, None);
+    while animation_rx.try_recv().is_ok() {}
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    reactor.update_layout_or_warn(false, false, None);
+    let mut warmed = Vec::new();
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        if let crate::animation::platform::engine::Event::WarmWindows(targets) = event {
+            warmed.extend(targets.into_iter().map(|target| target.window));
+        }
+    }
+    assert!(warmed.contains(&late), "{warmed:?}");
+    assert!(!warmed.contains(&early), "pictured once already: {warmed:?}");
 }

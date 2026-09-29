@@ -481,8 +481,8 @@ pub struct Reactor {
     /// moving. See [`crate::windows::domain::focus::RaiseEcho`].
     raise_echo: crate::windows::domain::focus::RaiseEcho,
     live_spaces: space_affinity::LiveSpaces,
-    /// Spaces whose every workspace has been pictured once. See `animate_layout`.
-    pictured_spaces: HashSet<SpaceId>,
+    /// Windows a layout pass has asked a picture of. See `animate_layout`.
+    pictured_windows: HashSet<WindowId>,
     /// The strip windows the current event's regroup already raised, so the post-layout judgment does
     /// not raise them a second time. See `regroup_after_layout`.
     regroup_raised: Vec<WindowId>,
@@ -595,7 +595,7 @@ impl Reactor {
             main_window_tracker: MainWindowTracker::default(),
             raise_echo: crate::windows::domain::focus::RaiseEcho::default(),
             live_spaces: space_affinity::LiveSpaces::default(),
-            pictured_spaces: HashSet::default(),
+            pictured_windows: HashSet::default(),
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,

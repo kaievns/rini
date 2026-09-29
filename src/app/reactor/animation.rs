@@ -90,10 +90,32 @@ impl AnimationManager {
             return false;
         };
         // A pass only asks for pictures of the windows it moves, and after a restart nothing moves:
-        // every window is where the saved layout left it. So the first pass on a space asks for all
-        // of them, every workspace, before anything flies. See "Rapid presses" in `specs/focus.md`.
-        if reactor.pictured_spaces.insert(space) {
-            reactor.warm_all_workspaces(space);
+        // every window is where the saved layout left it. So each window is asked for once, the first
+        // time a pass lays it out, whichever workspace it is on. Per window rather than per space:
+        // at startup apps are found one by one, and the first pass knew one window of 21.
+        reactor
+            .pictured_windows
+            .retain(|window| reactor.state.windows.window(*window).is_some());
+        let first_laid_out: Vec<crate::animation::domain::request::SnapshotTarget> = layout
+            .iter()
+            .filter(|(window, _)| !reactor.pictured_windows.contains(window))
+            .filter_map(|&(window, frame)| {
+                Some(crate::animation::domain::request::SnapshotTarget {
+                    window,
+                    server_id: reactor.state.windows.window(window)?.info.sys_id?,
+                    size: frame.size,
+                })
+            })
+            .collect();
+        if !first_laid_out.is_empty()
+            && let Some(tx) = &reactor.communication_manager.workspace_animation_tx
+        {
+            reactor
+                .pictured_windows
+                .extend(first_laid_out.iter().map(|target| target.window));
+            _ = tx.send(crate::animation::platform::engine::Event::WarmWindows(
+                first_laid_out,
+            ));
         }
         let plan = pass::plan(Self::gather(reactor, space, layout, skip_wid, true));
 

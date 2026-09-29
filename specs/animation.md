@@ -75,9 +75,10 @@ destination for a window already moving.
 - A window MUST NOT be left at an animation's intermediate frame if a pass is interrupted.
 - The overlay MUST stop drawing a tile whose window is gone, and MUST drop a container once the last
   tile leaves it. An empty container is a layer the compositor keeps compositing.
-- Every window on every workspace of a space MUST be asked for a picture when rini first lays that
-  space out, before anything flies. After a restart nothing moves, and a pass that moves nothing asked
-  for no pictures, so the first flights had none to draw.
+- Every window MUST be asked for a picture the first time rini lays it out, on whatever workspace,
+  before anything flies. After a restart nothing moves, and a pass that moves nothing asked for no
+  pictures, so the first flights had none to draw. Per window, not per display: apps are found one
+  by one at startup, and the first pass on the display knew one window of 21.
 
 > **Reported 2026-09-29.** "i also occassionally run into issues where windows are missing during the
 > animation, or maybe have holes in their screenshots... i just notice momentary gaps where only the
