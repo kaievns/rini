@@ -54,7 +54,8 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 
 ## The time and the menu extras
 
-- The time MUST read 24-hour `HH:MM` and change on the minute. The date reads like "Tue 29th".
+- The time MUST read 24-hour `HH:MM` and change on the minute, whatever else wakes the bar first. A
+  bar that comes back up MUST show the time it came back to. The date reads like "Tue 29th".
 - Wi-Fi, sound and battery MUST be macOS's own icons, so they show what macOS shows: signal, level,
   charge, and charging.
 - Every other menu extra MUST be drawn in the tray, in menu-bar order, with the app's own icon. The
@@ -69,6 +70,8 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 
 - Nothing on the bar MAY move at rest. Changes are cuts, with two exceptions, both asked for:
   unfolding the glyphs fades them in, and the tray slides into and out of its chevron.
+- A click during either movement MUST turn it round from where it is on screen, never cut it back
+  to where it started.
 
 ## Where it lives
 

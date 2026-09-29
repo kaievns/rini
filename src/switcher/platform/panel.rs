@@ -34,7 +34,7 @@ use objc2_quartz_core::{
 };
 use tracing::{debug, warn};
 
-use crate::animation::platform::overlay::set_layer_contents;
+use crate::animation::platform::overlay::{set_contents, set_layer_contents};
 use crate::bar::domain::palette;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
@@ -598,10 +598,7 @@ impl SwitcherPanel {
             if let Some(badge) = self.icons.get(index) {
                 match badges.get(index).and_then(|icon| icon.clone()) {
                     Some(image) => {
-                        let raw: *const objc2_core_graphics::CGImage = &*image;
-                        unsafe {
-                            let _: () = msg_send![&**badge, setContents: raw];
-                        }
+                        set_contents(badge, &image);
                         badge.setHidden(false);
                     }
                     None => badge.setHidden(true),

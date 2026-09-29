@@ -28,6 +28,25 @@ pub enum Fade {
     Out,
 }
 
+impl Fade {
+    /// The opacity a glyph fades to.
+    pub fn to(self) -> f64 {
+        match self {
+            Fade::In => 1.0,
+            Fade::Out => 0.0,
+        }
+    }
+
+    /// The opacity a glyph's fade starts from. One still fading when a click turns the fade round
+    /// goes on from the opacity it had reached; any other starts from the far end.
+    pub fn from(self, fading: Option<f64>) -> f64 {
+        fading.unwrap_or(match self {
+            Fade::In => 0.0,
+            Fade::Out => 1.0,
+        })
+    }
+}
+
 impl Folding {
     /// Whether the glyphs are laid out unfolded.
     pub fn expanded(self) -> bool {
@@ -139,6 +158,26 @@ mod tests {
         assert!(close(&delays(Fade::In, 3), &[0.0, 0.035, 0.07]));
         assert!(close(&delays(Fade::Out, 3), &[0.07, 0.035, 0.0]));
         assert!(delays(Fade::Out, 0).is_empty());
+    }
+
+    /// A glyph at rest fades from the far end: in from clear, out from solid.
+    #[test]
+    fn a_fade_from_rest_starts_at_the_far_end() {
+        assert_eq!((Fade::In.from(None), Fade::In.to()), (0.0, 1.0));
+        assert_eq!((Fade::Out.from(None), Fade::Out.to()), (1.0, 0.0));
+    }
+
+    /// A click mid-fade turns each glyph round where it is. Starting from the far end would cut a
+    /// half-faded glyph, or one still waiting its turn, to clear before it faded back in.
+    #[test]
+    fn a_fade_turned_round_goes_on_from_the_opacity_on_screen() {
+        assert_eq!(Fade::In.from(Some(0.4)), 0.4, "half faded out");
+        assert_eq!(
+            Fade::In.from(Some(1.0)),
+            1.0,
+            "still waiting its turn to fade out"
+        );
+        assert_eq!(Fade::Out.from(Some(0.7)), 0.7, "half faded in");
     }
 
     /// The last glyph starts two staggers in and takes 14 frames.

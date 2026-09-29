@@ -12,7 +12,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRetained, CFType, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
@@ -1317,11 +1317,7 @@ fn apply_edge_dressing(
             DressingAction::SwapInPlace => {
                 for (index, layer) in &tile.dressing {
                     let image = dressing_image(new, *index).expect("index sets match");
-                    // SAFETY: a retained CGImage; Core Animation retains what it draws.
-                    unsafe {
-                        let raw: *const objc2_core_graphics::CGImage = &**image;
-                        let _: () = msg_send![&**layer, setContents: raw];
-                    }
+                    set_contents(layer, image);
                 }
                 return;
             }
@@ -1344,11 +1340,7 @@ fn apply_edge_dressing(
         layer.setContentsScale(scale);
         // Above the crop pieces, which sit at the default 0.
         layer.setZPosition(1.0);
-        // SAFETY: a retained CGImage; Core Animation retains what it draws.
-        unsafe {
-            let raw: *const objc2_core_graphics::CGImage = &**image;
-            let _: () = msg_send![&*layer, setContents: raw];
-        }
+        set_contents(&layer, image);
         tile.picture.addSublayer(&layer);
         tile.dressing.push((index, layer));
     }
@@ -1574,31 +1566,77 @@ fn reparent(layer: &CALayer, container: &CALayer) {
     container.addSublayer(layer);
 }
 
-/// Hands a snapshot to a layer as its contents; Core Animation takes a `CGImage` or an `IOSurface`
-/// directly.
-/// Hand a captured picture to a layer, whichever kind of image it is.
+/// Hands a captured picture to a layer, whichever kind of image it is.
 ///
 /// `pub(crate)` so the switcher's panel draws pictures the same way the overlay does. The alternative
-/// was a second copy of these six lines, and two places deciding how a snapshot becomes layer
-/// contents is exactly the kind of split that drifts.
+/// was a second copy of these lines, and two places deciding how a snapshot becomes layer contents is
+/// exactly the kind of split that drifts.
 pub(crate) fn set_layer_contents(layer: &CALayer, snapshot: &WindowSnapshot) {
-    unsafe {
-        match &snapshot.image {
-            SnapshotImage::Bitmap(image) => {
-                let raw: *const objc2_core_graphics::CGImage = &**image;
-                let _: () = msg_send![layer, setContents: raw];
-            }
-            SnapshotImage::Surface(surface) => {
-                let raw: *const objc2_io_surface::IOSurfaceRef = &**surface;
-                let _: () = msg_send![layer, setContents: raw];
-            }
-        }
+    match &snapshot.image {
+        SnapshotImage::Bitmap(image) => set_contents(layer, image),
+        SnapshotImage::Surface(surface) => set_contents(layer, surface),
     }
+}
+
+/// Hands `picture`, a `CGImage` or an `IOSurface`, to `layer` as its contents.
+///
+/// As an object: a `CGImage` or `IOSurfaceRef` pointer handed to `msg_send!` encodes as a struct
+/// pointer, which objc2 refuses for `setContents:` in any build with debug assertions.
+pub(crate) fn set_contents(layer: &CALayer, picture: &CFType) {
+    // SAFETY: Core Animation draws a CGImage or an IOSurface as a layer's contents, and retains it.
+    unsafe { layer.setContents(Some(picture.as_ref())) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
+        use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
+        use objc2_io_surface::{
+            IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfaceWidth,
+        };
+        let keys: [&CFString; 3] =
+            unsafe { [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement] };
+        let values = [
+            CFNumber::new_i64(1),
+            CFNumber::new_i64(1),
+            CFNumber::new_i64(4),
+        ];
+        let value_refs: [&CFNumber; 3] = std::array::from_fn(|i| &*values[i]);
+        // SAFETY: the three keys an IOSurface needs, each with a number.
+        unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
+            .expect("a surface")
+    }
+
+    fn contents_address(layer: &CALayer) -> Option<usize> {
+        // SAFETY: a read of the layer's own property.
+        unsafe { layer.contents() }.map(|object| Retained::as_ptr(&object) as usize)
+    }
+
+    /// Either kind of picture reaches the layer, under the debug assertions every test build has.
+    /// Handed to `setContents:` as a raw `CGImage` or `IOSurfaceRef` pointer instead, the message
+    /// fails objc2's encoding check and panics, in a debug build on the first bar, flight or switch.
+    #[test]
+    fn a_layer_takes_a_picture_of_either_kind() {
+        use crate::animation::platform::window_snapshot::test_snapshot;
+        let layer = CALayer::layer();
+
+        let bitmap = test_snapshot(CGSize::new(1.0, 1.0));
+        set_layer_contents(&layer, &bitmap);
+        let SnapshotImage::Bitmap(image) = &bitmap.image else {
+            unreachable!("a test snapshot is a bitmap")
+        };
+        assert_eq!(contents_address(&layer), Some(&**image as *const _ as usize));
+
+        let surface = test_surface();
+        let on_surface = WindowSnapshot {
+            image: SnapshotImage::Surface(surface.clone()),
+            ..test_snapshot(CGSize::new(1.0, 1.0))
+        };
+        set_layer_contents(&layer, &on_surface);
+        assert_eq!(contents_address(&layer), Some(&*surface as *const _ as usize));
+    }
 
     /// A stand-in stretches only its two-pixel middle, so its corners keep the window's radius; a real
     /// picture stretches whole. Written every install, since tile layers are pooled.

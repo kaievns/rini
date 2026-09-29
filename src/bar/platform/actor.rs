@@ -1,8 +1,8 @@
 //! The main-thread actor that owns every display's bar.
 //!
 //! It is told what to show and never asks: a model from the reactor, pictures from the menu-extras
-//! thread, and the clock it reads itself at each minute. Between those it sleeps, with nothing but
-//! the minute's timer running.
+//! thread, and the clock, which it reads itself on every wake. Between those it sleeps, with nothing
+//! but the minute's timer running.
 
 use std::collections::hash_map::Entry;
 use std::rc::Rc;
@@ -16,11 +16,10 @@ use rini_runloop::executor::sleep;
 use rustc_hash::FxHashMap as HashMap;
 use tracing::{debug, warn};
 
-use crate::bar::domain::format::until_next_minute;
 use crate::bar::domain::layout::{self, Target};
 use crate::bar::domain::model::{Action, BarModel};
 use crate::bar::domain::motion::{Fade, Folding, fade_length};
-use crate::bar::domain::pieces::{self, Click, Clock, Context};
+use crate::bar::domain::pieces::{self, Click, Clock, Context, Timepiece};
 use crate::bar::platform::menu_extras::{Extras, Watcher};
 use crate::bar::platform::panel::{BarPanel, OnClick, SCALE};
 use crate::bar::platform::text::Text;
@@ -52,7 +51,7 @@ pub struct BarActor {
     clicked: channel::Receiver<(String, Target)>,
     model: BarModel,
     extras: Extras,
-    clock: Clock,
+    clock: Timepiece,
     flight: bool,
     folding: Folding,
     /// When the tail's fade out has run and the glyphs fold.
@@ -84,7 +83,7 @@ impl BarActor {
             clicked,
             model: BarModel::default(),
             extras: Extras::default(),
-            clock: read_clock().0,
+            clock: Timepiece::new(read_clock(), Instant::now()),
             flight: false,
             folding: Folding::default(),
             refold_at: None,
@@ -100,7 +99,7 @@ impl BarActor {
     pub async fn run(mut self) {
         loop {
             let minute =
-                (!self.model.displays.is_empty()).then(|| until_next_minute(read_clock().1));
+                (!self.model.displays.is_empty()).then(|| self.clock.until_turn(Instant::now()));
             let refold = self.refold_at.map(|at| at.saturating_duration_since(Instant::now()));
             let wake = tokio::select! {
                 request = self.requests.recv() => match request {
@@ -113,15 +112,19 @@ impl BarActor {
                 _ = sleep(minute.unwrap_or_default()), if minute.is_some() => Wake::Minute,
                 _ = sleep(refold.unwrap_or_default()), if refold.is_some() => Wake::Refold,
             };
+            self.clock.read(read_clock(), Instant::now());
             match wake {
                 Wake::Event(event) => self.handle(event),
                 Wake::Click(display, target) => self.click(&display, target),
-                Wake::Minute => self.tick(),
+                Wake::Minute => {}
                 Wake::Refold => {
                     self.refold_at = None;
                     self.folding = self.folding.faded();
                     self.redraw();
                 }
+            }
+            if self.clock.behind() {
+                self.redraw();
             }
         }
     }
@@ -143,20 +146,10 @@ impl BarActor {
                 self.pause_watcher();
             }
             Event::ClockChanged => {
-                self.clock = read_clock().0;
                 if let Some(watcher) = self.watcher.as_ref().filter(|_| !self.paused) {
                     watcher.refresh();
                 }
-                self.redraw();
             }
-        }
-    }
-
-    fn tick(&mut self) {
-        let clock = read_clock().0;
-        if clock != self.clock {
-            self.clock = clock;
-            self.redraw();
         }
     }
 
@@ -208,6 +201,7 @@ impl BarActor {
 
     /// Draws every display's bar and orders out the rest. Inside a transaction the caller holds.
     fn draw_all(&mut self) {
+        let clock = self.clock.show();
         let mut drawn: Vec<&str> = Vec::new();
         for bar in &self.model.displays {
             let display = CGDisplayBounds(bar.screen);
@@ -238,7 +232,7 @@ impl BarActor {
             let fold = layout::fold(bar.glyphs.len(), self.folding.expanded());
             let context = Context {
                 fold: &fold,
-                clock: self.clock,
+                clock,
                 tray_open: self.tray_open,
             };
             panel.draw(bar, context, &self.extras, &mut self.text);

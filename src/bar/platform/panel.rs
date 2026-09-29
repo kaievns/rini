@@ -25,6 +25,7 @@ use objc2_quartz_core::{
 };
 use rustc_hash::FxHashMap as HashMap;
 
+use crate::animation::platform::overlay::set_contents;
 use crate::bar::domain::extras::Kind;
 use crate::bar::domain::layout::{self, Piece, Scene, Target};
 use crate::bar::domain::model::DisplayBar;
@@ -375,11 +376,7 @@ impl BarPanel {
         if drawn.shows != Some(shows) {
             match image {
                 Some(image) => {
-                    let raw: *const CGImage = image;
-                    // SAFETY: a layer's contents take a CGImage, which the layer retains.
-                    unsafe {
-                        let _: () = msg_send![&*drawn.layer, setContents: raw];
-                    }
+                    set_contents(&drawn.layer, image);
                     drawn.layer.setContentsScale(scale);
                 }
                 None => {
@@ -434,17 +431,15 @@ impl BarPanel {
         let tail = motion::tail(
             self.layers.iter().filter(|(_, drawn)| drawn.shown).map(|(piece, _)| *piece),
         );
-        let (from, to) = match fade {
-            Fade::In => (0.0, 1.0),
-            Fade::Out => (1.0, 0.0),
-        };
+        let key = NSString::from_str(FADE_KEY);
+        let to = fade.to();
         for (piece, delay) in tail.iter().zip(motion::delays(fade, tail.len())) {
             if let Some(drawn) = self.layers.get(piece) {
+                let from = fade.from(fading(&drawn.layer, &key));
                 drawn.layer.setOpacity(to as f32);
-                drawn.layer.addAnimation_forKey(
-                    &fade_animation(from, to, now + delay),
-                    Some(&NSString::from_str(FADE_KEY)),
-                );
+                drawn
+                    .layer
+                    .addAnimation_forKey(&fade_animation(from, to, now + delay), Some(&key));
             }
         }
         tail.len()
@@ -472,6 +467,16 @@ impl BarPanel {
             kCAMediaTimingFunctionEaseOut
         })));
         self.tray.addAnimation_forKey(&animation, Some(&NSString::from_str(SLIDE_KEY)));
+    }
+}
+
+/// The opacity on screen of a layer whose fade is still running or waiting its turn, and `None` for
+/// one at rest: a glyph just shown still presents its last committed opacity, 1, and would not fade.
+fn fading(layer: &CALayer, key: &NSString) -> Option<f64> {
+    // SAFETY: a lookup by key; `presentationLayer` returns a read-only copy of the layer.
+    unsafe {
+        layer.animationForKey(key)?;
+        layer.presentationLayer().map(|shown| shown.opacity() as f64)
     }
 }
 

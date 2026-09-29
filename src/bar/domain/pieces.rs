@@ -1,8 +1,10 @@
 //! What each piece of a bar says, which pieces a bar has to measure, which menu extra stands behind
-//! a piece, and what a click on a region asks for.
+//! a piece, what a click on a region asks for, and the time it says.
+
+use std::time::{Duration, Instant};
 
 use super::extras::{Kind, Vital};
-use super::format::{clock_label, date_label};
+use super::format::{clock_label, date_label, until_next_minute};
 use super::glyphs;
 use super::layout::{Fold, Piece, Right, Target};
 use super::model::{Action, DisplayBar};
@@ -17,6 +19,52 @@ pub struct Clock {
     pub day: u32,
     pub hour: u32,
     pub minute: u32,
+}
+
+/// The clock as last read, what the bar last showed of it, and when its minute turns over.
+///
+/// Read on every wake, not only the minute's: any wake can be the first past the boundary.
+#[derive(Clone, Copy, Debug)]
+pub struct Timepiece {
+    read: Clock,
+    shown: Option<Clock>,
+    turns: Instant,
+}
+
+impl Timepiece {
+    /// `clock`, read at `at` and `seconds` into its minute.
+    pub fn new((clock, seconds): (Clock, f64), at: Instant) -> Self {
+        Self {
+            read: clock,
+            shown: None,
+            turns: at + until_next_minute(seconds),
+        }
+    }
+
+    /// A fresh reading, as `new` takes one. What the bar shows stays noted.
+    pub fn read(&mut self, reading: (Clock, f64), at: Instant) {
+        *self = Self {
+            shown: self.shown,
+            ..Self::new(reading, at)
+        };
+    }
+
+    /// The clock to draw, noted as shown.
+    pub fn show(&mut self) -> Clock {
+        self.shown = Some(self.read);
+        self.read
+    }
+
+    /// Whether the bar shows a minute other than the one last read.
+    pub fn behind(&self) -> bool {
+        self.shown.is_some_and(|shown| shown != self.read)
+    }
+
+    /// From `now` until the minute last read turns over, measured from when it was read, so a wake
+    /// that took a while still lands on the boundary. Zero once it has passed.
+    pub fn until_turn(&self, now: Instant) -> Duration {
+        self.turns.saturating_duration_since(now)
+    }
 }
 
 /// What a text piece says and how it is set.
@@ -414,5 +462,62 @@ mod tests {
     fn the_fold_and_the_tray_stay_on_the_bar() {
         assert_eq!(click(Target::Fold, "d"), Click::Fold);
         assert_eq!(click(Target::Tray, "d"), Click::Tray);
+    }
+
+    const NEXT: Clock = Clock { minute: 6, ..CLOCK };
+
+    /// A menu extra's picture wakes the bar just past the boundary. The time moves on then, not a
+    /// minute later when the minute's sleep, re-aimed from that wake, fires.
+    #[test]
+    fn a_wake_that_is_not_the_minute_s_still_moves_the_time_on() {
+        let start = Instant::now();
+        let mut time = Timepiece::new((CLOCK, 50.0), start);
+        assert_eq!(time.show(), CLOCK);
+
+        time.read((NEXT, 0.5), start + Duration::from_secs_f64(10.5));
+        assert!(time.behind());
+        assert_eq!(time.show(), NEXT);
+        assert!(!time.behind());
+    }
+
+    /// A bar that comes back up after a stretch with no bars, and so no minute's sleep, is drawn
+    /// with the time its wake read rather than the one from before the stretch.
+    #[test]
+    fn a_bar_coming_back_shows_the_time_it_woke_to() {
+        let start = Instant::now();
+        let mut time = Timepiece::new((CLOCK, 0.0), start);
+        assert_eq!(time.show(), CLOCK);
+
+        let later = Clock { hour: 9, ..CLOCK };
+        time.read((later, 12.0), start + Duration::from_secs(7200));
+        assert_eq!(time.show(), later);
+    }
+
+    /// A wake inside the same minute changes nothing on the bar, and nothing is behind before the
+    /// first draw.
+    #[test]
+    fn only_a_new_minute_is_behind() {
+        let start = Instant::now();
+        let mut time = Timepiece::new((CLOCK, 10.0), start);
+        time.read((NEXT, 0.0), start);
+        assert!(!time.behind(), "nothing shown yet");
+
+        time.show();
+        time.read((NEXT, 30.0), start + Duration::from_secs(30));
+        assert!(!time.behind());
+    }
+
+    /// The wait is measured from the reading, so a wake that took a while still lands on the
+    /// boundary, and one that ran past it asks for none.
+    #[test]
+    fn the_next_turn_is_timed_from_the_reading() {
+        let start = Instant::now();
+        let time = Timepiece::new((CLOCK, 15.25), start);
+        assert_eq!(time.until_turn(start), Duration::from_secs_f64(44.75));
+        assert_eq!(
+            time.until_turn(start + Duration::from_secs(10)),
+            Duration::from_secs_f64(34.75)
+        );
+        assert_eq!(time.until_turn(start + Duration::from_secs(45)), Duration::ZERO);
     }
 }
