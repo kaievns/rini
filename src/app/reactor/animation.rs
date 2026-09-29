@@ -89,6 +89,12 @@ impl AnimationManager {
         let Some(active_ws) = reactor.layout_manager.layout_engine.active_workspace(space) else {
             return false;
         };
+        // A pass only asks for pictures of the windows it moves, and after a restart nothing moves:
+        // every window is where the saved layout left it. So the first pass on a space asks for all
+        // of them, every workspace, before anything flies. See "Rapid presses" in `specs/focus.md`.
+        if reactor.pictured_spaces.insert(space) {
+            reactor.warm_all_workspaces(space);
+        }
         let plan = pass::plan(Self::gather(reactor, space, layout, skip_wid, true));
 
         // Visible moves wait for the flight decision; hidden ones go straight to the app.

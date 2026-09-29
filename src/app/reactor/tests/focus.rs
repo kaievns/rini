@@ -1069,3 +1069,46 @@ fn a_report_after_the_raises_have_run_is_followed() {
         Some(second)
     );
 }
+
+/// The reported case: after a restart nothing moves, so no layout pass asked for a single picture,
+/// and the first flights drew windows with nothing in them. The first pass on a space asks for every
+/// window on every one of its workspaces, including ones that never move.
+#[test]
+fn the_first_pass_on_a_space_pictures_every_workspace() {
+    let mut reactor = test_reactor();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    let (here, elsewhere) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    set_space_membership(&[(space, &[901, 902])]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    reactor.add_test_app(1);
+    let workspaces = reactor.test_workspace_ids(space);
+    for (window, wsid, workspace) in [
+        (here, 901u32, workspaces[0]),
+        (elsewhere, 902, workspaces[1]),
+    ] {
+        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
+    }
+    // Settled, as a restart finds it: every window already where the saved layout puts it.
+    reactor.update_layout_or_warn(false, false, None);
+    reactor.update_layout_or_warn(false, false, None);
+    reactor.pictured_spaces.clear();
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    let mut warmed_by_pass = || {
+        reactor.update_layout_or_warn(false, false, None);
+        let mut warmed = Vec::new();
+        while let Ok((_, event)) = animation_rx.try_recv() {
+            if let crate::animation::platform::engine::Event::WarmWindows(targets) = event {
+                warmed.extend(targets.into_iter().map(|target| target.window));
+            }
+        }
+        warmed
+    };
+
+    let first = warmed_by_pass();
+    assert!(first.contains(&here) && first.contains(&elsewhere), "{first:?}");
+    assert!(warmed_by_pass().is_empty(), "once, not on every pass");
+}

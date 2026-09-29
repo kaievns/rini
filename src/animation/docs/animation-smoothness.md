@@ -300,7 +300,12 @@ per flight. Under the old load the refresh took 203ms median (p90 441,
 n=535) against 16-24ms at idle, and 298 of 535 landed inside the flight.
 271 of 321 desktop renders landed mid-flight. `warm_all_workspaces` stays in
 the reactor's switch handler: the actor knows the flight phase, the reactor
-does not. After the lift the owed captures wait for a quiet period
+does not. It also runs once for each space on the first layout pass rini
+makes there (`pictured_spaces`), because a pass warms only the windows it
+moves, and after a restart nothing moves: the saved layout already has every
+window in place. Measured 2026-09-29 over four restarts: no picture landed in
+the first 11s, none at all in 40s with nothing pressed, and 49% of the flights
+in the first 30s were missing a window. After the lift the owed captures wait for a quiet period
 (`SETTLE_BEFORE_CAPTURES`, 400ms; `Event::Quiet`, `after_flight_captures`).
 They used to run the instant the overlay lifted and took 600-800ms (8-15
 window captures and the desktop render), so a press inside that window flew
