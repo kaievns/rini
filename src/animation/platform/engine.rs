@@ -1818,6 +1818,15 @@ impl FlightEngine {
             .collect();
 
         let depths = crate::windows::platform::window_server::front_to_back_depths();
+        // One query for every window, not one each: a round trip per window stalled this thread
+        // for 100-200ms a press. See "Rapid presses" in `specs/focus.md`.
+        let real_frames: HashMap<WindowServerId, CGRect> =
+            crate::windows::platform::window_server::get_windows(
+                &windows.iter().map(|w| w.server_id).collect::<Vec<_>>(),
+            )
+            .into_iter()
+            .map(|info| (info.id, info.frame))
+            .collect();
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
@@ -1832,10 +1841,8 @@ impl FlightEngine {
                     if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
-                    if let Some(info) =
-                        crate::windows::platform::window_server::get_window(window.server_id)
-                    {
-                        starts.push((window.window, info.frame));
+                    if let Some(frame) = real_frames.get(&window.server_id) {
+                        starts.push((window.window, *frame));
                     }
                     tiles.push(OverlayTile {
                         window: window.window,
@@ -2112,16 +2119,22 @@ impl FlightEngine {
         let running = self.running.as_ref()?;
         let (display_frame, _) = self.display?;
         let tiled: Vec<WindowId> = running.tiles.iter().map(|t| t.window).collect();
-        let real: HashMap<WindowId, CGRect> = running
+        let asked: Vec<WindowId> = running
             .final_frames
             .iter()
-            .filter(|(window, _)| tiled.contains(window))
-            .filter_map(|(window, _)| {
-                let info = crate::windows::platform::window_server::get_window(
-                    rini_core::ids::WindowServerId::new(window.idx.get()),
-                )?;
-                Some((*window, info.frame))
-            })
+            .map(|(window, _)| *window)
+            .filter(|window| tiled.contains(window))
+            .collect();
+        let by_server: HashMap<WindowServerId, CGRect> =
+            crate::windows::platform::window_server::get_windows(
+                &asked.iter().map(|w| WindowServerId::new(w.idx.get())).collect::<Vec<_>>(),
+            )
+            .into_iter()
+            .map(|info| (info.id, info.frame))
+            .collect();
+        let real: HashMap<WindowId, CGRect> = asked
+            .into_iter()
+            .filter_map(|w| Some((w, *by_server.get(&WindowServerId::new(w.idx.get()))?)))
             .collect();
         Some(handover_report(
             &running.final_frames,

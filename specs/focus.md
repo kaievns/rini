@@ -67,7 +67,9 @@ more than a "correct" choice by the layout.
   is from the window server, and asking one window at a time cost a burst about 130ms a press on the
   reactor: presses reached the layout up to 330ms after the key, and the flights trailed the keys.
   The frames of the windows being placed are read in one query, and each window's space at most
-  once per event.
+  once per event. The animation engine starting or ending a flight reads its windows' frames in one
+  query as well: one round trip each stalled its thread for up to 237ms mid-flight, and a press
+  arriving then was handled after the strip had already stopped.
 
 - Navigating a strip MUST NOT move a window to another display or another workspace.
 
