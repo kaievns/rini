@@ -50,6 +50,7 @@ Rules for keeping this honest:
 | [`persistence.md`](persistence.md) | What survives a restart, and what a bad file costs |
 | [`animation.md`](animation.md) | What moves, and what must never be seen to move |
 | [`service.md`](service.md) | Running as a launchd agent, and which build it runs |
+| [`bar.md`](bar.md) | The menu bar across the top of every display |
 
 ## What rini is
 

@@ -36,6 +36,7 @@ use objc2_quartz_core::{
 use tracing::{debug, warn};
 
 use crate::animation::platform::overlay::set_layer_contents;
+use crate::bar::domain::palette;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::switcher::domain::layout::{Metrics, Strip, lay_out};
@@ -59,16 +60,16 @@ const PANEL_LEVEL: isize = 101;
 ///
 /// The darkening inside the glass. Two steps below the content plane on purpose: this panel floats
 /// OVER content rather than being content.
-const N0: (f64, f64, f64) = (0.059, 0.067, 0.075);
+const N0: (f64, f64, f64) = palette::N0.rgb();
 /// `--n3`, raised. A tile with no picture yet is a surface sitting on the panel.
-const N3: (f64, f64, f64) = (0.133, 0.145, 0.153);
+const N3: (f64, f64, f64) = palette::N3.rgb();
 /// `--n11`, primary text.
-const N11: (f64, f64, f64) = (0.882, 0.890, 0.898);
+const N11: (f64, f64, f64) = palette::N11.rgb();
 /// `--ember`. Owns selection and active indicators, on a budget of one or two appearances per screen —
 /// here it is exactly one: the selected row.
-const EMBER: (f64, f64, f64) = (1.0, 0.486, 0.314);
+const EMBER: (f64, f64, f64) = palette::EMBER.rgb();
 /// `--ember-soft`, the specified fill for an active row.
-const EMBER_SOFT: (f64, f64, f64) = (0.247, 0.176, 0.157);
+const EMBER_SOFT: (f64, f64, f64) = palette::EMBER_SOFT.rgb();
 
 /// The panel's corner radius.
 ///

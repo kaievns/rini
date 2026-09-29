@@ -23,6 +23,7 @@
 
 pub mod animation;
 pub mod app;
+pub mod bar;
 pub mod displays;
 pub mod input;
 pub mod layout;
