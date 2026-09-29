@@ -433,23 +433,27 @@ animation; `screenSaverWindow` (1000) was the first working level and worse stil
 `SLSHWCaptureWindowList`, which composites only the windows it is handed and so
 cannot answer what is actually on screen.
 
-**The overlay spans the FULL display.** This reverses an earlier decision and
-the reasoning for the original is worth keeping, because it is nearly right.
-sketchybar sits at layer **-20**, below normal windows, and is visible only
-because nothing occupies the top 32pt strip, so an overlay sized to the usable
-frame of 1728x1085 leaves the bar live while still covering every window. That
-was measured and it works.
-
-It was still wrong. A shorter overlay squashes the captured desktop into a box
-the wrong shape, and it leaves a vertical animation invisible in the strip
+**The overlay's coordinates span the FULL display; its window starts below the
+bar.** An earlier version simply sized the whole overlay to the usable frame, and
+that was wrong twice over: a shorter overlay squashes the captured desktop into a
+box the wrong shape, and it leaves a vertical animation invisible in the strip
 beneath the bar, which is exactly where a workspace is supposed to slide out of
-view. So the overlay covers the whole display and redraws the bar on top of
-itself instead. See "The bar is dozens of windows" for what that costs.
+view.
 
-That is for a bar under the overlay, which is another app's since rini draws its
-own. rini's bar is at level 20, above the overlay, so it stays live through a
-flight and nothing pictures it; the engine looks for a bar under the overlay only
-while `[settings.bar] enabled = false`. See `src/bar/docs/README.md`.
+Both come from confusing the window's rect with the coordinate system. The
+overlay keeps the FULL display as its coordinate frame — the backdrop, the tiles
+and the strip surface are all placed in full-display coordinates and register 1:1
+with the real desktop, unchanged. Only the window is shorter: it starts at the
+bar's lower edge (`window_rect`), and the content layer is lifted by the band
+(`canvas_rect`) inside a clipping view, so the reserved top band is drawn and
+then clipped rather than squashed. The band comes from the reactor as
+`SetDisplay { top_band }`, which is `[settings.bar]`'s reserved height, or 0 with
+the bar off.
+
+rini's own bar is at level 20, above the overlay (18), so it stays live through a
+flight and nothing pictures it; the engine looks for a bar UNDER the overlay only
+while `[settings.bar] enabled = false`, where it is another app's. See
+`src/bar/docs/README.md`.
 
 The relevant layers on this machine:
 

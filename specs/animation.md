@@ -42,6 +42,21 @@ only the transitions are missing.
 > and it feels like a bug/stuck." The overshoot was 36pt; moving reported no edge at all, so it never
 > reached the bounce.
 
+## The vertical workspace switch
+
+- The workspaces MUST scroll as one column, each sitting directly on the one above it. There MUST NOT
+  be a band of empty desktop the size of the bar between one workspace and the next: the only space
+  between two workspaces' windows is their own outer margins, the same gap two tiled windows have.
+- The animation MUST NOT extend under the bar. Its surface starts at the bar's lower edge, and a
+  window scrolling up off the top passes behind the bar rather than into a strip above it.
+
+> **Reported 2026-09-29.** "remove the menu bar sized gap between workspaces during the animation so
+> they'd sit directly on top of each other during the workspaces vertical switch animation" and "make
+> the animation overlay a bit smaller at the top to start right under the new menu bar". The strips
+> were stacked one FULL display height apart while each workspace's windows started below the bar
+> inside its row, so a bar-sized strip of desktop showed between workspaces as they scrolled. The
+> overlay covered the whole display, including the band the bar sits in.
+
 ## Arriving mid-flight
 
 The layout does not wait for an animation to land, so a second pass can arrive with a different

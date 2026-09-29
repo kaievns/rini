@@ -399,19 +399,39 @@ pub struct TileOverlay {
     /// Whether the bar has ever been drawn, so a skipped capture keeps it rather than hiding it.
     bar_drawn: bool,
     tile_layers: HashMap<WindowId, Tile>,
-    /// Display frame in CoreGraphics coordinates.
+    /// Display frame in CoreGraphics coordinates. Full display: `root` draws in these coordinates,
+    /// and the window is the part below `top_band`.
     frame: CGRect,
+    /// Points reserved at the top for the bar, so the window starts below it.
+    top_band: f64,
     scale: f64,
     visible: bool,
     mtm: MainThreadMarker,
 }
 
+/// The overlay window's rect: the display below the bar's band. In CoreGraphics coordinates, y grows
+/// downward, so the top band is removed by moving the origin down and shrinking the height.
+fn window_rect(frame: CGRect, top_band: f64) -> CGRect {
+    CGRect::new(
+        CGPoint::new(frame.origin.x, frame.origin.y + top_band),
+        CGSize::new(frame.size.width, (frame.size.height - top_band).max(0.0)),
+    )
+}
+
+/// Where the content layer sits inside the window: the full display, lifted so the reserved band is
+/// above the window's top edge and clipped away. The view is flipped, so its layer's y grows
+/// downward and a negative origin lifts the content.
+fn canvas_rect(frame: CGRect, top_band: f64) -> CGRect {
+    CGRect::new(CGPoint::new(0.0, -top_band), frame.size)
+}
+
 impl TileOverlay {
     /// Creates the overlay once, ordered in but fully transparent. `frame` must be the display's
-    /// full bounds in CoreGraphics coordinates. See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
-    pub fn new(frame: CGRect, scale: f64, mtm: MainThreadMarker) -> Option<Self> {
+    /// full bounds in CoreGraphics coordinates, and `top_band` the points the bar reserves at the
+    /// top. See "Level and coverage" in `src/animation/docs/capture-overlay-research.md`.
+    pub fn new(frame: CGRect, top_band: f64, scale: f64, mtm: MainThreadMarker) -> Option<Self> {
         let converter = CoordinateConverter::from_height(primary_display_height());
-        let cocoa_frame = converter.convert_rect(frame)?;
+        let cocoa_frame = converter.convert_rect(window_rect(frame, top_band))?;
 
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -447,14 +467,24 @@ impl TileOverlay {
         let view: Retained<FlippedView> = unsafe {
             objc2::msg_send![
                 FlippedView::alloc(mtm),
-                initWithFrame: CGRect::new(CGPoint::new(0.0, 0.0), frame.size)
+                initWithFrame: CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size)
             ]
         };
         view.setWantsLayer(true);
         window.setContentView(Some(&view));
 
-        let root = view.layer()?;
+        // The view's own layer clips; `root` holds the content in FULL-display coordinates, lifted so
+        // the reserved top band falls above the view and is clipped away. Everything downstream —
+        // the backdrop, the tiles, the strip surface — keeps working in full-display coordinates and
+        // needs no offset of its own.
+        let clip = view.layer()?;
+        clip.setMasksToBounds(true);
+        clip.setContentsScale(scale);
+        let root = CALayer::layer();
+        root.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        root.setFrame(canvas_rect(frame, top_band));
         root.setContentsScale(scale);
+        clip.addSublayer(&root);
 
         // Not geometryFlipped: that flips a layer's contents too, drawing the desktop upside down.
         let backdrop = CALayer::layer();
@@ -484,6 +514,7 @@ impl TileOverlay {
             lifted: None,
             tile_layers: HashMap::new(),
             frame,
+            top_band,
             scale,
             visible: false,
             mtm,
@@ -538,20 +569,26 @@ impl TileOverlay {
         self.visible
     }
 
-    /// Repoints the overlay at a different display, or the same one after a resolution change.
-    pub fn set_frame(&mut self, frame: CGRect, scale: f64) {
-        if self.frame == frame && (self.scale - scale).abs() < f64::EPSILON {
+    /// Repoints the overlay at a different display, a resolution change, or a change of the band the
+    /// bar reserves at the top.
+    pub fn set_frame(&mut self, frame: CGRect, top_band: f64, scale: f64) {
+        if self.frame == frame
+            && self.top_band == top_band
+            && (self.scale - scale).abs() < f64::EPSILON
+        {
             return;
         }
         self.frame = frame;
+        self.top_band = top_band;
         self.scale = scale;
         let converter = CoordinateConverter::from_height(primary_display_height());
-        if let Some(cocoa) = converter.convert_rect(frame) {
+        if let Some(cocoa) = converter.convert_rect(window_rect(frame, top_band)) {
             self.window.setFrame_display(cocoa, false);
         }
         if let Some(view) = self.window.contentView() {
-            view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), frame.size));
+            view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size));
         }
+        self.root.setFrame(canvas_rect(frame, top_band));
         self.root.setContentsScale(scale);
     }
 
@@ -1590,6 +1627,23 @@ pub(crate) fn set_contents(layer: &CALayer, picture: &CFType) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The window starts a band below the display's top and loses that much height; the canvas holds
+    /// the whole display, lifted by the band so the top is clipped. With no band the two are the
+    /// display itself.
+    #[test]
+    fn the_window_sits_below_the_band_and_the_canvas_spans_the_display() {
+        let display = CGRect::new(CGPoint::new(-670.0, -1692.0), CGSize::new(3008.0, 1692.0));
+        let window = window_rect(display, 32.0);
+        assert_eq!(window.origin, CGPoint::new(-670.0, -1660.0));
+        assert_eq!(window.size, CGSize::new(3008.0, 1660.0));
+        let canvas = canvas_rect(display, 32.0);
+        assert_eq!(canvas.origin, CGPoint::new(0.0, -32.0));
+        assert_eq!(canvas.size, display.size);
+
+        assert_eq!(window_rect(display, 0.0), display);
+        assert_eq!(canvas_rect(display, 0.0).origin, CGPoint::new(0.0, 0.0));
+    }
 
     fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
         use objc2_core_foundation::{CFDictionary, CFNumber, CFString};

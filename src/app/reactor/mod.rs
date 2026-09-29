@@ -3880,18 +3880,15 @@ impl Reactor {
         let low = from_index.min(to_index);
         let high = from_index.max(to_index);
 
-        // Strips are stacked with a GAP between them equal to the menu bar inset, so a switch reads as
-        // one strip sliding up out of view just above the bar while the next arrives from below,
-        // rather than two strips welded edge to edge.
+        // Strips are stacked one USABLE height apart, so each workspace's tiling area sits directly
+        // on the one above it and a switch reads as the strips scrolling as a single column. The
+        // pitch was once the full display height, which left a menu-bar-sized band of empty desktop
+        // between one workspace and the next as it scrolled past.
         //
-        // The inset is the difference between the display's full height and its usable height, which
-        // is exactly the space the menu bar and the bar sitting in it occupy. Adding it to the usable
-        // height makes the row pitch the FULL display height.
-        // The overlay spans the full display, so the strip surface is expressed in full-display coordinates
-        // and the row pitch is simply the full display height. That pitch already contains the menu
-        // bar gap, because each workspace's windows start below the bar within their own row.
+        // The surface is still expressed in full-display coordinates (the overlay's own), so a
+        // window keeps its position below the bar within its row; only the row-to-row step shrinks.
         let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
-        let row_pitch = display_bounds.size.height;
+        let row_pitch = screen.frame.size.height;
         let height = row_pitch;
 
         let mut windows: Vec<crate::animation::platform::engine::SurfaceWindow> = Vec::new();
@@ -4089,6 +4086,7 @@ impl Reactor {
             // is a safe default until there is a reason to plumb the real value through.
             scale: 2.0,
             picture_bar: !self.config.settings.bar.enabled,
+            top_band: self.config.settings.top_band(),
         });
     }
 

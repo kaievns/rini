@@ -51,6 +51,8 @@ pub enum Event {
         frame: CGRect,
         scale: f64,
         picture_bar: bool,
+        /// Points to leave clear at the top for the bar; the overlay window starts below it.
+        top_band: f64,
     },
     /// Drop snapshots for windows that no longer exist, so the cache cannot grow without bound.
     ForgetWindow(WindowId),
@@ -578,6 +580,10 @@ pub struct FlightEngine {
     display: Option<(CGRect, f64)>,
     /// Which display the overlay is on, for the desktop capture.
     display_id: Option<u32>,
+    /// Points reserved at the top of the display for the bar. The overlay window starts below it,
+    /// while its coordinates stay the full display's, so a captured desktop and the tiles keep their
+    /// registration. Zero with the bar off.
+    top_band: f64,
     running: Option<RunningAnimation>,
     /// Fires once after the layout passes settle, to start the animation moving.
     coalesce: Option<RepeatingTimer>,
@@ -634,6 +640,7 @@ impl FlightEngine {
             service,
             display: None,
             display_id: None,
+            top_band: 0.0,
             running: None,
             coalesce: None,
             quiet: None,
@@ -686,7 +693,8 @@ impl FlightEngine {
                 frame,
                 scale,
                 picture_bar,
-            } => self.set_display(id, frame, scale, picture_bar),
+                top_band,
+            } => self.set_display(id, frame, scale, picture_bar, top_band),
             Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
             Event::AnimateSurface {
                 windows,
@@ -895,18 +903,21 @@ impl FlightEngine {
         self.service.request(targets);
     }
 
-    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, picture_bar: bool) {
+    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, picture_bar: bool, top_band: f64) {
         if !picture_bar {
             self.pictures.bar = None;
         }
         self.picture_bar = picture_bar;
         let first = self.display.is_none();
-        let changed = self.display != Some((frame, scale)) || self.display_id != Some(id);
+        let changed = self.display != Some((frame, scale))
+            || self.display_id != Some(id)
+            || self.top_band != top_band;
         self.display = Some((frame, scale));
         self.display_id = Some(id);
+        self.top_band = top_band;
         self.service.set_scale(scale);
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_frame(frame, scale);
+            overlay.set_frame(frame, top_band, scale);
         }
         if first || changed {
             self.warm_cache();
@@ -923,7 +934,7 @@ impl FlightEngine {
     fn ensure_overlay(&mut self) -> Option<&mut TileOverlay> {
         if self.overlay.is_none() {
             let (frame, scale) = self.display?;
-            match TileOverlay::new(frame, scale, self.mtm) {
+            match TileOverlay::new(frame, self.top_band, scale, self.mtm) {
                 Some(overlay) => self.overlay = Some(overlay),
                 None => {
                     warn!("could not create the animation overlay; animations will be skipped");

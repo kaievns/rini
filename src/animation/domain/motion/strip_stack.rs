@@ -1,8 +1,9 @@
 //! Pure geometry for the stack of workspace strips a vertical switch scrolls through.
 //!
-//! Every workspace is a horizontal strip. The strips are stacked in index order, one full display
-//! height apart, and a switch moves the viewport rather than the strips: each strip keeps its own
-//! horizontal position and is pinned vertically to its row.
+//! Every workspace is a horizontal strip. The strips are stacked in index order, one usable height
+//! apart so each workspace's tiling area sits directly on the one above it, and a switch moves the
+//! viewport rather than the strips: each strip keeps its own horizontal position and is pinned
+//! vertically to its row.
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
@@ -67,7 +68,8 @@ mod tests {
 
     use super::*;
 
-    const PITCH: f64 = 1117.0;
+    // The usable height on the built-in: the full 1117 display less the 32pt band.
+    const PITCH: f64 = 1085.0;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -99,26 +101,33 @@ mod tests {
     }
 
     #[test]
-    fn strips_are_stacked_one_display_height_apart() {
-        let window = rect(4.0, 32.0, 859.0, 1081.0);
-        assert_eq!(strip_frame(window, origin(), 0, PITCH).origin.y, 32.0);
-        assert_eq!(strip_frame(window, origin(), 1, PITCH).origin.y, 32.0 + PITCH);
+    fn strips_are_stacked_one_usable_height_apart() {
+        let window = rect(4.0, 36.0, 859.0, 1077.0);
+        assert_eq!(strip_frame(window, origin(), 0, PITCH).origin.y, 36.0);
+        assert_eq!(strip_frame(window, origin(), 1, PITCH).origin.y, 36.0 + PITCH);
         assert_eq!(
             strip_frame(window, origin(), 3, PITCH).origin.y,
-            32.0 + 3.0 * PITCH
+            36.0 + 3.0 * PITCH
         );
     }
 
-    /// The pitch is the FULL display height, not the usable height, which is what leaves a gap the size
-    /// of the menu bar between strips: each workspace's windows start below the bar inside their own row.
+    /// With the pitch a USABLE height, one workspace's tiling area sits directly on the next: the
+    /// area filling the usable frame [32, 1117] in one row ends exactly where the next row's begins.
+    /// The only space left between two workspaces' windows is their own outer margins, as between
+    /// two windows side by side, not the menu-bar band the full-display pitch used to leave.
     #[test]
-    fn the_row_gap_is_the_menu_bar_inset() {
-        let window = rect(4.0, 32.0, 859.0, 1081.0);
+    fn consecutive_workspaces_abut() {
+        let usable = rect(4.0, 32.0, 859.0, 1085.0);
+        let first = strip_frame(usable, origin(), 0, PITCH);
+        let second = strip_frame(usable, origin(), 1, PITCH);
+        assert_eq!(second.origin.y - (first.origin.y + first.size.height), 0.0);
+
+        // A real window carries a 4pt top and bottom margin inside its usable frame, so the visible
+        // gap between the two workspaces' windows is those margins alone: 8pt, like a tiled pair.
+        let window = rect(4.0, 36.0, 859.0, 1077.0);
         let first = strip_frame(window, origin(), 0, PITCH);
         let second = strip_frame(window, origin(), 1, PITCH);
-        let gap = second.origin.y - (first.origin.y + first.size.height);
-        assert_eq!(gap, PITCH - 1081.0);
-        assert_eq!(gap, 36.0);
+        assert_eq!(second.origin.y - (first.origin.y + first.size.height), 8.0);
     }
 
     /// Each strip scrolls horizontally on its own and is pinned vertically to its row. Stacking must
