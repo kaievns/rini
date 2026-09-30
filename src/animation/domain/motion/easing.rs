@@ -1,5 +1,6 @@
-//! The one curve every movement runs on, and the shape of an edge bounce. Core Animation takes
-//! the same control points, so the clock and the render server agree.
+//! The one curve every movement runs on, and the shapes of the two out-and-backs: the edge bounce
+//! and a moved window's nudge. Core Animation takes the same control points, so the clock and the
+//! render server agree.
 
 /// The one curve every movement runs on, as CSS-style cubic Bezier control points `(x1, y1, x2, y2)`.
 ///
@@ -133,6 +134,22 @@ pub fn bounce_displacement(t: f64) -> f64 {
     }
 }
 
+/// The displacement of a moved window's nudge at progress `t`, for a unit offset: `sin²(πt)`, at
+/// rest and motionless at both ends and furthest out at half time. Why not the bounce's shape is in
+/// "The move flight", `src/animation/docs/animation-smoothness.md`.
+pub fn nudge_displacement(t: f64) -> f64 {
+    let s = (std::f64::consts::PI * t.clamp(0.0, 1.0)).sin();
+    s * s
+}
+
+/// How fast `nudge_displacement` changes, per unit of progress.
+pub fn nudge_rate(t: f64) -> f64 {
+    if !(0.0..=1.0).contains(&t) {
+        return 0.0;
+    }
+    std::f64::consts::PI * (2.0 * std::f64::consts::PI * t).sin()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +228,33 @@ mod tests {
             previous = d;
         }
         assert!(BOUNCE_TURN < 0.5, "out fast, home at leisure");
+    }
+
+    /// The nudge leaves rest at no speed, is furthest out at half time and back at rest with no speed
+    /// at the end, and its way out mirrors its way back.
+    #[test]
+    fn a_nudge_starts_and_ends_at_rest() {
+        assert_eq!(nudge_displacement(0.0), 0.0);
+        assert!(nudge_displacement(1.0).abs() < 1e-12);
+        assert_eq!(nudge_rate(0.0), 0.0);
+        assert!(nudge_rate(1.0).abs() < 1e-12);
+        assert!((nudge_displacement(0.5) - 1.0).abs() < 1e-12);
+        for i in 0..=1000 {
+            let t = i as f64 / 1000.0;
+            assert!(nudge_displacement(t) <= nudge_displacement(0.5) + 1e-12, "t={t}");
+            assert!(
+                (nudge_displacement(t) - nudge_displacement(1.0 - t)).abs() < 1e-12,
+                "symmetric at t={t}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_nudge_rate_is_its_slope() {
+        for t in [0.05, 0.25, 0.5, 0.7, 0.95] {
+            let h = 1e-6;
+            let numeric = (nudge_displacement(t + h) - nudge_displacement(t - h)) / (2.0 * h);
+            assert!((nudge_rate(t) - numeric).abs() < 1e-6, "t={t}");
+        }
     }
 }

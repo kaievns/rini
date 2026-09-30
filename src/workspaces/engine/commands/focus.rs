@@ -59,6 +59,7 @@ impl LayoutEngine {
                         raise_windows: vec![windows[next]],
                         boundary_hit: None,
                         edge_hit: None,
+                        moved: None,
                     };
                     self.apply_focus_response(window_store, space, workspace_id, layout, &response);
                     return response;
@@ -75,6 +76,7 @@ impl LayoutEngine {
                         raise_windows,
                         boundary_hit: None,
                         edge_hit: None,
+                        moved: None,
                     };
                     self.apply_focus_response(window_store, space, workspace_id, layout, &response);
                     return response;

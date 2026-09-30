@@ -83,6 +83,10 @@ struct LayoutState {
     /// before the first. A change of gap re-spaces the strip around it, so the column stays put.
     #[serde(skip, default = "default_atomic_unset")]
     last_selected_rel_px: AtomicU64,
+    /// Where the strip's first column started after the last layout, against the tiling area's left
+    /// edge: the anchor less the scroll offset, or NaN before the first. See `strip_origin`.
+    #[serde(skip, default = "default_atomic_unset")]
+    last_strip_origin_px: AtomicU64,
     #[serde(skip, default = "default_atomic")]
     last_step_px: AtomicU64,
     #[serde(skip, default = "default_atomic")]
@@ -109,6 +113,7 @@ impl LayoutState {
             last_screen_width: AtomicU64::new(0.0f64.to_bits()),
             last_gap_x: AtomicU64::new(0.0f64.to_bits()),
             last_selected_rel_px: default_atomic_unset(),
+            last_strip_origin_px: default_atomic_unset(),
             last_step_px: AtomicU64::new(0.0f64.to_bits()),
             last_center_offset_delta_px: AtomicU64::new(0.0f64.to_bits()),
             overscroll_accumulation: AtomicU64::new(0.0f64.to_bits()),
@@ -494,6 +499,7 @@ impl Clone for LayoutState {
             last_screen_width: AtomicU64::new(self.last_screen_width.load(Ordering::Relaxed)),
             last_gap_x: AtomicU64::new(self.last_gap_x.load(Ordering::Relaxed)),
             last_selected_rel_px: AtomicU64::new(self.last_selected_rel_px.load(Ordering::Relaxed)),
+            last_strip_origin_px: AtomicU64::new(self.last_strip_origin_px.load(Ordering::Relaxed)),
             last_step_px: AtomicU64::new(self.last_step_px.load(Ordering::Relaxed)),
             last_center_offset_delta_px: AtomicU64::new(
                 self.last_center_offset_delta_px.load(Ordering::Relaxed),
@@ -755,15 +761,19 @@ impl ScrollingLayoutSystem {
         state.request_center_on_selected();
     }
 
-    /// How far along the strip the viewport currently sits, in points.
+    /// Where the strip's first column starts on screen after the last layout, in points from the
+    /// tiling area's left edge: the anchor less the scroll offset. `None` before the first layout.
     ///
-    /// A window at strip position p is drawn at p minus this. The animation path uses the CHANGE in this
-    /// number as the distance the strip has to travel, because it is the only description of the movement
+    /// A column at strip position p is drawn at this plus p. The animation path uses the CHANGE in this
+    /// number as the distance the strip travelled, because it is the only description of the movement
     /// that does not depend on where each window really is: macOS clamps windows it will not place off
-    /// screen, and the layout is recomputed several times per keystroke.
-    pub fn scroll_offset(&self, layout: LayoutId) -> Option<f64> {
+    /// screen, and the layout is recomputed several times per keystroke. The scroll offset alone missed
+    /// a change of anchor, a centred column losing its centring, which moves every column with the
+    /// offset unchanged. Against the tiling area, so a display moving in global space is not a pan.
+    pub fn strip_origin(&self, layout: LayoutId) -> Option<f64> {
         self.layout_state(layout)
-            .map(|state| f64::from_bits(state.scroll_offset_px.load(Ordering::Relaxed)))
+            .map(|state| f64::from_bits(state.last_strip_origin_px.load(Ordering::Relaxed)))
+            .filter(|origin| !origin.is_nan())
     }
 
     fn layout_state(&self, layout: LayoutId) -> Option<&LayoutState> {
@@ -1110,6 +1120,8 @@ impl ScrollingLayoutSystem {
         state.scroll_offset_px.store(clamped.to_bits(), Ordering::Relaxed);
         let selected_rel = column_starts.get(selected_col_idx).copied().unwrap_or(0.0) - clamped;
         state.last_selected_rel_px.store(selected_rel.to_bits(), Ordering::Relaxed);
+        let origin = anchor_x - tiling.origin.x - clamped;
+        state.last_strip_origin_px.store(origin.to_bits(), Ordering::Relaxed);
 
         let mut out = Vec::new();
         for (col_idx, col) in state.columns.iter().enumerate() {
@@ -2327,6 +2339,52 @@ mod tests {
             expected_x.round(),
             selected_frame.origin.x
         );
+    }
+
+    /// Under niri navigation with centre alignment, moving a centred column drops the centring: the
+    /// anchor goes from the centre to the left edge while the scroll offset stays put, and every
+    /// column moves on screen by that much. The strip's origin says so; the offset alone did not.
+    #[test]
+    fn the_strip_origin_moves_with_the_anchor_as_well_as_the_offset() {
+        let mut settings = ScrollingLayoutSettings::default();
+        settings.alignment = crate::layout::settings::ScrollingAlignment::Center;
+        settings.focus_navigation_style =
+            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
+        settings.column_width_ratio = 1.0 / 3.0;
+        let mut system = ScrollingLayoutSystem::new(&settings);
+        let layout = system.create_layout();
+        let windows: Vec<WindowId> = (1..=5).map(|i| wid(1, i)).collect();
+        for &window in &windows {
+            system.add_window_after_selection(layout, window);
+        }
+        let (screen, gaps) = (screen(1728.0, 1117.0), GapSettings::default());
+        assert_eq!(system.strip_origin(layout), None, "nothing laid out yet");
+        system.select_window(layout, windows[2]);
+        system.center_selected_column(layout);
+        let centred = render(&system, layout, screen, &gaps);
+        let (offset, origin) = (scroll_offset(&system, layout), system.strip_origin(layout));
+        let tiling = compute_tiling_area(screen, &gaps);
+        let first = frame_for(&centred, windows[0]).origin.x - tiling.origin.x;
+        assert!(
+            (origin.unwrap() - first).abs() < 1.0,
+            "{origin:?} against {first}"
+        );
+
+        assert!(system.move_selection(layout, Direction::Right));
+        let moved = render(&system, layout, screen, &gaps);
+        assert!(
+            (scroll_offset(&system, layout) - offset).abs() < 1e-9,
+            "the offset stays put"
+        );
+        let shift = system.strip_origin(layout).unwrap() - origin.unwrap();
+        assert!(shift.abs() > 100.0, "the anchor left the centre: {shift}");
+        for &window in [windows[0], windows[1], windows[4]].iter() {
+            let travel = frame_for(&moved, window).origin.x - frame_for(&centred, window).origin.x;
+            assert!(
+                (travel - shift).abs() < 1.0,
+                "{window:?} moved {travel}, the origin {shift}"
+            );
+        }
     }
 
     #[test]

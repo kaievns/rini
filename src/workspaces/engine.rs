@@ -107,6 +107,11 @@ pub struct EventResponse {
     /// so the stop reads as an edge rather than a dropped keypress.
     #[serde(default)]
     pub edge_hit: Option<Direction>,
+    /// A window moved along its strip, changing places with the column that way. The reactor draws
+    /// the two columns crossing. Not set for a move out of a stacked column, a vertical move, or a
+    /// move onto another display.
+    #[serde(default)]
+    pub moved: Option<(WindowId, Direction)>,
 }
 
 #[must_use]
@@ -218,6 +223,7 @@ impl LayoutEngine {
                 focus_window: None,
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             }
         }
     }
@@ -265,14 +271,15 @@ impl LayoutEngine {
         self.virtual_workspace_manager.update_settings(settings, &self.layout_settings);
     }
 
-    /// Where the strip's viewport sits on `space`, in points along the strip.
+    /// Where the active strip's first column starts on `space`, against the tiling area's left edge.
     ///
-    /// `None` when the space has no active workspace. Callers compare it against the value they last saw to
-    /// learn how far the strip moved, which is exact and needs no reference to any window's real frame.
-    pub fn strip_scroll_offset(&self, space: SpaceId) -> Option<f64> {
+    /// `None` when the space has no active workspace or its strip has not been laid out. Callers compare
+    /// it against the value they last saw to learn how far the strip moved on screen, which is exact and
+    /// needs no reference to any window's real frame.
+    pub fn strip_origin(&self, space: SpaceId) -> Option<f64> {
         let (ws_id, layout) = self.workspace_and_layout(space)?;
         let system = self.workspace_tree(ws_id);
-        system.scroll_offset(layout)
+        system.strip_origin(layout)
     }
 
     fn active_floating_windows_in_workspace(
@@ -376,6 +383,7 @@ impl LayoutEngine {
             raise_windows: vec![],
             boundary_hit: None,
             edge_hit: None,
+            moved: None,
         }
     }
 
@@ -498,6 +506,7 @@ impl LayoutEngine {
             raise_windows: tiled_windows,
             boundary_hit: None,
             edge_hit: None,
+            moved: None,
         };
         self.apply_focus_response(window_store, space, ws_id, layout, &response);
         response
@@ -541,6 +550,7 @@ impl LayoutEngine {
                 raise_windows,
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             };
             self.apply_focus_response(window_store, space, ws_id, layout, &response);
             response
@@ -589,6 +599,7 @@ impl LayoutEngine {
                         raise_windows: windows_in_new_space,
                         boundary_hit: None,
                         edge_hit: None,
+                        moved: None,
                     };
                     self.apply_focus_response(
                         window_store,
@@ -621,6 +632,7 @@ impl LayoutEngine {
                     raise_windows: vec![],
                     boundary_hit: None,
                     edge_hit,
+                    moved: None,
                 };
                 self.apply_focus_response(window_store, space, ws_id, layout, &response);
                 return response;
@@ -1745,6 +1757,7 @@ impl LayoutEngine {
                 focus_window: Some(window),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             };
         }
         if app_rule_outcome.has_resizes() || constraints_changed {
@@ -1993,6 +2006,7 @@ impl LayoutEngine {
             focus_window: Some(wid),
             boundary_hit: None,
             edge_hit: None,
+            moved: None,
         };
     }
 
@@ -2016,6 +2030,7 @@ impl LayoutEngine {
                 focus_window,
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             };
             self.apply_focus_response(window_store, space, workspace_id, layout, &response);
             return response;
@@ -2034,6 +2049,7 @@ impl LayoutEngine {
                 focus_window,
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             };
             self.apply_focus_response(window_store, space, workspace_id, layout, &response);
             return response;
@@ -2587,6 +2603,7 @@ impl LayoutEngine {
                 raise_windows: vec![],
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             };
         } else if Some(current_workspace_id) == active_workspace {
             self.focused_window = None;
@@ -2607,6 +2624,7 @@ impl LayoutEngine {
                     raise_windows: vec![],
                     boundary_hit: None,
                     edge_hit: None,
+                    moved: None,
                 };
             }
         }
@@ -2938,6 +2956,7 @@ impl LayoutEngine {
                 focus_window: Some(window_id),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             };
         }
 
@@ -3065,6 +3084,7 @@ impl LayoutEngine {
             focus_window: Some(window_id),
             boundary_hit: None,
             edge_hit: None,
+            moved: None,
         }
     }
 
@@ -4166,9 +4186,15 @@ mod tests {
         assert_eq!(response.edge_hit, None);
     }
 
-    /// A move that lands somewhere reports no edge, or every successful press would bounce too.
-    #[test]
-    fn a_move_with_room_to_go_reports_no_edge() {
+    /// Two windows side by side on one space, the first selected.
+    fn two_columns() -> (
+        WindowStore,
+        LayoutEngine,
+        DisplayMemory,
+        SpaceId,
+        WindowId,
+        WindowId,
+    ) {
         let mut window_store = WindowStore::default();
         let mut engine = test_engine();
         let mut memory = DisplayMemory::default();
@@ -4199,7 +4225,6 @@ mod tests {
             &mut memory,
             LayoutEvent::WindowsOnScreenUpdated(space, pid, vec![info(first), info(second)], None),
         );
-
         engine.focused_window = Some(first);
         let _ = engine.handle_command(
             &mut window_store,
@@ -4209,15 +4234,55 @@ mod tests {
             &HashMap::default(),
             LayoutCommand::MoveFocus(Direction::Left),
         );
-        let moved = engine.handle_command(
-            &mut window_store,
-            &mut memory,
-            Some(space),
-            &[space],
-            &HashMap::default(),
-            LayoutCommand::MoveNode(Direction::Right),
-        );
+        (window_store, engine, memory, space, first, second)
+    }
+
+    /// A move that lands somewhere reports no edge, or every successful press would bounce too. It
+    /// names the window it moved and the way it went, so the two columns are drawn changing places.
+    #[test]
+    fn a_move_with_room_to_go_names_the_window_and_reports_no_edge() {
+        let (mut window_store, mut engine, mut memory, space, first, _) = two_columns();
+        let mut command = |command| {
+            engine.handle_command(
+                &mut window_store,
+                &mut memory,
+                Some(space),
+                &[space],
+                &HashMap::default(),
+                command,
+            )
+        };
+        let moved = command(LayoutCommand::MoveNode(Direction::Right));
         assert_eq!(moved.edge_hit, None);
+        assert_eq!(moved.moved, Some((first, Direction::Right)));
+
+        let stopped = command(LayoutCommand::MoveNode(Direction::Right));
+        assert_eq!(stopped.edge_hit, Some(Direction::Right));
+        assert_eq!(stopped.moved, None, "at the end nothing changed places");
+    }
+
+    /// Pulling a window out of a stacked column makes a new column and resizes the ones it leaves: not
+    /// two columns changing places. Nor is a move up or down its column.
+    #[test]
+    fn a_move_out_of_a_stack_or_along_a_column_names_nothing() {
+        let (mut window_store, mut engine, mut memory, space, _, _) = two_columns();
+        let mut command = |command| {
+            engine.handle_command(
+                &mut window_store,
+                &mut memory,
+                Some(space),
+                &[space],
+                &HashMap::default(),
+                command,
+            )
+        };
+        let _ = command(LayoutCommand::MoveFocus(Direction::Right));
+        let _ = command(LayoutCommand::ToggleFold(Direction::Left));
+        let vertical = command(LayoutCommand::MoveNode(Direction::Up));
+        assert_eq!(vertical.moved, None);
+        let pulled = command(LayoutCommand::MoveNode(Direction::Right));
+        assert_eq!(pulled.edge_hit, None, "it moved");
+        assert_eq!(pulled.moved, None);
     }
 
     /// Moving a window down the workspace stack from the bottom one has nowhere to go. Reported as

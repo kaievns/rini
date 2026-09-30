@@ -1014,11 +1014,14 @@ travel="1722,0 -> 0,0"   chaining, residual="3645,0"
 Each retarget is individually continuous, so nothing tears, but the destination
 keeps changing and the strip visibly jerks.
 
-The distance now comes from the strip's own scroll offset, which the layout owns:
-`strip_scroll_offset(space)` before and after, negated because windows travel
-opposite to the viewport. It needs no reference to any window's real frame, so the
-clamp is irrelevant to it. A pass that did not move the strip reports zero and
-starts nothing:
+The distance now comes from where the layout says the strip starts on screen:
+`strip_origin(space)`, the anchor less the scroll offset, before and after. It
+needs no reference to any window's real frame, so the clamp is irrelevant to it.
+The scroll offset alone, negated, was used first and missed a change of anchor:
+under niri navigation with centre alignment, centring a column and then moving it
+cleared the centring, so every window moved 576pt on a 1728pt display while the
+offset stayed at 1152, and the move was drawn as the finished layout at frame zero.
+A pass that did not move the strip reports zero and starts nothing:
 
 ```
 1:04:44.994  cmd=MoveFocus(Right)
@@ -1119,9 +1122,9 @@ moved diagonally, or slid vertically and then panned sideways. Both shapes are o
 bug, and it is not in the switch: `travel()` has always returned `from.x == to.x ==
 0`, so the switch itself only ever moves in y.
 
-The strip offset was remembered per SPACE, while `strip_scroll_offset(space)` returns
+The strip's position was remembered per SPACE, while `strip_origin(space)` answers for
 whichever workspace is currently ACTIVE. So the first layout pass after a switch
-compared the destination workspace's offset against the departed one's and reported
+compared the destination workspace's position against the departed one's and reported
 the difference as a movement no window had made. Measured in a test on two
 workspaces, six columns: **5529.6pt of phantom horizontal pan** for a switch that
 moved nothing sideways.
@@ -1130,13 +1133,13 @@ moved nothing sideways.
 - Landing while the slide is still in flight, chaining folds it into the residual and
   the whole thing goes diagonal.
 
-Two changes. The offset is now keyed by `(space, workspace)`, because every workspace
+Two changes. The position is now keyed by `(space, workspace)`, because every workspace
 has its own strip and two of them are not comparable. And a switch CLAIMS the
-destination's offset as it builds the canvas, because the destination row is drawn at
+destination's position as it builds the canvas, because the destination row is drawn at
 that scroll already — the strip arrives with the target window in view, so revealing
 it afterwards is not something left to do.
 
-The claim is exactly the offset the rows were drawn from, so a genuine scroll after
+The claim is exactly the position the rows were drawn from, so a genuine scroll after
 the switch still animates. What the claim would hide is a destination row that was
 never scrolled to the target in the first place: `lands_in_view` checks for that at
 build time and logs it, since the target would then simply never be revealed.
@@ -1162,8 +1165,8 @@ frame is 40pt off the left edge while their layout frame is thousands of points
 away, so their apparent movement is nothing like the strip's, and one of them
 disqualified the whole strip. The fix at the time was to let only windows at least a
 quarter on screen vote. That classifier was later replaced outright: the reactor
-reads the strip's own scroll offset (`take_strip_movement`), which says how far the
-strip travelled without consulting any window.
+reads where the layout says the strip starts (`take_strip_movement`), which says how
+far the strip travelled without consulting any window.
 
 Measured on three `MoveFocus(Right)` presses 120ms apart, which is faster than the
 350ms animation:

@@ -112,6 +112,43 @@ impl Leg {
         }
     }
 
+    /// The leg a container takes toward `to` at `now`: its own leg bent there, or, with none, a
+    /// spring from its model position at rest. Never from the presented position, which carries
+    /// any bounce or nudge riding the container additively; a leg begun there carries it twice.
+    pub fn toward(leg: Option<&Leg>, model: CGPoint, to: CGPoint, now: f64, omega: f64) -> Leg {
+        match leg {
+            Some(leg) => leg.retarget(to, now, omega),
+            None => Leg::Spring {
+                from: model,
+                to,
+                velocity: CGPoint::new(0.0, 0.0),
+                begin: now,
+                omega,
+            },
+        }
+    }
+
+    /// The leg of a container opened mid-flight for a member leaving `source`: from where the
+    /// member is drawn, `install`, as fast as `source`'s leg is going at `now` (at rest with none),
+    /// pulled toward `to`. A curve there started it from rest, and the curve leaves at 6.25x its
+    /// average speed: the column a second move passes left the strip at 12x the speed it had a
+    /// frame before.
+    pub fn leaving(
+        source: Option<&Leg>,
+        install: CGPoint,
+        to: CGPoint,
+        now: f64,
+        omega: f64,
+    ) -> Leg {
+        Leg::Spring {
+            from: install,
+            to,
+            velocity: source.map_or(CGPoint::new(0.0, 0.0), |leg| leg.velocity_at(now)),
+            begin: now,
+            omega,
+        }
+    }
+
     /// How long the leg runs. A spring runs until it has landed; see `SETTLED_PT`.
     pub fn seconds(&self) -> f64 {
         match *self {
@@ -245,6 +282,53 @@ mod tests {
         assert!(close(points[0].x, leg.position_at(0.1).x, 1e-9));
         assert_eq!(points.last().copied(), Some(CGPoint::new(-2.0 * COLUMN, 0.0)));
         assert!(close(seconds, (points.len() - 1) as f64 / 120.0, 1e-9));
+    }
+
+    /// A still container a nudge is riding is drawn a third of the display out; the model says where
+    /// it is. A leg begun from the drawn position would add the nudge to it a second time.
+    #[test]
+    fn a_container_with_no_leg_leaves_from_its_model_at_rest() {
+        let omega = spring_omega(DURATION);
+        let model = CGPoint::new(0.0, 0.0);
+        let to = CGPoint::new(-COLUMN, 0.0);
+        let leg = Leg::toward(None, model, to, 2.0, omega);
+        assert_eq!(leg.position_at(2.0), model);
+        assert_eq!(leg.velocity_at(2.0), CGPoint::new(0.0, 0.0));
+        assert!(close(
+            leg.position_at(2.0 + leg.seconds()).x,
+            -COLUMN,
+            SETTLED_PT
+        ));
+
+        let moving = curve(0.0, -COLUMN);
+        assert_eq!(
+            Leg::toward(Some(&moving), model, to, 0.1, omega),
+            moving.retarget(to, 0.1, omega),
+            "a container with a leg bends it"
+        );
+    }
+
+    /// A member leaving a moving container mid-flight goes on from where it is drawn exactly as
+    /// fast as the container it left, and lands where it is going.
+    #[test]
+    fn a_member_leaving_a_container_keeps_its_speed() {
+        let omega = spring_omega(DURATION);
+        let strip = curve(0.0, -2.0 * COLUMN);
+        let now = 0.12;
+        let install = CGPoint::new(strip.position_at(now).x + 36.0, 0.0);
+        let to = CGPoint::new(-3.0 * COLUMN, 0.0);
+        let leg = Leg::leaving(Some(&strip), install, to, now, omega);
+        assert_eq!(leg.position_at(now), install);
+        assert!(close(leg.velocity_at(now).x, strip.velocity_at(now).x, 1e-6));
+        assert!(strip.velocity_at(now).x.abs() > 1000.0, "it was moving");
+        assert!(close(leg.position_at(now + leg.seconds()).x, to.x, SETTLED_PT));
+
+        let still = Leg::leaving(None, install, to, now, omega);
+        assert_eq!(
+            still.velocity_at(now),
+            CGPoint::new(0.0, 0.0),
+            "from a still one, at rest"
+        );
     }
 
     /// A chained leg lands in about the time a fresh one takes.

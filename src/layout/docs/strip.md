@@ -169,6 +169,11 @@ is borrowed.
   go, and `MoveWindowToWorkspace` with no workspace that way, both set
   `edge_hit` so the view bounces. Neither did, and a move that changed nothing
   and said nothing was indistinguishable from a stuck key.
+- **A move that swaps two columns says so.** `MoveNode` left or right that
+  swaps the selection's column with its neighbour sets `moved`, the window and
+  the way it went, so the flight can draw the two changing places; a move out
+  of a stacked column makes a new column instead and sets nothing. See "The
+  move flight" in `src/animation/docs/animation-smoothness.md`.
 
 ## Joining
 

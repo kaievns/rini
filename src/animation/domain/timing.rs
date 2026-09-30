@@ -99,7 +99,8 @@ pub(in crate::animation) const SETTLE_BEFORE_CAPTURES: Duration = Duration::from
 /// lifting anyway. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) const LIFT_GRACE: Duration = Duration::from_millis(350);
 
-/// The flight's clock once a bounce joins it: long enough for the return leg, never shorter.
+/// The flight's clock once an out-and-back joins it, an edge bounce or a move's nudge: long enough
+/// for it to come home, never shorter.
 pub(in crate::animation) fn clock_for_bounce(
     started: Option<Instant>,
     duration: Duration,
@@ -109,11 +110,46 @@ pub(in crate::animation) fn clock_for_bounce(
     duration.max(needed)
 }
 
-/// Whether a push against an end starts a bounce: not while one is still playing, or a burst of
-/// presses at the wall replays the bounce once per press. See "Edge bounce" in
-/// `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn starts_a_bounce(now: Instant, bouncing_until: Option<Instant>) -> bool {
-    bouncing_until.is_none_or(|until| now >= until)
+/// The two out-and-backs a flight carries on top of its movement: the edge bounce and a moved
+/// window's nudge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::animation) enum OutAndBack {
+    Bounce,
+    Nudge,
+}
+
+/// When each out-and-back playing now comes home. One still playing holds off another of its kind,
+/// or a burst of presses replays it once per press; the two kinds never hold each other off. See
+/// "Edge bounce" and "The move flight" in `src/animation/docs/animation-smoothness.md`.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub(in crate::animation) struct OutAndBacks {
+    bounce: Option<Instant>,
+    nudge: Option<Instant>,
+}
+
+impl OutAndBacks {
+    /// Whether one of `kind` may start at `now`.
+    pub(in crate::animation) fn admits(&self, kind: OutAndBack, now: Instant) -> bool {
+        let until = match kind {
+            OutAndBack::Bounce => self.bounce,
+            OutAndBack::Nudge => self.nudge,
+        };
+        until.is_none_or(|until| now >= until)
+    }
+
+    /// One of `kind` starts at `now` and comes home after `duration`.
+    pub(in crate::animation) fn start(
+        &mut self,
+        kind: OutAndBack,
+        now: Instant,
+        duration: Duration,
+    ) {
+        let until = Some(now + duration);
+        match kind {
+            OutAndBack::Bounce => self.bounce = until,
+            OutAndBack::Nudge => self.nudge = until,
+        }
+    }
 }
 
 /// Whether the overlay lifts now: clock done AND (presented and landed, or `LIFT_GRACE` overdue).
@@ -136,22 +172,47 @@ mod tests {
 
     use super::*;
 
+    const PLAYS: Duration = Duration::from_millis(350);
+
     /// The reported case: presses at the end of the strip kept the view bouncing off the wall, once
-    /// per press, after the pressing had stopped.
+    /// per press, after the pressing had stopped. A move's nudge is held off the same way.
     #[test]
-    fn a_press_at_the_wall_during_a_bounce_starts_none() {
+    fn a_press_while_one_plays_starts_no_other_of_its_kind() {
         let now = Instant::now();
-        let until = now + Duration::from_millis(350);
-        assert!(!starts_a_bounce(now + Duration::from_millis(100), Some(until)));
+        for kind in [OutAndBack::Bounce, OutAndBack::Nudge] {
+            let mut playing = OutAndBacks::default();
+            playing.start(kind, now, PLAYS);
+            assert!(
+                !playing.admits(kind, now + Duration::from_millis(100)),
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
-    fn a_press_at_the_wall_after_the_bounce_starts_one() {
+    fn a_press_after_it_came_home_starts_one() {
         let now = Instant::now();
-        assert!(starts_a_bounce(now, None));
-        assert!(starts_a_bounce(
-            now + Duration::from_millis(350),
-            Some(now + Duration::from_millis(350))
-        ));
+        for kind in [OutAndBack::Bounce, OutAndBack::Nudge] {
+            let mut playing = OutAndBacks::default();
+            assert!(playing.admits(kind, now));
+            playing.start(kind, now, PLAYS);
+            assert!(playing.admits(kind, now + PLAYS), "{kind:?}");
+        }
+    }
+
+    /// A move at the end of the strip nudges and bounces at once: neither holds the other off.
+    #[test]
+    fn a_bounce_and_a_nudge_never_hold_each_other_off() {
+        let now = Instant::now();
+        let soon = now + Duration::from_millis(100);
+        let mut playing = OutAndBacks::default();
+        playing.start(OutAndBack::Bounce, now, PLAYS);
+        assert!(playing.admits(OutAndBack::Nudge, soon), "a bounce playing");
+        let mut playing = OutAndBacks::default();
+        playing.start(OutAndBack::Nudge, now, PLAYS);
+        assert!(playing.admits(OutAndBack::Bounce, soon), "a nudge playing");
+        playing.start(OutAndBack::Bounce, now, PLAYS);
+        assert!(!playing.admits(OutAndBack::Bounce, soon));
+        assert!(!playing.admits(OutAndBack::Nudge, soon));
     }
 }

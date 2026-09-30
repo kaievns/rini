@@ -27,8 +27,10 @@ pub(crate) use crate::animation::domain::motion::plan::{
     AnimationTarget, animation_targets, bounce_carries,
 };
 use crate::animation::domain::motion::plan::{
-    Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative, stale_overlay_layers,
+    Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented, group_relative,
+    stale_overlay_layers,
 };
+use crate::animation::domain::motion::strip_move::nudge_samples;
 pub use crate::animation::domain::motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
     lerp_rect, placeholder_mode, resize_in_flight,
@@ -76,8 +78,9 @@ pub struct OverlayTile {
     pub server_order: Option<usize>,
     /// Front-to-back position in the overlay, 0 frontmost; derived once per flight by the engine.
     pub depth: usize,
-    /// A border window riding the window it traces: a quarter step in front of it, no shadow.
-    pub companion: bool,
+    /// For a border window riding the window it traces, that window: a quarter step in front of it,
+    /// no shadow.
+    pub companion: Option<WindowId>,
     /// Whether this window holds (or is about to hold) focus, which deepens its shadow.
     pub focused: bool,
 }
@@ -95,7 +98,7 @@ impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
     fn floating(&self) -> bool {
         self.floating
     }
-    fn companion(&self) -> bool {
+    fn companion(&self) -> Option<WindowId> {
         self.companion
     }
 }
@@ -104,7 +107,7 @@ impl OverlayTile {
     /// The zPosition this tile draws at; a companion's quarter step stays clear of the half step
     /// the shadow casters sit behind.
     pub(crate) fn z(&self) -> f64 {
-        -(self.depth as f64) + if self.companion { 0.25 } else { 0.0 }
+        -(self.depth as f64) + if self.companion.is_some() { 0.25 } else { 0.0 }
     }
 }
 
@@ -274,6 +277,29 @@ fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAn
         motion_timing(),
         CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseInEaseOut }),
     ])));
+    animation.setAdditive(true);
+    animation.setDuration(timing.seconds);
+    animation.setBeginTime(timing.begin);
+    animation
+}
+
+/// One key for a moved window's nudge, apart from the bounce's so neither stops the other.
+const NUDGE_ANIMATION_KEY: &str = "rini.group.nudge";
+
+/// An additive position animation out to `offset` and back along `nudge_samples`, so it rides a
+/// movement in flight and leaves the model position alone.
+fn nudge_animation(offset: CGPoint, timing: Timing) -> Retained<CAKeyframeAnimation> {
+    let animation =
+        CAKeyframeAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
+    // SAFETY: NSValues holding CGPoints are the value type Core Animation expects for "position".
+    unsafe {
+        let values: Vec<Retained<objc2::runtime::AnyObject>> =
+            nudge_samples(offset, timing.seconds, LEG_STEP)
+                .into_iter()
+                .map(|p| Retained::into_super(Retained::into_super(NSValue::valueWithPoint(p))))
+                .collect();
+        animation.setValues(Some(&NSArray::from_retained_slice(&values)));
+    }
     animation.setAdditive(true);
     animation.setDuration(timing.seconds);
     animation.setBeginTime(timing.begin);
@@ -871,6 +897,24 @@ impl TileOverlay {
         commit_now();
     }
 
+    /// Steps the container `key` names out to `offset` and back, additively, on top of any
+    /// movement in flight. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
+    pub(crate) fn nudge(&mut self, key: GroupKey, offset: CGPoint, duration: Duration) {
+        if duration.is_zero() {
+            return;
+        }
+        let timing = Timing::starting_now(duration);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        for layer in self.layers_of(key) {
+            layer.addAnimation_forKey(
+                &nudge_animation(offset, timing),
+                Some(&NSString::from_str(NUDGE_ANIMATION_KEY)),
+            );
+        }
+        commit_now();
+    }
+
     /// Model position of the container `key` names; the origin for the root.
     fn container_position(&self, key: Option<GroupKey>) -> CGPoint {
         key.and_then(|k| self.containers.get(&k))
@@ -900,7 +944,7 @@ impl TileOverlay {
         reparent(&entry.picture, &parent);
         reparent(&entry.shadow, &parent);
         entry.key = key;
-        entry.companion = tile.companion;
+        entry.companion = tile.companion.is_some();
         entry.picture.setContentsScale(self.scale);
         entry.resize_until = None;
         let covered = tile.snapshot.coverage.covered;
@@ -921,7 +965,7 @@ impl TileOverlay {
         entry.shadow.setShadowOffset(CGSize::new(0.0, style.offset_y));
         place_tile(entry, whole(at), tile.z());
         entry.picture.setHidden(false);
-        entry.shadow.setHidden(tile.companion);
+        entry.shadow.setHidden(tile.companion.is_some());
     }
 
     /// Adds one loose tile to a flight in progress under `key`, flying `tile.from` to `tile.to`
@@ -982,16 +1026,30 @@ impl TileOverlay {
         containers && tiles
     }
 
-    /// Presented position of every container: what `merge_plans` retargets from.
-    pub(crate) fn presented_positions(&self) -> HashMap<GroupKey, CGPoint> {
-        self.containers
-            .keys()
-            .map(|key| (*key, self.presented_container_position(Some(*key))))
-            .collect()
+    /// Where every container is: where it is drawn, any bounce or nudge riding it included, and
+    /// where its own leg has it, or its model position with none. `merge_plans` starts a member
+    /// leaving a container from the first and judges everything else against the second.
+    pub(crate) fn presented_positions(&self) -> Presented {
+        let now = objc2_quartz_core::CACurrentMediaTime();
+        Presented {
+            drawn: self
+                .containers
+                .keys()
+                .map(|key| (*key, self.presented_container_position(Some(*key))))
+                .collect(),
+            along: self
+                .containers
+                .iter()
+                .map(|(key, layer)| {
+                    let along = self.legs.get(key).map(|leg| leg.position_at(now));
+                    (*key, along.unwrap_or_else(|| layer.position()))
+                })
+                .collect(),
+        }
     }
 
-    /// Applies one merged pass to a flight in progress in one transaction, reading every presented
-    /// position before writing. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+    /// Applies one merged pass to a flight in progress in one transaction. See "Mid-flight passes"
+    /// in `src/animation/docs/animation-smoothness.md`.
     pub(crate) fn retarget(
         &mut self,
         delta: &PlanDelta,
@@ -1001,15 +1059,22 @@ impl TileOverlay {
         duration: Duration,
     ) -> Duration {
         let timing = Timing::starting_now(duration);
-        let presented = self.presented_positions();
         let mut longest = Duration::ZERO;
         let find = |window: WindowId| tiles.iter().find(|t| t.window == window);
         CATransaction::begin();
         CATransaction::setDisableActions(true);
 
-        for &(key, install) in &delta.new_groups {
+        // Read before any leg is bent below: a container opened for a member leaving another goes
+        // on as fast as that one was going.
+        let carried: HashMap<GroupKey, Leg> = delta
+            .new_groups
+            .iter()
+            .filter_map(|group| Some((group.key, *self.legs.get(&group.leaving?)?)))
+            .collect();
+        for new in &delta.new_groups {
+            let key = new.key;
             let container = self.reset_container(key);
-            container.setPosition(whole_point(install));
+            container.setPosition(whole_point(new.install));
             let Some(group) = plan.groups.iter().find(|g| g.key == key) else {
                 continue;
             };
@@ -1049,23 +1114,8 @@ impl TileOverlay {
         let omega = spring_omega(duration.as_secs_f64());
         for &(key, to) in &delta.retargeted_groups {
             let to = whole_point(to);
-            let leg = match self.legs.get(&key) {
-                Some(leg) => leg.retarget(to, now, omega),
-                None => {
-                    let from = presented
-                        .get(&key)
-                        .copied()
-                        .or_else(|| self.containers.get(&key).map(|layer| layer.position()))
-                        .unwrap_or(to);
-                    Leg::Spring {
-                        from,
-                        to,
-                        velocity: CGPoint::new(0.0, 0.0),
-                        begin: now,
-                        omega,
-                    }
-                }
-            };
+            let model = self.containers.get(&key).map(|layer| layer.position()).unwrap_or(to);
+            let leg = Leg::toward(self.legs.get(&key), model, to, now, omega);
             for layer in self.layers_of(key) {
                 layer.setPosition(to);
                 if !duration.is_zero() {
@@ -1083,9 +1133,24 @@ impl TileOverlay {
                 self.legs.insert(key, leg);
             }
         }
-        for &(key, install) in &delta.new_groups {
-            let to = whole_point(plan.positions.get(&key).copied().unwrap_or(install));
-            let install = whole_point(install);
+        for new in &delta.new_groups {
+            let key = new.key;
+            let to = whole_point(plan.positions.get(&key).copied().unwrap_or(new.install));
+            let install = whole_point(new.install);
+            if new.leaving.is_some() && !duration.is_zero() && !install.same_as(to) {
+                // A member leaving a container mid-flight keeps its speed; see `Leg::leaving`.
+                let leg = Leg::leaving(carried.get(&key), install, to, now, omega);
+                for layer in self.layers_of(key) {
+                    layer.setPosition(to);
+                    layer.addAnimation_forKey(
+                        &leg_animation(&leg),
+                        Some(&NSString::from_str(GROUP_ANIMATION_KEY)),
+                    );
+                }
+                longest = longest.max(Duration::from_secs_f64(leg.samples(LEG_STEP).1));
+                self.legs.insert(key, leg);
+                continue;
+            }
             for layer in self.layers_of(key) {
                 layer.setPosition(to);
                 if !duration.is_zero() && !install.same_as(to) {
@@ -1945,5 +2010,14 @@ mod tests {
                 "size {size:?}"
             );
         }
+    }
+
+    /// Core Animation replaces an animation added under a key already in use, so a nudge sharing
+    /// the bounce's key would stop a bounce playing, and the other way round.
+    #[test]
+    fn the_nudge_and_the_bounce_ride_under_keys_of_their_own() {
+        assert_ne!(NUDGE_ANIMATION_KEY, BOUNCE_ANIMATION_KEY);
+        assert_ne!(NUDGE_ANIMATION_KEY, GROUP_ANIMATION_KEY);
+        assert_ne!(BOUNCE_ANIMATION_KEY, GROUP_ANIMATION_KEY);
     }
 }

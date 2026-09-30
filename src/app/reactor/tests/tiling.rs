@@ -871,6 +871,7 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 1)),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             },
             None,
         );
@@ -948,6 +949,7 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 4)),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             },
             None,
         );
@@ -970,6 +972,7 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 1)),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             },
             None,
         );
@@ -1786,5 +1789,268 @@ mod title_bar_zoom {
         );
         assert_eq!(laid_out_frame(&mut reactor, space, screen, wid), before);
         assert_eq!(before, Some(floating_frame));
+    }
+}
+
+/// One 1728pt display with `count` columns `ratio` of the viewport wide, the first focused, flying
+/// through a captured animation channel from here on.
+fn moving_strip(
+    ratio: f64,
+    count: usize,
+) -> (
+    Apps,
+    Reactor,
+    crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+) {
+    moving_strip_with(ratio, count, |_| {})
+}
+
+/// `moving_strip` with the strip's settings changed by `configure` first.
+fn moving_strip_with(
+    ratio: f64,
+    count: usize,
+    configure: impl FnOnce(&mut crate::layout::settings::ScrollingLayoutSettings),
+) -> (
+    Apps,
+    Reactor,
+    crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+) {
+    let mut layout = crate::app::config::LayoutSettings::default();
+    layout.scrolling.column_width_ratio = ratio;
+    layout.scrolling.max_column_width_ratio = ratio.max(layout.scrolling.max_column_width_ratio);
+    configure(&mut layout.scrolling);
+    let mut reactor = Reactor::new_for_test(crate::workspaces::LayoutEngine::new(
+        &crate::app::config::VirtualWorkspaceSettings::default(),
+        &layout,
+    ));
+    let mut apps = Apps::new();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(count));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
+    apps.simulate_until_quiet(&mut reactor);
+    reactor.config.settings.animate = true;
+    let (animation_tx, animation_rx) = crate::app::channels::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    (apps, reactor, animation_rx)
+}
+
+/// One strip movement the reactor sent.
+struct SurfaceFlight {
+    windows: Vec<crate::animation::platform::engine::SurfaceWindow>,
+    from_offset: CGPoint,
+    final_frames: Vec<(WindowId, CGRect)>,
+    nudge: Option<crate::animation::platform::engine::Nudge>,
+    duration: std::time::Duration,
+}
+
+/// Every strip movement the reactor sent since the last look.
+fn strip_movements(
+    rx: &mut crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+) -> Vec<SurfaceFlight> {
+    let mut out = Vec::new();
+    while let Ok((_, event)) = rx.try_recv() {
+        if let crate::animation::platform::engine::Event::AnimateSurface {
+            windows,
+            from_offset,
+            final_frames,
+            nudge,
+            duration,
+            ..
+        } = event
+        {
+            out.push(SurfaceFlight {
+                windows,
+                from_offset,
+                final_frames,
+                nudge,
+                duration,
+            });
+        }
+    }
+    out
+}
+
+/// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else
+/// the window jumped to its new place and a navigation pan played on top. A move that scrolls the
+/// strip draws the moved window and the column it passes starting from each other's slots.
+#[test]
+fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let moved = WindowId::new(1, 2);
+    let passed = WindowId::new(1, 3);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1, "one strip movement for the press");
+    let SurfaceFlight { windows, from_offset, .. } = &flights[0];
+    assert!(from_offset.x.abs() >= 1.0, "the strip scrolled: {from_offset:?}");
+    let find = |window| windows.iter().find(|w| w.window == window).expect("on the surface");
+    let (w, n) = (find(moved), find(passed));
+    let w_from = w.from.expect("the moved window starts from its old slot");
+    let n_from = n.from.expect("the column it passed starts from its old slot");
+    assert_eq!(
+        w_from.origin.x, n.frame.origin.x,
+        "W left from where the passed column is now"
+    );
+    assert_eq!(
+        n_from.origin.x,
+        w.frame.origin.x + w.frame.size.width - n.frame.size.width,
+        "the passed column left from W's side of the pair"
+    );
+    for other in windows.iter().filter(|s| s.window != moved && s.window != passed) {
+        assert_eq!(other.from, None, "{:?} only pans", other.window);
+    }
+
+    // The move is spent: the next scroll is a plain pan.
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
+    for flight in strip_movements(&mut rx) {
+        assert!(flight.windows.iter().all(|w| w.from.is_none()));
+        assert_eq!(flight.nudge, None);
+    }
+}
+
+/// A full-size window the camera follows does not move on screen at all, so the move steps it a
+/// third of the display toward where it went and back. The reactor asks for the plain duration: the
+/// engine stretches the flight only if it does nudge.
+#[test]
+fn a_full_width_move_carries_the_nudge() {
+    let (_apps, mut reactor, mut rx) = moving_strip(1.0, 3);
+    let moved = WindowId::new(1, 1);
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1);
+    let flight = &flights[0];
+    assert!(
+        flight.from_offset.x.abs() >= 1.0,
+        "the strip scrolled to follow it"
+    );
+    let from_of = |window| flight.windows.iter().find(|w| w.window == window).unwrap().from;
+    assert!(from_of(moved).is_some());
+    assert!(from_of(WindowId::new(1, 2)).is_some());
+    let nudge = flight.nudge.expect("the camera followed it, so it is nudged");
+    assert_eq!(nudge.window, moved);
+    assert!((nudge.offset.x - 1728.0 / 3.0).abs() < 1e-9, "{nudge:?}");
+    assert_eq!(nudge.offset.y, 0.0);
+    let plain = reactor.config.settings.animation_duration;
+    assert!(
+        (flight.duration.as_secs_f64() - plain).abs() < 1e-6,
+        "{:?}",
+        flight.duration
+    );
+}
+
+/// Half a display of travel on screen already shows the move: the pair crosses with no nudge, and a
+/// move that scrolls nothing is still a strip movement.
+#[test]
+fn a_move_the_camera_does_not_follow_is_not_nudged() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 3);
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1);
+    let flight = &flights[0];
+    assert_eq!(flight.from_offset.x, 0.0, "the pair was already in view");
+    assert_eq!(flight.windows.iter().filter(|w| w.from.is_some()).count(), 2);
+    assert_eq!(flight.nudge, None);
+    assert!(
+        (flight.duration.as_secs_f64() - reactor.config.settings.animation_duration).abs() < 1e-6
+    );
+}
+
+/// A move that scrolls nothing places only the two windows that changed places: a column on screen
+/// that did not move is not sent its own frame again, as on the per-window path.
+#[test]
+fn a_move_that_scrolls_nothing_places_only_the_pair() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.33, 4);
+    let unmoved = WindowId::new(1, 3);
+    let on_screen = reactor.state.windows.window(unmoved).unwrap().frame_monotonic;
+    assert!(on_screen.max().x <= 1728.0, "{on_screen:?}");
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1);
+    assert_eq!(flights[0].from_offset.x, 0.0, "nothing scrolled");
+    let mut placed: Vec<WindowId> = flights[0].final_frames.iter().map(|(w, _)| *w).collect();
+    placed.sort_by_key(|w| w.idx);
+    assert_eq!(placed, vec![WindowId::new(1, 1), WindowId::new(1, 2)]);
+}
+
+/// Reported in review 2026-09-30: under niri navigation with centre alignment, centring a column
+/// and then moving it drops the centring, so every window moves 576pt on screen with the scroll
+/// offset unchanged, and the move was drawn as the finished layout at frame zero. Every window
+/// starts where it really was.
+#[test]
+fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
+    let (_apps, mut reactor, mut rx) = moving_strip_with(1.0 / 3.0, 5, |scrolling| {
+        scrolling.alignment = crate::layout::settings::ScrollingAlignment::Center;
+        scrolling.focus_navigation_style =
+            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
+    });
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    reactor.handle_test_layout_command(LayoutCommand::CenterSelection);
+    strip_movements(&mut rx);
+    let was: Vec<(WindowId, CGRect)> = (1..=5)
+        .map(|idx| {
+            let window = WindowId::new(1, idx);
+            (
+                window,
+                reactor.state.windows.window(window).unwrap().frame_monotonic,
+            )
+        })
+        .collect();
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1);
+    let flight = &flights[0];
+    assert!(
+        flight.from_offset.x.abs() >= 1.0,
+        "every window moved on screen: {:?}",
+        flight.from_offset
+    );
+    assert_eq!(flight.windows.len(), 5);
+    let display = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let mut seen = 0;
+    for window in &flight.windows {
+        let (start, _) = window.travel(flight.from_offset, CGPoint::new(0.0, 0.0));
+        let (_, before) = was.iter().find(|(w, _)| *w == window.window).unwrap();
+        if rini_geometry::is_off_screen(display, *before) {
+            assert!(
+                rini_geometry::is_off_screen(display, start),
+                "{:?} was parked, and is drawn from off screen, not {start:?}",
+                window.window
+            );
+        } else {
+            seen += 1;
+            assert_eq!(
+                start.origin, before.origin,
+                "{:?} is drawn from where it was",
+                window.window
+            );
+        }
+    }
+    assert_eq!(seen, 3, "the three columns in view");
+    assert!(flight.nudge.is_some(), "the moved window stayed put on screen");
+}
+
+/// Navigating is a pan and nothing else: no window starts anywhere but where the pan puts it, and
+/// nothing is nudged.
+#[test]
+fn a_navigation_scroll_pans_with_no_swap_and_no_nudge() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert!(!flights.is_empty(), "the strip scrolled to the third column");
+    for flight in flights {
+        assert!(flight.from_offset.x.abs() >= 1.0);
+        assert!(flight.windows.iter().all(|w| w.from.is_none()));
+        assert_eq!(flight.nudge, None);
     }
 }
