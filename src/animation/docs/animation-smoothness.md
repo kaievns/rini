@@ -40,7 +40,8 @@ group-relative frames and never move on their own. Resizes and entrances
 are loose tiles under `StripLoose`; floating windows sit in the `Floating`
 container. `fly` hands the whole plan to the render server in ONE
 `CATransaction`: one position animation per moving container, one resize
-per loose tile, one timebase, one curve. Model layers jump to their
+per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
+while a move steps the strip; see "The move flight"). Model layers jump to their
 destinations; the animations carry the presentation and are removed on
 completion. The tick loop paces only the mid-flight orchestration (frame
 placement at the apply point, the one destination recapture, teardown);
@@ -105,13 +106,15 @@ The two entry points feed the same `begin_group`:
   latency is the enemy. `surface_plan` puts every window on the surface in
   ONE group travelling by the viewport's travel (`surface_travel`,
   `pan_travel`): one container, one position animation. The exception is a
-  move's two swapped columns, which start from their old slots
-  (`SurfaceWindow::from`) and group by their own vectors; see "The move
-  flight". Pinned (floating) windows stand in the floating container with
-  `from == to`; a switch moves the floating container itself by the same
-  travel (`floating_travel`). Visual destinations are deliberately distinct
-  from `final_frames`: a leaving window animates off-screen while its real
-  frame goes to a park.
+  move's swapped columns, which start from their old slots
+  (`SurfaceWindow::from`) and group by their own vectors, but for the column
+  a stepping move passes, which is held at its old slot on the strip; see
+  "The move flight". Pinned (floating) windows stand in the floating
+  container with `from == to`; a switch moves the floating container itself
+  by the same travel (`floating_travel`). Visual destinations are
+  deliberately distinct from `final_frames`: a leaving window animates
+  off-screen while its real frame goes to a park, and a held column is drawn
+  going beneath the moved window while its real window parks.
 
 Mid-flight passes go through `merge_plans` (pure, tested), which retargets
 containers, not tiles. A rigid member of the incoming pass votes for its
@@ -134,8 +137,8 @@ resolved after the votes, because the votes change the remaining travel. A
 pan adds its travel to every group and every loose strip tile and changes
 no membership; members the pan does not compose (no usable picture) ride
 their group all the same. A move under a pan is the one exception: the
-members of a group that does not travel with the pan (the two columns the
-move swapped) vote as in an ordinary pass, wherever their destination is,
+members of a group that does not travel with the pan (the columns the move
+swapped that cross it) vote as in an ordinary pass, wherever their destination is,
 and the rest of each group they sit in holds the place the pan gave it. The
 merge reads two positions of every container (`Presented`): where it is drawn,
 any bounce or nudge riding it included, and where its own leg has it. A member
@@ -146,10 +149,10 @@ travel and a newcomer's frame are judged against the second, because every
 destination and every frame a pass carries is a place on the strip: judged
 against the drawn position, a border landing mid-nudge matched no container and
 was left a third of the display from its window; pinned by
-`a_border_arriving_mid_nudge_rides_with_the_moved_window`. The container a
-nudge rides (`FlightPlan::nudging`) takes no one but the moved window's own
-borders, or a still window joining would step with it; pinned by
-`a_still_window_joining_mid_nudge_is_not_nudged`. A pass confirming the
+`a_border_arriving_mid_nudge_rides_with_the_moved_window`. A move's step rides
+every strip container, so a still window joining mid-step takes the still
+piece and steps with the strip; pinned by
+`a_still_window_joining_mid_step_steps_with_the_strip`. A pass confirming the
 flight's destinations is an empty `PlanDelta`: nothing is
 touched, and rapid presses neither restart nor extend the flight. Any real
 change restarts the orchestration clock so the frame placement and teardown
@@ -396,9 +399,11 @@ Mechanics worth remembering:
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
   exponential ease-out. The actor's clock evaluates it by
   solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
-  and Core Animation gets the same four control points (`motion_timing`),
+  and Core Animation gets the same four control points (`timing_function`),
   so the apply point and the drawn motion agree; pinned by
-  `the_clock_and_the_render_server_run_one_curve`. Progress at quarter,
+  `the_clock_and_the_render_server_run_one_curve`. A flight that steps flies
+  its containers on CSS ease-in-out (`EASE_IN_OUT`) instead, the same way:
+  `Leg::Curve` carries its curve (see "The move flight"). Progress at quarter,
   half and 70% of the duration: 0.87, 0.97, 0.995. Ease-out cubic
   (`1 - (1-t)^3`, the thirds Bezier `(1/3, 1, 2/3, 1)`, for which x(t) is
   the identity) ran before it and read as sluggish at 350ms: 0.58, 0.875,
@@ -464,19 +469,21 @@ notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The a
 no travel when none is running (every tile at rest, `final_frames` the layout
 the windows already sit at) and adds the bounce to whatever is running
 otherwise, extending the clock to cover the return (`clock_for_bounce`). The
-overlay's `bounce` is one additive `CAKeyframeAnimation` per container
+overlay's `out_and_back` with `OutAndBack::Bounce` is one additive
+`CAKeyframeAnimation` per container
 (`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; ease-out then ease-in-out) under
 its own key, so an in-flight movement is neither replaced nor disturbed and
 the model positions stay put; `settled` reads false until it is home, which
 holds the lift. The floating container rides only a vertical bounce
-(`bounce_carries`), the rule a pan (pinned) and a switch (carried) already
+(`carries_out_and_back`), the rule a pan (pinned) and a switch (carried) already
 follow. Real windows never move. The shape is `bounce_displacement`, pinned
 by `a_bounce_goes_out_once_and_comes_home`. A push while a bounce is still
 playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
 under the same key, so a burst of presses at the wall bounced once per press, and the
 presses the reactor reached late kept bouncing after the pressing had stopped.
-A move's nudge (below) is the other out-and-back, under its own key and held
-off only by a nudge still playing (`OutAndBacks` in
+A move's nudge (below) is the other out-and-back, on the same containers by
+the same rule, under its own key and held off only by a nudge still playing
+(`OutAndBacks` in
 `src/animation/domain/timing.rs`, one clock per kind), so neither holds the
 other off; pinned by `a_bounce_and_a_nudge_never_hold_each_other_off` and
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
@@ -502,38 +509,96 @@ frame. The moved column and the column it passed also get a start (`swap_starts`
 now, in the order they had before. For W of width a and N of width b with gap
 g, moving right, W started at N's new x and N at N's new x + a + g; moving
 left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
-shifts by one amount. `surface_plan` groups by travel vector, so the strip is
-one container and each of the pair has its own; the moved window holds focus,
-so its container is drawn first (`band_plan`) and N slides beneath it.
+shifts by one amount. `stage_move` puts the pair on the surface: W crosses from
+its start, and N crosses from its own unless the move steps, when it is held
+(below). `surface_plan` groups by travel vector, so the strip is one container
+and each crossing column has its own; the moved window holds focus, so its
+container is drawn first (`band_plan`) and N slides beneath it.
 
-**The nudge.** When the moved window's own travel on screen (its travel along
-the strip less the camera's) is under a quarter of the viewport, it steps a
-third of the viewport toward where it went and back (`nudge`, `NUDGE_BELOW`,
-`NUDGE_SHARE`), so N is seen sliding out from beneath it. It is an additive
-keyframe animation on the moved window's container under its own key
-(`TileOverlay::nudge`, `"rini.group.nudge"`), the bounce's mechanism, sampled
-every 1/120s from `nudge_displacement`, `sin²(πt)`: at rest and motionless at
-both ends, furthest out at half time. It rides only a container holding the
-moved window and its own borders (`nudge_carrier`). A border records the
-window it traces (`OverlayTile::companion`), and a floating window's border is
-floating like its window, so it stands with that window in the floating
-container: adopted by vector as it was, the border of a pinned floating window
-sat in the still piece a followed move puts the moved window in, and stepped a
-third of the display away from its window. A moved window sharing its
-container with another window is not stepped, since the step would carry that
-window too; with the container's members grouped by vector, that takes a
-second window travelling exactly as the moved one does. The step starts only
-on a flight that moves: one still collecting passes recomposes its containers,
-which drops any additive animation, so a move arriving then waits and steps
-when the flight starts moving (`nudge_admission`, `NudgeAdmission::Wait`,
-`start_moving`); it used to be dropped, and a full-width move merged into a
-collecting layout pass showed nothing. The engine stretches a flight that
-steps to `NUDGE_STRETCH` (1.3x) the plain duration, when the step starts, so a
-flight that does not step keeps its length; the reactor asked for the stretch
-with every nudge it sent, stepped or not. The clock and lift wait for the step
-to come home (`clock_for_bounce`, `settled`). The bounce's shape was not
-reused: it leaves at 6.25x its average speed, which over a third of the
-viewport is the jerk already reported.
+**Which moves step.** Only a moved column that fills the viewport steps
+(`fills_viewport`): its width is the tiling area's, the display's usable width
+less both outer gaps, within a point, whether the full-width toggle or a width
+preset made it so. The view follows such a column, so it does not move on
+screen and nothing else shows the move. A half or two-thirds column is seen
+moving and never steps. The rule was the moved window's own travel on screen
+under a quarter of the viewport (`NUDGE_BELOW`), which stepped every narrower
+move the view followed as well; reported 2026-09-30.
+
+**Which way.** A third of the viewport (`NUDGE_SHARE`) away from where the
+window went, and back (`nudge`): a move right steps the strip left and opens
+the right side, where N was. It went toward where the window went, opening the
+side N was heading for.
+
+**The whole strip steps.** It is the edge bounce's mechanism: one additive
+keyframe animation, under its own key (`"rini.group.nudge"`), on every
+container `carries_out_and_back` names (`TileOverlay::out_and_back` with
+`OutAndBack::Nudge`), sampled every 1/120s from `nudge_displacement`,
+`sin²(πt)`: at rest and motionless at both ends, furthest out at half time.
+That is every strip container: the moved window's, the strip's, and with them
+every border tracing a strip window, which rides its window's container. The
+floating container rides only a vertical out-and-back and a nudge is sideways,
+so floating windows stay where they are, and so do their borders: a floating
+window's border is floating like its window (`border_tile`) and stands with it
+in the floating container. The first design stepped the moved window's
+container alone. The side it opened showed whatever was under the window, and
+N crossed on `MOTION_CURVE` in about 60ms, so for nearly the whole step that
+was the desktop (a screen recording and the engine's debug log, 2026-09-30).
+
+**The column passed is held.** For a move that steps, `stage_move` gives N its
+old slot as its surface frame and no start of its own, so it rides the strip's
+container: its tile starts where N was on screen and moves only as the strip
+does, W slides over it, and it finishes beneath W, covered. Only the drawing is
+held. N's real window goes to its layout frame, off screen, as for any move:
+`final_frames` are unchanged, the handover compares real windows with them, and
+the stand-in chase judges where the real window lands (`stand_in_chase`). A
+move that does not step keeps both columns crossing.
+
+**The curve.** While it steps, a flight's containers fly on CSS ease-in-out
+(`EASE_IN_OUT`, `(0.42, 0, 0.58, 1)`; `flight_curve`) over the stretched
+duration instead of `MOTION_CURVE`, so N lingers in the side the step opens.
+`MOTION_CURVE` is 87% of the way at a quarter of the flight: it carries N
+beneath W before the step is out, and C fills the side instead. `Leg::Curve`
+carries its curve and `fly` hands Core Animation the same four numbers
+(`timing_function`), so the leg is what the render server draws, and a press
+arriving mid-flight bends it from where it is and as fast as it goes; pinned by
+`a_leg_on_the_ease_in_out_bends_without_a_kick`. A step that starts on a flight
+already moving (a merge) bends the strip's leg as any merge does, a spring, not
+the ease-in-out, so N lingers less.
+
+The side the step opens, [V - d, V] with d the step at t, for the design case:
+the 1728pt display, full-width W (1722pt at x=3) moved right past N (860pt),
+C (1148pt) after N, the view travelling -862, the step 576pt over 0.455s.
+Points of it covered, pinned by `the_side_the_step_opens_is_the_simulated_one`:
+
+```
+t        0.1  0.2  0.3  0.4  0.5  0.6  0.7  0.8  0.9
+opened    55  199  377  521  576  521  377  199   55
+N         55  199  377  521  428  283  159   67   14
+C          0    0    0    0  145  235  215  129   38
+desktop    0    0    0    0    3    3    3    3    3
+```
+
+The 3pt of desktop is the gap between N and C. N's tile runs 1727 to 865 on
+screen and ends beneath W at [3, 1725]; a move left is its mirror image
+(`the_column_passed_fills_the_side_the_step_opens`). On `MOTION_CURVE` N
+covers 103 of the 377 points at t = 0.3, and with the step on W's container
+alone the opened side shows the desktop
+(`the_side_the_step_opens_needs_the_whole_strip_and_the_ease_in_out`). In the
+simulation the design was chosen from, flipping the direction alone, W
+stepping alone and N crossing, left the whole opened side desktop at every t.
+Past the strip's end the opened side shows the desktop: nothing is there.
+
+The step starts only on a flight that moves: one still collecting passes
+recomposes its containers, which drops any additive animation, so a move
+arriving then waits and steps when the flight starts moving (`nudge_admission`,
+`NudgeAdmission::Wait`, `starting_nudge`); it used to be dropped, and a
+full-width move merged into a collecting layout pass showed nothing. The engine
+stretches a flight that steps to `NUDGE_STRETCH` (1.3x) the plain duration,
+when the step starts, so a flight that does not step keeps its length; the
+reactor asked for the stretch with every nudge it sent, stepped or not. The
+clock and lift wait for the step to come home (`clock_for_bounce`, `settled`).
+The bounce's shape was not reused: it leaves at 6.25x its average speed, which
+over a third of the viewport is the jerk already reported.
 
 ```
 offset                   nudge, sin², 0.455s    bounce's shape, 0.35s
@@ -546,31 +611,35 @@ offset                   nudge, sin², 0.455s    bounce's shape, 0.35s
 
 The nudge's peak is `offset x π / seconds`, at a quarter and three quarters of
 the flight; pinned by `the_nudge_peaks_at_a_moderate_speed`. The viewport is
-the display's usable width, `screen.frame`, not the tiling area. *Not yet
-seen on screen*: the column passed by a full-width move crosses two 1,723pt
-steps on the flight's curve, so only its trailing edge is seen crossing the
-revealed third, early in the nudge; for the rest of it the third shows the
-desktop.
+the display's usable width, `screen.frame`, not the tiling area.
 
 **A burst.** Each press is its own `AnimateSurface`. The first installs the
-flight and starts the nudge. A press arriving mid-flight merges into it
+flight and starts the step. A press arriving mid-flight merges into it
 (`begin_group`, `merge_plans` with the pan): every container moves by the pan,
-the new pair votes as an ordinary pass would, the moved window keeps its
+the new pair votes as an ordinary pass would, and the moved window keeps its
 container (a camera that follows it again leaves it going where it was, so it
-is not retargeted at all), the newly passed column leaves the strip's
-container at the frame it is drawn at and flies to its slot beneath the moved
-window, and the pair of the earlier press pans on with the rest. Containers
-bend from their legs, never from where they are drawn, and the passed column's
-new container carries on the strip's (`Leg::leaving`), so nothing kicks. The
-orchestration clock restarts to cover the new legs. A nudge still playing is
-not restarted (`OutAndBacks`): one nudge per burst, as presses at the wall
-bounce once. A press after it has come home, 455ms at the default duration,
-starts another. A press at the end of the strip bounces as before, on top of
-whatever is playing.
+is not retargeted at all). For a narrower column the newly passed column leaves
+the strip's container at the frame it is drawn at and flies to its slot
+beneath the moved window, and the pair of the earlier press pans on with the
+rest. Containers bend from their legs, never from where they are drawn, and
+the passed column's new container carries on the strip's (`Leg::leaving`), so
+nothing kicks. For a full-width column each press's passed column is held on
+the strip, so nothing leaves the strip's container and the step playing carries
+on over all of it (`a_second_full_width_move_mid_flight_holds_its_column_on_the_strip`).
+A column an earlier press held pans on with the strip from beneath the moved
+window, not to its slot: where the columns passed differ in width it ends a
+few points into the outer gap beside the moved window until the lift. A
+container a merge opens after a step began does not carry the rest of it: its
+member leaves from where it is drawn, so it does not jump, but it stops
+stepping, as with the edge bounce. The orchestration clock restarts to cover
+the new legs. A step still playing is not restarted (`OutAndBacks`): one step
+per burst, as presses at the wall bounce once. A press after it has come home,
+455ms at the default duration, starts another. A press at the end of the strip
+bounces as before, on top of whatever is playing.
 
 **Pictures.** The column a full-width move passes is parked at both ends, so a
 cold cache had no picture of it, and the strip surface drew nothing for a
-window with no picture: a hole in the revealed third. The surface path now
+window with no picture: a hole in the side the step opens. The surface path now
 takes the stand-in the per-window path does (`picture_or_stand_in` in
 `src/animation/domain/admission.rs`, shared by both): a known window parked off
 this display with no picture flies as the dark `--n3` tile, uncached. A window
@@ -579,13 +648,14 @@ movement starts at once and never holds, so the real picture of a stand-in
 whose window lands on this display, the column a move at the edge brings in
 from its park, is chased once its frame is applied (`stand_in_chase`,
 `chases_stand_in`), and the reveal swap puts it on the same tile mid-flight.
-It used to fly dark for the whole flight: nothing asked for its picture. One
-parked at both ends has nothing on screen to capture and keeps the stand-in to
-lift.
+Where it lands is its real frame: a held column is drawn going beneath the
+moved window while its real window parks, so it is not chased. It used to fly
+dark for the whole flight: nothing asked for its picture. One parked at both
+ends has nothing on screen to capture and keeps the stand-in to lift.
 
 Real windows go to the layout's frames at frame zero, as for any strip
 movement (`APPLY_FRAMES_AT_PAN`), and only the ones whose frames changed; the
-nudge is drawn only.
+step and the held column are drawn only.
 
 ## Resizes through the overlay
 
@@ -832,8 +902,9 @@ running, carrying real border windows as tiles:
   clear of the half-step shadow casters), with no shadow of its own. It
   records the window it traces and takes that window's band: a floating
   window's border is floating, in the floating container with it and lifted
-  with it (`border_tile`, `band_plan`). A move's nudge carries the moved
-  window's own border and no other (see "The move flight").
+  with it (`border_tile`, `band_plan`). A move's step carries every strip
+  window's border with the strip and never a floating window's (see "The
+  move flight").
 - Captured and cached like any window, keyed by synthetic ids; no picture
   yet means skipped this flight and warmed for the next. Companions join the
   post-flight warm set because borders recolor with focus.
@@ -958,7 +1029,8 @@ ended in the overlay's favour.
    also feeds the switch's claim on the destination's origin and needs care.
    `strip_pan_delta` is already gone.
 6. ~~Shared `motion` module + wire or delete `animation_easing`~~ — the AX
-   engine and `animation_easing` are gone; `MOTION_CURVE` is the one curve.
+   engine and `animation_easing` are gone; `MOTION_CURVE` is the curve every
+   movement runs on but a stepping move's.
 7. Staleness: change-driven warming or a stream pool; measure the mid-flight
    refresh cap first since it is nearly free.
 8. `animate_layout` decomposition: the pass analysis is out (`pass::plan`); the flight decision and dispatch remain, next time selection logic changes anyway.

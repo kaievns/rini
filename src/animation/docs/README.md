@@ -11,11 +11,11 @@ edge bounce are all flights of the same thing.
 |---|---|
 | `domain/motion/plan.rs` | `FlightPlan`, rigid groups, and `merge_plans` for a pass arriving mid-flight |
 | `domain/motion/travel.rs`, `surface.rs` | How far each tile goes, and what a pinned one does |
-| `domain/motion/easing.rs` | `MOTION_CURVE`, the one curve |
+| `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
 | `domain/translucency.rs` | Putting a window's blur back into its picture: merging its own capture with a composite of what is below it |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/strip_stack.rs` | The stacked-workspace geometry a switch moves through |
-| `domain/motion/strip_move.rs` | A window moved along the strip: where the two columns changing places start, and the nudge |
+| `domain/motion/strip_move.rs` | A window moved along the strip: where the two columns changing places start, which moves step the whole strip, and the column such a move holds on it |
 | `domain/motion/fit.rs` | Whether a captured picture still fits the tile it is for |
 | `domain/timing.rs`, `flight.rs`, `admission.rs` | When work happens, what a flight is and when it may capture, and how a mid-flight request is admitted |
 | `domain/pass.rs` | Sorting a layout pass into moves, unmoved windows and warm targets |
@@ -32,7 +32,7 @@ animations were tried and reverted: each tile bent from its own presented positi
 its own clock, and a pass merging mid-flight sent tiles of one strip off on different
 legs, which the user saw as a teleport.
 
-**One `CATransaction`, one timebase, one curve.** Model layers jump to their
+**One `CATransaction`, one timebase, one curve per flight.** Model layers jump to their
 destinations; the animations carry the presentation.
 
 **Every commit is flushed at once.** `commit_now`, because the overlay shares the main

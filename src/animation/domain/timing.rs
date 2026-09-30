@@ -110,8 +110,8 @@ pub(in crate::animation) fn clock_for_bounce(
     duration.max(needed)
 }
 
-/// The two out-and-backs a flight carries on top of its movement: the edge bounce and a moved
-/// window's nudge.
+/// The two out-and-backs a flight carries on top of its movement: the edge bounce and a move's
+/// nudge, which steps the whole strip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::animation) enum OutAndBack {
     Bounce,

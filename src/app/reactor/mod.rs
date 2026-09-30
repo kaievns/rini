@@ -3681,7 +3681,8 @@ impl Reactor {
     /// active workspace at its final positions, and the viewport starts shifted back by `delta` so
     /// the strip appears to arrive from where it was, then settles. A `moved` window's column and the
     /// column it passed start from the slots they held before the move, so the two are seen changing
-    /// places; a moved window the camera follows is nudged. See "The move flight" in
+    /// places. A moved column that fills the viewport steps the whole strip instead, the column it
+    /// passed held on the strip beneath it (`strip_move::stage_move`). See "The move flight" in
     /// `src/animation/docs/animation-smoothness.md`.
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
@@ -3746,19 +3747,14 @@ impl Reactor {
         let from_offset = CGPoint::new(delta.x, delta.y);
         let to_offset = CGPoint::new(0.0, 0.0);
         let nudge = moved.and_then(|(window, direction)| {
-            use crate::animation::domain::motion::strip_move;
-            let strip: Vec<(WindowId, CGRect)> =
-                windows.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
-            for (wid, start) in strip_move::swap_starts(&strip, window, direction) {
-                if let Some(surface) = windows.iter_mut().find(|w| w.window == wid) {
-                    surface.from = Some(start);
-                }
-            }
-            let (start, end) =
-                windows.iter().find(|w| w.window == window)?.travel(from_offset, to_offset);
-            let travel = end.origin.x - start.origin.x;
-            strip_move::nudge(travel, screen.frame.size.width, direction)
-                .map(|offset| crate::animation::platform::engine::Nudge { window, offset })
+            crate::animation::domain::motion::strip_move::stage_move(
+                &mut windows,
+                window,
+                direction,
+                screen.frame.size.width,
+                gaps.outer.left,
+                gaps.outer.right,
+            )
         });
         // The plain duration: the engine stretches the flight only when it does nudge.
         let duration =

@@ -11,7 +11,6 @@ use objc2_core_foundation::{CGRect, CGSize};
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 
-use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::surface::to_overlay_space;
 use crate::animation::domain::timing::{OutAndBack, OutAndBacks};
 
@@ -150,36 +149,32 @@ pub(in crate::animation) fn chases_stand_in(destination: CGRect, display: CGRect
     !rini_geometry::is_off_screen(display, destination)
 }
 
-/// What becomes of a moved window's nudge. See "The move flight" in
+/// What becomes of a move's nudge. See "The move flight" in
 /// `src/animation/docs/animation-smoothness.md`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::animation) enum NudgeAdmission {
-    /// It rides this container from now, and the flight is stretched to carry it.
-    Start(GroupKey),
+    /// It steps the strip from now, and the flight is stretched to carry it.
+    Start,
     /// The flight is still collecting passes, which recomposes its containers and would drop it:
     /// it starts when the flight does.
     Wait,
-    /// Not in this flight, which keeps its plain duration.
-    Skip(&'static str),
+    /// One is still playing: not in this flight, which keeps its plain duration.
+    Skip,
 }
 
-/// The nudge's admission from what is playing, whether the flight moves yet, and the container it
-/// would ride (`FlightPlan::nudge_carrier`). An edge bounce playing never holds it off.
+/// The nudge's admission from what is playing and whether the flight moves yet. An edge bounce
+/// playing never holds it off.
 pub(in crate::animation) fn nudge_admission(
     playing: &OutAndBacks,
     now: Instant,
     moving: bool,
-    carrier: Option<GroupKey>,
 ) -> NudgeAdmission {
     if !playing.admits(OutAndBack::Nudge, now) {
-        return NudgeAdmission::Skip("one is still playing");
-    }
-    if !moving {
-        return NudgeAdmission::Wait;
-    }
-    match carrier {
-        Some(key) => NudgeAdmission::Start(key),
-        None => NudgeAdmission::Skip("the moved window shares its container"),
+        NudgeAdmission::Skip
+    } else if !moving {
+        NudgeAdmission::Wait
+    } else {
+        NudgeAdmission::Start
     }
 }
 
@@ -594,45 +589,33 @@ mod tests {
         playing
     }
 
-    /// Every combination the engine meets: one playing holds a nudge off whatever else holds, a
-    /// flight still collecting makes it wait, and a moved window sharing its container is not
-    /// nudged.
+    /// Every combination the engine meets: one playing holds a nudge off whatever else holds, and a
+    /// flight still collecting makes it wait.
     #[test]
-    fn a_nudge_is_admitted_once_per_burst_and_only_on_a_container_of_its_own() {
+    fn a_nudge_is_admitted_once_per_burst_and_waits_for_its_flight_to_move() {
         use std::time::Duration;
         let now = Instant::now();
         let soon = now + Duration::from_millis(100);
-        let key = Some(GroupKey::Rigid(3));
         let idle = OutAndBacks::default();
-        assert_eq!(
-            nudge_admission(&idle, now, true, key),
-            NudgeAdmission::Start(GroupKey::Rigid(3))
-        );
-        assert_eq!(nudge_admission(&idle, now, false, key), NudgeAdmission::Wait);
-        assert!(matches!(
-            nudge_admission(&idle, now, true, None),
-            NudgeAdmission::Skip(_)
-        ));
-        assert_eq!(nudge_admission(&idle, now, false, None), NudgeAdmission::Wait);
+        assert_eq!(nudge_admission(&idle, now, true), NudgeAdmission::Start);
+        assert_eq!(nudge_admission(&idle, now, false), NudgeAdmission::Wait);
         for moving in [true, false] {
-            assert!(
-                matches!(
-                    nudge_admission(&nudging_since(now), soon, moving, key),
-                    NudgeAdmission::Skip(_)
-                ),
+            assert_eq!(
+                nudge_admission(&nudging_since(now), soon, moving),
+                NudgeAdmission::Skip,
                 "a press while the step plays starts no other"
             );
         }
         let mut bouncing = OutAndBacks::default();
         bouncing.start(OutAndBack::Bounce, now, Duration::from_millis(350));
         assert_eq!(
-            nudge_admission(&bouncing, soon, true, key),
-            NudgeAdmission::Start(GroupKey::Rigid(3)),
+            nudge_admission(&bouncing, soon, true),
+            NudgeAdmission::Start,
             "a bounce at the end never holds the step off"
         );
         assert_eq!(
-            nudge_admission(&nudging_since(now), now + Duration::from_millis(455), true, key),
-            NudgeAdmission::Start(GroupKey::Rigid(3)),
+            nudge_admission(&nudging_since(now), now + Duration::from_millis(455), true),
+            NudgeAdmission::Start,
             "once it is home the next press steps again"
         );
     }
