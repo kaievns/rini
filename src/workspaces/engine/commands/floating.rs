@@ -36,6 +36,7 @@ impl LayoutEngine {
                         focus_window: None,
                         boundary_hit: None,
                         edge_hit: None,
+                        moved: None,
                     }
                 }
             }

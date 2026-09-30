@@ -37,8 +37,15 @@ impl LayoutEngine {
             }
             LayoutCommand::MoveNode(direction) => {
                 self.workspace_layouts.mark_last_saved(space, workspace_id, layout);
+                let tree = self.workspace_tree(workspace_id);
+                let swapping =
+                    strip_edge(direction).is_some() && !tree.parent_of_selection_is_stacked(layout);
+                let selected = tree.selected_window(layout);
                 if self.workspace_tree_mut(workspace_id).move_selection(layout, direction) {
-                    return EventResponse::default();
+                    return EventResponse {
+                        moved: selected.filter(|_| swapping).map(|window| (window, direction)),
+                        ..EventResponse::default()
+                    };
                 }
 
                 // The strip has no room that way. Whether the window may leave for the next display is

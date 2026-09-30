@@ -128,6 +128,17 @@ pub(in crate::animation) fn stands_in(server_frame: Option<CGRect>, display: CGR
     })
 }
 
+/// What a flight draws for a window: its picture, else the stand-in when `stands_in` says so, else
+/// nothing. The server frame and the stand-in are asked for only when there is no picture.
+pub(in crate::animation) fn picture_or_stand_in<S>(
+    picture: Option<S>,
+    server_frame: impl FnOnce() -> Option<CGRect>,
+    display: CGRect,
+    stand_in: impl FnOnce() -> Option<S>,
+) -> Option<S> {
+    picture.or_else(|| stands_in(server_frame(), display).then(stand_in).flatten())
+}
+
 /// How a newly opened window enters a flight.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::animation) enum EntranceDecision {
@@ -515,6 +526,35 @@ mod tests {
                 display
             ),
             "a zero frame is not a window to stand in for"
+        );
+    }
+
+    /// A strip movement holds every window of the workspace, and after a restart the parked ones have
+    /// no picture: each flies as the stand-in, where it used to be left out and show as a hole.
+    #[test]
+    fn a_parked_window_with_no_picture_is_drawn_as_the_stand_in() {
+        let display = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
+        let parked = CGRect::new(CGPoint::new(1727.0, 1085.0), CGSize::new(1720.0, 1081.0));
+        let on_screen = CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(1720.0, 1081.0));
+        let stand_in = || Some("stand-in");
+        assert_eq!(
+            picture_or_stand_in(None, || Some(parked), display, stand_in),
+            Some("stand-in")
+        );
+        assert_eq!(
+            picture_or_stand_in(None, || Some(on_screen), display, stand_in),
+            None,
+            "a window on this display with no picture is not stood in for"
+        );
+        assert_eq!(picture_or_stand_in(None, || None, display, stand_in), None);
+        assert_eq!(
+            picture_or_stand_in(
+                Some("picture"),
+                || panic!("no frame is read for a window with a picture"),
+                display,
+                || panic!("nor a stand-in drawn")
+            ),
+            Some("picture")
         );
     }
 }

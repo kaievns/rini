@@ -1,4 +1,4 @@
-use objc2_core_foundation::CGRect;
+use objc2_core_foundation::{CGPoint, CGRect};
 use tracing::{debug, trace};
 
 use crate::animation::domain::motion::travel::travels_visibly;
@@ -118,6 +118,13 @@ impl AnimationManager {
             ));
         }
         let plan = pass::plan(Self::gather(reactor, space, layout, skip_wid, true));
+        // A strip scroll moves every window by the SAME vector: a viewport pan over the one
+        // workspace, the horizontal twin of the vertical workspace switch. The strip's own scroll
+        // offset says how far, once per press; reading it off the windows answered differently on
+        // each of the several passes one keystroke produces. Taken on every pass, placing or not, so
+        // the offset bookkeeping stays current; the move with it, so it reaches one pass only.
+        let strip_movement = reactor.take_strip_movement(space);
+        let moved = reactor.take_move_in(layout);
 
         // Visible moves wait for the flight decision; hidden ones go straight to the app.
         let mut placements = Vec::new();
@@ -185,21 +192,20 @@ impl AnimationManager {
             && !overlay_requests.is_empty()
             && reactor.communication_manager.workspace_animation_tx.is_some();
 
-        // A strip scroll moves every window by the SAME vector: a viewport pan over the one
-        // workspace, the horizontal twin of the vertical workspace switch. The strip's own scroll
-        // offset says how far, once per press; reading it off the windows answered differently on
-        // each of the several passes one keystroke produces. Always consumed, so the offset
-        // bookkeeping stays current, but a pass that resizes a window is not a pan: the strip
-        // surface draws final sizes, which would snap the resize.
-        let strip_movement = reactor.take_strip_movement(space);
+        // A pass that resizes a window is neither a pan nor a move: the strip surface draws final
+        // sizes, which would snap the resize. A move along the strip is a strip movement whether or
+        // not the strip scrolled, with the two columns that changed places crossing it.
+        let moved = moved.filter(|_| !any_resize);
         let pan_delta = if any_resize {
             None
+        } else if moved.is_some() {
+            Some(strip_movement.unwrap_or(CGPoint::new(0.0, 0.0)))
         } else {
-            strip_movement.filter(|moved| moved.x.abs() >= 1.0)
+            strip_movement.filter(|movement| movement.x.abs() >= 1.0)
         };
         if use_overlay
             && let Some(delta) = pan_delta
-            && reactor.start_strip_pan(space, active_ws, layout, skip_wid, delta)
+            && reactor.start_strip_pan(space, active_ws, layout, skip_wid, delta, moved)
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {

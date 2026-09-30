@@ -29,6 +29,7 @@ pub(crate) use crate::animation::domain::motion::plan::{
 use crate::animation::domain::motion::plan::{
     Banding, FlightPlan, GroupKey, Member, PlanDelta, group_relative, stale_overlay_layers,
 };
+use crate::animation::domain::motion::strip_move::nudge_samples;
 pub use crate::animation::domain::motion::tile::{
     ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
     lerp_rect, placeholder_mode, resize_in_flight,
@@ -274,6 +275,29 @@ fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAn
         motion_timing(),
         CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseInEaseOut }),
     ])));
+    animation.setAdditive(true);
+    animation.setDuration(timing.seconds);
+    animation.setBeginTime(timing.begin);
+    animation
+}
+
+/// One key for a moved window's nudge, apart from the bounce's so neither stops the other.
+const NUDGE_ANIMATION_KEY: &str = "rini.group.nudge";
+
+/// An additive position animation out to `offset` and back along `nudge_samples`, so it rides a
+/// movement in flight and leaves the model position alone.
+fn nudge_animation(offset: CGPoint, timing: Timing) -> Retained<CAKeyframeAnimation> {
+    let animation =
+        CAKeyframeAnimation::animationWithKeyPath(Some(&NSString::from_str("position")));
+    // SAFETY: NSValues holding CGPoints are the value type Core Animation expects for "position".
+    unsafe {
+        let values: Vec<Retained<objc2::runtime::AnyObject>> =
+            nudge_samples(offset, timing.seconds, LEG_STEP)
+                .into_iter()
+                .map(|p| Retained::into_super(Retained::into_super(NSValue::valueWithPoint(p))))
+                .collect();
+        animation.setValues(Some(&NSArray::from_retained_slice(&values)));
+    }
     animation.setAdditive(true);
     animation.setDuration(timing.seconds);
     animation.setBeginTime(timing.begin);
@@ -871,6 +895,24 @@ impl TileOverlay {
         commit_now();
     }
 
+    /// Steps the container `key` names out to `offset` and back, additively, on top of any
+    /// movement in flight. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
+    pub(crate) fn nudge(&mut self, key: GroupKey, offset: CGPoint, duration: Duration) {
+        if duration.is_zero() {
+            return;
+        }
+        let timing = Timing::starting_now(duration);
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        for layer in self.layers_of(key) {
+            layer.addAnimation_forKey(
+                &nudge_animation(offset, timing),
+                Some(&NSString::from_str(NUDGE_ANIMATION_KEY)),
+            );
+        }
+        commit_now();
+    }
+
     /// Model position of the container `key` names; the origin for the root.
     fn container_position(&self, key: Option<GroupKey>) -> CGPoint {
         key.and_then(|k| self.containers.get(&k))
@@ -982,7 +1024,8 @@ impl TileOverlay {
         containers && tiles
     }
 
-    /// Presented position of every container: what `merge_plans` retargets from.
+    /// Where every container is drawn, any bounce or nudge riding it included: what `merge_plans`
+    /// reparents and joins against, so a tile changing containers stays where it is drawn.
     pub(crate) fn presented_positions(&self) -> HashMap<GroupKey, CGPoint> {
         self.containers
             .keys()
@@ -990,8 +1033,8 @@ impl TileOverlay {
             .collect()
     }
 
-    /// Applies one merged pass to a flight in progress in one transaction, reading every presented
-    /// position before writing. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+    /// Applies one merged pass to a flight in progress in one transaction. See "Mid-flight passes"
+    /// in `src/animation/docs/animation-smoothness.md`.
     pub(crate) fn retarget(
         &mut self,
         delta: &PlanDelta,
@@ -1001,7 +1044,6 @@ impl TileOverlay {
         duration: Duration,
     ) -> Duration {
         let timing = Timing::starting_now(duration);
-        let presented = self.presented_positions();
         let mut longest = Duration::ZERO;
         let find = |window: WindowId| tiles.iter().find(|t| t.window == window);
         CATransaction::begin();
@@ -1049,23 +1091,8 @@ impl TileOverlay {
         let omega = spring_omega(duration.as_secs_f64());
         for &(key, to) in &delta.retargeted_groups {
             let to = whole_point(to);
-            let leg = match self.legs.get(&key) {
-                Some(leg) => leg.retarget(to, now, omega),
-                None => {
-                    let from = presented
-                        .get(&key)
-                        .copied()
-                        .or_else(|| self.containers.get(&key).map(|layer| layer.position()))
-                        .unwrap_or(to);
-                    Leg::Spring {
-                        from,
-                        to,
-                        velocity: CGPoint::new(0.0, 0.0),
-                        begin: now,
-                        omega,
-                    }
-                }
-            };
+            let model = self.containers.get(&key).map(|layer| layer.position()).unwrap_or(to);
+            let leg = Leg::toward(self.legs.get(&key), model, to, now, omega);
             for layer in self.layers_of(key) {
                 layer.setPosition(to);
                 if !duration.is_zero() {

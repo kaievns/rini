@@ -27,10 +27,9 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 
 pub(crate) use crate::animation::domain::motion::plan;
+pub use crate::animation::domain::motion::strip_move::Nudge;
 pub use crate::animation::domain::motion::surface::SurfaceWindow;
-pub(crate) use crate::animation::domain::motion::surface::{
-    pan_travel, surface_travel, to_overlay_space,
-};
+pub(crate) use crate::animation::domain::motion::surface::{pan_travel, to_overlay_space};
 use crate::animation::domain::motion::travel::{TilePath, is_moving, tile_path};
 
 /// One window's part in an animation, as the caller describes it.
@@ -64,7 +63,8 @@ pub enum Event {
         duration: Duration,
     },
     /// Move the whole strip surface by one travel, as one rigid group; a leaving window animates
-    /// off screen while its real frame parks. See "Strip movements" in `src/animation/docs/animation-smoothness.md`.
+    /// off screen while its real frame parks, and the two columns a move swapped cross the surface
+    /// from their old slots. See "Strip movements" in `src/animation/docs/animation-smoothness.md`.
     AnimateSurface {
         windows: Vec<SurfaceWindow>,
         from_offset: CGPoint,
@@ -74,6 +74,8 @@ pub enum Event {
         /// The window that will hold focus once this settles, drawn in front of the rest.
         focus: Option<WindowId>,
         duration: Duration,
+        /// A moved window's step toward where it went and back; drawn only.
+        nudge: Option<Nudge>,
     },
     /// Nudge the strip surface by `overshoot` and bring it back; real windows stay put. Rides an
     /// in-flight movement additively. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
@@ -619,6 +621,9 @@ pub struct FlightEngine {
     )>,
     /// When the edge bounce playing now comes home. See `starts_a_bounce`.
     bouncing_until: Option<Instant>,
+    /// When the move nudge playing now comes home. Its own, so a nudge and an edge bounce never
+    /// hold each other off.
+    nudging_until: Option<Instant>,
 }
 
 impl FlightEngine {
@@ -658,6 +663,7 @@ impl FlightEngine {
             flight_report: FlightReport::default(),
             placeholder_image: None,
             bouncing_until: None,
+            nudging_until: None,
         }
     }
 
@@ -703,7 +709,11 @@ impl FlightEngine {
                 final_frames,
                 focus,
                 duration,
-            } => self.start_surface(windows, from_offset, to_offset, final_frames, focus, duration),
+                nudge,
+            } => {
+                self.start_surface(windows, from_offset, to_offset, final_frames, focus, duration);
+                self.start_nudge(nudge, duration);
+            }
             Event::Bounce {
                 windows,
                 overshoot,
@@ -1388,13 +1398,15 @@ impl FlightEngine {
             // A known window off this display with no picture flies with a stand-in instead of
             // leaving a hole; see `stands_in`. It covers nothing, so the arm below holds for its
             // reveal like any grow, and the real picture replaces it.
-            let snapshot = snapshot.or_else(|| {
-                let frame = crate::windows::platform::window_server::get_window(request.server_id)
-                    .map(|info| info.frame);
-                crate::animation::domain::admission::stands_in(frame, display_frame)
-                    .then(|| self.placeholder_for(request.to.size, scale))
-                    .flatten()
-            });
+            let snapshot = picture_or_stand_in(
+                snapshot,
+                || {
+                    crate::windows::platform::window_server::get_window(request.server_id)
+                        .map(|info| info.frame)
+                },
+                display_frame,
+                || self.placeholder_for(request.to.size, scale),
+            );
             match snapshot {
                 Some(snapshot) => {
                     // A grow whose picture cannot cover the destination holds for the reveal.
@@ -1845,8 +1857,9 @@ impl FlightEngine {
         }
     }
 
-    /// Animates the whole strip surface as one rigid group: one container, one position
-    /// animation. See "Strip movements" in `src/animation/docs/animation-smoothness.md`.
+    /// Animates the whole strip surface as one rigid group, one container and one position
+    /// animation, with a container of its own for each column a move swapped. See "Strip
+    /// movements" in `src/animation/docs/animation-smoothness.md`.
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,
@@ -1879,15 +1892,34 @@ impl FlightEngine {
         let mut tiles = Vec::with_capacity(windows.len());
         let mut missing = 0usize;
         let mut misshapen = 0usize;
+        let mut stand_ins = 0usize;
         let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
         let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
+        let display_frame = self.display.map(|(frame, _)| frame);
+        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for window in &windows {
-            let (from, to) = surface_travel(window.frame, from_offset, to_offset, window.pinned);
-            match self.cache.usable(window.window).cloned() {
+            let (from, to) = window.travel(from_offset, to_offset);
+            let cached = self.cache.usable(window.window).cloned();
+            // A known window parked off this display with no picture flies as the stand-in, as on
+            // the per-window path; see `stands_in`.
+            let snapshot = match display_frame {
+                Some(display) => picture_or_stand_in(
+                    cached,
+                    || real_frames.get(&window.server_id).copied(),
+                    display,
+                    || self.placeholder_for(window.frame.size, scale),
+                ),
+                None => cached,
+            };
+            match snapshot {
                 Some(snapshot) => {
                     // A wrong-shaped picture is stretched rather than dropped. See "A window that
                     // was resized keeps a usable picture" in `src/animation/docs/capture-overlay-research.md`.
-                    if !snapshot.fits(window.frame.size) {
+                    if snapshot.source
+                        == crate::animation::platform::window_snapshot::SnapshotSource::Placeholder
+                    {
+                        stand_ins += 1;
+                    } else if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
                     }
                     if let Some(frame) = real_frames.get(&window.server_id) {
@@ -1940,6 +1972,7 @@ impl FlightEngine {
             tiles = tiles.len(),
             missing,
             misshapen,
+            stand_ins,
             travel = format!(
                 "{:.0},{:.0} -> {:.0},{:.0}",
                 from_offset.x, from_offset.y, to_offset.x, to_offset.y
@@ -1947,7 +1980,8 @@ impl FlightEngine {
             "surface group animation"
         );
 
-        // One rigid piece for the strip; companions are adopted by their own vectors.
+        // One rigid piece for the strip and one for each column a move swapped; companions are
+        // adopted by their own vectors.
         let drawn: Vec<SurfaceWindow> = windows
             .iter()
             .filter(|w| tiles.iter().any(|t| t.window == w.window && !t.companion))
@@ -2013,6 +2047,43 @@ impl FlightEngine {
             overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
             joined = running.started.is_some(),
             "edge bounce"
+        );
+    }
+
+    /// Steps a moved window out by the nudge and back, on its own container, once per burst: a
+    /// nudge still playing is not restarted. Waits, as the lift does, for it to come home. See
+    /// "The move flight" in `src/animation/docs/animation-smoothness.md`.
+    fn start_nudge(&mut self, nudge: Option<Nudge>, duration: Duration) {
+        let Some(nudge) = nudge else { return };
+        let now = Instant::now();
+        if !starts_a_bounce(now, self.nudging_until) {
+            debug!("move nudge skipped: one is still playing");
+            return;
+        }
+        let Self {
+            overlay,
+            running,
+            nudging_until,
+            ..
+        } = self;
+        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
+            return;
+        };
+        // A flight still collecting passes recomposes its containers, which would drop the nudge.
+        if running.started.is_none() {
+            return;
+        }
+        let Some(key) = running.plan.nudge_carrier(nudge.window) else {
+            debug!("move nudge skipped: the moved window shares its container");
+            return;
+        };
+        *nudging_until = Some(now + duration);
+        running.duration = clock_for_bounce(running.started, running.duration, duration);
+        overlay.nudge(key, nudge.offset, duration);
+        debug!(
+            offset = format!("{:.0},{:.0}", nudge.offset.x, nudge.offset.y),
+            key = format!("{key:?}"),
+            "move nudge"
         );
     }
 
@@ -2500,6 +2571,7 @@ fn live_frame(server_id: WindowServerId) -> Option<CGRect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::domain::motion::surface::surface_travel;
     use crate::animation::domain::motion::travel::{
         neighbour_travel, resolve_end, resolve_start, travel_subject, worth_animating,
     };
@@ -4216,7 +4288,7 @@ mod tests {
 
         /// P-3.14.
         #[test]
-        fn a_strip_window_with_no_usable_picture_is_placed_but_not_drawn() {
+        fn a_strip_window_on_this_display_with_no_usable_picture_is_placed_but_not_drawn() {
             let mut rng = Gen(95);
             for _ in 0..RUNS {
                 let slot = rng.on_screen();
@@ -5645,6 +5717,7 @@ mod tests {
                         frame: a,
                         pinned: false,
                         floating: false,
+                        from: None,
                     },
                     SurfaceWindow {
                         window: wid(2),
@@ -5652,6 +5725,7 @@ mod tests {
                         frame: shifted(b, CGPoint::new(859.0, 0.0)),
                         pinned: false,
                         floating: false,
+                        from: None,
                     },
                 ],
                 CGPoint::new(-574.0, 0.0),
@@ -5889,6 +5963,7 @@ mod tests {
                     frame: to_overlay_space(*to, EXTERNAL),
                     pinned: false,
                     floating: false,
+                    from: None,
                 })
                 .collect();
             let pan =
@@ -6360,6 +6435,7 @@ mod tests {
                 frame,
                 pinned,
                 floating,
+                from: None,
             }
         }
 
@@ -7246,6 +7322,267 @@ mod tests {
                 tiles.sort();
                 assert_eq!(tiles, expected, "{tag}: tile targets");
             }
+        }
+    }
+
+    /// A window moved along the strip: the two columns changing places cross the surface as pieces
+    /// of their own, the moved one in front, and a burst of moves merges as one movement. See "The
+    /// move flight" in `src/animation/docs/animation-smoothness.md`.
+    mod strip_move {
+        use super::preservation::{DISPLAY, stacked};
+        use super::*;
+        use crate::animation::domain::motion::strip_move::swap_starts;
+        use crate::animation::platform::engine::plan::*;
+        use rini_ipc::protocol::Direction;
+
+        /// A full-width column and the gap after it.
+        const WIDTH: f64 = 1720.0;
+        const STEP: f64 = 1723.0;
+
+        fn wid(idx: u32) -> WindowId {
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
+        }
+
+        fn at(x: f64, width: f64) -> CGRect {
+            rect(x, 32.0, width, 1081.0)
+        }
+
+        /// The surface of one move: every window at its new frame, the swapped pair from their old
+        /// slots, as `start_strip_pan` builds it.
+        fn surface(
+            frames: &[(WindowId, CGRect)],
+            moved: WindowId,
+            direction: Direction,
+        ) -> Vec<SurfaceWindow> {
+            let starts = swap_starts(frames, moved, direction);
+            frames
+                .iter()
+                .map(|&(window, frame)| SurfaceWindow {
+                    window,
+                    server_id: WindowServerId::new(window.idx.get()),
+                    frame,
+                    pinned: false,
+                    floating: false,
+                    from: starts.iter().find(|(w, _)| *w == window).map(|(_, start)| *start),
+                })
+                .collect()
+        }
+
+        fn dest(plan: &FlightPlan, window: WindowId) -> Option<CGRect> {
+            match plan.member(window)? {
+                Member::Rigid { key, rel } => Some(overlay_of(rel, plan.position_of(key))),
+                _ => None,
+            }
+        }
+
+        fn key_of(plan: &FlightPlan, window: WindowId) -> Option<GroupKey> {
+            match plan.member(window)? {
+                Member::Rigid { key, .. } => Some(key),
+                _ => None,
+            }
+        }
+
+        /// Half-width columns, W at the right edge moving right past B, the strip scrolling one column
+        /// with it. B is two windows stacked. W stands still on screen, B crosses it, the rest pans.
+        #[test]
+        fn the_moved_column_and_the_one_it_passed_are_pieces_of_their_own() {
+            let top = rect(4.0, 32.0, 860.0, 539.0);
+            let bottom = rect(4.0, 574.0, 860.0, 539.0);
+            let frames = [
+                (wid(1), at(4.0 - 864.0, 860.0)),
+                (wid(2), top),
+                (wid(3), bottom),
+                (wid(4), at(868.0, 860.0)),
+                (wid(5), at(1732.0, 860.0)),
+            ];
+            let windows = surface(&frames, wid(4), Direction::Right);
+            let (from_offset, to_offset) = (CGPoint::new(-864.0, 0.0), CGPoint::new(0.0, 0.0));
+            let plan = surface_plan(&windows, from_offset, to_offset);
+            let group = |window| plan.group_of(window).expect("rigid").clone();
+
+            assert_eq!(group(wid(4)).key, GroupKey::STILL, "the camera followed it");
+            assert_eq!(group(wid(4)).members.len(), 1);
+            let passed = group(wid(2));
+            assert_eq!(passed.key, group(wid(3)).key, "a stacked column is one piece");
+            assert_eq!(passed.travel, CGPoint::new(-1728.0, 0.0));
+            let rest = group(wid(1));
+            assert_eq!(rest.key, group(wid(5)).key, "the rest of the strip is one piece");
+            assert_eq!(rest.travel, pan_travel(from_offset, to_offset));
+            assert_eq!(plan.groups.iter().filter(|g| !g.members.is_empty()).count(), 3);
+            for window in &windows {
+                let (from, to) = window.travel(from_offset, to_offset);
+                let member = group(window.window);
+                let rel = member.members.iter().find(|m| m.window == window.window).unwrap().rel;
+                assert_eq!(rel, from, "installs where it was on screen");
+                assert_eq!(overlay_of(rel, member.travel), to, "lands at its new frame");
+            }
+        }
+
+        /// The moved window is focused and its container is drawn first, so the column it passes
+        /// slides beneath it even where the server has that column in front.
+        #[test]
+        fn the_moved_window_is_drawn_over_the_column_it_passes() {
+            let frames = [
+                (wid(1), at(4.0 - STEP, WIDTH)),
+                (wid(2), at(4.0, WIDTH)),
+                (wid(3), at(4.0 + STEP, WIDTH)),
+            ];
+            let windows = surface(&frames, wid(2), Direction::Right);
+            let (from_offset, to_offset) = (CGPoint::new(-STEP, 0.0), CGPoint::new(0.0, 0.0));
+            let plan = FlightPlan::from(surface_plan(&windows, from_offset, to_offset));
+            let mut tiles: Vec<OverlayTile> = windows
+                .iter()
+                .enumerate()
+                .map(|(order, w)| {
+                    let (from, to) = w.travel(from_offset, to_offset);
+                    stacked(w.window, from, to, Some(2 - order), false)
+                })
+                .collect();
+            restack(&mut tiles, Some(wid(2)));
+            let banding = band_plan(&plan, &tiles, Some(wid(2)));
+            let moved = key_of(&plan, wid(2)).unwrap();
+            let passed = key_of(&plan, wid(1)).unwrap();
+            assert_ne!(moved, passed);
+            let order = |key| banding.group_order.iter().position(|k| *k == key).unwrap();
+            assert_eq!(order(moved), 0, "the moved window leads");
+            assert!(order(moved) < order(passed));
+        }
+
+        #[test]
+        fn a_nudge_rides_only_a_container_holding_the_moved_window_alone() {
+            let frames = [(wid(1), at(4.0 - STEP, WIDTH)), (wid(2), at(4.0, WIDTH))];
+            let windows = surface(&frames, wid(2), Direction::Right);
+            let mut plan = surface_plan(&windows, CGPoint::new(-STEP, 0.0), CGPoint::new(0.0, 0.0));
+            let key = plan.group_of(wid(2)).unwrap().key;
+            let mut companion = stacked(wid(20), at(4.0, WIDTH), at(4.0, WIDTH), None, false);
+            companion.companion = true;
+            plan.adopt(&companion);
+            let plan = FlightPlan::from(plan);
+            assert_eq!(plan.nudge_carrier(wid(2)), Some(key), "its border rides with it");
+
+            let pan = [
+                SurfaceWindow { from: None, ..windows[0] },
+                SurfaceWindow { from: None, ..windows[1] },
+            ];
+            let panned = FlightPlan::from(surface_plan(
+                &pan,
+                CGPoint::new(-STEP, 0.0),
+                CGPoint::new(0.0, 0.0),
+            ));
+            assert_eq!(
+                panned.nudge_carrier(wid(2)),
+                None,
+                "sharing the strip's container, the whole strip would be nudged"
+            );
+            assert_eq!(panned.nudge_carrier(wid(9)), None);
+        }
+
+        /// Full-width columns 0 A W B C, W moved right twice in a row. The second press arrives while
+        /// the first still flies: W stays where it is drawn and keeps its container (and its nudge),
+        /// B is taken out of the strip's piece and crosses beneath W, A (passed by the first press)
+        /// and everything else carry on with the pan.
+        #[test]
+        fn a_second_move_mid_flight_swaps_its_pair_and_pans_the_rest() {
+            let (zero, a, w, b, c) = (wid(1), wid(2), wid(3), wid(4), wid(5));
+            let first = [
+                (zero, at(4.0 - 2.0 * STEP, WIDTH)),
+                (a, at(4.0 - STEP, WIDTH)),
+                (w, at(4.0, WIDTH)),
+                (b, at(4.0 + STEP, WIDTH)),
+                (c, at(4.0 + 2.0 * STEP, WIDTH)),
+            ];
+            let offset = CGPoint::new(-STEP, 0.0);
+            let rest = CGPoint::new(0.0, 0.0);
+            let current =
+                FlightPlan::from(surface_plan(&surface(&first, w, Direction::Right), offset, rest));
+            let second = [
+                (zero, at(4.0 - 3.0 * STEP, WIDTH)),
+                (a, at(4.0 - 2.0 * STEP, WIDTH)),
+                (b, at(4.0 - STEP, WIDTH)),
+                (w, at(4.0, WIDTH)),
+                (c, at(4.0 + STEP, WIDTH)),
+            ];
+            let incoming = surface_plan(&surface(&second, w, Direction::Right), offset, rest);
+            let presented: HashMap<GroupKey, CGPoint> = current
+                .groups
+                .iter()
+                .map(|g| (g.key, CGPoint::new(-g.travel.x / 2.0, -g.travel.y / 2.0)))
+                .collect();
+            let (merged, delta) = merge_plans(
+                &current,
+                &incoming,
+                Some(pan_travel(offset, rest)),
+                &presented,
+                Some(w),
+                DISPLAY,
+            );
+
+            for (window, frame) in second {
+                assert!(
+                    dest(&merged, window).unwrap().same_as(frame),
+                    "{window:?} lands at {frame:?}, not {:?}",
+                    dest(&merged, window)
+                );
+            }
+            let w_key = key_of(&current, w).unwrap();
+            assert_eq!(key_of(&merged, w), Some(w_key), "W keeps its container");
+            assert!(
+                !delta.retargeted_groups.iter().any(|(key, _)| *key == w_key),
+                "W is still going where it was: {:?}",
+                delta.retargeted_groups
+            );
+            let strip = key_of(&current, zero).unwrap();
+            assert_eq!(key_of(&current, b), Some(strip));
+            assert!(delta.reparented.contains(&(b, strip, key_of(&merged, b).unwrap())));
+            assert_eq!(
+                key_of(&merged, zero),
+                Some(strip),
+                "the rest keeps the strip's piece"
+            );
+            assert_eq!(key_of(&merged, c), Some(strip));
+            assert_eq!(key_of(&merged, a), key_of(&current, a), "the first pair pans on");
+        }
+
+        /// Where a container is drawn includes the nudge riding it, and a member leaving it mid-nudge
+        /// leaves from there: continuous, and still landing on its destination.
+        #[test]
+        fn a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn() {
+            let (a, b) = (at(4.0, 860.0), at(868.0, 860.0));
+            let v = CGPoint::new(-300.0, 0.0);
+            let current = FlightPlan::from(reflow_plan(
+                &[
+                    (wid(1), a, rect(a.origin.x + v.x, 32.0, 860.0, 1081.0), false),
+                    (wid(2), b, rect(b.origin.x + v.x, 32.0, 860.0, 1081.0), false),
+                ],
+                DISPLAY,
+            ));
+            let group = key_of(&current, wid(2)).unwrap();
+            let nudge = CGPoint::new(576.0, 0.0);
+            let drawn = CGPoint::new(v.x / 2.0 + nudge.x, 0.0);
+            let presented: HashMap<GroupKey, CGPoint> = [(group, drawn)].into_iter().collect();
+            let rel = |plan: &FlightPlan, window| match plan.member(window) {
+                Some(Member::Rigid { rel, .. }) => rel,
+                other => panic!("{other:?}"),
+            };
+            let before = overlay_of(rel(&current, wid(2)), drawn);
+
+            let elsewhere = at(1500.0, 860.0);
+            let pass = reflow_plan(
+                &[
+                    (wid(1), a, rect(a.origin.x + v.x, 32.0, 860.0, 1081.0), false),
+                    (wid(2), b, elsewhere, false),
+                ],
+                DISPLAY,
+            );
+            let (merged, delta) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
+            let (_, install) = delta.new_groups[0];
+            let key = key_of(&merged, wid(2)).unwrap();
+            assert_ne!(key, group);
+            assert_eq!(overlay_of(rel(&merged, wid(2)), install), before, "no jump");
+            assert!(dest(&merged, wid(2)).unwrap().same_as(elsewhere));
         }
     }
 }

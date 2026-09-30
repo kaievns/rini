@@ -871,6 +871,7 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 1)),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             },
             None,
         );
@@ -948,6 +949,7 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 4)),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             },
             None,
         );
@@ -970,6 +972,7 @@ mod strip_regroup {
                 focus_window: Some(WindowId::new(1, 1)),
                 boundary_hit: None,
                 edge_hit: None,
+                moved: None,
             },
             None,
         );
@@ -1354,4 +1357,158 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
         )),
         "the windows are still placed"
     );
+}
+
+/// One 1728pt display with `count` columns `ratio` of the viewport wide, the first focused, flying
+/// through a captured animation channel from here on.
+fn moving_strip(
+    ratio: f64,
+    count: usize,
+) -> (
+    Apps,
+    Reactor,
+    crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+) {
+    let mut layout = crate::app::config::LayoutSettings::default();
+    layout.scrolling.column_width_ratio = ratio;
+    layout.scrolling.max_column_width_ratio = ratio.max(layout.scrolling.max_column_width_ratio);
+    let mut reactor = Reactor::new_for_test(crate::workspaces::LayoutEngine::new(
+        &crate::app::config::VirtualWorkspaceSettings::default(),
+        &layout,
+    ));
+    let mut apps = Apps::new();
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
+    let space = SpaceId::new(1);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    apps.make_app_and_settle(&mut reactor, 1, make_windows(count));
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, WindowId::new(1, 1)));
+    apps.simulate_until_quiet(&mut reactor);
+    reactor.config.settings.animate = true;
+    let (animation_tx, animation_rx) = crate::app::channels::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    (apps, reactor, animation_rx)
+}
+
+/// Every strip movement the reactor sent since the last look.
+fn strip_movements(
+    rx: &mut crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+) -> Vec<(
+    Vec<crate::animation::platform::engine::SurfaceWindow>,
+    CGPoint,
+    Option<crate::animation::platform::engine::Nudge>,
+    std::time::Duration,
+)> {
+    let mut out = Vec::new();
+    while let Ok((_, event)) = rx.try_recv() {
+        if let crate::animation::platform::engine::Event::AnimateSurface {
+            windows,
+            from_offset,
+            nudge,
+            duration,
+            ..
+        } = event
+        {
+            out.push((windows, from_offset, nudge, duration));
+        }
+    }
+    out
+}
+
+/// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else
+/// the window jumped to its new place and a navigation pan played on top. A move that scrolls the
+/// strip draws the moved window and the column it passes starting from each other's slots.
+#[test]
+fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let moved = WindowId::new(1, 2);
+    let passed = WindowId::new(1, 3);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1, "one strip movement for the press");
+    let (windows, from_offset, _, _) = &flights[0];
+    assert!(from_offset.x.abs() >= 1.0, "the strip scrolled: {from_offset:?}");
+    let find = |window| windows.iter().find(|w| w.window == window).expect("on the surface");
+    let (w, n) = (find(moved), find(passed));
+    let w_from = w.from.expect("the moved window starts from its old slot");
+    let n_from = n.from.expect("the column it passed starts from its old slot");
+    assert_eq!(
+        w_from.origin.x, n.frame.origin.x,
+        "W left from where the passed column is now"
+    );
+    assert_eq!(
+        n_from.origin.x,
+        w.frame.origin.x + w.frame.size.width - n.frame.size.width,
+        "the passed column left from W's side of the pair"
+    );
+    for other in windows.iter().filter(|s| s.window != moved && s.window != passed) {
+        assert_eq!(other.from, None, "{:?} only pans", other.window);
+    }
+
+    // The move is spent: the next scroll is a plain pan.
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
+    for (windows, _, nudge, _) in strip_movements(&mut rx) {
+        assert!(windows.iter().all(|w| w.from.is_none()));
+        assert_eq!(nudge, None);
+    }
+}
+
+/// A full-size window the camera follows does not move on screen at all, so the move steps it a
+/// third of the display toward where it went and back, over a longer flight.
+#[test]
+fn a_full_width_move_carries_the_nudge() {
+    use crate::animation::domain::motion::strip_move::NUDGE_STRETCH;
+    let (_apps, mut reactor, mut rx) = moving_strip(1.0, 3);
+    let moved = WindowId::new(1, 1);
+
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1);
+    let (windows, from_offset, nudge, duration) = &flights[0];
+    assert!(from_offset.x.abs() >= 1.0, "the strip scrolled to follow it");
+    assert!(windows.iter().find(|w| w.window == moved).unwrap().from.is_some());
+    assert!(windows.iter().find(|w| w.window == WindowId::new(1, 2)).unwrap().from.is_some());
+    let nudge = nudge.expect("the camera followed it, so it is nudged");
+    assert_eq!(nudge.window, moved);
+    assert!((nudge.offset.x - 1728.0 / 3.0).abs() < 1e-9, "{nudge:?}");
+    assert_eq!(nudge.offset.y, 0.0);
+    let plain = reactor.config.settings.animation_duration;
+    assert!(
+        (duration.as_secs_f64() - plain * NUDGE_STRETCH).abs() < 1e-6,
+        "{duration:?}"
+    );
+}
+
+/// Half a display of travel on screen already shows the move: the pair crosses with no nudge, and a
+/// move that scrolls nothing is still a strip movement.
+#[test]
+fn a_move_the_camera_does_not_follow_is_not_nudged() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 3);
+    reactor.handle_test_layout_command(LayoutCommand::MoveNode(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert_eq!(flights.len(), 1);
+    let (windows, from_offset, nudge, duration) = &flights[0];
+    assert_eq!(from_offset.x, 0.0, "the pair was already in view");
+    assert_eq!(windows.iter().filter(|w| w.from.is_some()).count(), 2);
+    assert_eq!(*nudge, None);
+    assert!((duration.as_secs_f64() - reactor.config.settings.animation_duration).abs() < 1e-6);
+}
+
+/// Navigating is a pan and nothing else: no window starts anywhere but where the pan puts it, and
+/// nothing is nudged.
+#[test]
+fn a_navigation_scroll_pans_with_no_swap_and_no_nudge() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flights = strip_movements(&mut rx);
+    assert!(!flights.is_empty(), "the strip scrolled to the third column");
+    for (windows, from_offset, nudge, _) in flights {
+        assert!(from_offset.x.abs() >= 1.0);
+        assert!(windows.iter().all(|w| w.from.is_none()));
+        assert_eq!(nudge, None);
+    }
 }

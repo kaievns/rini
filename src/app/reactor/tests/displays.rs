@@ -685,6 +685,7 @@ fn handle_layout_response_groups_windows_by_app_and_screen() {
             focus_window: None,
             boundary_hit: None,
             edge_hit: None,
+            moved: None,
         },
         None,
     );

@@ -99,7 +99,8 @@ pub(in crate::animation) const SETTLE_BEFORE_CAPTURES: Duration = Duration::from
 /// lifting anyway. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) const LIFT_GRACE: Duration = Duration::from_millis(350);
 
-/// The flight's clock once a bounce joins it: long enough for the return leg, never shorter.
+/// The flight's clock once an out-and-back joins it, an edge bounce or a move's nudge: long enough
+/// for it to come home, never shorter.
 pub(in crate::animation) fn clock_for_bounce(
     started: Option<Instant>,
     duration: Duration,
@@ -109,9 +110,9 @@ pub(in crate::animation) fn clock_for_bounce(
     duration.max(needed)
 }
 
-/// Whether a push against an end starts a bounce: not while one is still playing, or a burst of
-/// presses at the wall replays the bounce once per press. See "Edge bounce" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// Whether a push against an end starts a bounce, or a move its nudge: not while the same one is
+/// still playing, or a burst of presses replays it once per press. See "Edge bounce" and "The move
+/// flight" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) fn starts_a_bounce(now: Instant, bouncing_until: Option<Instant>) -> bool {
     bouncing_until.is_none_or(|until| now >= until)
 }

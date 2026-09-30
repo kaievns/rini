@@ -155,6 +155,7 @@ fn handle_layout_response_includes_handles_for_raise_and_focus_windows() {
             focus_window: Some(WindowId::new(2, 1)),
             boundary_hit: None,
             edge_hit: None,
+            moved: None,
         },
         None,
     );

@@ -482,6 +482,9 @@ pub struct Reactor {
     /// the first pass after a workspace switch compared the new workspace's offset against the old one's
     /// and animated the difference as a horizontal pan that no window had made.
     last_strip_offset: HashMap<(SpaceId, crate::workspaces::VirtualWorkspaceId), f64>,
+    /// The window the current command moved along its strip, and which way, for the passes that
+    /// command asked for: they draw the two columns crossing. See `animate_layout`.
+    moved_along_strip: Option<(WindowId, Direction)>,
     space_activation_policy: SpaceActivationPolicy,
     main_window_tracker: MainWindowTracker,
     /// The focus reports rini's own raises are about to produce, so they are not mistaken for the user
@@ -601,6 +604,7 @@ impl Reactor {
             },
             space_state: ForwardedSpaceState::default(),
             last_strip_offset: HashMap::default(),
+            moved_along_strip: None,
             space_activation_policy: SpaceActivationPolicy::new(),
             main_window_tracker: MainWindowTracker::default(),
             raise_echo: crate::windows::domain::focus::RaiseEcho::default(),
@@ -1730,6 +1734,8 @@ impl Reactor {
                 );
             }
         }
+        // A move is only a move for the passes its command asked for.
+        self.moved_along_strip = None;
 
         for request in outcome.raise_requests {
             self.dispatch_raise(request);
@@ -3649,11 +3655,15 @@ impl Reactor {
     }
 
     /// Animates a strip scroll as one horizontal viewport pan, the horizontal twin of a workspace
-    /// switch. Returns true when the strip surface took over.
+    /// switch, and a move along the strip as that pan with a swap. Returns true when the strip
+    /// surface took over.
     ///
-    /// `delta` is how far every window moved. The strip surface holds the whole active workspace at its
-    /// final positions, and the viewport starts shifted back by `delta` so the strip appears to
-    /// arrive from where it was, then settles.
+    /// `delta` is how far the strip moved, zero when it did not. The strip surface holds the whole
+    /// active workspace at its final positions, and the viewport starts shifted back by `delta` so
+    /// the strip appears to arrive from where it was, then settles. A `moved` window's column and the
+    /// column it passed start from the slots they held before the move, so the two are seen changing
+    /// places; a moved window the camera follows is nudged. See "The move flight" in
+    /// `src/animation/docs/animation-smoothness.md`.
     fn start_strip_pan(
         &mut self,
         space: SpaceId,
@@ -3661,6 +3671,7 @@ impl Reactor {
         layout: &[(WindowId, CGRect)],
         skip_wid: Option<WindowId>,
         delta: CGPoint,
+        moved: Option<(WindowId, Direction)>,
     ) -> bool {
         let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
             return false;
@@ -3694,7 +3705,7 @@ impl Reactor {
         let display_bounds = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
         // A floating window is not in the strip. Panning it with the strip dragged it sideways
         // and snapped it back at the handover.
-        let windows = self.strip_windows_at(&full, display_bounds, true);
+        let mut windows = self.strip_windows_at(&full, display_bounds, true);
         if windows.is_empty() {
             return false;
         }
@@ -3717,8 +3728,29 @@ impl Reactor {
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
         let from_offset = CGPoint::new(delta.x, delta.y);
         let to_offset = CGPoint::new(0.0, 0.0);
-        let duration =
-            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
+        let nudge = moved.and_then(|(window, direction)| {
+            use crate::animation::domain::motion::strip_move;
+            let strip: Vec<(WindowId, CGRect)> =
+                windows.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
+            for (wid, start) in strip_move::swap_starts(&strip, window, direction) {
+                if let Some(surface) = windows.iter_mut().find(|w| w.window == wid) {
+                    surface.from = Some(start);
+                }
+            }
+            let (start, end) =
+                windows.iter().find(|w| w.window == window)?.travel(from_offset, to_offset);
+            let travel = end.origin.x - start.origin.x;
+            strip_move::nudge(travel, screen.frame.size.width, direction)
+                .map(|offset| crate::animation::platform::engine::Nudge { window, offset })
+        });
+        let stretch = if nudge.is_some() {
+            crate::animation::domain::motion::strip_move::NUDGE_STRETCH
+        } else {
+            1.0
+        };
+        let duration = std::time::Duration::from_secs_f64(
+            self.config.settings.animation_duration.max(0.0) * stretch,
+        );
 
         self.publish_animation_display_for(Some(space));
         _ = tx.send(crate::animation::platform::engine::Event::AnimateSurface {
@@ -3728,6 +3760,7 @@ impl Reactor {
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
             duration,
+            nudge,
         });
         true
     }
@@ -3761,6 +3794,7 @@ impl Reactor {
                 ),
                 pinned: pin_floating && floating,
                 floating,
+                from: None,
             });
         }
         windows
@@ -3926,6 +3960,7 @@ impl Reactor {
                     // one being left and arrives with the one being entered.
                     pinned: false,
                     floating: self.layout_manager.layout_engine.is_window_floating(wid),
+                    from: None,
                 });
                 let _ = &mut final_frames;
             }
@@ -3994,6 +4029,7 @@ impl Reactor {
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
             duration,
+            nudge: None,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
         // the animation actor defers it until the flight lifts (`src/animation/docs/animation-smoothness.md`).
@@ -4051,6 +4087,19 @@ impl Reactor {
             "strip movement"
         );
         Some(CGPoint::new(-(now - before.unwrap_or(now)), 0.0))
+    }
+
+    /// The window the current command moved along the strip, if this pass lays it out; taken, so
+    /// only one pass draws the move.
+    pub(crate) fn take_move_in(
+        &mut self,
+        layout: &[(WindowId, CGRect)],
+    ) -> Option<(WindowId, Direction)> {
+        let (window, _) = self.moved_along_strip?;
+        if !layout.iter().any(|(wid, _)| *wid == window) {
+            return None;
+        }
+        self.moved_along_strip.take()
     }
 
     pub(crate) fn publish_animation_display(&self) {
@@ -4680,7 +4729,11 @@ impl Reactor {
             mut focus_window,
             boundary_hit,
             edge_hit,
+            moved,
         } = response;
+        if moved.is_some() {
+            self.moved_along_strip = moved;
+        }
 
         // The command ran into an end of the strip or of the workspace stack. The view bounces so
         // the stop reads as an edge, not a dropped keypress. A blocked workspace step changed

@@ -112,6 +112,22 @@ impl Leg {
         }
     }
 
+    /// The leg a container takes toward `to` at `now`: its own leg bent there, or, with none, a
+    /// spring from its model position at rest. Never from the presented position, which carries
+    /// any bounce or nudge riding the container additively; a leg begun there carries it twice.
+    pub fn toward(leg: Option<&Leg>, model: CGPoint, to: CGPoint, now: f64, omega: f64) -> Leg {
+        match leg {
+            Some(leg) => leg.retarget(to, now, omega),
+            None => Leg::Spring {
+                from: model,
+                to,
+                velocity: CGPoint::new(0.0, 0.0),
+                begin: now,
+                omega,
+            },
+        }
+    }
+
     /// How long the leg runs. A spring runs until it has landed; see `SETTLED_PT`.
     pub fn seconds(&self) -> f64 {
         match *self {
@@ -245,6 +261,30 @@ mod tests {
         assert!(close(points[0].x, leg.position_at(0.1).x, 1e-9));
         assert_eq!(points.last().copied(), Some(CGPoint::new(-2.0 * COLUMN, 0.0)));
         assert!(close(seconds, (points.len() - 1) as f64 / 120.0, 1e-9));
+    }
+
+    /// A still container a nudge is riding is drawn a third of the display out; the model says where
+    /// it is. A leg begun from the drawn position would add the nudge to it a second time.
+    #[test]
+    fn a_container_with_no_leg_leaves_from_its_model_at_rest() {
+        let omega = spring_omega(DURATION);
+        let model = CGPoint::new(0.0, 0.0);
+        let to = CGPoint::new(-COLUMN, 0.0);
+        let leg = Leg::toward(None, model, to, 2.0, omega);
+        assert_eq!(leg.position_at(2.0), model);
+        assert_eq!(leg.velocity_at(2.0), CGPoint::new(0.0, 0.0));
+        assert!(close(
+            leg.position_at(2.0 + leg.seconds()).x,
+            -COLUMN,
+            SETTLED_PT
+        ));
+
+        let moving = curve(0.0, -COLUMN);
+        assert_eq!(
+            Leg::toward(Some(&moving), model, to, 0.1, omega),
+            moving.retarget(to, 0.1, omega),
+            "a container with a leg bends it"
+        );
     }
 
     /// A chained leg lands in about the time a fresh one takes.

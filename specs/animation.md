@@ -8,6 +8,7 @@ only the transitions are missing.
 - A window that changes position or size in a layout pass.
 - A window opening, from the frame macOS first showed it at to its slot.
 - The strip scrolling, and a workspace switch.
+- A window moved along the strip, changing places with the column it passes.
 
 ## What does not
 
@@ -41,6 +42,35 @@ only the transitions are missing.
 > in a strip or between workspaces it needs similar animations, because otherwise there is no visual cue
 > and it feels like a bug/stuck." The overshoot was 36pt; moving reported no edge at all, so it never
 > reached the bounce.
+
+## Moving a window along the strip
+
+- A window moved along the strip MUST be seen to change places with the column it passes, whether or
+  not the strip scrolls. Both start from the places they held and cross; the rest of the strip moves
+  only as the view does. Drawing the finished layout and scrolling the view to it shows the swap
+  only where nothing scrolls.
+- A moved window whose own travel on screen is small MUST step a third of the display toward where it
+  is going and come back, the column it passes seen sliding the other way beneath it. Small is under
+  a quarter of the display: a full-width column the view follows does not move on screen at all.
+- The step MUST leave and come back at rest. On the bounce's shape a third of a 1720pt display,
+  573pt, leaves at 29,235pt/s over the default 0.35s: the kind of jolt reported under "Arriving
+  mid-flight".
+- The moved window MUST be drawn over the column it passes.
+- A burst of moves MUST read as one movement with one step: a move arriving mid-flight carries the
+  flight on, and a press while the step plays MUST NOT start another.
+- The step and the bounce at an end MUST NOT hold each other off.
+- The step is drawn only. Real windows go to the layout's frames.
+
+> **Reported 2026-09-30.** "what i have two 50/50 windows at the beginning of a strip, when i move one
+> of them in place of the other there is a nice transition animation where two windows are moving to
+> take each other's places. everywhere else though the window just jumps to new place and then there
+> is a focus navigation animation on top of it, the transition is instant and confusing, it is
+> especially problematic for full sized windows where the movement is generally invisible and it
+> doesn't feel like anything is actually happening, which feels broken." And: "maby moving full-size
+> windows 1/3 to either side temporarily to show the swap animation and then bounce it back in focus
+> would be an option too". Every move that scrolled the strip was drawn as the finished layout panning
+> into view, so the two windows had changed places by the first frame. The 50/50 pair at the start of
+> a strip was the one case that did not scroll.
 
 ## The vertical workspace switch
 
@@ -106,15 +136,17 @@ destination for a window already moving.
 
 ## Where it lives
 
-`src/animation/domain/motion/` is the planning, `src/animation/domain/admission.rs` the mid-flight
-rules, `src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
+`src/animation/domain/motion/` is the planning, `src/animation/domain/motion/strip_move.rs` the move
+along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
+`src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
 `src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
 
 ## Windows with no picture yet
 
 - A window with no picture MUST NOT leave a hole in the strip. A known window parked off this display —
   every window after a restart, with the picture cache empty — MUST fly with a dark stand-in tile in its
-  place, moving exactly as its picture would.
+  place, moving exactly as its picture would. That holds for every flight: a layout pass, a strip
+  scroll, a switch and a move, where the column a full-width window passes is parked at both ends.
 - The stand-in MUST keep the window's rounded corners, and MUST be replaced by the window's real picture
   as soon as one lands, on the same tile, so nothing else in the flight is disturbed.
 - The stand-in MUST NOT be cached. Cached, it would be lent to the switcher as the window's picture and

@@ -7,7 +7,7 @@ use objc2_core_foundation::{CGPoint, CGRect};
 
 use crate::animation::domain::motion::fit::is_a_resize;
 use crate::animation::domain::motion::surface::{
-    SurfaceWindow, TileGeometry, pan_travel, surface_travel, to_overlay_space,
+    SurfaceWindow, TileGeometry, pan_travel, to_overlay_space,
 };
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
@@ -268,6 +268,17 @@ impl FlightPlan {
     pub fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
+
+    /// The container a nudge of `window` rides: its group, when nothing but border companions
+    /// rides with it. Anything else in it would be nudged too.
+    pub fn nudge_carrier(&self, window: WindowId) -> Option<GroupKey> {
+        let group = self.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))?;
+        group
+            .members
+            .iter()
+            .all(|m| m.window == window || m.companion)
+            .then_some(group.key)
+    }
 }
 
 impl From<ReflowPlan> for FlightPlan {
@@ -399,7 +410,10 @@ impl FlightPlan {
         self.positions.insert(key, p);
         let group = self.group_mut(key);
         group.travel = CGPoint::new(group.travel.x + p.x - old.x, group.travel.y + p.y - old.y);
-        delta.retargeted_groups.push((key, p));
+        match delta.retargeted_groups.iter_mut().find(|(k, _)| *k == key) {
+            Some(retarget) => retarget.1 = p,
+            None => delta.retargeted_groups.push((key, p)),
+        }
     }
 
     /// Opens a group installing at `install` and landing at `destination`, with one member.
@@ -437,9 +451,9 @@ fn is_zero(p: CGPoint) -> bool {
 }
 
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
-/// are reparented at presented frames, a pan adds its travel to every group. `presented` is each
-/// container's presented position, read by the overlay just before. See "Mid-flight passes" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// are reparented at presented frames, a pan adds its travel to every group and the columns a move
+/// swapped still vote under it. `presented` is where each container is drawn, read by the overlay
+/// just before. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,
@@ -490,11 +504,15 @@ pub fn merge_plans(
     let mut votes: Vec<(GroupKey, WindowId, CGPoint)> = Vec::new();
     let mut joins: Vec<(GroupMember, CGPoint)> = Vec::new();
     for group in &incoming.groups {
+        // Under a pan, only a group not travelling with it votes: a column a move swapped, heading
+        // for a slot of its own. Its destination is a place on the strip, never a park, so it
+        // votes wherever that is.
+        let swapped = pan.is_some_and(|d| !same_vector(group.travel, d));
         for m in &group.members {
             let to = overlay_of(m.rel, group.travel);
             match next.locate(m.window) {
                 Located::Group(key, rel) => {
-                    if pan.is_none() && !rides_out(&next, key, to, viewport) {
+                    if swapped || (pan.is_none() && !rides_out(&next, key, to, viewport)) {
                         votes.push((key, m.window, sub(to.origin, rel.origin)));
                     }
                 }
@@ -517,11 +535,25 @@ pub fn merge_plans(
         }
     }
 
-    // 3. Per voted group: the largest cluster keeps the container; the rest are reparented.
+    // 3. Per voted group: the largest cluster keeps the container; the rest are reparented. Under
+    // a pan, the members of a voted group that did not vote hold the place the pan gave them.
     let mut keys: Vec<GroupKey> = Vec::new();
     for (key, _, _) in &votes {
         if !keys.contains(key) {
             keys.push(*key);
+        }
+    }
+    if pan.is_some() {
+        for &key in &keys {
+            let hold = next.position(key);
+            let holders: Vec<WindowId> = next
+                .groups
+                .iter()
+                .filter(|g| g.key == key)
+                .flat_map(|g| g.members.iter().map(|m| m.window))
+                .filter(|window| !votes.iter().any(|(_, w, _)| w == window))
+                .collect();
+            votes.extend(holders.into_iter().map(|window| (key, window, hold)));
         }
     }
     for key in keys {
@@ -623,6 +655,10 @@ pub fn merge_plans(
         }
     }
 
+    // A group the pan moved and a vote brought back is still going where it was.
+    delta
+        .retargeted_groups
+        .retain(|(key, p)| current.positions.get(key).is_none_or(|was| !was.same_as(*p)));
     (next, delta)
 }
 
@@ -742,7 +778,8 @@ pub fn plan_from_tiles<T: TileGeometry>(tiles: &[T]) -> ReflowPlan {
     plan
 }
 
-/// A strip movement as one rigid piece. `strip_travel` already yields overlay space.
+/// A strip movement as rigid pieces: the strip is one piece, and each column a move swapped is a
+/// piece of its own, grouped by the vector it travels. The surface is already overlay space.
 /// Pinned windows stand in the floating container; unpinned floating windows ride it by the strip's travel.
 pub fn surface_plan(
     windows: &[SurfaceWindow],
@@ -755,7 +792,7 @@ pub fn surface_plan(
     // container to move some tiles and not others, so that case falls back to per-tile floating moves.
     let mixed = windows.iter().any(|w| w.pinned) && windows.iter().any(|w| w.floating && !w.pinned);
     for window in windows {
-        let (from, to) = surface_travel(window.frame, from_offset, to_offset, window.pinned);
+        let (from, to) = window.travel(from_offset, to_offset);
         if window.pinned {
             plan.floating.push((window.window, from, from));
         } else if window.floating {
@@ -765,6 +802,8 @@ pub fn surface_plan(
                 plan.floating.push((window.window, from, from));
                 plan.floating_travel = travel;
             }
+        } else if window.from.is_some() {
+            plan.place(window.window, from, vector_of(from, to));
         } else {
             plan.place(window.window, from, travel);
         }

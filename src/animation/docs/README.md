@@ -2,8 +2,8 @@
 
 One engine. Every animated movement is a flight of a Core Animation overlay: window
 bitmaps composited in one opaque window, the real windows placed once behind it. Layout
-passes, strip pans, workspace switches, resizes, entrances and the edge bounce are all
-flights of the same thing.
+passes, strip pans, moves along the strip, workspace switches, resizes, entrances and the
+edge bounce are all flights of the same thing.
 
 ## What it owns
 
@@ -15,6 +15,7 @@ flights of the same thing.
 | `domain/translucency.rs` | Putting a window's blur back into its picture: merging its own capture with a composite of what is below it |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/strip_stack.rs` | The stacked-workspace geometry a switch moves through |
+| `domain/motion/strip_move.rs` | A window moved along the strip: where the two columns changing places start, and the nudge |
 | `domain/motion/fit.rs` | Whether a captured picture still fits the tile it is for |
 | `domain/timing.rs`, `flight.rs`, `admission.rs` | When work happens, what a flight is and when it may capture, and how a mid-flight request is admitted |
 | `domain/pass.rs` | Sorting a layout pass into moves, unmoved windows and warm targets |
