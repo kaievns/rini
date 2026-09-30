@@ -17,7 +17,7 @@ or layout: everything else depends on it and it depends on nothing.
 | **Raising** | `domain/raise.rs` — the raise manager |
 | **Raise order** | `domain/raise_order.rs` — which windows are worth raising, and in what order |
 | **Frame transactions** | `domain/transaction.rs` — txids, so a frame report can be matched to the write that caused it |
-| **Title-bar zoom** | `domain/zoom.rs` — the double-click that makes the resizes after it an app's zoom rather than a width or an echo of rini's own write, believed for a second and answered once |
+| **Title-bar zoom** | `domain/zoom.rs` — which window's title bar a double-click landed on, and what that window's resizes in the next second mean: the zoom, which toggles full width once, or the rest of it, which rini overrules |
 | **The port into a window** | `domain/request.rs` — `Request`/`Quiet`, what the per-app thread accepts |
 
 Two questions about raising and admission that were closed on evidence rather than code are in

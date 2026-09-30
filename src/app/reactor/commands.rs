@@ -191,6 +191,8 @@ impl Reactor {
         command: LayoutCommand,
         command_space: Option<rini_core::ids::SpaceId>,
     ) -> anyhow::Result<EventOutcome> {
+        // What a window does after a command answers rini, not a double-click before it.
+        self.drag_manager.title_bar_click = None;
         let (visible_spaces, visible_space_centers) = self.visible_spaces_for_layout(false);
         command_workflow::handle_command_layout(
             &mut self.state,

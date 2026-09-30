@@ -386,6 +386,7 @@ mod tests {
                     is_builtin: false,
                     id: ScreenId::new(i as u32 + 1),
                     frame: *frame,
+                    bounds: *frame,
                     display_uuid: format!("uuid-{i}"),
                     name: None,
                     space: Some(SpaceId::new(i as u64 + 1)),

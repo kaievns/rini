@@ -274,6 +274,7 @@ mod tests {
             is_builtin: false,
             id: ScreenId::new(screen_id),
             frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0)),
+            bounds: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(0.0, 0.0)),
             display_uuid: display_uuid.unwrap_or_default().to_string(),
             name: None,
             space: space.map(SpaceId::new),

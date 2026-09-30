@@ -765,6 +765,7 @@ mod tests {
         let screen = |id: u32, frame: CGRect| ScreenInfo {
             id: ScreenId::new(id),
             frame,
+            bounds: frame,
             display_uuid: format!("display-{id}"),
             name: None,
             space: None,

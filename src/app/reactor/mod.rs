@@ -268,9 +268,11 @@ pub enum Event {
     /// `roadmap.md` under known bugs; acting on it needs a measured case, because the visible
     /// symptom is a layout pass that does not happen rather than one that goes wrong.
     MouseUp,
-    /// The left button went down for the second click of a double-click: the evidence that the
-    /// resizes following it are the window's app zooming it from its title bar.
-    MouseDoubleClicked,
+    /// The left button went down. Straight from the input thread, so it is handled before any frame
+    /// report the app sends in answer; see [`Event::left_press_sink`]. A double-click on a column's
+    /// title bar is the evidence that the resize after it is the app zooming the window.
+    #[serde(skip)]
+    LeftMouseDown(crate::input::event::LeftPress),
     /// A switcher session opened, moved, committed or was cancelled.
     Switch(crate::input::domain::switch_session::Signal),
     /// A row of the switcher popup was clicked: select that window and commit.
@@ -423,6 +425,13 @@ impl From<crate::windows::event::Event> for Event {
 }
 
 impl Event {
+    /// What the input tap's left presses are wired to: the reactor's own channel, not the main
+    /// thread. The tap holds each press until this returns, and the app it lands on answers from its
+    /// own thread, so the press is ahead of the answer on this channel.
+    pub fn left_press_sink(events: Sender) -> crate::input::event::OnLeftPress {
+        Box::new(move |press| events.send(Event::LeftMouseDown(press)))
+    }
+
     /// The focus edge this event carries, if any. See [`FocusEvent`].
     fn focus_event(&self) -> Option<FocusEvent> {
         Some(match self {
@@ -616,7 +625,7 @@ impl Reactor {
                     config.settings.window_snapping,
                 ),
                 skip_layout_for_window: None,
-                double_click: Default::default(),
+                title_bar_click: None,
             },
             workspace_switch_manager: managers::WorkspaceSwitchManager {
                 workspace_switch_state: WorkspaceSwitchState::Inactive,
@@ -1130,9 +1139,10 @@ impl Reactor {
 
     fn log_event(&self, event: &Event) {
         match event {
-            Event::WindowFrameChanged(..) | Event::MouseUp | Event::MouseMoved(_) => {
-                trace!(?event, "Event")
-            }
+            Event::WindowFrameChanged(..)
+            | Event::MouseUp
+            | Event::LeftMouseDown(_)
+            | Event::MouseMoved(_) => trace!(?event, "Event"),
             _ => debug!(?event, "Event"),
         }
     }
@@ -1419,8 +1429,8 @@ impl Reactor {
             Event::MouseUp => {
                 return self.on_mouse_up();
             }
-            Event::MouseDoubleClicked => {
-                self.drag_manager.double_click.clicked(std::time::Instant::now());
+            Event::LeftMouseDown(press) => {
+                self.on_left_mouse_down(press);
                 return Ok(EventOutcome::no_change());
             }
             Event::MenuOpened(pid) => {

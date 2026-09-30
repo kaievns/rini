@@ -4,6 +4,8 @@
 //! a window-server query per event, and both used to live inside the tap's callback where nothing
 //! could reach them — in the file with the worst code-to-test ratio in the tree.
 
+use std::time::Duration;
+
 use rini_core::ids::WindowServerId;
 
 /// Whether a mouse move is far enough from the last one to process.
@@ -83,6 +85,26 @@ pub fn wants_mouse_move_events(
 /// for is one zoom, and a third click in the same run must not stand for another.
 pub fn is_double_click(click_state: i64) -> bool {
     click_state == 2
+}
+
+/// The machine's tick length, as `mach_timebase_info` gives it: `numer / denom` nanoseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timebase {
+    pub numer: u32,
+    pub denom: u32,
+}
+
+/// How long ago an event happened, from its timestamp and `mach_absolute_time` now, both in ticks.
+///
+/// A timestamp of 0 is none, and one ahead of the clock is no age at all. Why reading the
+/// timestamp as ticks is safe is in `src/input/docs/README.md`.
+pub fn event_age(now: u64, timestamp: u64, timebase: Timebase) -> Duration {
+    if timestamp == 0 || timebase.denom == 0 {
+        return Duration::ZERO;
+    }
+    let ticks = u128::from(now.saturating_sub(timestamp));
+    let nanos = ticks * u128::from(timebase.numer) / u128::from(timebase.denom);
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]
@@ -191,6 +213,29 @@ mod tests {
         assert!(
             !wants_mouse_move_events(true, true, false),
             "suppressed at runtime, during a drag or an animation"
+        );
+    }
+
+    #[test]
+    fn an_event_s_age_is_its_ticks_behind_the_clock_in_the_machine_s_tick_length() {
+        let intel = Timebase { numer: 1, denom: 1 };
+        let apple_silicon = Timebase { numer: 125, denom: 3 };
+        assert_eq!(event_age(5_000, 2_000, intel), Duration::from_nanos(3_000));
+        assert_eq!(
+            event_age(24_000_000 + 7, 7, apple_silicon),
+            Duration::from_secs(1),
+            "24 MHz"
+        );
+        assert_eq!(
+            event_age(1_000, 2_000, intel),
+            Duration::ZERO,
+            "ahead of the clock"
+        );
+        assert_eq!(event_age(1_000, 0, intel), Duration::ZERO, "no timestamp");
+        assert_eq!(
+            event_age(1_000, 10, Timebase { numer: 1, denom: 0 }),
+            Duration::ZERO,
+            "no timebase"
         );
     }
 

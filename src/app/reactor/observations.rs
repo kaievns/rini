@@ -11,13 +11,12 @@
 use objc2_core_foundation::CGRect;
 
 use rini_core::ids::{SpaceId, WindowId, WindowServerId};
-use rini_geometry::SameAs;
 
 use crate::displays::domain::topology::SpaceEventKind;
-use crate::layout::domain::area::{compute_tiling_area, fills_tiling_area};
+use crate::input::event::LeftPress;
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::{Requested, TransactionId};
-use crate::windows::domain::zoom::Zoom;
+use crate::windows::domain::zoom::{self, Zoom};
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
 
@@ -277,7 +276,7 @@ impl Reactor {
             requested.0,
             &mut mouse_state,
             mission_control_active,
-            matches!(zoom, Some((_, Zoom::Toggle))),
+            zoom.is_some(),
         );
         // A mouse release still has to terminate an open drag session, including on the paths the
         // reducer returns early from: frame acknowledgements and no-op geometry changes.
@@ -342,27 +341,47 @@ impl Reactor {
     }
 
     /// Whether this resize is `window`'s app zooming it from the title bar, and which strip it is a
-    /// column of. Nothing in the report says so; a recent double-click is the evidence.
-    fn title_bar_zoom(&self, window: WindowId, new_frame: CGRect) -> Option<(SpaceId, Zoom)> {
-        let now = std::time::Instant::now();
-        if !self.drag_manager.double_click.is_recent(now) {
+    /// column of. Nothing in the report says so; a double-click on that title bar is the evidence.
+    fn title_bar_zoom(&mut self, window: WindowId, new_frame: CGRect) -> Option<(SpaceId, Zoom)> {
+        let click = self.drag_manager.title_bar_click.as_ref()?;
+        if click.window() != window {
             return None;
         }
-        let old_frame = self.state.windows.window(window)?.frame_monotonic;
-        if old_frame.size.same_as(new_frame.size) {
-            return None;
-        }
+        let state = self.state.windows.window(window)?;
         let space = self.affinity().assigned_space_for_window_id(window)?;
-        let full_width = self.layout_manager.layout_engine.full_width_of_column(space, window)?;
-        let screen = self.space_state.screen_by_space(space)?;
-        let gaps = self
-            .config
-            .settings
-            .layout
-            .gaps
-            .effective_for_display(screen.display_uuid_opt());
-        let fills = fills_tiling_area(new_frame, compute_tiling_area(screen.frame, &gaps));
-        Some((space, self.drag_manager.double_click.read(full_width || fills)))
+        let report = zoom::SizeReport {
+            from: state.frame_monotonic,
+            to: new_frame,
+            pending: state
+                .info
+                .sys_id
+                .and_then(|server| self.transaction_manager.get_target_frame(server)),
+            display: self.space_state.screen_by_space(space).map(|screen| screen.bounds),
+            column: self.layout_manager.layout_engine.full_width_of_column(space, window).is_some(),
+        };
+        let zoom = zoom::read(
+            &mut self.drag_manager.title_bar_click,
+            window,
+            &report,
+            std::time::Instant::now(),
+        )?;
+        Some((space, zoom))
+    }
+
+    /// A left press, first of all. Only a double-click on a tiled window's title bar is kept, and
+    /// any later press replaces it: a drag that starts after the double-click is not its zoom.
+    pub(super) fn on_left_mouse_down(&mut self, press: LeftPress) {
+        let clicked = press.double_click.then(|| {
+            let tiled = self.iter_active_spaces().flat_map(|space| {
+                self.layout_manager.layout_engine.ordered_windows_in_active_workspace(space)
+            });
+            let frames = tiled.filter_map(|window| {
+                Some((window, self.state.windows.window(window)?.frame_monotonic))
+            });
+            zoom::title_bar_under(press.location, frames.collect::<Vec<_>>())
+        });
+        self.drag_manager.title_bar_click =
+            clicked.flatten().map(|window| zoom::Evidence::new(window, press.at));
     }
 }
 

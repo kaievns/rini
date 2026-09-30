@@ -1364,16 +1364,19 @@ mod title_bar_zoom {
     use test_log::test;
 
     use super::*;
+    use crate::app::channels;
     use crate::app::config::OuterGaps;
+    use crate::input::event::LeftPress;
     use crate::layout::domain::area::compute_tiling_area;
+    use crate::windows::domain::zoom::Evidence;
 
-    fn frame_writes(apps: &mut Apps, wid: WindowId) -> Vec<CGRect> {
+    fn frames_written(requests: &[Request], wid: WindowId) -> Vec<CGRect> {
         let mut out = Vec::new();
-        for request in apps.requests() {
+        for request in requests {
             match request {
-                Request::SetWindowFrame(w, frame, _, _) if w == wid => out.push(frame),
+                Request::SetWindowFrame(w, frame, _, _) if *w == wid => out.push(*frame),
                 Request::SetBatchWindowFrame(frames, _, _) => {
-                    out.extend(frames.into_iter().filter(|(w, _)| *w == wid).map(|(_, f)| f))
+                    out.extend(frames.iter().filter(|(w, _)| *w == wid).map(|(_, f)| *f))
                 }
                 _ => {}
             }
@@ -1381,16 +1384,31 @@ mod title_bar_zoom {
         out
     }
 
+    fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
+    }
+
+    /// The whole display, and what the menu bar leaves of it: where AppKit zooms a window to.
+    const DISPLAY: CGRect = CGRect {
+        origin: CGPoint { x: 0., y: 0. },
+        size: CGSize { width: 1440., height: 900. },
+    };
+    const VISIBLE: CGRect = CGRect {
+        origin: CGPoint { x: 0., y: 25. },
+        size: CGSize { width: 1440., height: 875. },
+    };
+
     struct Strip {
         apps: Apps,
         reactor: Reactor,
         window: WindowId,
+        other: WindowId,
         space: SpaceId,
-        screen: CGRect,
     }
 
     impl Strip {
-        /// Gaps all round, so rini's full width is smaller than the screen an app zooms to.
+        /// Two columns and gaps all round, so rini's full width is smaller than the screen an app
+        /// zooms to.
         fn new() -> Self {
             let (mut apps, mut reactor) = test_context();
             reactor.config.settings.layout.gaps.outer = OuterGaps {
@@ -1403,10 +1421,17 @@ mod title_bar_zoom {
                 .layout_manager
                 .layout_engine
                 .set_layout_settings(&reactor.config.settings.layout);
-            let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
             let space = SpaceId::new(1);
             set_space_membership(&[(space, &[1, 2])]);
-            reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+            reactor.handle_event(space_state_event_from_screens(vec![ScreenInfo {
+                id: rini_core::ids::ScreenId::new(0),
+                frame: VISIBLE,
+                bounds: DISPLAY,
+                display_uuid: "test-display-0".to_owned(),
+                name: None,
+                space: Some(space),
+                is_builtin: false,
+            }]));
             make_active_app_with_count(&mut apps, &mut reactor, 1, 2, Some(WindowId::new(1, 1)));
             let window = WindowId::new(1, 1);
             reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
@@ -1415,18 +1440,23 @@ mod title_bar_zoom {
                 apps,
                 reactor,
                 window,
+                other: WindowId::new(1, 2),
                 space,
-                screen,
             }
         }
 
         fn laid_out(&mut self) -> CGRect {
-            laid_out_frame(&mut self.reactor, self.space, self.screen, self.window)
+            laid_out_frame(&mut self.reactor, self.space, VISIBLE, self.window)
                 .expect("the window is laid out")
         }
 
         fn tiling(&self) -> CGRect {
-            compute_tiling_area(self.screen, &self.reactor.config.settings.layout.gaps)
+            compute_tiling_area(VISIBLE, &self.reactor.config.settings.layout.gaps)
+        }
+
+        fn clamped_width(&self) -> f64 {
+            let max = self.reactor.config.settings.layout.scrolling.max_column_width_ratio;
+            (self.tiling().size.width * max).round()
         }
 
         fn full_width(&self) -> Option<bool> {
@@ -1434,6 +1464,28 @@ mod title_bar_zoom {
                 .layout_manager
                 .layout_engine
                 .full_width_of_column(self.space, self.window)
+        }
+
+        fn frame_of(&self, window: WindowId) -> CGRect {
+            self.reactor.state.windows.window(window).expect("tracked").frame_monotonic
+        }
+
+        fn title_bar_of(&self, window: WindowId) -> CGPoint {
+            let frame = self.frame_of(window);
+            CGPoint::new(frame.mid().x, frame.origin.y + 12.)
+        }
+
+        fn press(&mut self, location: CGPoint, double_click: bool) {
+            self.reactor.handle_event(Event::LeftMouseDown(LeftPress {
+                location,
+                at: Instant::now(),
+                double_click,
+            }));
+        }
+
+        fn double_click_title_bar(&mut self) {
+            let title_bar = self.title_bar_of(self.window);
+            self.press(title_bar, true);
         }
 
         /// The app reporting a frame it chose itself.
@@ -1450,49 +1502,197 @@ mod title_bar_zoom {
             ));
         }
 
-        fn zoom(&mut self, frame: CGRect, mouse: MouseState) {
-            self.reactor.handle_event(Event::MouseDoubleClicked);
-            self.app_reports(frame, mouse);
+        fn zoom(&mut self, frame: CGRect) {
+            self.double_click_title_bar();
+            self.app_reports(frame, MouseState::Up);
         }
 
-        /// The release, and a later click back onto the window: where the zoom used to be undone.
+        /// A later click back onto the window: where the zoom used to be undone.
         fn click_back(&mut self) {
+            let content = self.frame_of(self.window).mid();
+            self.press(content, false);
             self.reactor.handle_event(Event::MouseUp);
             self.reactor
                 .send_layout_event(LayoutEvent::WindowFocused(self.space, self.window));
         }
 
-        fn writes(&mut self) -> Vec<CGRect> {
-            frame_writes(&mut self.apps, self.window)
+        /// Carries rini's requests out as the app would, and returns what they wrote the window.
+        fn settle(&mut self) -> Vec<CGRect> {
+            let mut written = Vec::new();
+            loop {
+                let requests = self.apps.requests();
+                if requests.is_empty() {
+                    return written;
+                }
+                written.extend(frames_written(&requests, self.window));
+                for event in self.apps.simulate_events_for_requests(requests) {
+                    self.reactor.handle_event(event);
+                }
+            }
+        }
+
+        fn on_screen(&self) -> CGRect {
+            self.apps.windows[&self.window].frame
+        }
+
+        fn assert_ends_at_full_width(&mut self, case: &str) {
+            assert_eq!(self.full_width(), Some(true), "{case}");
+            let full = self.laid_out();
+            assert!(
+                full.size.same_as(self.tiling().size),
+                "{case}: rini's full width, not {full:?}"
+            );
+            let written = self.settle();
+            assert_eq!(
+                written.last(),
+                Some(&full),
+                "{case}: written at once: {written:?}"
+            );
+            assert_eq!(self.on_screen(), full, "{case}");
+
+            self.click_back();
+            assert_eq!(
+                self.settle(),
+                Vec::<CGRect>::new(),
+                "{case}: the next click writes nothing back"
+            );
+            assert_eq!(self.full_width(), Some(true), "{case}");
+        }
+
+        fn assert_adopted_as_before(&mut self, case: &str) {
+            assert_eq!(self.full_width(), Some(false), "{case}");
+            assert_eq!(self.laid_out().size.width, self.clamped_width(), "{case}");
         }
     }
 
     #[test]
-    fn a_zoom_makes_the_window_the_full_width_column_at_once() {
+    fn a_title_bar_double_click_and_a_frame_filling_the_screen_make_the_full_width_column() {
         let mut strip = Strip::new();
-        let screen = strip.screen;
-        strip.zoom(screen, MouseState::Up);
+        strip.zoom(VISIBLE);
+        strip.assert_ends_at_full_width("zoomed to the screen");
+    }
 
-        assert_eq!(strip.full_width(), Some(true));
+    #[test]
+    fn a_zoom_that_fits_the_window_to_its_content_also_ends_at_full_width() {
+        let mut strip = Strip::new();
+        strip.zoom(rect(140., 40., 1150., 700.));
+        strip.assert_ends_at_full_width("zoomed to its content");
+    }
+
+    #[test]
+    fn a_double_click_in_the_content_or_on_another_window_is_not_a_zoom() {
+        for case in ["content", "another window's title bar"] {
+            let mut strip = Strip::new();
+            let at = match case {
+                "content" => {
+                    let frame = strip.frame_of(strip.window);
+                    CGPoint::new(frame.mid().x, frame.origin.y + 200.)
+                }
+                _ => strip.title_bar_of(strip.other),
+            };
+            strip.press(at, true);
+            strip.app_reports(VISIBLE, MouseState::Up);
+            strip.assert_adopted_as_before(case);
+        }
+    }
+
+    #[test]
+    fn native_fullscreen_is_not_a_zoom() {
+        let mut strip = Strip::new();
+        strip.zoom(DISPLAY);
+        assert_eq!(strip.full_width(), Some(false));
+        assert_eq!(strip.reactor.drag_manager.title_bar_click, None, "spent");
+    }
+
+    #[test]
+    fn a_resize_with_no_double_click_behind_it_is_adopted_as_before() {
+        for stale in [false, true] {
+            let mut strip = Strip::new();
+            if stale {
+                let long_ago = Instant::now() - Duration::from_secs(2);
+                strip.reactor.drag_manager.title_bar_click =
+                    Some(Evidence::new(strip.window, long_ago));
+            }
+            strip.app_reports(VISIBLE, MouseState::Up);
+            strip.assert_adopted_as_before(if stale { "stale" } else { "none" });
+        }
+    }
+
+    // From the default 0.7, the next preset `ctrl-R` reaches is 1.0.
+    #[test]
+    fn ctrl_f_or_ctrl_r_after_a_double_click_keeps_the_full_width_it_gave() {
+        for command in [
+            LayoutCommand::ToggleFullscreenWithinGaps,
+            LayoutCommand::CyclePresetColumnWidth,
+        ] {
+            let mut strip = Strip::new();
+            strip.double_click_title_bar();
+            assert!(strip.reactor.drag_manager.title_bar_click.is_some());
+
+            strip.reactor.handle_test_layout_command(command.clone());
+            assert_eq!(strip.reactor.drag_manager.title_bar_click, None, "{command:?}");
+            strip.settle();
+            assert_eq!(strip.full_width(), Some(true), "{command:?}");
+
+            // The app snapping its height to a grid after rini's write.
+            let full = strip.laid_out();
+            let snapped =
+                CGRect::new(full.origin, CGSize::new(full.size.width, full.size.height - 4.));
+            strip.app_reports(snapped, MouseState::Up);
+            assert_eq!(strip.full_width(), Some(true), "{command:?}");
+        }
+    }
+
+    #[test]
+    fn the_rest_of_a_zoom_ends_at_rini_s_frame_and_does_not_pin_the_window() {
+        let mut strip = Strip::new();
+        strip.zoom(VISIBLE);
+        strip.settle();
         let full = strip.laid_out();
-        assert!(
-            full.size.same_as(strip.tiling().size),
-            "rini's full width, not {full:?}"
+        assert_eq!(strip.on_screen(), full);
+
+        // The app putting its own zoom frame back after rini's write.
+        strip.app_reports(VISIBLE, MouseState::Up);
+        assert_ne!(
+            strip.reactor.drag_manager.skip_layout_for_window,
+            Some(strip.window)
         );
-        let writes = strip.writes();
-        assert_eq!(
-            writes.last(),
-            Some(&full),
-            "written by the zoom itself: {writes:?}"
-        );
+        assert_eq!(strip.settle().last(), Some(&full), "rini's frame again, at once");
+        assert_eq!(strip.on_screen(), full);
+        assert_eq!(strip.full_width(), Some(true), "one double-click toggles once");
 
         strip.click_back();
-        assert_eq!(
-            strip.writes(),
-            Vec::<CGRect>::new(),
-            "the next click writes nothing back"
-        );
-        assert_eq!(strip.full_width(), Some(true));
+        assert_eq!(strip.settle(), Vec::<CGRect>::new());
+    }
+
+    #[test]
+    fn a_second_title_bar_double_click_restores_the_width_it_had() {
+        for unzoomed_to in ["its own frame", "the screen again"] {
+            let mut strip = Strip::new();
+            let before = strip.laid_out();
+            strip.zoom(VISIBLE);
+            strip.settle();
+            assert_eq!(strip.full_width(), Some(true));
+
+            strip.zoom(if unzoomed_to == "its own frame" {
+                before
+            } else {
+                VISIBLE
+            });
+            assert_eq!(strip.full_width(), Some(false), "{unzoomed_to}");
+            assert_eq!(strip.laid_out(), before, "{unzoomed_to}: back to its width");
+            strip.settle();
+            strip.click_back();
+            assert_eq!(strip.laid_out(), before, "{unzoomed_to}: and it stays there");
+        }
+    }
+
+    #[test]
+    fn a_zoom_with_the_button_still_down_ends_at_full_width() {
+        let mut strip = Strip::new();
+        strip.double_click_title_bar();
+        strip.app_reports(VISIBLE, MouseState::Down);
+        strip.assert_ends_at_full_width("the second press still held");
     }
 
     // rini's last write still pending when the app zooms: the report used to read as that write
@@ -1509,104 +1709,55 @@ mod title_bar_zoom {
         );
         strip.reactor.transaction_manager.store_txid(wsid, txid, pending);
 
-        let screen = strip.screen;
-        strip.zoom(screen, MouseState::Up);
-        let full = strip.laid_out();
-        assert_eq!(strip.full_width(), Some(true));
-        assert_eq!(strip.writes().last(), Some(&full));
-
-        strip.click_back();
-        assert_eq!(strip.writes(), Vec::<CGRect>::new());
+        strip.zoom(VISIBLE);
+        strip.assert_ends_at_full_width("over a pending write");
     }
 
     #[test]
-    fn a_zoom_with_the_button_still_down_ends_at_full_width() {
+    fn a_drag_that_starts_after_the_double_click_is_a_resize() {
         let mut strip = Strip::new();
-        let screen = strip.screen;
-        strip.zoom(screen, MouseState::Down);
-        let full = strip.laid_out();
-        assert_eq!(strip.full_width(), Some(true));
-        assert!(full.size.same_as(strip.tiling().size));
-
-        let mut writes = strip.writes();
-        strip.click_back();
-        writes.extend(strip.writes());
-        assert_eq!(
-            writes.last(),
-            Some(&full),
-            "the last word is full width: {writes:?}"
-        );
-        assert!(
-            writes.iter().all(|frame| frame.same_as(full)),
-            "nothing on the way wrote the column back: {writes:?}"
-        );
+        strip.double_click_title_bar();
+        let frame = strip.frame_of(strip.window);
+        strip.press(CGPoint::new(frame.max().x, frame.mid().y), false);
+        for width in [1020., 1050., 1080.] {
+            strip.app_reports(
+                CGRect::new(frame.origin, CGSize::new(width, frame.size.height)),
+                MouseState::Down,
+            );
+        }
+        strip.reactor.handle_event(Event::MouseUp);
+        assert_eq!(strip.full_width(), Some(false));
+        assert_eq!(strip.laid_out().size.width, 1080.);
     }
 
+    // The input tap hands the press straight to the reactor's channel, while the app answers the
+    // press from its own thread: whatever order the two land in, the press is handled first.
     #[test]
-    fn the_frames_a_zoom_animates_through_change_no_width() {
+    fn the_press_from_the_tap_is_handled_before_a_frame_report_sent_after_it() {
         let mut strip = Strip::new();
-        let before = strip.laid_out();
-        strip.reactor.handle_event(Event::MouseDoubleClicked);
-        for width in [900., 1100., 1300.] {
-            let frame = CGRect::new(before.origin, CGSize::new(width, before.size.height));
-            strip.app_reports(frame, MouseState::Up);
-            assert_eq!(strip.laid_out(), before, "{width} is on the way, not a width");
-            assert_eq!(strip.full_width(), Some(false));
+        let (tx, mut rx) = channels::channel();
+        let sink = Event::left_press_sink(tx.clone());
+        sink(LeftPress {
+            location: strip.title_bar_of(strip.window),
+            at: Instant::now(),
+            double_click: true,
+        });
+        let window = strip.apps.windows.get_mut(&strip.window).expect("test window");
+        window.frame = VISIBLE;
+        tx.send(Event::WindowFrameChanged(
+            strip.window,
+            VISIBLE,
+            Some(window.last_seen_txid),
+            Requested(false),
+            Some(MouseState::Up),
+        ));
+        // One by one rather than as a loop batch, which would mark the window server busy for the
+        // whole process and hold up the display-churn tests that follow.
+        while let Ok((_, event)) = rx.try_recv() {
+            strip.reactor.handle_event(event);
         }
-        assert_eq!(
-            strip.writes(),
-            Vec::<CGRect>::new(),
-            "nothing fights the animation"
-        );
 
-        let screen = strip.screen;
-        strip.app_reports(screen, MouseState::Up);
-        assert_eq!(strip.full_width(), Some(true));
-        // The app settling a few points off rini's frame is still the same zoom.
-        let settled = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1438., 898.));
-        strip.app_reports(settled, MouseState::Up);
-        assert_eq!(strip.full_width(), Some(true), "one double-click toggles once");
-    }
-
-    #[test]
-    fn zooming_again_restores_the_width_it_had() {
-        for unzoomed_to in ["its own frame", "the screen again"] {
-            let mut strip = Strip::new();
-            let before = strip.laid_out();
-            let screen = strip.screen;
-            strip.zoom(screen, MouseState::Up);
-            strip.apps.simulate_until_quiet(&mut strip.reactor);
-            assert_eq!(strip.full_width(), Some(true));
-
-            let reported = match unzoomed_to {
-                "its own frame" => before,
-                _ => screen,
-            };
-            strip.zoom(reported, MouseState::Up);
-            assert_eq!(strip.full_width(), Some(false), "{unzoomed_to}");
-            assert_eq!(strip.laid_out(), before, "{unzoomed_to}: back to its width");
-            strip.apps.simulate_until_quiet(&mut strip.reactor);
-            strip.click_back();
-            assert_eq!(strip.laid_out(), before, "{unzoomed_to}: and it stays there");
-        }
-    }
-
-    #[test]
-    fn a_resize_with_no_double_click_behind_it_is_adopted_as_before() {
-        for stale in [false, true] {
-            let mut strip = Strip::new();
-            if stale {
-                let long_ago = Instant::now() - Duration::from_secs(2);
-                strip.reactor.drag_manager.double_click.clicked(long_ago);
-            }
-            let screen = strip.screen;
-            strip.app_reports(screen, MouseState::Up);
-
-            assert_eq!(strip.full_width(), Some(false), "stale={stale}");
-            let max = strip.reactor.config.settings.layout.scrolling.max_column_width_ratio;
-            let clamped = (strip.tiling().size.width * max).round();
-            assert_eq!(strip.laid_out().size.width, clamped, "stale={stale}");
-        }
+        strip.assert_ends_at_full_width("through the channel");
     }
 
     #[test]
@@ -1614,7 +1765,12 @@ mod title_bar_zoom {
         let (mut reactor, wid, space, screen, floating_frame) = reactor_with_floating_window();
         let before = laid_out_frame(&mut reactor, space, screen, wid);
 
-        reactor.handle_event(Event::MouseDoubleClicked);
+        reactor.handle_event(Event::LeftMouseDown(LeftPress {
+            location: CGPoint::new(floating_frame.mid().x, floating_frame.origin.y + 10.),
+            at: Instant::now(),
+            double_click: true,
+        }));
+        assert_eq!(reactor.drag_manager.title_bar_click, None);
         reactor.handle_event(Event::WindowFrameChanged(
             wid,
             screen,

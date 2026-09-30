@@ -363,12 +363,13 @@ fn main() {
     });
 
     let input_settings = rini::input::settings::InputSettings::from(&config);
-    let event_tap = InputTap::new(
+    let mut event_tap = InputTap::new(
         &input_settings,
         rini::animation::platform::power::is_low_power_mode_enabled(),
         Box::new(wm_controller_sender.clone()),
         event_tap_rx,
     );
+    event_tap.set_on_left_press(reactor::Event::left_press_sink(events_tx.clone()));
     let gesture_tap = GestureTap::new(
         input_settings,
         Box::new(wm_controller_sender.clone()),

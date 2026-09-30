@@ -15,8 +15,13 @@ use rini_geometry::CGRectDef;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScreenInfo {
     pub id: ScreenId,
+    /// What is left for windows: the display less the menu bar, a band reserved at the top, and the
+    /// Dock.
     #[serde(with = "CGRectDef")]
     pub frame: CGRect,
+    /// The whole display, menu bar included.
+    #[serde(with = "CGRectDef", default)]
+    pub bounds: CGRect,
     pub display_uuid: String,
     pub name: Option<String>,
     pub space: Option<SpaceId>,

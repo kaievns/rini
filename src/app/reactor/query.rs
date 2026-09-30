@@ -1002,6 +1002,7 @@ mod tests {
                     is_builtin: false,
                     id: ScreenId::new(i as u32 + 1),
                     frame: rect(i as f64 * 1000.0, 1000.0),
+                    bounds: rect(i as f64 * 1000.0, 1000.0),
                     display_uuid: format!("uuid-{space}"),
                     name: None,
                     space: Some(SpaceId::new(space)),

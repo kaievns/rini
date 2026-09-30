@@ -264,12 +264,13 @@ impl<'de> Deserialize<'de> for RuntimeDisplayData {
             is_builtin: false,
             id: ScreenId::new(helper.screen_id),
             frame: helper.frame,
+            bounds: helper.frame,
             display_uuid: helper.uuid,
             name: helper.name,
             space: helper.space.map(SpaceId::new),
-            // Not on the wire: this is the IPC view of a display, and no client asks which screen is
-            // the machine's own. Adding it to the protocol for one internal rule is not worth a
-            // wire change.
+            // Neither is on the wire: this is the IPC view of a display, and no client asks which
+            // screen is the machine's own or how much of it the menu bar takes. Adding them to the
+            // protocol for internal rules is not worth a wire change.
         };
 
         Ok(RuntimeDisplayData {
@@ -335,6 +336,7 @@ mod tests {
             is_builtin: false,
             id: ScreenId::new(7),
             frame: CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 400.0)),
+            bounds: CGRect::new(CGPoint::new(10.0, 0.0), CGSize::new(300.0, 420.0)),
             display_uuid: "display-uuid".to_string(),
             name: Some("Primary".to_string()),
             space: Some(SpaceId::new(42)),

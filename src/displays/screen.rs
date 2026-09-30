@@ -194,6 +194,7 @@ impl<S: System> ScreenCache<S> {
                 ScreenInfo {
                     id: cg_id,
                     frame,
+                    bounds,
                     display_uuid,
                     name: ns_screens.iter().find(|s| s.cg_id == cg_id).and_then(|s| s.name.clone()),
                     space: None,

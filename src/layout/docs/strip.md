@@ -47,23 +47,46 @@ is borrowed.
   resizes. rini took the last of them either as a column width, clamped to
   `max_column_width_ratio`, or, with its own last write still pending, as that
   write landing a few points off, and either way the next click's layout pass
-  wrote the column back. Nothing in the report marks a zoom, so the input tap's
-  double-click (`kCGMouseEventClickState` 2 on a left press) is the evidence.
-  For a second after it, a tiled window's frame that fills the tiling area
-  toggles full width through the same path as `ctrl-F`, and so does any resize
-  of a window already at full width, which is a zoom back out. One double-click
-  toggles once. The other sizes the animation passes through are not adopted:
-  the one it settles on would otherwise become the width a later un-zoom
-  restores. The rule is `src/windows/domain/zoom.rs`; the reading is
-  `on_window_frame_changed` in `src/app/reactor/observations.rs`.
+  wrote the column back. Nothing in the report marks a zoom, so a double-click
+  (`kCGMouseEventClickState` 2 on a left press) on the window's title bar is the
+  evidence. That window's first resize within a second of the click toggles
+  full width through the same path as `ctrl-F`, whatever size the app chose: a
+  column becomes full width, and a full-width window goes back to the width and
+  stack it had. Every later frame the app reports in that second is the rest of
+  the zoom: none becomes a width, the window is not left out of layout passes,
+  and a pass puts rini's frame back over it. The rule is
+  `src/windows/domain/zoom.rs`; the reading is `title_bar_zoom` in
+  `src/app/reactor/observations.rs`.
 
-  Only the second click of a run counts: a third would restart the evidence,
-  and the rest of one zoom's animation would toggle it back. Not measured: how
-  long an app's zoom animates, which the second has to cover, and whether AppKit
-  zooms again on a fourth click, which would go unanswered. A zoom that fits the
-  window to its content rather than the screen does not fill the tiling area, so
-  it is not taken: the column keeps its width, and the next layout pass that
-  reaches the window, a click on it at the latest, puts it back.
+  The title bar is the top 60pt of the frame rini last put the window at.
+  AppKit's title bar is 28pt and a unified toolbar about 52pt, and the tab
+  strips Terminal and Chrome add are inferred to sit within that; lower is
+  content, where a double-click selects a word or opens a file. None of those
+  heights is measured here. A point on two windows' bands counts for neither.
+  The frame is where rini last committed the window, so during a strip
+  animation it is where the window will land rather than where it is on screen,
+  and a double-click then can miss (inferred, not seen).
+
+  The press has to reach the reactor before the zoom's first report, so it does
+  not go through the main thread, where a busy moment would let the report
+  overtake it; why the direct path cannot lose that race is in
+  `src/input/docs/README.md`. Any later press spends the double-click, so a drag
+  started after it is a drag, and so does any rini layout command: what a window
+  does after `ctrl-F` or `ctrl-R` answers rini. A third or fourth click of the
+  same run is a later press too, so if AppKit zooms again on the fourth, that
+  zoom goes unanswered (not measured). The second runs from the press's own
+  timestamp. Not measured: how long an app's zoom animates, which the second has
+  to cover.
+
+  Not a zoom: a frame equal to the whole display, which is native fullscreen,
+  since a zoom stops below the menu bar; a resize that moves only the top edge
+  up, which is macOS stretching the top edge a double-click landed on; rini's own
+  write coming back; a window that is not a column. On a display with no menu
+  bar showing and no Dock, a zoom to the screen would equal the whole display
+  and be taken for fullscreen (inferred, not seen). An app putting back a frame
+  rini has already overruled once is left to the ordinary path: overruling it
+  again starts a fight lasting the whole second, one write per report, with an
+  app that snaps its size to a grid after every write.
 - **macOS's own fullscreen takes the window off the strip entirely.** It is on a
   space of its own and rini does not manage it while it is there: it leaves the
   layout tree (`WindowRemovedPreserveFloating`, so the workspace assignment and

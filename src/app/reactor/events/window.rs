@@ -225,7 +225,7 @@ pub fn classify_window_frame_change(
     requested: bool,
     mouse_state: &mut Option<MouseState>,
     mission_control_active: bool,
-    zoom_toggles: bool,
+    zoom: bool,
 ) -> FrameChangeDisposition {
     let Some(window) = state.windows.window(wid) else {
         query_mouse_for_active_drag(drag, mouse_state);
@@ -241,7 +241,7 @@ pub fn classify_window_frame_change(
     }
 
     // A zoom answers the double-click, not rini's last write, whatever write the report follows.
-    if zoom_toggles {
+    if zoom {
         if let Some(server) = server_id {
             transactions.clear_target_for_window(server);
         }
@@ -339,16 +339,13 @@ pub fn handle_window_frame_changed(
     }
     match zoom {
         Some((space, Zoom::Toggle)) => {
-            drag.double_click.answered();
             end_drag_of(drag, wid);
             return Ok(EventOutcome::layout_changed(false)
                 .with_layout_event(LayoutEvent::WindowZoomed(space, wid)));
         }
-        // The app is still animating: a pass must not write over it, and no size of it is the
-        // column's.
-        Some((_, Zoom::InFlight)) => {
-            drag.skip_layout_for_window = Some(wid);
-            return Ok(EventOutcome::no_change());
+        Some((_, Zoom::Rest)) => {
+            end_drag_of(drag, wid);
+            return Ok(EventOutcome::layout_changed(false));
         }
         None => {}
     }
@@ -590,7 +587,7 @@ mod tests {
                 crate::input::settings::WindowSnappingSettings::default(),
             ),
             skip_layout_for_window: None,
-            double_click: Default::default(),
+            title_bar_click: None,
         }
     }
 
@@ -627,7 +624,7 @@ mod tests {
         requested: bool,
         mouse: MouseState,
         mission_control: bool,
-        zoom_toggles: bool,
+        zoom: bool,
     ) -> FrameChangeDisposition {
         let mut mouse = Some(mouse);
         classify_window_frame_change(
@@ -640,7 +637,7 @@ mod tests {
             requested,
             &mut mouse,
             mission_control,
-            zoom_toggles,
+            zoom,
         )
     }
 

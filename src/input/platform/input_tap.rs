@@ -42,7 +42,7 @@ use crate::input::domain::pointer;
 use crate::input::domain::switch_session::{
     KeyEvent as SwitchKeyEvent, KeyEventKind, SwitchKeys, SwitchSession,
 };
-use crate::input::event::{Event, EventSink};
+use crate::input::event::{Event, EventSink, LeftPress, OnLeftPress};
 use crate::input::platform::cursor;
 use crate::input::platform::keyboard::{key_code_from_event, modifiers_from_flags_with_keys};
 use crate::input::platform::tap;
@@ -69,6 +69,8 @@ pub enum Request {
 
 pub struct InputTap {
     events: Box<dyn EventSink>,
+    on_left_press: Option<OnLeftPress>,
+    timebase: pointer::Timebase,
     requests_rx: Option<Receiver>,
     state: RefCell<State>,
     event_mask: Cell<CGEventMask>,
@@ -267,6 +269,8 @@ impl InputTap {
         let mouse_move_min_interval_ns = mouse_move_sampling_profile(state.low_power_mode);
         InputTap {
             events,
+            on_left_press: None,
+            timebase: mach_timebase(),
             requests_rx: Some(requests_rx),
             state: RefCell::new(state),
             event_mask: Cell::new(event_mask),
@@ -279,6 +283,11 @@ impl InputTap {
             hotkey_specs: RefCell::new(Vec::new()),
             hotkeys: Arc::new(ArcSwap::from_pointee(HashMap::default())),
         }
+    }
+
+    /// Where every left press goes, instead of through the sink.
+    pub fn set_on_left_press(&mut self, on_left_press: OnLeftPress) {
+        self.on_left_press = Some(on_left_press);
     }
 
     pub async fn run(mut self) {
@@ -607,18 +616,31 @@ impl InputTap {
             CGEventType::RightMouseUp | CGEventType::LeftMouseUp => {
                 self.events.send(Event::MouseUp);
             }
-            CGEventType::LeftMouseDown
-                if pointer::is_double_click(CGEvent::integer_value_field(
-                    Some(event),
-                    CGEventField::MouseEventClickState,
-                )) =>
-            {
-                self.events.send(Event::DoubleClicked);
-            }
+            CGEventType::LeftMouseDown => self.send_left_press(event),
             _ => (),
         }
 
         true
+    }
+
+    fn send_left_press(&self, event: &CGEvent) {
+        let Some(on_left_press) = &self.on_left_press else {
+            return;
+        };
+        let now = Instant::now();
+        let age = pointer::event_age(
+            unsafe { mach_absolute_time() },
+            CGEvent::timestamp(Some(event)),
+            self.timebase,
+        );
+        on_left_press(LeftPress {
+            location: CGEvent::location(Some(event)),
+            at: now.checked_sub(age).unwrap_or(now),
+            double_click: pointer::is_double_click(CGEvent::integer_value_field(
+                Some(event),
+                CGEventField::MouseEventClickState,
+            )),
+        });
     }
 
     /// Handle mouse moves without running the generic mouse/keyboard path.
@@ -937,6 +959,28 @@ fn mouse_move_sampling_profile(low_power_mode: bool) -> u64 {
         MOUSE_MOVE_MIN_INTERVAL_NS_LOW_POWER
     } else {
         MOUSE_MOVE_MIN_INTERVAL_NS_NORMAL
+    }
+}
+
+#[repr(C)]
+struct MachTimebaseInfo {
+    numer: u32,
+    denom: u32,
+}
+
+unsafe extern "C" {
+    fn mach_absolute_time() -> u64;
+    fn mach_timebase_info(info: *mut MachTimebaseInfo) -> i32;
+}
+
+fn mach_timebase() -> pointer::Timebase {
+    let mut info = MachTimebaseInfo { numer: 0, denom: 0 };
+    if unsafe { mach_timebase_info(&mut info) } != 0 {
+        warn!("mach_timebase_info failed; left presses are timed when the tap sees them");
+    }
+    pointer::Timebase {
+        numer: info.numer,
+        denom: info.denom,
     }
 }
 

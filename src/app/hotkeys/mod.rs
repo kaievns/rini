@@ -140,9 +140,6 @@ impl WmController {
                 self.events_tx.send(Event::Switch(signal))
             }
             Input(crate::input::event::Event::MouseUp) => self.events_tx.send(Event::MouseUp),
-            Input(crate::input::event::Event::DoubleClicked) => {
-                self.events_tx.send(Event::MouseDoubleClicked)
-            }
             Input(crate::input::event::Event::PointerEnteredWindow(window)) => {
                 self.events_tx.send(Event::MouseMoved(window))
             }

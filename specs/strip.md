@@ -52,20 +52,25 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
   a "grow" that lands on `max_column_width_ratio` would make the window smaller. Shrinking one MUST
   end full width and start from the width it HAS, not the width it had before being maximised.
 - **A window the user zooms from its title bar MUST become the full-width column**, the same one
-  `ctrl-F` makes, and it MUST stay full width when it is clicked again. Zooming it again MUST restore
-  the width and the stack it had, whatever size the app reports on the way back. The two are one
-  toggle, so `ctrl-F` MUST undo a zoom and a zoom MUST undo `ctrl-F`.
-- The sizes a zoom animates through MUST NOT become the column's width. A resize with no double-click
-  behind it MUST NOT be taken for a zoom, and a floating window MUST be left at whatever size its app
-  gives it.
+  `ctrl-F` makes, whatever size the app zooms it to: the screen, or its content as Safari and Finder
+  do. It MUST end exactly at rini's full-width frame and stay there when it is clicked again. Zooming
+  it again from its title bar MUST restore the width and the stack it had, whatever size the app
+  reports on the way back. The two are one toggle, so `ctrl-F` MUST undo a zoom and a zoom MUST undo
+  `ctrl-F`.
+- One double-click MUST toggle once. The frames the app reports after its zoom MUST NOT become the
+  column's width, and MUST NOT keep rini's frame off the window.
+- Only a double-click on that window's own title bar makes its resize a zoom, and only for 1 second
+  after the click. A double-click in a window's content or on another window, a drag that starts after
+  the double-click, native fullscreen, and a floating window MUST each be handled exactly as with no
+  double-click at all. `ctrl-F` or `ctrl-R` pressed after a double-click MUST keep the width it gave.
 
 > **Reported 2026-09-30.** "when i double tap a window title to maximise it, rini doesn't pick up the
 > change and when i click to the window again it gets resized back to original rini's size. it should
 > just go the normal rini full-size window". The zoom reached rini as ordinary resize reports: either
 > adopted as a column width, clamped to `max_column_width_ratio`, or swallowed as a late echo of
 > rini's own last write. Either way the next click's layout pass wrote the column back. Nothing in
-> Accessibility marks a zoom, so the double-click, seen by the input tap, is the evidence: for 1
-> second after one, a tiled window's frame filling the tiling area toggles full width, once.
+> Accessibility marks a zoom, so a double-click on the window's title bar, seen by the input tap, is
+> the evidence: that window's first resize within 1 second of the click toggles full width.
 
 > **Reported 2026-09-24.** "When I put a window to full-size using ctrl-F it takes full-size shape, but
 > it stops responding to ctrl-R size cycling... In reality full-size is just one of the predefined

@@ -1455,6 +1455,7 @@ fn arranging_one_setup_does_not_disturb_another() {
         is_builtin: false,
         id: rini_core::ids::ScreenId::new(id),
         frame,
+        bounds: frame,
         space: Some(space),
         display_uuid: uuid.to_owned(),
         name: None,
@@ -1550,6 +1551,7 @@ fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
         |uuid: &str, id: u32, frame: CGRect, space: SpaceId, is_builtin: bool| ScreenInfo {
             id: rini_core::ids::ScreenId::new(id),
             frame,
+            bounds: frame,
             space: Some(space),
             display_uuid: uuid.to_owned(),
             name: None,
@@ -1620,6 +1622,7 @@ fn a_display_never_seen_before_takes_no_windows() {
         is_builtin: false,
         id: rini_core::ids::ScreenId::new(id),
         frame,
+        bounds: frame,
         space: Some(space),
         display_uuid: uuid.to_owned(),
         name: None,

@@ -57,6 +57,7 @@ mod tests {
         ScreenInfo {
             id: ScreenId::new(1),
             frame: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(1000.0, 1000.0)),
+            bounds: CGRect::new(CGPoint::new(x, 0.0), CGSize::new(1000.0, 1000.0)),
             display_uuid: uuid.to_owned(),
             name: None,
             space: None,

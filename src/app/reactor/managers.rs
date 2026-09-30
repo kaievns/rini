@@ -33,7 +33,9 @@ pub struct DragManager {
     pub drag_state: super::DragState,
     pub drag_swap_manager: DragSwapManager,
     pub skip_layout_for_window: Option<WindowId>,
-    pub double_click: crate::windows::domain::zoom::DoubleClick,
+    /// The last double-click on a tiled window's title bar, while it can still explain that
+    /// window's resizes.
+    pub title_bar_click: Option<crate::windows::domain::zoom::Evidence>,
 }
 
 impl DragManager {

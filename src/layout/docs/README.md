@@ -16,7 +16,7 @@ principle, and deliberately is not reused — see "Why this shape" in
 | `domain/strip.rs` | Where the strip sits and how wide its columns are: `anchor_x`, `column_starts`, `gap_share`, `reveal_offset` |
 | `domain/constraints.rs` | `column_ratio` for how wide a column asks to be, `solve_axis_lengths` for row heights, and `clamp_to_constraints` for what a window will accept |
 | `domain/preset_width.rs` | Which width the next `ctrl-R` asks for, and whether that width is the maximise mode |
-| `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps, and whether a frame fills it |
+| `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
 | `domain/boundary.rs` | What a swipe means once the strip has run out: which workspace step a strip edge implies, and the inversion flag that swaps it |
 | `settings.rs` | Ratios, gaps, presets, alignment, navigation style |
 
