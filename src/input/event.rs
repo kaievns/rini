@@ -15,6 +15,8 @@ pub enum Event {
     Switch(crate::input::domain::switch_session::Signal),
     /// A mouse button was released while the tap was processing mouse events.
     MouseUp,
+    /// The left button went down for the second click of a double-click.
+    DoubleClicked,
     /// The pointer moved into a different window than the one it was in.
     PointerEnteredWindow(WindowServerId),
 }

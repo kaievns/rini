@@ -86,6 +86,8 @@ pub enum LayoutEvent {
         new_frame: CGRect,
         screens: Vec<(SpaceId, CGRect, Option<String>)>,
     },
+    /// The window's app zoomed it from its title bar, on the strip `space` is showing.
+    WindowZoomed(SpaceId, WindowId),
     SpaceExposed(SpaceId, CGSize),
 }
 
@@ -1876,6 +1878,12 @@ impl LayoutEngine {
                     self.workspace_layouts.mark_last_saved(space, ws_id, layout);
                 }
             }
+            LayoutEvent::WindowZoomed(space, wid) => {
+                let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
+                    return EventResponse::default();
+                };
+                return self.toggle_full_width(memory, space, ws_id, layout, wid);
+            }
         }
         EventResponse::default()
     }
@@ -3083,6 +3091,15 @@ impl LayoutEngine {
         window_store: &WindowStore,
     ) -> crate::workspaces::domain::virtual_workspace::WorkspaceStats {
         self.virtual_workspace_manager.get_stats(window_store)
+    }
+
+    /// Whether `window` is at full width, or `None` when it is not a column of the strip `space` is
+    /// showing.
+    pub fn full_width_of_column(&self, space: SpaceId, window: WindowId) -> Option<bool> {
+        let (ws_id, layout) = self.workspace_and_layout(space)?;
+        let tree = self.workspace_tree(ws_id);
+        tree.contains_window(layout, window)
+            .then(|| tree.is_window_full_width(layout, window))
     }
 
     pub fn is_window_floating(&self, window_id: WindowId) -> bool {

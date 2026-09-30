@@ -76,6 +76,15 @@ pub fn wants_mouse_move_events(
     event_processing_enabled && focus_follows_mouse_configured && focus_follows_mouse_enabled
 }
 
+/// Whether a left-button press is the second click of a double-click.
+///
+/// `click_state` is the event's `kCGMouseEventClickState`: 1 for a lone click, counting up while
+/// clicks follow within the double-click interval. Only the second counts, because what it stands
+/// for is one zoom, and a third click in the same run must not stand for another.
+pub fn is_double_click(click_state: i64) -> bool {
+    click_state == 2
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +191,17 @@ mod tests {
         assert!(
             !wants_mouse_move_events(true, true, false),
             "suppressed at runtime, during a drag or an animation"
+        );
+    }
+
+    #[test]
+    fn only_the_second_click_of_a_run_is_a_double_click() {
+        assert!(!is_double_click(0));
+        assert!(!is_double_click(1));
+        assert!(is_double_click(2));
+        assert!(
+            !is_double_click(3),
+            "a triple click is one double-click, not two"
         );
     }
 }

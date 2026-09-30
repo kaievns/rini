@@ -11,11 +11,11 @@ why the CLI is a first-class client rather than a debugging aid.
 | `domain/key.rs` | `Modifiers`, `KeyCode`, and the token parsing that needs no keyboard |
 | `domain/hotkey.rs` | `modifiers_satisfy`: whether the keys held down are the ones a binding asked for |
 | `domain/binding.rs` | `WmCmd`/`WmCommand`: the binding table and what a config string parses to |
-| `domain/pointer.rs` | When a mouse move is worth processing, when the cached pointer window still answers, and which events the tap asks for at all |
+| `domain/pointer.rs` | When a mouse move is worth processing, when the cached pointer window still answers, which press is a double-click, and which events the tap asks for at all |
 | `domain/gesture.rs` | Trackpad rules over normalised touches: `swipe_step`, `scroll_step`, `touch_centroid`, and `SwipeTrack`'s phase machine |
 | `domain/drag_swap.rs` | Recognising a drag that means "swap these two windows" |
 | `platform/tap.rs` | `EventTap`, plus the shared tap lifecycle: `ReEnableGovernor` and `on_recovery` |
-| `platform/input_tap.rs` | The session tap: mouse buttons, and keys whenever a hotkey is bound |
+| `platform/input_tap.rs` | The session tap: mouse buttons (a release, and the second click of a double-click), and keys whenever a hotkey is bound |
 | `platform/gesture_tap.rs` | The HID tap for trackpad gestures |
 | `platform/keyboard.rs` | The layout-dependent `FromStr` impls — the only part that needs the current keyboard |
 | `platform/haptics.rs`, `cursor.rs` | The haptic engine and pointer control |

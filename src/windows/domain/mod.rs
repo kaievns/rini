@@ -12,3 +12,4 @@ pub mod request;
 pub mod rules;
 pub mod state;
 pub mod transaction;
+pub mod zoom;

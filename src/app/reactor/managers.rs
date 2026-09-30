@@ -33,6 +33,7 @@ pub struct DragManager {
     pub drag_state: super::DragState,
     pub drag_swap_manager: DragSwapManager,
     pub skip_layout_for_window: Option<WindowId>,
+    pub double_click: crate::windows::domain::zoom::DoubleClick,
 }
 
 impl DragManager {

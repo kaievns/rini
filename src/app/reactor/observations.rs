@@ -11,10 +11,13 @@
 use objc2_core_foundation::CGRect;
 
 use rini_core::ids::{SpaceId, WindowId, WindowServerId};
+use rini_geometry::SameAs;
 
 use crate::displays::domain::topology::SpaceEventKind;
+use crate::layout::domain::area::{compute_tiling_area, fills_tiling_area};
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::{Requested, TransactionId};
+use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server;
 
@@ -259,6 +262,11 @@ impl Reactor {
     ) -> anyhow::Result<EventOutcome> {
         let mission_control_active = self.is_mission_control_active();
         let mut mouse_state = mouse_state;
+        let zoom = if requested.0 {
+            None
+        } else {
+            self.title_bar_zoom(window, new_frame)
+        };
         let disposition = window_workflow::classify_window_frame_change(
             &mut self.state,
             &self.transaction_manager,
@@ -269,6 +277,7 @@ impl Reactor {
             requested.0,
             &mut mouse_state,
             mission_control_active,
+            matches!(zoom, Some((_, Zoom::Toggle))),
         );
         // A mouse release still has to terminate an open drag session, including on the paths the
         // reducer returns early from: frame acknowledgements and no-op geometry changes.
@@ -317,6 +326,7 @@ impl Reactor {
                     Some((screen.space?, screen.frame, screen.display_uuid_owned()))
                 })
                 .collect(),
+            zoom,
         };
         let mut outcome = window_workflow::handle_window_frame_changed(
             &mut self.state,
@@ -329,6 +339,30 @@ impl Reactor {
         }
         outcome.focused_window = raised_window;
         Ok(outcome)
+    }
+
+    /// Whether this resize is `window`'s app zooming it from the title bar, and which strip it is a
+    /// column of. Nothing in the report says so; a recent double-click is the evidence.
+    fn title_bar_zoom(&self, window: WindowId, new_frame: CGRect) -> Option<(SpaceId, Zoom)> {
+        let now = std::time::Instant::now();
+        if !self.drag_manager.double_click.is_recent(now) {
+            return None;
+        }
+        let old_frame = self.state.windows.window(window)?.frame_monotonic;
+        if old_frame.size.same_as(new_frame.size) {
+            return None;
+        }
+        let space = self.affinity().assigned_space_for_window_id(window)?;
+        let full_width = self.layout_manager.layout_engine.full_width_of_column(space, window)?;
+        let screen = self.space_state.screen_by_space(space)?;
+        let gaps = self
+            .config
+            .settings
+            .layout
+            .gaps
+            .effective_for_display(screen.display_uuid_opt());
+        let fills = fills_tiling_area(new_frame, compute_tiling_area(screen.frame, &gaps));
+        Some((space, self.drag_manager.double_click.read(full_width || fills)))
     }
 }
 

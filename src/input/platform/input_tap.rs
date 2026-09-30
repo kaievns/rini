@@ -399,7 +399,7 @@ impl InputTap {
             Request::SetEventProcessing(enabled) => {
                 state.event_processing_enabled = enabled;
                 if enabled {
-                    self.reset_mouse_move_sample_gate();
+                    self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
                 }
                 should_rebuild_mask = true;
@@ -411,7 +411,7 @@ impl InputTap {
                 );
                 state.focus_follows_mouse_enabled = enabled;
                 if enabled {
-                    self.reset_mouse_move_sample_gate();
+                    self.reset_mouse_move_sampling();
                     self.reset_mouse_window();
                 }
                 should_rebuild_mask = true;
@@ -461,13 +461,13 @@ impl InputTap {
                         .map(|target| state.compute_disable_hotkey_active(target))
                         .unwrap_or(false);
                     if prev_active && !state.disable_hotkey_active {
-                        self.reset_mouse_move_sample_gate();
+                        self.reset_mouse_move_sampling();
                         self.reset_mouse_window();
                     }
                     if prev_focus_follows_mouse_config_enabled
                         != state.focus_follows_mouse_config_enabled
                     {
-                        self.reset_mouse_move_sample_gate();
+                        self.reset_mouse_move_sampling();
                         self.reset_mouse_window();
                     }
                     if prev_mouse_hides_on_focus
@@ -485,7 +485,7 @@ impl InputTap {
                     debug!("low_power_mode changed in event tap: {}", enabled);
                     state.low_power_mode = enabled;
                     self.mouse_move_min_interval_ns.set(mouse_move_sampling_profile(enabled));
-                    self.reset_mouse_move_sample_gate();
+                    self.reset_mouse_move_sampling();
                 }
             }
         }
@@ -507,14 +507,14 @@ impl InputTap {
                 debug!(?target, "focus_follows_mouse disabled while hotkey held");
             } else {
                 debug!(?target, "focus_follows_mouse re-enabled after hotkey release");
-                self.reset_mouse_move_sample_gate();
+                self.reset_mouse_move_sampling();
                 self.reset_mouse_window();
             }
         }
     }
 
     #[inline]
-    fn reset_mouse_move_sample_gate(&self) {
+    fn reset_mouse_move_sampling(&self) {
         self.mouse_move_last_timestamp.set(None);
     }
 
@@ -606,6 +606,14 @@ impl InputTap {
         match event_type {
             CGEventType::RightMouseUp | CGEventType::LeftMouseUp => {
                 self.events.send(Event::MouseUp);
+            }
+            CGEventType::LeftMouseDown
+                if pointer::is_double_click(CGEvent::integer_value_field(
+                    Some(event),
+                    CGEventField::MouseEventClickState,
+                )) =>
+            {
+                self.events.send(Event::DoubleClicked);
             }
             _ => (),
         }

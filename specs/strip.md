@@ -51,6 +51,21 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - Growing an already-full-width column MUST do nothing: there is nothing wider than the viewport, and
   a "grow" that lands on `max_column_width_ratio` would make the window smaller. Shrinking one MUST
   end full width and start from the width it HAS, not the width it had before being maximised.
+- **A window the user zooms from its title bar MUST become the full-width column**, the same one
+  `ctrl-F` makes, and it MUST stay full width when it is clicked again. Zooming it again MUST restore
+  the width and the stack it had, whatever size the app reports on the way back. The two are one
+  toggle, so `ctrl-F` MUST undo a zoom and a zoom MUST undo `ctrl-F`.
+- The sizes a zoom animates through MUST NOT become the column's width. A resize with no double-click
+  behind it MUST NOT be taken for a zoom, and a floating window MUST be left at whatever size its app
+  gives it.
+
+> **Reported 2026-09-30.** "when i double tap a window title to maximise it, rini doesn't pick up the
+> change and when i click to the window again it gets resized back to original rini's size. it should
+> just go the normal rini full-size window". The zoom reached rini as ordinary resize reports: either
+> adopted as a column width, clamped to `max_column_width_ratio`, or swallowed as a late echo of
+> rini's own last write. Either way the next click's layout pass wrote the column back. Nothing in
+> Accessibility marks a zoom, so the double-click, seen by the input tap, is the evidence: for 1
+> second after one, a tiled window's frame filling the tiling area toggles full width, once.
 
 > **Reported 2026-09-24.** "When I put a window to full-size using ctrl-F it takes full-size shape, but
 > it stops responding to ctrl-R size cycling... In reality full-size is just one of the predefined
@@ -122,4 +137,6 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 
 `src/layout/domain/scrolling.rs` is the layout, `src/layout/domain/constraints.rs` the widths,
 `src/layout/domain/strip.rs` the geometry, `src/workspaces/engine/commands/` the commands.
+A title-bar zoom is told from a resize by `src/windows/domain/zoom.rs`, and the full-width toggle both
+routes share is in `src/workspaces/engine/commands/floating.rs`.
 Measurements are in `src/layout/docs/strip.md`.

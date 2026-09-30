@@ -42,6 +42,28 @@ is borrowed.
   width it was. It is deleted rather than fixed, because macOS's own fullscreen
   already covers "cover everything". A window that fills the tiling area is a
   full-width COLUMN, which is what niri means by `maximize-column`.
+- **A title-bar zoom is that maximize, not a resize.** Double-clicking a title
+  bar has macOS zoom the window, and Accessibility reports it as ordinary
+  resizes. rini took the last of them either as a column width, clamped to
+  `max_column_width_ratio`, or, with its own last write still pending, as that
+  write landing a few points off, and either way the next click's layout pass
+  wrote the column back. Nothing in the report marks a zoom, so the input tap's
+  double-click (`kCGMouseEventClickState` 2 on a left press) is the evidence.
+  For a second after it, a tiled window's frame that fills the tiling area
+  toggles full width through the same path as `ctrl-F`, and so does any resize
+  of a window already at full width, which is a zoom back out. One double-click
+  toggles once. The other sizes the animation passes through are not adopted:
+  the one it settles on would otherwise become the width a later un-zoom
+  restores. The rule is `src/windows/domain/zoom.rs`; the reading is
+  `on_window_frame_changed` in `src/app/reactor/observations.rs`.
+
+  Only the second click of a run counts: a third would restart the evidence,
+  and the rest of one zoom's animation would toggle it back. Not measured: how
+  long an app's zoom animates, which the second has to cover, and whether AppKit
+  zooms again on a fourth click, which would go unanswered. A zoom that fits the
+  window to its content rather than the screen does not fill the tiling area, so
+  it is not taken: the column keeps its width, and the next layout pass that
+  reaches the window, a click on it at the latest, puts it back.
 - **macOS's own fullscreen takes the window off the strip entirely.** It is on a
   space of its own and rini does not manage it while it is there: it leaves the
   layout tree (`WindowRemovedPreserveFloating`, so the workspace assignment and
@@ -68,7 +90,8 @@ is borrowed.
   tree still claimed they were abreast. It becomes its own column immediately to
   the right, and a second press puts it back beside the neighbour it left
   (`StackOrigin`). Every route in maximizes the same way — the key, the width
-  cycle, and restoring a remembered full width at startup. A neighbour is remembered rather than a row index, because
+  cycle, an app's title-bar zoom, and restoring a remembered full width at
+  startup. A neighbour is remembered rather than a row index, because
   while the window is maximized its old column can move along the strip or
   change size. If every window it could return to has closed, it stays the
   column it became rather than being put somewhere the user never had it.

@@ -1737,27 +1737,28 @@ impl ScrollingLayoutSystem {
         vec![selected]
     }
 
-    pub fn toggle_fullscreen_within_gaps_of_selection(
-        &mut self,
-        layout: LayoutId,
-    ) -> Vec<WindowId> {
+    /// Maximise `wid`, or put it back to the width and stack it had before, and select it.
+    ///
+    /// The one toggle: `ctrl-F` asks it of the selection, a title-bar zoom of the window zoomed.
+    /// `false` when the window is not a column of this layout.
+    pub fn toggle_full_width(&mut self, layout: LayoutId, wid: WindowId) -> bool {
         let niri_navigation = matches!(
             self.settings.focus_navigation_style,
             ScrollingFocusNavigationStyle::Niri
         );
         let Some(state) = self.layout_state_mut(layout) else {
-            return Vec::new();
+            return false;
         };
-        let Some(selected) = state.selected_or_first() else {
-            return Vec::new();
-        };
-
-        if state.fullscreen_within_gaps.contains(&selected) {
-            state.leave_full_width_restoring(selected);
-        } else {
-            state.enter_full_width(selected);
+        if state.locate(wid).is_none() {
+            return false;
         }
-        state.selected = Some(selected);
+
+        if state.fullscreen_within_gaps.contains(&wid) {
+            state.leave_full_width_restoring(wid);
+        } else {
+            state.enter_full_width(wid);
+        }
+        state.selected = Some(wid);
 
         // Rescroll so the resized column stays visible, as the resize path does.
         if niri_navigation {
@@ -1765,8 +1766,7 @@ impl ScrollingLayoutSystem {
         } else {
             state.align_scroll_to_selected();
         }
-
-        vec![selected]
+        true
     }
 
     /// Cycle the selected column through `preset_column_widths`.
@@ -2034,6 +2034,12 @@ mod tests {
         system.add_window_after_selection(layout, w1);
         system.add_window_after_selection(layout, w2);
         (system, layout, w1, w2)
+    }
+
+    /// What `ctrl-F` asks of the layout: the toggle, on the selection.
+    fn toggle_selection(system: &mut ScrollingLayoutSystem, layout: LayoutId) {
+        let selected = system.selected_window(layout).expect("a selection to toggle");
+        assert!(system.toggle_full_width(layout, selected));
     }
 
     #[test]
@@ -2891,7 +2897,7 @@ mod tests {
 
         // And it round-trips back to the preset, so the mode is not a one-way door.
         assert!(system.select_window(layout, w1));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         let frame = frame_for(&render(&system, layout, screen, &gaps), w1);
         assert!((frame.size.width - 400.0).abs() < 1.0, "got {frame:?}");
     }
@@ -2957,7 +2963,7 @@ mod tests {
         let gaps = GapSettings::default();
 
         assert!(system.select_window(layout, w1));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
 
         let x_before = frame_for(&render(&system, layout, screen, &gaps), w1).origin.x;
 
@@ -2982,7 +2988,7 @@ mod tests {
         let gaps = GapSettings::default();
 
         assert!(system.select_window(layout, w1));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
 
         let frames = render(&system, layout, screen, &gaps);
         let f1 = frame_for(&frames, w1);
@@ -3013,10 +3019,10 @@ mod tests {
         assert!(system.select_window(layout, w1));
         let width_before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
 
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         let width_full = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
 
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         let width_after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
 
         assert!(
@@ -3050,7 +3056,7 @@ mod tests {
         assert!(system.select_window(layout, w3));
         let _ = render(&system, layout, screen, &gaps);
 
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         let f3 = frame_for(&render(&system, layout, screen, &gaps), w3);
 
         let tiling = compute_tiling_area(screen, &gaps);
@@ -3137,7 +3143,7 @@ mod tests {
         };
 
         assert!(system.select_window(layout, w1));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         assert!(
             (width_of(&system) - 1.0).abs() < 0.02,
             "maximised {}",
@@ -3188,7 +3194,7 @@ mod tests {
         let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
 
         assert!(system.select_window(layout, w1));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         system.resize_selection_by(layout, 0.05, ResizeOrientation::Horizontal);
 
         assert!(system.is_window_full_width(layout, w1));
@@ -3204,7 +3210,7 @@ mod tests {
         let tiling_width = compute_tiling_area(screen, &gaps).size.width;
 
         assert!(system.select_window(layout, w1));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         system.resize_selection_by(layout, -0.05, ResizeOrientation::Horizontal);
 
         assert!(!system.is_window_full_width(layout, w1));
@@ -3228,7 +3234,7 @@ mod tests {
         let tiling_width = compute_tiling_area(screen, &gaps).size.width;
 
         assert!(system.select_window(layout, w1));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         // The gesture reads the geometry the last layout pass recorded.
         render(&system, layout, screen, &gaps);
         assert_eq!(scroll_offset(&system, layout), 0.0);
@@ -3550,7 +3556,7 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[1]));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
 
         assert_eq!(
             shape(&system, layout),
@@ -3565,8 +3571,8 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[1]));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
+        toggle_selection(&mut system, layout);
 
         assert_eq!(
             shape(&system, layout),
@@ -3576,6 +3582,51 @@ mod tests {
         assert!(!system.is_window_full_width(layout, w[1]));
     }
 
+    /// A title-bar zoom names the window it zoomed, which need not be the selection.
+    #[test]
+    fn full_width_toggles_the_window_it_names_and_selects_it() {
+        let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        assert!(system.select_window(layout, w2));
+        let width_before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        assert!(system.toggle_full_width(layout, w1));
+        assert!(system.is_window_full_width(layout, w1));
+        assert!(!system.is_window_full_width(layout, w2));
+        assert_eq!(system.selected_window(layout), Some(w1));
+        let width_full = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+        assert_eq!(width_full, compute_tiling_area(screen, &gaps).size.width);
+
+        assert!(system.toggle_full_width(layout, w1));
+        let width_after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+        assert!(!system.is_window_full_width(layout, w1));
+        assert_eq!(width_after, width_before, "back to the width it had");
+    }
+
+    #[test]
+    fn full_width_of_an_unselected_stacked_window_puts_it_back_in_its_stack() {
+        let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
+        assert!(system.select_window(layout, w[0]));
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
+
+        assert!(system.toggle_full_width(layout, w[1]));
+        assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
+    }
+
+    #[test]
+    fn full_width_of_a_window_outside_the_layout_changes_nothing() {
+        let (mut system, layout, _, _) = setup_two_windows(niri_settings(0.5));
+        let selected = system.selected_window(layout);
+        let stranger = wid(9, 9);
+
+        assert!(!system.toggle_full_width(layout, stranger));
+        assert!(!system.is_window_full_width(layout, stranger));
+        assert_eq!(system.selected_window(layout), selected);
+    }
+
     // Row 0 has no window above it, so the anchor is the one BELOW and it has to be restored in
     // front of it rather than after it.
     #[test]
@@ -3583,10 +3634,10 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[0]));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         assert_eq!(shape(&system, layout), vec![vec![w[1], w[2]], vec![w[0]]]);
 
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         assert_eq!(
             shape(&system, layout),
             vec![vec![w[0], w[1], w[2]]],
@@ -3601,11 +3652,11 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[1]));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         system.remove_window(w[0]);
         system.remove_window(w[2]);
 
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         assert_eq!(shape(&system, layout), vec![vec![w[1]]]);
         assert!(
             !system.is_window_full_width(layout, w[1]),
@@ -3620,11 +3671,11 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[1]));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         // w0 was the anchor, being directly above w1.
         system.remove_window(w[0]);
 
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         assert_eq!(
             shape(&system, layout),
             vec![vec![w[2]], vec![w[1]]],
@@ -3644,13 +3695,13 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[1]));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         system.cycle_preset_column_width(layout);
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[2]], vec![w[1]]]);
 
         // A fresh maximise and a fresh press to leave it. Nothing here asked for the old stack.
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
+        toggle_selection(&mut system, layout);
 
         assert_eq!(
             shape(&system, layout),
@@ -3666,8 +3717,8 @@ mod tests {
         let (mut system, layout, w) = stacked_three(ScrollingLayoutSettings::default());
 
         assert!(system.select_window(layout, w[1]));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
+        toggle_selection(&mut system, layout);
 
         assert_eq!(shape(&system, layout), vec![vec![w[0], w[1], w[2]]]);
     }
@@ -3711,9 +3762,9 @@ mod tests {
         system.add_window_after_selection(layout, b);
 
         assert!(system.select_window(layout, a));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         assert_eq!(shape(&system, layout), vec![vec![a], vec![b]]);
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
         assert_eq!(shape(&system, layout), vec![vec![a], vec![b]]);
     }
 
@@ -3729,7 +3780,7 @@ mod tests {
         system.add_window_after_selection(layout, next);
 
         assert!(system.select_window(layout, narrow));
-        system.toggle_fullscreen_within_gaps_of_selection(layout);
+        toggle_selection(&mut system, layout);
 
         let mut constraints = HashMap::default();
         constraints.insert(

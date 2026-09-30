@@ -268,6 +268,9 @@ pub enum Event {
     /// `roadmap.md` under known bugs; acting on it needs a measured case, because the visible
     /// symptom is a layout pass that does not happen rather than one that goes wrong.
     MouseUp,
+    /// The left button went down for the second click of a double-click: the evidence that the
+    /// resizes following it are the window's app zooming it from its title bar.
+    MouseDoubleClicked,
     /// A switcher session opened, moved, committed or was cancelled.
     Switch(crate::input::domain::switch_session::Signal),
     /// A row of the switcher popup was clicked: select that window and commit.
@@ -613,6 +616,7 @@ impl Reactor {
                     config.settings.window_snapping,
                 ),
                 skip_layout_for_window: None,
+                double_click: Default::default(),
             },
             workspace_switch_manager: managers::WorkspaceSwitchManager {
                 workspace_switch_state: WorkspaceSwitchState::Inactive,
@@ -1414,6 +1418,10 @@ impl Reactor {
             }
             Event::MouseUp => {
                 return self.on_mouse_up();
+            }
+            Event::MouseDoubleClicked => {
+                self.drag_manager.double_click.clicked(std::time::Instant::now());
+                return Ok(EventOutcome::no_change());
             }
             Event::MenuOpened(pid) => {
                 return Ok(system_workflow::handle_menu_opened(&mut self.menu_manager, pid)?);

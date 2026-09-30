@@ -9,6 +9,7 @@ use crate::windows::domain::info::WindowServerInfo;
 use crate::windows::domain::state::WindowFilter;
 use crate::windows::domain::state::WindowState;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
+use crate::windows::domain::zoom::Zoom;
 use crate::windows::platform::mouse::MouseState;
 use crate::windows::platform::window_server::compute_window_manageability;
 use crate::workspaces::LayoutEvent;
@@ -205,6 +206,8 @@ pub struct WindowFrameChangedPayload {
     pub assigned_space: Option<SpaceId>,
     pub keep_assigned_for_scrolling: bool,
     pub screens: Vec<(SpaceId, CGRect, Option<String>)>,
+    /// The report read as a title-bar zoom of a column on this strip.
+    pub zoom: Option<(SpaceId, Zoom)>,
 }
 
 pub enum FrameChangeDisposition {
@@ -222,6 +225,7 @@ pub fn classify_window_frame_change(
     requested: bool,
     mouse_state: &mut Option<MouseState>,
     mission_control_active: bool,
+    zoom_toggles: bool,
 ) -> FrameChangeDisposition {
     let Some(window) = state.windows.window(wid) else {
         query_mouse_for_active_drag(drag, mouse_state);
@@ -234,6 +238,14 @@ pub fn classify_window_frame_change(
         drag.drag_state = DragState::Inactive;
         drag.skip_layout_for_window = None;
         return FrameChangeDisposition::Handled;
+    }
+
+    // A zoom answers the double-click, not rini's last write, whatever write the report follows.
+    if zoom_toggles {
+        if let Some(server) = server_id {
+            transactions.clear_target_for_window(server);
+        }
+        return FrameChangeDisposition::NeedsGeometryAnalysis;
     }
 
     if let Some(server) = server_id
@@ -306,6 +318,7 @@ pub fn handle_window_frame_changed(
         assigned_space,
         keep_assigned_for_scrolling,
         screens,
+        zoom,
     } = payload;
     let mut outcome = EventOutcome::default();
     let Some(window) = state.windows.window(wid) else {
@@ -323,6 +336,21 @@ pub fn handle_window_frame_changed(
     }
     if let Some(window) = state.windows.window_mut(wid) {
         window.frame_monotonic = new_frame;
+    }
+    match zoom {
+        Some((space, Zoom::Toggle)) => {
+            drag.double_click.answered();
+            end_drag_of(drag, wid);
+            return Ok(EventOutcome::layout_changed(false)
+                .with_layout_event(LayoutEvent::WindowZoomed(space, wid)));
+        }
+        // The app is still animating: a pass must not write over it, and no size of it is the
+        // column's.
+        Some((_, Zoom::InFlight)) => {
+            drag.skip_layout_for_window = Some(wid);
+            return Ok(EventOutcome::no_change());
+        }
+        None => {}
     }
     outcome = EventOutcome::layout_changed(false);
 
@@ -484,6 +512,22 @@ pub fn handle_mouse_moved_over_window(
     }
     Ok(outcome)
 }
+
+/// Ends `wid`'s drag, so the layout pass the zoom asks for runs and writes it.
+fn end_drag_of(drag: &mut DragManager, wid: WindowId) {
+    if matches!(
+        &drag.drag_state,
+        DragState::Active { session } | DragState::PendingSwap { session, .. }
+            if session.window == wid
+    ) {
+        drag.reset();
+        drag.drag_state = DragState::Inactive;
+    }
+    if drag.skip_layout_for_window == Some(wid) {
+        drag.skip_layout_for_window = None;
+    }
+}
+
 fn handle_mouse_up_if_needed(
     drag: &mut DragManager,
     mission_control_active: bool,
@@ -546,6 +590,7 @@ mod tests {
                 crate::input::settings::WindowSnappingSettings::default(),
             ),
             skip_layout_for_window: None,
+            double_click: Default::default(),
         }
     }
 
@@ -560,6 +605,30 @@ mod tests {
         mouse: MouseState,
         mission_control: bool,
     ) -> FrameChangeDisposition {
+        classify_zoom(
+            state,
+            transactions,
+            drag,
+            new_frame,
+            last_seen,
+            requested,
+            mouse,
+            mission_control,
+            false,
+        )
+    }
+
+    fn classify_zoom(
+        state: &mut RiniState,
+        transactions: &TransactionManager,
+        drag: &mut DragManager,
+        new_frame: CGRect,
+        last_seen: Option<TransactionId>,
+        requested: bool,
+        mouse: MouseState,
+        mission_control: bool,
+        zoom_toggles: bool,
+    ) -> FrameChangeDisposition {
         let mut mouse = Some(mouse);
         classify_window_frame_change(
             state,
@@ -571,6 +640,7 @@ mod tests {
             requested,
             &mut mouse,
             mission_control,
+            zoom_toggles,
         )
     }
 
@@ -745,5 +815,43 @@ mod tests {
             rect(0.0, 0.0),
             "the frame is not accepted until the analysis decides what the move means"
         );
+    }
+
+    // rini's last write can still be pending when the app zooms: the report follows that write, so
+    // it would otherwise read as the write landing a few points off and be swallowed.
+    #[test]
+    fn a_zoom_is_analysed_even_while_rini_waits_on_its_own_write() {
+        let mut s = state();
+        let wsid = WindowServerId::new(WSID);
+        let tx = TransactionManager::new(WindowTxStore::new());
+        let txid = TransactionId::default().next();
+        tx.store_txid(wsid, txid, rect(50.0, 50.0));
+
+        let d = classify_zoom(
+            &mut s,
+            &tx,
+            &mut drag(),
+            rect(9.0, 9.0),
+            Some(txid),
+            false,
+            MouseState::Up,
+            false,
+            true,
+        );
+        assert!(!handled(&d), "the zoom is the app's, not an echo");
+        assert_eq!(tx.get_target_frame(wsid), None, "nothing is waited for any more");
+
+        let d = classify_zoom(
+            &mut s,
+            &tx,
+            &mut drag(),
+            rect(9.0, 9.0),
+            None,
+            false,
+            MouseState::Up,
+            true,
+            true,
+        );
+        assert!(handled(&d), "Mission Control still moves every window");
     }
 }
