@@ -1554,6 +1554,11 @@ impl ScrollingLayoutSystem {
         let Some((col_idx, row_idx)) = state.locate(wid) else {
             return;
         };
+        // A full-width column keeps the width it had before, for the toggle back; an app settling its
+        // own size under it is not a width given to it.
+        if state.is_full_width_column(&state.columns[col_idx]) {
+            return;
+        }
         state.columns[col_idx].width_offset = clamped - base_ratio;
         state.columns[col_idx].width_overridden = true;
 
@@ -3034,6 +3039,36 @@ mod tests {
             "expected {} after toggling back, got {}",
             width_before,
             width_after
+        );
+    }
+
+    /// An app reporting its own size while its column is full width does not replace the width the
+    /// column goes back to. Found 2026-09-30: an app that put its zoom frame back after rini's write,
+    /// or a terminal snapping to its cell grid, left the toggle back at the clamped maximum ratio
+    /// instead of the width it had.
+    #[test]
+    fn a_resize_report_under_full_width_keeps_the_width_to_return_to() {
+        let (mut system, layout, w1, _) = setup_two_windows(niri_settings(0.5));
+        let screen = screen(1000.0, 800.0);
+        let gaps = GapSettings::default();
+        assert!(system.select_window(layout, w1));
+        let width_before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+
+        toggle_selection(&mut system, layout);
+        let full = frame_for(&render(&system, layout, screen, &gaps), w1);
+        let settled = CGRect::new(full.origin, CGSize::new(full.size.width - 6.0, full.size.height - 4.0));
+        system.on_window_resized(layout, w1, full, settled, screen, &gaps);
+        assert_eq!(
+            frame_for(&render(&system, layout, screen, &gaps), w1).size.width,
+            full.size.width,
+            "still full width"
+        );
+
+        toggle_selection(&mut system, layout);
+        let width_after = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
+        assert!(
+            (width_after - width_before).abs() < 2.0,
+            "expected {width_before} after toggling back, got {width_after}"
         );
     }
 
