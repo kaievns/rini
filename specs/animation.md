@@ -61,7 +61,8 @@ only the transitions are missing.
   steps left and opens the right side, where the column it passes was.
 - The whole strip MUST step: every tiled window and every border tracing one. Floating windows and
   their borders MUST stay where they are. A border arriving mid-step steps with the window it
-  traces.
+  traces. Not yet met: a window that opens or resizes mid-step leaves the step where it is drawn
+  and does not carry the rest of it.
 - The column passed MUST be seen going beneath the moved window from the side the step opens, and
   that side MUST NOT show the desktop, except past the strip's end: the column passed fills it, then
   the strip beyond it. The column passed is drawn in its place on the strip, riding the strip
