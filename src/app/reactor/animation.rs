@@ -203,9 +203,11 @@ impl AnimationManager {
         } else {
             strip_movement.filter(|movement| movement.x.abs() >= 1.0)
         };
+        let moves: Vec<(WindowId, CGRect)> =
+            placements.iter().map(|&(_, window, frame, _)| (window, frame)).collect();
         if use_overlay
             && let Some(delta) = pan_delta
-            && reactor.start_strip_pan(space, active_ws, layout, skip_wid, delta, moved)
+            && reactor.start_strip_pan(space, active_ws, moves, delta, moved)
         {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {

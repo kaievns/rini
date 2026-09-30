@@ -137,11 +137,20 @@ their group all the same. A move under a pan is the one exception: the
 members of a group that does not travel with the pan (the two columns the
 move swapped) vote as in an ordinary pass, wherever their destination is,
 and the rest of each group they sit in holds the place the pan gave it. The
-merge reads where every container is drawn, any bounce or nudge riding it
-included, so a member changing containers mid-nudge stays where it is drawn
-and still lands on its destination; pinned by
-`a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`. A pass
-confirming the flight's destinations is an empty `PlanDelta`: nothing is
+merge reads two positions of every container (`Presented`): where it is drawn,
+any bounce or nudge riding it included, and where its own leg has it. A member
+leaving a container for one of its own starts from the first, so it stays where
+it is drawn and still lands on its destination; pinned by
+`a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`. Remaining
+travel and a newcomer's frame are judged against the second, because every
+destination and every frame a pass carries is a place on the strip: judged
+against the drawn position, a border landing mid-nudge matched no container and
+was left a third of the display from its window; pinned by
+`a_border_arriving_mid_nudge_rides_with_the_moved_window`. The container a
+nudge rides (`FlightPlan::nudging`) takes no one but the moved window's own
+borders, or a still window joining would step with it; pinned by
+`a_still_window_joining_mid_nudge_is_not_nudged`. A pass confirming the
+flight's destinations is an empty `PlanDelta`: nothing is
 touched, and rapid presses neither restart nor extend the flight. Any real
 change restarts the orchestration clock so the frame placement and teardown
 cover the newest legs. Reserved entrances still waiting for a picture take
@@ -166,8 +175,14 @@ edge bounce out of it: the presented position includes the bounce's additive
 offset, and a leg begun there carried the bounce twice. A container with no
 leg (a still one, or one placed outright) starts from its model position at
 rest for the same reason (`Leg::toward`): it used to start from its presented
-position, which under a move's nudge is a third of the display out. The
-flight's clock covers the longest spring (`running.duration`).
+position, which under a move's nudge is a third of the display out. A container
+a merge opens for a member leaving another carries on the one it left: a spring
+from where the member is drawn, as fast as the old container's leg is going
+(`Leg::leaving`). It used to start the curve from rest, and the column a second
+move passes left the strip at 12x the speed it had a frame before, 5,700 to
+53,000pt/s in a full-width burst; pinned by
+`the_column_a_second_move_passes_keeps_its_speed`. The flight's clock covers
+the longest spring (`running.duration`).
 
 Measured 2026-09-29 by tracing where each container is drawn every tick
 (`trace_presented`, enabled with `rini::animation::trace=trace` in `RUST_LOG`)
@@ -191,7 +206,7 @@ when a surface flight starts and at handover took the stalls over 30ms in that
 burst from 14 (909ms in all, longest 178ms) to 9 (424ms, longest 99ms). Most of
 what is left is the two full window lists and the desktop and bar captures a
 new flight takes.
-The engine reads every container's presented position once, for
+The engine reads every container's two positions once, for
 `merge_plans`, and the overlay applies the delta in one transaction
 (`retarget`): reparents, container animations, joins, loose retargets.
 Without this a pan merging 56ms after an open (log 3:27:20, 22 tiles
@@ -405,17 +420,28 @@ sit between it and the bar. During strip pans a floating window deliberately
 stands still (`pinned`); during switches it rides its workspace row in the
 floating container.
 
-Routing. `animate_layout` sends a pass to the strip surface when the strip's
-scroll offset moved (`take_strip_movement`) or the pass carries a move along the
+Routing. `animate_layout` sends a pass to the strip surface when the strip
+moved on screen (`take_strip_movement`) or the pass carries a move along the
 strip (`EventResponse::moved`, stashed by the reactor for the passes its
 command asked for and taken by the one pass that lays the moved window out,
-`take_move_in`), and no window in it resizes. Both are taken at the top of
-every pass, before anything can return early: a pass that placed nothing used
-to leave the scroll offset unconsumed for whichever pass came next. Still open:
-both routes land in the same machinery, and `take_strip_movement` also feeds
-the switch's claim on the destination's scroll offset, which needs care. The
-window-voting classifier (`strip_pan_delta`) is gone: it only ran when the
-space had no strip, which is when there is nothing to pan.
+`take_move_in`), and no window in it resizes. How far the strip moved is the
+change of where its first column starts, `strip_origin`: the anchor less the
+scroll offset, recorded by `calculate_layout` against the tiling area. The
+scroll offset alone missed a change of anchor. Under niri navigation with
+centre alignment a move clears a column's centring, so the anchor went from the
+centre to the left edge with the offset unchanged: every window moved 576pt on
+a 1728pt display, the pass reported no movement, and the move was drawn as the
+finished layout at frame zero; pinned by
+`a_move_that_drops_the_centring_starts_every_window_where_it_was`. Both are
+taken at the top of every pass, before anything can return early: a pass that
+placed nothing used to leave the movement unconsumed for whichever pass came
+next. A strip movement places only the pass's windows whose frames changed,
+as the per-window path does; a move that scrolled nothing re-placed every
+window on the workspace at frame zero. Still open: both routes land in the same
+machinery, and `take_strip_movement` also feeds the switch's claim on the
+destination's origin, which needs care. The window-voting classifier
+(`strip_pan_delta`) is gone: it only ran when the space had no strip, which is
+when there is nothing to pan.
 
 **Edge bounce.** A command that pushes past an end of the strip (the first/last
 column) or of the workspace stack (next/prev at the bottom/top with
@@ -446,11 +472,14 @@ holds the lift. The floating container rides only a vertical bounce
 (`bounce_carries`), the rule a pan (pinned) and a switch (carried) already
 follow. Real windows never move. The shape is `bounce_displacement`, pinned
 by `a_bounce_goes_out_once_and_comes_home`. A push while a bounce is still
-playing starts none (`starts_a_bounce`): each one restarted the keyframes under
-the same key, so a burst of presses at the wall bounced once per press, and the
+playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
+under the same key, so a burst of presses at the wall bounced once per press, and the
 presses the reactor reached late kept bouncing after the pressing had stopped.
-A move's nudge (below) is a separate out-and-back with its own key and its own
-`nudging_until`, so neither holds the other off.
+A move's nudge (below) is the other out-and-back, under its own key and held
+off only by a nudge still playing (`OutAndBacks` in
+`src/animation/domain/timing.rs`, one clock per kind), so neither holds the
+other off; pinned by `a_bounce_and_a_nudge_never_hold_each_other_off` and
+`the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
 ## The move flight
 
@@ -466,9 +495,9 @@ is parked off screen at both ends, so `worth_animating` culls it.
 **A move is a strip movement with a swap.** `MoveNode` that swaps two columns
 reports `EventResponse::moved` (not a pull out of a stack, which resizes, not a
 vertical move, not a move onto another display). The reactor routes it to
-`start_strip_pan` with the strip movement, zero when nothing scrolled, and
-the surface is built exactly as a pan's, every window at its NEW frame. The
-moved column and the column it passed also get a start (`swap_starts` in
+`start_strip_pan` with the strip movement, zero when the strip did not move on
+screen, and the surface is built exactly as a pan's, every window at its NEW
+frame. The moved column and the column it passed also get a start (`swap_starts` in
 `src/animation/domain/motion/strip_move.rs`): the two fill the span they fill
 now, in the order they had before. For W of width a and N of width b with gap
 g, moving right, W started at N's new x and N at N's new x + a + g; moving
@@ -484,13 +513,27 @@ third of the viewport toward where it went and back (`nudge`, `NUDGE_BELOW`,
 keyframe animation on the moved window's container under its own key
 (`TileOverlay::nudge`, `"rini.group.nudge"`), the bounce's mechanism, sampled
 every 1/120s from `nudge_displacement`, `sin²(πt)`: at rest and motionless at
-both ends, furthest out at half time. It only rides a container holding the
-moved window alone (`nudge_carrier`), and only a flight already moving: one
-still collecting passes recomposes its containers, which drops any additive
-animation. A flight carrying one runs `NUDGE_STRETCH` (1.3x) the plain
-duration, and its clock and lift wait for it to come home (`clock_for_bounce`,
-`settled`). The bounce's shape was not reused: it leaves at 6.25x its average
-speed, which over a third of the viewport is the jerk already reported.
+both ends, furthest out at half time. It rides only a container holding the
+moved window and its own borders (`nudge_carrier`). A border records the
+window it traces (`OverlayTile::companion`), and a floating window's border is
+floating like its window, so it stands with that window in the floating
+container: adopted by vector as it was, the border of a pinned floating window
+sat in the still piece a followed move puts the moved window in, and stepped a
+third of the display away from its window. A moved window sharing its
+container with another window is not stepped, since the step would carry that
+window too; with the container's members grouped by vector, that takes a
+second window travelling exactly as the moved one does. The step starts only
+on a flight that moves: one still collecting passes recomposes its containers,
+which drops any additive animation, so a move arriving then waits and steps
+when the flight starts moving (`nudge_admission`, `NudgeAdmission::Wait`,
+`start_moving`); it used to be dropped, and a full-width move merged into a
+collecting layout pass showed nothing. The engine stretches a flight that
+steps to `NUDGE_STRETCH` (1.3x) the plain duration, when the step starts, so a
+flight that does not step keeps its length; the reactor asked for the stretch
+with every nudge it sent, stepped or not. The clock and lift wait for the step
+to come home (`clock_for_bounce`, `settled`). The bounce's shape was not
+reused: it leaves at 6.25x its average speed, which over a third of the
+viewport is the jerk already reported.
 
 ```
 offset                   nudge, sin², 0.455s    bounce's shape, 0.35s
@@ -517,12 +560,13 @@ container (a camera that follows it again leaves it going where it was, so it
 is not retargeted at all), the newly passed column leaves the strip's
 container at the frame it is drawn at and flies to its slot beneath the moved
 window, and the pair of the earlier press pans on with the rest. Containers
-bend from their legs, never from where they are drawn, so nothing kicks. The
+bend from their legs, never from where they are drawn, and the passed column's
+new container carries on the strip's (`Leg::leaving`), so nothing kicks. The
 orchestration clock restarts to cover the new legs. A nudge still playing is
-not restarted (`starts_a_bounce` against `nudging_until`): one nudge per burst,
-as presses at the wall bounce once. A press after it has come home, 455ms at
-the default duration, starts another. A press at the end of the strip bounces
-as before, on top of whatever is playing.
+not restarted (`OutAndBacks`): one nudge per burst, as presses at the wall
+bounce once. A press after it has come home, 455ms at the default duration,
+starts another. A press at the end of the strip bounces as before, on top of
+whatever is playing.
 
 **Pictures.** The column a full-width move passes is parked at both ends, so a
 cold cache had no picture of it, and the strip surface drew nothing for a
@@ -530,10 +574,18 @@ window with no picture: a hole in the revealed third. The surface path now
 takes the stand-in the per-window path does (`picture_or_stand_in` in
 `src/animation/domain/admission.rs`, shared by both): a known window parked off
 this display with no picture flies as the dark `--n3` tile, uncached. A window
-on this display with no picture is still placed and not drawn.
+on this display with no picture is still placed and not drawn. A strip
+movement starts at once and never holds, so the real picture of a stand-in
+whose window lands on this display, the column a move at the edge brings in
+from its park, is chased once its frame is applied (`stand_in_chase`,
+`chases_stand_in`), and the reveal swap puts it on the same tile mid-flight.
+It used to fly dark for the whole flight: nothing asked for its picture. One
+parked at both ends has nothing on screen to capture and keeps the stand-in to
+lift.
 
 Real windows go to the layout's frames at frame zero, as for any strip
-movement (`APPLY_FRAMES_AT_PAN`); the nudge is drawn only.
+movement (`APPLY_FRAMES_AT_PAN`), and only the ones whose frames changed; the
+nudge is drawn only.
 
 ## Resizes through the overlay
 
@@ -595,7 +647,8 @@ changes is how the picture maps onto it (`content_mode` in
   `claim` swaps the real picture onto the same tile at frame zero, and the
   reveal swap takes one mid-flight. It is never cached. Strip movements draw
   the same stand-in (`picture_or_stand_in`; see "The move flight"), without
-  the hold: they start `Immediate`. A window already at its slot with no
+  the hold, since they start `Immediate`: the picture of one landing on this
+  display is chased all the same. A window already at its slot with no
   picture is captured as a still tile and not chased. Growing from zero
   width (`entrance_from`; a centred zero-size zoom was tried first and read
   as the window inflating, which nothing else on the strip does) was the
@@ -705,9 +758,9 @@ changes is how the picture maps onto it (`content_mode` in
   lift measured 90ms median, p90 156, and 0.75 of a 300ms switch leaves 75ms;
   0.5 was tried next and still lost 24 of 162 flights.
 - A pass containing a resize never becomes a strip pan or a move, even when
-  the strip offset moved: the strip surface draws final sizes, which would
-  snap the resize. The strip movement and the move are still taken, so the
-  offset bookkeeping stays current and the move reaches no later pass.
+  the strip moved: the strip surface draws final sizes, which would snap the
+  resize. The strip movement and the move are still taken, so the origin
+  bookkeeping stays current and the move reaches no later pass.
 - The caster's ring mask is created once per tile and reshaped in place; a
   resize animates its path and the shadow's silhouette between the two
   endpoint shapes, which interpolate because both are built by the same
@@ -776,7 +829,11 @@ running, carrying real border windows as tiles:
   one window (`claimed`).
 - The companion rides at its real relative offset from the window's tile,
   drawn a quarter depth-step in front of it (under the next tile forward,
-  clear of the half-step shadow casters), with no shadow of its own.
+  clear of the half-step shadow casters), with no shadow of its own. It
+  records the window it traces and takes that window's band: a floating
+  window's border is floating, in the floating container with it and lifted
+  with it (`border_tile`, `band_plan`). A move's nudge carries the moved
+  window's own border and no other (see "The move flight").
 - Captured and cached like any window, keyed by synthetic ids; no picture
   yet means skipped this flight and warmed for the next. Companions join the
   post-flight warm set because borders recolor with focus.
@@ -898,7 +955,7 @@ ended in the overlay's favour.
    `AnimateSurface`, the geometry module `strip_stack`.
 5. Pan routing collapse (`take_strip_movement` and `take_move_in`, routing in
    `animate_layout`), once the strip visuals are validated; the strip movement
-   also feeds the switch's scroll-offset claim and needs care.
+   also feeds the switch's claim on the destination's origin and needs care.
    `strip_pan_delta` is already gone.
 6. ~~Shared `motion` module + wire or delete `animation_easing`~~ — the AX
    engine and `animation_easing` are gone; `MOTION_CURVE` is the one curve.

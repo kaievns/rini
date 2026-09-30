@@ -60,8 +60,8 @@ pub struct GroupMember {
     pub window: WindowId,
     /// Frame inside the container: overlay-space `from` minus the container position at install.
     pub rel: CGRect,
-    /// A border window riding the window it traces; drawn a quarter step in front of it.
-    pub companion: bool,
+    /// For a border window, the window it traces; drawn a quarter step in front of it.
+    pub companion: Option<WindowId>,
 }
 
 /// How one window takes part in a plan.
@@ -127,7 +127,7 @@ impl ReflowPlan {
         let member = GroupMember {
             window,
             rel: from,
-            companion: false,
+            companion: None,
         };
         if let Some(group) = self.groups.iter_mut().find(|g| same_vector(g.travel, vector)) {
             group.members.push(member);
@@ -142,19 +142,21 @@ impl ReflowPlan {
 
     /// Adds a tile the plan did not derive itself (a border companion) by the same
     /// rules: floating stays loose, a resize is `changing`, anything else rides the group with its vector.
+    /// A floating tile's frames are in the floating container's space, as its anchor's are, so a
+    /// floating window's border travels with the container and not a second time on its own.
     pub fn adopt<T: TileGeometry>(&mut self, tile: &T) {
         let (window, from, to) = (tile.window(), tile.from(), tile.to());
         if tile.floating() {
-            self.floating.push((window, from, to));
+            self.floating.push((window, from, group_relative(to, self.floating_travel)));
         } else if is_a_resize(from.size, to.size) {
             self.changing.push((window, from, to));
         } else {
             let key = self.place(window, from, vector_of(from, to));
-            if tile.companion()
+            if let Some(anchor) = tile.companion()
                 && let Some(group) = self.groups.iter_mut().find(|g| g.key == key)
                 && let Some(member) = group.members.iter_mut().find(|m| m.window == window)
             {
-                member.companion = true;
+                member.companion = Some(anchor);
             }
         }
     }
@@ -226,7 +228,7 @@ fn windows_in(
 ) -> Vec<WindowId> {
     let mut out: Vec<WindowId> = groups
         .iter()
-        .flat_map(|g| g.members.iter().filter(|m| !m.companion).map(|m| m.window))
+        .flat_map(|g| g.members.iter().filter(|m| m.companion.is_none()).map(|m| m.window))
         .collect();
     out.extend(changing.iter().map(|(w, _, _)| *w));
     out.extend(entrances.iter().map(|(w, _, _)| *w));
@@ -245,6 +247,9 @@ pub struct FlightPlan {
     pub floating: Vec<(WindowId, CGRect, CGRect)>,
     pub floating_travel: CGPoint,
     pub next_key: u16,
+    /// The moved window a nudge rides with. Its container takes no one else but its own borders:
+    /// anyone landing in it would be nudged too.
+    pub nudging: Option<WindowId>,
 }
 
 impl FlightPlan {
@@ -269,14 +274,14 @@ impl FlightPlan {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
 
-    /// The container a nudge of `window` rides: its group, when nothing but border companions
-    /// rides with it. Anything else in it would be nudged too.
+    /// The container a nudge of `window` rides: its group, when nothing but its own borders rides
+    /// with it. Anything else in it would be nudged too, another window's border included.
     pub fn nudge_carrier(&self, window: WindowId) -> Option<GroupKey> {
         let group = self.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))?;
         group
             .members
             .iter()
-            .all(|m| m.window == window || m.companion)
+            .all(|m| m.window == window || m.companion == Some(window))
             .then_some(group.key)
     }
 }
@@ -297,6 +302,7 @@ impl From<ReflowPlan> for FlightPlan {
             floating: plan.floating,
             floating_travel: plan.floating_travel,
             next_key,
+            nudging: None,
         }
     }
 }
@@ -318,14 +324,45 @@ pub struct Banding {
     pub group_order: Vec<GroupKey>,
 }
 
+/// Where each container of a flight is at the moment of a merge, read by the overlay just before.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Presented {
+    /// Where it is drawn, any bounce or nudge riding it included: where a member leaving it starts.
+    pub drawn: HashMap<GroupKey, CGPoint>,
+    /// Where its own leg has it, with nothing riding it: what remaining travel and a newcomer's
+    /// frame are judged against, since every destination and every frame a pass carries is one of
+    /// these.
+    pub along: HashMap<GroupKey, CGPoint>,
+}
+
+/// A flight with nothing riding its containers: each is drawn where its leg has it.
+#[cfg(test)]
+impl From<HashMap<GroupKey, CGPoint>> for Presented {
+    fn from(positions: HashMap<GroupKey, CGPoint>) -> Self {
+        Presented {
+            drawn: positions.clone(),
+            along: positions,
+        }
+    }
+}
+
+/// A container a merge opens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NewGroup {
+    pub key: GroupKey,
+    /// Where it installs, overlay space; its members and destination are in the plan.
+    pub install: CGPoint,
+    /// The container its member left, whose motion it carries on; `None` for a newcomer's.
+    pub leaving: Option<GroupKey>,
+}
+
 /// What one merge changed, for the overlay. Pure output of [`merge_plans`]; every frame the
 /// overlay needs is in the merged plan, found by window.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanDelta {
     /// Containers to animate from their presented position to `to` (overlay space).
     pub retargeted_groups: Vec<(GroupKey, CGPoint)>,
-    /// New containers with the position they install at; members and destination are in the plan.
-    pub new_groups: Vec<(GroupKey, CGPoint)>,
+    pub new_groups: Vec<NewGroup>,
     /// Members moving container: (window, from_key, to_key). The new frame is in the plan.
     pub reparented: Vec<(WindowId, GroupKey, GroupKey)>,
     /// Loose tiles to bend toward a new destination, in their container's space.
@@ -416,13 +453,15 @@ impl FlightPlan {
         }
     }
 
-    /// Opens a group installing at `install` and landing at `destination`, with one member.
+    /// Opens a group installing at `install` and landing at `destination`, with one member, which
+    /// left container `leaving` if it was in one.
     fn open_group(
         &mut self,
         install: CGPoint,
         destination: CGPoint,
         member: GroupMember,
-        presented: &mut HashMap<GroupKey, CGPoint>,
+        leaving: Option<GroupKey>,
+        presented: &mut Presented,
         delta: &mut PlanDelta,
     ) -> GroupKey {
         let key = GroupKey::Rigid(self.next_key);
@@ -432,8 +471,9 @@ impl FlightPlan {
         group.members.push(member);
         self.groups.push(group);
         self.positions.insert(key, destination);
-        presented.insert(key, install);
-        delta.new_groups.push((key, install));
+        presented.drawn.insert(key, install);
+        presented.along.insert(key, install);
+        delta.new_groups.push(NewGroup { key, install, leaving });
         key
     }
 }
@@ -451,25 +491,26 @@ fn is_zero(p: CGPoint) -> bool {
 }
 
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
-/// are reparented at presented frames, a pan adds its travel to every group and the columns a move
-/// swapped still vote under it. `presented` is where each container is drawn, read by the overlay
-/// just before. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// are reparented at the frames they are drawn at, a pan adds its travel to every group and the
+/// columns a move swapped still vote under it. `presented` is where each container is, read by the
+/// overlay just before. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,
     pan: Option<CGPoint>,
-    presented: &HashMap<GroupKey, CGPoint>,
+    presented: &Presented,
     focus: Option<WindowId>,
     viewport: CGRect,
 ) -> (FlightPlan, PlanDelta) {
     let mut next = current.clone();
     let mut delta = PlanDelta::default();
-    let mut presented: HashMap<GroupKey, CGPoint> = presented.clone();
+    let mut presented = presented.clone();
     for (key, p) in &current.positions {
-        presented.entry(*key).or_insert(*p);
+        presented.drawn.entry(*key).or_insert(*p);
+        presented.along.entry(*key).or_insert(*p);
     }
-    let presented_of = |presented: &HashMap<GroupKey, CGPoint>, key: GroupKey| {
-        presented.get(&key).copied().unwrap_or(CGPoint::new(0.0, 0.0))
+    let position_in = |positions: &HashMap<GroupKey, CGPoint>, key: GroupKey| {
+        positions.get(&key).copied().unwrap_or(CGPoint::new(0.0, 0.0))
     };
 
     // 1. A strip pan: every group and every loose strip tile moves by `d`; nothing changes hands.
@@ -576,24 +617,39 @@ pub fn merge_plans(
             .expect("a voted group has a cluster");
         let p = clusters[winner].0;
         next.move_group(key, p, &mut delta);
-        let from_presented = presented_of(&presented, key);
+        let from_drawn = position_in(&presented.drawn, key);
+        let from_along = position_in(&presented.along, key);
         for (i, (_, losers)) in clusters.iter().enumerate() {
             if i == winner {
                 continue;
             }
             for &(window, p) in losers {
                 let member = next.take_member(key, window);
-                // What the member still has to travel from where it is drawn: a group with the
-                // same remaining travel carries it there.
-                let remaining = sub(p, from_presented);
-                let to_key = match landing_for(&next, &presented, remaining, Some(key)) {
+                // What the member still has to travel: a group with the same remaining travel
+                // carries it there. Else it leaves in a container of its own from where it is
+                // drawn.
+                let remaining = sub(p, from_along);
+                let to_key = match landing_for(
+                    &next,
+                    &presented.along,
+                    remaining,
+                    Some(key),
+                    member.companion,
+                ) {
                     Some(to_key) => {
-                        let shift = sub(from_presented, presented_of(&presented, to_key));
+                        let shift = sub(from_along, position_in(&presented.along, to_key));
                         let rel = CGRect::new(add(member.rel.origin, shift), member.rel.size);
                         next.group_mut(to_key).members.push(GroupMember { rel, ..member });
                         to_key
                     }
-                    None => next.open_group(from_presented, p, member, &mut presented, &mut delta),
+                    None => next.open_group(
+                        from_drawn,
+                        p,
+                        member,
+                        Some(key),
+                        &mut presented,
+                        &mut delta,
+                    ),
                 };
                 delta.reparented.push((window, key, to_key));
             }
@@ -611,7 +667,7 @@ pub fn merge_plans(
                 Located::Group(key, rel) => {
                     // Rigid until now: it leaves its container at the frame it is drawn at.
                     next.take_member(key, window);
-                    let at = overlay_of(rel, presented_of(&presented, key));
+                    let at = overlay_of(rel, position_in(&presented.drawn, key));
                     next.changing.push((window, at, to));
                     delta.reparented.push((window, key, GroupKey::Loose));
                     delta.retargeted_tiles.push((window, to));
@@ -639,8 +695,9 @@ pub fn merge_plans(
             Located::Floating(i) => retarget_loose(&mut next.floating, i, to_rel, &mut delta),
             Located::Group(key, rel) => {
                 next.take_member(key, window);
-                let at = overlay_of(rel, presented_of(&presented, key));
-                let from_rel = group_relative(at, presented_of(&presented, GroupKey::Floating));
+                let at = overlay_of(rel, position_in(&presented.drawn, key));
+                let from_rel =
+                    group_relative(at, position_in(&presented.drawn, GroupKey::Floating));
                 next.floating.push((window, from_rel, to_rel));
                 delta.reparented.push((window, key, GroupKey::Floating));
                 delta.retargeted_tiles.push((window, to_rel));
@@ -648,7 +705,8 @@ pub fn merge_plans(
             Located::Changing(i) => retarget_loose(&mut next.changing, i, to, &mut delta),
             Located::Entrance(i) => retarget_loose(&mut next.entrances, i, to, &mut delta),
             Located::Absent => {
-                let from_rel = group_relative(from, presented_of(&presented, GroupKey::Floating));
+                let from_rel =
+                    group_relative(from, position_in(&presented.along, GroupKey::Floating));
                 next.floating.push((window, from_rel, to_rel));
                 delta.joined_tiles.push((window, GroupKey::Floating));
             }
@@ -686,40 +744,49 @@ fn retarget_loose(
     delta.retargeted_tiles.push((list[index].0, to));
 }
 
-/// The group whose remaining travel (destination less presented position) matches `remaining`.
+/// The group whose remaining travel (destination less where its leg has it, `along`) matches
+/// `remaining`, for a member arriving from elsewhere; a border prefers the group of the window it
+/// traces. A container a nudge rides takes only its moved window's own borders.
 fn landing_for(
     next: &FlightPlan,
-    presented: &HashMap<GroupKey, CGPoint>,
+    along: &HashMap<GroupKey, CGPoint>,
     remaining: CGPoint,
     exclude: Option<GroupKey>,
+    companion: Option<WindowId>,
 ) -> Option<GroupKey> {
-    next.groups
+    let holds = |g: &RigidGroup, window: WindowId| g.members.iter().any(|m| m.window == window);
+    let fits = |g: &&RigidGroup| {
+        let p = along.get(&g.key).copied().unwrap_or(next.position(g.key));
+        let takes = next.nudging.is_none_or(|moved| !holds(g, moved) || companion == Some(moved));
+        Some(g.key) != exclude && takes && same_vector(sub(next.position(g.key), p), remaining)
+    };
+    let traced = next
+        .groups
         .iter()
-        .filter(|g| Some(g.key) != exclude)
-        .find(|g| {
-            let p = presented.get(&g.key).copied().unwrap_or(next.position(g.key));
-            same_vector(sub(next.position(g.key), p), remaining)
-        })
-        .map(|g| g.key)
+        .filter(fits)
+        .find(|g| companion.is_some_and(|anchor| holds(g, anchor)));
+    traced.or_else(|| next.groups.iter().find(fits)).map(|g| g.key)
 }
 
-/// A rigid newcomer: rides a group whose remaining travel matches its vector, else opens one.
+/// A rigid newcomer: rides a group whose remaining travel matches its vector, else opens one. Its
+/// frame is a place on the strip, as the group's leg is, so it is taken against that and not where
+/// the group is drawn: a bounce or nudge riding the group carries the newcomer with it.
 fn join(
     next: &mut FlightPlan,
     member: GroupMember,
     vector: CGPoint,
-    presented: &mut HashMap<GroupKey, CGPoint>,
+    presented: &mut Presented,
     delta: &mut PlanDelta,
 ) {
-    match landing_for(next, presented, vector, None) {
+    match landing_for(next, &presented.along, vector, None, member.companion) {
         Some(key) => {
-            let p = presented.get(&key).copied().unwrap_or(next.position(key));
+            let p = presented.along.get(&key).copied().unwrap_or(next.position(key));
             let rel = group_relative(member.rel, p);
             next.group_mut(key).members.push(GroupMember { rel, ..member });
             delta.joined_tiles.push((member.window, key));
         }
         None => {
-            next.open_group(CGPoint::new(0.0, 0.0), vector, member, presented, delta);
+            next.open_group(CGPoint::new(0.0, 0.0), vector, member, None, presented, delta);
         }
     }
 }

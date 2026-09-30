@@ -128,6 +128,27 @@ impl Leg {
         }
     }
 
+    /// The leg of a container opened mid-flight for a member leaving `source`: from where the
+    /// member is drawn, `install`, as fast as `source`'s leg is going at `now` (at rest with none),
+    /// pulled toward `to`. A curve there started it from rest, and the curve leaves at 6.25x its
+    /// average speed: the column a second move passes left the strip at 12x the speed it had a
+    /// frame before.
+    pub fn leaving(
+        source: Option<&Leg>,
+        install: CGPoint,
+        to: CGPoint,
+        now: f64,
+        omega: f64,
+    ) -> Leg {
+        Leg::Spring {
+            from: install,
+            to,
+            velocity: source.map_or(CGPoint::new(0.0, 0.0), |leg| leg.velocity_at(now)),
+            begin: now,
+            omega,
+        }
+    }
+
     /// How long the leg runs. A spring runs until it has landed; see `SETTLED_PT`.
     pub fn seconds(&self) -> f64 {
         match *self {
@@ -284,6 +305,29 @@ mod tests {
             Leg::toward(Some(&moving), model, to, 0.1, omega),
             moving.retarget(to, 0.1, omega),
             "a container with a leg bends it"
+        );
+    }
+
+    /// A member leaving a moving container mid-flight goes on from where it is drawn exactly as
+    /// fast as the container it left, and lands where it is going.
+    #[test]
+    fn a_member_leaving_a_container_keeps_its_speed() {
+        let omega = spring_omega(DURATION);
+        let strip = curve(0.0, -2.0 * COLUMN);
+        let now = 0.12;
+        let install = CGPoint::new(strip.position_at(now).x + 36.0, 0.0);
+        let to = CGPoint::new(-3.0 * COLUMN, 0.0);
+        let leg = Leg::leaving(Some(&strip), install, to, now, omega);
+        assert_eq!(leg.position_at(now), install);
+        assert!(close(leg.velocity_at(now).x, strip.velocity_at(now).x, 1e-6));
+        assert!(strip.velocity_at(now).x.abs() > 1000.0, "it was moving");
+        assert!(close(leg.position_at(now + leg.seconds()).x, to.x, SETTLED_PT));
+
+        let still = Leg::leaving(None, install, to, now, omega);
+        assert_eq!(
+            still.velocity_at(now),
+            CGPoint::new(0.0, 0.0),
+            "from a still one, at rest"
         );
     }
 

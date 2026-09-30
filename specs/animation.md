@@ -49,9 +49,19 @@ only the transitions are missing.
   not the strip scrolls. Both start from the places they held and cross; the rest of the strip moves
   only as the view does. Drawing the finished layout and scrolling the view to it shows the swap
   only where nothing scrolls.
+- Every window MUST start from where it was on screen. The view moves wherever the strip moves on
+  screen, not only when it scrolls: a centred column that loses its centring as it moves shifts the
+  whole strip with the scroll offset unchanged.
 - A moved window whose own travel on screen is small MUST step a third of the display toward where it
   is going and come back, the column it passes seen sliding the other way beneath it. Small is under
   a quarter of the display: a full-width column the view follows does not move on screen at all.
+- A move arriving while a flight still gathers its passes MUST step once that flight moves.
+- The one exception is a moved window that travels exactly as another window does and so shares its
+  piece of the strip: stepping the piece would step that window too, so it does not step.
+- A flight MUST run longer to carry the step only when it steps.
+- The step MUST carry the moved window's own border and nothing else. Every other window and border,
+  a floating window's included, stays where its own window is, and a border arriving mid-step steps
+  with the window it traces.
 - The step MUST leave and come back at rest. On the bounce's shape a third of a 1720pt display,
   573pt, leaves at 29,235pt/s over the default 0.35s: the kind of jolt reported under "Arriving
   mid-flight".
@@ -96,7 +106,8 @@ destination for a window already moving.
   key restarts the animation on every repeat and it never lands.
 - A pass with a new destination for a moving window MUST bend that window toward it rather than
   restarting: it continues from where it is drawn, at the speed it is moving. Its speed MUST NOT jump,
-  so a burst of presses reads as one movement that settles after the last.
+  so a burst of presses reads as one movement that settles after the last. That holds for a window a
+  pass takes out of the piece it rode, as a second move does with the column it passes.
 
 > **Reported 2026-09-29.** "as a general rule animation should not get interrupted mid-filight and
 > restarted a new, the target should fluidly move to the next window and feel like one smooth extended
@@ -148,7 +159,9 @@ along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
   place, moving exactly as its picture would. That holds for every flight: a layout pass, a strip
   scroll, a switch and a move, where the column a full-width window passes is parked at both ends.
 - The stand-in MUST keep the window's rounded corners, and MUST be replaced by the window's real picture
-  as soon as one lands, on the same tile, so nothing else in the flight is disturbed.
+  as soon as one lands, on the same tile, so nothing else in the flight is disturbed. A flight that does
+  not wait for pictures, a strip movement, MUST ask for the picture of a window it brings onto this
+  display once the window is placed there.
 - The stand-in MUST NOT be cached. Cached, it would be lent to the switcher as the window's picture and
   taken for one by the next flight.
 - A genuinely new window, on this display with no picture, keeps its spawn capture and entrance.

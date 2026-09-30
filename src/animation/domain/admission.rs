@@ -4,12 +4,16 @@
 //! different destination for a window already moving, or with a window the first pass had not placed.
 //! Admitting one into the other without a visible jump is what these decisions are for.
 
+use std::time::Instant;
+
 use objc2_core_foundation::{CGRect, CGSize};
 
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
 
+use crate::animation::domain::motion::plan::GroupKey;
 use crate::animation::domain::motion::surface::to_overlay_space;
+use crate::animation::domain::timing::{OutAndBack, OutAndBacks};
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
@@ -137,6 +141,46 @@ pub(in crate::animation) fn picture_or_stand_in<S>(
     stand_in: impl FnOnce() -> Option<S>,
 ) -> Option<S> {
     picture.or_else(|| stands_in(server_frame(), display).then(stand_in).flatten())
+}
+
+/// Whether a flight that does not hold chases the real picture of a window flying as the stand-in:
+/// when the window lands on this display, where a framed capture sees it once its frame is applied.
+/// One parked at both ends has nothing on screen to capture.
+pub(in crate::animation) fn chases_stand_in(destination: CGRect, display: CGRect) -> bool {
+    !rini_geometry::is_off_screen(display, destination)
+}
+
+/// What becomes of a moved window's nudge. See "The move flight" in
+/// `src/animation/docs/animation-smoothness.md`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::animation) enum NudgeAdmission {
+    /// It rides this container from now, and the flight is stretched to carry it.
+    Start(GroupKey),
+    /// The flight is still collecting passes, which recomposes its containers and would drop it:
+    /// it starts when the flight does.
+    Wait,
+    /// Not in this flight, which keeps its plain duration.
+    Skip(&'static str),
+}
+
+/// The nudge's admission from what is playing, whether the flight moves yet, and the container it
+/// would ride (`FlightPlan::nudge_carrier`). An edge bounce playing never holds it off.
+pub(in crate::animation) fn nudge_admission(
+    playing: &OutAndBacks,
+    now: Instant,
+    moving: bool,
+    carrier: Option<GroupKey>,
+) -> NudgeAdmission {
+    if !playing.admits(OutAndBack::Nudge, now) {
+        return NudgeAdmission::Skip("one is still playing");
+    }
+    if !moving {
+        return NudgeAdmission::Wait;
+    }
+    match carrier {
+        Some(key) => NudgeAdmission::Start(key),
+        None => NudgeAdmission::Skip("the moved window shares its container"),
+    }
 }
 
 /// How a newly opened window enters a flight.
@@ -526,6 +570,70 @@ mod tests {
                 display
             ),
             "a zero frame is not a window to stand in for"
+        );
+    }
+
+    /// The column a move at the edge passes comes in from its park with no picture: its real
+    /// picture is chased once it is on screen. One parked at both ends is not, nor one on another
+    /// display.
+    #[test]
+    fn a_stand_in_landing_on_this_display_is_chased() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        assert!(chases_stand_in(rect(868.0, 32.0, 856.0, 1081.0), display));
+        assert!(
+            chases_stand_in(rect(-400.0, 32.0, 856.0, 1081.0), display),
+            "partly on"
+        );
+        assert!(!chases_stand_in(rect(1727.0, 1085.0, 1720.0, 1081.0), display));
+        assert!(!chases_stand_in(rect(-3446.0, 32.0, 1720.0, 1081.0), display));
+    }
+
+    fn nudging_since(now: Instant) -> OutAndBacks {
+        let mut playing = OutAndBacks::default();
+        playing.start(OutAndBack::Nudge, now, std::time::Duration::from_millis(455));
+        playing
+    }
+
+    /// Every combination the engine meets: one playing holds a nudge off whatever else holds, a
+    /// flight still collecting makes it wait, and a moved window sharing its container is not
+    /// nudged.
+    #[test]
+    fn a_nudge_is_admitted_once_per_burst_and_only_on_a_container_of_its_own() {
+        use std::time::Duration;
+        let now = Instant::now();
+        let soon = now + Duration::from_millis(100);
+        let key = Some(GroupKey::Rigid(3));
+        let idle = OutAndBacks::default();
+        assert_eq!(
+            nudge_admission(&idle, now, true, key),
+            NudgeAdmission::Start(GroupKey::Rigid(3))
+        );
+        assert_eq!(nudge_admission(&idle, now, false, key), NudgeAdmission::Wait);
+        assert!(matches!(
+            nudge_admission(&idle, now, true, None),
+            NudgeAdmission::Skip(_)
+        ));
+        assert_eq!(nudge_admission(&idle, now, false, None), NudgeAdmission::Wait);
+        for moving in [true, false] {
+            assert!(
+                matches!(
+                    nudge_admission(&nudging_since(now), soon, moving, key),
+                    NudgeAdmission::Skip(_)
+                ),
+                "a press while the step plays starts no other"
+            );
+        }
+        let mut bouncing = OutAndBacks::default();
+        bouncing.start(OutAndBack::Bounce, now, Duration::from_millis(350));
+        assert_eq!(
+            nudge_admission(&bouncing, soon, true, key),
+            NudgeAdmission::Start(GroupKey::Rigid(3)),
+            "a bounce at the end never holds the step off"
+        );
+        assert_eq!(
+            nudge_admission(&nudging_since(now), now + Duration::from_millis(455), true, key),
+            NudgeAdmission::Start(GroupKey::Rigid(3)),
+            "once it is home the next press steps again"
         );
     }
 

@@ -269,14 +269,15 @@ impl LayoutEngine {
         self.virtual_workspace_manager.update_settings(settings, &self.layout_settings);
     }
 
-    /// Where the strip's viewport sits on `space`, in points along the strip.
+    /// Where the active strip's first column starts on `space`, against the tiling area's left edge.
     ///
-    /// `None` when the space has no active workspace. Callers compare it against the value they last saw to
-    /// learn how far the strip moved, which is exact and needs no reference to any window's real frame.
-    pub fn strip_scroll_offset(&self, space: SpaceId) -> Option<f64> {
+    /// `None` when the space has no active workspace or its strip has not been laid out. Callers compare
+    /// it against the value they last saw to learn how far the strip moved on screen, which is exact and
+    /// needs no reference to any window's real frame.
+    pub fn strip_origin(&self, space: SpaceId) -> Option<f64> {
         let (ws_id, layout) = self.workspace_and_layout(space)?;
         let system = self.workspace_tree(ws_id);
-        system.scroll_offset(layout)
+        system.strip_origin(layout)
     }
 
     fn active_floating_windows_in_workspace(

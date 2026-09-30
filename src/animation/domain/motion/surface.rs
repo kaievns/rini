@@ -42,7 +42,8 @@ pub trait TileGeometry {
     fn from(&self) -> CGRect;
     fn to(&self) -> CGRect;
     fn floating(&self) -> bool;
-    fn companion(&self) -> bool;
+    /// For a border window, the window it traces.
+    fn companion(&self) -> Option<WindowId>;
 }
 
 /// Where each tile of a strip movement starts and ends on screen, in overlay coordinates.
