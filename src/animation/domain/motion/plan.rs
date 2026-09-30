@@ -247,9 +247,6 @@ pub struct FlightPlan {
     pub floating: Vec<(WindowId, CGRect, CGRect)>,
     pub floating_travel: CGPoint,
     pub next_key: u16,
-    /// The moved window a nudge rides with. Its container takes no one else but its own borders:
-    /// anyone landing in it would be nudged too.
-    pub nudging: Option<WindowId>,
 }
 
 impl FlightPlan {
@@ -273,17 +270,6 @@ impl FlightPlan {
     pub fn windows(&self) -> Vec<WindowId> {
         windows_in(&self.groups, &self.changing, &self.entrances, &self.floating)
     }
-
-    /// The container a nudge of `window` rides: its group, when nothing but its own borders rides
-    /// with it. Anything else in it would be nudged too, another window's border included.
-    pub fn nudge_carrier(&self, window: WindowId) -> Option<GroupKey> {
-        let group = self.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))?;
-        group
-            .members
-            .iter()
-            .all(|m| m.window == window || m.companion == Some(window))
-            .then_some(group.key)
-    }
 }
 
 impl From<ReflowPlan> for FlightPlan {
@@ -302,7 +288,6 @@ impl From<ReflowPlan> for FlightPlan {
             floating: plan.floating,
             floating_travel: plan.floating_travel,
             next_key,
-            nudging: None,
         }
     }
 }
@@ -746,7 +731,7 @@ fn retarget_loose(
 
 /// The group whose remaining travel (destination less where its leg has it, `along`) matches
 /// `remaining`, for a member arriving from elsewhere; a border prefers the group of the window it
-/// traces. A container a nudge rides takes only its moved window's own borders.
+/// traces.
 fn landing_for(
     next: &FlightPlan,
     along: &HashMap<GroupKey, CGPoint>,
@@ -757,8 +742,7 @@ fn landing_for(
     let holds = |g: &RigidGroup, window: WindowId| g.members.iter().any(|m| m.window == window);
     let fits = |g: &&RigidGroup| {
         let p = along.get(&g.key).copied().unwrap_or(next.position(g.key));
-        let takes = next.nudging.is_none_or(|moved| !holds(g, moved) || companion == Some(moved));
-        Some(g.key) != exclude && takes && same_vector(sub(next.position(g.key), p), remaining)
+        Some(g.key) != exclude && same_vector(sub(next.position(g.key), p), remaining)
     };
     let traced = next
         .groups
@@ -845,9 +829,10 @@ pub fn plan_from_tiles<T: TileGeometry>(tiles: &[T]) -> ReflowPlan {
     plan
 }
 
-/// A strip movement as rigid pieces: the strip is one piece, and each column a move swapped is a
-/// piece of its own, grouped by the vector it travels. The surface is already overlay space.
-/// Pinned windows stand in the floating container; unpinned floating windows ride it by the strip's travel.
+/// A strip movement as rigid pieces: the strip is one piece, and each column a move swapped that
+/// crosses it is a piece of its own, grouped by the vector it travels. The surface is already
+/// overlay space. Pinned windows stand in the floating container; unpinned floating windows ride
+/// it by the strip's travel.
 pub fn surface_plan(
     windows: &[SurfaceWindow],
     from_offset: CGPoint,
@@ -878,12 +863,13 @@ pub fn surface_plan(
     plan
 }
 
-/// Whether the container `key` names takes part in a bounce by `overshoot`. Strip containers
-/// always; the floating container only when the bounce is vertical, the same rule a pan (floating
-/// pinned) and a switch (floating carried) follow.
-pub fn bounce_carries(key: GroupKey, overshoot: CGPoint) -> bool {
+/// Whether the container `key` names takes part in an out-and-back by `offset`, an edge bounce or
+/// a move's nudge. Strip containers always; the floating container only when it is vertical, the
+/// same rule a pan (floating pinned) and a switch (floating carried) follow. A nudge is always
+/// sideways, so it steps the whole strip and never a floating window.
+pub fn carries_out_and_back(key: GroupKey, offset: CGPoint) -> bool {
     match key {
-        GroupKey::Floating => overshoot.y != 0.0,
+        GroupKey::Floating => offset.y != 0.0,
         GroupKey::Rigid(_) | GroupKey::Loose => true,
     }
 }
@@ -1137,18 +1123,29 @@ mod tests {
         }
     }
 
-    /// Strip containers always bounce; the floating container only with the stack (vertical),
-    /// the way a pan pins floating windows and a switch carries them.
+    /// Strip containers always bounce and step; the floating container only with the stack
+    /// (vertical), the way a pan pins floating windows and a switch carries them. A move's step is
+    /// sideways, so it never carries a floating window.
     #[test]
-    fn the_floating_container_bounces_only_vertically() {
+    fn the_floating_container_bounces_only_vertically_and_never_steps() {
         let sideways = CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0);
         let upward = CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT);
+        let steps = [
+            crate::animation::domain::motion::strip_move::nudge(1728.0, Direction::Right),
+            crate::animation::domain::motion::strip_move::nudge(1728.0, Direction::Left),
+        ];
         for key in [GroupKey::Rigid(0), GroupKey::Rigid(3), GroupKey::Loose] {
-            assert!(bounce_carries(key, sideways), "{key:?}");
-            assert!(bounce_carries(key, upward), "{key:?}");
+            assert!(carries_out_and_back(key, sideways), "{key:?}");
+            assert!(carries_out_and_back(key, upward), "{key:?}");
+            for step in steps {
+                assert!(carries_out_and_back(key, step.unwrap()), "{key:?}");
+            }
         }
-        assert!(!bounce_carries(GroupKey::Floating, sideways));
-        assert!(bounce_carries(GroupKey::Floating, upward));
+        assert!(!carries_out_and_back(GroupKey::Floating, sideways));
+        assert!(carries_out_and_back(GroupKey::Floating, upward));
+        for step in steps {
+            assert!(!carries_out_and_back(GroupKey::Floating, step.unwrap()));
+        }
     }
 
     /// The surface gives the way the view was pushed: focus right at the last column pulls the

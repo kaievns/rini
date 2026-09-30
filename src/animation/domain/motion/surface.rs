@@ -1,5 +1,6 @@
 //! One surface of windows moved as a whole by a travelling viewport: the model behind a strip pan,
-//! a workspace switch and a move along the strip, whose two swapped columns also cross the surface.
+//! a workspace switch and a move along the strip, whose swapped columns also cross the surface
+//! unless the move holds one on it.
 //! Nothing here knows what the surface holds.
 
 use objc2_core_foundation::{CGPoint, CGRect};

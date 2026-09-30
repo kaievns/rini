@@ -1,8 +1,9 @@
-//! The one curve every movement runs on, and the shapes of the two out-and-backs: the edge bounce
-//! and a moved window's nudge. Core Animation takes the same control points, so the clock and the
-//! render server agree.
+//! The curve every movement runs on, the one the strip crosses on while a move steps it, and the
+//! shapes of the two out-and-backs: the edge bounce and a move's nudge. Core Animation takes the
+//! same control points, so the clock and the render server agree.
 
-/// The one curve every movement runs on, as CSS-style cubic Bezier control points `(x1, y1, x2, y2)`.
+/// The curve every movement runs on but a stepping move's (`EASE_IN_OUT`), as CSS-style cubic
+/// Bezier control points `(x1, y1, x2, y2)`.
 ///
 /// An exponential ease-out: off the line at once and 97% of the way there by half time, so the
 /// motion reads as finished well inside `animation_duration` and the tail is a settle, not a crawl.
@@ -13,6 +14,16 @@ pub const MOTION_CURVE: CubicBezier = CubicBezier {
     x1: 0.16,
     y1: 1.0,
     x2: 0.3,
+    y2: 1.0,
+};
+
+/// CSS `ease-in-out`: at rest at both ends, fastest at half time. The strip crosses on it while a
+/// move steps it, so the column the move passed is still in the side the step opens
+/// (`strip_move::flight_curve`).
+pub const EASE_IN_OUT: CubicBezier = CubicBezier {
+    x1: 0.42,
+    y1: 0.0,
+    x2: 0.58,
     y2: 1.0,
 };
 
@@ -134,7 +145,7 @@ pub fn bounce_displacement(t: f64) -> f64 {
     }
 }
 
-/// The displacement of a moved window's nudge at progress `t`, for a unit offset: `sin²(πt)`, at
+/// The displacement of a move's nudge at progress `t`, for a unit offset: `sin²(πt)`, at
 /// rest and motionless at both ends and furthest out at half time. Why not the bounce's shape is in
 /// "The move flight", `src/animation/docs/animation-smoothness.md`.
 pub fn nudge_displacement(t: f64) -> f64 {

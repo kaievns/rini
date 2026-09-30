@@ -24,7 +24,7 @@ pub use crate::animation::domain::motion::easing::{
 };
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
 pub(crate) use crate::animation::domain::motion::plan::{
-    AnimationTarget, animation_targets, bounce_carries,
+    AnimationTarget, animation_targets, carries_out_and_back,
 };
 use crate::animation::domain::motion::plan::{
     Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented, group_relative,
@@ -36,6 +36,7 @@ pub use crate::animation::domain::motion::tile::{
     lerp_rect, placeholder_mode, resize_in_flight,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
+use crate::animation::domain::timing::OutAndBack;
 use crate::animation::platform::edge_dressing::{boundary_layout, tile_corner_radius};
 use crate::animation::platform::window_snapshot::{SnapshotImage, WindowSnapshot};
 use crate::displays::domain::screen::CoordinateConverter;
@@ -175,9 +176,9 @@ const TILE_ANIMATION_KEY: &str = "rini.tile.move";
 /// One key per container movement, for the same reason.
 const GROUP_ANIMATION_KEY: &str = "rini.group.move";
 
-/// `MOTION_CURVE` in Core Animation form, so `ease` and the render server run one curve.
-fn motion_timing() -> Retained<CAMediaTimingFunction> {
-    let c = MOTION_CURVE;
+/// A curve in Core Animation form, from the four numbers the actor's clock evaluates, so the two
+/// run the same curve.
+fn timing_function(c: CubicBezier) -> Retained<CAMediaTimingFunction> {
     CAMediaTimingFunction::functionWithControlPoints(
         c.x1 as f32,
         c.y1 as f32,
@@ -186,12 +187,13 @@ fn motion_timing() -> Retained<CAMediaTimingFunction> {
     )
 }
 
-/// An explicit begin on the media clock plus a length. Every animation of one leg shares one
-/// `Timing`, so a leg re-installed with it continues on the same curve instead of restarting.
+/// An explicit begin on the media clock, a length and a curve. Every animation of one leg shares
+/// one `Timing`, so a leg re-installed with it continues on the same curve instead of restarting.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Timing {
     begin: f64,
     seconds: f64,
+    curve: CubicBezier,
 }
 
 impl Timing {
@@ -199,11 +201,12 @@ impl Timing {
         Timing {
             begin: objc2_quartz_core::CACurrentMediaTime(),
             seconds: duration.as_secs_f64(),
+            curve: MOTION_CURVE,
         }
     }
 
     fn apply(&self, animation: &CABasicAnimation) {
-        animation.setTimingFunction(Some(&motion_timing()));
+        animation.setTimingFunction(Some(&timing_function(self.curve)));
         animation.setDuration(self.seconds);
         animation.setBeginTime(self.begin);
     }
@@ -274,7 +277,7 @@ fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAn
         [0.0, BOUNCE_TURN, 1.0].into_iter().map(NSNumber::numberWithDouble).collect();
     animation.setKeyTimes(Some(&NSArray::from_retained_slice(&key_times)));
     animation.setTimingFunctions(Some(&NSArray::from_retained_slice(&[
-        motion_timing(),
+        timing_function(MOTION_CURVE),
         CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionEaseInEaseOut }),
     ])));
     animation.setAdditive(true);
@@ -283,7 +286,7 @@ fn bounce_animation(overshoot: CGPoint, timing: Timing) -> Retained<CAKeyframeAn
     animation
 }
 
-/// One key for a moved window's nudge, apart from the bounce's so neither stops the other.
+/// One key for a move's nudge, apart from the bounce's so neither stops the other.
 const NUDGE_ANIMATION_KEY: &str = "rini.group.nudge";
 
 /// An additive position animation out to `offset` and back along `nudge_samples`, so it rides a
@@ -830,9 +833,13 @@ impl TileOverlay {
     }
 
     /// Hands a composed flight to Core Animation in one transaction: exactly the movements
-    /// `animation_targets` names. A zero duration lands everything with no animation.
-    pub(crate) fn fly(&mut self, plan: &FlightPlan, duration: Duration) {
-        let timing = Timing::starting_now(duration);
+    /// `animation_targets` names, every container on `curve`. A zero duration lands everything with
+    /// no animation.
+    pub(crate) fn fly(&mut self, plan: &FlightPlan, duration: Duration, curve: CubicBezier) {
+        let timing = Timing {
+            curve,
+            ..Timing::starting_now(duration)
+        };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for target in animation_targets(plan) {
@@ -872,45 +879,38 @@ impl TileOverlay {
         commit_now();
     }
 
-    /// Nudges the containers by `overshoot` and back, additively, on top of any movement in flight.
-    /// See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
-    pub(crate) fn bounce(&mut self, overshoot: CGPoint, duration: Duration) {
+    /// Takes every container `carries_out_and_back` names out to `offset` and back, additively, on
+    /// top of any movement in flight, under a key of the kind's own: the edge bounce's shape or the
+    /// nudge's. See "Edge bounce" and "The move flight" in
+    /// `src/animation/docs/animation-smoothness.md`.
+    pub(in crate::animation) fn out_and_back(
+        &mut self,
+        kind: OutAndBack,
+        offset: CGPoint,
+        duration: Duration,
+    ) {
         if duration.is_zero() {
             return;
         }
         let timing = Timing::starting_now(duration);
+        let key_name = NSString::from_str(match kind {
+            OutAndBack::Bounce => BOUNCE_ANIMATION_KEY,
+            OutAndBack::Nudge => NUDGE_ANIMATION_KEY,
+        });
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         let keys: Vec<GroupKey> = self.containers.keys().copied().collect();
         for key in keys {
-            if !bounce_carries(key, overshoot) {
+            if !carries_out_and_back(key, offset) {
                 continue;
             }
             for layer in self.layers_of(key) {
-                let animation = bounce_animation(overshoot, timing);
-                layer.addAnimation_forKey(
-                    &animation,
-                    Some(&NSString::from_str(BOUNCE_ANIMATION_KEY)),
-                );
+                let animation = match kind {
+                    OutAndBack::Bounce => bounce_animation(offset, timing),
+                    OutAndBack::Nudge => nudge_animation(offset, timing),
+                };
+                layer.addAnimation_forKey(&animation, Some(&key_name));
             }
-        }
-        commit_now();
-    }
-
-    /// Steps the container `key` names out to `offset` and back, additively, on top of any
-    /// movement in flight. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
-    pub(crate) fn nudge(&mut self, key: GroupKey, offset: CGPoint, duration: Duration) {
-        if duration.is_zero() {
-            return;
-        }
-        let timing = Timing::starting_now(duration);
-        CATransaction::begin();
-        CATransaction::setDisableActions(true);
-        for layer in self.layers_of(key) {
-            layer.addAnimation_forKey(
-                &nudge_animation(offset, timing),
-                Some(&NSString::from_str(NUDGE_ANIMATION_KEY)),
-            );
         }
         commit_now();
     }
@@ -1228,6 +1228,7 @@ impl TileOverlay {
                     to,
                     begin: timing.begin,
                     seconds: timing.seconds,
+                    curve: timing.curve,
                 },
             );
         }
@@ -1800,8 +1801,12 @@ mod tests {
         );
     }
 
+    /// `timing_function` hands Core Animation the four numbers the clock evaluates, so the clock
+    /// must solve the same Bezier: the motion curve, and the ease-in-out a stepping move's strip
+    /// crosses on.
     #[test]
     fn the_clock_and_the_render_server_run_one_curve() {
+        use crate::animation::domain::motion::easing::EASE_IN_OUT;
         for step in 0..=1000 {
             let s = step as f64 / 1000.0;
             let (x, y) = MOTION_CURVE.at(s);
@@ -1809,6 +1814,11 @@ mod tests {
                 (ease(x) - y).abs() < 1e-6,
                 "the curves diverge at s={s}: ease({x})={} y={y}",
                 ease(x)
+            );
+            let (x, y) = EASE_IN_OUT.at(s);
+            assert!(
+                (EASE_IN_OUT.ease(x) - y).abs() < 1e-6,
+                "the ease-in-out diverges at s={s}"
             );
         }
         // Ease-out cubic has a closed form: the thirds Bezier.

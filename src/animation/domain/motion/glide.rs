@@ -3,7 +3,7 @@
 //! `src/animation/docs/animation-smoothness.md`.
 use objc2_core_foundation::CGPoint;
 
-use super::easing::{MOTION_CURVE, ease};
+use super::easing::CubicBezier;
 
 /// Within this of its target and slower than `SETTLED_SPEED`, a spring has landed.
 const SETTLED_PT: f64 = 0.5;
@@ -19,12 +19,14 @@ pub fn spring_omega(duration: f64) -> f64 {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Leg {
-    /// `from` to `to` along `MOTION_CURVE`, from `begin` for `seconds`.
+    /// `from` to `to` along `curve`, from `begin` for `seconds`: `MOTION_CURVE`, or `EASE_IN_OUT`
+    /// for the strip a move steps.
     Curve {
         from: CGPoint,
         to: CGPoint,
         begin: f64,
         seconds: f64,
+        curve: CubicBezier,
     },
     /// A critically damped spring pulling toward `to` at `omega`, let go at `from` moving at
     /// `velocity` points a second.
@@ -56,8 +58,14 @@ impl Leg {
 
     pub fn position_at(&self, now: f64) -> CGPoint {
         match *self {
-            Leg::Curve { from, to, begin, seconds } => {
-                let p = ease(((now - begin) / seconds.max(1e-9)).clamp(0.0, 1.0));
+            Leg::Curve {
+                from,
+                to,
+                begin,
+                seconds,
+                curve,
+            } => {
+                let p = curve.ease(((now - begin) / seconds.max(1e-9)).clamp(0.0, 1.0));
                 CGPoint::new(from.x + (to.x - from.x) * p, from.y + (to.y - from.y) * p)
             }
             Leg::Spring {
@@ -79,9 +87,15 @@ impl Leg {
     /// Points a second, per axis.
     pub fn velocity_at(&self, now: f64) -> CGPoint {
         match *self {
-            Leg::Curve { from, to, begin, seconds } => {
+            Leg::Curve {
+                from,
+                to,
+                begin,
+                seconds,
+                curve,
+            } => {
                 let seconds = seconds.max(1e-9);
-                let rate = MOTION_CURVE.slope((now - begin) / seconds) / seconds;
+                let rate = curve.slope((now - begin) / seconds) / seconds;
                 CGPoint::new((to.x - from.x) * rate, (to.y - from.y) * rate)
             }
             Leg::Spring {
@@ -130,9 +144,9 @@ impl Leg {
 
     /// The leg of a container opened mid-flight for a member leaving `source`: from where the
     /// member is drawn, `install`, as fast as `source`'s leg is going at `now` (at rest with none),
-    /// pulled toward `to`. A curve there started it from rest, and the curve leaves at 6.25x its
-    /// average speed: the column a second move passes left the strip at 12x the speed it had a
-    /// frame before.
+    /// pulled toward `to`. `MOTION_CURVE` there started it from rest, and that curve leaves at
+    /// 6.25x its average speed: the column a second move passes left the strip at 12x the speed it
+    /// had a frame before.
     pub fn leaving(
         source: Option<&Leg>,
         install: CGPoint,
@@ -191,6 +205,7 @@ impl Leg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
 
     const DURATION: f64 = 0.35;
     const COLUMN: f64 = 861.0;
@@ -201,6 +216,7 @@ mod tests {
             to: CGPoint::new(to, 0.0),
             begin: 0.0,
             seconds: DURATION,
+            curve: MOTION_CURVE,
         }
     }
 
@@ -337,5 +353,56 @@ mod tests {
         let leg = curve(0.0, 0.0).retarget(CGPoint::new(-COLUMN, 0.0), 0.0, spring_omega(DURATION));
         let seconds = leg.seconds();
         assert!(seconds > 0.2 && seconds < 0.4, "{seconds}");
+    }
+
+    /// The strip a move steps crosses on the ease-in-out, and its leg says where it is and how fast
+    /// it goes on that curve: at rest at both ends, the rate the derivative of the position. A
+    /// press arriving mid-crossing bends it from there, and a column leaving it mid-crossing leaves
+    /// as fast as it was going.
+    #[test]
+    fn a_leg_on_the_ease_in_out_bends_without_a_kick() {
+        let seconds = DURATION * crate::animation::domain::motion::strip_move::NUDGE_STRETCH;
+        let crossing = Leg::Curve {
+            from: CGPoint::new(0.0, 0.0),
+            to: CGPoint::new(-862.0, 0.0),
+            begin: 0.0,
+            seconds,
+            curve: EASE_IN_OUT,
+        };
+        assert_eq!(crossing.velocity_at(0.0).x, 0.0, "leaves at rest");
+        assert!(
+            crossing.velocity_at(seconds * 0.999).x.abs() < 10.0,
+            "lands at rest"
+        );
+        assert!(
+            close(crossing.position_at(seconds / 2.0).x, -431.0, 1e-6),
+            "half way at half time"
+        );
+        for now in [0.03, 0.1, 0.2, 0.3, 0.4] {
+            let h = 1e-5;
+            let numeric =
+                (crossing.position_at(now + h).x - crossing.position_at(now - h).x) / (2.0 * h);
+            assert!(close(crossing.velocity_at(now).x, numeric, 0.5), "t={now}");
+            let p = crossing.position_at(now).x / -862.0;
+            assert!(
+                close(p, EASE_IN_OUT.ease(now / seconds), 1e-9),
+                "on its own curve at {now}"
+            );
+        }
+
+        let omega = spring_omega(seconds);
+        let now = 0.15;
+        let bent = crossing.retarget(CGPoint::new(-2013.0, 0.0), now, omega);
+        assert!(close(bent.position_at(now).x, crossing.position_at(now).x, 1e-6));
+        assert!(close(bent.velocity_at(now).x, crossing.velocity_at(now).x, 1e-6));
+        assert!(
+            crossing.velocity_at(now).x < -1000.0,
+            "it was crossing: {:?}",
+            crossing.velocity_at(now)
+        );
+        let install = CGPoint::new(crossing.position_at(now).x - 576.0, 0.0);
+        let left = Leg::leaving(Some(&crossing), install, CGPoint::new(-1723.0, 0.0), now, omega);
+        assert_eq!(left.position_at(now), install);
+        assert!(close(left.velocity_at(now).x, crossing.velocity_at(now).x, 1e-6));
     }
 }

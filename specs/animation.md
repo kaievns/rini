@@ -46,22 +46,28 @@ only the transitions are missing.
 ## Moving a window along the strip
 
 - A window moved along the strip MUST be seen to change places with the column it passes, whether or
-  not the strip scrolls. Both start from the places they held and cross; the rest of the strip moves
-  only as the view does. Drawing the finished layout and scrolling the view to it shows the swap
-  only where nothing scrolls.
+  not the strip scrolls. Both start from the places they held. A moved column narrower than the
+  viewport and the column it passes cross, and the rest of the strip moves only as the view does.
+  Drawing the finished layout and scrolling the view to it shows the swap only where nothing
+  scrolls.
 - Every window MUST start from where it was on screen. The view moves wherever the strip moves on
   screen, not only when it scrolls: a centred column that loses its centring as it moves shifts the
   whole strip with the scroll offset unchanged.
-- A moved window whose own travel on screen is small MUST step a third of the display toward where it
-  is going and come back, the column it passes seen sliding the other way beneath it. Small is under
-  a quarter of the display: a full-width column the view follows does not move on screen at all.
+- Only a moved column that fills the viewport MUST step: one as wide as the tiling area, the
+  display's usable width less both outer gaps, within a point, whether the full-width toggle or a
+  width preset made it so. The view follows such a column, so nothing else on screen shows it moved.
+  A narrower column, half or two-thirds of the display, is seen moving and MUST NOT step.
+- The step MUST go away from where the window goes, a third of the display and back: a move right
+  steps left and opens the right side, where the column it passes was.
+- The whole strip MUST step: every tiled window and every border tracing one. Floating windows and
+  their borders MUST stay where they are. A border arriving mid-step steps with the window it
+  traces.
+- The column passed MUST be seen going beneath the moved window from the side the step opens, and
+  that side MUST NOT show the desktop, except past the strip's end: the column passed fills it, then
+  the strip beyond it. The column passed is drawn in its place on the strip, riding the strip
+  beneath the moved window, which covers it at the end.
 - A move arriving while a flight still gathers its passes MUST step once that flight moves.
-- The one exception is a moved window that travels exactly as another window does and so shares its
-  piece of the strip: stepping the piece would step that window too, so it does not step.
 - A flight MUST run longer to carry the step only when it steps.
-- The step MUST carry the moved window's own border and nothing else. Every other window and border,
-  a floating window's included, stays where its own window is, and a border arriving mid-step steps
-  with the window it traces.
 - The step MUST leave and come back at rest. On the bounce's shape a third of a 1720pt display,
   573pt, leaves at 29,235pt/s over the default 0.35s: the kind of jolt reported under "Arriving
   mid-flight".
@@ -69,7 +75,7 @@ only the transitions are missing.
 - A burst of moves MUST read as one movement with one step: a move arriving mid-flight carries the
   flight on, and a press while the step plays MUST NOT start another.
 - The step and the bounce at an end MUST NOT hold each other off.
-- The step is drawn only. Real windows go to the layout's frames.
+- The step is drawn only. Real windows go to the layout's frames, the column passed included.
 
 > **Reported 2026-09-30.** "what i have two 50/50 windows at the beginning of a strip, when i move one
 > of them in place of the other there is a nice transition animation where two windows are moving to
@@ -81,6 +87,13 @@ only the transitions are missing.
 > would be an option too". Every move that scrolled the strip was drawn as the finished layout panning
 > into view, so the two windows had changed places by the first frame. The 50/50 pair at the start of
 > a strip was the one case that did not scroll.
+
+> **Reported 2026-09-30.** "two fixes for the moving animation. 1. only full-size windows should
+> cause the wobble (ecause you can't see otherwise it's movement) currently smaller windows do that
+> too. 2. the wobble should go the opposite direction from current implementation". Any move whose
+> own travel on screen was under a quarter of the display stepped, so half-width moves the view
+> followed stepped too, and the moved window stepped alone toward where it went. The column it passed
+> crossed the display in about 60ms, so the third the step opened showed the desktop.
 
 ## The vertical workspace switch
 
@@ -107,7 +120,8 @@ destination for a window already moving.
 - A pass with a new destination for a moving window MUST bend that window toward it rather than
   restarting: it continues from where it is drawn, at the speed it is moving. Its speed MUST NOT jump,
   so a burst of presses reads as one movement that settles after the last. That holds for a window a
-  pass takes out of the piece it rode, as a second move does with the column it passes.
+  pass takes out of the piece it rode, as a second move of a narrower column does with the column it
+  passes.
 
 > **Reported 2026-09-29.** "as a general rule animation should not get interrupted mid-filight and
 > restarted a new, the target should fluidly move to the next window and feel like one smooth extended
