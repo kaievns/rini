@@ -1,4 +1,4 @@
-//! The switcher's popup: one panel, a row of tiles, a highlight.
+//! The switcher's popup: one panel, a row of tiles or stacks of them, a highlight.
 //!
 //! Its own window rather than the animation overlay's, for four reasons each sufficient on its own.
 //! The overlay is opaque black across the WHOLE display and is only ever shown with a captured desktop
@@ -30,7 +30,8 @@ use objc2_app_kit::{
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::NSString;
 use objc2_quartz_core::{
-    CALayer, CAMediaTimingFunction, CATextLayer, CATransaction, kCAMediaTimingFunctionEaseOut,
+    CALayer, CALayerContentsGravity, CAMediaTimingFunction, CATextLayer, CATransaction,
+    kCAMediaTimingFunctionEaseOut,
 };
 use tracing::{debug, warn};
 
@@ -39,7 +40,8 @@ use crate::bar::domain::palette;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
-use crate::switcher::domain::layout::{Metrics, Strip, lay_out};
+use crate::switcher::domain::entries::{BEHIND, CardBehind, Entry, cards_behind};
+use crate::switcher::domain::layout::{Metrics, Strip, Tile, lay_out};
 use crate::switcher::domain::motion::{GLIDE_SECONDS, glides};
 use crate::windows::platform::app::{NSRunningApplicationExt, image_file_pixels};
 
@@ -79,12 +81,6 @@ const EMBER_SOFT: (f64, f64, f64) = palette::EMBER_SOFT.rgb();
 /// floating surfaces — Spotlight, the volume HUD, a popover — are rounded far more than 7px. Matching
 /// the platform reads as correct here in a way that matching the document system does not.
 const CORNER: f64 = 26.0;
-/// The tiles' radius, and a departure for the same reason as the panel's.
-///
-/// `--radius-control` is 5px, which is a button's radius. A tile here is a picture of a window, and the
-/// windows it is a picture of are themselves rounded at about 10px by macOS — so a square-cornered tile
-/// reads as a screenshot of a window rather than as a window.
-const TILE_CORNER: f64 = 11.0;
 /// The ember ring around the selected row.
 ///
 /// The elevation law's default for an active ROW in a list is a soft fill plus a 2px inset bar at its
@@ -169,17 +165,34 @@ fn token(rgb: (f64, f64, f64), alpha: f64) -> Retained<objc2_core_graphics::CGCo
     NSColor::colorWithSRGBRed_green_blue_alpha(rgb.0, rgb.1, rgb.2, alpha).CGColor()
 }
 
-/// One row to draw.
+/// One row to draw: a window, or an application's stack drawn from its top window.
 #[derive(Clone)]
 pub struct Row {
+    /// The top window, which a click on the row commits.
     pub window: rini_core::ids::WindowId,
-    /// The window's size on screen, which decides how wide its tile is.
+    /// The top window's size on screen, which decides how wide the row is.
     pub size: CGSize,
-    pub title: String,
+    /// The caption's second line.
+    pub detail: String,
     pub app_name: String,
-    pub is_minimized: bool,
     /// An image configured to badge this row in place of its application's own icon.
     pub icon: Option<std::path::PathBuf>,
+    /// The windows drawn as cards behind the top one, nearest first. Empty for a lone window.
+    pub behind: Vec<rini_core::ids::WindowId>,
+}
+
+impl Row {
+    pub fn of(entry: &Entry, icon: Option<std::path::PathBuf>) -> Self {
+        let front = entry.front();
+        Self {
+            window: front.window,
+            size: front.size,
+            detail: entry.detail(),
+            app_name: front.app_name.clone(),
+            icon,
+            behind: entry.behind().iter().map(|candidate| candidate.window).collect(),
+        }
+    }
 }
 
 /// What a draw does to the layers' geometry.
@@ -209,8 +222,11 @@ pub struct SwitcherPanel {
     backing: Retained<NSGlassEffectView>,
     view: Retained<SwitcherView>,
     /// One layer per visible row, reused across opens. Rebuilt only when the row count changes, so
-    /// stepping the selection moves a highlight rather than tearing down a layer tree.
+    /// stepping the selection moves a highlight rather than tearing down a layer tree. A row's top
+    /// card.
     tiles: Vec<Retained<CALayer>>,
+    /// `BEHIND` cards per row, nearest first, behind its tile. Hidden past the row's depth.
+    behind: Vec<Vec<Retained<CALayer>>>,
     captions: Vec<Retained<CATextLayer>>,
     /// One badge per row, in front of its tile.
     icons: Vec<Retained<CALayer>>,
@@ -301,6 +317,7 @@ impl SwitcherPanel {
         backing.setContentView(Some(&view));
 
         let root = view.layer()?;
+        let metrics = Metrics::default();
         let scale = backing_scale();
         root.setContentsScale(scale);
         root.setCornerRadius(CORNER);
@@ -312,19 +329,19 @@ impl SwitcherPanel {
         let highlight = CALayer::layer();
         highlight.setAnchorPoint(CGPoint::new(0.0, 0.0));
         highlight.setContentsScale(scale);
-        highlight.setCornerRadius(TILE_CORNER + 3.0);
+        highlight.setCornerRadius(metrics.tile_corner + 3.0);
         highlight.setZPosition(0.0);
         highlight.setHidden(true);
         highlight.setBackgroundColor(Some(&token(EMBER_SOFT, 1.0)));
         root.addSublayer(&highlight);
 
-        // Over everything: the tiles are at 1.0, the badges at 1.5, the captions at 2.0. A ring drawn
-        // under the tiles is clipped away by them on every side except where the 4pt margin shows, which
-        // reads as a glow rather than as an outline.
+        // Over everything: the cards behind are at 0.5 and 0.75, the tiles at 1.0, the badges at 1.5,
+        // the captions at 2.0. A ring drawn under the tiles is clipped away by them on every side except
+        // where the 4pt margin shows, which reads as a glow rather than as an outline.
         let ring = CALayer::layer();
         ring.setAnchorPoint(CGPoint::new(0.0, 0.0));
         ring.setContentsScale(scale);
-        ring.setCornerRadius(TILE_CORNER + 3.0);
+        ring.setCornerRadius(metrics.tile_corner + 3.0);
         ring.setZPosition(3.0);
         ring.setHidden(true);
         ring.setBorderWidth(FOCUS_RING);
@@ -336,11 +353,12 @@ impl SwitcherPanel {
             backing,
             view,
             tiles: Vec::new(),
+            behind: Vec::new(),
             captions: Vec::new(),
             icons: Vec::new(),
             highlight,
             ring,
-            metrics: Metrics::default(),
+            metrics,
             visible: false,
             scale,
             pictures: HashMap::default(),
@@ -354,8 +372,14 @@ impl SwitcherPanel {
     ///
     /// `screen` is the display to centre on, in CoreGraphics coordinates.
     pub fn show(&mut self, rows: &[Row], selected: usize, screen: CGRect) {
-        let sizes: Vec<CGSize> = rows.iter().map(|row| row.size).collect();
-        let Some(strip) = lay_out(&sizes, selected, screen, self.metrics) else {
+        let tiles: Vec<Tile> = rows
+            .iter()
+            .map(|row| Tile {
+                size: row.size,
+                depth: row.behind.len(),
+            })
+            .collect();
+        let Some(strip) = lay_out(&tiles, selected, screen, self.metrics) else {
             self.hide();
             return;
         };
@@ -457,6 +481,9 @@ impl SwitcherPanel {
         for tile in self.tiles.drain(..) {
             tile.removeFromSuperlayer();
         }
+        for card in self.behind.drain(..).flatten() {
+            card.removeFromSuperlayer();
+        }
         for caption in self.captions.drain(..) {
             caption.removeFromSuperlayer();
         }
@@ -464,19 +491,19 @@ impl SwitcherPanel {
             icon.removeFromSuperlayer();
         }
         for _ in 0..count {
-            let tile = CALayer::layer();
-            tile.setAnchorPoint(CGPoint::new(0.0, 0.0));
-            tile.setContentsScale(self.scale);
-            tile.setCornerRadius(TILE_CORNER);
-            tile.setMasksToBounds(true);
-            tile.setZPosition(1.0);
-            // The raised plane, so a row with no picture yet reads as a surface rather than as a hole.
-            tile.setBackgroundColor(Some(&token(N3, 1.0)));
-            // Drawn over the picture, so every tile has an edge whatever its window looks like.
-            tile.setBorderWidth(1.0);
-            tile.setBorderColor(Some(&token(N11, TILE_EDGE_ALPHA)));
+            let tile = self.card(1.0);
             root.addSublayer(&tile);
             self.tiles.push(tile);
+
+            let behind: Vec<Retained<CALayer>> = (1..=BEHIND)
+                .map(|depth| {
+                    let card = self.card(1.0 - 0.25 * depth as f64);
+                    card.setHidden(true);
+                    root.addSublayer(&card);
+                    card
+                })
+                .collect();
+            self.behind.push(behind);
 
             let caption = CATextLayer::layer();
             caption.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -509,6 +536,22 @@ impl SwitcherPanel {
             self.icons.push(icon);
         }
         debug!(count, "switcher panel rebuilt its rows");
+    }
+
+    /// One card of a row: a picture of a window, or the placeholder until one arrives.
+    fn card(&self, z: f64) -> Retained<CALayer> {
+        let card = CALayer::layer();
+        card.setAnchorPoint(CGPoint::new(0.0, 0.0));
+        card.setContentsScale(self.scale);
+        card.setCornerRadius(self.metrics.tile_corner);
+        card.setMasksToBounds(true);
+        card.setZPosition(z);
+        // The raised plane, so a card with no picture yet reads as a surface rather than as a hole.
+        card.setBackgroundColor(Some(&token(N3, 1.0)));
+        // Drawn over the picture, so every card has an edge whatever its window looks like.
+        card.setBorderWidth(1.0);
+        card.setBorderColor(Some(&token(N11, TILE_EDGE_ALPHA)));
+        card
     }
 
     /// The application's icon, read once and kept.
@@ -581,18 +624,24 @@ impl SwitcherPanel {
         CATransaction::setDisableActions(true);
         for (index, row) in rows.iter().enumerate() {
             if let Some(tile) = self.tiles.get(index) {
-                tile.setOpacity(if row.is_minimized { 0.45 } else { 1.0 });
-                match self.pictures.get(&row.window) {
-                    Some(snapshot) => {
-                        // Scaled to fit inside the tile rather than cropped: a cropped thumbnail of a
-                        // browser is a rectangle of text.
-                        tile.setContentsGravity(unsafe {
-                            objc2_quartz_core::kCAGravityResizeAspect
+                // Scaled to fit rather than cropped: a cropped thumbnail of a browser is a rectangle
+                // of text.
+                self.draw_picture(tile, row.window, unsafe {
+                    objc2_quartz_core::kCAGravityResizeAspect
+                });
+            }
+            let slots = cards_behind(&row.behind);
+            for (card, slot) in self.behind.get(index).into_iter().flatten().zip(slots) {
+                match slot {
+                    CardBehind::Shows(window) => {
+                        card.setHidden(false);
+                        // Filled and cropped: only the card's top edge shows, and a fitted picture in
+                        // a narrower card would leave that edge a band of placeholder.
+                        self.draw_picture(card, window, unsafe {
+                            objc2_quartz_core::kCAGravityResizeAspectFill
                         });
-                        set_layer_contents(tile, snapshot);
                     }
-                    // Left as the placeholder slab. A row with no picture still reads as a row.
-                    None => unsafe { tile.setContents(None) },
+                    CardBehind::Hidden => card.setHidden(true),
                 }
             }
             if let Some(badge) = self.icons.get(index) {
@@ -614,6 +663,22 @@ impl SwitcherPanel {
         CATransaction::commit();
     }
 
+    fn draw_picture(
+        &self,
+        card: &CALayer,
+        window: rini_core::ids::WindowId,
+        gravity: &CALayerContentsGravity,
+    ) {
+        match self.pictures.get(&window) {
+            Some(snapshot) => {
+                card.setContentsGravity(gravity);
+                set_layer_contents(card, snapshot);
+            }
+            // Left as the placeholder slab. A card with no picture still reads as a card.
+            None => unsafe { card.setContents(None) },
+        }
+    }
+
     /// Where each row SITS, and where the selection's ring sits.
     ///
     /// Animated when the strip is only moving, which is what makes the ring travel to the next window
@@ -629,15 +694,15 @@ impl SwitcherPanel {
             CATransaction::setAnimationTimingFunction(Some(&ease));
         }
         for (index, rect) in strip.rows.iter().enumerate() {
-            if rows.get(index).is_none() {
+            let Some(row) = rows.get(index) else {
                 continue;
-            }
-            // The row's own width: each tile is as wide as its window is in proportion.
+            };
+            let cards = self.metrics.cards(*rect, row.behind.len());
             if let Some(tile) = self.tiles.get(index) {
-                tile.setFrame(CGRect::new(
-                    rect.origin,
-                    CGSize::new(rect.size.width, self.metrics.tile_height),
-                ));
+                tile.setFrame(cards[0]);
+            }
+            for (card, frame) in self.behind.get(index).into_iter().flatten().zip(&cards[1..]) {
+                card.setFrame(*frame);
             }
             // Bottom-left of the picture: away from a window's own controls, which sit top-left, and
             // away from the caption below.
@@ -685,16 +750,16 @@ impl SwitcherPanel {
     }
 }
 
-/// Two lines: the application, then the window's own title.
+/// Two lines: the application, then the window's own title or the stack's window count.
 ///
 /// The application first because it is the coarse thing the eye lands on, and a window title is often
 /// a file path whose useful end is truncated away.
 fn caption_text(row: &Row) -> String {
-    let title = row.title.trim();
-    if title.is_empty() {
+    let detail = row.detail.trim();
+    if detail.is_empty() {
         return row.app_name.clone();
     }
-    format!("{}\n{}", row.app_name, title)
+    format!("{}\n{}", row.app_name, detail)
 }
 
 /// The backing scale to draw at.
@@ -708,17 +773,58 @@ fn backing_scale() -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use rini_core::ids::{SpaceId, WindowId};
+
     use super::*;
+    use crate::switcher::domain::candidates::{Candidate, Scope};
+    use crate::switcher::domain::entries::entries;
 
     fn row(app: &str, title: &str) -> Row {
         Row {
-            window: rini_core::ids::WindowId::new(1, 1),
+            window: WindowId::new(1, 1),
             size: CGSize::new(800.0, 600.0),
-            title: title.to_owned(),
+            detail: title.to_owned(),
             app_name: app.to_owned(),
-            is_minimized: false,
             icon: None,
+            behind: Vec::new(),
         }
+    }
+
+    fn ghostty(idx: u32, width: f64) -> Candidate {
+        Candidate {
+            window: WindowId::new(1, idx),
+            space: SpaceId::new(1),
+            workspace: slotmap::KeyData::from_ffi((1u64 << 32) | 1).into(),
+            workspace_index: 0,
+            size: CGSize::new(width, 600.0),
+            title: format!("~/projects/{idx}"),
+            app_name: "Ghostty".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_stack_caption_names_the_application_then_the_count() {
+        let list = (1..=4).map(|idx| ghostty(idx, 800.0)).collect();
+        let stack = &entries(list, Scope::Everything)[0];
+        assert_eq!(caption_text(&Row::of(stack, None)), "Ghostty\n4 windows");
+    }
+
+    /// The row is drawn from its top window, which is also what a click on it commits.
+    #[test]
+    fn a_stack_row_is_drawn_from_its_top_window_with_two_behind() {
+        let list = (1..=4).map(|idx| ghostty(idx, 400.0 * idx as f64)).collect();
+        let row = Row::of(&entries(list, Scope::Everything)[0], None);
+        assert_eq!(row.window, WindowId::new(1, 1));
+        assert_eq!(row.size, CGSize::new(400.0, 600.0));
+        assert_eq!(row.behind, vec![WindowId::new(1, 2), WindowId::new(1, 3)]);
+    }
+
+    #[test]
+    fn a_window_row_is_captioned_by_its_title_and_has_nothing_behind() {
+        let list = (1..=2).map(|idx| ghostty(idx, 800.0)).collect();
+        let row = Row::of(&entries(list, Scope::App(1))[0], None);
+        assert_eq!(caption_text(&row), "Ghostty\n~/projects/1");
+        assert!(row.behind.is_empty());
     }
 
     #[test]

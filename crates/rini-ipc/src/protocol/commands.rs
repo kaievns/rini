@@ -110,9 +110,7 @@ pub enum ReactorCommand {
     },
     /// One step of the window switcher over `scope`, focusing the window it lands on wherever it is.
     ///
-    /// Unbundled, unlike macOS's own switcher: one entry per window rather than per application, so
-    /// four windows of one app are four steps. The scope decides the order as well as the windows —
-    /// see `SwitchScope`.
+    /// The scope decides what a step moves between as well as which windows — see `SwitchScope`.
     SwitchWindow {
         #[serde(default)]
         backward: bool,
@@ -121,23 +119,22 @@ pub enum ReactorCommand {
     },
 }
 
-/// Which windows a switch offers, and in what order.
+/// Which windows a switch offers, and what a step moves between. Every scope is most recently focused
+/// first.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SwitchScope {
-    /// Every window, on every workspace and display, most recently focused first. cmd-tab.
+    /// Every window, on every workspace and display, one step per application: each application's
+    /// windows are a stack, and a step lands on its most recently focused one.
     #[default]
     Everything,
-    /// The focused workspace's windows on EVERY display, most recently focused first. A workspace is
-    /// one context spread across displays, so a switch scoped to it is not scoped to a display.
+    /// The focused workspace's windows on EVERY display, one step per window. A workspace is one
+    /// context spread across displays, so a switch scoped to it is not scoped to a display.
     Workspace,
-    /// The focused application's windows, wherever they are, in a fixed ROTATION rather than by
-    /// recency. cmd-`.
+    /// The focused application's windows, wherever they are, one step per window. cmd-`.
     ///
-    /// Rotation because a quick tap has to be able to reach every window: macOS's own cmd-` only
-    /// offers windows on the current Space, so with three Ghostty windows over two rini workspaces
-    /// it cycled the two sharing one and never reached the third. By recency a quick tap would
-    /// toggle between the two most recent and leave the third unreachable again.
+    /// macOS's own cmd-` only offers windows on the current Space, so with three Ghostty windows over
+    /// two rini workspaces it never reached the third. This offers every one of them.
     App,
 }
 

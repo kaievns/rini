@@ -169,16 +169,18 @@ recent-windows {
     }
 
     // The switcher's keys. Bind them with a modifier: the modifier holds the switch open. A quick
-    // tap steps to the window you were in before; holding the modifier and pressing the key again
+    // tap steps to the entry you were in before; holding the modifier and pressing the key again
     // steps further, Shift steps back, the arrow keys move the selection, Escape cancels, and
-    // releasing the modifier commits. Bound without a modifier it is a one-shot step.
+    // releasing the modifier commits. Bound without a modifier it is a one-shot step. Every one
+    // goes most recently focused first.
     //
-    // - next-window: every window, on every workspace and display, most recently focused first.
-    //   One row per window, not per application.
-    // - next-window scope="workspace": the shown workspace only, on every display it spans.
-    // - next-window filter="app-id": the focused application's windows, wherever they are. These
-    //   ROTATE rather than follow recency, like cmd-` rather than cmd-tab, so quick taps reach
-    //   every window instead of toggling between the last two.
+    // - next-window: every application with a window, on every workspace and display, by its most
+    //   recently focused window. Each is a stack of its windows, and choosing one focuses its most
+    //   recent.
+    // - next-window scope="workspace": the shown workspace's windows, one by one, on every display
+    //   it spans.
+    // - next-window filter="app-id": the focused application's windows, one by one, wherever they
+    //   are. A quick tap toggles the last two; hold the modifier to reach the rest.
     // - previous-window takes the same properties and starts the other way.
     //
     // Cmd+Tab belongs to the Dock and cannot be taken. Examples:

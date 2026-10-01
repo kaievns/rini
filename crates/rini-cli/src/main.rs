@@ -173,21 +173,11 @@ enum ExecuteCommands {
     /// Recovery for a layout where windows have piled onto one display. Does nothing when
     /// every window is already where its recorded affinity says it belongs.
     Redistribute,
-    /// Cycle focus between the focused app's windows, across workspaces and displays.
+    /// Step through every application with a window, on every workspace and display, by its most
+    /// recently focused window, focusing that window.
     ///
-    /// macOS's own cmd-` only reaches windows on the visible workspace, so an app whose
-    /// windows are spread over several workspaces silently cycles a subset. This rotates
-    /// through all of them and switches the owning display's workspace to follow.
-    CycleAppWindows {
-        /// Cycle in reverse, for a shift-modified binding.
-        #[arg(long)]
-        backward: bool,
-    },
-    /// Step through EVERY window, on every workspace and display, most recently focused first.
-    ///
-    /// Unbundled: one step per window rather than per application. This is the out-of-band path
-    /// that works with no event tap at all, which is the only thing that helps if the keyboard
-    /// tap has been stood down.
+    /// This is the out-of-band path that works with no event tap at all, which is the only thing
+    /// that helps if the keyboard tap has been stood down.
     SwitchWindow {
         /// Step backward through the order.
         #[arg(long)]
@@ -195,6 +185,17 @@ enum ExecuteCommands {
     },
     /// Step through the focused workspace's windows on every display, most recently focused first.
     SwitchWorkspaceWindow {
+        /// Step backward through the order.
+        #[arg(long)]
+        backward: bool,
+    },
+    /// Step through the focused app's windows, across workspaces and displays, most recently
+    /// focused first.
+    ///
+    /// macOS's own cmd-` only reaches windows on the visible workspace. This offers all of them and
+    /// switches the owning display's workspace to follow. A one-shot step toggles the two most
+    /// recent; `window focus --window-id` reaches any other.
+    SwitchAppWindow {
         /// Step backward through the order.
         #[arg(long)]
         backward: bool,
@@ -623,7 +624,7 @@ fn build_execute_request(execute: ExecuteCommands) -> Result<RiniRequest, String
         ExecuteCommands::SwitchWorkspaceWindow { backward } => {
             switch(backward, SwitchScope::Workspace)
         }
-        ExecuteCommands::CycleAppWindows { backward } => switch(backward, SwitchScope::App),
+        ExecuteCommands::SwitchAppWindow { backward } => switch(backward, SwitchScope::App),
     };
 
     if let CliCommand::Config(rini_ipc::protocol::ConfigCommand::GetConfig) = &rini_command {
@@ -1000,6 +1001,29 @@ mod tests {
             })
         );
     }
+    #[test]
+    fn the_three_switch_subcommands_are_the_three_scopes() {
+        for (subcommand, scope) in [
+            ("switch-window", SwitchScope::Everything),
+            ("switch-workspace-window", SwitchScope::Workspace),
+            ("switch-app-window", SwitchScope::App),
+        ] {
+            let cli = Cli::try_parse_from(["rini-cli", "execute", subcommand, "--backward"])
+                .unwrap_or_else(|e| panic!("{subcommand}: {e}"));
+            let Commands::Execute { command } = cli.command else {
+                panic!("{subcommand} is not an execute subcommand");
+            };
+            assert_eq!(
+                serde_json::to_value(build_execute_request(command).unwrap()).unwrap(),
+                serde_json::to_value(RiniRequest::ExecuteCommand {
+                    command: into_protocol_command(switch(true, scope)).unwrap(),
+                })
+                .unwrap(),
+                "{subcommand}"
+            );
+        }
+    }
+
     /// Every window subcommand has to map to a DISTINCT wire command. The arms are 33 lines of
     /// near-identical shape, which is exactly where a copy-paste sends two keys to one command and
     /// nothing complains.

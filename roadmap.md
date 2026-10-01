@@ -37,14 +37,6 @@ current behaviour annoys me.
 
 ## Wanted
 
-- **The every-window switcher shows application stacks (asked 2026-10-01).** The cmd-caps
-  popup lists every window and is too long to use. Show one stack of window pictures per
-  application, with its icon, and step between the stacks, as the Dock's switcher steps
-  between applications. This reverses `specs/switcher.md`'s "one entry per window", whose
-  reason was reaching the third of four Slack windows; that becomes cmd-`'s job.
-- **cmd-` goes by recency, like the other switchers (asked 2026-10-01).** Its fixed rotation
-  is the one switcher that orders differently. By recency, quick taps toggle between the two
-  most recent windows, and a third is reached by holding the popup open, as everywhere else.
 - **Per-display gaps by display name.** `output "UUID"` overrides `gaps` and `struts` per
   display, by UUID only; niri also names outputs by connector or make, model and serial.
 - **Verify unplug/replug end to end with `query diagnostics`,** capturing before/after state

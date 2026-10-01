@@ -60,6 +60,7 @@ use crate::displays::platform::spaces::SpaceKinds;
 use crate::input::domain::switch_session::Signal as SwitchSignal;
 use crate::layout::domain::boundary::workspace_step_at_boundary;
 use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, switch_list};
+use crate::switcher::domain::entries::{Entry, entries};
 use crate::switcher::domain::selection::Selection;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
 use crate::windows::domain::raise_order;
@@ -470,7 +471,7 @@ impl Event {
 /// they are stepping through it — the focus order it is built from would change the moment anything
 /// committed.
 struct LiveSwitch {
-    list: Vec<Candidate>,
+    list: Vec<Entry>,
     cursor: Selection,
 }
 
@@ -2875,6 +2876,13 @@ impl Reactor {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
+    pub(crate) fn probe_switch_entries(&mut self, scope: SwitchScope) -> Vec<Entry> {
+        self.switch_scope(scope)
+            .map(|scope| self.switch_entries(scope))
+            .unwrap_or_default()
+    }
+
     /// Focus `window` wherever it is, switching the owning display's workspace to follow.
     ///
     /// The half of a switch that is not about choosing. One function because a second copy would be a
@@ -2932,7 +2940,7 @@ impl Reactor {
                 // No scope to resolve — an application switch with nothing focused — opens nothing,
                 // and the commit that follows finds no live switch and does nothing either.
                 let resolved = self.switch_scope(scope);
-                let list = resolved.map(|scope| self.switch_candidates(scope)).unwrap_or_default();
+                let list = resolved.map(|scope| self.switch_entries(scope)).unwrap_or_default();
                 // At info, not debug: which window counted as focused and what the scope resolved to
                 // are the two facts a wrong list comes down to, and the release build logs at info.
                 info!(
@@ -2940,6 +2948,7 @@ impl Reactor {
                     ?resolved,
                     focused = ?self.main_window(),
                     rows = list.len(),
+                    windows = list.iter().map(Entry::count).sum::<usize>(),
                     "switch opened"
                 );
                 let start = opening_selection(&list);
@@ -2971,7 +2980,7 @@ impl Reactor {
                 let Some(target) = switch.list.get(switch.cursor.index()) else {
                     return EventOutcome::no_change();
                 };
-                let window = target.window;
+                let window = target.front().window;
                 if Some(window) == self.main_window() {
                     return EventOutcome::no_change();
                 }
@@ -2985,12 +2994,12 @@ impl Reactor {
         }
     }
 
-    /// A click on a popup row: select that window and commit, exactly as releasing the modifier would.
+    /// A click on a popup row: select that row and commit, exactly as releasing the modifier would.
     ///
-    /// Through the one cursor every other selection change goes through, by window rather than by row
-    /// index, so a click can never land on a different entry from the one drawn under the pointer. A
-    /// window the open switch does not offer commits nothing: guessing would focus something the user
-    /// did not point at.
+    /// Through the one cursor every other selection change goes through, by the row's top window
+    /// rather than by row index, so a click can never land on a different entry from the one drawn
+    /// under the pointer. A window no open row is drawn for commits nothing: guessing would focus
+    /// something the user did not point at.
     ///
     /// The tap is told the switch is over, or it would keep swallowing the arrow keys until the modifier
     /// is let go and then send a second commit on that release.
@@ -2998,7 +3007,7 @@ impl Reactor {
         let Some(switch) = self.live_switch.as_mut() else {
             return EventOutcome::no_change();
         };
-        let Some(index) = switch.list.iter().position(|candidate| candidate.window == window)
+        let Some(index) = switch.list.iter().position(|entry| entry.front().window == window)
         else {
             return EventOutcome::no_change();
         };
@@ -3024,19 +3033,15 @@ impl Reactor {
         let rows: Vec<crate::switcher::platform::panel::Row> = switch
             .list
             .iter()
-            .map(|candidate| crate::switcher::platform::panel::Row {
-                window: candidate.window,
-                size: candidate.size,
-                title: candidate.title.clone(),
-                app_name: candidate.app_name.clone(),
-                is_minimized: candidate.is_minimized,
-                icon: self.config.settings.switcher.icon_for(
+            .map(|entry| {
+                let icon = self.config.settings.switcher.icon_for(
                     self.app_manager
                         .apps
-                        .get(&candidate.window.pid)
+                        .get(&entry.front().window.pid)
                         .and_then(|app| app.info.bundle_id.as_deref()),
                     home.as_deref(),
-                ),
+                );
+                crate::switcher::platform::panel::Row::of(entry, icon)
             })
             .collect();
         // The display the switch is being driven from, so the popup appears where the user is looking
@@ -3049,7 +3054,11 @@ impl Reactor {
         let Some(screen) = screen else {
             return;
         };
-        let windows: Vec<WindowId> = switch.list.iter().map(|c| c.window).collect();
+        // The windows drawn, not every window the entries stand for: a stack draws three at most.
+        let windows: Vec<WindowId> = rows
+            .iter()
+            .flat_map(|row| std::iter::once(row.window).chain(row.behind.iter().copied()))
+            .collect();
         tx.send(crate::switcher::platform::actor::Event::Show {
             rows,
             selected: switch.cursor.index(),
@@ -3091,7 +3100,8 @@ impl Reactor {
     ///
     /// Built from the workspace assignments rather than from any layout tree: a tree is per display and
     /// per workspace, and this list is deliberately neither. Windows with no workspace assignment are
-    /// dropped — there is nowhere to switch TO for a window rini has not placed.
+    /// dropped — there is nowhere to switch TO for a window rini has not placed — and a minimised window
+    /// is one: minimising takes it off its workspace.
     ///
     /// The workspace index comes from the canonical order rather than from the workspace id, so the
     /// stable tail matches the order the user sees when they step through workspaces.
@@ -3128,16 +3138,15 @@ impl Reactor {
                 size: state.frame_monotonic.size,
                 title: state.info.title.clone(),
                 app_name,
-                is_minimized: state.info.is_minimized,
             });
         }
 
-        switch_list(
-            candidates,
-            self.main_window_tracker.focus_order(),
-            scope,
-            self.main_window(),
-        )
+        switch_list(candidates, self.main_window_tracker.focus_order(), scope)
+    }
+
+    /// What a switch over `scope` steps between, in its order: windows, or application stacks.
+    fn switch_entries(&mut self, scope: Scope) -> Vec<Entry> {
+        entries(self.switch_candidates(scope), scope)
     }
 
     /// What a switch over `scope` covers right now.
@@ -3162,7 +3171,7 @@ impl Reactor {
         }
     }
 
-    /// One step of a switcher over `scope`: focus the next window in its list, wherever it is.
+    /// One step of a switcher over `scope`: focus the next entry's top window, wherever it is.
     ///
     /// The no-popup half of the switcher, and on its own the whole of a quick tap. The same list the
     /// popup draws, so a tap and a held switch can never disagree about what comes next.
@@ -3170,19 +3179,19 @@ impl Reactor {
         let Some(scope) = self.switch_scope(scope) else {
             return EventOutcome::no_change();
         };
-        let list = self.switch_candidates(scope);
+        let list = self.switch_entries(scope);
         let current = self.main_window();
-        // Every list puts the window focused now first — unless focus is somewhere rini does not
+        // Every list puts the entry focused now first — unless focus is somewhere rini does not
         // track, in which case the front is still the best guess at "where I was", and stepping from
         // it is right.
         let here = current
-            .and_then(|window| list.iter().position(|candidate| candidate.window == window))
+            .and_then(|window| list.iter().position(|entry| entry.holds(window)))
             .unwrap_or(0);
         let Some(mut cursor) = Selection::new(list.len(), here) else {
             return EventOutcome::no_change();
         };
         cursor.step(if backward { -1 } else { 1 });
-        let target = list[cursor.index()].window;
+        let target = list[cursor.index()].front().window;
         if Some(target) == current {
             return EventOutcome::no_change();
         }

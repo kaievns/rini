@@ -166,6 +166,13 @@ impl Reactor {
             .expect("switch signal should dispatch")
     }
 
+    /// Wire in a switcher popup, returning what it is sent.
+    pub fn connect_test_switcher(&mut self) -> crate::switcher::platform::actor::Receiver {
+        let (tx, rx) = channels::channel();
+        self.switcher_tx = Some(tx);
+        rx
+    }
+
     /// Click a popup row the way the switcher panel does, returning the outcome.
     pub(crate) fn dispatch_test_pick(&mut self, window: WindowId) -> EventOutcome {
         self.dispatch_workflow(Event::SwitchPicked(window))
