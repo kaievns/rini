@@ -39,9 +39,6 @@ pub struct Candidate {
     pub size: CGSize,
     pub title: String,
     pub app_name: String,
-    /// Minimised windows are offered. macOS's own switcher shows them, and leaving them out means a
-    /// window you minimised becomes unreachable by the one key whose job is reaching windows.
-    pub is_minimized: bool,
 }
 
 /// Which windows a switch offers.
@@ -155,7 +152,6 @@ mod tests {
             size: CGSize::new(800.0, 600.0),
             title: format!("window {idx}"),
             app_name: format!("app {pid}"),
-            is_minimized: false,
         }
     }
 
@@ -288,15 +284,6 @@ mod tests {
         assert!(Scope::Everything.stacks());
         assert!(!Scope::Workspace(workspace(0)).stacks());
         assert!(!Scope::App(7).stacks());
-    }
-
-    /// A minimised window is still a window you want to reach. Native cmd-tab offers them.
-    #[test]
-    fn minimised_windows_are_offered() {
-        let mut minimised = candidate(1, 1, 1, 0);
-        minimised.is_minimized = true;
-        let switched = switch_list(vec![minimised], &FocusOrder::default(), Scope::Everything);
-        assert_eq!(switched.len(), 1);
     }
 
     /// A focus record for a window that is no longer a candidate must not resurrect it.

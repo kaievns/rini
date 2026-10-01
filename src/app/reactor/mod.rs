@@ -3100,7 +3100,8 @@ impl Reactor {
     ///
     /// Built from the workspace assignments rather than from any layout tree: a tree is per display and
     /// per workspace, and this list is deliberately neither. Windows with no workspace assignment are
-    /// dropped — there is nowhere to switch TO for a window rini has not placed.
+    /// dropped — there is nowhere to switch TO for a window rini has not placed — and a minimised window
+    /// is one: minimising takes it off its workspace.
     ///
     /// The workspace index comes from the canonical order rather than from the workspace id, so the
     /// stable tail matches the order the user sees when they step through workspaces.
@@ -3137,7 +3138,6 @@ impl Reactor {
                 size: state.frame_monotonic.size,
                 title: state.info.title.clone(),
                 app_name,
-                is_minimized: state.info.is_minimized,
             });
         }
 

@@ -13,8 +13,8 @@ switcher answers "every window I have, wherever it is".
   application switcher and the workspace switcher, and both MUST stay one entry per window.
 - An application MUST be one process, the unit the application switcher scopes to. Two processes of
   one bundle are two stacks.
-- An application with no window rini has placed MUST NOT get a stack: choosing it would have nothing
-  to focus. The Dock's switcher lists such applications; rini's does not.
+- An application's stack MUST be made of the windows the switch offers, so an application with none
+  of them gets no stack. The Dock's switcher lists an application with no window; rini's does not.
 
 > **Asked 2026-10-01.** "i kind of dislike the all apps apps switcher. the one that is wired to
 > cmd-caps at the momemnt, it's too long and unweilding. I want you to redesign it so that it would
@@ -22,10 +22,13 @@ switcher answers "every window I have, wherever it is".
 > the normal Dock app switcher, just instead of app icons, you'd show stacks of app windows with an
 > icon." This reverses the unbundling asked for on 2026-09-24 for the every-window switcher. The
 > workspace and application switchers keep it.
-- Minimised windows MUST be offered. macOS's own switcher shows them, and leaving them out makes a
-  window you minimised unreachable by the one key whose job is reaching windows.
-- A window with no workspace assignment MAY be omitted: there is nowhere to switch to for a window rini
-  has not placed.
+- A window with no workspace assignment MUST NOT be offered: there is nowhere to switch to for a
+  window rini has not placed.
+- A minimised window MUST NOT be offered. Minimising takes a window off its workspace, and rini does
+  not un-minimise a window it focuses, so choosing one would land on nothing. The cost is that no
+  switcher reaches a window you minimised. Offering one needs both halves: a workspace kept for it
+  while it is minimised, and an un-minimise on commit. The first switcher's spec required minimised
+  windows to be offered, and no build ever offered one.
 - A narrower scope — the windows of the focused workspace only — MUST be available on its own binding.
   It is the same machinery with a narrower candidate set, never a second code path.
 - The workspace scope MUST cover that workspace on EVERY display, not the display the switch was opened
@@ -69,22 +72,23 @@ switcher answers "every window I have, wherever it is".
   are opaque and sort into an order the user never sees.
 - A switch MUST open on the SECOND entry. The first is the window, or the application, you are already
   in, so opening there would make a quick step do nothing.
+- A switch with one entry MUST open no popup: there is nothing to choose between. With one
+  application's windows open that is the every-window switch, and a tap on it stays in that
+  application; cmd-` is the key that steps between its windows.
 - Re-focusing the window already at the front MUST change nothing. One raise produces a focus report
   per window it touches, and raising a strip window lifts the whole visible strip, so a switcher that
   reshuffled on every report would destroy the order it exists to keep.
 
 ## Stacks
 
-- A stack's windows MUST be in recency order with minimised windows after the rest. Its first window
-  is drawn on top, and choosing the stack MUST focus that window wherever it is. rini does not
-  un-minimise a window it focuses, so a minimised window on top would make choosing an application
-  with a window on screen land on nothing.
-- An application whose windows are all minimised MUST still get a stack, because minimised windows
-  are offered.
+- A stack's windows MUST be in recency order. Its first window is drawn on top, and choosing the stack
+  MUST focus that window wherever it is.
+- A tap MUST step from the stack holding the focused window, whichever of its windows that is. When
+  focus moves without a report, the focused window can sit behind its stack's top one.
 - A stack MUST draw its top window and at most two behind it. Three cards read as a stack; more would
   thin each to a sliver.
 - A stack's caption MUST be the application's name over the number of its windows the switch covers,
-  `1 window` or `N windows`, counting the undrawn and the minimised.
+  `1 window` or `N windows`, counting the undrawn.
 
 ## Stepping
 
@@ -233,8 +237,6 @@ switcher answers "every window I have, wherever it is".
 - Each card behind MUST sit 8pt higher than the card in front of it and 12pt narrower on each side, so
   the stack shows as edges above the top card. The inset MUST be wider than a tile's corner radius, or
   a card behind shows through the top card's rounded corner.
-- A stack MUST be dimmed as one when its top window is minimised, which is only when all of its windows
-  are.
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
   `--line` hairline and a shadow; a card with no picture takes the raised plane `--n3`; captions take

@@ -41,10 +41,12 @@ same key walk the list instead of jumping around it.
 there would make a quick tap do nothing, and "tap to get back to the last window" is what the
 key is for.
 
-**Minimised windows are offered.** macOS's own switcher shows them, and leaving them out means
-a window you minimised becomes unreachable by the one key whose job is reaching windows.
-`WindowState.info.is_minimized` is the reliable flag; `WindowVisibility::Minimized` is not,
-because the window-server visible/hidden sweeps overwrite it.
+**Minimised windows are not offered.** Minimising a window takes it off its workspace
+(`handle_window_minimized` sends `WindowRemoved`), and the list is built from the workspace
+assignments, so it has gone before the switcher looks. rini does not un-minimise a window it focuses
+either, so offering one would land on nothing. Offering them needs both halves: a workspace kept for
+the minimised window and an un-minimise on commit. The first switcher was written to offer them and
+never did: its test built a minimised candidate by hand, and the reactor never reaches one.
 
 **One owner for the selection.** Three things move the cursor — the trigger key repeating, the
 arrow keys, and a mouse click. Any two of them keeping their own idea of the selected row is a
@@ -165,10 +167,10 @@ one. The inset is wider than the 11pt `tile_corner`, or a card behind would show
 card's rounded corner; `layout.rs` tests that relation. Cards behind are FILLED and cropped rather
 than fitted, because only their top 8pt shows, and a fitted picture in a narrower card is centred
 vertically and leaves that strip a band of placeholder. A portrait window behind a landscape one
-shows a middle strip; that is the cost. Minimised windows go to the back of their stack, because rini
-never un-minimises a window it focuses, so the top card is the most recent window on screen; a stack
-whose top is minimised is minimised throughout and dims as one. Cards behind are not dimmed: the
-rise, the inset and the hairline are the depth cue. Whether they read clearly over a dark desktop has
+shows a middle strip; that is the cost. Cards behind are not dimmed: the rise, the inset and the
+hairline are the depth cue. The panel reuses a row's card layers between switches, so a slot past the
+row's depth is hidden explicitly (`entries::cards_behind`), or a lone window would show the last
+switch's cards behind it. Whether they read clearly over a dark desktop has
 not been checked on screen; a `--n0` wash on the cards behind is the first thing to try if not.
 
 **Two layers for the selection, not one.** The `--ember-soft` wash sits UNDER the tiles, where it tints

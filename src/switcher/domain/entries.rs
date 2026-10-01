@@ -53,10 +53,6 @@ impl Entry {
 }
 
 /// `list` as the entries a switch over `scope` steps between, in `list`'s order.
-///
-/// Within a stack, minimised windows go after the rest: rini does not un-minimise a window it focuses,
-/// so a minimised top window would make choosing an application with a window on screen land on
-/// nothing.
 pub fn entries(list: Vec<Candidate>, scope: Scope) -> Vec<Entry> {
     if !scope.stacks() {
         return list
@@ -74,13 +70,24 @@ pub fn entries(list: Vec<Candidate>, scope: Scope) -> Vec<Entry> {
             None => stacks.push(vec![candidate]),
         }
     }
-    stacks
-        .into_iter()
-        .map(|mut windows| {
-            windows.sort_by_key(|candidate| candidate.is_minimized);
-            Entry { windows, stacked: true }
-        })
-        .collect()
+    stacks.into_iter().map(|windows| Entry { windows, stacked: true }).collect()
+}
+
+/// What one of a row's `BEHIND` card slots shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardBehind {
+    Shows(WindowId),
+    /// Past the row's depth. The panel reuses its layers between switches, so a slot not hidden here
+    /// keeps showing the last switch's window behind a lone one.
+    Hidden,
+}
+
+/// Every card slot behind a row's top card, nearest first, for the windows it draws behind.
+pub fn cards_behind(behind: &[WindowId]) -> [CardBehind; BEHIND] {
+    std::array::from_fn(|depth| match behind.get(depth) {
+        Some(window) => CardBehind::Shows(*window),
+        None => CardBehind::Hidden,
+    })
 }
 
 #[cfg(test)]
@@ -111,14 +118,6 @@ mod tests {
             size: CGSize::new(800.0, 600.0),
             title: format!("window {idx}"),
             app_name: format!("app {pid}"),
-            is_minimized: false,
-        }
-    }
-
-    fn minimised(pid: pid_t, idx: u32) -> Candidate {
-        Candidate {
-            is_minimized: true,
-            ..candidate(pid, idx, 1, 0)
         }
     }
 
@@ -189,36 +188,6 @@ mod tests {
     }
 
     #[test]
-    fn a_minimised_window_goes_behind_the_rest_of_its_stack() {
-        let list = vec![
-            minimised(1, 1),
-            candidate(1, 2, 1, 0),
-            candidate(2, 1, 1, 0),
-        ];
-        let stacks = stacked(list, &focused(&[win(1, 1), win(2, 1), win(1, 2)]));
-        assert_eq!(
-            members(&stacks[0]),
-            vec![win(1, 2), win(1, 1)],
-            "the visible window on top, though the minimised one was focused last"
-        );
-        assert_eq!(
-            stacks[1].front().window,
-            win(2, 1),
-            "the application still sits where its most recent window does"
-        );
-    }
-
-    #[test]
-    fn an_application_whose_windows_are_all_minimised_keeps_a_stack() {
-        let list = vec![minimised(1, 1), minimised(1, 2), candidate(2, 1, 1, 0)];
-        let stacks = stacked(list, &focused(&[win(2, 1), win(1, 2)]));
-        assert_eq!(stacks.len(), 2);
-        assert_eq!(members(&stacks[1]), vec![win(1, 2), win(1, 1)]);
-        assert!(stacks[1].front().is_minimized);
-        assert_eq!(stacks[1].detail(), "2 windows");
-    }
-
-    #[test]
     fn a_stack_draws_at_most_two_windows_behind_the_top_one() {
         let list = (1..=5).map(|idx| candidate(1, idx, 1, 0)).collect();
         let stacks = stacked(list, &FocusOrder::default());
@@ -243,14 +212,23 @@ mod tests {
 
     #[test]
     fn a_stack_counts_its_windows() {
-        let list = vec![
-            candidate(1, 1, 1, 0),
-            candidate(1, 2, 1, 0),
-            minimised(1, 3),
-        ];
+        let list = (1..=3).map(|idx| candidate(1, idx, 1, 0)).collect();
         let stacks = stacked(list, &FocusOrder::default());
         assert_eq!(stacks[0].count(), 3);
-        assert_eq!(stacks[0].detail(), "3 windows", "minimised windows count");
+        assert_eq!(stacks[0].detail(), "3 windows");
+    }
+
+    #[test]
+    fn a_card_slot_past_the_rows_depth_is_hidden() {
+        assert_eq!(cards_behind(&[]), [CardBehind::Hidden, CardBehind::Hidden]);
+        assert_eq!(
+            cards_behind(&[win(1, 2)]),
+            [CardBehind::Shows(win(1, 2)), CardBehind::Hidden]
+        );
+        assert_eq!(
+            cards_behind(&[win(1, 2), win(1, 3)]),
+            [CardBehind::Shows(win(1, 2)), CardBehind::Shows(win(1, 3))]
+        );
     }
 
     #[test]

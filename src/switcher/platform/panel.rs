@@ -40,7 +40,7 @@ use crate::bar::domain::palette;
 use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
-use crate::switcher::domain::entries::{BEHIND, Entry};
+use crate::switcher::domain::entries::{BEHIND, CardBehind, Entry, cards_behind};
 use crate::switcher::domain::layout::{Metrics, Strip, Tile, lay_out};
 use crate::switcher::domain::motion::{GLIDE_SECONDS, glides};
 use crate::windows::platform::app::{NSRunningApplicationExt, image_file_pixels};
@@ -175,7 +175,6 @@ pub struct Row {
     /// The caption's second line.
     pub detail: String,
     pub app_name: String,
-    pub is_minimized: bool,
     /// An image configured to badge this row in place of its application's own icon.
     pub icon: Option<std::path::PathBuf>,
     /// The windows drawn as cards behind the top one, nearest first. Empty for a lone window.
@@ -190,7 +189,6 @@ impl Row {
             size: front.size,
             detail: entry.detail(),
             app_name: front.app_name.clone(),
-            is_minimized: front.is_minimized,
             icon,
             behind: entry.behind().iter().map(|candidate| candidate.window).collect(),
         }
@@ -625,29 +623,25 @@ impl SwitcherPanel {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for (index, row) in rows.iter().enumerate() {
-            // A minimised top window means every window of the stack is minimised, so the whole
-            // stack dims as one.
-            let opacity = if row.is_minimized { 0.45 } else { 1.0 };
             if let Some(tile) = self.tiles.get(index) {
-                tile.setOpacity(opacity);
                 // Scaled to fit rather than cropped: a cropped thumbnail of a browser is a rectangle
                 // of text.
                 self.draw_picture(tile, row.window, unsafe {
                     objc2_quartz_core::kCAGravityResizeAspect
                 });
             }
-            for (depth, card) in self.behind.get(index).into_iter().flatten().enumerate() {
-                match row.behind.get(depth) {
-                    Some(window) => {
+            let slots = cards_behind(&row.behind);
+            for (card, slot) in self.behind.get(index).into_iter().flatten().zip(slots) {
+                match slot {
+                    CardBehind::Shows(window) => {
                         card.setHidden(false);
-                        card.setOpacity(opacity);
                         // Filled and cropped: only the card's top edge shows, and a fitted picture in
                         // a narrower card would leave that edge a band of placeholder.
-                        self.draw_picture(card, *window, unsafe {
+                        self.draw_picture(card, window, unsafe {
                             objc2_quartz_core::kCAGravityResizeAspectFill
                         });
                     }
-                    None => card.setHidden(true),
+                    CardBehind::Hidden => card.setHidden(true),
                 }
             }
             if let Some(badge) = self.icons.get(index) {
@@ -791,7 +785,6 @@ mod tests {
             size: CGSize::new(800.0, 600.0),
             detail: title.to_owned(),
             app_name: app.to_owned(),
-            is_minimized: false,
             icon: None,
             behind: Vec::new(),
         }
@@ -806,7 +799,6 @@ mod tests {
             size: CGSize::new(width, 600.0),
             title: format!("~/projects/{idx}"),
             app_name: "Ghostty".to_owned(),
-            is_minimized: false,
         }
     }
 

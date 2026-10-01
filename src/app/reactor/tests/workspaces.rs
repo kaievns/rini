@@ -1090,24 +1090,94 @@ fn a_stack_commits_its_applications_most_recent_window_wherever_it_is() {
     );
 }
 
-/// rini does not un-minimise a window it focuses, so a stack whose most recent window is minimised
-/// goes to the application's window on screen instead.
+/// Minimising takes a window off its workspace, so it is not offered: its application's stack goes
+/// without it, and an application whose windows are all minimised has no stack.
 #[test]
-fn a_stack_on_top_skips_a_minimised_window() {
+fn a_minimised_window_is_not_offered() {
+    let current = WindowId::new(1, 1);
     let visible = WindowId::new(2, 1);
     let minimised = WindowId::new(2, 2);
-    let current = WindowId::new(1, 1);
+    let (hidden, other_hidden) = (WindowId::new(3, 1), WindowId::new(3, 2));
     let (mut reactor, _) = switch_desk(
-        &[(current, 0), (visible, 0), (minimised, 0)],
-        &[visible, minimised, current],
+        &[
+            (current, 0),
+            (visible, 0),
+            (minimised, 0),
+            (hidden, 0),
+            (other_hidden, 1),
+        ],
+        &[hidden, other_hidden, visible, minimised, current],
     );
-    reactor.state.windows.window_mut(minimised).expect("tracked").info.is_minimized = true;
+    for window in [minimised, hidden, other_hidden] {
+        reactor.handle_event(Event::WindowMinimized(window));
+    }
 
+    assert_eq!(
+        reactor
+            .probe_switch_candidates(SwitchScope::Everything)
+            .iter()
+            .map(|c| c.window)
+            .collect::<Vec<_>>(),
+        vec![current, visible]
+    );
     let stacks = reactor.probe_switch_entries(SwitchScope::Everything);
-    assert_eq!(stacks[1].count(), 2, "the minimised window is still offered");
+    assert_eq!(
+        stacks.len(),
+        2,
+        "no stack for the application with every window minimised"
+    );
+    assert_eq!(stacks[1].front().window, visible);
+    assert_eq!(
+        stacks[1].detail(),
+        "1 window",
+        "the minimised window is not counted"
+    );
     assert_eq!(
         focus_target(&reactor.probe_switch_window(false, SwitchScope::Everything)),
         Some(visible)
+    );
+}
+
+/// A stack is made of the windows the switch offers, so an application with none of them gets no
+/// stack: neither one with no window at all, which the Dock's switcher lists, nor one whose only window
+/// rini has not placed on a workspace.
+#[test]
+fn an_application_with_no_offered_window_gets_no_stack() {
+    let current = WindowId::new(1, 1);
+    let other = WindowId::new(2, 1);
+    let unplaced = WindowId::new(4, 1);
+    let (mut reactor, space) = switch_desk(&[(current, 0), (other, 0)], &[other, current]);
+    reactor.add_test_app(3);
+    reactor.add_test_app(4);
+    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
+    reactor.add_test_window(unplaced, WindowServerId::new(950), Some(space), screen);
+    assert!(reactor.state.windows.workspace_info_for_window(unplaced).is_none());
+
+    let stacks = reactor.probe_switch_entries(SwitchScope::Everything);
+    assert_eq!(
+        stacks.iter().map(|entry| entry.front().window.pid).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+}
+
+/// A tap steps from the stack holding the focused window, whichever of its windows that is. With
+/// recency stale, as when focus moved without a report, the focused window can sit behind its stack's
+/// top one, and stepping from the top would mistake the stack for some other.
+#[test]
+fn a_tap_steps_from_the_stack_holding_the_focused_window() {
+    let b = WindowId::new(2, 1);
+    let (a_top, a_focused) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    let (mut reactor, _) =
+        switch_desk(&[(a_top, 0), (a_focused, 0), (b, 0)], &[a_focused, a_top, b]);
+    reactor.set_test_focus(a_focused);
+    let stacks = reactor.probe_switch_entries(SwitchScope::Everything);
+    assert_eq!(stacks[0].front().window, b);
+    assert_eq!(stacks[1].front().window, a_top);
+
+    assert_eq!(
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::Everything)),
+        Some(b),
+        "the step leaves the focused window's stack and wraps to b, rather than landing on a_top"
     );
 }
 
@@ -1151,6 +1221,73 @@ fn the_popup_draws_one_stack_per_application() {
     assert!(rows[1].behind.is_empty());
     assert_eq!(rows[1].detail, "1 window");
     assert_eq!(selected, 1, "the previous application");
+}
+
+/// With one application's windows open the every-window switch has one entry, so a hold draws nothing
+/// and a tap stays where it is.
+#[test]
+fn a_switch_with_one_entry_opens_no_popup() {
+    use crate::input::domain::switch_session::Signal;
+
+    let (first, second) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    let (mut reactor, _) = switch_desk(&[(first, 0), (second, 1)], &[second, first]);
+    let mut popup = reactor.connect_test_switcher();
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
+    let committed = reactor.dispatch_test_switch(Signal::Commit);
+
+    let mut shown = false;
+    while let Ok((_, event)) = popup.try_recv() {
+        shown |= matches!(event, crate::switcher::platform::actor::Event::Show { .. });
+    }
+    assert!(!shown);
+    assert_eq!(focus_target(&committed), None);
+    assert_eq!(
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::Everything)),
+        None
+    );
+}
+
+/// The pictures asked for are the cards drawn: each stack's top window and the two behind it, never a
+/// window the stack stands for but does not draw.
+#[test]
+fn a_switch_lends_and_warms_only_the_windows_it_draws() {
+    use crate::animation::platform::engine::Event as Engine;
+    use crate::input::domain::switch_session::Signal;
+
+    let ghostty: Vec<WindowId> = (1..=4).map(|idx| WindowId::new(1, idx)).collect();
+    let slack = WindowId::new(2, 1);
+    let mut windows: Vec<(WindowId, usize)> = ghostty.iter().map(|window| (*window, 0)).collect();
+    windows.push((slack, 0));
+    let (mut reactor, _) = switch_desk(
+        &windows,
+        &[ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0]],
+    );
+    let _popup = reactor.connect_test_switcher();
+    let (animation_tx, mut animation_rx) = channels::channel();
+    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
+
+    let (mut lent, mut warmed) = (Vec::new(), Vec::new());
+    while let Ok((_, event)) = animation_rx.try_recv() {
+        match event {
+            Engine::LendSnapshots(windows) => lent.extend(windows),
+            Engine::WarmWindows(targets) => {
+                warmed.extend(targets.into_iter().map(|target| target.window))
+            }
+            _ => {}
+        }
+    }
+    let drawn = vec![ghostty[0], ghostty[1], ghostty[2], slack];
+    assert_eq!(lent, drawn);
+    assert_eq!(warmed, drawn);
 }
 
 /// The workspace switcher is unchanged: one entry per window, by recency, so a tap reaches the other
