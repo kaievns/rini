@@ -8,7 +8,7 @@ or layout: everything else depends on it and it depends on nothing.
 
 | | |
 |---|---|
-| **Which apps have a thread** | `domain/app_threads.rs` — when a running application gets its Accessibility thread: launched, observed ready, or seen ready when it next becomes frontmost; and never a second one |
+| **Which apps have a thread** | `domain/app_threads.rs` — when a running application gets its Accessibility thread: launched, observed ready, seen ready when the window server reports a new window of it, or seen ready when it next becomes frontmost; and never a second one |
 | **The catalogue** | `domain/catalogue.rs` — every window rini has seen, keyed by `WindowId { pid, idx }`, with its window-server id, its placement, and the native-fullscreen records that let a window come back |
 | **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`) and `domain/state.rs` (`WindowState`, manageability) |
 | **The AX boundary's rules** | `domain/ax_events.rs` — whether a failed Accessibility request means the window is gone, and the codec for the one `usize` an observer callback carries |

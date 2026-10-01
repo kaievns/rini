@@ -1,8 +1,9 @@
 //! Which running applications have their Accessibility thread, and when one without gets it.
 //!
 //! Every sighting of an application asks the same question: its launch, each property observer that
-//! reports, and every time it becomes frontmost. The rules are in `specs/windows.md`, "Taking on an
-//! application".
+//! reports, each new window of it the window server reports while the reactor does not know the
+//! application, and every time it becomes frontmost. The rules are in `specs/windows.md`, "Taking on
+//! an application".
 
 use std::collections::HashSet;
 
@@ -84,8 +85,8 @@ mod tests {
         threads
     }
 
-    /// Docker Desktop's launch as measured on 2026-10-01, one sighting per row: Carbon at check-in,
-    /// the finished-launching observer, the activation-policy observer, then becoming frontmost.
+    /// One sighting per row: the launch, Regular but still launching; the finished-launching observer,
+    /// by then Accessory; the activation-policy observer, Regular again; then becoming frontmost.
     #[test]
     fn an_application_whose_policy_flips_while_it_launches_is_taken_on_once_it_settles() {
         let mut threads = discovered();

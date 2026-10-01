@@ -13,8 +13,8 @@ one reaches the strip.
 - An application slow to answer Accessibility while it launches MUST be asked again, not given up on
   at the first failure.
 - An application that becomes frontmost without a thread MUST be looked at again then. Its launch, its
-  policy change and its finished launch are each reported once, and one report that fails or goes
-  missing MUST NOT leave the application unmanaged for as long as it runs.
+  policy change, its finished launch and each of its windows are reported once, and one report that
+  fails or goes missing MUST NOT leave the application unmanaged for as long as it runs.
 - A thread that gives up MUST say so in the info-level log.
 
 > **Reported 2026-10-01.** "also the docker window is not in the strip for some reason". Fixed.
@@ -29,13 +29,14 @@ one reaches the strip.
 > showed no `com.electron.dockerdesktop(21114)` thread, and Accessibility answered for its window in
 > 41 ms. The info-level log never named the pid.
 >
-> Each report rini waits on does fire for an application launched this way; the probes are in
-> `src/windows/docs/launch-notifications.md`. What no step had was a second chance. The thread started
-> after the last report gave up on its first failed Accessibility subscription — every application but
-> JetBrains' and Emacs got no retry — logged that at debug level only, and nothing asked again. That it
-> failed one is inferred, not seen, since that line is debug-level. Kiro Crew, also Electron, failed an
-> Accessibility read with "could not complete" after 1 s at 08:01:55 the same day, as it drew its first
-> window.
+> The Carbon launch and both property reports do fire for an application launched this way; the probes
+> are in `src/windows/docs/launch-notifications.md`. Its first window was drawn while it was Accessory,
+> so that window's one report, if it came, found it not ready. What no step had was a second chance.
+> The thread started after the last report gave up on its first failed Accessibility subscription —
+> every application but JetBrains' and Emacs got no retry — and logged that at debug level only. That it
+> failed one is inferred, not seen, since that line is debug-level; a KVO report that never arrived
+> fits the same logs. Kiro Crew, also Electron, failed an Accessibility read with "could not complete"
+> after 1 s at 08:01:55 the same day, as it drew its first window.
 
 ## Admission
 

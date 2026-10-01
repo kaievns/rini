@@ -1728,7 +1728,8 @@ mod tests {
         state.init(AppThreadHandle::from_sender(requests_tx), info, patience)
     }
 
-    /// Docker Desktop's thread gave up on the first failed subscription, and nothing asked again.
+    /// A subscription that fails while the application launches is asked again until
+    /// `LAUNCH_PATIENCE` runs out, not given up on at the first failure.
     #[test]
     fn an_application_too_busy_launching_to_answer_is_asked_again() {
         let ax = FakeAx { app: 1, ..FakeAx::default() };
