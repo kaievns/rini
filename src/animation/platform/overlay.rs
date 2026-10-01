@@ -599,8 +599,12 @@ impl TileOverlay {
     }
 
     /// Repoints the overlay at a different display, a resolution change, or a change of the band the
-    /// bar reserves at the top.
+    /// bar reserves at the top, and puts its window back wherever macOS has moved it.
     pub fn set_frame(&mut self, frame: CGRect, top_band: f64, scale: f64) {
+        let converter = CoordinateConverter::from_height(primary_display_height());
+        if let Some(cocoa) = converter.reframe(window_rect(frame, top_band), self.window.frame()) {
+            self.window.setFrame_display(cocoa, false);
+        }
         if self.frame == frame
             && self.top_band == top_band
             && (self.scale - scale).abs() < f64::EPSILON
@@ -610,10 +614,6 @@ impl TileOverlay {
         self.frame = frame;
         self.top_band = top_band;
         self.scale = scale;
-        let converter = CoordinateConverter::from_height(primary_display_height());
-        if let Some(cocoa) = converter.convert_rect(window_rect(frame, top_band)) {
-            self.window.setFrame_display(cocoa, false);
-        }
         if let Some(view) = self.window.contentView() {
             view.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), window_rect(frame, top_band).size));
         }

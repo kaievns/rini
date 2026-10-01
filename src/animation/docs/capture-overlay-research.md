@@ -448,7 +448,10 @@ bar's lower edge (`window_rect`), and the content layer is lifted by the band
 (`canvas_rect`) inside a clipping view, so the reserved top band is drawn and
 then clipped rather than squashed. The band comes from the reactor as
 `SetDisplay { top_band }`, which is `[settings.bar]`'s reserved height, or 0 with
-the bar off.
+the bar off. Every `SetDisplay` measures the window where AppKit has it, so one
+macOS moved when a display came or went is put back by the next, even when the
+display itself did not change. See "Placed from where its window is" in
+`src/bar/docs/README.md`.
 
 rini's own bar is at level 20, above the overlay (18), so it stays live through a
 flight and nothing pictures it; the engine looks for a bar UNDER the overlay only

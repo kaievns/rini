@@ -87,6 +87,20 @@ native fullscreen space. A panel hides whenever its app deactivates unless told 
 `hidesOnDeactivate` and `canHide` are off. A panel is made the first time a model names its display,
 which costs about 112ms, and kept; a display that leaves the model has its bar ordered out.
 
+**Placed from where its window is.** Every draw measures each bar's window, as AppKit has it, against
+the top strip of its display, and moves it when the two differ. A window moved or resized by
+anything, and a change of screens, wake the bar to do that at once; the minute's draw would within a
+minute. macOS moves windows itself when displays come and go, and a bar that compared only against
+the strip it last put itself on never noticed. On 2026-10-01 an external display was plugged in
+above the built-in, dropped and came back: rini's arrangement went to both displays at 11:56:02,
+the built-in alone at 11:56:32 and both again at 11:56:50, local time. SkyLight's display updates
+logged the built-in at (0, 0, 1728, 1117) at every step, so the built-in's strip never changed, yet
+its bar's window was left at (0, 832), 1728 by 32: both `CGWindowListCopyWindowInfo` and AppKit's own
+frame, read through accessibility, said so. AppKit's screen reactions ran at 11:55:57.9, 11:56:04.8,
+11:56:31.1, 11:56:31.8, 11:56:49.2 and 11:56:51.2, and the window server logged no move of the
+window, so which step moved it, and why to 832, is not known. A window put back is logged at info as
+"a bar's window was moved off its display; put back", with both frames, so the next one says when.
+
 ```text
 root         n1 at 0.88, the ground until the first picture of it arrives
 ├── ground   the desktop behind the bar, blurred, under n1 at 0.88: one still picture

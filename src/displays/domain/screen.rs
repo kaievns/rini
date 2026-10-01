@@ -169,6 +169,14 @@ impl CoordinateConverter {
             rect.size,
         ))
     }
+
+    /// The Cocoa frame that puts one of rini's own windows over `wanted`, in CoreGraphics
+    /// coordinates, or `None` when `actual`, the Cocoa frame AppKit has the window at now, is that
+    /// already. AppKit moves windows itself when displays come and go, so a window is measured where
+    /// it is, never where rini last put it.
+    pub fn reframe(&self, wanted: CGRect, actual: CGRect) -> Option<CGRect> {
+        self.convert_rect(wanted).filter(|frame| *frame != actual)
+    }
 }
 
 pub fn order_visible_spaces_by_position(
@@ -270,6 +278,31 @@ mod tests {
         assert_eq!(flipped.size.width, 50.0);
         let back = converter.convert_rect(flipped).unwrap();
         assert_eq!((back.origin.x, back.origin.y), (10.0, 100.0));
+    }
+
+    #[test]
+    fn a_window_is_reframed_only_when_it_is_not_where_it_is_wanted() {
+        let converter = CoordinateConverter::from_height(1117.0);
+        let wanted = rect(0.0, 32.0, 1728.0, 1085.0);
+        let cocoa = rect(0.0, 0.0, 1728.0, 1085.0);
+        assert_eq!(converter.reframe(wanted, cocoa), None);
+        assert_eq!(
+            converter.reframe(wanted, rect(0.0, 253.0, 1728.0, 1085.0)),
+            Some(cocoa)
+        );
+        assert_eq!(
+            converter.reframe(wanted, rect(0.0, 0.0, 1728.0, 1084.0)),
+            Some(cocoa)
+        );
+    }
+
+    #[test]
+    fn a_default_converter_reframes_nothing() {
+        let window = rect(0.0, 253.0, 1728.0, 32.0);
+        assert_eq!(
+            CoordinateConverter::default().reframe(rect(0.0, 0.0, 1728.0, 32.0), window),
+            None
+        );
     }
 
     #[test]

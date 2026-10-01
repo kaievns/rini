@@ -23,7 +23,7 @@ use crate::bar::domain::motion::{Fade, Folding, fade_length};
 use crate::bar::domain::pieces::{self, Click, Clock, Context, Timepiece};
 use crate::bar::platform::ground::Ground;
 use crate::bar::platform::menu_extras::{Extras, Sinks, Watcher};
-use crate::bar::platform::panel::{BarPanel, OnClick, SCALE};
+use crate::bar::platform::panel::{BarPanel, OnClick, OnMoved, SCALE};
 use crate::bar::platform::text::Text;
 
 pub type Sender = channel::Sender<Event>;
@@ -53,6 +53,9 @@ pub struct BarActor {
     /// Clicks from the bars' views, by display.
     clicks: channel::Sender<(String, Target)>,
     clicked: channel::Receiver<(String, Target)>,
+    /// A bar's window was moved or resized, by the bar itself or by macOS, or the screens changed.
+    moves: channel::Sender<()>,
+    moved: channel::Receiver<()>,
     model: BarModel,
     extras: Extras,
     /// By display uuid, as last pictured.
@@ -82,6 +85,7 @@ impl BarActor {
         on_action: OnAction,
     ) -> Self {
         let (clicks, clicked) = channel::channel();
+        let (moves, moved) = channel::channel();
         Self {
             requests,
             sender,
@@ -89,6 +93,8 @@ impl BarActor {
             on_action,
             clicks,
             clicked,
+            moves,
+            moved,
             model: BarModel::default(),
             extras: Extras::default(),
             grounds: HashMap::default(),
@@ -119,6 +125,10 @@ impl BarActor {
                 Some((_span, (display, target))) = self.clicked.recv() => {
                     Wake::Click(display, target)
                 }
+                Some(_) = self.moved.recv() => {
+                    while self.moved.try_recv().is_ok() {}
+                    Wake::Moved
+                }
                 _ = sleep(minute.unwrap_or_default()), if minute.is_some() => Wake::Minute,
                 _ = sleep(refold.unwrap_or_default()), if refold.is_some() => Wake::Refold,
             };
@@ -126,6 +136,7 @@ impl BarActor {
             match wake {
                 Wake::Event(event) => self.handle(event),
                 Wake::Click(display, target) => self.click(&display, target),
+                Wake::Moved => self.redraw(),
                 Wake::Minute => {}
                 Wake::Refold => {
                     self.refold_at = None;
@@ -228,7 +239,11 @@ impl BarActor {
             let panel = match self.panels.entry(bar.uuid.clone()) {
                 Entry::Occupied(made) => made.into_mut(),
                 Entry::Vacant(slot) => {
-                    match BarPanel::new(self.mtm, on_click(&self.clicks, &bar.uuid)) {
+                    match BarPanel::new(
+                        self.mtm,
+                        on_click(&self.clicks, &bar.uuid),
+                        on_moved(&self.moves),
+                    ) {
                         Some(panel) => {
                             debug!(display = %bar.uuid, "bar panel created");
                             slot.insert(panel)
@@ -243,9 +258,7 @@ impl BarActor {
                     }
                 }
             };
-            if !panel.place(display) {
-                continue;
-            }
+            panel.place(display);
             if let Some(ground) = self.grounds.get(&bar.uuid) {
                 panel.set_ground(ground);
             }
@@ -316,9 +329,17 @@ fn on_click(clicks: &channel::Sender<(String, Target)>, display: &str) -> OnClic
     Rc::new(move |target| clicks.send((display.clone(), target)))
 }
 
+/// Wakes the actor to place every bar again. Sent, never handled in place: the bar's own move posts
+/// it from inside `place`.
+fn on_moved(moves: &channel::Sender<()>) -> OnMoved {
+    let moves = moves.clone();
+    Rc::new(move || moves.send(()))
+}
+
 enum Wake {
     Event(Event),
     Click(String, Target),
+    Moved,
     Minute,
     Refold,
 }
