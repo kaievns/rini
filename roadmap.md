@@ -9,11 +9,13 @@ current behaviour annoys me.
 
 ## Known bugs
 
-- **A bad keybinding discards the whole config.** No longer fatal: `main.rs` reports the
-  error and falls back to the built-in defaults, so the WM starts and the hotkeys for
-  editing the config stay reachable. But one bad command name still costs every other
-  setting in the file. One bad binding should be reported and skipped, not the file
-  abandoned.
+- **A bad keybinding discards the whole config.** No longer fatal: rini reports the error
+  and falls back to the built-in defaults, so the WM starts and the hotkeys for editing the
+  config stay reachable, and a reload that cannot be used keeps the running config. Every
+  problem in the file is reported at once, with its line, bar the two kinds `specs/config.md`
+  lets show only once another is fixed. But one bad action name still
+  costs every other setting in the file, as it does in niri. One bad binding should be
+  reported and skipped, not the file abandoned.
 - **Blank built-in display after manual window moves.** Untested since the workspace
   restructure; may already be fixed.
 - **First column stays put while the strip shifts on focus.** Needs measurement with the
@@ -28,8 +30,10 @@ current behaviour annoys me.
   before it can be acted on.
 
 ## Cleanup
-- **Merge the two gesture tables.** `[settings.gestures]` (workspace swipe) and
-  `[settings.layout.scrolling.gestures]` (column scroll) configure one event tap.
+- **Merge the two gesture settings.** The file has one `gestures` block, but the workspace
+  swipe (`input::settings::GestureSettings`) and the column scroll
+  (`layout::settings::ScrollingGestureSettings`) still configure one event tap from two
+  features.
 
 ## Wanted
 
@@ -41,12 +45,10 @@ current behaviour annoys me.
 - **cmd-` goes by recency, like the other switchers (asked 2026-10-01).** Its fixed rotation
   is the one switcher that orders differently. By recency, quick taps toggle between the two
   most recent windows, and a third is reached by holding the popup open, as everywhere else.
-- **Per-display gaps and insets.** Currently keyed by display UUID for the SketchyBar inset
-  only; the general case is unhandled.
+- **Per-display gaps by display name.** `output "UUID"` overrides `gaps` and `struts` per
+  display, by UUID only; niri also names outputs by connector or make, model and serial.
 - **Verify unplug/replug end to end with `query diagnostics`,** capturing before/after state
   rather than eyeballing it. The per-display census makes this possible now.
-- **Named workspaces in the config,** with app rules targeting them by name rather than
-  index. Index-based rules broke once already on the 0-based/1-based boundary.
 - **Window rules for initial placement** beyond workspace assignment: column width, and
   whether a window should float.
 

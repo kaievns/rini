@@ -1,13 +1,12 @@
-//! What the switcher can be told about itself. Plain data; the config file fills it under
-//! `[settings.switcher]`.
+//! What the switcher can be told about itself. Plain data; the config file fills it from
+//! `recent-windows`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Serialize, Debug, PartialEq, Clone, Default)]
 pub struct SwitcherSettings {
     /// An image to badge a tile with in place of its application's own icon, by bundle identifier.
     ///
@@ -15,7 +14,6 @@ pub struct SwitcherSettings {
     /// `macos-icon`, for one, is drawn at launch and handed to the Dock alone, so every API another
     /// process can call still returns the icon in the bundle. A path starting `~/` is under the home
     /// directory.
-    #[serde(default)]
     pub icons: BTreeMap<String, String>,
 }
 
@@ -67,13 +65,5 @@ mod tests {
         let s = settings(&[("com.mitchellh.ghostty", "/icons/ghostty.png")]);
         assert_eq!(s.icon_for(Some("com.google.Chrome"), None), None);
         assert_eq!(s.icon_for(None, None), None);
-    }
-
-    /// The table is read from `[settings.switcher.icons]`, keyed by bundle identifier.
-    #[test]
-    fn the_table_parses_from_toml() {
-        let parsed: SwitcherSettings =
-            toml::from_str("[icons]\n\"com.mitchellh.ghostty\" = \"~/g.png\"\n").expect("parses");
-        assert_eq!(parsed, settings(&[("com.mitchellh.ghostty", "~/g.png")]));
     }
 }

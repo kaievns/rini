@@ -47,7 +47,8 @@ race that shows up as the popup highlighting one window while the release focuse
 **Three switchers, one machinery.** Every window (cmd-tab), the focused workspace, and the focused
 application's windows (cmd-`) share the session, the popup, the selection and the commit. They differ
 in `Scope`: which candidates are admitted and, for the application, the order. The application's
-`cycle_app_windows` used to be its own code path with its own list; it is now this with a scope.
+cycle, now `next-window filter="app-id"`, used to be its own code path with its own list; it is now
+this with a scope.
 
 **A workspace switch spans every display.** A workspace is one context spread across displays, and
 its id is the same on all of them, so the scope is the workspace rather than the display the switch
@@ -64,7 +65,7 @@ still opens on its second entry.
 opened it: that trigger's key steps it and its modifiers hold it. Another switcher's trigger pressed
 mid-switch is eaten with nothing sent, or it would reach the hotkey table and run a one-shot step in
 the middle of the switch. And the most specific trigger wins, because modifiers match as "at least
-these" and `Ctrl + Alt + Q` satisfies a `Ctrl + Q` binding too.
+these" and `Ctrl+Alt+Q` satisfies a `Ctrl+Q` binding too.
 
 **The tap holds a flag, not a list.** `src/input/domain/switch_session.rs` answers "swallow or pass,
 and what do I tell the reactor" for every key event, because an active event tap sits in the event
@@ -175,7 +176,7 @@ the reactor, which selects that window in the one cursor, commits, and tells the
 The panel accepts the first click without becoming the key window, because it is never key and a click
 that only made it so would need a second one.
 
-**Icons can be overridden per application.** `[settings.switcher.icons]` maps a bundle identifier to
+**Icons can be overridden per application.** `recent-windows › icons` maps a bundle identifier to
 an image file, because an application that sets its icon while running — Ghostty's `macos-icon` — hands
 it to the Dock alone, and every API rini can call returns the stock one. The reactor resolves the path
 onto the row; the panel reads the file once, caches the result by path, and falls back to the

@@ -1,7 +1,7 @@
 //! The application layer: what turns the features into rini.
 //!
 //! `reactor` orchestrates — it holds every feature's store, reduces the events they emit, and drives
-//! them back. `config` reads `config.toml` and fills each feature's settings type. `api` is the
+//! them back. `config` reads `config.kdl` and fills each feature's settings type. `api` is the
 //! outward surface: the IPC backend and the query DTOs. `notifications` demultiplexes NSWorkspace
 //! for the two features that want it, `hotkeys` lowers a binding to a command, `launch_agent` owns
 //! the plist, and `startup` runs the configured startup commands.

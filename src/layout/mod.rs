@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn insertion_point_is_honoured_by_the_scrolling_layout() {
         let mut scrolling_settings = ScrollingLayoutSettings::default();
-        scrolling_settings.base.window_insertion_point = Some(WindowInsertionPoint::EndOfTree);
+        scrolling_settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
         let mut scrolling = ScrollingLayoutSystem::new(&scrolling_settings);
         let scrolling_layout = scrolling.create_layout();
         scrolling.add_window_after_selection(scrolling_layout, w(1));

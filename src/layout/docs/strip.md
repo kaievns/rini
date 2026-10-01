@@ -16,8 +16,8 @@ is borrowed.
   `ctrl-R` looked dead on a maximized window: the cycle wrote a `width_offset`
   that `calculate_layout` then ignored, because a column holding a maximized
   window is 1.0 whatever its stored width says. It cannot be a ratio like the
-  others — `max_column_width_ratio` is 0.66667 in the shipped config, so 1.0
-  asked for as a ratio comes back as two thirds — so `preset_width::next_preset`
+  others — `max-column-width` is below 1.0, 0.9 by default, so 1.0 asked for
+  as a ratio comes back clamped to it — so `preset_width::next_preset`
   answers `Full` or `Ratio` and the caller applies the matching transition.
 - **Being given a width is what unmaximizes a window.** `ctrl-R` and the resize
   keys both do it, and the window stays where it is rather than going back to
@@ -26,7 +26,7 @@ is borrowed.
   lone window records no new origin, so the press that unmaximized it read the
   stale one and dropped the window into a stack untouched since.
 - **Growing a maximized column does nothing.** Nothing is wider than the
-  viewport. Stepping it would unmaximize onto `max_column_width_ratio`, which is
+  viewport. Stepping it would unmaximize onto `max-column-width`, which is
   *narrower* than what it has, so "grow" would visibly shrink the window. A
   shrink does unmaximize, starting from 1.0 rather than the width it had before.
 - **One place applies the width bounds.** `constraints::column_ratio`, read by
@@ -45,7 +45,7 @@ is borrowed.
 - **A title-bar zoom is that maximize, not a resize.** Double-clicking a title
   bar has macOS zoom the window, and Accessibility reports it as ordinary
   resizes. rini took the last of them either as a column width, clamped to
-  `max_column_width_ratio`, or, with its own last write still pending, as that
+  `max-column-width`, or, with its own last write still pending, as that
   write landing a few points off, and either way the next click's layout pass
   wrote the column back. Nothing in the report marks a zoom, so a double-click
   (`kCGMouseEventClickState` 2 on a left press) on the window's title bar is the
@@ -150,7 +150,7 @@ is borrowed.
   Zoom and System Settings floating, ctrl-J/L cycled those two instead of the
   columns, the escape landed on the *first* column, and walking off the last
   column stepped onto Settings and bounced back. Floating windows are still in
-  the workspace and reachable with cmd-tab and `toggle_focus_floating`. A
+  the workspace and reachable with cmd-tab and `switch-focus-between-floating-and-tiling`. A
   floating branch that advanced with `(idx + 1) % len` was a closed cycle that
   never reached the fallback.
 - **Resume at the strip's selection, not `first()`.** Taking the first column
@@ -177,17 +177,17 @@ is borrowed.
 
 ## Joining
 
-`toggle_stack` moves the *selected* window into the *previous* column (niri's
+`toggle-stack` moves the *selected* window into the *previous* column (niri's
 consume-into-column), falling back to the next column only in the first
 column. It used to pull the next column's windows into the current one, which
 stacked a window the user had not chosen and left the selection untouched.
 
-**`toggle_fold` is the symmetric one, and is what a fold key should be bound to.**
-`toggle_stack` is not a round trip: folding in moves one window, folding out
-explodes the whole column, so a second press on a column of three does not give
-you a column of three. `toggle_fold` moves only the selected window in both
-directions, and it takes a side, so one binding per side gives the same control
-each way (`ctrl-,` left, `ctrl-.` right by default).
+**`toggle-fold-left` and `toggle-fold-right` are the symmetric ones, and are what a
+fold key should be bound to.** `toggle-stack` is not a round trip: folding in moves one
+window, folding out explodes the whole column, so a second press on a column of three
+does not give you a column of three. A fold moves only the selected window in both
+directions, and each action takes a side, so one binding per side gives the same control
+each way (`Mod+Comma` left, `Mod+Period` right in `rini.default.kdl`).
 
 Pressing one key twice returns the strip to its shape, which takes two different
 mechanisms:
@@ -213,12 +213,14 @@ remembered to.
 **Two commands cover folding, not five.** `join_window`,
 `consume_or_expel_window` and `unjoin_windows` are deleted. They were rift's
 tree-era vocabulary for moving a window between containers, and against a single
-scrolling layout each was a partial view of `toggle_fold`: join was its fold-in
+scrolling layout each was a partial view of the fold: join was its fold-in
 half, unjoin its fold-out half, and consume-or-expel almost the whole thing but
 with the fold-out landing on the side asked for instead of the side the window
-came from, so it never round-tripped. What is left is `toggle_fold` per side and
-`toggle_stack`, which keeps its own meaning: it explodes a whole column rather
-than moving one window.
+came from, so it never round-tripped. What is left is the fold per side,
+`toggle-fold-left` and `toggle-fold-right`, and `toggle-stack`, which keeps its own
+meaning: it explodes a whole column rather than moving one window. That history is why
+rini does not take niri's `consume-or-expel-window-left`: it is the one that never
+round-tripped.
 
 **Folded windows divide the height evenly unless someone has resized them.**
 `height_weights` means two different things and they are read differently: equal

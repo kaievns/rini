@@ -56,11 +56,12 @@ impl Record {
         self.file.as_mut()
     }
 
-    pub(super) fn start(&mut self, config: &Config, layout: &LayoutEngine, memory: &DisplayMemory) {
+    /// The recording opens with the layout; the config is the caller's to give `replay`, since a
+    /// config is read from its file and has no other written form.
+    pub(super) fn start(&mut self, layout: &LayoutEngine, memory: &DisplayMemory) {
         let Some(file) = self.file() else { return };
-        let config = ron::ser::to_string(&config).unwrap();
         let layout = layout.serialize_to_string(memory);
-        write!(file, "{config}\n{layout}\n").unwrap();
+        write!(file, "{layout}\n").unwrap();
     }
 
     pub(super) fn on_event(&mut self, event: &Event) {
@@ -74,6 +75,7 @@ impl Record {
 
 pub fn replay(
     path: &Path,
+    config: Config,
     mut on_event: impl FnMut(Span, Request) + Send + 'static,
 ) -> anyhow::Result<()> {
     let file = BufReader::new(File::open(path)?);
@@ -81,8 +83,7 @@ pub fn replay(
     let handle = AppThreadHandle::from_sender(tx);
     DESERIALIZE_THREAD_HANDLE.with(|h| h.borrow_mut().replace(handle));
     let mut lines = file.lines();
-    let config = ron::de::from_str(&lines.next().expect("Empty restore file")?)?;
-    let loaded = LayoutEngine::deserialize_file(&lines.next().expect("Expected layout line")?)?;
+    let loaded = LayoutEngine::deserialize_file(&lines.next().expect("Empty recording")?)?;
     let memory = loaded.memory;
     let layout = loaded.layout?;
     let (broadcast_tx, _) = channels::channel();

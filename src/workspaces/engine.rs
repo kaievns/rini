@@ -100,7 +100,7 @@ pub struct EventResponse {
     pub raise_windows: Vec<WindowId>,
     pub focus_window: Option<WindowId>,
     /// A gesture overscrolled the strip past `workspace_switch_threshold`: the swipe continues
-    /// into a workspace switch (`propagate_to_workspace_swipe`).
+    /// into a workspace switch (`switch_workspace_on_overscroll`).
     pub boundary_hit: Option<Direction>,
     /// A command tried to go past an end: the strip's first/last column (`Left`/`Right`) or the
     /// workspace stack's top/bottom (`Up`/`Down`). Nothing moved; the reactor bounces the view
@@ -255,11 +255,8 @@ impl LayoutEngine {
     pub fn set_layout_settings(&mut self, settings: &LayoutSettings) {
         self.layout_settings = settings.clone();
 
-        let mut scrolling = settings.scrolling.clone();
-        scrolling.base = settings.resolved_base();
         for (_, ws) in self.virtual_workspace_manager.workspaces.iter_mut() {
-            let system = &mut ws.layout_system;
-            system.update_settings(&scrolling);
+            ws.layout_system.update_settings(&settings.scrolling);
         }
     }
 
@@ -267,7 +264,7 @@ impl LayoutEngine {
         &mut self,
         settings: &crate::workspaces::settings::VirtualWorkspaceSettings,
     ) {
-        self.app_rules = AppRuleEngine::new(&settings.app_rules, settings.float_modal_windows);
+        self.app_rules = AppRuleEngine::new(&settings.app_rules);
         self.virtual_workspace_manager.update_settings(settings, &self.layout_settings);
     }
 
@@ -1475,10 +1472,7 @@ impl LayoutEngine {
             workspace_layouts: WorkspaceLayouts::default(),
             floating: FloatingManager::new(),
             floating_positions: FloatingPositionStore::default(),
-            app_rules: AppRuleEngine::new(
-                &virtual_workspace_config.app_rules,
-                virtual_workspace_config.float_modal_windows,
-            ),
+            app_rules: AppRuleEngine::new(&virtual_workspace_config.app_rules),
             focused_window: None,
             window_layout_constraints: HashMap::default(),
             virtual_workspace_manager,
@@ -2154,7 +2148,7 @@ impl LayoutEngine {
         &mut self,
         space: SpaceId,
         screen: CGRect,
-        gaps: &crate::layout::settings::GapSettings,
+        gaps: &crate::layout::settings::Gaps,
     ) -> Vec<(WindowId, CGRect)> {
         let Some((ws_id, layout)) = self.workspace_and_layout(space) else {
             return Vec::new();
@@ -2172,7 +2166,7 @@ impl LayoutEngine {
         window_store: &WindowStore,
         space: SpaceId,
         screen: CGRect,
-        gaps: &crate::layout::settings::GapSettings,
+        gaps: &crate::layout::settings::Gaps,
         get_window_frame: F,
         all_screens: &[CGRect],
     ) -> Vec<(WindowId, CGRect)>
@@ -2380,7 +2374,7 @@ impl LayoutEngine {
         space: SpaceId,
         workspace_id: crate::workspaces::VirtualWorkspaceId,
         screen: CGRect,
-        gaps: &crate::layout::settings::GapSettings,
+        gaps: &crate::layout::settings::Gaps,
     ) -> Vec<(WindowId, CGRect)> {
         let mut positions = HashMap::default();
 
@@ -2651,7 +2645,7 @@ impl LayoutEngine {
     ) -> EventResponse {
         match command {
             // Workspaces stack downward: the next one is below, the previous above. No step
-            // (the end with `prevent_wrapping`, or nothing left in that direction to skip to)
+            // (the end of the stack, or nothing left in that direction to skip to)
             // reports the edge instead of silence.
             LayoutCommand::NextWorkspace(skip_empty) => {
                 if let Some(current_workspace) =
@@ -3314,7 +3308,7 @@ mod tests {
 
     use super::*;
     use crate::layout::settings::LayoutSettings;
-    use crate::windows::domain::rules::{AppRulePosition, AppRuleSize, AppWorkspaceRule};
+    use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
     use crate::workspaces::settings::VirtualWorkspaceSettings;
     use rini_ipc::protocol::WorkspaceSelector;
     use rustc_hash::FxHashMap as HashMap;
@@ -3493,12 +3487,17 @@ mod tests {
         );
     }
 
-    /// `float_modal_windows` (default on): a modal window reported alongside a plain one floats
-    /// with no app rule configured, and the plain one takes a column.
+    /// The reference config's modal rule: a modal window reported alongside a plain one floats, and
+    /// the plain one takes a column.
     #[test]
-    fn a_modal_window_floats_by_default_and_a_plain_one_is_tiled() {
-        let settings = VirtualWorkspaceSettings::default();
-        assert!(settings.float_modal_windows);
+    fn under_the_modal_rule_a_modal_window_floats_and_a_plain_one_is_tiled() {
+        let settings = VirtualWorkspaceSettings {
+            app_rules: vec![WindowRule {
+                open_floating: Some(true),
+                ..WindowRule::when(RuleMatch { is_modal: Some(true), ..RuleMatch::default() })
+            }],
+            ..VirtualWorkspaceSettings::default()
+        };
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
         let mut memory = DisplayMemory::default();
         let mut window_store = WindowStore::default();
@@ -3538,9 +3537,8 @@ mod tests {
         assert!(engine.is_window_floating(modal), "the modal floats");
         assert!(!engine.is_window_floating(plain), "the app window is tiled");
 
-        let mut off = VirtualWorkspaceSettings::default();
-        off.float_modal_windows = false;
-        let mut engine = LayoutEngine::new(&off, &LayoutSettings::default());
+        let mut engine =
+            LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
         let mut memory = DisplayMemory::default();
         let mut window_store = WindowStore::default();
         let _ = engine.handle_event(
@@ -3555,28 +3553,21 @@ mod tests {
         );
         assert!(
             !engine.is_window_floating(modal),
-            "with the setting off a modal is tiled"
+            "with no rule a modal is tiled"
         );
     }
 
     #[test]
     fn floating_app_rule_emits_one_shot_placement_and_switches_focus_workspace() {
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.app_rules = vec![AppWorkspaceRule {
-            display: None,
-            app_id: Some("com.example.Tool".into()),
-            workspace: Some(WorkspaceSelector::Index(1)),
-            floating: true,
-            position: Some(AppRulePosition { x: 0.4, y: 0.7 }),
-            size: Some(AppRuleSize { w: Some(640.0), h: Some(480.0) }),
-            focus: true,
-            manage: true,
-            app_name: None,
-            title_regex: None,
-            title_substring: None,
-            ax_role: None,
-            ax_subrole: None,
-            modal: None,
+        settings.app_rules = vec![WindowRule {
+            open_on_workspace: Some("Development".into()),
+            open_floating: Some(true),
+            default_floating_position: Some(FloatingPosition { x: 40.0, y: 30.0, ..Default::default() }),
+            default_column_width: Some(640.0),
+            default_window_height: Some(480.0),
+            open_focused: Some(true),
+            ..WindowRule::when(RuleMatch::app("com.example.Tool"))
         }];
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
         let mut memory = DisplayMemory::default();
@@ -3618,7 +3609,10 @@ mod tests {
         assert!(resizes.is_empty());
         assert_eq!(placement.len(), 1);
         assert_eq!(placement[0].window, window);
-        assert_eq!(placement[0].position, Some(AppRulePosition { x: 0.4, y: 0.7 }));
+        assert_eq!(
+            placement[0].position,
+            Some(FloatingPosition { x: 40.0, y: 30.0, ..Default::default() })
+        );
         assert_eq!(
             placement[0].size,
             Some(AppRuleSize { w: Some(640.0), h: Some(480.0) })
@@ -3628,7 +3622,7 @@ mod tests {
                 CGRect::new(CGPoint::new(10.0, 20.0), CGSize::new(300.0, 200.0)),
                 CGRect::new(CGPoint::new(1000.0, 50.0), screen),
             ),
-            CGRect::new(CGPoint::new(1224.0, 274.0), CGSize::new(640.0, 480.0))
+            CGRect::new(CGPoint::new(1040.0, 80.0), CGSize::new(640.0, 480.0))
         );
         // `changed` because this discovery is where the window's size limits were learned. The
         // fixture window is locked to 300x200, and a layout computed before that was known is the
@@ -3660,21 +3654,9 @@ mod tests {
     #[test]
     fn tiled_app_rule_size_sets_scrolling_column_width() {
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.app_rules = vec![AppWorkspaceRule {
-            display: None,
-            app_id: Some("com.example.Editor".into()),
-            workspace: None,
-            floating: false,
-            position: None,
-            size: Some(AppRuleSize { w: Some(234.0), h: None }),
-            focus: false,
-            manage: true,
-            app_name: None,
-            title_regex: None,
-            title_substring: None,
-            ax_role: None,
-            ax_subrole: None,
-            modal: None,
+        settings.app_rules = vec![WindowRule {
+            default_column_width: Some(234.0),
+            ..WindowRule::when(RuleMatch::app("com.example.Editor"))
         }];
         let mut layout_settings = LayoutSettings::default();
         layout_settings.scrolling.min_column_width_ratio = 0.1;
@@ -3723,7 +3705,7 @@ mod tests {
         let new_frame = CGRect::new(old_frame.origin, CGSize::new(234.0, 500.0));
         engine.apply_app_rule_resize(resizes[0], old_frame, new_frame, screen, None);
 
-        let frames = engine.calculate_layout(space, screen, &layout_settings.gaps);
+        let frames = engine.calculate_layout(space, screen, &layout_settings.gaps.effective_for_display(None));
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
         assert_eq!(frame.size.width, 234.0);
 
@@ -3738,7 +3720,7 @@ mod tests {
                 screens: vec![(space, screen, None)],
             },
         );
-        let frames = engine.calculate_layout(space, screen, &layout_settings.gaps);
+        let frames = engine.calculate_layout(space, screen, &layout_settings.gaps.effective_for_display(None));
         let frame = frames.iter().find(|(wid, _)| *wid == window).unwrap().1;
         assert_eq!(frame.size.width, 400.0);
     }
@@ -3791,11 +3773,14 @@ mod tests {
             Some(space_a),
             &visible_spaces,
             &visible_space_centers,
-            LayoutCommand::ResizeWindowBy { amount: 0.2 },
+            LayoutCommand::ResizeWindowBy {
+                amount: 0.2,
+                orientation: crate::layout::ResizeOrientation::Horizontal,
+            },
         );
 
         let resized_layout =
-            engine.calculate_layout(space_a, screen, &LayoutSettings::default().gaps);
+            engine.calculate_layout(space_a, screen, &LayoutSettings::default().gaps.effective_for_display(None));
 
         let _ = engine.handle_event(
             &mut window_store,
@@ -3809,7 +3794,7 @@ mod tests {
         );
 
         let after_other_space_sync =
-            engine.calculate_layout(space_a, screen, &LayoutSettings::default().gaps);
+            engine.calculate_layout(space_a, screen, &LayoutSettings::default().gaps.effective_for_display(None));
         assert_eq!(
             resized_layout, after_other_space_sync,
             "membership sync on one space must not rebalance saved layouts on another space"
@@ -3970,7 +3955,7 @@ mod tests {
                     source_space,
                     source_workspace,
                     source_screen,
-                    &LayoutSettings::default().gaps,
+                    &LayoutSettings::default().gaps.effective_for_display(None),
                 )
                 .into_iter()
                 .any(|(window_id, _)| window_id == wid),
@@ -4285,16 +4270,12 @@ mod tests {
         assert_eq!(pulled.moved, None);
     }
 
-    /// Moving a window down the workspace stack from the bottom one has nowhere to go. Reported as
-    /// feeling stuck, because nothing moved and nothing said why.
-    ///
-    /// Only with `prevent_wrapping`. Wrapping turns the same press into a real move to the top of the
-    /// stack, which is not an edge and must not bounce — asserted at the end.
+    /// Moving a window down the workspace stack from the bottom one has nowhere to go: the stack
+    /// never wraps. Reported as feeling stuck, because nothing moved and nothing said why.
     #[test]
     fn moving_a_window_past_the_end_of_the_workspace_stack_reports_the_edge() {
         let mut window_store = WindowStore::default();
-        let mut workspace_settings = VirtualWorkspaceSettings::default();
-        workspace_settings.prevent_wrapping = true;
+        let workspace_settings = VirtualWorkspaceSettings::default();
         let mut engine = LayoutEngine::new(&workspace_settings, &LayoutSettings::default());
         let mut memory = DisplayMemory::default();
         let space = SpaceId::new(533);
@@ -4370,54 +4351,6 @@ mod tests {
             },
         );
         assert_eq!(nonexistent.edge_hit, None);
-
-        // With wrapping allowed the same press lands on the top of the stack. That is a move, not an
-        // end, and bouncing it would claim the stack stopped when the window had just travelled.
-        let mut wrapping =
-            LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
-        let _ = wrapping.handle_event(
-            &mut window_store,
-            &mut memory,
-            LayoutEvent::SpaceExposed(space, CGSize::new(1000.0, 800.0)),
-        );
-        let _ = wrapping.handle_event(
-            &mut window_store,
-            &mut memory,
-            LayoutEvent::WindowsOnScreenUpdated(
-                space,
-                pid,
-                vec![(
-                    wid,
-                    None,
-                    None,
-                    None,
-                    false,
-                    true,
-                    CGSize::new(0.0, 0.0),
-                    None,
-                    None,
-                )],
-                None,
-            ),
-        );
-        wrapping.focused_window = Some(wid);
-        let workspaces = wrapping.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
-        assert!(
-            wrapping
-                .virtual_workspace_manager_mut()
-                .set_active_workspace(space, workspaces.last().unwrap().0)
-        );
-        let wrapped = wrapping.handle_virtual_workspace_command(
-            &mut window_store,
-            &mut memory,
-            space,
-            &LayoutCommand::MoveWindowToWorkspace {
-                workspace: WorkspaceSelector::Name("next".to_owned()),
-                follow: true,
-                window_id: None,
-            },
-        );
-        assert_eq!(wrapped.edge_hit, None);
     }
 
     #[test]
@@ -4499,8 +4432,7 @@ mod tests {
     fn workspace_navigation_no_ops_report_unchanged() {
         let mut window_store = WindowStore::default();
         let space = SpaceId::new(82);
-        let mut settings = VirtualWorkspaceSettings::default();
-        settings.prevent_wrapping = true;
+        let settings = VirtualWorkspaceSettings::default();
         let mut engine = LayoutEngine::new(&settings, &LayoutSettings::default());
         let mut memory = DisplayMemory::default();
 
@@ -4510,15 +4442,15 @@ mod tests {
                 .virtual_workspace_manager_mut()
                 .set_active_workspace(space, workspaces.last().unwrap().0)
         );
-        let prevented_wrap = engine.handle_virtual_workspace_command(
+        let past_the_bottom_workspace = engine.handle_virtual_workspace_command(
             &mut window_store,
             &mut memory,
             space,
             &LayoutCommand::NextWorkspace(None),
         );
-        assert!(!prevented_wrap.changed);
+        assert!(!past_the_bottom_workspace.changed);
         assert_eq!(
-            prevented_wrap.edge_hit,
+            past_the_bottom_workspace.edge_hit,
             Some(Direction::Down),
             "the bottom of the stack"
         );
@@ -4548,25 +4480,6 @@ mod tests {
         );
         assert!(!top.changed);
         assert_eq!(top.edge_hit, Some(Direction::Up), "the top of the stack");
-
-        // With wrapping the step always lands somewhere: no edge.
-        let mut engine =
-            LayoutEngine::new(&VirtualWorkspaceSettings::default(), &LayoutSettings::default());
-        let mut memory = DisplayMemory::default();
-        let workspaces = engine.virtual_workspace_manager_mut().list_workspaces(space).to_vec();
-        assert!(
-            engine
-                .virtual_workspace_manager_mut()
-                .set_active_workspace(space, workspaces.last().unwrap().0)
-        );
-        let wrapped = engine.handle_virtual_workspace_command(
-            &mut window_store,
-            &mut memory,
-            space,
-            &LayoutCommand::NextWorkspace(None),
-        );
-        assert!(wrapped.changed);
-        assert_eq!(wrapped.edge_hit, None);
     }
 
     #[test]
@@ -4614,10 +4527,13 @@ mod tests {
             Some(space),
             &[space],
             &HashMap::default(),
-            LayoutCommand::ResizeWindowBy { amount: 0.2 },
+            LayoutCommand::ResizeWindowBy {
+                amount: 0.2,
+                orientation: crate::layout::ResizeOrientation::Horizontal,
+            },
         );
 
-        let gaps = engine.layout_settings.gaps.clone();
+        let gaps = engine.layout_settings.gaps.effective_for_display(None);
         let before = engine.calculate_layout(space, screen, &gaps);
 
         // Simulate a discovery snapshot that temporarily omitted w2.
@@ -4685,10 +4601,13 @@ mod tests {
             Some(space_a),
             &[space_a, space_b],
             &HashMap::default(),
-            LayoutCommand::ResizeWindowBy { amount: 0.2 },
+            LayoutCommand::ResizeWindowBy {
+                amount: 0.2,
+                orientation: crate::layout::ResizeOrientation::Horizontal,
+            },
         );
 
-        let gaps = engine.layout_settings.gaps.clone();
+        let gaps = engine.layout_settings.gaps.effective_for_display(None);
         let before = engine.calculate_layout(space_a, screen, &gaps);
 
         let _ = engine.handle_event(
@@ -4766,7 +4685,7 @@ mod tests {
             &mut memory,
             LayoutEvent::WindowFocused(space, WindowId::new(pid, 1)),
         );
-        let gaps = engine.layout_settings.gaps.clone();
+        let gaps = engine.layout_settings.gaps.effective_for_display(None);
 
         let _ = engine.handle_command(
             &mut window_store,
@@ -4823,7 +4742,7 @@ mod tests {
                 None,
             ),
         );
-        let gaps = engine.layout_settings.gaps.clone();
+        let gaps = engine.layout_settings.gaps.effective_for_display(None);
         let before = engine.calculate_layout(space, screen, &gaps);
 
         assert!(!engine.add_window_to_layout(&mut window_store, &mut memory, space, wid));

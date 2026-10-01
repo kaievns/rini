@@ -46,6 +46,9 @@ pub const EMBER: Colour = Colour(0xff7c50);
 /// The specified fill behind an active row.
 pub const EMBER_SOFT: Colour = Colour(0x3f2d28);
 
+/// The meaning colour for an error, `--err`. Text in it is 12.5px or larger and carries the `✕` glyph.
+pub const ERR: Colour = Colour(0xf85052);
+
 /// The bar's ground is `N1` at this opacity, so the wallpaper reads faintly through the chrome.
 pub const BAR_GROUND_ALPHA: f64 = 0.88;
 

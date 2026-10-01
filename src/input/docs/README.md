@@ -1,16 +1,17 @@
 # `input` — what the user asked for
 
-Keys, bindings, gestures and drags. It emits `rini-ipc` commands, so the reactor cannot
-tell a hotkey from a CLI call — which is why every binding is testable as a command and
-why the CLI is a first-class client rather than a debugging aid.
+Keys, bindings, gestures and drags. A key emits the `Action` it is bound to, which the
+application lowers to a `rini-ipc` command, and a gesture emits a command; so the reactor
+cannot tell a hotkey from a CLI call — which is why every binding is testable as a command
+and why the CLI is a first-class client rather than a debugging aid.
 
 ## What it owns
 
 | | |
 |---|---|
-| `domain/key.rs` | `Modifiers`, `KeyCode`, and the token parsing that needs no keyboard |
-| `domain/hotkey.rs` | `modifiers_satisfy`: whether the keys held down are the ones a binding asked for |
-| `domain/binding.rs` | `WmCmd`/`WmCommand`: the binding table and what a config string parses to |
+| `domain/key.rs` | `Modifiers`, `KeyCode`, the token parsing that needs no keyboard, and `Mod` (`input › mod-key`) |
+| `domain/hotkey.rs` | `modifiers_satisfy`: whether the keys held down are the ones a binding asked for; `HotkeyTable`: what a press fires, and that a held key's repeats fire only a bind written `repeat=true` |
+| `domain/binding.rs` | `Action` and `Bind`: what a `binds` entry names, in niri's words, decoded straight from the config |
 | `domain/pointer.rs` | When a mouse move is worth processing, when the cached pointer window still answers, which press is a double-click, how long ago an event happened, and which events the tap asks for at all |
 | `domain/gesture.rs` | Trackpad rules over normalised touches: `swipe_step`, `scroll_step`, `touch_centroid`, and `SwipeTrack`'s phase machine |
 | `domain/drag_swap.rs` | Recognising a drag that means "swap these two windows" |

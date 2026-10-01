@@ -288,6 +288,7 @@ fn resolved_activation_without_main_window_does_not_choose_arbitrary_app_window(
 #[test]
 fn menu_open_state_is_cleared_when_owner_deactivates() {
     let mut reactor = test_reactor();
+    reactor.config.settings.focus_follows_mouse = true;
     let (event_tap_tx, mut event_tap_rx) = channels::channel();
     reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
 
@@ -314,6 +315,7 @@ fn menu_open_state_is_cleared_when_owner_deactivates() {
 #[test]
 fn stale_menu_open_state_is_cleared_when_other_app_activates() {
     let mut reactor = test_reactor();
+    reactor.config.settings.focus_follows_mouse = true;
     let (event_tap_tx, mut event_tap_rx) = channels::channel();
     reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
 
@@ -535,12 +537,6 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
     reactor.config.settings.animate = true;
-    let mut settings = reactor.config.virtual_workspaces.clone();
-    settings.prevent_wrapping = true;
-    reactor
-        .layout_manager
-        .layout_engine
-        .update_virtual_workspace_settings(&settings);
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
@@ -598,12 +594,6 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
     reactor.config.settings.animate = true;
-    let mut settings = reactor.config.virtual_workspaces.clone();
-    settings.prevent_wrapping = true;
-    reactor
-        .layout_manager
-        .layout_engine
-        .update_virtual_workspace_settings(&settings);
 
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));

@@ -16,29 +16,6 @@ use crate::windows::domain::transaction::Requested;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::{LayoutCommand, LayoutEngine};
 
-/// A rule matching nothing and asking for nothing, to be filled in by a test.
-///
-/// Mirrors what serde produces for a bare `{ app_id = "..." }` — `manage: true` above all, since
-/// deriving `Default` would make it false and quietly stop rini managing the matched windows.
-pub fn default_app_rule() -> crate::windows::domain::rules::AppWorkspaceRule {
-    crate::windows::domain::rules::AppWorkspaceRule {
-        app_id: None,
-        workspace: None,
-        floating: false,
-        position: None,
-        size: None,
-        focus: false,
-        manage: true,
-        app_name: None,
-        title_regex: None,
-        title_substring: None,
-        ax_role: None,
-        ax_subrole: None,
-        modal: None,
-        display: None,
-    }
-}
-
 impl Reactor {
     pub fn new_for_test(layout: LayoutEngine) -> Reactor {
         let mut config = Config::default();
@@ -247,7 +224,7 @@ impl Reactor {
     /// Install app rules and rebuild the rule engine, as a config reload does.
     pub fn set_test_app_rules(
         &mut self,
-        rules: Vec<crate::windows::domain::rules::AppWorkspaceRule>,
+        rules: Vec<crate::windows::domain::rules::WindowRule>,
     ) {
         self.config.virtual_workspaces.app_rules = rules;
         let settings = self.config.virtual_workspaces.clone();
@@ -375,7 +352,7 @@ pub fn test_reactor_with_workspace_settings(
 
 pub fn test_reactor_with_workspace_count(count: usize) -> Reactor {
     let mut settings = crate::app::config::VirtualWorkspaceSettings::default();
-    settings.default_workspace_count = count;
+    settings.workspace_names = crate::workspaces::settings::numbered_names(count);
     test_reactor_with_workspace_settings(&settings)
 }
 
@@ -765,6 +742,6 @@ pub fn test_context() -> (Apps, Reactor) {
 
 pub fn test_context_with_workspace_count(count: usize) -> (Apps, Reactor) {
     let mut settings = crate::app::config::VirtualWorkspaceSettings::default();
-    settings.default_workspace_count = count;
+    settings.workspace_names = crate::workspaces::settings::numbered_names(count);
     (Apps::new(), test_reactor_with_workspace_settings(&settings))
 }

@@ -9,11 +9,10 @@ use std::path::PathBuf;
 use dispatchr::queue;
 use dispatchr::time::Time;
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
-use serde_json;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::app::config::actor as config;
-pub use crate::input::domain::binding::{ExecCmd, WmCmd, WmCommand};
+use crate::input::domain::binding::{Action, Bind};
 use crate::input::platform::gesture_tap;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::pid_t;
@@ -42,15 +41,14 @@ pub enum WmEvent {
     AppThreadGaveUp(pid_t),
     /// Everything the displays context reports; forwarded to the reactor as is.
     Displays(crate::displays::event::Event),
-    /// Everything the input context reports: bindings become `Command`, pointer events go to the
-    /// reactor.
+    /// Everything the input context reports: a bound action is lowered here, pointer events go to
+    /// the reactor.
     Input(crate::input::event::Event),
     PowerStateChanged(bool),
     KeyboardLayoutChanged,
     /// The system clock was set, or the time zone changed.
     ClockChanged,
     ConfigUpdated(crate::app::config::Config),
-    Command(WmCommand),
 }
 
 impl From<crate::input::event::Event> for WmEvent {
@@ -135,12 +133,14 @@ impl WmController {
         debug!("handle_event");
         use reactor::Event;
 
-        use self::WmCommand::*;
         use self::WmEvent::*;
 
         match event {
             Displays(event) => self.events_tx.send(Event::from(event)),
-            Input(crate::input::event::Event::Command(cmd)) => self.handle_event(Command(cmd)),
+            Input(crate::input::event::Event::Action(action)) => self.carry_out(action),
+            Input(crate::input::event::Event::Command(command)) => {
+                self.events_tx.send(reactor::Event::Command(command))
+            }
             Input(crate::input::event::Event::Switch(signal)) => {
                 self.events_tx.send(Event::Switch(signal))
             }
@@ -196,7 +196,8 @@ impl WmController {
             }
             AppThreadGaveUp(pid) => self.app_threads.ended(pid),
             ConfigUpdated(new_cfg) => {
-                let old_keys_ser = serde_json::to_string(&self.config.config.keys).ok();
+                let binds_changed =
+                    Registration::of(&self.config.config) != Registration::of(&new_cfg);
 
                 self.config.config = new_cfg;
 
@@ -216,18 +217,11 @@ impl WmController {
                     return;
                 }
 
-                if let Some(old_ser) = old_keys_ser {
-                    if serde_json::to_string(&self.config.config.keys).ok().as_deref()
-                        != Some(&old_ser)
-                    {
-                        debug!("hotkey bindings changed; reloading hotkeys");
-                        self.register_hotkeys();
-                    } else {
-                        debug!("hotkey bindings unchanged; skipping reload");
-                    }
-                } else {
-                    debug!("could not compare hotkey bindings; reloading hotkeys");
+                if binds_changed {
+                    debug!("hotkey bindings changed; reloading hotkeys");
                     self.register_hotkeys();
+                } else {
+                    debug!("hotkey bindings unchanged; skipping reload");
                 }
             }
             PowerStateChanged(is_low_power_mode) => {
@@ -238,25 +232,18 @@ impl WmController {
                 _ = self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
             }
             ClockChanged => self.events_tx.send(Event::ClockChanged),
-            // Every binding alias is a translation; `lower` is that translation and is tested on
-            // its own. What is left here is the two things only the controller can carry out.
-            Command(Wm(cmd)) => {
-                match lower::lower(cmd, &self.config.config.virtual_workspaces.workspace_names) {
-                    lower::Lowered::Command(cmd) => {
-                        self.events_tx.send(reactor::Event::Command(cmd));
-                    }
-                    lower::Lowered::Exec(cmd) => self.exec_cmd(cmd),
-                    lower::Lowered::ReloadConfig => self.reload_config(),
-                    lower::Lowered::UnknownWorkspace(selector) => {
-                        warn!(
-                            ?selector,
-                            "a binding asked for a workspace that is not configured; ignoring"
-                        );
-                    }
-                }
-            }
-            Command(ReactorCommand(cmd)) => {
-                self.events_tx.send(reactor::Event::Command(cmd));
+        }
+    }
+
+    /// Every bound action is a translation; `lower` is that translation and is tested on its own.
+    /// What is left here is the two things only the controller can carry out.
+    fn carry_out(&self, action: Action) {
+        match lower::lower(action, &self.config.config.virtual_workspaces.workspace_names) {
+            lower::Lowered::Command(cmd) => self.events_tx.send(reactor::Event::Command(cmd)),
+            lower::Lowered::Spawn(argv) => crate::app::startup::spawn(argv),
+            lower::Lowered::ReloadConfig => self.reload_config(),
+            lower::Lowered::UnknownWorkspace(name) => {
+                warn!(%name, "a binding asked for a workspace that is not configured; ignoring");
             }
         }
     }
@@ -325,19 +312,20 @@ impl WmController {
 
     fn register_hotkeys(&mut self) {
         debug!("register_hotkeys");
-        let bindings: Vec<(String, WmCommand)> =
-            self.config.config.key_specs.iter().cloned().collect();
+        let Registration { binds, switcher_binds } = Registration::of(&self.config.config);
         // Derived from the same bindings rather than configured separately, so the chord that opens a
         // switch and the modifier that holds it open cannot disagree.
         let switch_keys =
-            crate::switcher::domain::trigger::switch_keys_from_bindings(&bindings, |spec| {
+            crate::switcher::domain::trigger::switch_keys_from_bindings(&switcher_binds, |spec| {
                 let hotkey =
                     <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(spec)
                         .ok()?;
                 Some((hotkey.modifiers, hotkey.key_code))
             });
         _ = self.event_tap_tx.send(event_tap::Request::SetSwitchKeys(switch_keys));
-        _ = self.event_tap_tx.send(event_tap::Request::SetHotkeys(bindings));
+        _ = self
+            .event_tap_tx
+            .send(event_tap::Request::SetHotkeys(binds.into_iter().chain(switcher_binds).collect()));
     }
 
     fn reload_config(&self) {
@@ -356,37 +344,87 @@ impl WmController {
             error!("Failed to request config reload: {error_message}");
         }
     }
+}
 
-    fn exec_cmd(&self, cmd_args: ExecCmd) {
-        std::thread::spawn(move || {
-            let cmd_args = cmd_args.as_array();
-            let [cmd, args @ ..] = &*cmd_args else {
-                error!("Empty argument list passed to exec");
-                return;
-            };
-            let output = std::process::Command::new(cmd).args(args).output();
-            let output = match output {
-                Ok(o) => o,
-                Err(e) => {
-                    error!("Failed to execute command {cmd:?}: {e:?}");
-                    return;
-                }
-            };
-            if !output.status.success() {
-                error!(
-                    "Exec command exited with status {}: {cmd:?} {args:?}",
-                    output.status
-                );
-                error!("stdout: {}", String::from_utf8_lossy(&*output.stdout));
-                error!("stderr: {}", String::from_utf8_lossy(&*output.stderr));
-            }
-        });
+/// What the tap is given for a config's keys: every bind and switcher bind with `Mod` replaced by
+/// `mod-key`. A config change re-registers exactly when this changes.
+#[derive(Debug, PartialEq)]
+struct Registration {
+    binds: Vec<Bind>,
+    switcher_binds: Vec<Bind>,
+}
+
+impl Registration {
+    fn of(config: &crate::app::config::Config) -> Self {
+        let mod_key = config.settings.mod_key;
+        let resolve = |binds: &[Bind]| {
+            binds
+                .iter()
+                .map(|bind| Bind {
+                    key: bind.resolved_key(mod_key),
+                    ..bind.clone()
+                })
+                .collect()
+        };
+        Registration {
+            binds: resolve(&config.binds),
+            switcher_binds: resolve(&config.switcher_binds),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn registration(text: &str) -> Registration {
+        let config = crate::app::config::Config::parse("test.kdl", text)
+            .unwrap_or_else(|error| panic!("{}", error.render()));
+        Registration::of(&config)
+    }
+
+    fn keys(binds: &[Bind]) -> Vec<&str> {
+        binds.iter().map(|bind| bind.key.as_str()).collect()
+    }
+
+    const BINDS: &str = concat!(
+        "binds {\n    Mod+J { focus-column-left; }\n    Alt+K { debug; }\n}\n",
+        "recent-windows {\n    binds {\n        Mod+Tab { next-window; }\n    }\n}\n",
+    );
+
+    #[test]
+    fn every_mod_bind_is_registered_on_the_mod_key_switcher_binds_too() {
+        let ctrl = registration(&format!("input {{\n    mod-key \"Ctrl\"\n}}\n{BINDS}"));
+        assert_eq!(keys(&ctrl.binds), ["Ctrl+J", "Alt+K"]);
+        assert_eq!(keys(&ctrl.switcher_binds), ["Ctrl+Tab"]);
+        for key in keys(&ctrl.binds).into_iter().chain(keys(&ctrl.switcher_binds)) {
+            assert!(
+                <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(key).is_ok(),
+                "{key} would not register"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reload_that_only_changes_mod_key_re_registers() {
+        let alt = registration(BINDS);
+        let super_key = registration(&format!("input {{\n    mod-key \"Super\"\n}}\n{BINDS}"));
+        assert_ne!(alt, super_key);
+        assert_eq!(keys(&super_key.binds), ["Super+J", "Alt+K"]);
+    }
+
+    #[test]
+    fn a_reload_that_leaves_every_key_alone_does_not_re_register() {
+        assert_eq!(
+            registration(BINDS),
+            registration(&format!("layout {{\n    gaps 8\n}}\n{BINDS}"))
+        );
+        assert_eq!(
+            registration("binds {\n    Mod+J { focus-column-left; }\n}\n"),
+            registration("binds {\n    Alt+J { focus-column-left; }\n}\n"),
+            "`Mod+J` under the default mod-key registers what `Alt+J` does"
+        );
+    }
 
     #[test]
     fn a_clock_change_is_passed_to_the_reactor() {

@@ -7,7 +7,7 @@ use crate::layout::ScrollingLayoutSystem;
 use crate::layout::settings::LayoutSettings;
 use crate::windows::domain::rules::AppRuleDecision;
 #[cfg(test)]
-use crate::windows::domain::rules::AppWorkspaceRule;
+use crate::windows::domain::rules::{RuleMatch, WindowRule};
 use crate::workspaces::Direction;
 use crate::workspaces::domain::app_rules::{AppRuleEffects, AppRuleResult};
 use crate::workspaces::domain::hidden_window_placement::{HiddenWindowPlacement, HideCorner};
@@ -81,9 +81,7 @@ impl VirtualWorkspace {
     }
 
     pub fn create_layout_system(settings: &LayoutSettings) -> ScrollingLayoutSystem {
-        let mut scrolling = settings.scrolling.clone();
-        scrolling.base = settings.resolved_base();
-        crate::layout::ScrollingLayoutSystem::new(&scrolling)
+        crate::layout::ScrollingLayoutSystem::new(&settings.scrolling)
     }
 
     pub fn set_last_focused(&mut self, space: SpaceId, window_id: Option<WindowId>) {
@@ -151,15 +149,11 @@ pub struct WorkspaceStore {
     #[serde(skip)]
     max_workspaces: usize,
     #[serde(skip)]
-    default_workspace_count: usize,
-    #[serde(skip)]
     default_workspace_names: Vec<String>,
     #[serde(skip)]
     default_workspace: usize,
     #[serde(skip)]
     pub workspace_auto_back_and_forth: bool,
-    #[serde(skip)]
-    prevent_wrapping: bool,
     #[serde(skip)]
     pub layout_settings: LayoutSettings,
 }
@@ -179,8 +173,7 @@ impl WorkspaceStore {
         config: &VirtualWorkspaceSettings,
         layout_settings: &LayoutSettings,
     ) -> Self {
-        let target_count = config.default_workspace_count.max(1).min(MAX_WORKSPACES);
-        let default_workspace = config.default_workspace.min(target_count - 1);
+        let default_workspace = config.default_workspace.min(config.workspace_count() - 1);
 
         Self {
             workspaces: SlotMap::default(),
@@ -188,16 +181,11 @@ impl WorkspaceStore {
             active_workspace_per_space: HashMap::default(),
             workspace_counter: 1,
             #[cfg(test)]
-            test_app_rules: crate::windows::domain::rules::AppRuleEngine::new(
-                &config.app_rules,
-                config.float_modal_windows,
-            ),
+            test_app_rules: crate::windows::domain::rules::AppRuleEngine::new(&config.app_rules),
             max_workspaces: MAX_WORKSPACES,
-            default_workspace_count: config.default_workspace_count,
             default_workspace_names: config.workspace_names.clone(),
             default_workspace,
             workspace_auto_back_and_forth: config.workspace_auto_back_and_forth,
-            prevent_wrapping: config.prevent_wrapping,
             layout_settings: layout_settings.clone(),
         }
     }
@@ -213,12 +201,10 @@ impl WorkspaceStore {
             self.max_workspaces = MAX_WORKSPACES;
         }
         self.layout_settings = layout_settings.clone();
-        self.default_workspace_count = config.default_workspace_count;
         self.default_workspace_names = config.workspace_names.clone();
         self.workspace_auto_back_and_forth = config.workspace_auto_back_and_forth;
-        self.prevent_wrapping = config.prevent_wrapping;
 
-        let target_count = self.default_workspace_count.max(1).min(self.max_workspaces);
+        let target_count = config.workspace_count().min(self.max_workspaces);
         self.default_workspace = config.default_workspace.min(target_count - 1);
 
         // Persisted workspace names are historical display metadata. Explicit names in the
@@ -232,14 +218,9 @@ impl WorkspaceStore {
         }
 
         // Grow to the configured count. Shrinking is deliberately not done: windows would
-        // have to be relocated, and a mistyped count should not silently destroy a strip.
+        // have to be relocated, and a name removed by mistake should not silently destroy a strip.
         while self.workspace_order.len() < target_count {
-            let idx = self.workspace_order.len();
-            let name = self.default_workspace_names.get(idx).cloned().unwrap_or_else(|| {
-                let name = format!("Workspace {}", self.workspace_counter);
-                self.workspace_counter += 1;
-                name
-            });
+            let name = self.default_workspace_names[self.workspace_order.len()].clone();
             let workspace = VirtualWorkspace::new(name, &self.layout_settings);
             let id = self.workspaces.insert(workspace);
             self.workspace_order.push(id);
@@ -249,13 +230,9 @@ impl WorkspaceStore {
     /// Make sure the global workspace list exists, and that this display is showing one.
     fn ensure_space_initialized(&mut self, space: SpaceId) {
         if self.workspace_order.is_empty() {
-            let count = self.default_workspace_count.max(1).min(self.max_workspaces);
+            let count = self.default_workspace_names.len().clamp(1, self.max_workspaces);
             for i in 0..count {
-                let name = self
-                    .default_workspace_names
-                    .get(i)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Workspace {}", i + 1));
+                let name = self.default_workspace_names.get(i).cloned().unwrap_or_default();
                 let workspace = VirtualWorkspace::new(name, &self.layout_settings);
                 let id = self.workspaces.insert(workspace);
                 self.workspace_order.push(id);
@@ -442,8 +419,6 @@ impl WorkspaceStore {
             index = match dir {
                 Direction::Right if index + 1 < ids.len() => index + 1,
                 Direction::Left if index > 0 => index - 1,
-                Direction::Right if !self.prevent_wrapping => 0,
-                Direction::Left if !self.prevent_wrapping => ids.len() - 1,
                 _ => return None,
             };
 
@@ -1343,7 +1318,7 @@ mod tests {
     fn preserves_workspace_ordinal_across_transient_space_id_churn() {
         let mut window_store = WindowStore::default();
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.default_workspace_count = 3;
+        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let old_space = SpaceId::new(1);
         let new_space = SpaceId::new(2);
@@ -1389,7 +1364,7 @@ mod tests {
     fn a_new_window_lands_on_its_own_displays_active_workspace() {
         let mut window_store = WindowStore::default();
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.default_workspace_count = 4;
+        settings.workspace_names = crate::workspaces::settings::numbered_names(4);
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let builtin = SpaceId::new(1);
         let external = SpaceId::new(479);
@@ -1436,29 +1411,17 @@ mod tests {
 
     /// An app rule pins the WORKSPACE without pinning the display.
     ///
-    /// Under the old model workspace indices were per-display, so a rule naming index 2 meant
-    /// a different object on each display. Now index 2 is one workspace, and a rule sends the
+    /// Under the old model workspace indices were per-display, so a rule naming the third workspace
+    /// meant a different object on each display. Now it is one workspace, and a rule sends the
     /// window there regardless of which display it opened on.
     #[test]
     fn an_app_rule_pins_the_workspace_on_whichever_display_it_opens_on() {
         let mut window_store = WindowStore::default();
         let settings = VirtualWorkspaceSettings {
-            default_workspace_count: 4,
-            app_rules: vec![AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.editor".into()),
-                workspace: Some(WorkspaceSelector::Index(2)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
+            workspace_names: crate::workspaces::settings::numbered_names(4),
+            app_rules: vec![WindowRule {
+                open_on_workspace: Some("3".into()),
+                ..WindowRule::when(RuleMatch::app("com.example.editor"))
             }],
             ..VirtualWorkspaceSettings::default()
         };
@@ -1506,7 +1469,7 @@ mod tests {
     fn moving_to_a_busy_display_keeps_the_windows_workspace() {
         let mut window_store = WindowStore::default();
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.default_workspace_count = 3;
+        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let old_space = SpaceId::new(1);
         let new_space = SpaceId::new(2);
@@ -1571,7 +1534,7 @@ mod tests {
     fn topology_reassignment_preserves_workspace_ordinal_with_destination_assignments() {
         let mut window_store = WindowStore::default();
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.default_workspace_count = 3;
+        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let source_space = SpaceId::new(1);
         let destination_space = SpaceId::new(2);
@@ -1614,22 +1577,10 @@ mod tests {
     fn unmanaged_rule_does_not_reassign_window_during_transient_space_id_churn() {
         let mut window_store = WindowStore::default();
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.default_workspace_count = 3;
-        settings.app_rules = vec![AppWorkspaceRule {
-            display: None,
-            app_id: Some("com.example.unmanaged".into()),
-            workspace: None,
-            floating: false,
-            position: None,
-            size: None,
-            focus: false,
-            manage: false,
-            app_name: None,
-            title_regex: None,
-            title_substring: None,
-            ax_role: None,
-            ax_subrole: None,
-            modal: None,
+        settings.workspace_names = crate::workspaces::settings::numbered_names(3);
+        settings.app_rules = vec![WindowRule {
+            manage: Some(false),
+            ..WindowRule::when(RuleMatch::app("com.example.unmanaged"))
         }];
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
         let old_space = SpaceId::new(1);
@@ -1723,7 +1674,7 @@ mod tests {
     #[test]
     fn default_workspace_setting_applied() {
         let mut settings = VirtualWorkspaceSettings::default();
-        settings.default_workspace_count = 5;
+        settings.workspace_names = crate::workspaces::settings::numbered_names(5);
         settings.default_workspace = 3;
 
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
@@ -1768,7 +1719,6 @@ mod tests {
         // Navigation follows `workspace_order`, including after it changes.
         let window_store = WindowStore::default();
         let settings = VirtualWorkspaceSettings {
-            default_workspace_count: 3,
             workspace_names: vec!["A".into(), "B".into(), "C".into()],
             ..VirtualWorkspaceSettings::default()
         };
@@ -1799,32 +1749,10 @@ mod tests {
     }
 
     #[test]
-    fn workspace_navigation_wraps_by_default() {
-        let window_store = WindowStore::default();
-        let settings = VirtualWorkspaceSettings {
-            default_workspace_count: 3,
-            ..VirtualWorkspaceSettings::default()
-        };
-        let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
-        let space = SpaceId::new(1);
-        let workspaces = manager.list_workspaces(space).to_vec();
-
-        assert_eq!(
-            manager.next_workspace(&window_store, space, workspaces[2].0, None),
-            Some(workspaces[0].0)
-        );
-        assert_eq!(
-            manager.prev_workspace(&window_store, space, workspaces[0].0, None),
-            Some(workspaces[2].0)
-        );
-    }
-
-    #[test]
-    fn prevent_wrapping_stops_workspace_navigation_at_boundaries() {
+    fn workspace_navigation_stops_at_the_ends() {
         let mut window_store = WindowStore::default();
         let settings = VirtualWorkspaceSettings {
-            default_workspace_count: 4,
-            prevent_wrapping: true,
+            workspace_names: crate::workspaces::settings::numbered_names(4),
             ..VirtualWorkspaceSettings::default()
         };
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
@@ -1858,30 +1786,6 @@ mod tests {
     }
 
     #[test]
-    fn prevent_wrapping_updates_on_config_reload() {
-        let window_store = WindowStore::default();
-        let mut settings = VirtualWorkspaceSettings {
-            default_workspace_count: 2,
-            ..VirtualWorkspaceSettings::default()
-        };
-        let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
-        let space = SpaceId::new(1);
-        let workspaces = manager.list_workspaces(space).to_vec();
-
-        assert_eq!(
-            manager.next_workspace(&window_store, space, workspaces[1].0, None),
-            Some(workspaces[0].0)
-        );
-
-        settings.prevent_wrapping = true;
-        manager.update_settings(&settings, &LayoutSettings::default());
-        assert_eq!(
-            manager.next_workspace(&window_store, space, workspaces[1].0, None),
-            None
-        );
-    }
-
-    #[test]
     fn app_rules() {
         let mut window_store = WindowStore::default();
         let space1 = SpaceId::new(1);
@@ -1889,229 +1793,43 @@ mod tests {
 
         let mut settings = VirtualWorkspaceSettings::default();
 
-        if settings.workspace_names.len() < 4 {
-            while settings.workspace_names.len() < 4 {
-                settings
-                    .workspace_names
-                    .push(format!("Workspace {}", settings.workspace_names.len() + 1));
-            }
-        }
         settings.workspace_names[1] = "coding".to_string();
 
+        let floating = |line: RuleMatch| WindowRule { open_floating: Some(true), ..WindowRule::when(line) };
+        let to = |workspace: &str, line: RuleMatch| WindowRule {
+            open_on_workspace: Some(workspace.into()),
+            ..WindowRule::when(line)
+        };
+        let foo_titled = |pattern: &str| RuleMatch { title: Some(pattern.parse().unwrap()), ..RuleMatch::app("com.example.foo") };
+        // In file order, and every rule that applies is applied, so the general rule for an app comes
+        // before the specific one that overrides it.
         settings.app_rules = vec![
-            // Floating by app_id
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.test".into()),
-                workspace: None,
-                floating: true,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            // Match by app_name -> workspace 1
-            AppWorkspaceRule {
-                display: None,
-                app_id: None,
-                workspace: Some(WorkspaceSelector::Index(1)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: Some("Calendar".into()),
-                title_regex: None,
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            // Title substring -> workspace 0
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.foo".into()),
-                workspace: Some(WorkspaceSelector::Index(0)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: Some("Preferences".into()),
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            // Title regex -> workspace 2
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.foo".into()),
-                workspace: Some(WorkspaceSelector::Index(2)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: Some(r"Dialog\s+\d+".into()),
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            // AX role + subrole floating
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.special".into()),
-                workspace: None,
-                floating: true,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: None,
+            floating(RuleMatch::app("com.example.test")),
+            to("coding", RuleMatch { app_name: Some("Calendar".parse().unwrap()), ..RuleMatch::default() }),
+            to("Main", foo_titled("Preferences")),
+            to("Communication", foo_titled(r"Dialog\s+\d+")),
+            floating(RuleMatch {
                 ax_role: Some("AXWindow".into()),
                 ax_subrole: Some("AXDialog".into()),
-                modal: None,
-            },
-            // Workspace by name
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.name".into()),
-                workspace: Some(WorkspaceSelector::Name("coding".into())),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            // Specificity tie breaking generic vs substring (generic workspace 0, specific workspace 2)
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.tie".into()),
-                workspace: Some(WorkspaceSelector::Index(0)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("com.example.tie".into()),
-                workspace: Some(WorkspaceSelector::Index(2)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: Some("Editor".into()),
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            // Reapplication: Bitwarden title becomes floating
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("app.zen-browser.zen".into()),
-                workspace: None,
-                floating: true,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: Some("Bitwarden".into()),
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("app.zen-browser.zen".into()),
-                workspace: Some(WorkspaceSelector::Index(2)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            // Workspace override when specific rule matches different workspace + floating
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("app.zen-browser.zen".into()),
-                workspace: Some(WorkspaceSelector::Index(1)),
-                floating: false,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: None,
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
-            AppWorkspaceRule {
-                display: None,
-                app_id: Some("app.zen-browser.zen".into()),
-                workspace: Some(WorkspaceSelector::Index(3)),
-                floating: true,
-                position: None,
-                size: None,
-                focus: false,
-                manage: true,
-                app_name: None,
-                title_regex: None,
-                title_substring: Some("bitwarden".into()),
-                ax_role: None,
-                ax_subrole: None,
-                modal: None,
-            },
+                ..RuleMatch::app("com.example.special")
+            }),
+            to("coding", RuleMatch::app("com.example.name")),
+            to("Main", RuleMatch::app("com.example.tie")),
+            to("Communication", RuleMatch { title: Some("Editor".parse().unwrap()), ..RuleMatch::app("com.example.tie") }),
+            to("Communication", RuleMatch::app("app.zen-browser.zen")),
+            floating(RuleMatch { title: Some("(?i)bitwarden".parse().unwrap()), ..RuleMatch::app("app.zen-browser.zen") }),
         ];
 
         let mut manager = WorkspaceStore::new_with_config(&settings, &LayoutSettings::default());
 
-        // 1. Floating persistence via app_id (case-insensitive)
+        // 1. Floating persistence via app_id
         let w_float = WindowId::new(10, 1);
         let assignment = assign(
             &mut manager,
             &mut window_store,
             w_float,
             space1,
-            Some("COM.EXAMPLE.Test"),
+            Some("com.example.test"),
             None,
             None,
             None,
@@ -2149,7 +1867,7 @@ mod tests {
             None,
         )
         .workspace_id;
-        let coding_idx = 1; // Calendar rule points to workspace index 1
+        let coding_idx = 1; // the Calendar rule points to "coding", the second workspace
         let expected_ws_name = manager.list_workspaces(space1).get(coding_idx).unwrap().0;
         assert_eq!(ws_name, expected_ws_name);
 
@@ -2218,7 +1936,7 @@ mod tests {
             manager.list_workspaces(space1).iter().find(|(_, n)| n == "coding").unwrap().0;
         assert_eq!(ws_named, coding_ws);
 
-        // 6. Specificity tie-breaking (generic vs substring)
+        // 6. The later, more specific rule overrides the general one
         let w_tie = WindowId::new(60, 7);
         let ws_tie = assign(
             &mut manager,
@@ -2232,7 +1950,7 @@ mod tests {
             None,
         )
         .workspace_id;
-        let expected_specific = manager.list_workspaces(space1).get(2).unwrap().0; // substring rule points to 2
+        let expected_specific = manager.list_workspaces(space1).get(2).unwrap().0; // the title rule points to the third
         assert_eq!(ws_tie, expected_specific);
 
         // 7. Reapplication updates existing window to floating (Bitwarden title)
@@ -2291,16 +2009,10 @@ mod tests {
             None,
             None,
         );
-        // The generic rule with workspace index 1 should apply first.
-        // When title matches, the specific rule (index 3, floating) should override.
-        let expected_initial = manager.list_workspaces(space2).get(2).unwrap().0; // workspace index 1
-        let expected_updated = manager.list_workspaces(space2).get(3).unwrap().0; // workspace index 3
-        assert_eq!(bw2_initial_assignment.workspace_id, expected_initial);
-        // Workspace may remain same depending on rule ordering; ensure floating toggled and workspace is one of the target candidates.
-        assert!(
-            bw2_updated_assignment.workspace_id == expected_initial
-                || bw2_updated_assignment.workspace_id == expected_updated
-        );
+        // The general rule places it; the title rule then floats it where it already is.
+        let expected = manager.list_workspaces(space2).get(2).unwrap().0;
+        assert_eq!(bw2_initial_assignment.workspace_id, expected);
+        assert_eq!(bw2_updated_assignment.workspace_id, expected);
         assert!(bw2_updated_assignment.floating);
     }
 

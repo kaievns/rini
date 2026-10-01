@@ -1,92 +1,57 @@
-//! What the input context can be told about itself. Plain data with defaults and validation; the
-//! config file fills it and hands the whole thing over as `InputSettings`.
-use serde::{Deserialize, Serialize};
+//! What the input context can be told about itself. Plain data with defaults; the config file fills
+//! it and hands the whole thing over as `InputSettings`.
+use serde::Serialize;
 
 use crate::input::domain::key::HotkeySpec;
 use crate::input::platform::haptics::HapticPattern;
 
-fn yes() -> bool {
-    true
-}
-fn no() -> bool {
-    false
-}
-pub fn default_swipe_vertical_tolerance() -> f64 {
-    0.4
-}
-pub fn default_swipe_fingers() -> usize {
-    3
-}
-pub fn default_distance_pct() -> f64 {
-    0.08
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+/// The workspace swipe, `gestures › swipe-workspace-switch`, and what both swipes share.
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct GestureSettings {
-    #[serde(default = "no")]
     pub enabled: bool,
-    /// If true, consume horizontal swipe events owned by Rini so macOS and the
-    /// foreground app do not also handle them.
-    #[serde(default = "yes")]
+    /// Consume the horizontal swipes rini handles, so macOS and the frontmost application do not
+    /// also handle them.
     pub consume_dock_swipe: bool,
-    #[serde(default)]
     pub invert_horizontal_swipe: bool,
-    /// Maximum absolute Y delta allowed for the gesture to count as horizontal
-    #[serde(default = "default_swipe_vertical_tolerance")]
+    /// How far the fingers may drift vertically and still count as a horizontal swipe: a fraction,
+    /// or a percentage above 1.
     pub swipe_vertical_tolerance: f64,
-    /// If true, attempt to skip empty workspaces on swipe (if supported)
-    #[serde(default)]
+    /// Skip empty workspaces when a swipe switches workspace.
     pub skip_empty: bool,
-    #[serde(default = "default_swipe_fingers")]
     pub fingers: usize,
-    /// Normalized horizontal distance (0..1) required to fire a swipe
-    #[serde(default = "default_distance_pct")]
+    /// Horizontal distance (0..1 of the trackpad) a switch needs.
     pub distance_pct: f64,
-    #[serde(default = "yes")]
     pub haptics_enabled: bool,
-    #[serde(default)]
     pub haptic_pattern: HapticPattern,
 }
+
 impl Default for GestureSettings {
     fn default() -> Self {
         Self {
             enabled: false,
             consume_dock_swipe: true,
             invert_horizontal_swipe: false,
-            swipe_vertical_tolerance: default_swipe_vertical_tolerance(),
+            swipe_vertical_tolerance: 0.4,
             skip_empty: true,
-            fingers: default_swipe_fingers(),
-            distance_pct: default_distance_pct(),
+            fingers: 3,
+            distance_pct: 0.08,
             haptics_enabled: true,
             haptic_pattern: HapticPattern::LevelChange,
         }
     }
 }
-impl GestureSettings {
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
-        if self.swipe_vertical_tolerance < 0.0 {
-            issues.push(format!(
-                "gestures.swipe_vertical_tolerance must be non-negative, got {}",
-                self.swipe_vertical_tolerance
-            ));
-        }
-        issues
-    }
-}
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default, Copy)]
-#[serde(deny_unknown_fields)]
+#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
 pub struct WindowSnappingSettings {
-    #[serde(default = "default_drag_swap_fraction")]
+    /// How much two windows must overlap, as intersection over union, before a drag swaps them.
     pub drag_swap_fraction: f64,
 }
-fn default_drag_swap_fraction() -> f64 {
-    0.3
+
+impl Default for WindowSnappingSettings {
+    fn default() -> Self { Self { drag_swap_fraction: 0.3 } }
 }
 
-/// The strip-scrolling gesture, as the tiling context configures it (`[settings.layout.scrolling.gestures]`).
+/// The strip-scrolling gesture, as the tiling context configures it (`gestures › swipe-view-scroll`).
 /// Copied here by the application so this context does not read tiling's settings.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ScrollGestureSettings {

@@ -8,7 +8,7 @@ use rini_geometry::SameAs;
 use test_log::test;
 
 use super::fixtures::*;
-use crate::app::config::OuterGaps;
+use crate::app::config::Edges;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::catalogue::NativeFullscreenTransition;
@@ -621,7 +621,7 @@ fn fullscreen_exit_space_restore_does_not_revive_stale_pre_rekey_window() {
 fn floating_window_toggles_to_fullscreen_within_gaps() {
     let (mut reactor, wid, space1, screen, _floating_frame) = reactor_with_floating_window();
     // Assymetric gaps to prevent swapped left/right or swapped width/height bugs from passing
-    reactor.config.settings.layout.gaps.outer = OuterGaps {
+    reactor.config.settings.layout.gaps.struts = Edges {
         top: 10.,
         left: 20.,
         bottom: 30.,

@@ -20,28 +20,57 @@ pub fn wants_restore(restore: bool, no_restore: bool) -> bool {
 
 /// The config, or the built-in defaults and the reason the file could not be used.
 ///
-/// A broken config MUST NOT stop rini starting. This used to be an unwrap, so one unparseable line
-/// took the whole window manager down at launch — and with no window manager running there is no
-/// way to open an editor except from a terminal that happens to be open already. One mistyped
-/// keybinding was enough.
+/// A broken config MUST NOT stop rini starting: with no window manager running there is no way to
+/// open an editor except from a terminal that happens to be open already. On the defaults rini keeps
+/// its binds and re-reads the file when it is saved, so the file can be fixed in place.
 ///
-/// Falling back keeps windows managed and the hotkeys for editing the config reachable, which is the
-/// only state a user can actually recover from. A missing file is not an error: it means the defaults.
+/// A missing file means the defaults, unless the TOML config sits beside it (`leftover_toml`).
 pub fn config_or_default(path: &Path) -> (Config, Option<String>) {
     if !path.exists() {
-        return (Config::default(), None);
+        return (Config::default(), leftover_toml(path));
     }
     match Config::read(path) {
         Ok(config) => (config, None),
         Err(error) => (
             Config::default(),
             Some(format!(
-                "Could not read the config at {}; starting with the built-in defaults so rini \
-                 stays usable. Fix the config and restart. Error: {error}",
-                path.display()
+                "Could not use the config at {}; starting on the built-in defaults, \
+                 rini.default.kdl. Fix the config and it is read again as soon as it is saved.\n{}",
+                path.display(),
+                error.render()
             )),
         ),
     }
+}
+
+/// Why a missing `path` is not simply the defaults: a `config.toml` beside it is a config that was
+/// written and is no longer read.
+fn leftover_toml(path: &Path) -> Option<String> {
+    let toml = path.with_file_name("config.toml");
+    toml.exists().then(|| {
+        format!(
+            "No config at {}, but {} is there: rini's config is KDL, and until {} exists rini runs \
+             on its built-in defaults, rini.default.kdl. docs/config.md has the format.",
+            path.display(),
+            toml.display(),
+            path.display()
+        )
+    })
+}
+
+/// What `rini --validate` says about the config: a line naming it when it is good, the report when
+/// it is not. A missing file is good, since it means the defaults, unless `leftover_toml` says why
+/// not.
+pub fn validate_config(path: &Path) -> Result<String, String> {
+    if !path.exists() {
+        return match leftover_toml(path) {
+            Some(complaint) => Err(complaint),
+            None => Ok(format!("No config at {}; rini uses its built-in defaults", path.display())),
+        };
+    }
+    Config::read(path)
+        .map(|_| format!("config is valid: {}", path.display()))
+        .map_err(|error| error.render())
 }
 
 /// Where the config is, given whatever `--config` said.
@@ -87,30 +116,54 @@ mod tests {
         assert!(wants_restore(true, true));
     }
 
+    fn temp_config(name: &str, text: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        (dir, path)
+    }
+
     #[test]
     fn a_missing_config_file_is_not_an_error() {
-        let path = std::env::temp_dir().join(format!("rini-absent-{}.toml", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        let (_, complaint) = config_or_default(&path);
+        let dir = tempfile::tempdir().unwrap();
+        let (_, complaint) = config_or_default(&dir.path().join("config.kdl"));
         assert_eq!(
             complaint, None,
             "no file means the defaults, which is not a failure"
         );
     }
 
+    /// The defaults run every Space inactive, so starting on them silently in place of a TOML config
+    /// looks like rini is broken.
+    #[test]
+    fn a_missing_config_beside_a_toml_one_is_a_config_that_cannot_be_used() {
+        let (dir, toml) = temp_config("config.toml", "[settings]\nanimate = false\n");
+        let kdl = dir.path().join("config.kdl");
+
+        let (config, complaint) = config_or_default(&kdl);
+
+        let complaint = complaint.expect("the TOML file is named, not ignored");
+        for named in [kdl.display().to_string(), toml.display().to_string()] {
+            assert!(complaint.contains(&named), "{named} missing: {complaint}");
+        }
+        assert!(complaint.contains("docs/config.md"), "{complaint}");
+        assert_eq!(config.settings, Config::default().settings);
+
+        let report = validate_config(&kdl).unwrap_err();
+        assert!(report.contains("config.toml"), "{report}");
+    }
+
     /// The history this exists for: one mistyped keybinding used to take the window manager down at
     /// launch, and with nothing managing windows there is no way to open an editor to fix it.
     #[test]
     fn an_unparseable_config_falls_back_to_the_defaults_and_says_so() {
-        let path = std::env::temp_dir().join(format!("rini-broken-{}.toml", std::process::id()));
-        std::fs::write(&path, "[settings]\nanimate = \"not a bool\"\n\n[keys]\n").unwrap();
+        let (_dir, path) = temp_config("config.kdl", "animations {\n    off \"not a bool\"\n}\n");
 
         let (config, complaint) = config_or_default(&path);
-        let _ = std::fs::remove_file(&path);
 
         let complaint = complaint.expect("a refused config has to say why");
         assert!(complaint.contains("built-in defaults"), "{complaint}");
-        assert!(complaint.contains("Fix the config and restart"), "{complaint}");
+        assert!(complaint.contains("config.kdl:2:"), "the report names the line: {complaint}");
         assert_eq!(
             config.settings.animate,
             Config::default().settings.animate,
@@ -118,39 +171,48 @@ mod tests {
         );
     }
 
-    /// A binding naming a command that does not exist is the exact shape of the failure: deleting a
-    /// command from the protocol invalidates a config that used it, and that must not be fatal.
+    /// A binding naming an action that does not exist is the exact shape of the failure: renaming an
+    /// action invalidates a config that used it, and that must not be fatal.
     #[test]
-    fn a_config_naming_an_unknown_command_falls_back_rather_than_failing() {
-        let path = std::env::temp_dir().join(format!("rini-unknown-{}.toml", std::process::id()));
-        std::fs::write(&path, "[keys]\n\"Alt + Q\" = \"no_such_command\"\n").unwrap();
+    fn a_config_naming_an_unknown_action_falls_back_rather_than_failing() {
+        let (_dir, path) = temp_config("config.kdl", "binds {\n    Alt+Q { no-such-action; }\n}\n");
 
         let (_, complaint) = config_or_default(&path);
-        let _ = std::fs::remove_file(&path);
 
         assert!(
-            complaint.is_some(),
-            "an unknown command is a refusal, not a silent ignore"
+            complaint.is_some_and(|complaint| complaint.contains("unknown action `no-such-action`")),
+            "an unknown action is a refusal, not a silent ignore"
         );
     }
 
+    /// Every section is optional: a file with only one setting in it is a whole config.
     #[test]
     fn a_valid_config_produces_no_complaint() {
-        let path = std::env::temp_dir().join(format!("rini-ok-{}.toml", std::process::id()));
-        // `keys` is a TOP-LEVEL table and is required: the binding table has no default, because a
-        // window manager with no bindings is not a state anyone should reach by omission.
-        std::fs::write(&path, "[settings]\nanimate = false\n\n[keys]\n").unwrap();
+        let (_dir, path) = temp_config("config.kdl", "animations {\n    off\n}\n");
 
         let (config, complaint) = config_or_default(&path);
-        let _ = std::fs::remove_file(&path);
 
         assert_eq!(complaint, None);
         assert!(!config.settings.animate);
     }
 
     #[test]
+    fn validate_names_a_good_config_and_reports_a_bad_one_with_its_line() {
+        let (_dir, good) = temp_config("good.kdl", "layout {\n    gaps 4\n}\n");
+        assert!(validate_config(&good).unwrap().starts_with("config is valid: "));
+
+        let (_dir, bad) = temp_config("bad.kdl", "layout {\n    gasp 4\n}\n");
+        let report = validate_config(&bad).unwrap_err();
+        assert!(report.contains("bad.kdl:2:5"), "{report}");
+        assert!(report.contains("did you mean `gaps`?"), "{report}");
+
+        let missing = good.with_file_name("absent.kdl");
+        assert!(validate_config(&missing).unwrap().contains("built-in defaults"));
+    }
+
+    #[test]
     fn a_named_config_path_is_taken_as_given() {
-        let named = PathBuf::from("/tmp/somewhere/rini.toml");
+        let named = PathBuf::from("/tmp/somewhere/rini.kdl");
         assert_eq!(config_path(Some(named.clone())), named);
     }
 
@@ -164,7 +226,7 @@ mod tests {
     /// behind the user's actual settings.
     #[test]
     fn a_named_path_that_does_not_exist_is_not_second_guessed() {
-        let absent = PathBuf::from("/tmp/rini-does-not-exist-9e7c.toml");
+        let absent = PathBuf::from("/tmp/rini-does-not-exist-9e7c.kdl");
         assert_eq!(config_path(Some(absent.clone())), absent);
         assert_ne!(config_path(Some(absent)), rini_core::paths::config_file());
     }

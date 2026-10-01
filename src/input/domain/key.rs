@@ -1,16 +1,15 @@
 //! Keys, modifiers and hotkeys as rini names them.
 //!
 //! The vocabulary, and the parts of a key spec that need no keyboard: which modifiers a token names,
-//! which side of a pair it means, how a `Hotkey` prints, how a spec written in `rini.toml` is
-//! canonicalised. Turning a spec into a physical key is layout-dependent and lives in
+//! which side of a pair it means, how a `Hotkey` prints, how a key written in `binds` is canonicalised
+//! and what its `Mod` stands for. Turning a spec into a physical key is layout-dependent and lives in
 //! `crate::input::platform::keyboard`.
 
 use std::fmt;
 
-use rustc_hash::FxHashMap as HashMap;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Modifiers(u8);
 
 impl Modifiers {
@@ -208,9 +207,9 @@ pub(in crate::input) const MOD_FAMILIES: &[ModFamily] = &[
         right_mask: 0x00000004,
     },
     ModFamily {
-        name: "Meta",
-        left_name: "MetaLeft",
-        right_name: "MetaRight",
+        name: "Super",
+        left_name: "SuperLeft",
+        right_name: "SuperRight",
         generic: Modifiers::META,
         left: Modifiers::META_LEFT,
         right: Modifiers::META_RIGHT,
@@ -264,7 +263,7 @@ pub(in crate::input) fn modifier_from_token(token: &str) -> Option<Modifiers> {
         "alt" | "option" => &MOD_FAMILIES[1],
         "ctrl" | "control" => &MOD_FAMILIES[0],
         "shift" => &MOD_FAMILIES[2],
-        "meta" | "cmd" | "command" => &MOD_FAMILIES[3],
+        "super" | "win" | "cmd" | "command" => &MOD_FAMILIES[3],
         _ => return None,
     };
 
@@ -275,7 +274,7 @@ pub(in crate::input) fn modifier_from_token(token: &str) -> Option<Modifiers> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum KeyCode {
     KeyA,
     KeyS,
@@ -587,7 +586,7 @@ pub fn is_modifier_key(key_code: KeyCode) -> bool {
 /// arrow word becomes its `ArrowX` name.
 ///
 /// Anything else is left exactly as written. A token this does not know is either a key name the
-/// keyboard layer will resolve or a typo the config validator will refuse, and guessing here would
+/// keyboard layer will resolve or a typo the config decoder will refuse, and guessing here would
 /// turn the second into the first.
 fn canonical_spec_token(word: &str) -> String {
     if word.len() == 1 {
@@ -602,45 +601,78 @@ fn canonical_spec_token(word: &str) -> String {
     }
 }
 
-/// Canonicalises a key spec as written in `rini.toml`: single letters upper-cased, arrow words
-/// to `ArrowUp` and kin.
-///
-/// Splits on anything non-alphabetic and puts the separators back unchanged, so `Alt + Shift + Down`
-/// keeps its spacing and its pluses. The token rule was written out twice here — once for the words
-/// inside the loop and once for a trailing word with no separator after it — which is two places for
-/// one rule to be fixed in.
+/// Canonicalises a key spec as written in `binds`: a single letter upper-cased, an arrow word to
+/// `ArrowUp` and kin. Each `+`-separated token is taken whole and keeps its spacing, so
+/// `Alt + Shift + Down` stays spaced and `Page_Down` stays the key it names.
 pub fn normalize_spec(key: &str) -> String {
-    let mut out = String::with_capacity(key.len());
-    let mut word = String::new();
-
-    for ch in key.chars() {
-        if ch.is_alphabetic() {
-            word.push(ch);
-            continue;
-        }
-        if !word.is_empty() {
-            out.push_str(&canonical_spec_token(&word));
-            word.clear();
-        }
-        out.push(ch);
-    }
-    if !word.is_empty() {
-        out.push_str(&canonical_spec_token(&word));
-    }
-
-    out
+    key.split('+')
+        .map(|token| {
+            let word = token.trim();
+            if word.is_empty() {
+                token.to_owned()
+            } else {
+                token.replacen(word, &canonical_spec_token(word), 1)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
-/// Replaces a leading `[modifier_combinations]` alias (`comb1 + C`) with its definition.
-pub fn expand_modifier_combination(key: &str, combinations: &HashMap<String, String>) -> String {
-    if let Some(plus_pos) = key.find(" + ") {
-        let potential_combo = &key[..plus_pos];
-        if let Some(combo_value) = combinations.get(potential_combo) {
-            let rest = &key[plus_pos + 3..];
-            return format!("{} + {}", combo_value, rest);
+/// The modifier `Mod` stands for in a key: `input › mod-key`, niri's name for it.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModKey {
+    #[default]
+    Alt,
+    Ctrl,
+    Shift,
+    Super,
+}
+
+impl ModKey {
+    pub const ALL: [ModKey; 4] = [ModKey::Alt, ModKey::Ctrl, ModKey::Shift, ModKey::Super];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ModKey::Alt => "Alt",
+            ModKey::Ctrl => "Ctrl",
+            ModKey::Shift => "Shift",
+            ModKey::Super => "Super",
         }
     }
-    key.to_string()
+}
+
+impl std::str::FromStr for ModKey {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match normalize_token(text).as_str() {
+            "alt" | "option" => Ok(ModKey::Alt),
+            "ctrl" | "control" => Ok(ModKey::Ctrl),
+            "shift" => Ok(ModKey::Shift),
+            "super" | "win" | "cmd" | "command" => Ok(ModKey::Super),
+            "isolevel3shift" | "mod5" | "isolevel5shift" | "mod3" => {
+                Err(format!("`{text}` has no meaning on macOS"))
+            }
+            _ => Err(format!(
+                "expected one modifier, `Alt`, `Ctrl`, `Shift` or `Super`, found `{text}`"
+            )),
+        }
+    }
+}
+
+/// `spec` with every `Mod` token replaced by `mod_key`'s name.
+pub fn substitute_mod(spec: &str, mod_key: ModKey) -> String {
+    spec.split('+')
+        .map(|token| {
+            let trimmed = token.trim();
+            if trimmed.eq_ignore_ascii_case("mod") {
+                token.replacen(trimmed, mod_key.name(), 1)
+            } else {
+                token.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 #[cfg(test)]
@@ -652,7 +684,7 @@ mod tests {
         assert_eq!(normalize_spec("Alt + Shift + Down"), "Alt + Shift + ArrowDown");
         assert_eq!(normalize_spec("Ctrl + Up"), "Ctrl + ArrowUp");
         assert_eq!(normalize_spec("Shift + Left"), "Shift + ArrowLeft");
-        assert_eq!(normalize_spec("Meta + Right"), "Meta + ArrowRight");
+        assert_eq!(normalize_spec("Super + Right"), "Super + ArrowRight");
     }
 
     // --- the bitfield -------------------------------------------------------------------------
@@ -757,7 +789,7 @@ mod tests {
         for variant in mods.expand_to_specific() {
             assert!(
                 variant.intersects(Modifiers::META),
-                "{variant} does not press Meta"
+                "{variant} does not press Super"
             );
         }
     }
@@ -767,7 +799,7 @@ mod tests {
     #[test]
     fn every_modifier_name_and_alias_parses() {
         for token in [
-            "ctrl", "control", "alt", "option", "shift", "meta", "cmd", "command",
+            "ctrl", "control", "alt", "option", "shift", "super", "win", "cmd", "command",
         ] {
             assert!(modifier_from_token(token).is_some(), "{token} does not parse");
         }
@@ -777,8 +809,9 @@ mod tests {
     #[test]
     fn an_alias_is_the_same_modifier_as_the_name_it_aliases() {
         assert_eq!(modifier_from_token("option"), modifier_from_token("alt"));
-        assert_eq!(modifier_from_token("cmd"), modifier_from_token("meta"));
-        assert_eq!(modifier_from_token("command"), modifier_from_token("meta"));
+        assert_eq!(modifier_from_token("cmd"), modifier_from_token("super"));
+        assert_eq!(modifier_from_token("command"), modifier_from_token("super"));
+        assert_eq!(modifier_from_token("win"), modifier_from_token("super"));
         assert_eq!(modifier_from_token("control"), modifier_from_token("ctrl"));
     }
 
@@ -791,7 +824,7 @@ mod tests {
 
     #[test]
     fn a_token_that_is_not_a_modifier_does_not_parse() {
-        for token in ["a", "ArrowUp", "hyper", "", "ctr"] {
+        for token in ["a", "ArrowUp", "hyper", "", "ctr", "meta"] {
             assert_eq!(
                 modifier_from_token(token),
                 None,
@@ -844,7 +877,7 @@ mod tests {
         other.insert(Modifiers::CONTROL);
         other.insert(Modifiers::META);
         assert_eq!(one.to_string(), other.to_string());
-        assert_eq!(one.to_string(), "Ctrl + Meta");
+        assert_eq!(one.to_string(), "Ctrl + Super");
     }
 
     #[test]
@@ -912,8 +945,6 @@ mod tests {
         assert_eq!(normalize_spec("Ctrl + A"), "Ctrl + A");
     }
 
-    /// A trailing word takes the same rule as a word inside the spec. This was written out twice, and
-    /// a fix to one copy and not the other is the failure the duplication invited.
     #[test]
     fn the_last_token_is_canonicalised_the_same_as_the_others() {
         assert_eq!(normalize_spec("Alt + down"), "Alt + ArrowDown");
@@ -930,11 +961,19 @@ mod tests {
     }
 
     /// A word this does not know is left alone, because it is either a key name the keyboard layer
-    /// resolves or a typo the config validator refuses. Guessing would turn the second into the first.
+    /// resolves or a typo the config decoder refuses. Guessing would turn the second into the first.
     #[test]
     fn an_unknown_word_is_left_exactly_as_written() {
         assert_eq!(normalize_spec("Ctrl + Hyper"), "Ctrl + Hyper");
         assert_eq!(normalize_spec("Ctrl + F13"), "Ctrl + F13");
+    }
+
+    /// niri's XKB names hold arrow words: `Page_Down` is one key, not `Page_` and an arrow.
+    #[test]
+    fn a_key_name_holding_an_arrow_word_is_one_token() {
+        assert_eq!(normalize_spec("Mod+Page_Down"), "Mod+Page_Down");
+        assert_eq!(normalize_spec("Mod + Ctrl + Page_Up"), "Mod + Ctrl + Page_Up");
+        assert_eq!(normalize_spec("Mod+Shift+Down"), "Mod+Shift+ArrowDown");
     }
 
     #[test]
@@ -944,48 +983,37 @@ mod tests {
 
     #[test]
     fn canonicalising_twice_changes_nothing_the_second_time() {
-        for spec in ["Alt + Shift + Down", "ctrl+a", "down", "Ctrl + F13", ""] {
+        for spec in [
+            "Alt + Shift + Down",
+            "ctrl+a",
+            "down",
+            "Ctrl + F13",
+            "Mod+Page_Up",
+            "",
+        ] {
             let once = normalize_spec(spec);
             assert_eq!(normalize_spec(&once), once, "{spec:?} is not stable");
         }
     }
 
-    // --- modifier combinations ----------------------------------------------------------------
+    // --- Mod ----------------------------------------------------------------------------------
 
-    fn combos() -> HashMap<String, String> {
-        let mut map = HashMap::default();
-        map.insert("hyper".to_owned(), "Ctrl + Alt + Shift + Meta".to_owned());
-        map
+    #[test]
+    fn mod_is_replaced_wherever_it_is_and_however_it_is_spelt() {
+        assert_eq!(substitute_mod("Mod+Shift+J", ModKey::Ctrl), "Ctrl+Shift+J");
+        assert_eq!(substitute_mod("Shift + mod + J", ModKey::Super), "Shift + Super + J");
+        assert_eq!(substitute_mod("Alt+M", ModKey::Ctrl), "Alt+M", "the key M is not Mod");
+        assert_eq!(substitute_mod("Ctrl+Modx", ModKey::Ctrl), "Ctrl+Modx");
     }
 
     #[test]
-    fn a_leading_alias_is_replaced_by_its_definition() {
-        assert_eq!(
-            expand_modifier_combination("hyper + C", &combos()),
-            "Ctrl + Alt + Shift + Meta + C"
-        );
-    }
-
-    #[test]
-    fn a_spec_naming_no_alias_is_returned_unchanged() {
-        assert_eq!(expand_modifier_combination("Ctrl + C", &combos()), "Ctrl + C");
-    }
-
-    /// Only a LEADING alias is expanded. An alias later in the spec is left alone, which is a real
-    /// limit rather than an oversight: a combination names the modifiers a binding starts with, and
-    /// substituting one mid-spec would put modifiers after the key.
-    #[test]
-    fn an_alias_that_is_not_leading_is_left_alone() {
-        assert_eq!(
-            expand_modifier_combination("Ctrl + hyper", &combos()),
-            "Ctrl + hyper"
-        );
-    }
-
-    /// A bare alias with no key after it is also left alone, because the split looks for ` + `. Worth
-    /// knowing: `"hyper" = "..."` used as a whole binding does not expand.
-    #[test]
-    fn a_bare_alias_with_no_key_is_not_expanded() {
-        assert_eq!(expand_modifier_combination("hyper", &combos()), "hyper");
+    fn mod_key_takes_one_modifier_by_any_of_its_names() {
+        assert_eq!("Ctrl".parse(), Ok(ModKey::Ctrl));
+        assert_eq!("control".parse(), Ok(ModKey::Ctrl));
+        assert_eq!("Option".parse(), Ok(ModKey::Alt));
+        assert_eq!("Win".parse(), Ok(ModKey::Super));
+        assert_eq!("Cmd".parse(), Ok(ModKey::Super));
+        assert!("ISO_Level3_Shift".parse::<ModKey>().unwrap_err().contains("macOS"));
+        assert!("Ctrl+Alt".parse::<ModKey>().is_err());
     }
 }

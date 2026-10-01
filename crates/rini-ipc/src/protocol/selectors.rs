@@ -24,6 +24,34 @@ pub enum RestoreSource {
     CurrentSpace,
 }
 
+/// The config's spelling, `scope="workspace"`.
+impl std::str::FromStr for RestoreScope {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "workspace" => Ok(RestoreScope::Workspace),
+            "space" => Ok(RestoreScope::Space),
+            other => Err(format!("expected `workspace` or `space`, found `{other}`")),
+        }
+    }
+}
+
+/// The config's spelling, `source="saved-active-space"`.
+impl std::str::FromStr for RestoreSource {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "saved-active-space" => Ok(RestoreSource::SavedActiveSpace),
+            "current-space" => Ok(RestoreSource::CurrentSpace),
+            other => Err(format!(
+                "expected `saved-active-space` or `current-space`, found `{other}`"
+            )),
+        }
+    }
+}
+
 /// Stepping through the displays rather than naming one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,6 +102,13 @@ mod tests {
 
         let direction: DisplaySelector = serde_json::from_str("\"right\"").expect("parses");
         assert_eq!(direction, DisplaySelector::Direction(Direction::Right));
+    }
+
+    #[test]
+    fn restore_scope_and_source_parse_the_config_spelling() {
+        assert_eq!("space".parse(), Ok(RestoreScope::Space));
+        assert_eq!("current-space".parse(), Ok(RestoreSource::CurrentSpace));
+        assert!("current_space".parse::<RestoreSource>().is_err());
     }
 
     #[test]

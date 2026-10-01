@@ -177,25 +177,13 @@ pub fn fullscreen_startup_fixture(
     crate::workspaces::domain::virtual_workspace::VirtualWorkspaceId,
 ) {
     let mut workspace_cfg = crate::app::config::VirtualWorkspaceSettings {
-        default_workspace_count: 2,
+        workspace_names: crate::workspaces::settings::numbered_names(2),
         ..crate::app::config::VirtualWorkspaceSettings::default()
     };
     if with_app_rule {
-        workspace_cfg.app_rules = vec![crate::app::config::AppWorkspaceRule {
-            display: None,
-            app_id: Some("com.testapp1".to_string()),
-            workspace: Some(crate::app::config::WorkspaceSelector::Index(1)),
-            floating: false,
-            position: None,
-            size: None,
-            focus: false,
-            manage: true,
-            app_name: None,
-            title_regex: None,
-            title_substring: None,
-            ax_role: None,
-            ax_subrole: None,
-            modal: None,
+        workspace_cfg.app_rules = vec![crate::app::config::WindowRule {
+            open_on_workspace: Some("2".into()),
+            ..crate::app::config::WindowRule::when(crate::app::config::RuleMatch::app("com.testapp1"))
         }];
     }
 
@@ -264,7 +252,7 @@ pub fn has_window_in_layout(
     screen: CGRect,
     wid: WindowId,
 ) -> bool {
-    let gaps = reactor.config.settings.layout.gaps.clone();
+    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     reactor
         .layout_manager
         .layout_engine
@@ -278,7 +266,7 @@ pub fn test_layout(
     space: SpaceId,
     screen: CGRect,
 ) -> Vec<(WindowId, CGRect)> {
-    let gaps = reactor.config.settings.layout.gaps.clone();
+    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     reactor.layout_manager.layout_engine.calculate_layout(space, screen, &gaps)
 }
 
@@ -324,7 +312,7 @@ pub fn laid_out_frame(
     screen: CGRect,
     wid: WindowId,
 ) -> Option<CGRect> {
-    let gaps = reactor.config.settings.layout.gaps.clone();
+    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     reactor
         .layout_manager
         .layout_engine

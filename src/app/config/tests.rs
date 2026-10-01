@@ -1,0 +1,1102 @@
+use std::collections::BTreeMap;
+
+use pretty_assertions::assert_eq;
+use strum::VariantNames;
+
+use super::*;
+use crate::app::config::kdl::suggest::{NIRI, NIRI_ACTIONS, SCHEMA};
+use crate::displays::platform::cursor_warp::StackedUpperSide;
+use crate::input::domain::binding::{Action, SwitcherFilter, SwitcherScope, WorkspaceReference};
+use crate::layout::settings::{CenterFocusedColumn, Gaps, WindowInsertionPoint};
+use crate::windows::domain::rules::{
+    AppRuleDecision, AppRuleEngine, FloatingPosition, RelativeTo, WindowRuleContext,
+};
+use crate::workspaces::domain::display_pin::DisplayRole;
+
+fn parse(text: &str) -> Config {
+    Config::parse("test.kdl", text).unwrap_or_else(|error| panic!("{}", error.render()))
+}
+
+/// The rendered report for a text that must be refused, its whitespace folded so a wrapped line
+/// still reads as one.
+fn refused(text: &str) -> String {
+    match Config::parse("test.kdl", text) {
+        Ok(_) => panic!("accepted:\n{text}"),
+        Err(error) => error.render().split_whitespace().collect::<Vec<_>>().join(" "),
+    }
+}
+
+/// The settings and workspaces, which are what an empty file and the reference must agree on.
+fn settings_and_workspaces(config: &Config) -> (Settings, Vec<String>, usize, bool, bool) {
+    let w = &config.virtual_workspaces;
+    (
+        config.settings.clone(),
+        w.workspace_names.clone(),
+        w.default_workspace,
+        w.workspace_auto_back_and_forth,
+        w.reapply_app_rules_on_title_change,
+    )
+}
+
+// --- the reference -----------------------------------------------------------------------------
+
+#[test]
+fn the_embedded_default_parses() {
+    if let Err(error) = Config::parse("rini.default.kdl", DEFAULT_KDL) {
+        panic!("{}", error.render());
+    }
+}
+
+/// niri's `diff_empty_to_default`: every value the reference writes is the code default, so it
+/// cannot drift from what an empty file means. Binds and window rules are the exception, by design.
+#[test]
+fn the_reference_means_the_same_settings_and_workspaces_as_an_empty_file() {
+    assert_eq!(
+        settings_and_workspaces(&Config::default()),
+        settings_and_workspaces(&parse(""))
+    );
+    assert!(parse("").binds.is_empty(), "a file with no binds has none");
+    assert!(parse("").virtual_workspaces.app_rules.is_empty());
+    assert!(!Config::default().binds.is_empty());
+}
+
+/// Under `"Shift"` each Mod+Shift bind is its Mod bind, as the reference's comment says.
+#[test]
+fn the_reference_is_usable_under_every_mod_key_it_offers() {
+    for (name, usable) in [
+        ("Alt", true),
+        ("Ctrl", true),
+        ("Super", true),
+        ("Shift", false),
+    ] {
+        let written = format!("mod-key \"{name}\"");
+        let text = DEFAULT_KDL.replace("mod-key \"Alt\"", &written);
+        assert!(text.contains(&written));
+        let file = Config::parse("rini.default.kdl", &text);
+        let report = file.as_ref().err().map(ConfigError::render).unwrap_or_default();
+        assert_eq!(file.is_ok(), usable, "{name}:\n{report}");
+        let fragment =
+            Config::default().with("config set", &format!("input {{\n    {written}\n}}\n"));
+        assert_eq!(fragment.is_ok(), usable, "config set {written}");
+    }
+}
+
+#[test]
+fn an_empty_section_means_the_same_as_an_absent_one() {
+    let absent = parse("");
+    for section in [
+        "input",
+        "cursor",
+        "layout",
+        "animations",
+        "gestures",
+        "recent-windows",
+        "bar",
+        "config-notification",
+        "binds",
+    ] {
+        assert_eq!(parse(&format!("{section} {{\n}}\n")), absent, "`{section} {{}}`");
+    }
+    assert_eq!(
+        parse(
+            "gestures {\n    swipe-workspace-switch {\n    }\n    swipe-view-scroll {\n    }\n}\n"
+        ),
+        absent
+    );
+    assert_eq!(
+        parse("recent-windows {\n    icons {\n    }\n    binds {\n    }\n}\n"),
+        absent
+    );
+    assert_eq!(parse("layout {\n    preset-column-widths {\n    }\n}\n"), absent);
+}
+
+/// Each has one default, whether its section is written or not (`specs/config.md`).
+#[test]
+fn skipping_empty_workspaces_and_the_drag_swap_overlap_have_one_default() {
+    let config = parse("gestures {\n    pass-through false\n}\n");
+    assert!(config.settings.gestures.skip_empty);
+    assert_eq!(config.settings.window_snapping.drag_swap_fraction, 0.3);
+    assert_eq!(parse("").settings.window_snapping.drag_swap_fraction, 0.3);
+}
+
+#[test]
+fn the_config_serialises_for_config_get() {
+    let json = serde_json::to_value(Config::default()).expect("serialises");
+    assert_eq!(json["settings"]["mod_key"], "Alt");
+    assert_eq!(json["binds"][0]["key"], "Mod+Z");
+    assert_eq!(json["binds"][0]["action"], "toggle-space-activated");
+    assert_eq!(json["virtual_workspaces"]["workspace_names"][0], "Main");
+}
+
+#[test]
+fn the_bar_keeps_its_band_clear_until_it_is_turned_off() {
+    let mut settings = Config::default().settings;
+    assert!(settings.bar.enabled);
+    assert_eq!(settings.top_band(), crate::bar::domain::layout::HEIGHT);
+    settings.bar.enabled = false;
+    assert_eq!(settings.top_band(), 0.0);
+}
+
+// --- sections ----------------------------------------------------------------------------------
+
+#[test]
+fn the_bar_is_turned_off_with_off() {
+    assert!(!parse("bar {\n    off\n}\n").settings.bar.enabled);
+    assert!(parse("bar {\n    off false\n}\n").settings.bar.enabled);
+    assert!(refused("bar {\n    of\n}\n").contains("did you mean `off`?"));
+}
+
+#[test]
+fn input_maps_onto_focus_and_the_pointer() {
+    let config = parse(concat!(
+        "input {\n",
+        "    mod-key \"Ctrl\"\n",
+        "    focus-follows-mouse suspend-while-held=\"Fn\"\n",
+        "    warp-mouse-to-focus\n",
+        "    workspace-auto-back-and-forth\n",
+        "    warp-mouse-across-stacked-outputs upper-side=\"right\" lower-top-at=0.25\n",
+        "    ignore-app-activation \"com.apple.Spotlight\"\n",
+        "    ignore-app-activation \"com.apple.dock\"\n",
+        "}\n",
+        "cursor {\n    hide-on-focus-change\n}\n",
+    ));
+    let s = &config.settings;
+    assert_eq!(s.mod_key, ModKey::Ctrl);
+    assert!(s.focus_follows_mouse && s.mouse_follows_focus && s.mouse_hides_on_focus);
+    assert!(s.focus_follows_mouse_disable_hotkey.is_some());
+    assert!(config.virtual_workspaces.workspace_auto_back_and_forth);
+    assert!(s.warp_cursor_between_stacked_displays);
+    assert_eq!(s.stacked_display_upper_is, StackedUpperSide::Right);
+    assert_eq!(s.stacked_display_lower_top_at, 0.25);
+    assert_eq!(s.auto_focus_denylist, ["com.apple.Spotlight", "com.apple.dock"]);
+}
+
+#[test]
+fn the_three_pointer_flags_are_off_unless_written() {
+    let s = parse("").settings;
+    assert!(!s.focus_follows_mouse && !s.mouse_follows_focus && !s.mouse_hides_on_focus);
+}
+
+#[test]
+fn a_mod_key_with_no_macos_meaning_is_refused() {
+    assert!(
+        refused("input {\n    mod-key \"ISO_Level3_Shift\"\n}\n").contains("no meaning on macOS")
+    );
+}
+
+#[test]
+fn layout_maps_onto_the_strip() {
+    let config = parse(concat!(
+        "layout {\n",
+        "    gaps 3\n",
+        "    struts { top 20; }\n",
+        "    default-column-width { proportion 0.5; }\n",
+        "    min-column-width { proportion 0.33333; }\n",
+        "    max-column-width { proportion 0.66667; }\n",
+        "    preset-column-widths { proportion 0.5; proportion 1.0; }\n",
+        "    center-focused-column \"always\"\n",
+        "    window-insertion-point \"end-of-tree\"\n",
+        "}\n",
+    ));
+    let layout = &config.settings.layout;
+    assert_eq!(layout.gaps.gaps, 3.0);
+    assert_eq!(layout.gaps.struts, Edges { top: 20.0, ..Edges::default() });
+    let s = &layout.scrolling;
+    assert_eq!(
+        (
+            s.min_column_width_ratio,
+            s.column_width_ratio,
+            s.max_column_width_ratio
+        ),
+        (0.33333, 0.5, 0.66667)
+    );
+    assert_eq!(s.preset_column_widths, [0.5, 1.0]);
+    assert_eq!(s.center_focused_column, CenterFocusedColumn::Always);
+    assert_eq!(s.window_insertion_point, WindowInsertionPoint::EndOfTree);
+}
+
+#[test]
+fn niri_values_rini_lacks_are_refused_by_name() {
+    assert!(
+        refused("layout {\n    center-focused-column \"on-overflow\"\n}\n")
+            .contains("not supported yet")
+    );
+    assert!(
+        refused("layout {\n    default-column-width { fixed 960; }\n}\n")
+            .contains("`fixed` is not supported yet")
+    );
+    assert!(refused("layout {\n    default-column-width {}\n}\n").contains("expected a size"));
+}
+
+#[test]
+fn column_widths_must_nest_and_the_report_points_at_them() {
+    let report = refused(concat!(
+        "layout {\n",
+        "    min-column-width { proportion 0.8; }\n",
+        "    max-column-width { proportion 0.5; }\n",
+        "}\n",
+    ));
+    assert!(report.contains("column widths must nest"), "{report}");
+    assert!(report.contains("test.kdl:2:5"), "{report}");
+}
+
+#[test]
+fn a_number_out_of_range_or_of_the_wrong_kind_says_what_is_expected() {
+    assert!(refused("layout {\n    gaps -1\n}\n").contains("expected a number from 0 to 65535"));
+    assert!(
+        refused("layout {\n    gaps \"wide\"\n}\n").contains("expected a number from 0 to 65535")
+    );
+    assert!(refused("gestures {\n    drag-swap-overlap 0\n}\n").contains("above 0 to 1"));
+    assert!(
+        refused("gestures {\n    swipe-view-scroll { fingers 2.5; }\n}\n")
+            .contains("a whole number")
+    );
+}
+
+#[test]
+fn gaps_and_struts_make_the_outer_gaps_and_a_display_replaces_each_as_a_whole() {
+    let config = parse(concat!(
+        "layout {\n    gaps 3\n    struts { left 2; right 2; }\n}\n",
+        "output \"D1\" {\n    layout {\n        struts { top 20; }\n    }\n}\n",
+        "output \"D2\" {\n    layout {\n        gaps 8\n    }\n}\n",
+    ));
+    let gaps = &config.settings.layout.gaps;
+    assert_eq!(gaps.effective_for_display(None), Gaps {
+        outer: Edges {
+            top: 3.0,
+            left: 5.0,
+            bottom: 3.0,
+            right: 5.0
+        },
+        inner: 3.0
+    });
+    assert_eq!(gaps.effective_for_display(Some("D1")), Gaps {
+        outer: Edges {
+            top: 23.0,
+            left: 3.0,
+            bottom: 3.0,
+            right: 3.0
+        },
+        inner: 3.0
+    });
+    assert_eq!(gaps.effective_for_display(Some("D2")), Gaps {
+        outer: Edges {
+            top: 8.0,
+            left: 10.0,
+            bottom: 8.0,
+            right: 10.0
+        },
+        inner: 8.0
+    });
+}
+
+#[test]
+fn an_output_takes_only_layout_gaps_and_struts() {
+    assert!(refused("output \"D\" {\n    scale 2.0\n}\n").contains("macOS owns"));
+    assert!(
+        refused(
+            "output \"D\" {\n    layout {\n        center-focused-column \"always\"\n    }\n}\n"
+        )
+        .contains("unknown node `center-focused-column` in `output › layout`")
+    );
+}
+
+#[test]
+fn animations_map_onto_animate_and_the_movement_length() {
+    let config = parse("animations {\n    off\n    slowdown 2\n}\n");
+    assert!(!config.settings.animate);
+    assert_eq!(config.settings.animation_duration, 0.7);
+    assert!(
+        refused("animations {\n    window-open { duration-ms 150; }\n}\n")
+            .contains("one movement animation")
+    );
+}
+
+/// The two swipes are configured in one `gestures` block and reach the taps as two settings.
+#[test]
+fn input_settings_are_assembled_from_both_swipes() {
+    let config = parse(concat!(
+        "gestures {\n",
+        "    swipe-workspace-switch {\n        on\n        fingers 4\n        haptics \"off\"\n    }\n",
+        "    swipe-view-scroll {\n        on\n        fingers 2\n        trigger-distance 0.2\n",
+        "        switch-workspace-on-overscroll threshold=0.5\n    }\n",
+        "    pass-through\n",
+        "    visit-empty-workspaces\n",
+        "    drag-swap-overlap 0.4\n",
+        "}\n",
+    ));
+    let input = InputSettings::from(&config);
+    assert!(input.gestures.enabled);
+    assert_eq!(input.gestures.fingers, 4);
+    assert!(!input.gestures.haptics_enabled);
+    assert!(!input.gestures.consume_dock_swipe);
+    assert!(!input.gestures.skip_empty);
+    assert!(input.strip_scroll.enabled);
+    assert_eq!(input.strip_scroll.fingers, 2);
+    assert_eq!(input.strip_scroll.distance_pct, 0.2);
+    let scroll = &config.settings.layout.scrolling.gestures;
+    assert!(scroll.switch_workspace_on_overscroll);
+    assert_eq!(scroll.workspace_switch_threshold, 0.5);
+    assert_eq!(config.settings.window_snapping.drag_swap_fraction, 0.4);
+}
+
+#[test]
+fn on_and_off_together_is_an_error() {
+    assert!(
+        refused("gestures {\n    swipe-view-scroll {\n        on\n        off\n    }\n}\n")
+            .contains("`on` and `off` are both written")
+    );
+}
+
+#[test]
+fn recent_windows_icons_are_keyed_by_bundle_id() {
+    let config = parse(
+        "recent-windows {\n    icons {\n        \"com.mitchellh.ghostty\" \"~/g.png\"\n    }\n}\n",
+    );
+    assert_eq!(
+        config.settings.switcher.icons,
+        BTreeMap::from([("com.mitchellh.ghostty".to_owned(), "~/g.png".to_owned())])
+    );
+}
+
+#[test]
+fn startup_commands_keep_their_order_and_their_kind() {
+    let config = parse(
+        "spawn-at-startup \"open\" \"-a\" \"My App\"\nspawn-sh-at-startup \"echo $HOME | wc -c\"\n",
+    );
+    assert_eq!(config.settings.run_on_start, [
+        StartupCommand::Spawn(vec!["open".into(), "-a".into(), "My App".into()]),
+        StartupCommand::SpawnSh("echo $HOME | wc -c".into()),
+    ]);
+    assert!(refused("spawn-at-startup\n").contains("needs a program"));
+}
+
+#[test]
+fn the_two_top_level_flags() {
+    let config = parse("activate-spaces-by-default\nreapply-window-rules-on-title-change\n");
+    assert!(!config.settings.default_disable);
+    assert!(config.virtual_workspaces.reapply_app_rules_on_title_change);
+    assert!(
+        parse("").settings.default_disable,
+        "spaces start inactive unless written"
+    );
+}
+
+#[test]
+fn the_failed_config_marker_is_on_unless_disabled() {
+    assert!(parse("").settings.mark_failed_config);
+    assert!(
+        !parse("config-notification {\n    disable-failed\n}\n")
+            .settings
+            .mark_failed_config
+    );
+}
+
+// --- workspaces --------------------------------------------------------------------------------
+
+#[test]
+fn workspaces_are_declared_in_order_and_one_can_show_at_launch() {
+    let config = parse(
+        "workspace \"main\"\nworkspace \"comms\" { focus-at-startup; }\nworkspace \"work\"\n",
+    );
+    assert_eq!(config.virtual_workspaces.workspace_names, [
+        "main", "comms", "work"
+    ]);
+    assert_eq!(config.virtual_workspaces.default_workspace, 1);
+    assert_eq!(config.virtual_workspaces.workspace_count(), 3);
+}
+
+#[test]
+fn workspace_names_are_unique_ignoring_case() {
+    let report = refused("workspace \"Main\"\nworkspace \"main\"\n");
+    assert!(report.contains("declared twice"), "{report}");
+    assert!(
+        report.contains("first here") && report.contains("again here"),
+        "{report}"
+    );
+}
+
+#[test]
+fn only_one_workspace_shows_at_launch() {
+    assert!(
+        refused("workspace \"a\" { focus-at-startup; }\nworkspace \"b\" { focus-at-startup; }\n")
+            .contains("on two workspaces")
+    );
+}
+
+#[test]
+fn at_most_128_workspaces() {
+    let text: String = (0..129).map(|n| format!("workspace \"w{n}\"\n")).collect();
+    assert!(refused(&text).contains("at most 128 workspaces"));
+}
+
+// --- window rules ------------------------------------------------------------------------------
+
+#[test]
+fn a_window_rule_carries_its_matchers_and_properties() {
+    let config = parse(concat!(
+        "workspace \"main\"\nworkspace \"tools\"\n",
+        "window-rule {\n",
+        "    match app-id=r\"^com\\.example\\.Tool$\" title=\"Prefs\"\n",
+        "    match app-name=\"^Tool$\" ax-subrole=\"AXDialog\" is-modal=false\n",
+        "    exclude ax-role=\"AXSheet\"\n",
+        "    open-on-workspace \"tools\"\n",
+        "    open-floating true\n",
+        "    default-floating-position x=40 y=30 relative-to=\"bottom-right\"\n",
+        "    default-column-width { fixed 640; }\n",
+        "    default-window-height { fixed 480; }\n",
+        "    open-focused true\n",
+        "    open-on-output \"internal\"\n",
+        "}\n",
+    ));
+    let rule = &config.virtual_workspaces.app_rules[0];
+    assert_eq!(rule.matches.len(), 2);
+    assert_eq!(
+        rule.matches[0].app_id.as_ref().unwrap().as_str(),
+        "^com\\.example\\.Tool$"
+    );
+    assert_eq!(rule.matches[1].ax_subrole.as_deref(), Some("AXDialog"));
+    assert_eq!(rule.matches[1].is_modal, Some(false));
+    assert_eq!(rule.excludes[0].ax_role.as_deref(), Some("AXSheet"));
+    assert_eq!(rule.open_on_workspace.as_deref(), Some("tools"));
+    assert_eq!(
+        rule.default_floating_position,
+        Some(FloatingPosition {
+            x: 40.0,
+            y: 30.0,
+            relative_to: RelativeTo::BottomRight
+        })
+    );
+    assert_eq!(
+        (rule.default_column_width, rule.default_window_height),
+        (Some(640.0), Some(480.0))
+    );
+    assert_eq!(rule.open_focused, Some(true));
+    assert_eq!(rule.open_on_output, Some(DisplayRole::Internal));
+}
+
+/// Every rule that applies is folded in file order, a later one overriding an earlier one.
+#[test]
+fn rules_from_the_file_fold_in_order() {
+    let config = parse(concat!(
+        "window-rule {\n    match is-modal=true\n    open-floating true\n}\n",
+        "window-rule {\n    match app-id=r\"^com\\.example\\.Editor$\" is-modal=true\n    open-floating false\n}\n",
+    ));
+    let engine = AppRuleEngine::new(&config.virtual_workspaces.app_rules);
+    let modal = |app| WindowRuleContext {
+        app_bundle_id: Some(app),
+        is_modal: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        engine.evaluate(modal("com.example.Other")),
+        AppRuleDecision::Managed { floating: true, .. }
+    ));
+    assert!(matches!(
+        engine.evaluate(modal("com.example.Editor")),
+        AppRuleDecision::Managed { floating: false, .. }
+    ));
+}
+
+#[test]
+fn an_invalid_regex_is_an_error_naming_the_line() {
+    let report = refused("window-rule {\n    match title=\"(unclosed\"\n}\n");
+    assert!(report.contains("test.kdl:2:"), "{report}");
+    assert!(report.contains("unclosed group"), "{report}");
+}
+
+#[test]
+fn a_rule_naming_a_workspace_that_is_not_declared_is_refused() {
+    assert!(
+        refused("window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"nowhere\"\n}\n")
+            .contains("there is no workspace `nowhere`")
+    );
+}
+
+#[test]
+fn rule_shapes_rini_cannot_honour_are_refused() {
+    assert!(refused("window-rule {\n    match\n}\n").contains("names no matcher"));
+    assert!(refused("window-rule {\n    match title=\"\"\n}\n").contains("empty pattern"));
+    assert!(refused("window-rule {\n    open-focused false\n}\n").contains("not supported yet"));
+    assert!(
+        refused("window-rule {\n    default-column-width { proportion 0.5; }\n}\n")
+            .contains("sizes in pixels")
+    );
+    assert!(refused("window-rule {\n    match is-active=true\n}\n").contains("is-active"));
+}
+
+// --- binds -------------------------------------------------------------------------------------
+
+fn bind_keys(config: &Config) -> Vec<&str> {
+    config.binds.iter().map(|bind| bind.key.as_str()).collect()
+}
+
+#[test]
+fn binds_keep_file_order_and_their_options() {
+    let config = parse(concat!(
+        "binds {\n",
+        "    Mod+L { focus-column-right; }\n",
+        "    Mod+H repeat=true { focus-column-left; }\n",
+        "    \"Alt + Shift + J\" { move-window-left; }\n",
+        "}\n",
+    ));
+    assert_eq!(bind_keys(&config), ["Mod+L", "Mod+H", "Alt + Shift + J"]);
+    assert!(
+        !config.binds[0].repeat && config.binds[1].repeat,
+        "a held key fires once unless repeat=true"
+    );
+}
+
+#[test]
+fn mod_stands_for_each_mod_key() {
+    for (mod_key, expected) in [
+        ("Alt", "Alt+J"),
+        ("Ctrl", "Ctrl+J"),
+        ("Shift", "Shift+J"),
+        ("Super", "Super+J"),
+    ] {
+        let config = parse(&format!(
+            "input {{\n    mod-key \"{mod_key}\"\n}}\nbinds {{\n    Mod+J {{ focus-column-left; }}\n}}\n"
+        ));
+        assert_eq!(config.binds[0].resolved_key(config.settings.mod_key), expected);
+    }
+}
+
+#[test]
+fn a_key_bound_twice_is_an_error_with_both_places() {
+    let report = refused(
+        "binds {\n    Mod+h { focus-column-left; }\n    Alt+H { focus-column-right; }\n}\n",
+    );
+    assert!(report.contains("bound twice"), "{report}");
+    assert!(
+        report.contains("first bound here") && report.contains("bound again here"),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_key_is_bound_once_across_both_bind_blocks() {
+    let report = refused(concat!(
+        "binds {\n    Super+F19 { debug; }\n}\n",
+        "recent-windows {\n    binds {\n        Super+F19 { next-window; }\n    }\n}\n",
+    ));
+    assert!(report.contains("bound twice"), "{report}");
+}
+
+#[test]
+fn a_spelling_of_one_side_overlaps_the_generic_modifier() {
+    assert!(
+        refused("binds {\n    Alt+H { debug; }\n    LAlt+H { serialize; }\n}\n")
+            .contains("bound twice")
+    );
+    parse("binds {\n    LAlt+H { debug; }\n    RAlt+H { serialize; }\n}\n");
+}
+
+#[test]
+fn niri_triggers_that_are_not_keys_are_refused_with_the_reason() {
+    assert!(
+        refused("binds {\n    Mod+WheelScrollDown { focus-workspace-down; }\n}\n")
+            .contains("triggers are not supported yet")
+    );
+    assert!(refused("binds {\n    XF86AudioMute { spawn \"true\"; }\n}\n").contains("media keys"));
+}
+
+/// niri's default config binds these.
+#[test]
+fn niri_page_keys_bind() {
+    let config = parse(concat!(
+        "binds {\n",
+        "    Mod+Page_Down { focus-workspace-down; }\n",
+        "    Mod+Page_Up { focus-workspace-up; }\n",
+        "    Mod+Ctrl+Page_Down { move-window-to-workspace-down; }\n",
+        "    Mod+Shift+Page_Up { move-window-to-workspace-up; }\n",
+        "}\n",
+    ));
+    assert_eq!(bind_keys(&config), [
+        "Mod+Page_Down",
+        "Mod+Page_Up",
+        "Mod+Ctrl+Page_Down",
+        "Mod+Shift+Page_Up"
+    ]);
+}
+
+#[test]
+fn a_key_with_two_keys_in_it_is_refused() {
+    assert!(refused("binds {\n    Ctrl+J+K { debug; }\n}\n").contains("names two keys"));
+}
+
+#[test]
+fn a_quoted_key_with_spaces_is_the_same_key() {
+    assert!(
+        refused("binds {\n    \"Alt + H\" { debug; }\n    Alt+H { serialize; }\n}\n")
+            .contains("bound twice")
+    );
+}
+
+#[test]
+fn a_bind_takes_exactly_one_action_and_no_arguments() {
+    assert!(refused("binds {\n    Alt+H\n}\n").contains("expected an action"));
+    assert!(refused("binds {\n    Alt+H { debug; serialize; }\n}\n").contains("one action"));
+    assert!(refused("binds {\n    Alt+H \"x\" { debug; }\n}\n").contains("takes no arguments"));
+    assert!(
+        refused("binds {\n    Alt+H cooldown-ms=150 { debug; }\n}\n").contains("not supported yet")
+    );
+    assert!(
+        refused("binds {\n    Alt+H allow-when-locked=true { debug; }\n}\n")
+            .contains("lock screen")
+    );
+}
+
+#[test]
+fn the_switcher_actions_belong_in_recent_windows() {
+    assert!(
+        refused("binds {\n    Super+F19 { next-window; }\n}\n")
+            .contains("`recent-windows › binds`")
+    );
+    assert!(
+        refused("recent-windows {\n    binds {\n        Super+F19 { debug; }\n    }\n}\n")
+            .contains("takes `next-window` and `previous-window`")
+    );
+    assert!(refused("recent-windows {\n    binds {\n        Super+F19 { next-window scope=\"workspace\" filter=\"app-id\"; }\n    }\n}\n")
+        .contains("not both"));
+    assert!(refused("recent-windows {\n    binds {\n        Super+F19 { next-window scope=\"output\"; }\n    }\n}\n")
+        .contains("span every display"));
+}
+
+#[test]
+fn the_switchers_three_scopes_decode() {
+    let config = parse(concat!(
+        "recent-windows {\n    binds {\n",
+        "        Super+F19 { next-window; }\n",
+        "        Super+F18 { next-window scope=\"workspace\"; }\n",
+        "        Super+F17 { previous-window filter=\"app-id\"; }\n",
+        "    }\n}\n",
+    ));
+    let actions: Vec<_> = config.switcher_binds.iter().map(|bind| bind.action.clone()).collect();
+    assert_eq!(actions, [
+        Action::NextWindow { scope: None, filter: None },
+        Action::NextWindow {
+            scope: Some(SwitcherScope::Workspace),
+            filter: None
+        },
+        Action::PreviousWindow {
+            scope: None,
+            filter: Some(SwitcherFilter::AppId)
+        },
+    ]);
+}
+
+#[test]
+fn workspace_indices_start_at_one() {
+    let config = parse("binds {\n    Mod+1 { focus-workspace 1; }\n}\n");
+    assert_eq!(
+        config.binds[0].action,
+        Action::FocusWorkspace(WorkspaceReference::Index(1))
+    );
+    let report = refused("binds {\n    Mod+0 { focus-workspace 0; }\n}\n");
+    assert!(report.contains("start at 1"), "{report}");
+}
+
+#[test]
+fn a_bind_naming_a_workspace_that_is_not_declared_is_refused() {
+    let report =
+        refused("workspace \"main\"\nbinds {\n    Mod+1 { focus-workspace \"mian\"; }\n}\n");
+    assert!(report.contains("there is no workspace `mian`"), "{report}");
+    parse("workspace \"next\"\nbinds {\n    Mod+1 { move-window-to-workspace \"next\"; }\n}\n");
+}
+
+#[test]
+fn a_misspelt_action_gets_a_suggestion_on_its_span() {
+    let report = refused("binds {\n    Mod+J { focus-colum-left; }\n}\n");
+    assert!(report.contains("unknown action `focus-colum-left`"), "{report}");
+    assert!(report.contains("did you mean `focus-column-left`?"), "{report}");
+    assert!(report.contains("test.kdl:2:13"), "{report}");
+}
+
+#[test]
+fn a_niri_action_rini_lacks_is_told_why() {
+    let report = refused("binds {\n    Mod+J { focus-window-down; }\n}\n");
+    assert!(report.contains("cross to the next display"), "{report}");
+}
+
+/// Every action decodes from its name, with the arguments it needs.
+#[test]
+fn every_action_name_decodes() {
+    let arguments = |name: &str| match name {
+        "set-column-width" | "set-window-height" | "set-column-width-or-window-height" => {
+            " \"+5%\""
+        }
+        "scroll-strip" => " 0.5",
+        "focus-workspace"
+        | "move-window-to-workspace"
+        | "focus-monitor"
+        | "move-window-to-monitor"
+        | "move-mouse-to-monitor" => " 1",
+        "spawn" | "spawn-sh" => " \"true\"",
+        "save-layout" => " \"/tmp/layout.ron\"",
+        "restore-layout" => " \"/tmp/layout.ron\" scope=\"workspace\"",
+        "debug-overlay-slide" => " dx=1 dy=2 duration-ms=3",
+        _ => "",
+    };
+    for (index, name) in Action::VARIANTS.iter().enumerate() {
+        let key = format!(
+            "{}F{}",
+            ["", "Ctrl+", "Alt+", "Shift+"][index / 20],
+            index % 20 + 1
+        );
+        let bind = format!("        {key} {{ {name}{}; }}\n", arguments(name));
+        let text = if matches!(*name, "next-window" | "previous-window") {
+            format!("recent-windows {{\n    binds {{\n{bind}    }}\n}}\n")
+        } else {
+            format!("binds {{\n{bind}}}\n")
+        };
+        let config = parse(&text);
+        let action =
+            config.binds.iter().chain(&config.switcher_binds).next().unwrap().action.clone();
+        let json = serde_json::to_value(&action).unwrap();
+        let decoded = json
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| json.as_object().and_then(|o| o.keys().next().cloned()));
+        assert_eq!(decoded.as_deref(), Some(*name), "{text}");
+    }
+}
+
+// --- errors ------------------------------------------------------------------------------------
+
+#[test]
+fn an_unknown_node_is_an_error_with_its_line_and_a_suggestion() {
+    let report = refused("layout {\n    gasp 3\n}\n");
+    assert!(report.contains("unknown node `gasp` in `layout`"), "{report}");
+    assert!(report.contains("did you mean `gaps`?"), "{report}");
+    assert!(report.contains("test.kdl:2:5"), "{report}");
+    assert_eq!(
+        report.matches("gasp").count(),
+        2,
+        "one report, not knus's as well:\n{report}"
+    );
+}
+
+#[test]
+fn an_unknown_section_names_the_sections_when_nothing_is_near() {
+    let report = refused("completely-different {\n}\n");
+    assert!(
+        report.contains("unknown section `completely-different`"),
+        "{report}"
+    );
+    assert!(report.contains("takes: input, cursor"), "{report}");
+}
+
+#[test]
+fn a_niri_section_is_told_why_rather_than_offered_a_lookalike() {
+    let report = refused("prefer-no-csd\n");
+    assert!(report.contains("macOS draws window decorations"), "{report}");
+}
+
+#[test]
+fn every_problem_in_the_file_is_reported_at_once() {
+    let report = refused(concat!(
+        "layout {\n    gasp 3\n}\n",
+        "binds {\n    Mod+J { focus-colum-left; }\n}\n",
+        "bar {\n    of\n}\n",
+    ));
+    for expected in ["`gasp`", "`focus-colum-left`", "`of`"] {
+        assert!(report.contains(expected), "{expected} missing:\n{report}");
+    }
+}
+
+#[test]
+fn what_does_not_decode_and_the_checks_across_nodes_are_one_report() {
+    let report = refused(concat!(
+        "layout {\n    gasp 3\n    gaps -1\n}\n",
+        "layout {\n}\n",
+        "binds {\n",
+        "    Mod+J { focus-column-left; }\n",
+        "    Mod+J { focus-column-right; }\n",
+        "    Ctrl+J+K { debug; }\n",
+        "    Mod+Q { focus-colum-left; }\n",
+        "}\n",
+    ));
+    for expected in [
+        "`gasp`",
+        "from 0 to 65535",
+        "`layout` is written twice",
+        "`Mod+J` is bound twice",
+        "`Ctrl+J+K` is not a key rini can bind",
+        "`focus-colum-left`",
+    ] {
+        assert!(report.contains(expected), "{expected} missing:\n{report}");
+    }
+}
+
+#[test]
+fn a_bind_whose_action_does_not_decode_still_holds_its_key() {
+    let report =
+        refused("binds {\n    Mod+J { focus-colum-left; }\n    Mod+J { focus-column-right; }\n}\n");
+    assert!(report.contains("`focus-colum-left`"), "{report}");
+    assert!(report.contains("`Mod+J` is bound twice"), "{report}");
+}
+
+/// A line from niri's default config.
+#[test]
+fn a_wheel_trigger_with_a_cooldown_is_told_both_reasons() {
+    let report =
+        refused("binds {\n    Mod+WheelScrollDown cooldown-ms=150 { focus-workspace-down; }\n}\n");
+    assert!(report.contains("`cooldown-ms` is not supported yet"), "{report}");
+    assert!(
+        report.contains("wheel, touchpad and tablet triggers"),
+        "{report}"
+    );
+}
+
+/// Run on what was there instead, these checks would report problems the file does not have.
+#[test]
+fn a_check_that_needs_a_node_that_did_not_decode_is_not_run() {
+    let report = refused(concat!(
+        "input {\n    mod-key \"Ctrl\"\n    warp-mouse-to-focus 3\n}\n",
+        "workspace \"a\" {\n    focus-at-startup 3\n}\n",
+        "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"a\"\n}\n",
+        "binds {\n",
+        "    Mod+J { focus-workspace \"a\"; }\n",
+        "    Alt+J { debug; }\n",
+        "    Mod+K { debug; }\n",
+        "    Mod+K { serialize; }\n",
+        "}\n",
+    ));
+    assert!(!report.contains("`Alt+J` is bound twice"), "{report}");
+    assert!(!report.contains("there is no workspace"), "{report}");
+    assert!(
+        report.contains("`Mod+K` is bound twice"),
+        "one key whatever mod-key says: {report}"
+    );
+}
+
+#[test]
+fn a_section_written_twice_is_an_error_with_both_places() {
+    let report = refused("layout {\n    gaps 1\n}\nlayout {\n    gaps 2\n}\n");
+    assert!(report.contains("`layout` is written twice"), "{report}");
+    assert!(
+        report.contains("first written here") && report.contains("written again here"),
+        "{report}"
+    );
+}
+
+#[test]
+fn kdl_v2_syntax_is_a_syntax_error() {
+    let report = refused("animations {\n    off #true\n}\n");
+    assert!(report.contains("test.kdl:2:"), "{report}");
+}
+
+/// `SCHEMA` lists only names the decoder takes, and `NIRI` only names it refuses: neither table can
+/// promise something the decoder does not do.
+#[test]
+fn the_suggestion_tables_are_true() {
+    use knus::span::Span;
+    // The decoder's own verdict, before the walk replaces its unknown-node reports.
+    let decoder_refuses = |path: &str, name: &str| -> bool {
+        let mut text = format!("{name}\n");
+        for section in
+            path.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>().into_iter().rev()
+        {
+            let opener = match section {
+                "output" => "output \"D\"".to_owned(),
+                "workspace" => "workspace \"w\"".to_owned(),
+                other => other.to_owned(),
+            };
+            text = format!("{opener} {{\n{text}}}\n");
+        }
+        let document = knus::parse_ast::<Span>("t.kdl", &text).expect("syntax");
+        let node = &document.nodes[0];
+        let section = if path.is_empty() {
+            &**node.node_name
+        } else {
+            path.split('/').next().unwrap()
+        };
+        // Refused as a node (a struct's unknown child) or as a variant (an enum's unknown name),
+        // either way reported where the node starts.
+        let at = text.find(&format!("{name}\n")).expect("the node is in the text");
+        let unexpected = |errors: Vec<knus::errors::DecodeError<Span>>| {
+            errors.iter().any(|error| match error {
+                knus::errors::DecodeError::Unexpected { span, kind: "node", .. }
+                | knus::errors::DecodeError::Conversion { span, .. } => span.0 == at,
+                _ => false,
+            })
+        };
+        use super::kdl::{bar, gestures, input, layout, window_rule};
+        let result = match section {
+            "input" => knus::decode::node::<input::InputPart, Span>(node).err(),
+            "cursor" => knus::decode::node::<input::CursorPart, Span>(node).err(),
+            "layout" => knus::decode::node::<layout::LayoutPart, Span>(node).err(),
+            "animations" => knus::decode::node::<gestures::AnimationsPart, Span>(node).err(),
+            "gestures" => knus::decode::node::<gestures::GesturesPart, Span>(node).err(),
+            "recent-windows" => knus::decode::node::<bar::RecentWindowsPart, Span>(node).err(),
+            "bar" => knus::decode::node::<bar::BarPart, Span>(node).err(),
+            "output" => knus::decode::node::<layout::OutputPart, Span>(node).err(),
+            "workspace" => knus::decode::node::<window_rule::WorkspacePart, Span>(node).err(),
+            "window-rule" => knus::decode::node::<window_rule::WindowRulePart, Span>(node).err(),
+            _ => {
+                return Config::parse("t.kdl", &text)
+                    .is_err_and(|error| error.render().contains("unknown section"));
+            }
+        };
+        result.is_some_and(unexpected)
+    };
+    for (path, children) in SCHEMA {
+        for child in *children {
+            assert!(
+                !decoder_refuses(path, child),
+                "{path} › {child} is in SCHEMA but refused"
+            );
+        }
+    }
+    for (path, name, _) in NIRI {
+        assert!(
+            decoder_refuses(path, name),
+            "{path} › {name} is in NIRI but accepted"
+        );
+        assert!(
+            refused_somewhere(path, name),
+            "{path} › {name} gets no pointed message"
+        );
+    }
+    for (name, why) in NIRI_ACTIONS {
+        let report = refused(&format!("binds {{\n    Alt+F1 {{ {name}; }}\n}}\n"));
+        let why = why.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(report.contains(&why), "{name}:\n{report}");
+    }
+}
+
+fn refused_somewhere(path: &str, name: &str) -> bool {
+    let mut text = format!("{name}\n");
+    for section in path.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>().into_iter().rev() {
+        let opener = match section {
+            "output" => "output \"D\"".to_owned(),
+            "workspace" => "workspace \"w\"".to_owned(),
+            other => other.to_owned(),
+        };
+        text = format!("{opener} {{\n{text}}}\n");
+    }
+    refused(&text).contains("niri's, not rini's")
+}
+
+// --- fragments ---------------------------------------------------------------------------------
+
+#[test]
+fn a_fragment_changes_what_it_names_and_keeps_the_rest() {
+    let running = Config::default();
+    let changed = running.with("config set", "layout {\n    gaps 8\n}\n").expect("applies");
+    assert_eq!(changed.settings.layout.gaps.gaps, 8.0);
+    assert_eq!(
+        changed.settings.layout.scrolling,
+        running.settings.layout.scrolling
+    );
+    assert_eq!(changed.binds, running.binds);
+}
+
+#[test]
+fn a_fragments_binds_replace_the_binds_for_their_keys() {
+    let running = Config::default();
+    let changed = running
+        .with("config set", "binds {\n    Mod+H { debug; }\n}\n")
+        .expect("applies");
+    assert_eq!(changed.binds.len(), running.binds.len());
+    let h = changed.binds.iter().find(|bind| bind.key == "Mod+H").unwrap();
+    assert_eq!(h.action, Action::Debug);
+}
+
+fn refused_fragment(running: &Config, fragment: &str) -> String {
+    match running.with("config set", fragment) {
+        Ok(_) => panic!("accepted:\n{fragment}"),
+        Err(error) => error.render().split_whitespace().collect::<Vec<_>>().join(" "),
+    }
+}
+
+#[test]
+fn a_fragment_that_makes_two_running_binds_one_key_is_refused() {
+    let running = parse("binds {\n    Mod+J { focus-column-left; }\n    Ctrl+J { debug; }\n}\n");
+    let report = refused_fragment(&running, "input {\n    mod-key \"Ctrl\"\n}\n");
+    assert!(
+        report.contains("the running binds `Mod+J` and `Ctrl+J` are the same key"),
+        "{report}"
+    );
+    let rebound = running
+        .with(
+            "config set",
+            "input {\n    mod-key \"Ctrl\"\n}\nbinds {\n    Ctrl+J { debug; }\n}\n",
+        )
+        .expect("rebinding the key in the same fragment settles it");
+    assert_eq!(bind_keys(&rebound), ["Ctrl+J"]);
+}
+
+#[test]
+fn a_fragment_that_drops_a_workspace_a_running_bind_or_rule_names_is_refused() {
+    let running = parse(concat!(
+        "workspace \"a\"\nworkspace \"b\"\n",
+        "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"b\"\n}\n",
+        "binds {\n    Mod+B { focus-workspace \"b\"; }\n}\n",
+    ));
+    let report = refused_fragment(&running, "workspace \"a\"\nworkspace \"c\"\n");
+    assert!(
+        report.contains("the running bind `Mod+B` names workspace `b`"),
+        "{report}"
+    );
+    assert!(
+        report.contains("a running window rule opens on workspace `b`"),
+        "{report}"
+    );
+    assert!(
+        running
+            .with(
+                "config set",
+                "workspace \"a\"\nworkspace \"b\"\nworkspace \"c\"\n"
+            )
+            .is_ok()
+    );
+}
+
+/// The list a fragment's `window-rule` or bind block would have replaced is not known, so the
+/// running rules or binds are not checked; the ones it leaves alone still are.
+#[test]
+fn a_fragment_whose_rules_or_binds_did_not_decode_does_not_check_the_running_ones() {
+    let running = parse(concat!(
+        "workspace \"a\"\nworkspace \"b\"\n",
+        "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"b\"\n}\n",
+        "binds {\n    Mod+B { focus-workspace \"b\"; }\n    Ctrl+J { debug; }\n}\n",
+        "recent-windows {\n    binds {\n        Mod+J { next-window; }\n    }\n}\n",
+    ));
+
+    let report = refused_fragment(
+        &running,
+        "workspace \"a\"\nwindow-rule {\n    match app-id=\"y\"\n    bogus 1\n}\n",
+    );
+    assert!(report.contains("`bogus`"), "{report}");
+    assert!(!report.contains("a running window rule"), "{report}");
+    assert!(
+        report.contains("the running bind `Mod+B` names workspace `b`"),
+        "{report}"
+    );
+
+    let report = refused_fragment(
+        &running,
+        concat!(
+            "workspace \"a\"\nbinds {\n}\n",
+            "binds {\n    Mod+B { focus-workspace \"a\"; }\n}\n",
+        ),
+    );
+    assert!(report.contains("`binds` is written twice"), "{report}");
+    assert!(!report.contains("the running bind"), "{report}");
+    assert!(
+        report.contains("a running window rule opens on workspace `b`"),
+        "{report}"
+    );
+
+    let report = refused_fragment(
+        &running,
+        concat!(
+            "input {\n    mod-key \"Ctrl\"\n}\n",
+            "recent-windows {\n    bogus 1\n    binds {\n        Alt+J { next-window; }\n    }\n}\n",
+        ),
+    );
+    assert!(report.contains("`bogus`"), "{report}");
+    assert!(!report.contains("the running binds"), "{report}");
+}

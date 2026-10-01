@@ -8,8 +8,8 @@ moves along the strip within one workspace.
 - The workspace ORDER is global: index 2 is the same workspace on every display.
 - The ACTIVE workspace is per space. A space rini has never seen lists the same workspaces and has none
   of them active.
-- A workspace's configured name comes from the config and MUST survive a restore. A restore reads a
-  saved layout, not a saved set of names.
+- A workspace's configured name comes from the config's `workspace "name"` nodes and MUST survive a
+  restore. A restore reads a saved layout, not a saved set of names.
 
 ## What belongs to a workspace
 

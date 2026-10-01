@@ -5,7 +5,7 @@
 
 use super::layout::Piece;
 use super::model::{DisplayBar, Row};
-use super::palette::{Colour, EMBER, N6, N7, N8, N9, N10, N11};
+use super::palette::{Colour, EMBER, ERR, N6, N7, N8, N9, N10, N11};
 
 /// A font by PostScript name, at a size in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,6 +29,9 @@ pub const CHEVRON_OPEN: &str = "\u{f054}";
 pub const CHEVRON_CLOSED: &str = "\u{f053}";
 /// Between the application and its window's title.
 pub const FOCUS_DOT: &str = "·";
+/// The config file could not be used. The design system's error glyph leads, so the marker is not
+/// carried by its colour alone.
+pub const CONFIG_FAILED: &str = "\u{2715} config";
 
 pub fn face(piece: Piece, bar: &DisplayBar) -> Face {
     let (name, size) = match piece {
@@ -41,6 +44,7 @@ pub fn face(piece: Piece, bar: &DisplayBar) -> Face {
         Piece::Time => (SEMIBOLD, 13.0),
         Piece::Date => (REGULAR, 13.0),
         Piece::Chevron => (REGULAR, 12.0),
+        Piece::ConfigFailed => (MEDIUM, 13.0),
         Piece::PlaceDivider | Piece::ClockDivider | Piece::Vital(_) | Piece::Tray(_) => (REGULAR, 12.0),
     };
     Face { name, size }
@@ -62,6 +66,7 @@ pub fn colour(piece: Piece, bar: &DisplayBar) -> Colour {
         // is nearly invisible on the bar's chrome.
         Piece::PlaceDivider | Piece::ClockDivider => N6,
         Piece::Vital(_) | Piece::Tray(_) => N11,
+        Piece::ConfigFailed => ERR,
     }
 }
 
@@ -85,6 +90,7 @@ mod tests {
                 Glyph { app: "Zen".into(), window: WindowId::new(2, 2), lit: false },
             ],
             focus: None,
+            config_failed: true,
         }
     }
 
@@ -113,5 +119,13 @@ mod tests {
         let bar = bar();
         assert_eq!((colour(Piece::Time, &bar), face(Piece::Time, &bar).name), (N11, SEMIBOLD));
         assert_eq!((colour(Piece::Date, &bar), face(Piece::Date, &bar).name), (N9, REGULAR));
+    }
+
+    /// The one red thing on the bar: the error colour at a size the design system lets it be read.
+    #[test]
+    fn the_failed_config_marker_is_the_error_colour() {
+        let bar = bar();
+        assert_eq!(colour(Piece::ConfigFailed, &bar), ERR);
+        assert!(face(Piece::ConfigFailed, &bar).size >= 12.5);
     }
 }

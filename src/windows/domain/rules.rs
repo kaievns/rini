@@ -1,73 +1,186 @@
-//! App rules: which windows rini manages, and what a rule asks for a matching window. Matching
-//! only; resolving a rule against workspaces is `crate::workspaces::domain::app_rules`.
-use regex::{Regex, RegexBuilder};
-use serde::{Deserialize, Serialize};
-use tracing::warn;
+//! Window rules: which windows rini manages, and what the rules that match a window ask for it.
+//! Matching only; resolving the result against workspaces is `crate::workspaces::domain::app_rules`.
+//!
+//! niri's semantics. A rule applies to a window that matches ANY of its `match` lines and NONE of
+//! its `exclude` lines, and a rule with no `match` applies to every window. Every rule that applies
+//! is applied, in order, a later one overriding an earlier one property by property.
+use std::fmt;
+use std::str::FromStr;
 
+use regex::Regex;
 pub use rini_ipc::protocol::WorkspaceSelector;
+use serde::{Serialize, Serializer};
 
-fn yes() -> bool {
-    true
+use crate::workspaces::domain::display_pin::DisplayRole;
+
+/// A regular expression that compares by its pattern, so a rule can be compared and printed.
+#[derive(Clone)]
+pub struct RegexEq(Regex);
+
+impl RegexEq {
+    pub fn is_match(&self, text: &str) -> bool { self.0.is_match(text) }
+
+    pub fn as_str(&self) -> &str { self.0.as_str() }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct AppWorkspaceRule {
-    pub app_id: Option<String>,
-    /// Target workspace index (0 based) OR workspace name. If None, window goes to active workspace.
-    pub workspace: Option<WorkspaceSelector>,
-    #[serde(default)]
-    pub floating: bool,
-    /// Initial normalized position for a floating window. `(0, 0)` is the top-left
-    /// and `(1, 1)` is the bottom-right of the available screen area.
-    pub position: Option<AppRulePosition>,
-    /// Preferred window size in logical pixels.
-    pub size: Option<AppRuleSize>,
-    /// Focus the window after applying this rule, switching virtual workspaces if needed.
-    #[serde(default)]
-    pub focus: bool,
-    /// Whether Rini should manage matching windows (defaults to true). `false` makes the
-    /// window invisible to Rini (no tiling, floating, or assignments).
-    #[serde(default = "yes")]
-    pub manage: bool,
-    pub app_name: Option<String>,
-    pub title_regex: Option<String>,
-    /// Matched as a literal substring of the title; `title_regex` for anything else.
-    pub title_substring: Option<String>,
+impl FromStr for RegexEq {
+    type Err = regex::Error;
 
-    /// Exact match on `AXRole`.
+    fn from_str(pattern: &str) -> Result<Self, Self::Err> { Regex::new(pattern).map(Self) }
+}
+
+impl PartialEq for RegexEq {
+    fn eq(&self, other: &Self) -> bool { self.as_str() == other.as_str() }
+}
+
+impl fmt::Debug for RegexEq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{:?}", self.as_str()) }
+}
+
+impl Serialize for RegexEq {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// One `match` or `exclude` line: every matcher it names must hold.
+#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+pub struct RuleMatch {
+    /// The bundle id.
+    pub app_id: Option<RegexEq>,
+    pub title: Option<RegexEq>,
+    /// The application's localised name.
+    pub app_name: Option<RegexEq>,
+    /// Exact `AXRole`.
     pub ax_role: Option<String>,
-
-    /// Exact match on `AXSubrole`.
+    /// Exact `AXSubrole`.
     pub ax_subrole: Option<String>,
-
-    /// Optional: match on the window's `AXModal` attribute. `true` matches modal dialogs,
-    /// `false` matches everything else. A rule naming `modal` overrides `float_modal_windows`.
-    pub modal: Option<bool>,
-
-    /// Keep matching windows on the internal or the external display.
-    ///
-    /// A ROLE, not a display: the external at home and the one at the office have different UUIDs,
-    /// and a rule naming one would be silently inert at the other desk.
-    ///
-    /// A default rather than a law. It decides where a window belongs when the display arrangement in
-    /// force has not been told otherwise, so an explicit move still wins, and a role nothing fills —
-    /// the lid shut, with only an external attached — leaves the window wherever it can go.
-    pub display: Option<crate::workspaces::domain::display_pin::DisplayRole>,
+    /// The window's `AXModal` attribute.
+    pub is_modal: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
-#[serde(deny_unknown_fields)]
-pub struct AppRulePosition {
+impl RuleMatch {
+    fn holds(&self, context: WindowRuleContext<'_>) -> bool {
+        regex_holds(self.app_id.as_ref(), context.app_bundle_id)
+            && regex_holds(self.title.as_ref(), context.window_title)
+            && regex_holds(self.app_name.as_ref(), context.app_name)
+            && exact_holds(self.ax_role.as_deref(), context.ax_role)
+            && exact_holds(self.ax_subrole.as_deref(), context.ax_subrole)
+            && self.is_modal.is_none_or(|modal| modal == context.is_modal)
+    }
+}
+
+fn regex_holds(regex: Option<&RegexEq>, actual: Option<&str>) -> bool {
+    regex.is_none_or(|regex| actual.is_some_and(|actual| regex.is_match(actual)))
+}
+
+fn exact_holds(rule: Option<&str>, actual: Option<&str>) -> bool {
+    rule.is_none_or(|rule| actual == Some(rule))
+}
+
+/// Which corner or side of the display a floating position is measured from.
+#[derive(Serialize, Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RelativeTo {
+    #[default]
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+/// Where a floating window first appears: logical pixels from a corner, or from the middle of a side.
+#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+pub struct FloatingPosition {
     pub x: f64,
     pub y: f64,
+    pub relative_to: RelativeTo,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
-#[serde(deny_unknown_fields)]
+/// A window's first size in logical pixels, either dimension or both.
+#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
 pub struct AppRuleSize {
     pub w: Option<f64>,
     pub h: Option<f64>,
+}
+
+/// One `window-rule`. Every property is optional, so a later rule can leave what an earlier one said.
+#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+pub struct WindowRule {
+    pub matches: Vec<RuleMatch>,
+    pub excludes: Vec<RuleMatch>,
+    /// A workspace by name.
+    pub open_on_workspace: Option<String>,
+    pub open_floating: Option<bool>,
+    pub default_floating_position: Option<FloatingPosition>,
+    /// Logical pixels.
+    pub default_column_width: Option<f64>,
+    pub default_window_height: Option<f64>,
+    /// Focus the window when it opens, switching to its workspace.
+    pub open_focused: Option<bool>,
+    /// `false`: rini leaves the window alone completely.
+    pub manage: Option<bool>,
+    /// Keep matching windows on the internal or the external display.
+    ///
+    /// A ROLE, not a display: the external at home and the one at the office have different UUIDs,
+    /// and a rule naming one would be silently inert at the other desk. A default rather than a law,
+    /// so an explicit move still wins, and a role nothing fills leaves the window where it can go.
+    pub open_on_output: Option<DisplayRole>,
+}
+
+impl WindowRule {
+    fn applies(&self, context: WindowRuleContext<'_>) -> bool {
+        (self.matches.is_empty() || self.matches.iter().any(|m| m.holds(context)))
+            && !self.excludes.iter().any(|m| m.holds(context))
+    }
+
+    /// `self` with every property `later` sets replaced by `later`'s.
+    fn overlay(&mut self, later: &WindowRule) {
+        let later = later.clone();
+        self.open_on_workspace = later.open_on_workspace.or(self.open_on_workspace.take());
+        self.open_floating = later.open_floating.or(self.open_floating);
+        self.default_floating_position =
+            later.default_floating_position.or(self.default_floating_position);
+        self.default_column_width = later.default_column_width.or(self.default_column_width);
+        self.default_window_height = later.default_window_height.or(self.default_window_height);
+        self.open_focused = later.open_focused.or(self.open_focused);
+        self.manage = later.manage.or(self.manage);
+        self.open_on_output = later.open_on_output.or(self.open_on_output);
+    }
+}
+
+#[cfg(test)]
+impl RuleMatch {
+    /// A bundle id, matched exactly.
+    pub fn app(bundle_id: &str) -> Self {
+        let pattern = format!("^{}$", regex::escape(bundle_id));
+        Self {
+            app_id: Some(pattern.parse().expect("an escaped literal")),
+            ..Self::default()
+        }
+    }
+
+    pub fn title(pattern: &str) -> Self {
+        Self {
+            title: Some(pattern.parse().expect("a valid pattern")),
+            ..Self::default()
+        }
+    }
+}
+
+#[cfg(test)]
+impl WindowRule {
+    /// A rule with one `match` line and no properties yet.
+    pub fn when(line: RuleMatch) -> Self {
+        Self {
+            matches: vec![line],
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -88,208 +201,69 @@ pub enum AppRuleDecision {
     Managed {
         workspace: Option<WorkspaceSelector>,
         floating: bool,
-        position: Option<AppRulePosition>,
+        position: Option<FloatingPosition>,
         size: Option<AppRuleSize>,
         focus: bool,
-        /// The display role this window is pinned to, if the rule names one.
-        display: Option<crate::workspaces::domain::display_pin::DisplayRole>,
+        /// The display role this window is pinned to, if a rule names one.
+        display: Option<DisplayRole>,
     },
 }
 
-#[derive(Debug, Clone)]
-struct CompiledRule {
-    rule: AppWorkspaceRule,
-    title_regex: Option<Regex>,
-}
-
-/// Compiles and evaluates app policy without depending on workspaces, windows,
-/// the reactor, or the layout engine.
+/// Evaluates the window rules without depending on workspaces, windows, the reactor, or the layout
+/// engine.
 #[derive(Debug, Clone, Default)]
 pub struct AppRuleEngine {
-    rules: Vec<CompiledRule>,
-    /// `float_modal_windows`: a modal window floats unless the rule that matched it names `modal`.
-    float_modals: bool,
+    rules: Vec<WindowRule>,
 }
 
 impl AppRuleEngine {
-    pub fn new(rules: &[AppWorkspaceRule], float_modals: bool) -> Self {
-        let rules = rules
-            .iter()
-            .cloned()
-            .map(|rule| {
-                let title_regex =
-                    rule.title_regex.as_deref().filter(|value| !value.is_empty()).and_then(
-                        |value| {
-                            RegexBuilder::new(value)
-                            .case_insensitive(true)
-                            .build()
-                            .map_err(|error| {
-                                warn!(%error, pattern = value, "invalid title regex in app rule");
-                            })
-                            .ok()
-                        },
-                    );
-                CompiledRule { rule, title_regex }
-            })
-            .collect();
-        Self { rules, float_modals }
-    }
+    pub fn new(rules: &[WindowRule]) -> Self { Self { rules: rules.to_vec() } }
 
-    /// The best matching rule's decision. A modal window floats by default: with no rule, or
-    /// with a rule that does not name `modal` (an `app_id` rule sending an app to a workspace
-    /// should not tile that app's dialogs). A rule naming `modal` decides for itself.
+    /// Every rule that applies, folded in order into one decision.
     pub fn evaluate(&self, context: WindowRuleContext<'_>) -> AppRuleDecision {
-        let best = self
-            .rules
-            .iter()
-            .enumerate()
-            .filter(|(_, rule)| rule.matches(context))
-            .max_by_key(|(index, rule)| (rule.specificity(), std::cmp::Reverse(*index)));
-        let modal_floats = self.float_modals && context.is_modal;
-        let Some((_, matched)) = best else {
-            return if modal_floats {
-                AppRuleDecision::Managed {
-                    workspace: None,
-                    floating: true,
-                    position: None,
-                    size: None,
-                    focus: false,
-                    display: None,
-                }
-            } else {
-                AppRuleDecision::NoMatch
-            };
+        let mut folded: Option<WindowRule> = None;
+        for rule in self.rules.iter().filter(|rule| rule.applies(context)) {
+            folded.get_or_insert_with(WindowRule::default).overlay(rule);
+        }
+        let Some(rule) = folded else {
+            return AppRuleDecision::NoMatch;
         };
-        if !matched.rule.manage {
-            AppRuleDecision::Unmanaged
-        } else {
-            AppRuleDecision::Managed {
-                workspace: matched.rule.workspace.clone(),
-                floating: matched.rule.floating || (modal_floats && matched.rule.modal.is_none()),
-                position: matched.rule.position,
-                size: matched.rule.size,
-                focus: matched.rule.focus,
-                display: matched.rule.display,
-            }
+        if rule.manage == Some(false) {
+            return AppRuleDecision::Unmanaged;
+        }
+        let size = (rule.default_column_width.is_some() || rule.default_window_height.is_some())
+            .then_some(AppRuleSize {
+                w: rule.default_column_width,
+                h: rule.default_window_height,
+            });
+        AppRuleDecision::Managed {
+            workspace: rule.open_on_workspace.map(WorkspaceSelector::Name),
+            floating: rule.open_floating.unwrap_or(false),
+            position: rule.default_floating_position,
+            size,
+            focus: rule.open_focused.unwrap_or(false),
+            display: rule.open_on_output,
         }
     }
-}
-
-impl CompiledRule {
-    fn matches(&self, context: WindowRuleContext<'_>) -> bool {
-        optional_eq_ignore_case(self.rule.app_id.as_deref(), context.app_bundle_id)
-            && optional_fuzzy_name(self.rule.app_name.as_deref(), context.app_name)
-            && optional_regex(
-                self.rule.title_regex.as_deref(),
-                self.title_regex.as_ref(),
-                context.window_title,
-            )
-            && optional_contains(self.rule.title_substring.as_deref(), context.window_title)
-            && optional_exact(self.rule.ax_role.as_deref(), context.ax_role)
-            && optional_exact(self.rule.ax_subrole.as_deref(), context.ax_subrole)
-            && self.rule.modal.is_none_or(|modal| modal == context.is_modal)
-    }
-
-    fn specificity(&self) -> usize {
-        [
-            self.rule.app_id.as_deref(),
-            self.rule.app_name.as_deref(),
-            self.rule.title_regex.as_deref(),
-            self.rule.title_substring.as_deref(),
-            self.rule.ax_role.as_deref(),
-            self.rule.ax_subrole.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|value| !value.is_empty())
-        .count()
-            + usize::from(self.rule.modal.is_some())
-    }
-}
-
-fn optional_eq_ignore_case(rule: Option<&str>, actual: Option<&str>) -> bool {
-    rule.is_none_or(|rule| actual.is_some_and(|actual| rule.eq_ignore_ascii_case(actual)))
-}
-fn optional_fuzzy_name(rule: Option<&str>, actual: Option<&str>) -> bool {
-    rule.is_none_or(|rule| {
-        actual.is_some_and(|actual| {
-            let (rule, actual) = (rule.to_lowercase(), actual.to_lowercase());
-            rule.contains(&actual) || actual.contains(&rule)
-        })
-    })
-}
-fn optional_regex(pattern: Option<&str>, regex: Option<&Regex>, actual: Option<&str>) -> bool {
-    pattern.is_none_or(|pattern| {
-        !pattern.is_empty()
-            && regex.is_some_and(|regex| actual.is_some_and(|actual| regex.is_match(actual)))
-    })
-}
-fn optional_contains(rule: Option<&str>, actual: Option<&str>) -> bool {
-    rule.is_none_or(|rule| {
-        !rule.is_empty()
-            && actual.is_some_and(|actual| actual.to_lowercase().contains(&rule.to_lowercase()))
-    })
-}
-fn optional_exact(rule: Option<&str>, actual: Option<&str>) -> bool {
-    rule.is_none_or(|rule| !rule.is_empty() && actual == Some(rule))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn evaluates_without_workspace_or_layout_state() {
-        let rule = AppWorkspaceRule {
-            display: None,
-            app_id: Some("com.example.Editor".into()),
-            workspace: None,
-            floating: true,
-            position: Some(AppRulePosition { x: 0.4, y: 0.7 }),
-            size: Some(AppRuleSize { w: Some(640.0), h: Some(480.0) }),
-            focus: true,
-            manage: true,
-            app_name: None,
-            title_regex: Some("project \\d+".into()),
-            title_substring: None,
-            ax_role: None,
-            ax_subrole: None,
-            modal: None,
-        };
-        let engine = AppRuleEngine::new(&[rule], true);
-        assert_eq!(
-            engine.evaluate(WindowRuleContext {
-                app_bundle_id: Some("COM.EXAMPLE.EDITOR"),
-                window_title: Some("Project 42"),
-                ..Default::default()
-            }),
-            AppRuleDecision::Managed {
-                workspace: None,
-                floating: true,
-                position: Some(AppRulePosition { x: 0.4, y: 0.7 }),
-                size: Some(AppRuleSize { w: Some(640.0), h: Some(480.0) }),
-                focus: true,
-                display: None,
-            }
-        );
+    fn regex(pattern: &str) -> Option<RegexEq> { Some(pattern.parse().expect("a valid pattern")) }
+
+    fn app(pattern: &str) -> RuleMatch {
+        RuleMatch {
+            app_id: regex(pattern),
+            ..RuleMatch::default()
+        }
     }
 
-    fn rule(app_id: Option<&str>, modal: Option<bool>, floating: bool) -> AppWorkspaceRule {
-        AppWorkspaceRule {
-            display: None,
-            app_id: app_id.map(Into::into),
-            workspace: Some(WorkspaceSelector::Index(2)),
-            floating,
-            position: None,
-            size: None,
-            focus: false,
-            manage: true,
-            app_name: None,
-            title_regex: None,
-            title_substring: None,
-            ax_role: None,
-            ax_subrole: None,
-            modal,
+    fn window(app_id: &str) -> WindowRuleContext<'_> {
+        WindowRuleContext {
+            app_bundle_id: Some(app_id),
+            ..WindowRuleContext::default()
         }
     }
 
@@ -300,68 +274,206 @@ mod tests {
         }
     }
 
-    /// `float_modal_windows`: a modal floats with no rule, and under a rule that does not name
-    /// `modal` (the rule's other effects, such as the workspace, still apply). A rule naming
-    /// `modal` decides for itself; with the setting off a modal is any other window.
     #[test]
-    fn a_modal_window_floats_unless_a_rule_naming_modal_says_otherwise() {
+    fn no_rule_applying_is_no_match() {
+        let engine = AppRuleEngine::new(&[WindowRule {
+            matches: vec![app("^com\\.example\\.Editor$")],
+            open_floating: Some(true),
+            ..WindowRule::default()
+        }]);
+        assert_eq!(
+            engine.evaluate(window("com.example.Other")),
+            AppRuleDecision::NoMatch
+        );
+    }
+
+    /// Every rule that applies is applied in order, a later one overriding property by property: the
+    /// Outlook reminder that one rule floats and another pins gets both.
+    #[test]
+    fn every_applying_rule_is_folded_in_file_order() {
+        let engine = AppRuleEngine::new(&[
+            WindowRule {
+                matches: vec![RuleMatch {
+                    app_id: regex("^com\\.microsoft\\.Outlook$"),
+                    title: regex("^[0-9]+ Reminders?$"),
+                    ..RuleMatch::default()
+                }],
+                open_floating: Some(true),
+                ..WindowRule::default()
+            },
+            WindowRule {
+                matches: vec![app("^com\\.microsoft\\.Outlook$")],
+                open_on_output: Some(DisplayRole::Internal),
+                open_floating: Some(false),
+                ..WindowRule::default()
+            },
+            WindowRule {
+                matches: vec![RuleMatch {
+                    title: regex("Reminder"),
+                    ..RuleMatch::default()
+                }],
+                open_floating: Some(true),
+                ..WindowRule::default()
+            },
+        ]);
+        let reminder = WindowRuleContext {
+            window_title: Some("2 Reminders"),
+            ..window("com.microsoft.Outlook")
+        };
+        assert_eq!(engine.evaluate(reminder), AppRuleDecision::Managed {
+            workspace: None,
+            floating: true,
+            position: None,
+            size: None,
+            focus: false,
+            display: Some(DisplayRole::Internal),
+        });
+        let inbox = WindowRuleContext {
+            window_title: Some("Inbox"),
+            ..window("com.microsoft.Outlook")
+        };
+        assert_eq!(floats(&engine.evaluate(inbox)), Some(false));
+    }
+
+    #[test]
+    fn several_match_lines_are_alternatives_and_one_line_is_a_conjunction() {
+        let engine = AppRuleEngine::new(&[WindowRule {
+            matches: vec![app("^com\\.agilebits\\.onepassword7$"), RuleMatch {
+                app_id: regex("^com\\.apple\\.finder$"),
+                ax_subrole: Some("AXDialog".into()),
+                ..RuleMatch::default()
+            }],
+            open_floating: Some(true),
+            ..WindowRule::default()
+        }]);
+        assert_eq!(
+            floats(&engine.evaluate(window("com.agilebits.onepassword7"))),
+            Some(true)
+        );
+        let dialog = WindowRuleContext {
+            ax_subrole: Some("AXDialog"),
+            ..window("com.apple.finder")
+        };
+        assert_eq!(floats(&engine.evaluate(dialog)), Some(true));
+        assert_eq!(
+            engine.evaluate(window("com.apple.finder")),
+            AppRuleDecision::NoMatch
+        );
+    }
+
+    #[test]
+    fn an_exclude_line_stops_the_rule_applying() {
+        let engine = AppRuleEngine::new(&[WindowRule {
+            matches: vec![app("^us\\.zoom\\.xos$")],
+            excludes: vec![RuleMatch {
+                title: regex("^Zoom Meeting$"),
+                ..RuleMatch::default()
+            }],
+            open_floating: Some(true),
+            ..WindowRule::default()
+        }]);
+        assert_eq!(floats(&engine.evaluate(window("us.zoom.xos"))), Some(true));
+        let meeting = WindowRuleContext {
+            window_title: Some("Zoom Meeting"),
+            ..window("us.zoom.xos")
+        };
+        assert_eq!(engine.evaluate(meeting), AppRuleDecision::NoMatch);
+    }
+
+    #[test]
+    fn a_rule_with_no_match_line_applies_to_every_window() {
+        let engine = AppRuleEngine::new(&[WindowRule {
+            open_on_workspace: Some("main".into()),
+            ..WindowRule::default()
+        }]);
+        assert!(matches!(
+            engine.evaluate(window("anything")),
+            AppRuleDecision::Managed { workspace: Some(WorkspaceSelector::Name(name)), .. } if name == "main"
+        ));
+    }
+
+    /// Regular expressions are case-sensitive and match anywhere, as niri's are; `(?i)` and anchors
+    /// say otherwise.
+    #[test]
+    fn matchers_are_unanchored_case_sensitive_regexes() {
+        let rule = |pattern: &str| {
+            AppRuleEngine::new(&[WindowRule {
+                matches: vec![RuleMatch {
+                    title: regex(pattern),
+                    ..RuleMatch::default()
+                }],
+                open_floating: Some(true),
+                ..WindowRule::default()
+            }])
+        };
+        let titled = WindowRuleContext {
+            window_title: Some("Project Preferences"),
+            ..WindowRuleContext::default()
+        };
+        assert_eq!(floats(&rule("Preferences").evaluate(titled)), Some(true));
+        assert_eq!(rule("preferences").evaluate(titled), AppRuleDecision::NoMatch);
+        assert_eq!(floats(&rule("(?i)preferences").evaluate(titled)), Some(true));
+        assert_eq!(rule("^Preferences$").evaluate(titled), AppRuleDecision::NoMatch);
+    }
+
+    /// The modal default is an ordinary rule, so a later rule decides otherwise for the windows it
+    /// matches.
+    #[test]
+    fn a_later_rule_overrides_the_modal_rule() {
+        let modal_rule = WindowRule {
+            matches: vec![RuleMatch {
+                is_modal: Some(true),
+                ..RuleMatch::default()
+            }],
+            open_floating: Some(true),
+            ..WindowRule::default()
+        };
         let modal = WindowRuleContext {
-            app_bundle_id: Some("com.example.Editor"),
             is_modal: true,
-            ..Default::default()
+            ..window("com.example.Editor")
         };
         let plain = WindowRuleContext { is_modal: false, ..modal };
 
-        let none = AppRuleEngine::new(&[], true);
-        assert_eq!(floats(&none.evaluate(modal)), Some(true));
-        assert_eq!(none.evaluate(plain), AppRuleDecision::NoMatch);
+        let default_only = AppRuleEngine::new(std::slice::from_ref(&modal_rule));
+        assert_eq!(floats(&default_only.evaluate(modal)), Some(true));
+        assert_eq!(default_only.evaluate(plain), AppRuleDecision::NoMatch);
 
-        let by_app = AppRuleEngine::new(&[rule(Some("com.example.Editor"), None, false)], true);
-        let decision = by_app.evaluate(modal);
-        assert_eq!(
-            floats(&decision),
-            Some(true),
-            "an app rule does not tile the app's dialogs"
-        );
-        assert!(
-            matches!(decision, AppRuleDecision::Managed { workspace: Some(_), .. }),
-            "{decision:?}"
-        );
-        assert_eq!(floats(&by_app.evaluate(plain)), Some(false));
-
-        let tiled_modals =
-            AppRuleEngine::new(&[rule(Some("com.example.Editor"), Some(true), false)], true);
-        assert_eq!(
-            floats(&tiled_modals.evaluate(modal)),
-            Some(false),
-            "a rule naming modal wins"
-        );
-        assert_eq!(
-            tiled_modals.evaluate(plain),
-            AppRuleDecision::NoMatch,
-            "modal = true does not match a plain window"
-        );
-
-        let off = AppRuleEngine::new(&[], false);
-        assert_eq!(off.evaluate(modal), AppRuleDecision::NoMatch);
+        let tiled = AppRuleEngine::new(&[modal_rule, WindowRule {
+            matches: vec![RuleMatch {
+                app_id: regex("^com\\.example\\.Editor$"),
+                is_modal: Some(true),
+                ..RuleMatch::default()
+            }],
+            open_floating: Some(false),
+            ..WindowRule::default()
+        }]);
+        assert_eq!(floats(&tiled.evaluate(modal)), Some(false));
     }
 
-    /// `modal` counts toward specificity like every other match field: a rule naming it beats a
-    /// bare `app_id` rule for the same app.
     #[test]
-    fn a_rule_naming_modal_is_more_specific_than_one_that_does_not() {
-        let engine = AppRuleEngine::new(
-            &[
-                rule(Some("com.example.Editor"), None, false),
-                rule(Some("com.example.Editor"), Some(true), false),
-            ],
-            true,
+    fn manage_false_leaves_the_window_unmanaged_and_the_sizes_become_one_size() {
+        let engine = AppRuleEngine::new(&[
+            WindowRule {
+                matches: vec![app("^com\\.example\\.Panel$")],
+                default_window_height: Some(320.0),
+                ..WindowRule::default()
+            },
+            WindowRule {
+                matches: vec![app("^com\\.example\\.Hud$")],
+                manage: Some(false),
+                ..WindowRule::default()
+            },
+        ]);
+        assert!(matches!(
+            engine.evaluate(window("com.example.Panel")),
+            AppRuleDecision::Managed {
+                size: Some(AppRuleSize { w: None, h: Some(320.0) }),
+                ..
+            }
+        ));
+        assert_eq!(
+            engine.evaluate(window("com.example.Hud")),
+            AppRuleDecision::Unmanaged
         );
-        let modal = WindowRuleContext {
-            app_bundle_id: Some("com.example.Editor"),
-            is_modal: true,
-            ..Default::default()
-        };
-        assert_eq!(floats(&engine.evaluate(modal)), Some(false));
     }
 }

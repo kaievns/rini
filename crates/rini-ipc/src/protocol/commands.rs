@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{
     Direction, DisplaySelector, ResizeOrientation, RestoreScope, RestoreSource, WindowId,
@@ -27,8 +26,12 @@ pub enum LayoutCommand {
     ToggleFullscreenWithinGaps,
     ResizeWindowGrow(ResizeOrientation),
     ResizeWindowShrink(ResizeOrientation),
+    /// Change the selection's size by `amount` of the tiling area: its column's width, its height
+    /// in a stacked column, or whichever of the two `Smart` picks.
     ResizeWindowBy {
         amount: f64,
+        #[serde(default)]
+        orientation: ResizeOrientation,
     },
     ScrollStrip {
         delta: f64,
@@ -147,28 +150,11 @@ pub enum MetricsCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigCommand {
-    SetAnimate(bool),
-    SetAnimationDuration(f64),
-    SetMouseFollowsFocus(bool),
-    SetMouseHidesOnFocus(bool),
-    SetFocusFollowsMouse(bool),
-    SetOuterGaps {
-        top: f64,
-        left: f64,
-        bottom: f64,
-        right: f64,
-    },
-    SetInnerGaps {
-        horizontal: f64,
-        vertical: f64,
-    },
-    SetWorkspaceNames(Vec<String>),
-    Set {
-        key: String,
-        value: Value,
-    },
+    /// A KDL fragment laid over the running config until the next reload. It is not appended: what
+    /// it writes replaces what is running, setting by setting, `workspace` and `window-rule` lists
+    /// whole, and binds key by key (`specs/config.md`, "Changing the running config").
+    Set(String),
     GetConfig,
-    SaveConfig,
     ReloadConfig,
 }
 

@@ -23,7 +23,7 @@ pub trait CliExecutor: Send + Sync + 'static {
     ) -> Result<i32, std::io::Error>;
 }
 
-/// The `RINI_*` environment a CLI hook receives, as documented in `rini.default.toml`.
+/// The `RINI_*` environment a CLI hook receives, as documented in `rini.default.kdl`.
 pub fn event_env(event: &BroadcastEvent) -> HashMap<String, String> {
     let mut env_vars: HashMap<String, String> = HashMap::default();
     match event {

@@ -606,7 +606,7 @@ fn space_restore_rejects_workspace_count_mismatch_before_mutating_layouts() {
     snapshot.save(&mut memory, path.clone()).unwrap();
 
     let mut target_settings = VirtualWorkspaceSettings::default();
-    target_settings.default_workspace_count = 3;
+    target_settings.workspace_names = crate::workspaces::settings::numbered_names(3);
     let mut engine = LayoutEngine::new(&target_settings, &LayoutSettings::default());
     let mut memory = DisplayMemory::default();
     let mut window_store = WindowStore::default();
@@ -645,7 +645,6 @@ fn space_restore_rejects_workspace_count_mismatch_before_mutating_layouts() {
 #[test]
 fn saved_workspace_restore_uses_target_ordinal_and_preserves_configured_name() {
     let mut workspace_settings = VirtualWorkspaceSettings::default();
-    workspace_settings.default_workspace_count = 6;
     workspace_settings.workspace_names =
         ["B", "C", "E", "T", "X", "S"].into_iter().map(str::to_owned).collect();
     workspace_settings.default_workspace = 3;

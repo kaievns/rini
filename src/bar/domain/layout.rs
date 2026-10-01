@@ -73,6 +73,8 @@ pub enum Piece {
     ClockDivider,
     Date,
     Time,
+    /// The config file could not be used.
+    ConfigFailed,
 }
 
 /// A horizontal run of ink, in points from the bar's left edge.
@@ -168,7 +170,7 @@ pub fn lay_out(
     ink: impl Fn(Piece) -> Option<f64>,
 ) -> Scene {
     let mut scene = Scene::default();
-    lay_out_right(width, right, &ink, &mut scene);
+    lay_out_right(width, bar, right, &ink, &mut scene);
     let limit = scene.pieces.iter().map(|(_, span)| span.x0).fold(width, f64::min) - ZONE_CLEARANCE;
     lay_out_left(bar, fold, &ink, limit, &mut scene);
     scene.pieces.sort_by(|a, b| a.1.x0.total_cmp(&b.1.x0));
@@ -255,6 +257,7 @@ fn lay_out_left(
 
 fn lay_out_right(
     width: f64,
+    bar: &DisplayBar,
     right: &Right,
     ink: &impl Fn(Piece) -> Option<f64>,
     scene: &mut Scene,
@@ -278,14 +281,16 @@ fn lay_out_right(
     for vital in right.vitals.iter().rev() {
         place(Piece::Vital(*vital), ICON_GAP, scene);
     }
-    if right.tray == 0 {
-        return;
+    if right.tray > 0 {
+        if let Some(chevron) = place(Piece::Chevron, ICON_GAP, scene) {
+            scene.hits.push((chevron.grown(8.0, 8.0), Target::Tray));
+        }
+        for index in (0..right.tray).rev() {
+            place(Piece::Tray(index), TRAY_GAP, scene);
+        }
     }
-    if let Some(chevron) = place(Piece::Chevron, ICON_GAP, scene) {
-        scene.hits.push((chevron.grown(8.0, 8.0), Target::Tray));
-    }
-    for index in (0..right.tray).rev() {
-        place(Piece::Tray(index), TRAY_GAP, scene);
+    if bar.config_failed {
+        place(Piece::ConfigFailed, ICON_GAP, scene);
     }
 }
 
@@ -310,6 +315,7 @@ mod tests {
             rows: vec![Row::Occupied, Row::Shown, Row::Empty, Row::Empty],
             glyphs: vec![glyph(1, true), glyph(2, false), glyph(3, false), glyph(4, false)],
             focus: Some(FocusLabel { app: "Code".into(), title: "lib.rs — rini".into() }),
+            config_failed: false,
         }
     }
 
@@ -335,6 +341,7 @@ mod tests {
             Piece::Vital(_) => 17.0,
             Piece::Chevron => 5.5,
             Piece::Tray(_) => 16.0,
+            Piece::ConfigFailed => 52.0,
         })
     }
 
@@ -484,5 +491,18 @@ mod tests {
     fn pieces_are_in_drawing_order() {
         let scene = scene();
         assert!(scene.pieces.windows(2).all(|pair| pair[0].1.x0 <= pair[1].1.x0));
+    }
+
+    /// The failed-config marker opens the right zone, a tray icon's gap left of the tray, and the
+    /// title stops short of it as it does of the tray.
+    #[test]
+    fn a_failed_config_marker_opens_the_right_zone() {
+        let marked = DisplayBar { config_failed: true, ..bar() };
+        let marked_scene = lay_out(WIDTH, &marked, &fold(4, false), &right(), ink);
+        let marker = marked_scene.span(Piece::ConfigFailed).expect("the marker is placed");
+        assert_eq!(gap(&marked_scene, Piece::ConfigFailed, Piece::Tray(0)), TRAY_GAP);
+        assert!(marked_scene.span(Piece::FocusTitle).unwrap().x1 <= marker.x0 - ZONE_CLEARANCE);
+        assert!(marked_scene.hit(marker.x0 + 1.0).is_none(), "a marker, not a button");
+        assert!(scene().span(Piece::ConfigFailed).is_none(), "no marker without a failure");
     }
 }

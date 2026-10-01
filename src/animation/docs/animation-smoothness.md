@@ -16,8 +16,8 @@ flights of it.
 `AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
 `crate::animation::domain::pass::plan` (moves, unmoved windows the overlay must still
-draw, warm targets), decides whether the overlay flies (`config.settings.animate`,
-not low power, not a drag, something visibly travels) and places the real windows
+draw, warm targets), decides whether the overlay flies (no `animations › off` in the
+config, not low power, not a drag, something visibly travels) and places the real windows
 directly when it does not.
 
 The per-frame Accessibility engine that preceded it (`AXPosition`/`AXSize`
@@ -167,7 +167,8 @@ travel it moves at about 890pt/s, and the restart put it at 15,375pt/s in one
 frame. Reported as a series of jerky movements. Now each container keeps its
 current leg (`Leg` in `src/animation/domain/motion/glide.rs`), and a new
 destination starts a critically damped spring from where the leg is and as fast
-as it is going. The spring's stiffness follows `animation_duration`: 97% home
+as it is going. The spring's stiffness follows the movement's length, 0.35s times
+`animations › slowdown`: 97% home
 from rest at half the duration, where the curve is, so a chained leg lands like
 a fresh one. Core Animation cannot take a spring with a starting velocity in
 two dimensions as one timing function, so the leg is handed over as keyframes
@@ -449,8 +450,8 @@ destination's origin, which needs care. The window-voting classifier
 when there is nothing to pan.
 
 **Edge bounce.** A command that pushes past an end of the strip (the first/last
-column) or of the workspace stack (next/prev at the bottom/top with
-`prevent_wrapping`, or nothing further to skip to) used to stop dead, which read
+column) or of the workspace stack (next/prev at the bottom/top, which never wraps,
+or nothing further to skip to) used to stop dead, which read
 as a dropped keypress. The layout reports it as `EventResponse::edge_hit`,
 distinct from `boundary_hit`, which is the gesture's threshold crossing. Four
 places report it: `move_focus_internal`'s fallback and `MoveNode`'s, both
@@ -1010,8 +1011,8 @@ Options, in order of expected value:
 The overlay learned resizes (anchored, cropped rather than scaled, the real
 resize applied once behind the overlay), then switches, pans, entrances and
 closes, and the AX engine's last job was the `overlay_animations = false`
-fallback. That switch is gone: `animate` is on/off, on means the overlay,
-off means placement. The AX resize trial ("Detour" in earlier revisions)
+fallback. That switch is gone: animation is on or off (`animations › off`), on means
+the overlay, off means placement. The AX resize trial ("Detour" in earlier revisions)
 ended in the overlay's favour.
 
 ## Order of attack

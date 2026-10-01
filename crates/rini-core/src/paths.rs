@@ -13,9 +13,9 @@ pub fn restore_file() -> PathBuf {
     data_dir().join("layout.ron")
 }
 
-/// `~/.config/rini/config.toml`: the user's config, watched for reload.
+/// `~/.config/rini/config.kdl`: the user's config, watched for reload.
 pub fn config_file() -> PathBuf {
-    dirs::home_dir().unwrap().join(".config").join("rini").join("config.toml")
+    dirs::home_dir().unwrap().join(".config").join("rini").join("config.kdl")
 }
 
 #[cfg(test)]
@@ -31,6 +31,6 @@ mod tests {
     #[test]
     fn the_config_lives_under_dot_config_rini() {
         let path = config_file();
-        assert!(path.ends_with(".config/rini/config.toml"), "{path:?}");
+        assert!(path.ends_with(".config/rini/config.kdl"), "{path:?}");
     }
 }

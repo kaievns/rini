@@ -9,7 +9,7 @@ belongs in a feature.
 | | |
 |---|---|
 | `ids.rs` | `WindowId { pid, idx }` — rini's own window identity. `WindowServerId` and `SpaceId` are macOS's, declared in `rini-skylight-sys` and re-exported from here so nothing else needs that dependency for a number. `ScreenId` is a `CGDirectDisplayID`. `BTreeExt` |
-| `paths.rs` | `data_dir()`, `config_file()`, `restore_file()` — the three places rini reads and writes |
+| `paths.rs` | `data_dir()`, `config_file()` (`~/.config/rini/config.kdl`), `restore_file()` — the three places rini reads and writes |
 
 ## The shape that matters
 

@@ -11,9 +11,7 @@ use crate::layout::domain::constraints::{
 };
 use crate::layout::domain::preset_width::{PresetWidth, next_preset};
 use crate::layout::domain::strip::{Reveal, anchor_x, column_starts, reveal_offset};
-use crate::layout::settings::{
-    ScrollingFocusNavigationStyle, ScrollingLayoutSettings, WindowInsertionPoint,
-};
+use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
 use crate::layout::{Direction, LayoutId, ResizeOrientation};
 use rini_core::ids::{WindowId, pid_t};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -983,14 +981,14 @@ impl ScrollingLayoutSystem {
         layout: LayoutId,
         screen: CGRect,
         constraints: &HashMap<WindowId, WindowLayoutConstraints>,
-        gaps: &crate::layout::settings::GapSettings,
+        gaps: &Gaps,
     ) -> Vec<(WindowId, CGRect)> {
         let Some(state) = self.layouts.get(layout) else {
             return Vec::new();
         };
         let tiling = compute_tiling_area(screen, gaps);
-        let gap_x = gaps.inner.horizontal;
-        let gap_y = gaps.inner.vertical;
+        let gap_x = gaps.inner;
+        let gap_y = gaps.inner;
         let base_ratio = Self::clamp_base_ratio(
             state.column_width_ratio,
             self.settings.min_column_width_ratio,
@@ -1050,8 +1048,7 @@ impl ScrollingLayoutSystem {
             selected_width,
             selected_col_idx,
             state.columns.len(),
-            self.settings.alignment,
-            self.settings.focus_navigation_style,
+            self.settings.center_focused_column,
             state.center_override_window.is_some(),
         );
         let center_anchor_x = tiling.origin.x + (tiling.size.width - selected_width) / 2.0;
@@ -1253,10 +1250,7 @@ impl ScrollingLayoutSystem {
         layout: LayoutId,
         direction: Direction,
     ) -> (Option<WindowId>, Vec<WindowId>) {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
             return (None, vec![]);
         };
@@ -1264,7 +1258,7 @@ impl ScrollingLayoutSystem {
             Direction::Left | Direction::Right => Self::move_focus_horizontal(state, direction),
             Direction::Up | Direction::Down => Self::move_focus_vertical(state, direction),
         };
-        if new_sel.is_some() && niri_navigation {
+        if new_sel.is_some() && reveals_only {
             if matches!(direction, Direction::Left | Direction::Right) {
                 state.reveal_selected_in_direction(direction);
             } else {
@@ -1304,16 +1298,13 @@ impl ScrollingLayoutSystem {
     }
 
     pub fn add_window_after_selection(&mut self, layout: LayoutId, wid: WindowId) {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
-        let insertion_point = self.settings.base.window_insertion_point.unwrap_or_default();
+        let reveals_only = self.settings.reveals_only();
+        let insertion_point = self.settings.window_insertion_point;
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
         Self::insert_new_column(state, wid, insertion_point);
-        if niri_navigation {
+        if reveals_only {
             state.reveal_selected_without_direction();
         }
     }
@@ -1450,11 +1441,8 @@ impl ScrollingLayoutSystem {
     }
 
     pub fn set_windows_for_app(&mut self, layout: LayoutId, pid: pid_t, desired: Vec<WindowId>) {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
-        let insertion_point = self.settings.base.window_insertion_point.unwrap_or_default();
+        let reveals_only = self.settings.reveals_only();
+        let insertion_point = self.settings.window_insertion_point;
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -1491,7 +1479,7 @@ impl ScrollingLayoutSystem {
                 (None, None) => break,
             }
         }
-        if niri_navigation {
+        if reveals_only {
             state.reveal_selected_without_direction();
         }
     }
@@ -1509,10 +1497,7 @@ impl ScrollingLayoutSystem {
     }
 
     pub fn select_window(&mut self, layout: LayoutId, wid: WindowId) -> bool {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
             return false;
         };
@@ -1522,7 +1507,7 @@ impl ScrollingLayoutSystem {
                 return true;
             }
             state.selected = Some(wid);
-            if niri_navigation {
+            if reveals_only {
                 state.reveal_selected_without_direction();
             } else {
                 state.align_scroll_to_selected();
@@ -1540,14 +1525,11 @@ impl ScrollingLayoutSystem {
         _old_frame: CGRect,
         new_frame: CGRect,
         screen: CGRect,
-        gaps: &crate::layout::settings::GapSettings,
+        gaps: &Gaps,
     ) {
         let min_ratio = self.settings.min_column_width_ratio;
         let max_ratio = self.settings.max_column_width_ratio;
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
 
         let Some(state) = self.layout_state_mut(layout) else {
             return;
@@ -1578,7 +1560,7 @@ impl ScrollingLayoutSystem {
         let col = &mut state.columns[col_idx];
         if col.windows.len() > 1 && tiling.size.height > 0.0 {
             col.ensure_height_weights();
-            let total_gap = gaps.inner.vertical * (col.windows.len().saturating_sub(1) as f64);
+            let total_gap = gaps.inner * (col.windows.len().saturating_sub(1) as f64);
             let available_height = (tiling.size.height - total_gap).max(0.0);
 
             if available_height > 0.0 {
@@ -1627,7 +1609,7 @@ impl ScrollingLayoutSystem {
             }
         }
 
-        if niri_navigation && state.selected == Some(wid) {
+        if reveals_only && state.selected == Some(wid) {
             state.reveal_selected_without_direction();
         } else if state.selected == Some(wid) {
             state.align_scroll_to_selected();
@@ -1667,10 +1649,7 @@ impl ScrollingLayoutSystem {
     }
 
     pub fn move_selection(&mut self, layout: LayoutId, direction: Direction) -> bool {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
             return false;
         };
@@ -1683,7 +1662,7 @@ impl ScrollingLayoutSystem {
             }
         };
         if moved {
-            if niri_navigation {
+            if reveals_only {
                 state.reveal_selected_without_direction();
             } else {
                 state.align_scroll_to_selected();
@@ -1708,10 +1687,7 @@ impl ScrollingLayoutSystem {
             Direction::Right => Direction::Left,
             _ => return Vec::new(),
         };
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
         };
@@ -1746,7 +1722,7 @@ impl ScrollingLayoutSystem {
         }
 
         state.selected = Some(selected);
-        if niri_navigation {
+        if reveals_only {
             state.reveal_selected_without_direction();
         } else {
             state.align_scroll_to_selected();
@@ -1759,10 +1735,7 @@ impl ScrollingLayoutSystem {
     /// The one toggle: `ctrl-F` asks it of the selection, a title-bar zoom of the window zoomed.
     /// `false` when the window is not a column of this layout.
     pub fn toggle_full_width(&mut self, layout: LayoutId, wid: WindowId) -> bool {
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
             return false;
         };
@@ -1778,7 +1751,7 @@ impl ScrollingLayoutSystem {
         state.selected = Some(wid);
 
         // Rescroll so the resized column stays visible, as the resize path does.
-        if niri_navigation {
+        if reveals_only {
             state.reveal_selected_without_direction();
         } else {
             state.align_scroll_to_selected();
@@ -1798,10 +1771,7 @@ impl ScrollingLayoutSystem {
     /// [`next_preset`]; what a width means for a maximised column is `LayoutState::set_column_ratio`.
     pub fn cycle_preset_column_width(&mut self, layout: LayoutId) -> Vec<WindowId> {
         let presets = self.settings.preset_column_widths.clone();
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
 
         let Some(state) = self.layout_state_mut(layout) else {
             return Vec::new();
@@ -1823,7 +1793,7 @@ impl ScrollingLayoutSystem {
         // A width change moves every column start after it, so the strip has to be
         // rescrolled or a column at the viewport edge grows off-screen. Same
         // reasoning as the fullscreen toggle above.
-        if niri_navigation {
+        if reveals_only {
             state.reveal_selected_without_direction();
         } else {
             state.align_scroll_to_selected();
@@ -1917,10 +1887,7 @@ impl ScrollingLayoutSystem {
     ) {
         let min_ratio = self.settings.min_column_width_ratio;
         let max_ratio = self.settings.max_column_width_ratio;
-        let niri_navigation = matches!(
-            self.settings.focus_navigation_style,
-            ScrollingFocusNavigationStyle::Niri
-        );
+        let reveals_only = self.settings.reveals_only();
         let Some(state) = self.layout_state_mut(layout) else {
             return;
         };
@@ -1975,7 +1942,7 @@ impl ScrollingLayoutSystem {
         }
         let clamped = (current + amount).clamp(min_ratio, max_ratio).max(0.05);
         state.set_column_ratio(selected, col_idx, clamped);
-        if niri_navigation {
+        if reveals_only {
             state.reveal_selected_without_direction();
         } else {
             state.align_scroll_to_selected();
@@ -1992,7 +1959,7 @@ mod tests {
     use super::{Column, ScrollingLayoutSystem, rebased_offset};
     use crate::layout::WindowLayoutConstraints;
     use crate::layout::domain::area::compute_tiling_area;
-    use crate::layout::settings::{GapSettings, ScrollingLayoutSettings, WindowInsertionPoint};
+    use crate::layout::settings::{Gaps, ScrollingLayoutSettings, WindowInsertionPoint};
     use crate::layout::{Direction, LayoutId, ResizeOrientation};
     use rini_core::ids::{WindowId, pid_t};
     use rustc_hash::FxHashMap as HashMap;
@@ -2012,7 +1979,7 @@ mod tests {
         system: &ScrollingLayoutSystem,
         layout: LayoutId,
         screen: CGRect,
-        gaps: &GapSettings,
+        gaps: &Gaps,
     ) -> Vec<(WindowId, CGRect)> {
         let constraints = HashMap::default();
         system.calculate_layout(layout, screen, &constraints, gaps)
@@ -2085,7 +2052,7 @@ mod tests {
             layout,
             screen(800.0, 600.0),
             &constraints,
-            &GapSettings::default(),
+            &Gaps::default(),
         );
         let frame = frame_for(&frames, window);
         assert!(frame.size.width >= 699.0);
@@ -2130,7 +2097,7 @@ mod tests {
             layout,
             screen(700.0, 600.0),
             &constraints,
-            &GapSettings::default(),
+            &Gaps::default(),
         );
         let frame = frame_for(&frames, w1);
         assert!(frame.size.width >= 499.0);
@@ -2163,7 +2130,7 @@ mod tests {
             layout,
             screen(1200.0, 700.0),
             &constraints,
-            &GapSettings::default(),
+            &Gaps::default(),
         );
         let frame = frame_for(&frames, window);
         assert!(frame.size.width <= 600.0);
@@ -2220,7 +2187,7 @@ mod tests {
             layout,
             screen(1200.0, 700.0),
             &constraints,
-            &GapSettings::default(),
+            &Gaps::default(),
         );
         let locked_frame = frame_for(&frames, locked);
         let capped_frame = frame_for(&frames, capped);
@@ -2252,7 +2219,7 @@ mod tests {
         );
 
         let screen = screen(1200.0, 700.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let tiling = compute_tiling_area(screen, &gaps);
         let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
         let frame = frame_for(&frames, window);
@@ -2303,7 +2270,7 @@ mod tests {
     #[test]
     fn calculates_centered_columns() {
         let (system, layout, _, _) = setup_two_windows(ScrollingLayoutSettings::default());
-        let frames = render(&system, layout, screen(1000.0, 800.0), &GapSettings::default());
+        let frames = render(&system, layout, screen(1000.0, 800.0), &Gaps::default());
 
         assert_eq!(frames.len(), 2);
         let width0 = frames[0].1.size.width;
@@ -2318,13 +2285,12 @@ mod tests {
 
     #[test]
     fn centers_selected_column_without_changing_alignment() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
+        let settings = ScrollingLayoutSettings::default();
         let (mut system, layout, _, w2) = setup_two_windows(settings);
         system.center_selected_column(layout);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = render(&system, layout, screen, &gaps);
 
         let tiling = compute_tiling_area(screen, &gaps);
@@ -2341,15 +2307,12 @@ mod tests {
         );
     }
 
-    /// Under niri navigation with centre alignment, moving a centred column drops the centring: the
+    /// With `center-focused-column "never"`, moving a centred column drops the centring: the
     /// anchor goes from the centre to the left edge while the scroll offset stays put, and every
     /// column moves on screen by that much. The strip's origin says so; the offset alone did not.
     #[test]
     fn the_strip_origin_moves_with_the_anchor_as_well_as_the_offset() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Center;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 1.0 / 3.0;
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
@@ -2357,7 +2320,7 @@ mod tests {
         for &window in &windows {
             system.add_window_after_selection(layout, window);
         }
-        let (screen, gaps) = (screen(1728.0, 1117.0), GapSettings::default());
+        let (screen, gaps) = (screen(1728.0, 1117.0), Gaps::default());
         assert_eq!(system.strip_origin(layout), None, "nothing laid out yet");
         system.select_window(layout, windows[2]);
         system.center_selected_column(layout);
@@ -2389,8 +2352,7 @@ mod tests {
 
     #[test]
     fn center_selection_clears_when_focus_moves() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
+        let settings = ScrollingLayoutSettings::default();
         let (mut system, layout, _, _) = setup_two_windows(settings);
         system.center_selected_column(layout);
         let _ = system.move_focus(layout, Direction::Left);
@@ -2401,8 +2363,7 @@ mod tests {
 
     #[test]
     fn center_selection_toggles_back_to_layout_alignment() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
+        let settings = ScrollingLayoutSettings::default();
         let (mut system, layout, _, w2) = setup_two_windows(settings);
 
         // First call centers the current selection.
@@ -2411,7 +2372,7 @@ mod tests {
         system.center_selected_column(layout);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = render(&system, layout, screen, &gaps);
         let tiling = compute_tiling_area(screen, &gaps);
         let selected_frame = frame_for(&frames, w2);
@@ -2426,16 +2387,13 @@ mod tests {
     #[test]
     fn horizontal_focus_keeps_side_by_side_columns_visible_without_anchor_snapping() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
         let (mut system, layout, w1, w2) = setup_two_windows(settings);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         // Apply the default initial alignment (selected = w2) so w1 starts off-screen.
         let _ = render(&system, layout, screen, &gaps);
@@ -2468,16 +2426,14 @@ mod tests {
     #[test]
     fn horizontal_focus_anchored_snaps_to_alignment() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Anchored;
+        settings.center_focused_column = crate::layout::settings::CenterFocusedColumn::Always;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
         let (mut system, layout, _, _) = setup_two_windows(settings);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let _ = render(&system, layout, screen, &gaps);
 
         let _ = system.move_focus(layout, Direction::Left);
@@ -2499,20 +2455,18 @@ mod tests {
     #[test]
     fn resized_columns_remain_contiguous_without_horizontal_holes() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Anchored;
+        settings.center_focused_column = crate::layout::settings::CenterFocusedColumn::Always;
         let (mut system, layout, w1, w2) = setup_two_windows(settings);
         let _ = system.move_focus(layout, Direction::Left);
         system.resize_selection_by(layout, 0.12, ResizeOrientation::Horizontal);
 
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = render(&system, layout, screen(1000.0, 800.0), &gaps);
 
         let w1_frame = frame_for(&frames, w1);
         let w2_frame = frame_for(&frames, w2);
 
-        let expected_w2_x = w1_frame.origin.x + w1_frame.size.width + gaps.inner.horizontal;
+        let expected_w2_x = w1_frame.origin.x + w1_frame.size.width + gaps.inner;
         assert!(
             (w2_frame.origin.x - expected_w2_x).abs() < 1.0,
             "expected contiguous columns, got w1 right+gap={} and w2 x={}",
@@ -2524,16 +2478,13 @@ mod tests {
     #[test]
     fn selecting_column_in_niri_mode_reveals_without_centering() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Center;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
         let (mut system, layout, w1, _) = setup_two_windows(settings);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let _ = render(&system, layout, screen, &gaps);
 
         assert!(system.select_window(layout, w1));
@@ -2551,9 +2502,6 @@ mod tests {
     #[test]
     fn niri_focus_between_different_width_columns_keeps_strip_stable() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Center;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.42;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.9;
@@ -2564,7 +2512,7 @@ mod tests {
         system.resize_selection_by(layout, 0.15, ResizeOrientation::Horizontal);
 
         let screen = screen(1200.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         let frames_left = render(&system, layout, screen, &gaps);
         let w1_x_left = frame_for(&frames_left, w1).origin.x;
@@ -2610,16 +2558,13 @@ mod tests {
     #[test]
     fn niri_rightmost_resize_grow_increases_visible_width() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Center;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.45;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 0.95;
         let (mut system, layout, _, w2) = setup_two_windows(settings); // selected rightmost
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         let before = render(&system, layout, screen, &gaps);
         let before_frame = frame_for(&before, w2);
@@ -2647,16 +2592,13 @@ mod tests {
 
     #[test]
     fn center_override_persists_on_refocus_of_same_window_in_niri_mode() {
-        let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
+        let settings = ScrollingLayoutSettings::default();
         let (mut system, layout, _, w2) = setup_two_windows(settings);
 
         system.center_selected_column(layout);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let before = frame_for(&render(&system, layout, screen, &gaps), w2);
 
         assert!(system.select_window(layout, w2));
@@ -2685,7 +2627,7 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         // 1. Initial layout calculation (should be split equally)
         let frames_before = render(&system, layout, screen, &gaps);
@@ -2727,7 +2669,7 @@ mod tests {
         assert!(system.select_window(layout, w1));
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let before = frame_for(&render(&system, layout, screen, &gaps), w1);
 
         system.resize_selection_by(layout, 0.05, ResizeOrientation::Vertical);
@@ -2749,7 +2691,7 @@ mod tests {
         assert!(system.select_window(layout, w1));
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let before = frame_for(&render(&system, layout, screen, &gaps), w1);
         system.resize_selection_by(layout, 0.05, ResizeOrientation::Smart);
         let after = frame_for(&render(&system, layout, screen, &gaps), w1);
@@ -2761,9 +2703,6 @@ mod tests {
     #[test]
     fn niri_new_window_reveal_does_not_unnecessarily_push_offscreen() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.alignment = crate::layout::settings::ScrollingAlignment::Center;
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = 0.4;
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
@@ -2773,7 +2712,7 @@ mod tests {
         // Add first window
         system.add_window_after_selection(layout, w1);
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let _ = render(&system, layout, screen, &gaps);
         assert_eq!(scroll_offset(&system, layout), 0.0);
 
@@ -2796,74 +2735,13 @@ mod tests {
     }
 
     #[test]
-    fn anchored_alignments_adjust_outer_columns() {
+    fn always_centring_sits_the_outer_columns_flush() {
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
-        // Test Left Alignment: last column is anchored to the right.
         {
             let mut settings = ScrollingLayoutSettings::default();
-            settings.alignment = crate::layout::settings::ScrollingAlignment::Left;
-            settings.focus_navigation_style =
-                crate::layout::settings::ScrollingFocusNavigationStyle::Anchored;
-            settings.column_width_ratio = 0.4;
-            let mut system = ScrollingLayoutSystem::new(&settings);
-            let layout = system.create_layout();
-            let w1 = wid(1, 1);
-            let w2 = wid(1, 2);
-            let w3 = wid(1, 3);
-            system.add_window_after_selection(layout, w1);
-            system.add_window_after_selection(layout, w2);
-            system.add_window_after_selection(layout, w3);
-
-            assert!(system.select_window(layout, w1));
-            let w1_frame = frame_for(&render(&system, layout, screen, &gaps), w1);
-            assert!((w1_frame.origin.x - 0.0).abs() < 1.0); // left-aligned
-
-            assert!(system.select_window(layout, w2));
-            let w2_frame = frame_for(&render(&system, layout, screen, &gaps), w2);
-            assert!((w2_frame.origin.x - 0.0).abs() < 1.0); // left-aligned
-
-            assert!(system.select_window(layout, w3));
-            let w3_frame = frame_for(&render(&system, layout, screen, &gaps), w3);
-            assert!((w3_frame.origin.x - 600.0).abs() < 1.0); // right-aligned
-        }
-
-        // Test Right Alignment: first column is anchored to the left.
-        {
-            let mut settings = ScrollingLayoutSettings::default();
-            settings.alignment = crate::layout::settings::ScrollingAlignment::Right;
-            settings.focus_navigation_style =
-                crate::layout::settings::ScrollingFocusNavigationStyle::Anchored;
-            settings.column_width_ratio = 0.4;
-            let mut system = ScrollingLayoutSystem::new(&settings);
-            let layout = system.create_layout();
-            let w1 = wid(1, 1);
-            let w2 = wid(1, 2);
-            let w3 = wid(1, 3);
-            system.add_window_after_selection(layout, w1);
-            system.add_window_after_selection(layout, w2);
-            system.add_window_after_selection(layout, w3);
-
-            assert!(system.select_window(layout, w1));
-            let w1_frame = frame_for(&render(&system, layout, screen, &gaps), w1);
-            assert!((w1_frame.origin.x - 0.0).abs() < 1.0); // left-aligned
-
-            assert!(system.select_window(layout, w2));
-            let w2_frame = frame_for(&render(&system, layout, screen, &gaps), w2);
-            assert!((w2_frame.origin.x - 600.0).abs() < 1.0); // right-aligned
-
-            assert!(system.select_window(layout, w3));
-            let w3_frame = frame_for(&render(&system, layout, screen, &gaps), w3);
-            assert!((w3_frame.origin.x - 600.0).abs() < 1.0); // right-aligned
-        }
-
-        // Test Center Alignment: first column is left-anchored, last is right-anchored, middle is centered.
-        {
-            let mut settings = ScrollingLayoutSettings::default();
-            settings.alignment = crate::layout::settings::ScrollingAlignment::Center;
-            settings.focus_navigation_style =
-                crate::layout::settings::ScrollingFocusNavigationStyle::Anchored;
+            settings.center_focused_column = crate::layout::settings::CenterFocusedColumn::Always;
             settings.column_width_ratio = 0.4;
             let mut system = ScrollingLayoutSystem::new(&settings);
             let layout = system.create_layout();
@@ -2910,7 +2788,7 @@ mod tests {
         system.add_window_after_selection(layout, w1);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames1 = render(&system, layout, screen, &gaps);
         let w1_frame1 = frame_for(&frames1, w1);
 
@@ -2951,7 +2829,7 @@ mod tests {
         assert!(system.is_window_full_width(layout, w1));
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frame = frame_for(&render(&system, layout, screen, &gaps), w1);
         assert!(
             (frame.size.width - 1000.0).abs() < 1.0,
@@ -2968,7 +2846,7 @@ mod tests {
     #[test]
     fn app_reconciliation_honors_updated_next_to_selection_policy() {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.base.window_insertion_point = Some(WindowInsertionPoint::EndOfTree);
+        settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
         let mut system = ScrollingLayoutSystem::new(&settings);
         let layout = system.create_layout();
         let w1 = wid(1, 1);
@@ -2978,7 +2856,7 @@ mod tests {
         system.add_window_after_selection(layout, w2);
         assert!(system.select_window(layout, w1));
 
-        settings.base.window_insertion_point = Some(WindowInsertionPoint::NextToSelection);
+        settings.window_insertion_point = WindowInsertionPoint::NextToSelection;
         system.update_settings(&settings);
         system.set_windows_for_app(layout, 1, vec![w1, w2, w3]);
 
@@ -2997,7 +2875,7 @@ mod tests {
         system.add_window_after_selection(layout, w2);
         assert!(system.select_window(layout, w1));
 
-        settings.base.window_insertion_point = Some(WindowInsertionPoint::EndOfTree);
+        settings.window_insertion_point = WindowInsertionPoint::EndOfTree;
         system.update_settings(&settings);
         system.set_windows_for_app(layout, 1, vec![w1, w2, w3]);
 
@@ -3008,8 +2886,6 @@ mod tests {
 
     fn niri_settings(ratio: f64) -> ScrollingLayoutSettings {
         let mut settings = ScrollingLayoutSettings::default();
-        settings.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
         settings.column_width_ratio = ratio;
         settings.min_column_width_ratio = 0.2;
         settings.max_column_width_ratio = 1.0;
@@ -3023,7 +2899,7 @@ mod tests {
     fn fullscreen_within_gaps_column_scrolls_with_the_strip() {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         assert!(system.select_window(layout, w1));
         toggle_selection(&mut system, layout);
@@ -3048,7 +2924,7 @@ mod tests {
     fn fullscreen_within_gaps_column_reserves_full_width() {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         assert!(system.select_window(layout, w1));
         toggle_selection(&mut system, layout);
@@ -3077,7 +2953,7 @@ mod tests {
     fn fullscreen_within_gaps_toggles_back_to_preset_width() {
         let (mut system, layout, w1, _) = setup_two_windows(niri_settings(0.5));
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         assert!(system.select_window(layout, w1));
         let width_before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
@@ -3108,7 +2984,7 @@ mod tests {
     fn a_resize_report_under_full_width_keeps_the_width_to_return_to() {
         let (mut system, layout, w1, _) = setup_two_windows(niri_settings(0.5));
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         assert!(system.select_window(layout, w1));
         let width_before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
 
@@ -3143,7 +3019,7 @@ mod tests {
             system.add_window_after_selection(layout, w);
         }
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         // Select the last column, which sits at the right edge of the viewport.
         assert!(system.select_window(layout, w3));
@@ -3173,7 +3049,7 @@ mod tests {
         settings.preset_column_widths = vec![0.33333, 0.5, 0.66667];
         let (mut system, layout, w1, _) = setup_two_windows(settings);
         let screen = screen(1200.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let tiling_width = compute_tiling_area(screen, &gaps).size.width;
 
         assert!(system.select_window(layout, w1));
@@ -3229,7 +3105,7 @@ mod tests {
     fn a_step_off_full_width_actually_resizes_the_window() {
         let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
         let screen = screen(1200.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let tiling_width = compute_tiling_area(screen, &gaps).size.width;
         let width_of = |system: &ScrollingLayoutSystem| {
             frame_for(&render(system, layout, screen, &gaps), w1).size.width / tiling_width
@@ -3263,7 +3139,7 @@ mod tests {
     fn the_cycle_reaches_full_width_past_the_configured_maximum() {
         let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
         let screen = screen(1200.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let tiling_width = compute_tiling_area(screen, &gaps).size.width;
 
         assert!(system.select_window(layout, w1));
@@ -3299,7 +3175,7 @@ mod tests {
     fn shrinking_a_maximised_column_unmaximises_it() {
         let (mut system, layout, w1, _) = setup_two_windows(preset_settings());
         let screen = screen(1200.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let tiling_width = compute_tiling_area(screen, &gaps).size.width;
 
         assert!(system.select_window(layout, w1));
@@ -3323,7 +3199,7 @@ mod tests {
     fn a_swipe_steps_over_a_maximised_column_by_its_real_width() {
         let (mut system, layout, w1, w2) = setup_two_windows(preset_settings());
         let screen = screen(1200.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let tiling_width = compute_tiling_area(screen, &gaps).size.width;
 
         assert!(system.select_window(layout, w1));
@@ -3336,7 +3212,7 @@ mod tests {
 
         let stepped = scroll_offset(&system, layout);
         assert!(
-            (stepped - (tiling_width + gaps.inner.horizontal)).abs() < 2.0,
+            (stepped - (tiling_width + gaps.inner)).abs() < 2.0,
             "one swipe should clear the whole maximised column ({} + gap), stepped {stepped}",
             tiling_width
         );
@@ -3352,10 +3228,10 @@ mod tests {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
         let screen = screen(1728.0, 1117.0);
         // With zero gaps two 0.5 columns fit exactly and the overflow cannot appear.
-        let mut gaps = GapSettings::default();
+        let mut gaps = Gaps::default();
         gaps.outer.left = 4.0;
         gaps.outer.right = 4.0;
-        gaps.inner.horizontal = 4.0;
+        gaps.inner = 4.0;
 
         let positions = |system: &ScrollingLayoutSystem| {
             let frames = render(system, layout, screen, &gaps);
@@ -3403,7 +3279,7 @@ mod tests {
         settings.preset_column_widths = vec![];
         let (mut system, layout, w1, _) = setup_two_windows(settings);
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         assert!(system.select_window(layout, w1));
         let before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
@@ -3490,15 +3366,15 @@ mod tests {
         assert!(system.select_window(layout, w3));
         system.resize_selection_by(layout, 0.5, ResizeOrientation::Horizontal);
         let screen = screen(1728.0, 1117.0);
-        let mut gaps = GapSettings::default();
+        let mut gaps = Gaps::default();
         gaps.outer.left = 4.0;
         gaps.outer.right = 4.0;
-        gaps.inner.horizontal = 2.0;
+        gaps.inner = 2.0;
 
         let before = frame_for(&render(&system, layout, screen, &gaps), w3);
         assert_eq!(before.origin.x, 4.0, "the full-width column starts at the left margin");
 
-        gaps.inner.horizontal = 4.0;
+        gaps.inner = 4.0;
         let frames = render(&system, layout, screen, &gaps);
         let after = frame_for(&frames, w3);
         assert_eq!(after.origin.x, 4.0, "it stays at the left margin");
@@ -3519,10 +3395,10 @@ mod tests {
         let settings = niri_settings(0.49);
         let (mut system, layout, w1, _) = setup_two_windows(settings.clone());
         let screen = screen(1728.0, 1117.0);
-        let mut gaps = GapSettings::default();
+        let mut gaps = Gaps::default();
         gaps.outer.left = 4.0;
         gaps.outer.right = 4.0;
-        gaps.inner.horizontal = 2.0;
+        gaps.inner = 2.0;
 
         let width_of = |system: &ScrollingLayoutSystem| {
             frame_for(&render(system, layout, screen, &gaps), w1).size.width.round()
@@ -3542,7 +3418,7 @@ mod tests {
 
         // And it must land on the new default rather than anywhere in between.
         let tiling = compute_tiling_area(screen, &gaps).size.width;
-        let expected = (tiling * 0.5 - gaps.inner.horizontal / 2.0).round();
+        let expected = (tiling * 0.5 - gaps.inner / 2.0).round();
         assert!(
             (after - expected).abs() <= 1.0,
             "expected the new default width {expected}, got {after}"
@@ -3556,7 +3432,7 @@ mod tests {
         let settings = niri_settings(0.49);
         let (mut system, layout, w1, _) = setup_two_windows(settings.clone());
         let screen = screen(1728.0, 1117.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         assert!(system.select_window(layout, w1));
         system.resize_selection_by(layout, 0.10, ResizeOrientation::Horizontal);
@@ -3590,7 +3466,7 @@ mod tests {
         system.add_window_after_selection(layout, w2);
 
         let screen = screen(1728.0, 1117.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
 
         // Stack w2 into w1's column.
         assert!(system.select_window(layout, w2));
@@ -3680,7 +3556,7 @@ mod tests {
     fn full_width_toggles_the_window_it_names_and_selects_it() {
         let (mut system, layout, w1, w2) = setup_two_windows(niri_settings(0.5));
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         assert!(system.select_window(layout, w2));
         let width_before = frame_for(&render(&system, layout, screen, &gaps), w1).size.width;
 
@@ -3885,7 +3761,7 @@ mod tests {
             },
         );
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
 
         let maximized = frame_for(&frames, narrow);
@@ -3923,7 +3799,7 @@ mod tests {
             },
         );
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
 
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
@@ -3944,7 +3820,7 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
@@ -3969,7 +3845,7 @@ mod tests {
         system.resize_selection_by(layout, 0.2, ResizeOrientation::Vertical);
 
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
         let (a, b) = (frame_for(&frames, top), frame_for(&frames, bottom));
         assert!(
@@ -3994,7 +3870,7 @@ mod tests {
         system.toggle_fold_of_selection(layout, Direction::Left);
 
         let screen = screen(1000.0, 900.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = system.calculate_layout(layout, screen, &constraints_none(), &gaps);
         let heights: Vec<f64> = w.iter().map(|id| frame_for(&frames, *id).size.height).collect();
         let spread = heights.iter().cloned().fold(f64::MIN, f64::max)
@@ -4027,7 +3903,7 @@ mod tests {
             },
         );
         let screen = screen(1000.0, 800.0);
-        let gaps = GapSettings::default();
+        let gaps = Gaps::default();
         let frames = system.calculate_layout(layout, screen, &constraints, &gaps);
 
         let wide = frame_for(&frames, acme);

@@ -1,6 +1,6 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use crate::windows::domain::rules::{AppRulePosition, AppRuleSize};
+use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RelativeTo};
 use crate::workspaces::VirtualWorkspaceId;
 use rini_core::ids::SpaceId;
 use rini_core::ids::WindowId;
@@ -13,7 +13,7 @@ use rini_core::ids::WindowId;
 pub struct AppRuleEffects {
     pub workspace_id: VirtualWorkspaceId,
     pub floating: bool,
-    pub position: Option<AppRulePosition>,
+    pub position: Option<FloatingPosition>,
     pub size: Option<AppRuleSize>,
     pub focus: bool,
     pub prev_rule_decision: bool,
@@ -101,7 +101,7 @@ impl AppRuleOutcome {
 pub struct AppRulePlacement {
     pub window: WindowId,
     pub space: SpaceId,
-    pub position: Option<AppRulePosition>,
+    pub position: Option<FloatingPosition>,
     pub size: Option<AppRuleSize>,
 }
 
@@ -117,15 +117,33 @@ impl AppRulePlacement {
             }
         }
         if let Some(position) = self.position {
-            let travel_x = (screen.size.width - frame.size.width).max(0.0);
-            let travel_y = (screen.size.height - frame.size.height).max(0.0);
-            frame.origin = CGPoint::new(
-                screen.origin.x + travel_x * position.x,
-                screen.origin.y + travel_y * position.y,
-            );
+            frame.origin = floating_origin(position, frame.size.width, frame.size.height, screen);
         }
         frame
     }
+}
+
+/// niri's `default-floating-position`: logical pixels from the corner `relative_to` names, each
+/// coordinate counted away from that corner, or from the middle of a side when only a side is named.
+fn floating_origin(position: FloatingPosition, width: f64, height: f64, screen: CGRect) -> CGPoint {
+    use RelativeTo::*;
+    let (left, top) = (screen.origin.x, screen.origin.y);
+    let right = screen.origin.x + screen.size.width - width;
+    let bottom = screen.origin.y + screen.size.height - height;
+    let middle_x = screen.origin.x + (screen.size.width - width) / 2.0;
+    let middle_y = screen.origin.y + (screen.size.height - height) / 2.0;
+    let (x, y) = (position.x, position.y);
+    let (ox, oy) = match position.relative_to {
+        TopLeft => (left + x, top + y),
+        TopRight => (right - x, top + y),
+        BottomLeft => (left + x, bottom - y),
+        BottomRight => (right - x, bottom - y),
+        Top => (middle_x + x, top + y),
+        Bottom => (middle_x + x, bottom - y),
+        Left => (left + x, middle_y + y),
+        Right => (right - x, middle_y + y),
+    };
+    CGPoint::new(ox, oy)
 }
 
 /// One-time tiled resize applied after the window has entered its layout tree.
@@ -228,6 +246,36 @@ mod tests {
             focus: false,
             prev_rule_decision,
         })
+    }
+
+    fn placed(relative_to: RelativeTo) -> CGPoint {
+        let placement = AppRulePlacement {
+            window: WindowId::new(1, 1),
+            space: SpaceId::new(1),
+            position: Some(FloatingPosition { x: 40.0, y: 30.0, relative_to }),
+            size: Some(AppRuleSize { w: Some(200.0), h: Some(100.0) }),
+        };
+        let screen = CGRect::new(CGPoint::new(0.0, 32.0), CGSize::new(1000.0, 600.0));
+        let current = CGRect::new(CGPoint::new(5.0, 5.0), CGSize::new(10.0, 10.0));
+        placement.resolve_frame(current, screen).origin
+    }
+
+    /// Each coordinate counts away from the corner named, as niri's do: `bottom-left` puts `y` above
+    /// the bottom edge.
+    #[test]
+    fn a_floating_position_is_pixels_from_the_corner_it_names() {
+        assert_eq!(placed(RelativeTo::TopLeft), CGPoint::new(40.0, 62.0));
+        assert_eq!(placed(RelativeTo::TopRight), CGPoint::new(760.0, 62.0));
+        assert_eq!(placed(RelativeTo::BottomLeft), CGPoint::new(40.0, 502.0));
+        assert_eq!(placed(RelativeTo::BottomRight), CGPoint::new(760.0, 502.0));
+    }
+
+    #[test]
+    fn a_side_alone_centres_the_window_along_it() {
+        assert_eq!(placed(RelativeTo::Top), CGPoint::new(440.0, 62.0));
+        assert_eq!(placed(RelativeTo::Bottom), CGPoint::new(440.0, 502.0));
+        assert_eq!(placed(RelativeTo::Left), CGPoint::new(40.0, 312.0));
+        assert_eq!(placed(RelativeTo::Right), CGPoint::new(760.0, 312.0));
     }
 
     #[test]

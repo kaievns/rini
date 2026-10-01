@@ -338,6 +338,10 @@ pub enum Event {
 
     #[serde(skip)]
     ConfigUpdated(Config),
+
+    /// The config file was read, and whether it could be used. While it cannot, every bar is marked.
+    #[serde(skip)]
+    ConfigFileRead { usable: bool },
 }
 
 /// The displays context's events, one for one; the topology snapshot arrives as `SpaceStateChanged`.
@@ -597,7 +601,7 @@ impl Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
-        record.start(&config, &layout_engine, &display_memory);
+        record.start(&layout_engine, &display_memory);
         let (raise_manager_tx, _rx) = channels::channel();
         let (window_notify_tx, window_tx_store) = match window_notify {
             Some((tx, store)) => (Some(tx), store),
@@ -1542,6 +1546,10 @@ impl Reactor {
             }
             Event::BarAction(action) => {
                 return self.on_bar_action(action);
+            }
+            Event::ConfigFileRead { usable } => {
+                self.bar.config_failed = !usable;
+                return Ok(EventOutcome::no_change());
             }
             Event::ClockChanged => {
                 self.bar_clock_changed();
@@ -4775,7 +4783,7 @@ impl Reactor {
         }
 
         if let Some(dir) = boundary_hit
-            && self.config.settings.layout.scrolling.gestures.propagate_to_workspace_swipe
+            && self.config.settings.layout.scrolling.gestures.switch_workspace_on_overscroll
         {
             let cmd = workspace_step_at_boundary(
                 dir,

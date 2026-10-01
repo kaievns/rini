@@ -228,6 +228,31 @@ fn a_bar_turned_off_is_sent_an_empty_model() {
     assert!(models(&mut desk.bar).is_empty());
 }
 
+/// A config file that cannot be used marks every bar, and the next good read clears it. The mark is
+/// the config's to turn off: `config-notification { disable-failed; }`.
+#[test]
+fn a_config_file_that_cannot_be_used_marks_every_bar_until_one_can() {
+    let mut desk = desk();
+    desk.reactor.handle_test_batch(vec![Event::ConfigFileRead { usable: false }]);
+    let sent = models(&mut desk.bar).pop().expect("the mark is sent");
+    assert!(sent.displays.iter().all(|display| display.config_failed));
+
+    desk.reactor.handle_test_batch(vec![Event::ConfigFileRead { usable: true }]);
+    let sent = models(&mut desk.bar).pop().expect("the mark is cleared");
+    assert!(sent.displays.iter().all(|display| !display.config_failed));
+
+    let mut config = desk.reactor.config.clone();
+    config.settings.mark_failed_config = false;
+    desk.reactor.handle_test_batch(vec![
+        Event::ConfigUpdated(config),
+        Event::ConfigFileRead { usable: false },
+    ]);
+    assert!(
+        models(&mut desk.bar).iter().all(|model| model.displays.iter().all(|d| !d.config_failed)),
+        "turned off, nothing is marked"
+    );
+}
+
 /// The application and title go on the display the focused window is on, and the other stays silent.
 #[test]
 fn the_focus_label_moves_with_focus() {

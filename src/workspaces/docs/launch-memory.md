@@ -62,7 +62,7 @@ A slot is claimed once, so two windows cannot both take it.
 
 Explicit configuration wins over anything learned:
 
-1. An `[[windows]]` rule from the config file.
+1. A `window-rule` from the config file that applies to the window.
 2. A remembered slot for this topology.
 3. Today's default: active workspace, display under the cursor, configured column width.
 

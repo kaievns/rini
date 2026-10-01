@@ -684,7 +684,7 @@ fn diagnostics_report_windows_missing_from_the_layout_tree() {
 /// Reported: with Zoom and System Settings floating, ctrl-J/L cycled those two rather than
 /// the columns, and leaving them landed on the FIRST column instead of the one that had been
 /// selected. Floating windows belong to a workspace but are not strip members; cmd-tab and
-/// toggle_focus_floating reach them.
+/// `switch-focus-between-floating-and-tiling` reach them.
 #[test]
 fn strip_navigation_skips_floating_windows_and_resumes_where_it_was() {
     let mut reactor = test_reactor();
@@ -1368,7 +1368,7 @@ mod title_bar_zoom {
 
     use super::*;
     use crate::app::channels;
-    use crate::app::config::OuterGaps;
+    use crate::app::config::Edges;
     use crate::input::event::LeftPress;
     use crate::layout::domain::area::compute_tiling_area;
     use crate::windows::domain::zoom::Evidence;
@@ -1414,7 +1414,7 @@ mod title_bar_zoom {
         /// zooms to.
         fn new() -> Self {
             let (mut apps, mut reactor) = test_context();
-            reactor.config.settings.layout.gaps.outer = OuterGaps {
+            reactor.config.settings.layout.gaps.struts = Edges {
                 top: 8.,
                 left: 8.,
                 bottom: 8.,
@@ -1454,7 +1454,7 @@ mod title_bar_zoom {
         }
 
         fn tiling(&self) -> CGRect {
-            compute_tiling_area(VISIBLE, &self.reactor.config.settings.layout.gaps)
+            compute_tiling_area(VISIBLE, &self.reactor.config.settings.layout.gaps.effective_for_display(None))
         }
 
         fn clamped_width(&self) -> f64 {
@@ -2045,16 +2045,14 @@ fn a_move_that_scrolls_nothing_places_only_the_pair() {
     assert_eq!(placed, vec![WindowId::new(1, 1), WindowId::new(1, 2)]);
 }
 
-/// Reported in review 2026-09-30: under niri navigation with centre alignment, centring a column
+/// Reported in review 2026-09-30: with `center-focused-column "never"`, centring a column
 /// and then moving it drops the centring, so every window moves 576pt on screen with the scroll
 /// offset unchanged, and the move was drawn as the finished layout at frame zero. Every window
 /// starts where it really was.
 #[test]
 fn a_move_that_drops_the_centring_starts_every_window_where_it_was() {
     let (_apps, mut reactor, mut rx) = moving_strip_with(1.0 / 3.0, 5, |scrolling| {
-        scrolling.alignment = crate::layout::settings::ScrollingAlignment::Center;
-        scrolling.focus_navigation_style =
-            crate::layout::settings::ScrollingFocusNavigationStyle::Niri;
+        scrolling.center_focused_column = crate::layout::settings::CenterFocusedColumn::Never;
     });
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));

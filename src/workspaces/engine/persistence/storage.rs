@@ -473,10 +473,7 @@ impl LayoutEngine {
         layout_settings: &LayoutSettings,
     ) {
         self.set_layout_settings(layout_settings);
-        self.app_rules = AppRuleEngine::new(
-            &virtual_workspace_config.app_rules,
-            virtual_workspace_config.float_modal_windows,
-        );
+        self.app_rules = AppRuleEngine::new(&virtual_workspace_config.app_rules);
         self.virtual_workspace_manager
             .update_settings(virtual_workspace_config, layout_settings);
     }

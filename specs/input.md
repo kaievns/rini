@@ -2,22 +2,53 @@
 
 ## Key specs
 
-- A binding is written in the config as modifiers plus a key: `Alt + Shift + Down`.
+- A binding is written in the config as modifiers and one key joined by `+`: `Alt+Shift+Down`,
+  niri's spelling. Spaces MAY surround the `+` in a quoted key: `"Alt + Shift + Down"` is the same key.
+- `Mod` MUST stand for the modifier `input › mod-key` names, `Alt` unless written. It is resolved
+  whenever the keys are registered, so changing `mod-key` moves every `Mod` bind with it.
+- A key MUST name exactly one key. `Ctrl+J+K` MUST be refused: it used to bind Ctrl+K and say nothing.
+- niri's triggers that are not keys (`WheelScrollDown`, `MouseLeft`, `TouchpadScrollDown`, `XF86…`)
+  MUST be refused with the reason, not as an unknown key.
 - A single letter is case-insensitive: `a` and `A` name the same physical key.
-- Arrow words are accepted and canonicalised: `Down` means `ArrowDown`.
+- Arrow words are accepted and canonicalised: `Down` means `ArrowDown`, as a whole token between `+`s
+  only. niri's XKB names for keys macOS has (`Return`, `BackSpace`, `Page_Up`, `Page_Down`, `space`,
+  `grave`) MUST name those keys.
 - A token rini does not recognise is left exactly as written. It is either a key name the keyboard
-  layer resolves or a typo the config validator refuses, and guessing would turn the second into the
-  first.
+  layer resolves or a typo the config decoder refuses, naming the line, and guessing would turn the
+  second into the first.
 - Canonicalising a spec twice MUST give the same answer as once.
+
+## Binds
+
+- A key MUST be bound once, across `binds` and `recent-windows › binds` together. A second binding is
+  refused with both places named. Keys are compared as pressed: `Mod+H` and `Alt+H` under
+  `mod-key "Alt"` are one key, and `LAlt+H` overlaps `Alt+H`. This holds for the config a
+  `config set` fragment leaves too, so a fragment changing `mod-key` is checked against the running
+  binds.
+- `rini.default.kdl` MUST be usable under `mod-key` `"Alt"`, `"Ctrl"` and `"Super"`. Under `"Shift"`
+  each `Mod+Shift` bind is its `Mod` bind, and the reference says so.
+- A held key MUST fire once. A bind written `repeat=true` fires again on every repeat while held.
+
+> **Reported 2026-10-01.** The switch to KDL asked whether a held key should repeat, niri's default.
+> Kai's decision: it fires once unless `repeat=true` says otherwise, because a repeat used to re-fire
+> commands such as workspace back-and-forth on every one.
+
+- A bind's workspace and monitor numbers MUST start at 1, the first, as niri's do; `0` is refused.
+  `rini-cli` keeps counting from 0.
+
+> **Reported 2026-10-01.** Kai's decision on the switch to KDL: `focus-workspace 1` is the first
+> workspace, as in niri. Kai's TOML had a comment explaining why `switch_to_workspace = 0` meant the
+> first, after binds written from 1 had landed one workspace off.
 
 ## Modifier sides
 
-- A modifier named without a side matches EITHER side. `Ctrl + A` fires on left or right Ctrl, or both
+- A modifier named without a side matches EITHER side. `Ctrl+A` fires on left or right Ctrl, or both
   held at once.
-- A modifier named WITH a side matches only that side. `CtrlLeft + A` MUST NOT fire on right Ctrl.
-- A generic modifier costs three registrations and they multiply: `Ctrl + Shift + A` is nine, and three
+- A modifier named WITH a side matches only that side. `CtrlLeft+A` MUST NOT fire on right Ctrl.
+- A generic modifier costs three registrations and they multiply: `Ctrl+Shift+A` is nine, and three
   generic modifiers is twenty-seven. Naming a side is what avoids that.
-- `l` and `r` prefix a modifier name to select a side. `option` is `alt`; `cmd` and `command` are `meta`.
+- `l` and `r` prefix a modifier name to select a side. `Option` is `Alt`; `Cmd`, `Command` and `Win`
+  are niri's `Super`. `Meta` is not a modifier name.
 
 ## Which keys are held
 
@@ -49,14 +80,15 @@ binding naming one is satisfied by the flag alone.
 ## Gestures
 
 - A horizontal swipe scrolls the strip. When the strip has run out in that direction, the swipe MAY
-  continue into the workspace stack, according to configuration.
-- Only a HORIZONTAL edge propagates. A vertical swipe already moves through the workspace stack, so
-  propagating a vertical edge would step it twice.
-- `invert_horizontal` swaps which workspace a left or right edge steps to. The two directions MUST NOT
-  ever answer the same way.
+  continue into the workspace stack, when `switch-workspace-on-overscroll` is written.
+- Only a HORIZONTAL edge carries on into the stack. A vertical swipe already moves through the
+  workspace stack, so carrying a vertical edge on would step it twice.
+- `invert` swaps which workspace a left or right edge steps to. The two directions MUST NOT ever answer
+  the same way.
 
 ## Where it lives
 
-`src/input/domain/key.rs` is the vocabulary, `src/input/domain/held_keys.rs` which keys are held,
+`src/input/domain/key.rs` is the vocabulary, `src/input/domain/binding.rs` what a bind names,
+`src/input/domain/hotkey.rs` what a press fires, `src/input/domain/held_keys.rs` which keys are held,
 `src/input/domain/gesture.rs` the swipe phases, `src/input/platform/input_tap.rs` and
 `gesture_tap.rs` the taps. Measurements are in `docs/permissions-and-the-launch-agent.md`.

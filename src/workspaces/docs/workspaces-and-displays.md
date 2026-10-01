@@ -96,8 +96,8 @@ macOS mints a fresh space id on every reconnect (one monitor observed as 479,
   Measured: the external's affinity list held three closed windows while all
   fourteen live windows were homed to the built-in; repatriation reported
   `homed=[3 windows] to_move=[]` and the external came back empty every time.
-- **A pin beats an observation and loses to a choice.** An app rule naming
-  `display = "internal"` decides where a window belongs when the arrangement has
+- **A pin beats an observation and loses to a choice.** A window rule naming
+  `open-on-output "internal"` decides where a window belongs when the arrangement has
   not been told otherwise. That needs three levels, not two, so `Setup` records
   which homes the USER chose (`home_by_intent`, written by `set_window_home`)
   separately from the ones inferred from where a window was seen

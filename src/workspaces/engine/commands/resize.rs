@@ -4,7 +4,6 @@
 //! is the pattern `engine/persistence/` already uses.
 
 use super::CommandTarget;
-use crate::layout::ResizeOrientation;
 use crate::workspaces::domain::display_memory::DisplayMemory;
 use crate::workspaces::engine::{EventResponse, LayoutCommand, LayoutEngine};
 
@@ -52,7 +51,7 @@ impl LayoutEngine {
                 self.remember_selected_column_width(memory, space, workspace_id, layout);
                 EventResponse::default()
             }
-            LayoutCommand::ResizeWindowBy { amount } => {
+            LayoutCommand::ResizeWindowBy { amount, orientation } => {
                 if is_floating {
                     return EventResponse::default();
                 }
@@ -61,7 +60,7 @@ impl LayoutEngine {
                 self.workspace_tree_mut(workspace_id).resize_selection_by(
                     layout,
                     amount,
-                    ResizeOrientation::Horizontal,
+                    orientation,
                 );
                 self.remember_selected_column_width(memory, space, workspace_id, layout);
                 EventResponse::default()

@@ -44,12 +44,12 @@ pub fn column_limits(
 /// The ratio of the viewport a column asks for, before its windows get a say.
 ///
 /// Full width is a MODE rather than a wider ratio: an ordinary column is clamped to
-/// `max_column_width_ratio` — two thirds in the shipped config, deliberately, so that the
-/// incremental resize keys cannot crawl to 100% — so a maximised column cannot be expressed as a
+/// `max-column-width` — below 1.0, deliberately, so that the incremental resize keys cannot crawl
+/// to 100% — so a maximised column cannot be expressed as a
 /// ratio at all and has to be asked for separately.
 ///
 /// Both the layout pass and the scroll-gesture arithmetic read this, because they used to disagree:
-/// the gesture computed a maximised column at `max_column_width_ratio` of the viewport, so it
+/// the gesture computed a maximised column at `max-column-width` of the viewport, so it
 /// stepped the strip by two thirds of a screen for a column occupying all of it.
 pub fn column_ratio(full_width: bool, base_ratio: f64, offset: f64, min: f64, max: f64) -> f64 {
     if full_width {

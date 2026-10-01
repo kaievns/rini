@@ -5,7 +5,7 @@ use std::process;
 use clap::{Parser, Subcommand};
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
-use rini::app::config::actor::ConfigActor;
+use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
 use rini::app::hotkeys::{self as wm_controller, WmController};
 use rini::app::launch_agent::{ServiceCommands, handle_service_command};
@@ -42,7 +42,7 @@ struct Cli {
     #[arg(long)]
     one: bool,
 
-    /// Disable new spaces by default.
+    /// Start with every Space inactive, whatever activate-spaces-by-default says.
     ///
     /// Ignored if --one is used.
     #[arg(long)]
@@ -52,7 +52,7 @@ struct Cli {
     #[arg(long)]
     no_animate: bool,
 
-    /// Check whether the saved layout snapshot can be loaded.
+    /// Check the config file and the saved layout snapshot, then exit.
     #[arg(long)]
     validate: bool,
 
@@ -72,7 +72,7 @@ struct Cli {
     #[arg(long)]
     record: Option<PathBuf>,
 
-    /// Path to configuration file to use (overrides default).
+    /// Path to the config file (KDL) to use instead of ~/.config/rini/config.kdl.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -166,19 +166,14 @@ fn main() {
     preflight();
 
     let config_path = rini::app::boot::config_path(opt.config.clone());
-    // The fallback rule and its history are `app::boot::config_or_default`, which is also where its
-    // tests are: this path is only reachable by running the binary.
-    let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
-    if let Some(complaint) = complaint {
-        eprintln!("{complaint}");
-    }
-    rini::app::boot::apply_flag_overrides(
-        &mut config.settings,
-        opt.no_animate,
-        opt.default_disable,
-    );
-
     if opt.validate {
+        match rini::app::boot::validate_config(&config_path) {
+            Ok(line) => println!("{line}"),
+            Err(report) => {
+                eprintln!("{report}");
+                process::exit(1);
+            }
+        }
         let path = restore_file();
         match LayoutEngine::load(path.clone()) {
             Ok(_) => println!("Saved layout file is valid: {}", path.display()),
@@ -192,6 +187,19 @@ fn main() {
         }
         process::exit(0);
     }
+
+    // The fallback rule is `app::boot::config_or_default`, which is also where its tests are: this
+    // path is only reachable by running the binary.
+    let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
+    let config_usable = complaint.is_none();
+    if let Some(complaint) = complaint {
+        eprintln!("{complaint}");
+    }
+    rini::app::boot::apply_flag_overrides(
+        &mut config.settings,
+        opt.no_animate,
+        opt.default_disable,
+    );
 
     execute_startup_commands(&config.settings.run_on_start);
 
@@ -257,6 +265,9 @@ fn main() {
         opt.one,
     );
     let events_tx = reactor.sender();
+    if !config_usable {
+        events_tx.send(reactor::Event::ConfigFileRead { usable: false });
+    }
 
     // The band the bar keeps clear is the spaces actor's to apply, so it hears of every accepted
     // change directly rather than through the reactor.
@@ -265,15 +276,20 @@ fn main() {
         Box::new({
             let events_tx = events_tx.clone();
             let spaces_tx = spaces_tx.clone();
-            move |config| {
-                spaces_tx.send(SpacesNotification::TopBandChanged(config.settings.top_band()));
-                events_tx.send(reactor::Event::ConfigUpdated(config))
+            move |change| match change {
+                Change::Applied(config) => {
+                    spaces_tx.send(SpacesNotification::TopBandChanged(config.settings.top_band()));
+                    events_tx.send(reactor::Event::ConfigUpdated(config))
+                }
+                Change::FileRead { usable } => {
+                    events_tx.send(reactor::Event::ConfigFileRead { usable })
+                }
             }
         }),
         config_path.clone(),
     );
 
-    ConfigWatcher::spawn(config_tx.clone(), config.clone(), config_path.clone());
+    ConfigWatcher::spawn(config_tx.clone(), config_path.clone());
 
     let server_state = match ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
         reactor.clone(),
@@ -437,9 +453,9 @@ fn main() {
 
     if config.settings.default_disable {
         println!(
-            "NOTICE: by default rini starts in a deactivated state.
-            you must activate it by using the toggle_space_activated command.
-            by default this is bound to Alt+Z but can be changed in the config file."
+            "NOTICE: rini starts with every Space inactive. Turn a Space on with the \
+             toggle-space-activated action (Mod+Z in rini.default.kdl), or write \
+             activate-spaces-by-default in the config to manage every Space from the start."
         );
     }
 

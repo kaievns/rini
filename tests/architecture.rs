@@ -263,7 +263,8 @@ fn every_documented_path_resolves() {
                 || candidate.starts_with("docs/"))
                 && (candidate.ends_with(".rs")
                     || candidate.ends_with(".md")
-                    || candidate.ends_with(".toml"));
+                    || candidate.ends_with(".toml")
+                    || candidate.ends_with(".kdl"));
             // `<feature>` in a diagram is not a path, and a crate's own docs are named relative
             // to its root, so `docs/x.md` inside `crates/y/` means `crates/y/docs/x.md`.
             if !is_path || candidate.contains('<') {
@@ -280,6 +281,8 @@ fn every_documented_path_resolves() {
     };
     let mut files: Vec<PathBuf> = rust_files(Path::new("src"));
     files.extend(rust_files(Path::new("crates")));
+    // The reference config is read by users, and points them at the docs.
+    files.push(PathBuf::from("rini.default.kdl"));
     for dir in ["docs", "specs", "src", "crates"] {
         collect_markdown(Path::new(dir), &mut files);
     }
@@ -298,7 +301,7 @@ fn every_documented_path_resolves() {
 
 /// An Accessibility element is never handed to a log macro.
 ///
-/// `AXUIElement`'s `Debug` delegates to the Core Foundation description, which QUERIES the element
+/// `AXUIElement`'s `Debug` hands off to the Core Foundation description, which QUERIES the element
 /// for its role and title. Formatting one is therefore a round-trip to the application, and on a
 /// wedged application it blocks — in a log line, which is the last place anyone looks for a stall.
 ///

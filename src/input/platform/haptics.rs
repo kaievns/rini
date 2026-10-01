@@ -4,12 +4,12 @@ use std::ffi::{CStr, c_char, c_void};
 use objc2_core_foundation::{CFNumber, CFNumberType, CFRetained, CFString, CFType};
 use once_cell::sync::OnceCell;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use rini_skylight_sys::CFRelease;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum HapticPattern {
     Generic,
     Alignment,
@@ -35,7 +35,7 @@ type mach_port_t = u32;
 unsafe extern "C" {
     fn IOServiceMatching(name: *const c_char) -> *mut CFType;
     fn IOServiceGetMatchingServices(
-        master: mach_port_t,
+        main_port: mach_port_t,
         matching: *mut CFType,
         iter: *mut io_iterator_t,
     ) -> kern_return_t;

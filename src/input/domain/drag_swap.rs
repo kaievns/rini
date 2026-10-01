@@ -175,11 +175,7 @@ impl DragManager {
     }
 
     pub fn update_config(&mut self, config: WindowSnappingSettings) {
-        self.config.drag_swap_fraction = if config.drag_swap_fraction <= 0.0 {
-            0.5
-        } else {
-            config.drag_swap_fraction
-        };
+        self.config = config;
     }
 
     fn rect_center(rect: CGRect) -> CGPoint {

@@ -1,364 +1,213 @@
 //! What a strip can be told about itself: gaps, column widths, insertion, the scrolling gesture.
-//! Plain data with defaults and validation; the config file fills it.
-use serde::{Deserialize, Serialize};
+//! Plain data with defaults; the config file fills it.
+use std::collections::BTreeMap;
 
-fn no() -> bool {
-    false
-}
-use rustc_hash::FxHashMap as HashMap;
+use serde::Serialize;
 
-fn default_scrolling_column_width_ratio() -> f64 {
-    0.7
-}
-fn default_scrolling_min_column_width_ratio() -> f64 {
-    0.3
-}
-fn default_scrolling_max_column_width_ratio() -> f64 {
-    0.9
-}
-/// Preset column widths cycled by `cycle_preset_column_width`: a third, a half,
-/// two thirds, and the whole viewport.
-///
-/// niri's `layout.preset-column-widths` defaults stop at two thirds and leave full
-/// width to `maximize-column` alone. The full width is in the cycle here because
-/// `ctrl-F` maximising and `ctrl-R` refusing to size a maximised column left the
-/// window with no way out but `ctrl-F` again. A ratio of 1.0 means the maximise
-/// mode, not a ratio: see `layout::domain::preset_width`.
-fn default_scrolling_preset_column_widths() -> Vec<f64> {
-    vec![0.33333, 0.5, 0.66667, 1.0]
-}
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum WindowInsertionPoint {
     #[default]
     NextToSelection,
     EndOfTree,
 }
-/// Options flattened into both `[settings.layout]` and `[settings.layout.scrolling]`.
-/// The scrolling value overrides the layout-wide value.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct BaseLayoutSettings {
-    #[serde(default)]
-    pub window_insertion_point: Option<WindowInsertionPoint>,
+
+/// How the strip follows focus. niri's `center-focused-column`, without its `on-overflow`.
+#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum CenterFocusedColumn {
+    /// The strip moves only as far as it must to show the focused column.
+    #[default]
+    Never,
+    /// The focused column sits in the middle, except the first and last, which sit flush.
+    Always,
 }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
+
+#[derive(Serialize, Debug, PartialEq, Clone, Default)]
 pub struct LayoutSettings {
-    /// Settings inherited by `scrolling` unless overridden in its table.
-    #[serde(flatten)]
-    pub base: BaseLayoutSettings,
-    #[serde(default)]
     pub gaps: GapSettings,
-    #[serde(default)]
     pub scrolling: ScrollingLayoutSettings,
 }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(deny_unknown_fields)]
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct ScrollingLayoutSettings {
-    #[serde(flatten)]
-    pub base: BaseLayoutSettings,
-    #[serde(default = "default_scrolling_column_width_ratio")]
+    pub window_insertion_point: WindowInsertionPoint,
     pub column_width_ratio: f64,
-    #[serde(default = "default_scrolling_min_column_width_ratio")]
     pub min_column_width_ratio: f64,
-    #[serde(default = "default_scrolling_max_column_width_ratio")]
     pub max_column_width_ratio: f64,
-    /// Column widths cycled by `cycle_preset_column_width`, as ratios of the
-    /// tiling width. Mirrors niri's `layout.preset-column-widths`, plus 1.0 for
-    /// the maximised column. Ratios outside `(0, 1]` are ignored.
-    #[serde(default = "default_scrolling_preset_column_widths")]
+    /// Column widths cycled by `switch-preset-column-width`, as ratios of the tiling width. niri's
+    /// presets stop at two thirds; 1.0 is here too, and means the maximise mode rather than a ratio
+    /// (`layout::domain::preset_width`), so a maximised column can be stepped back down. Ratios
+    /// outside `(0, 1]` are ignored.
     pub preset_column_widths: Vec<f64>,
-    #[serde(default)]
-    pub alignment: ScrollingAlignment,
-    /// Horizontal focus navigation behavior:
-    /// - niri: reveal only as needed based on navigation direction.
-    /// - anchored: always align focused column to `alignment`.
-    #[serde(default)]
-    pub focus_navigation_style: ScrollingFocusNavigationStyle,
-    #[serde(default)]
+    pub center_focused_column: CenterFocusedColumn,
     pub gestures: ScrollingGestureSettings,
 }
+
 impl Default for ScrollingLayoutSettings {
     fn default() -> Self {
         Self {
-            base: BaseLayoutSettings::default(),
-            column_width_ratio: default_scrolling_column_width_ratio(),
-            min_column_width_ratio: default_scrolling_min_column_width_ratio(),
-            max_column_width_ratio: default_scrolling_max_column_width_ratio(),
-            preset_column_widths: default_scrolling_preset_column_widths(),
-            alignment: ScrollingAlignment::default(),
-            focus_navigation_style: ScrollingFocusNavigationStyle::default(),
+            window_insertion_point: WindowInsertionPoint::default(),
+            column_width_ratio: 0.7,
+            min_column_width_ratio: 0.3,
+            max_column_width_ratio: 0.9,
+            preset_column_widths: vec![0.33333, 0.5, 0.66667, 1.0],
+            center_focused_column: CenterFocusedColumn::default(),
             gestures: ScrollingGestureSettings::default(),
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ScrollingAlignment {
-    Left,
-    #[default]
-    Center,
-    Right,
+
+impl ScrollingLayoutSettings {
+    /// Whether the strip is pinned and only moves to reveal the focused column.
+    pub fn reveals_only(&self) -> bool { self.center_focused_column == CenterFocusedColumn::Never }
 }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ScrollingFocusNavigationStyle {
-    #[default]
-    Niri,
-    Anchored,
-}
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
+
+#[derive(Serialize, Debug, PartialEq, Clone, Copy)]
 pub struct ScrollingGestureSettings {
-    #[serde(default = "no")]
     pub enabled: bool,
-    #[serde(default)]
     pub invert_horizontal: bool,
-    /// Maximum absolute Y delta allowed for the gesture to count as horizontal
-    #[serde(default = "default_swipe_vertical_tolerance")]
+    /// How far the fingers may drift vertically and still count as a horizontal swipe: a fraction,
+    /// or a percentage above 1.
     pub vertical_tolerance: f64,
-    #[serde(default = "default_swipe_fingers")]
     pub fingers: usize,
-    /// Normalized horizontal distance (0..1) required to fire a scroll step
-    #[serde(default = "default_distance_pct")]
+    /// Horizontal distance (0..1 of the trackpad) a scroll step needs.
     pub distance_pct: f64,
-    /// If true, scrolling past the end of the strip will trigger a workspace switch
-    #[serde(default = "no")]
-    pub propagate_to_workspace_swipe: bool,
-    /// Amount of overscroll (in steps) required to trigger a workspace switch
-    #[serde(default = "default_overscroll_threshold")]
+    /// Scrolling past either end of the strip switches workspace.
+    pub switch_workspace_on_overscroll: bool,
+    /// How many columns past the end that takes.
     pub workspace_switch_threshold: f64,
 }
+
 impl Default for ScrollingGestureSettings {
     fn default() -> Self {
         Self {
             enabled: false,
             invert_horizontal: false,
-            vertical_tolerance: default_swipe_vertical_tolerance(),
-            fingers: default_swipe_fingers(),
-            distance_pct: default_distance_pct(),
-            propagate_to_workspace_swipe: false,
-            workspace_switch_threshold: default_overscroll_threshold(),
+            vertical_tolerance: 0.4,
+            fingers: 3,
+            distance_pct: 0.08,
+            switch_workspace_on_overscroll: false,
+            workspace_switch_threshold: 0.15,
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct GapSettings {
-    #[serde(default)]
-    pub outer: OuterGaps,
-    #[serde(default)]
-    pub inner: InnerGaps,
-    #[serde(default)]
-    pub per_display: HashMap<String, GapOverride>,
-}
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct OuterGaps {
-    #[serde(default)]
+
+/// Space at each edge of a display, in logical pixels.
+#[derive(Serialize, Debug, PartialEq, Clone, Copy, Default)]
+pub struct Edges {
     pub top: f64,
-    #[serde(default)]
     pub left: f64,
-    #[serde(default)]
     pub bottom: f64,
-    #[serde(default)]
     pub right: f64,
 }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct InnerGaps {
-    #[serde(default)]
-    pub horizontal: f64,
-    #[serde(default)]
-    pub vertical: f64,
+
+/// The gaps as configured: niri's `gaps`, between windows and at the edges, and `struts`, extra
+/// space at each edge on top of `gaps`. A display can replace either one as a whole.
+#[derive(Serialize, Debug, PartialEq, Clone, Default)]
+pub struct GapSettings {
+    pub gaps: f64,
+    pub struts: Edges,
+    /// By display UUID.
+    pub per_display: BTreeMap<String, GapOverride>,
 }
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-#[serde(deny_unknown_fields)]
+
+#[derive(Serialize, Debug, PartialEq, Clone, Default)]
 pub struct GapOverride {
-    #[serde(default)]
-    pub outer: Option<OuterGaps>,
-    #[serde(default)]
-    pub inner: Option<InnerGaps>,
+    pub gaps: Option<f64>,
+    pub struts: Option<Edges>,
 }
-impl LayoutSettings {
-    pub fn window_insertion_point(&self) -> WindowInsertionPoint {
-        self.scrolling
-            .base
-            .window_insertion_point
-            .or(self.base.window_insertion_point)
-            .unwrap_or_default()
-    }
 
-    pub fn resolved_base(&self) -> BaseLayoutSettings {
-        BaseLayoutSettings {
-            window_insertion_point: Some(self.window_insertion_point()),
-        }
-    }
-
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
-
-        issues.extend(self.gaps.validate());
-
-        issues.extend(self.scrolling.validate());
-
-        issues
-    }
+/// The gaps one display lays out with.
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+pub struct Gaps {
+    /// Between the windows and the display's edges.
+    pub outer: Edges,
+    /// Between neighbouring windows, both ways.
+    pub inner: f64,
 }
-impl ScrollingLayoutSettings {
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
 
-        if !(0.0..=1.0).contains(&self.column_width_ratio) {
-            issues.push(format!(
-                "layout.scrolling.column_width_ratio must be between 0.0 and 1.0, got {}",
-                self.column_width_ratio
-            ));
-        }
-
-        if !(0.0..=1.0).contains(&self.min_column_width_ratio) {
-            issues.push(format!(
-                "layout.scrolling.min_column_width_ratio must be between 0.0 and 1.0, got {}",
-                self.min_column_width_ratio
-            ));
-        }
-
-        if !(0.0..=1.0).contains(&self.max_column_width_ratio) {
-            issues.push(format!(
-                "layout.scrolling.max_column_width_ratio must be between 0.0 and 1.0, got {}",
-                self.max_column_width_ratio
-            ));
-        }
-
-        if self.min_column_width_ratio > self.max_column_width_ratio {
-            issues.push(format!(
-                "layout.scrolling.min_column_width_ratio ({}) must be <= max_column_width_ratio ({})",
-                self.min_column_width_ratio, self.max_column_width_ratio
-            ));
-        }
-
-        if !(self.min_column_width_ratio..=self.max_column_width_ratio)
-            .contains(&self.column_width_ratio)
-        {
-            issues.push(format!(
-                "layout.scrolling.column_width_ratio ({}) must be within min/max bounds",
-                self.column_width_ratio
-            ));
-        }
-
-        if self.gestures.vertical_tolerance < 0.0 {
-            issues.push(format!(
-                "layout.scrolling.gestures.vertical_tolerance must be non-negative, got {}",
-                self.gestures.vertical_tolerance
-            ));
-        }
-
-        issues
-    }
-}
 impl GapSettings {
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
-
-        issues.extend(self.outer.validate());
-
-        issues.extend(self.inner.validate());
-
-        for (uuid, overrides) in &self.per_display {
-            if let Some(outer) = &overrides.outer {
-                for issue in outer.validate() {
-                    issues.push(format!("per_display[{uuid}] {issue}"));
-                }
-            }
-            if let Some(inner) = &overrides.inner {
-                for issue in inner.validate() {
-                    issues.push(format!("per_display[{uuid}] {issue}"));
-                }
-            }
+    pub fn effective_for_display(&self, display_uuid: Option<&str>) -> Gaps {
+        let display = display_uuid.and_then(|uuid| self.per_display.get(uuid));
+        let gaps = display.and_then(|d| d.gaps).unwrap_or(self.gaps);
+        let struts = display.and_then(|d| d.struts).unwrap_or(self.struts);
+        Gaps {
+            outer: Edges {
+                top: gaps + struts.top,
+                left: gaps + struts.left,
+                bottom: gaps + struts.bottom,
+                right: gaps + struts.right,
+            },
+            inner: gaps,
         }
-
-        issues
     }
+}
 
-    pub fn effective_for_display(&self, display_uuid: Option<&str>) -> GapSettings {
-        let mut resolved = GapSettings {
-            outer: self.outer.clone(),
-            inner: self.inner.clone(),
-            per_display: HashMap::default(),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_outer_gap_is_gaps_plus_the_strut_on_that_side() {
+        let settings = GapSettings {
+            gaps: 3.0,
+            struts: Edges { top: 20.0, ..Edges::default() },
+            per_display: BTreeMap::new(),
         };
-        if let Some(uuid) = display_uuid {
-            if let Some(overrides) = self.per_display.get(uuid) {
-                if let Some(outer_override) = &overrides.outer {
-                    resolved.outer = outer_override.clone();
-                }
-                if let Some(inner_override) = &overrides.inner {
-                    resolved.inner = inner_override.clone();
-                }
-            }
-        }
-        resolved
+        let gaps = settings.effective_for_display(None);
+        assert_eq!(gaps.inner, 3.0);
+        assert_eq!(gaps.outer, Edges {
+            top: 23.0,
+            left: 3.0,
+            bottom: 3.0,
+            right: 3.0
+        });
     }
-}
-impl OuterGaps {
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
 
-        if self.top < 0.0 {
-            issues.push(format!("outer.top gap must be non-negative, got {}", self.top));
-        }
+    /// niri's merge: a display's `struts` replaces the struts as a whole, so a side it leaves out is
+    /// 0 there, while the top-level `gaps` still applies.
+    #[test]
+    fn a_display_replaces_gaps_and_struts_each_as_a_whole() {
+        let mut settings = GapSettings {
+            gaps: 3.0,
+            struts: Edges {
+                top: 5.0,
+                left: 5.0,
+                bottom: 5.0,
+                right: 5.0,
+            },
+            per_display: BTreeMap::new(),
+        };
+        settings.per_display.insert("D".into(), GapOverride {
+            gaps: None,
+            struts: Some(Edges { top: 20.0, ..Edges::default() }),
+        });
+        settings
+            .per_display
+            .insert("G".into(), GapOverride { gaps: Some(8.0), struts: None });
 
-        if self.left < 0.0 {
-            issues.push(format!("outer.left gap must be non-negative, got {}", self.left));
-        }
+        let struts_only = settings.effective_for_display(Some("D"));
+        assert_eq!(struts_only.inner, 3.0);
+        assert_eq!(struts_only.outer, Edges {
+            top: 23.0,
+            left: 3.0,
+            bottom: 3.0,
+            right: 3.0
+        });
 
-        if self.bottom < 0.0 {
-            issues.push(format!(
-                "outer.bottom gap must be non-negative, got {}",
-                self.bottom
-            ));
-        }
+        let gaps_only = settings.effective_for_display(Some("G"));
+        assert_eq!(gaps_only.inner, 8.0);
+        assert_eq!(gaps_only.outer, Edges {
+            top: 13.0,
+            left: 13.0,
+            bottom: 13.0,
+            right: 13.0
+        });
 
-        if self.right < 0.0 {
-            issues.push(format!(
-                "outer.right gap must be non-negative, got {}",
-                self.right
-            ));
-        }
-
-        issues
+        assert_eq!(
+            settings.effective_for_display(Some("other")),
+            settings.effective_for_display(None)
+        );
     }
-}
-impl InnerGaps {
-    pub fn validate(&self) -> Vec<String> {
-        let mut issues = Vec::new();
-
-        if self.horizontal < 0.0 {
-            issues.push(format!(
-                "inner.horizontal gap must be non-negative, got {}",
-                self.horizontal
-            ));
-        }
-
-        if self.vertical < 0.0 {
-            issues.push(format!(
-                "inner.vertical gap must be non-negative, got {}",
-                self.vertical
-            ));
-        }
-
-        issues
-    }
-}
-fn default_swipe_vertical_tolerance() -> f64 {
-    0.4
-}
-fn default_swipe_fingers() -> usize {
-    3
-}
-fn default_distance_pct() -> f64 {
-    0.08
-}
-fn default_overscroll_threshold() -> f64 {
-    0.15
 }

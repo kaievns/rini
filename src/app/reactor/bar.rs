@@ -20,6 +20,8 @@ pub(super) struct BarFeed {
     /// `None` until the main thread's bars are wired in, and in tests that do not look.
     pub(super) tx: Option<Sender>,
     sent: Option<BarModel>,
+    /// The config file could not be used when it was last read.
+    pub(super) config_failed: bool,
 }
 
 impl Reactor {
@@ -89,6 +91,7 @@ impl Reactor {
         BarInput {
             displays,
             focus: self.bar_focus(),
+            config_failed: self.bar.config_failed && self.config.settings.mark_failed_config,
         }
     }
 
