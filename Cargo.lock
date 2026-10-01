@@ -1628,7 +1628,6 @@ dependencies = [
  "slotmap",
  "static_assertions",
  "strum",
- "strum_macros",
  "tempfile",
  "test-log",
  "test_bin",

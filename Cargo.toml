@@ -67,7 +67,6 @@ sigpipe = { workspace = true }
 slotmap = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true }
-strum_macros = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-stream = { workspace = true }
@@ -101,7 +100,6 @@ miette = { version = "7.6.0", default-features = false, features = ["fancy-no-ba
 notify = { version = "8.2.0", default-features = false }
 notify-debouncer-mini = { version = "0.7.0", default-features = false }
 strum = { version = "0.27.2", default-features = false, features = ["derive"] }
-strum_macros = "0.27.2"
 regex = "1.11.0"
 thiserror = { version = "2.0.17", default-features = false }
 tokio-util = "0.7.15"

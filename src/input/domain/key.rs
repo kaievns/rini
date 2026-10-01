@@ -7,9 +7,9 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Modifiers(u8);
 
 impl Modifiers {
@@ -274,7 +274,7 @@ pub(in crate::input) fn modifier_from_token(token: &str) -> Option<Modifiers> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum KeyCode {
     KeyA,
     KeyS,

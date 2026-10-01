@@ -10,13 +10,13 @@
 //! explicitly move it there" means. And a role that nothing fills resolves to nothing, so closing the
 //! lid does not strand a window on a display that is not there.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::displays::domain::screen::ScreenInfo;
 
 /// The display a rule pins a window to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DisplayRole {
     /// The machine's own screen.
     Internal,
