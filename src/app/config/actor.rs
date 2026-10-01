@@ -17,8 +17,18 @@ pub enum Event {
     },
 }
 
-/// Called with the new config after every accepted change, on the config thread.
-pub type OnChange = Box<dyn Fn(Config) + Send>;
+/// What the config thread tells the rest of rini.
+#[derive(Debug)]
+pub enum Change {
+    /// A change was accepted: a fragment applied, or the file read again.
+    Applied(Config),
+    /// The file was read again, and whether it could be used. One that could not left the running
+    /// config as it was.
+    FileRead { usable: bool },
+}
+
+/// Called on the config thread.
+pub type OnChange = Box<dyn Fn(Change) + Send>;
 
 pub struct ConfigActor {
     config: Config,
@@ -57,26 +67,36 @@ impl ConfigActor {
     /// error carries the whole report.
     fn handle_config_command(&mut self, cmd: ConfigCommand) -> Result<(), String> {
         debug!("Applying config command: {:?}", cmd);
-        let changed = match cmd {
-            ConfigCommand::GetConfig => return Ok(()),
+        match cmd {
+            ConfigCommand::GetConfig => Ok(()),
             ConfigCommand::Set(fragment) => {
-                self.config.with("config set", &fragment).map_err(|error| error.render())?
+                let changed =
+                    self.config.with("config set", &fragment).map_err(|error| error.render())?;
+                self.accept(changed);
+                Ok(())
             }
             ConfigCommand::ReloadConfig => match Config::read(&self.config_path) {
-                Ok(config) => config,
+                Ok(config) => {
+                    self.accept(config);
+                    (self.on_change)(Change::FileRead { usable: true });
+                    Ok(())
+                }
                 Err(error) => {
                     let report = error.render();
                     error!(
                         "the config was not reloaded; rini keeps running on the last good one\n{report}"
                     );
-                    return Err(report);
+                    (self.on_change)(Change::FileRead { usable: false });
+                    Err(report)
                 }
             },
-        };
+        }
+    }
+
+    fn accept(&mut self, config: Config) {
         info!("config changed");
-        self.config = changed;
-        (self.on_change)(self.config.clone());
-        Ok(())
+        self.config = config;
+        (self.on_change)(Change::Applied(self.config.clone()));
     }
 }
 
@@ -84,7 +104,7 @@ impl ConfigActor {
 mod tests {
     use super::*;
 
-    fn actor(path: PathBuf) -> (ConfigActor, std::sync::mpsc::Receiver<Config>) {
+    fn actor(path: PathBuf) -> (ConfigActor, std::sync::mpsc::Receiver<Change>) {
         let (tx, rx) = std::sync::mpsc::channel();
         let actor = ConfigActor {
             config: Config::default(),
@@ -101,10 +121,11 @@ mod tests {
             .handle_config_command(ConfigCommand::Set("layout { gaps 8; }".into()))
             .expect("applies");
         assert_eq!(actor.config.settings.layout.gaps.gaps, 8.0);
-        assert_eq!(
-            changes.try_recv().expect("announced").settings.layout.gaps.gaps,
-            8.0
-        );
+        let Ok(Change::Applied(announced)) = changes.try_recv() else {
+            panic!("announced")
+        };
+        assert_eq!(announced.settings.layout.gaps.gaps, 8.0);
+        assert!(changes.try_recv().is_err(), "a fragment is not the file");
         assert_eq!(
             actor.config.binds,
             Config::default().binds,
@@ -135,13 +156,21 @@ mod tests {
         let error = actor.handle_config_command(ConfigCommand::ReloadConfig).unwrap_err();
         assert!(error.contains("did you mean `focus-column-left`?"), "{error}");
         assert_eq!(actor.config, before);
-        assert!(changes.try_recv().is_err());
+        assert!(matches!(
+            changes.try_recv(),
+            Ok(Change::FileRead { usable: false })
+        ));
+        assert!(changes.try_recv().is_err(), "nothing applied");
 
         std::fs::write(&path, "layout { gaps 5; }\n").unwrap();
         actor
             .handle_config_command(ConfigCommand::ReloadConfig)
             .expect("a good file loads");
         assert_eq!(actor.config.settings.layout.gaps.gaps, 5.0);
-        assert!(changes.try_recv().is_ok());
+        assert!(matches!(changes.try_recv(), Ok(Change::Applied(_))));
+        assert!(matches!(
+            changes.try_recv(),
+            Ok(Change::FileRead { usable: true })
+        ));
     }
 }

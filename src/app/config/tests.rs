@@ -69,6 +69,7 @@ fn an_empty_section_means_the_same_as_an_absent_one() {
         "gestures",
         "recent-windows",
         "bar",
+        "config-notification",
         "binds",
     ] {
         assert_eq!(parse(&format!("{section} {{\n}}\n")), absent, "`{section} {{}}`");
@@ -356,6 +357,16 @@ fn the_two_top_level_flags() {
     assert!(
         parse("").settings.default_disable,
         "spaces start inactive unless written"
+    );
+}
+
+#[test]
+fn the_failed_config_marker_is_on_unless_disabled() {
+    assert!(parse("").settings.mark_failed_config);
+    assert!(
+        !parse("config-notification {\n    disable-failed\n}\n")
+            .settings
+            .mark_failed_config
     );
 }
 

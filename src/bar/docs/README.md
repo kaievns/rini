@@ -2,7 +2,7 @@
 
 One 32pt strip per display. On the left, where you are: every workspace's numeral, the shown one's
 applications, then the focused window's application and title. On the right, the menu extras and the
-time. It replaces a sketchybar setup (`~/.config/sketchybar`) and keeps its look, which was built to
+time, and while the config file cannot be used a red `✕ config` ahead of them. It replaces a sketchybar setup (`~/.config/sketchybar`) and keeps its look, which was built to
 the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 
 ## What it owns

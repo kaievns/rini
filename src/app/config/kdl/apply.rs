@@ -159,6 +159,9 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
     if let Some(Flag(off)) = part.bar.and_then(|bar| bar.off) {
         settings.bar.enabled = !off;
     }
+    if let Some(Flag(disabled)) = part.config_notification.and_then(|n| n.disable_failed) {
+        settings.mark_failed_config = !disabled;
+    }
 
     if let Some(Flag(on)) = part.activate_spaces_by_default {
         settings.default_disable = !on;

@@ -5,7 +5,7 @@ use std::process;
 use clap::{Parser, Subcommand};
 use objc2::MainThreadMarker;
 use objc2_application_services::AXUIElement;
-use rini::app::config::actor::ConfigActor;
+use rini::app::config::actor::{Change, ConfigActor};
 use rini::app::config::watcher::ConfigWatcher;
 use rini::app::hotkeys::{self as wm_controller, WmController};
 use rini::app::launch_agent::{ServiceCommands, handle_service_command};
@@ -169,6 +169,7 @@ fn main() {
     // The fallback rule and its history are `app::boot::config_or_default`, which is also where its
     // tests are: this path is only reachable by running the binary.
     let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
+    let config_usable = complaint.is_none();
     if let Some(complaint) = complaint {
         eprintln!("{complaint}");
     }
@@ -264,6 +265,9 @@ fn main() {
         opt.one,
     );
     let events_tx = reactor.sender();
+    if !config_usable {
+        events_tx.send(reactor::Event::ConfigFileRead { usable: false });
+    }
 
     // The band the bar keeps clear is the spaces actor's to apply, so it hears of every accepted
     // change directly rather than through the reactor.
@@ -272,9 +276,14 @@ fn main() {
         Box::new({
             let events_tx = events_tx.clone();
             let spaces_tx = spaces_tx.clone();
-            move |config| {
-                spaces_tx.send(SpacesNotification::TopBandChanged(config.settings.top_band()));
-                events_tx.send(reactor::Event::ConfigUpdated(config))
+            move |change| match change {
+                Change::Applied(config) => {
+                    spaces_tx.send(SpacesNotification::TopBandChanged(config.settings.top_band()));
+                    events_tx.send(reactor::Event::ConfigUpdated(config))
+                }
+                Change::FileRead { usable } => {
+                    events_tx.send(reactor::Event::ConfigFileRead { usable })
+                }
             }
         }),
         config_path.clone(),

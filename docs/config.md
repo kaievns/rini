@@ -73,6 +73,7 @@ cursor hiding, take niri's default: off. They were on, and a default-on flag can
 | `recent-windows › binds` | `next-window filter="app-id"` ROTATES the application's windows | cmd-` rather than cmd-tab: by recency, quick taps toggle between the last two and never reach a third |
 | `recent-windows › binds` | `scope="workspace"` spans every display | a rini workspace is one context across displays; `scope="output"` is refused |
 | `recent-windows › binds` | no defaults | niri's default, Alt+Tab, is `Mod+Tab` under rini's default `mod-key`, which is `focus-workspace-previous`; and Cmd+Tab belongs to the Dock |
+| `config-notification { disable-failed; }` | turns off the bar's `✕ config` marker | niri shows an on-screen notification; rini's bar is where it says things |
 | `quit` | saves the layout and exits, never asks | so `skip-confirmation=` is refused |
 | `load-config-file` | bindable | IPC-only in niri |
 | `focus-window-or-monitor-down`, `-up` | the only vertical focus | at the column's end it crosses to the display below; niri's `focus-window-down` would not, so it is not offered |

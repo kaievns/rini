@@ -80,6 +80,18 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 - Icons MUST be evenly spaced by their ink, not by their pictures, whose margins differ from one
   extra to the next.
 
+## A config that cannot be used
+
+- While the config file cannot be used, every bar MUST say so: the error glyph and the word, `✕ config`,
+  in the design system's error colour, opening the right zone. It MUST go as soon as the file is read
+  and can be used, and it MUST NOT be a button. `config-notification { disable-failed; }` turns it off.
+
+> **Reported 2026-10-01.** Kai's decision on the switch to KDL: a failed reload shows a marker in
+> rini's bar until the next good load, as niri shows an on-screen error, with niri's
+> `config-notification { disable-failed; }` to turn it off. Before, a failed reload said nothing at
+> all, so a typo looked like "my change did nothing". The glyph is there because the design system
+> refuses a status carried by colour alone.
+
 ## Motion
 
 - Nothing on the bar MAY move at rest. Changes are cuts, with two exceptions, both asked for:

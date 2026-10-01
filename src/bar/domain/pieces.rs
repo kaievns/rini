@@ -9,7 +9,7 @@ use super::glyphs;
 use super::layout::{Fold, Piece, Right, Target};
 use super::model::{Action, DisplayBar};
 use super::palette::Colour;
-use super::style::{self, CHEVRON_CLOSED, CHEVRON_OPEN, FOCUS_DOT, Face};
+use super::style::{self, CHEVRON_CLOSED, CHEVRON_OPEN, CONFIG_FAILED, FOCUS_DOT, Face};
 
 /// The wall clock, as much of it as the bar shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -112,6 +112,7 @@ pub fn label(piece: Piece, bar: &DisplayBar, context: Context) -> Option<Label> 
             };
             (chevron.to_string(), None)
         }
+        Piece::ConfigFailed => (CONFIG_FAILED.to_string(), None),
         Piece::PlaceDivider | Piece::ClockDivider | Piece::Vital(_) | Piece::Tray(_) => {
             return None;
         }
@@ -148,6 +149,9 @@ pub fn pieces(bar: &DisplayBar, fold: &Fold, right: &Right) -> Vec<Piece> {
     out.extend((0..right.tray).map(Piece::Tray));
     if right.tray > 0 {
         out.push(Piece::Chevron);
+    }
+    if bar.config_failed {
+        out.push(Piece::ConfigFailed);
     }
     out.extend(right.vitals.iter().map(|vital| Piece::Vital(*vital)));
     out.extend([Piece::ClockDivider, Piece::Date, Piece::Time]);
@@ -229,6 +233,7 @@ mod tests {
                 app: "Code".into(),
                 title: "lib.rs — rini".into(),
             }),
+            config_failed: false,
         }
     }
 
@@ -520,5 +525,17 @@ mod tests {
             Duration::from_secs_f64(34.75)
         );
         assert_eq!(time.until_turn(start + Duration::from_secs(45)), Duration::ZERO);
+    }
+
+    /// The marker carries the error glyph as well as the error colour: a colour alone is not a
+    /// signal (the Okibi rule for every state indicator).
+    #[test]
+    fn a_failed_config_is_measured_and_says_so_with_a_glyph() {
+        let marked = DisplayBar { config_failed: true, ..bar() };
+        let folded = fold(marked.glyphs.len(), false);
+        assert!(pieces(&marked, &folded, &Right::default()).contains(&Piece::ConfigFailed));
+        assert!(!pieces(&bar(), &folded, &Right::default()).contains(&Piece::ConfigFailed));
+        let text = says(Piece::ConfigFailed, &marked, &folded, false).unwrap();
+        assert!(text.starts_with('\u{2715}'), "{text}");
     }
 }

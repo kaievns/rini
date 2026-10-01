@@ -17,7 +17,7 @@ use knus::errors::DecodeError;
 use knus::span::Span;
 use knus::traits::Decode;
 
-use self::bar::{BarPart, RecentWindowsPart};
+use self::bar::{BarPart, ConfigNotificationPart, RecentWindowsPart};
 use self::binds::BindsPart;
 use self::error::{ConfigError, Problem};
 use self::gestures::{AnimationsPart, GesturesPart};
@@ -45,6 +45,7 @@ pub struct ConfigPart {
     pub gestures: Option<GesturesPart>,
     pub recent_windows: Option<RecentWindowsPart>,
     pub bar: Option<BarPart>,
+    pub config_notification: Option<ConfigNotificationPart>,
     pub binds: Option<BindsPart>,
     pub activate_spaces_by_default: Option<Flag>,
     pub reapply_window_rules_on_title_change: Option<Flag>,
@@ -77,6 +78,7 @@ pub fn parse(name: &str, text: &str) -> Result<ConfigPart, ConfigError> {
             "gestures" => d.once(&mut part.gestures, node),
             "recent-windows" => d.once(&mut part.recent_windows, node),
             "bar" => d.once(&mut part.bar, node),
+            "config-notification" => d.once(&mut part.config_notification, node),
             "binds" => d.once(&mut part.binds, node),
             "activate-spaces-by-default" => d.once(&mut part.activate_spaces_by_default, node),
             "reapply-window-rules-on-title-change" => {

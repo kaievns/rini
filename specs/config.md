@@ -38,9 +38,14 @@
 - A reload that cannot be used, whether the file changed, `load-config-file` was pressed or
   `rini-cli execute config reload` asked, MUST keep the running config and report why in the log.
   `rini-cli` MUST get the report as its error.
+- While the file cannot be used, at launch or on a reload, every bar MUST be marked until the file is
+  read and can be used; `config-notification { disable-failed; }` turns the mark off
+  (`specs/bar.md`).
 
-> **Found 2026-10-01, while acting on a report.** A reload that failed used to be dropped without a
-> word, so a typo looked like "my change did nothing".
+> **Reported 2026-10-01.** Kai's decision on the switch: a failed reload shows a marker in rini's bar
+> until the next good load, plus the log, with niri's `config-notification { disable-failed; }` to
+> turn it off. A reload that failed used to be dropped without a word, so a typo looked like "my
+> change did nothing".
 
 - `rini --validate` MUST check the config, printing `config is valid: PATH` or the report and exiting 1,
   before it checks the saved layout.

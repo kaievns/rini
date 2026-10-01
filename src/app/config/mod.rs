@@ -72,6 +72,8 @@ pub struct Settings {
     pub bar: crate::bar::settings::BarSettings,
     pub window_snapping: WindowSnappingSettings,
     pub run_on_start: Vec<StartupCommand>,
+    /// Mark every bar while the config file cannot be used, until it can.
+    pub mark_failed_config: bool,
 }
 
 impl Default for Settings {
@@ -97,6 +99,7 @@ impl Default for Settings {
             bar: Default::default(),
             window_snapping: WindowSnappingSettings::default(),
             run_on_start: Vec::new(),
+            mark_failed_config: true,
         }
     }
 }

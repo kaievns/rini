@@ -12,6 +12,14 @@ pub struct BarPart {
     pub off: Option<Flag>,
 }
 
+/// niri's notification of a config that could not be used; rini marks the bar instead.
+#[derive(knus::Decode, Debug, Default)]
+#[knus(span_type = Span)]
+pub struct ConfigNotificationPart {
+    #[knus(child)]
+    pub disable_failed: Option<Flag>,
+}
+
 /// niri's switcher section.
 #[derive(knus::Decode, Debug, Default)]
 #[knus(span_type = Span)]

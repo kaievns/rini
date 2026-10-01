@@ -338,6 +338,10 @@ pub enum Event {
 
     #[serde(skip)]
     ConfigUpdated(Config),
+
+    /// The config file was read, and whether it could be used. While it cannot, every bar is marked.
+    #[serde(skip)]
+    ConfigFileRead { usable: bool },
 }
 
 /// The displays context's events, one for one; the topology snapshot arrives as `SpaceStateChanged`.
@@ -1542,6 +1546,10 @@ impl Reactor {
             }
             Event::BarAction(action) => {
                 return self.on_bar_action(action);
+            }
+            Event::ConfigFileRead { usable } => {
+                self.bar.config_failed = !usable;
+                return Ok(EventOutcome::no_change());
             }
             Event::ClockChanged => {
                 self.bar_clock_changed();

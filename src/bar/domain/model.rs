@@ -18,6 +18,8 @@ pub const TITLE_MAX_CHARS: usize = 48;
 pub struct BarInput {
     pub displays: Vec<DisplayInput>,
     pub focus: Option<FocusInput>,
+    /// The config file could not be used when it was last read, and rini runs on an older one.
+    pub config_failed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,6 +72,9 @@ pub struct DisplayBar {
     pub glyphs: Vec<Glyph>,
     /// Only on the display the focused window is on. The others stay silent rather than repeat it.
     pub focus: Option<FocusLabel>,
+    /// The marker saying the config file could not be used. On every display, since the file is
+    /// every display's.
+    pub config_failed: bool,
 }
 
 /// How a workspace's numeral is drawn.
@@ -109,11 +114,15 @@ pub enum Action {
 
 pub fn build(input: &BarInput) -> BarModel {
     BarModel {
-        displays: input.displays.iter().map(|display| display_bar(display, input.focus.as_ref())).collect(),
+        displays: input
+            .displays
+            .iter()
+            .map(|display| display_bar(display, input.focus.as_ref(), input.config_failed))
+            .collect(),
     }
 }
 
-fn display_bar(display: &DisplayInput, focus: Option<&FocusInput>) -> DisplayBar {
+fn display_bar(display: &DisplayInput, focus: Option<&FocusInput>, config_failed: bool) -> DisplayBar {
     let rows = display
         .occupied
         .iter()
@@ -136,6 +145,7 @@ fn display_bar(display: &DisplayInput, focus: Option<&FocusInput>) -> DisplayBar
             app: focus.app.clone(),
             title: truncate(&focus.title, TITLE_MAX_CHARS),
         }),
+        config_failed,
     }
 }
 
@@ -204,6 +214,7 @@ mod tests {
                 app: "Ghostty".into(),
                 title: "~/p/rini".into(),
             }),
+            config_failed: false,
         }
     }
 
@@ -318,5 +329,15 @@ mod tests {
     #[test]
     fn no_displays_is_no_bars() {
         assert_eq!(build(&BarInput::default()), BarModel::default());
+    }
+
+    /// A config that could not be used is marked on every display, and the marker goes with the next
+    /// good one.
+    #[test]
+    fn a_failed_config_is_marked_on_every_display() {
+        let mut input = input();
+        assert!(build(&input).displays.iter().all(|display| !display.config_failed));
+        input.config_failed = true;
+        assert!(build(&input).displays.iter().all(|display| display.config_failed));
     }
 }

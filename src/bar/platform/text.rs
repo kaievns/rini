@@ -244,6 +244,7 @@ mod tests {
             rows: vec![Row::Shown, Row::Occupied],
             glyphs: vec![],
             focus: None,
+            config_failed: false,
         };
         assert_eq!(
             weight(style::face(Piece::Numeral(0), &bar).name),

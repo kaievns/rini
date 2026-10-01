@@ -195,6 +195,12 @@ bar {
     // off
 }
 
+// While the config file cannot be used, at launch or on a reload, every bar says `✕ config` in red
+// until it can. Uncomment to leave the bar alone; the log has the report either way.
+config-notification {
+    // disable-failed
+}
+
 // The workspaces, top to bottom. Each always exists, and there are as many as are listed (at most
 // 128). `focus-at-startup` on one shows it at launch; otherwise the first. Leaving every one out
 // gives these four.
