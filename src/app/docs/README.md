@@ -21,7 +21,7 @@ knows the features and converts what they emit.
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
 | `config/` | `config.toml`: parsing into each feature's settings, validation that spans features, watching and reload |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
-| `hotkeys/` | The controller: app launches, hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a binding alias to a `reactor::Command`, which is where the tests are |
+| `hotkeys/` | The controller: app launches and which apps get a thread (the rule is `windows::domain::app_threads`), hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a binding alias to a `reactor::Command`, which is where the tests are |
 | `notifications.rs` | The NSWorkspace demultiplexer |
 | `boot.rs` | What the flags and the config file say before anything is built: whether to restore, and the config-or-defaults fallback |
 | `launch_agent.rs`, `startup.rs`, `logging.rs`, `channels.rs` | The service plist, configured startup commands, tracing, and the span-carrying channel every actor is wired with |

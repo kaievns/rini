@@ -104,16 +104,33 @@ const WINDOW_NOTIFICATIONS: &[(AxNotificationKind, &str)] = &[
 
 struct RaiseRequest(Vec<WindowId>, CancellationToken, u64, Quiet);
 
+/// How long a launching application gets to answer Accessibility before its thread gives up.
+const LAUNCH_PATIENCE: Duration = Duration::from_secs(60);
+
+/// `gave_up` runs when the thread ends without taking the application on, so the next sighting can try
+/// again. It does not run for a process rini refuses, nor after the thread has taken the app on.
 pub fn spawn_app_thread(
     pid: pid_t,
     info: AppInfo,
     events_tx: Box<dyn EventSink>,
     tx_store: Option<WindowTxStore>,
+    gave_up: Box<dyn FnOnce() + Send>,
 ) {
     thread::Builder::new()
         .name(format!("{}({pid})", info.bundle_id.as_deref().unwrap_or("")))
-        .spawn(move || app_thread_main(pid, info, events_tx, tx_store))
+        .spawn(move || {
+            if app_thread_main(pid, info, events_tx, tx_store) == Outcome::GaveUp {
+                gave_up();
+            }
+        })
         .unwrap();
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Outcome {
+    TakenOn,
+    Refused,
+    GaveUp,
 }
 
 struct State<W: AxWorld> {
@@ -231,18 +248,11 @@ impl<W: AxWorld> State<W> {
     }
 
     async fn run(
-        mut self,
-        info: AppInfo,
-        requests_tx: channels::Sender<Request>,
+        self,
         requests_rx: channels::Receiver<Request>,
         notifications_rx: channels::Receiver<(W::Element, AxNotificationKind, Option<WindowId>)>,
         raises_rx: channels::Receiver<RaiseRequest>,
     ) {
-        let handle = AppThreadHandle::from_sender(requests_tx);
-        if !self.init(handle, info) {
-            return;
-        }
-
         let this = RefCell::new(self);
         join!(
             Self::handle_incoming(&this, requests_rx, notifications_rx),
@@ -340,18 +350,8 @@ impl<W: AxWorld> State<W> {
 
     #[instrument(skip_all, fields(?info))]
     #[must_use]
-    fn init(&mut self, handle: AppThreadHandle, info: AppInfo) -> bool {
-        let extended_timeout_prefixes = ["com.jetbrains.", "org.gnu.Emacs"];
-        let timeout = Instant::now()
-            + match info.bundle_id.as_deref() {
-                Some(id)
-                    if extended_timeout_prefixes.iter().any(|prefix| id.starts_with(prefix)) =>
-                {
-                    Duration::from_secs(60)
-                }
-
-                _ => Duration::ZERO,
-            };
+    fn init(&mut self, handle: AppThreadHandle, info: AppInfo, patience: Duration) -> bool {
+        let timeout = Instant::now() + patience;
         let mut sleep_dur = Duration::from_millis(20);
         let mut sleep = || {
             let now = Instant::now();
@@ -1424,18 +1424,18 @@ fn app_thread_main(
     info: AppInfo,
     events_tx: Box<dyn EventSink>,
     tx_store: Option<WindowTxStore>,
-) {
+) -> Outcome {
     let app = AXUIElement::application(pid);
     let Some(running_app) = NSRunningApplication::with_process_id(pid) else {
         info!(?pid, "Making NSRunningApplication failed; exiting app thread");
-        return;
+        return Outcome::GaveUp;
     };
 
     let bundle_id = running_app.bundleIdentifier();
 
     let Ok(process_info) = ProcessInfo::for_pid(pid) else {
         info!(?pid, ?bundle_id, "Could not get ProcessInfo; exiting app thread");
-        return;
+        return Outcome::GaveUp;
     };
     if process_info.is_xpc {
         // XPC processes are not supposed to have windows so at best they are
@@ -1443,12 +1443,12 @@ fn app_thread_main(
         // having standard windows (these seem to be for Finder previews), but
         // they are non-standard and unmanageable.
         debug!(?pid, ?bundle_id, "Filtering out XPC process");
-        return;
+        return Outcome::Refused;
     }
 
     let Ok(observer) = Observer::new(pid) else {
         info!(?pid, ?bundle_id, "Making observer failed; exiting app thread");
-        return;
+        return Outcome::GaveUp;
     };
     let (notifications_tx, notifications_rx) = channels::channel();
     let observer = observer.install(move |elem, data| {
@@ -1466,7 +1466,7 @@ fn app_thread_main(
         info.localized_name = running_app.localizedName().as_deref().map(ToString::to_string);
     }
 
-    let state = State {
+    let mut state = State {
         pid,
         bundle_id: info.bundle_id.clone(),
         ax: MacAx::new(app.clone(), running_app.clone(), observer),
@@ -1484,7 +1484,16 @@ fn app_thread_main(
     };
 
     let (requests_tx, requests_rx) = channels::channel();
-    Executor::run(state.run(info, requests_tx, requests_rx, notifications_rx, raises_rx));
+    if !state.init(AppThreadHandle::from_sender(requests_tx), info, LAUNCH_PATIENCE) {
+        info!(
+            ?pid,
+            ?bundle_id,
+            "Accessibility did not answer while the application launched; giving up until it is seen again"
+        );
+        return Outcome::GaveUp;
+    }
+    Executor::run(state.run(requests_rx, notifications_rx, raises_rx));
+    Outcome::TakenOn
 }
 
 /// Time an Accessibility call and say what happened when it fails.
@@ -1708,6 +1717,50 @@ mod tests {
             .expect("registers");
 
         assert!(!info.is_standard, "no readable title element means not standard");
+    }
+
+    fn launch(state: &mut State<FakeAx>, patience: Duration) -> bool {
+        let (requests_tx, _requests_rx) = channels::channel();
+        let info = AppInfo {
+            bundle_id: Some("com.electron.dockerdesktop".to_owned()),
+            localized_name: Some("Docker Desktop".to_owned()),
+        };
+        state.init(AppThreadHandle::from_sender(requests_tx), info, patience)
+    }
+
+    /// Docker Desktop's thread gave up on the first failed subscription, and nothing asked again.
+    #[test]
+    fn an_application_too_busy_launching_to_answer_is_asked_again() {
+        let ax = FakeAx { app: 1, ..FakeAx::default() };
+        ax.busy_watches.set(2);
+        let (mut state, sink) = state_with(ax);
+
+        assert!(launch(&mut state, LAUNCH_PATIENCE), "taken on");
+
+        let watched = state.ax.watched.borrow();
+        for &(_, notif) in APP_NOTIFICATIONS {
+            assert!(
+                watched.iter().any(|(elem, n)| *elem == 1 && *n == notif),
+                "{notif} was never subscribed"
+            );
+        }
+        assert!(
+            sink.0
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, Event::ApplicationLaunched { pid: PID, .. })),
+            "and the reactor hears of it"
+        );
+    }
+
+    #[test]
+    fn an_application_that_never_answers_is_given_up_on_once_patience_runs_out() {
+        let ax = FakeAx { app: 1, ..FakeAx::default() };
+        ax.busy_watches.set(u32::MAX);
+        let (mut state, sink) = state_with(ax);
+
+        assert!(!launch(&mut state, Duration::ZERO), "given up on");
+        assert!(sink.0.borrow().is_empty(), "and the reactor hears nothing");
     }
 
     /// Registering a window subscribes to its notifications. Without that the actor never hears the

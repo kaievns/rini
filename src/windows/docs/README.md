@@ -8,6 +8,7 @@ or layout: everything else depends on it and it depends on nothing.
 
 | | |
 |---|---|
+| **Which apps have a thread** | `domain/app_threads.rs` — when a running application gets its Accessibility thread: launched, observed ready, or seen ready when it next becomes frontmost; and never a second one |
 | **The catalogue** | `domain/catalogue.rs` — every window rini has seen, keyed by `WindowId { pid, idx }`, with its window-server id, its placement, and the native-fullscreen records that let a window come back |
 | **What a window IS** | `domain/info.rs` (`WindowInfo`, `AppInfo`, `WindowServerInfo`) and `domain/state.rs` (`WindowState`, manageability) |
 | **The AX boundary's rules** | `domain/ax_events.rs` — whether a failed Accessibility request means the window is gone, and the codec for the one `usize` an observer callback carries |
@@ -25,14 +26,18 @@ Two questions about raising and admission that were closed on evidence rather th
 
 `platform/` is the macOS side: `app_actor.rs` is the per-app Accessibility actor (one
 thread per application, observing and writing), `window_server.rs` the window-server
-reads, `carbon.rs` the front-app listener, `process.rs` the process watcher,
-`sub_level.rs` the SkyLight sub-level port.
+reads, `lifecycle.rs` the launch, quit and front-app listener over `carbon.rs`'s Carbon
+events, `app.rs` the activation-policy and finished-launching observers, `process.rs`
+the process-type check, `sub_level.rs` the SkyLight sub-level port.
 
 ## The shape that matters
 
 **One thread per application.** An AX call blocks on the owning app, so a hung
 application must not hang rini. Each app gets a thread with its own `CFRunLoop`, and
-the reactor talks to it through `Request`.
+the reactor talks to it through `Request`. An application slow to answer while it
+launches is asked again rather than given up on, and one that becomes frontmost
+without a thread is looked at again then, so no single missed report leaves an app
+unmanaged.
 
 **A window has two identities.** `WindowId { pid, idx }` is rini's own and dies with
 the process. `WindowServerId` is macOS's, survives, and is recycled. The catalogue
@@ -60,6 +65,8 @@ was raised first instead of last and ended up behind the strip.
 
 - [`multi-display-focus.md`](multi-display-focus.md) — why rini keeps its own record
   of each app's focused window, and how cmd-tab is told apart from cmd-`
+- [`launch-notifications.md`](launch-notifications.md) — what macOS reports while an
+  application launches, measured, and how to read a launch back out of the unified log
 
 Cross-feature detail is at the top of the tree: [`docs/architecture.md`](../../../docs/architecture.md),
 [`docs/testing.md`](../../../docs/testing.md).
