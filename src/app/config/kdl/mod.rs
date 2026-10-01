@@ -29,10 +29,6 @@ use crate::app::startup::StartupCommand;
 
 /// The `kind` a bind's decoder reports an action name rini does not have under. Its message is the
 /// name alone, so the report can say what was probably meant.
-///
-/// knus reports a node it does not know where the node starts: as an unexpected node in a struct,
-/// or as a failed conversion in an enum. The schema walk reports the same nodes with a suggestion,
-/// so knus's report of a node the walk has reported is dropped.
 pub const UNKNOWN_ACTION: &str = "action";
 
 /// One config text, decoded. Every section is optional, and a singleton written twice is an error.
@@ -109,6 +105,8 @@ pub fn parse(name: &str, text: &str) -> Result<ConfigPart, ConfigError> {
         }
     }
 
+    // knus reports a node it does not know where the node starts, as an unexpected node in a struct
+    // or a failed conversion in an enum; the walk has reported those already, with a suggestion.
     let reported: Vec<usize> = unknown.iter().map(|(offset, _)| *offset).collect();
     let mut problems: Vec<Problem> = unknown.into_iter().map(|(_, problem)| problem).collect();
     problems.extend(decoding.problems);

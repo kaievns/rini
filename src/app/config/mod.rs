@@ -8,13 +8,14 @@ pub use rini_ipc::protocol::{ConfigCommand, WorkspaceSelector};
 use serde::Serialize;
 
 use crate::app::startup::StartupCommand;
-pub use crate::displays::platform::cursor_warp::StackedUpperSide;
+use crate::displays::platform::cursor_warp::StackedUpperSide;
+use crate::input::domain::binding::Bind;
 use crate::input::domain::key::{HotkeySpec, ModKey};
-pub use crate::layout::settings::{
-    CenterFocusedColumn, Edges, GapOverride, GapSettings, Gaps, LayoutSettings,
-    ScrollingGestureSettings, ScrollingLayoutSettings, WindowInsertionPoint,
+use crate::input::settings::{
+    GestureSettings, InputSettings, ScrollGestureSettings, WindowSnappingSettings,
 };
-pub use crate::windows::domain::rules::{AppRuleSize, FloatingPosition, RuleMatch, WindowRule};
+pub use crate::layout::settings::{Edges, LayoutSettings};
+pub use crate::windows::domain::rules::{RuleMatch, WindowRule};
 pub use crate::workspaces::settings::{MAX_WORKSPACES, VirtualWorkspaceSettings};
 
 pub mod actor;
@@ -22,12 +23,6 @@ pub mod kdl;
 pub mod watcher;
 
 pub use kdl::error::{ConfigError, LoadError};
-
-pub use crate::input::domain::binding::{Action, Bind, Command};
-pub use crate::input::platform::haptics::HapticPattern;
-pub use crate::input::settings::{
-    GestureSettings, InputSettings, ScrollGestureSettings, WindowSnappingSettings,
-};
 
 /// The reference config, compiled in.
 pub const DEFAULT_KDL: &str = include_str!("../../../rini.default.kdl");
