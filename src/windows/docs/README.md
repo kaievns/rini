@@ -36,8 +36,7 @@ the process-type check, `sub_level.rs` the SkyLight sub-level port.
 application must not hang rini. Each app gets a thread with its own `CFRunLoop`, and
 the reactor talks to it through `Request`. An application slow to answer while it
 launches is asked again rather than given up on, and one that becomes frontmost
-without a thread is looked at again then, so no single missed report leaves an app
-unmanaged.
+without a thread is looked at again then (`launch-notifications.md`).
 
 **A window has two identities.** `WindowId { pid, idx }` is rini's own and dies with
 the process. `WindowServerId` is macOS's, survives, and is recycled. The catalogue

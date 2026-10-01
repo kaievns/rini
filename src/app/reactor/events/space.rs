@@ -291,8 +291,7 @@ pub fn handle_window_server_appeared(
     }
 
     state.windows.mark_window_server_observed(wsid);
-    // TODO: figure out why this is happening, we should really know about this app,
-    // why dont we get notifications that its being launched?
+    // A window can arrive before its application is taken on: src/windows/docs/launch-notifications.md.
     if let Some(window_server_info) = window_server_info {
         if window_server_info.layer != 0 {
             trace!(
