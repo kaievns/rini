@@ -239,27 +239,12 @@ pub fn ensure_finished_launching_observer(pid: pid_t, info: AppInfo) {
     });
 }
 
-pub fn remove_activation_policy_observer(pid: pid_t) {
-    with_application_observer(pid, |observer| observer.unobserve(Observed::ActivationPolicy));
-}
-
-pub fn remove_finished_launching_observer(pid: pid_t) {
-    with_application_observer(pid, |observer| observer.unobserve(Observed::FinishedLaunching));
-}
-
 pub fn remove_application_observer(pid: pid_t) {
     let observer = APPLICATION_OBSERVERS.lock().remove(&pid);
     if let Some(observer) = observer {
         unsafe {
             let _ = Retained::from_raw(observer as *mut ApplicationObserver);
         }
-    }
-}
-
-fn with_application_observer(pid: pid_t, f: impl FnOnce(&ApplicationObserver)) {
-    let observers = APPLICATION_OBSERVERS.lock();
-    if let Some(&observer) = observers.get(&pid) {
-        f(unsafe { &*(observer as *const ApplicationObserver) });
     }
 }
 

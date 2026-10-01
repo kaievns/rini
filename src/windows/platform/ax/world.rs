@@ -301,6 +301,9 @@ pub struct FakeAx {
     pub has_quit: bool,
     /// Every read fails with "could not complete", which is an application under load.
     pub busy: bool,
+    /// How many subscriptions fail with "could not complete" before they start to work: an
+    /// application too busy launching to answer.
+    pub busy_watches: std::cell::Cell<u32>,
 }
 
 #[cfg(test)]
@@ -464,6 +467,10 @@ impl AxWorld for FakeAx {
     }
 
     fn watch(&self, elem: &u32, notification: &'static str, _data: usize) -> Result<(), AxError> {
+        if let Some(left) = self.busy_watches.get().checked_sub(1) {
+            self.busy_watches.set(left);
+            return Self::busy();
+        }
         if !self.frames.contains_key(elem) && *elem != self.app {
             return Self::gone();
         }

@@ -25,6 +25,7 @@ type Receiver = channels::Receiver<WmEvent>;
 use crate::app::channels;
 use crate::app::reactor;
 use crate::input::platform::input_tap as event_tap;
+use crate::windows::domain::app_threads::{AppThreads, Next, Readiness};
 use crate::windows::domain::info::AppInfo;
 use crate::windows::domain::transaction::WindowTxStore;
 use rini_runloop::dispatch::DispatchExt;
@@ -37,6 +38,8 @@ pub enum WmEvent {
     AppGloballyActivated(pid_t),
     AppGloballyDeactivated(pid_t),
     AppTerminated(pid_t),
+    /// The application's thread ended without taking it on.
+    AppThreadGaveUp(pid_t),
     /// Everything the displays context reports; forwarded to the reactor as is.
     Displays(crate::displays::event::Event),
     /// Everything the input context reports: bindings become `Command`, pointer events go to the
@@ -88,6 +91,7 @@ pub struct WmController {
     receiver: Receiver,
     sender: Sender,
     hotkeys_installed: bool,
+    app_threads: AppThreads,
 }
 
 impl WmController {
@@ -114,6 +118,7 @@ impl WmController {
             receiver,
             sender: sender.clone(),
             hotkeys_installed: false,
+            app_threads: AppThreads::default(),
         };
         (this, sender)
     }
@@ -169,6 +174,7 @@ impl WmController {
                 for (pid, info) in crate::windows::platform::app::running_apps(None) {
                     self.new_app(pid, info);
                 }
+                self.app_threads.discovered();
             }
             AppLaunch(pid, info) => {
                 self.new_app(pid, info);
@@ -176,14 +182,19 @@ impl WmController {
             AppGloballyActivated(pid) => {
                 _ = self.event_tap_tx.send(event_tap::Request::EnforceHidden);
                 self.events_tx.send(Event::ApplicationGloballyActivated(pid));
+                if self.app_threads.look_on_activation(pid) {
+                    self.app_activated_without_thread(pid);
+                }
             }
             AppGloballyDeactivated(pid) => {
                 self.events_tx.send(Event::ApplicationGloballyDeactivated(pid));
             }
             AppTerminated(pid) => {
+                self.app_threads.ended(pid);
                 crate::windows::platform::app::remove_application_observer(pid);
                 self.events_tx.send(Event::ApplicationTerminated(pid));
             }
+            AppThreadGaveUp(pid) => self.app_threads.ended(pid),
             ConfigUpdated(new_cfg) => {
                 let old_keys_ser = serde_json::to_string(&self.config.config.keys).ok();
 
@@ -255,45 +266,61 @@ impl WmController {
             debug!(pid = ?pid, "Failed to resolve NSRunningApplication for new app");
             return;
         };
+        self.app_seen(pid, info, &running_app);
+    }
 
-        if running_app.activationPolicy() != NSApplicationActivationPolicy::Regular
-            && info.bundle_id.as_deref() != Some("com.apple.loginwindow")
-        {
-            crate::windows::platform::app::ensure_activation_policy_observer(pid, info.clone());
-            debug!(
-                pid = ?pid,
+    fn app_activated_without_thread(&mut self, pid: pid_t) {
+        let Some(running_app) = NSRunningApplication::with_process_id(pid) else {
+            return;
+        };
+        let info = AppInfo::from(&*running_app);
+        if self.app_seen(pid, info.clone(), &running_app) == Next::Spawn {
+            info!(
+                pid,
                 bundle = ?info.bundle_id,
-                "App not yet regular; deferring spawn until activation policy changes"
+                "Taking on an application first seen ready when it was activated"
             );
+        }
+    }
 
-            if running_app.activationPolicy() == NSApplicationActivationPolicy::Regular {
-                crate::windows::platform::app::remove_activation_policy_observer(pid);
-            } else {
-                return;
+    fn app_seen(&mut self, pid: pid_t, info: AppInfo, running_app: &NSRunningApplication) -> Next {
+        let readiness = Readiness {
+            regular: running_app.activationPolicy() == NSApplicationActivationPolicy::Regular,
+            finished_launching: running_app.isFinishedLaunching(),
+            login_window: info.bundle_id.as_deref() == Some("com.apple.loginwindow"),
+        };
+        let next = self.app_threads.next(pid, readiness);
+        match next {
+            Next::AlreadyRunning => {}
+            Next::AwaitActivationPolicy => {
+                debug!(
+                    pid,
+                    bundle = ?info.bundle_id,
+                    "App not yet regular; waiting for its activation policy"
+                );
+                crate::windows::platform::app::ensure_activation_policy_observer(pid, info);
+            }
+            Next::AwaitFinishedLaunching => {
+                debug!(
+                    pid,
+                    bundle = ?info.bundle_id,
+                    "App has not finished launching; waiting for it"
+                );
+                crate::windows::platform::app::ensure_finished_launching_observer(pid, info);
+            }
+            Next::Spawn => {
+                crate::windows::platform::app::remove_application_observer(pid);
+                let sender = self.sender.clone();
+                crate::windows::platform::app_actor::spawn_app_thread(
+                    pid,
+                    info,
+                    Box::new(self.events_tx.clone()),
+                    self.window_tx_store.clone(),
+                    Box::new(move || sender.send(WmEvent::AppThreadGaveUp(pid))),
+                );
             }
         }
-
-        if !running_app.isFinishedLaunching() {
-            crate::windows::platform::app::ensure_finished_launching_observer(pid, info.clone());
-            debug!(
-                pid = ?pid,
-                bundle = ?info.bundle_id,
-                "App has not finished launching; deferring spawn until finished"
-            );
-
-            if running_app.isFinishedLaunching() {
-                crate::windows::platform::app::remove_finished_launching_observer(pid);
-            } else {
-                return;
-            }
-        }
-
-        crate::windows::platform::app_actor::spawn_app_thread(
-            pid,
-            info,
-            Box::new(self.events_tx.clone()),
-            self.window_tx_store.clone(),
-        );
+        next
     }
 
     fn register_hotkeys(&mut self) {

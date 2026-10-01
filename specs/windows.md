@@ -1,5 +1,43 @@
 # Which windows rini manages
 
+## Taking on an application
+
+An application is taken on when it gets its Accessibility thread. No window of an application without
+one reaches the strip.
+
+- An application MUST be taken on once it is Regular and has finished launching, in whichever order
+  it got there, however often its activation policy changed on the way, and whether or not Launch
+  Services launched it.
+- One thread per application. A launch reported twice MUST NOT start a second thread. An
+  Accessibility call blocks on the owning application, so a hung application MUST NOT hang rini.
+- An application slow to answer Accessibility while it launches MUST be asked again, not given up on
+  at the first failure.
+- An application that becomes frontmost without a thread MUST be looked at again then. Its launch, its
+  policy change, its finished launch and each of its windows are reported once, and one report that
+  fails or goes missing MUST NOT leave the application unmanaged for as long as it runs.
+- A thread that gives up MUST say so in the info-level log.
+
+> **Reported 2026-10-01.** "also the docker window is not in the strip for some reason". Fixed.
+>
+> Measured: Docker Desktop (pid 21114, `com.electron.dockerdesktop`) is started by
+> `com.docker.backend`, not by Launch Services (`launchedByLS=0`). The unified log has its activation
+> policy changing twice in its first two seconds: Regular at check-in (10:31:32.657), Accessory at
+> 10:31:32.972, finished launching at 10:31:33.180, first window drawn at 10:31:34.208, Regular again at
+> 10:31:34.563. It became frontmost at 10:31:34.063, before it was Regular again, and then at
+> 10:32:19, 10:47:13, 11:58:42 and 11:59:11. At 12:00 rini had
+> no thread for it: `rini-cli query applications` listed 14 applications without it, a sample of rini
+> showed no `com.electron.dockerdesktop(21114)` thread, and Accessibility answered for its window in
+> 41 ms. The info-level log never named the pid.
+>
+> The Carbon launch and both property reports do fire for an application launched this way; the probes
+> are in `src/windows/docs/launch-notifications.md`. Its first window was drawn while it was Accessory,
+> so that window's one report, if it came, found it not ready. What no step had was a second chance.
+> The thread started after the last report gave up on its first failed Accessibility subscription —
+> every application but JetBrains' and Emacs got no retry — and logged that at debug level only. That it
+> failed one is inferred, not seen, since that line is debug-level; a KVO report that never arrived
+> fits the same logs. Kiro Crew, also Electron, failed an Accessibility read with "could not complete"
+> after 1 s at 08:01:55 the same day, as it drew its first window.
+
 ## Admission
 
 A window Accessibility reports is turned away before anything else knows it exists when:
@@ -43,14 +81,13 @@ as visible rather than absent. The reverse — an id the server does not report 
   dropped.
 - Enhanced User Interface MUST be suppressed for the duration of a burst of writes, not per write.
   AppKit re-lays-out a window while it is on, which fights the write.
-- One thread per application. An Accessibility call blocks on the owning application, so a hung
-  application MUST NOT hang rini.
 
 ## Where it lives
 
-`src/windows/domain/admissible.rs` is admission, `src/windows/domain/catalogue.rs` the records,
-`src/windows/domain/ax_events.rs` the liveness rules, `src/windows/platform/app_actor.rs` the per-app
-thread.
+`src/windows/domain/app_threads.rs` is taking an application on, `src/windows/domain/admissible.rs`
+admission, `src/windows/domain/catalogue.rs` the records, `src/windows/domain/ax_events.rs` the
+liveness rules, `src/windows/platform/app_actor.rs` the per-app thread, and `src/app/hotkeys/mod.rs`
+the controller that starts it.
 
 ## Floating windows and the park corner
 
