@@ -11,19 +11,25 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use objc2::rc::Retained;
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::runtime::AnyObject;
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSBackingStoreType, NSColor,
-    NSEvent, NSPanel, NSScreen, NSView, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua,
+    NSApplicationDidChangeScreenParametersNotification, NSBackingStoreType, NSColor, NSEvent,
+    NSPanel, NSScreen, NSView, NSWindowCollectionBehavior, NSWindowDidMoveNotification,
+    NSWindowDidResizeNotification, NSWindowStyleMask,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColor, CGImage};
-use objc2_foundation::{NSNumber, NSString, NSValue};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSNotificationName, NSNumber, NSString, NSValue,
+};
 use objc2_quartz_core::{
     CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, kCAFillModeBackwards,
     kCAGravityLeft, kCAMediaTimingFunctionEaseInEaseOut, kCAMediaTimingFunctionEaseOut,
 };
 use rustc_hash::FxHashMap as HashMap;
+use tracing::info;
 
 use crate::animation::platform::overlay::set_contents;
 use crate::bar::domain::extras::Kind;
@@ -32,7 +38,7 @@ use crate::bar::domain::model::DisplayBar;
 use crate::bar::domain::motion::{self, FADE_SECONDS, Fade, SLIDE_SECONDS};
 use crate::bar::domain::palette::{self, Colour};
 use crate::bar::domain::pieces::{self, Context};
-use crate::bar::domain::placement::{self, RULE_WIDTH};
+use crate::bar::domain::placement::{self, RULE_WIDTH, Reframe};
 use crate::bar::domain::style;
 use crate::bar::platform::ground::Ground;
 use crate::bar::platform::menu_extras::{Extra, Extras};
@@ -55,10 +61,15 @@ const SLIDE_KEY: &str = "rini.bar.slide";
 /// Where a click on the bar goes, by what was under it.
 pub type OnClick = Rc<dyn Fn(Target)>;
 
+/// Told when the bar's window was moved or resized, by the bar or by anything else, and when the
+/// screens changed under it.
+pub type OnMoved = Rc<dyn Fn()>;
+
 struct ViewIvars {
     /// As last drawn, for the hit test. Empty while the bar is ordered out.
     scene: RefCell<Scene>,
     on_click: OnClick,
+    on_moved: OnMoved,
 }
 
 define_class!(
@@ -89,6 +100,11 @@ define_class!(
             if let Some(target) = target {
                 (self.ivars().on_click)(target);
             }
+        }
+
+        #[unsafe(method(mayHaveMoved:))]
+        fn may_have_moved(&self, _notification: &NSNotification) {
+            (self.ivars().on_moved)();
         }
     }
 );
@@ -160,13 +176,13 @@ pub struct BarPanel {
     tray_drawn: Option<(CGRect, bool)>,
     underline: Retained<CALayer>,
     underline_drawn: Option<CGRect>,
-    /// Where the bar was last put, in CoreGraphics coordinates.
+    /// The strip of its display it was last put on, in CoreGraphics coordinates.
     strip: Option<CGRect>,
     visible: bool,
 }
 
 impl BarPanel {
-    pub fn new(mtm: MainThreadMarker, on_click: OnClick) -> Option<Self> {
+    pub fn new(mtm: MainThreadMarker, on_click: OnClick, on_moved: OnMoved) -> Option<Self> {
         // A placeholder frame: `place` puts it on its display.
         let frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(100.0, layout::HEIGHT));
         let window: Retained<BarWindow> = unsafe {
@@ -200,10 +216,30 @@ impl BarPanel {
         let view = BarView::alloc(mtm).set_ivars(ViewIvars {
             scene: RefCell::default(),
             on_click,
+            on_moved,
         });
         let view: Retained<BarView> = unsafe { msg_send![super(view), initWithFrame: frame] };
         view.setWantsLayer(true);
         window.setContentView(Some(&view));
+        let center = NSNotificationCenter::defaultCenter();
+        let observe = |name: &NSNotificationName, object: Option<&AnyObject>| {
+            // SAFETY: `mayHaveMoved:` takes one `&NSNotification`, and the centre drops an observer
+            // that has gone.
+            unsafe {
+                center.addObserver_selector_name_object(
+                    &view,
+                    sel!(mayHaveMoved:),
+                    Some(name),
+                    object,
+                )
+            }
+        };
+        // SAFETY: AppKit's notification names, read as the statics they are.
+        unsafe {
+            observe(NSWindowDidMoveNotification, Some(&window));
+            observe(NSWindowDidResizeNotification, Some(&window));
+            observe(NSApplicationDidChangeScreenParametersNotification, None);
+        }
 
         let root = view.layer()?;
         root.setContentsScale(SCALE);
@@ -233,22 +269,27 @@ impl BarPanel {
         })
     }
 
-    /// Puts the bar across the top of `display`, in CoreGraphics coordinates. False while it has
-    /// never had a frame to draw in.
-    pub fn place(&mut self, display: CGRect) -> bool {
+    /// Puts the bar across the top of `display`, in CoreGraphics coordinates, wherever its window is
+    /// now.
+    pub fn place(&mut self, display: CGRect) {
+        let converter = CoordinateConverter::from_height(primary_display_height());
+        let frame = self.window.frame();
+        match placement::reframe(display, self.strip, converter, frame) {
+            Reframe::Stay => {}
+            Reframe::Follow(to) => self.window.setFrame_display(to, false),
+            Reframe::Restore(to) => {
+                info!(from = ?frame, ?to, "a bar's window was moved off its display; put back");
+                self.window.setFrame_display(to, false);
+            }
+        }
         let strip = placement::strip(display);
-        if self.strip != Some(strip)
-            && let Some(cocoa) =
-                CoordinateConverter::from_height(primary_display_height()).convert_rect(strip)
-        {
-            self.window.setFrame_display(cocoa, false);
+        if self.strip.map(|placed| placed.size) != Some(strip.size) {
             let bounds = CGRect::new(CGPoint::new(0.0, 0.0), strip.size);
             self.view.setFrame(bounds);
             self.root.setFrame(bounds);
             self.ground.setFrame(bounds);
-            self.strip = Some(strip);
         }
-        self.strip.is_some()
+        self.strip = Some(strip);
     }
 
     /// Shows `ground` behind everything, if it is not what shows already.

@@ -37,6 +37,14 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 - A display that sleeps MUST keep its bar. A display that is plugged in gets one; one unplugged
   loses it.
 - A display whose resolution or arrangement changes MUST have its bar follow it at once.
+- A bar MUST stay across the top of its display whatever else moves its window. macOS moves windows
+  itself when a display comes or goes, and the bar MUST be back at the top at once.
+
+> **Reported 2026-10-01.** "can you have a look at the menubar? it got stuck in the middle of the
+> built-in screen when i connected my external monitor in the office". The external was plugged in,
+> dropped 30 seconds later and came back 18 seconds after that. Neither display's bounds changed,
+> yet the built-in's bar was left 832pt down its 1117. The bar moved its window only when its
+> display's bounds changed, so nothing ever put it back.
 - The bar MUST NOT be drawn over a native fullscreen space.
 
 ## What it costs

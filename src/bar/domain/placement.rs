@@ -7,6 +7,8 @@
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
+use crate::displays::domain::screen::CoordinateConverter;
+
 use super::layout::{
     GLYPH_CENTRE, HAIRLINE_HEIGHT, HAIRLINE_TOP, HEIGHT, NUMERAL_BASELINE, Piece, Span,
     TEXT_BASELINE, UNDERLINE_HEIGHT,
@@ -139,6 +141,32 @@ pub fn tray_bounds(open: bool, window: CGRect) -> CGRect {
 /// A bar's frame in CoreGraphics coordinates: the top strip of its display.
 pub fn strip(display: CGRect) -> CGRect {
     CGRect::new(display.origin, CGSize::new(display.size.width, HEIGHT))
+}
+
+/// What a bar's window needs, measured against where AppKit has it now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Reframe {
+    Stay,
+    /// Its display is new to it, or has moved or been resized. The frame is in Cocoa coordinates.
+    Follow(CGRect),
+    /// It was moved off a display that has not changed since the bar was last put on it.
+    Restore(CGRect),
+}
+
+/// Where a bar's window goes to lie across the top of `display`, given `placed`, the strip it was last
+/// put on, and `window`, the Cocoa frame AppKit has it at.
+pub fn reframe(
+    display: CGRect,
+    placed: Option<CGRect>,
+    converter: CoordinateConverter,
+    window: CGRect,
+) -> Reframe {
+    let strip = strip(display);
+    match converter.reframe(strip, window) {
+        None => Reframe::Stay,
+        Some(frame) if placed == Some(strip) => Reframe::Restore(frame),
+        Some(frame) => Reframe::Follow(frame),
+    }
 }
 
 fn snap(value: f64, scale: f64) -> f64 {
@@ -320,6 +348,119 @@ mod tests {
         assert_eq!(
             strip(display),
             CGRect::new(display.origin, CGSize::new(1920.0, HEIGHT))
+        );
+    }
+
+    fn rect(x: f64, y: f64, width: f64, height: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(width, height))
+    }
+
+    /// The office setup of 2026-10-01: the built-in is the primary display, the external above it.
+    const BUILT_IN: CGRect = CGRect {
+        origin: CGPoint { x: 0.0, y: 0.0 },
+        size: CGSize { width: 1728.0, height: 1117.0 },
+    };
+    const EXTERNAL: CGRect = CGRect {
+        origin: CGPoint { x: -670.0, y: -1692.0 },
+        size: CGSize { width: 3008.0, height: 1692.0 },
+    };
+
+    /// A bar's window as the panel keeps it: the strip it was last put on, and where AppKit has it.
+    struct Window {
+        placed: Option<CGRect>,
+        frame: CGRect,
+    }
+
+    impl Window {
+        /// Made with a placeholder frame, as the panel is.
+        fn new() -> Self {
+            Self {
+                placed: None,
+                frame: rect(0.0, 0.0, 100.0, HEIGHT),
+            }
+        }
+
+        fn place(&mut self, display: CGRect) -> Reframe {
+            let converter = CoordinateConverter::from_height(BUILT_IN.size.height);
+            let decision = reframe(display, self.placed, converter, self.frame);
+            if let Reframe::Follow(frame) | Reframe::Restore(frame) = decision {
+                self.frame = frame;
+            }
+            self.placed = Some(strip(display));
+            decision
+        }
+    }
+
+    #[test]
+    fn a_bar_follows_its_display_onto_the_top_edge() {
+        let mut built_in = Window::new();
+        assert_eq!(
+            built_in.place(BUILT_IN),
+            Reframe::Follow(rect(0.0, 1085.0, 1728.0, HEIGHT))
+        );
+        assert_eq!(built_in.place(BUILT_IN), Reframe::Stay);
+
+        let mut external = Window::new();
+        assert_eq!(
+            external.place(EXTERNAL),
+            Reframe::Follow(rect(-670.0, 2777.0, 3008.0, HEIGHT))
+        );
+        let left = rect(-3008.0, -575.0, 3008.0, 1692.0);
+        assert_eq!(
+            external.place(left),
+            Reframe::Follow(rect(-3008.0, 1660.0, 3008.0, HEIGHT))
+        );
+    }
+
+    /// The external was plugged in, dropped 30 seconds later and came back 18 seconds after that.
+    /// Neither display's bounds changed, and macOS left the built-in's bar at y = 832 of 1117, 253 in
+    /// Cocoa's.
+    #[test]
+    fn a_bar_macos_moved_through_a_display_flap_is_put_back() {
+        let top = rect(0.0, 1085.0, 1728.0, HEIGHT);
+        let mut built_in = Window::new();
+        built_in.place(BUILT_IN);
+
+        let mut external = Window::new();
+        external.place(EXTERNAL);
+        assert_eq!(built_in.place(BUILT_IN), Reframe::Stay);
+
+        built_in.frame = rect(0.0, 253.0, 1728.0, HEIGHT);
+        assert_eq!(built_in.placed, Some(strip(BUILT_IN)));
+        assert_eq!(built_in.place(BUILT_IN), Reframe::Restore(top));
+        assert_eq!(built_in.place(BUILT_IN), Reframe::Stay);
+
+        external.frame = rect(0.0, 1085.0, 3008.0, HEIGHT);
+        assert_eq!(
+            external.place(EXTERNAL),
+            Reframe::Restore(rect(-670.0, 2777.0, 3008.0, HEIGHT))
+        );
+        assert_eq!(external.place(EXTERNAL), Reframe::Stay);
+        assert_eq!(built_in.frame, top);
+    }
+
+    #[test]
+    fn a_bar_resized_by_macos_is_put_back_to_its_display_width() {
+        let mut external = Window::new();
+        external.place(EXTERNAL);
+        external.frame.size.width = 1728.0;
+        assert_eq!(
+            external.place(EXTERNAL),
+            Reframe::Restore(rect(-670.0, 2777.0, 3008.0, HEIGHT))
+        );
+    }
+
+    #[test]
+    fn without_a_primary_display_a_bar_stays_where_it_is() {
+        let window = rect(0.0, 253.0, 1728.0, HEIGHT);
+        assert_eq!(
+            reframe(
+                BUILT_IN,
+                Some(strip(BUILT_IN)),
+                CoordinateConverter::default(),
+                window
+            ),
+            Reframe::Stay
         );
     }
 }
