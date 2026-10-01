@@ -461,13 +461,14 @@ fn apply_binds(
             let hotkey = match resolve_hotkey(&key, config) {
                 Ok(hotkey) => hotkey,
                 Err(error) => {
+                    let why = super::suggest::niri_trigger(&key).map_or(error, str::to_owned);
                     problems.push(
                         Problem::at(
                             &part.key_span,
                             format!("`{}` is not a key rini can bind", part.key),
                             "here",
                         )
-                        .help(error),
+                        .help(why),
                     );
                     continue;
                 }

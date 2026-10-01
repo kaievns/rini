@@ -571,6 +571,15 @@ fn a_spelling_of_one_side_overlaps_the_generic_modifier() {
 }
 
 #[test]
+fn niri_triggers_that_are_not_keys_are_refused_with_the_reason() {
+    assert!(
+        refused("binds {\n    Mod+WheelScrollDown { focus-workspace-down; }\n}\n")
+            .contains("triggers are not supported yet")
+    );
+    assert!(refused("binds {\n    XF86AudioMute { spawn \"true\"; }\n}\n").contains("media keys"));
+}
+
+#[test]
 fn a_key_with_two_keys_in_it_is_refused() {
     assert!(refused("binds {\n    Ctrl+J+K { debug; }\n}\n").contains("names two keys"));
 }

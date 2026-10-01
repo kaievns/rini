@@ -501,6 +501,22 @@ pub const NIRI_ACTIONS: &[(&str, &str)] = &[
     ("close-overview", "rini has no overview"),
 ];
 
+/// Why a niri trigger that is not a key cannot be bound, judged by the key's last segment.
+pub fn niri_trigger(spec: &str) -> Option<&'static str> {
+    let trigger = spec.rsplit('+').next()?.trim();
+    let starts = |prefix: &str| trigger.len() > prefix.len() && trigger.starts_with(prefix);
+    if starts("XF86") {
+        Some("macOS's media keys do not reach an event tap as keys; `XF86` keys cannot be bound")
+    } else if ["Mouse", "Wheel", "Touchpad", "TabletStylus"]
+        .iter()
+        .any(|prefix| starts(prefix))
+    {
+        Some("mouse, wheel, touchpad and tablet triggers are not supported yet; a bind takes a key")
+    } else {
+        None
+    }
+}
+
 /// Edit distance, for "did you mean".
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();

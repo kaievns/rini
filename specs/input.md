@@ -7,6 +7,8 @@
 - `Mod` MUST stand for the modifier `input › mod-key` names, `Alt` unless written. It is resolved
   whenever the keys are registered, so changing `mod-key` moves every `Mod` bind with it.
 - A key MUST name exactly one key. `Ctrl+J+K` MUST be refused: it used to bind Ctrl+K and say nothing.
+- niri's triggers that are not keys (`WheelScrollDown`, `MouseLeft`, `TouchpadScrollDown`, `XF86…`)
+  MUST be refused with the reason, not as an unknown key.
 - A single letter is case-insensitive: `a` and `A` name the same physical key.
 - Arrow words are accepted and canonicalised: `Down` means `ArrowDown`. niri's XKB names for keys macOS
   has (`Return`, `BackSpace`, `Page_Up`, `space`, `grave`) MUST name those keys.
