@@ -57,7 +57,7 @@ gone, and where the design differs most from upstream:
 
 **Behaviour rift leaves to macOS, where macOS gets it wrong.** ⌘\` only cycles windows on
 the visible workspace, so an app with windows on three workspaces silently cycles two.
-Rini does the rotation itself and brings the display along.
+Rini offers every one of them, most recent first, and brings the display along.
 
 **Diagnosability.** `rini-cli query diagnostics` dumps the whole topology — every display,
 every workspace, column origins and widths, which windows are parked, and where each

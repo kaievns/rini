@@ -29,7 +29,7 @@ more than a "correct" choice by the layout.
 > i always cmd-tilda into the call window because that's the next on the app list". Zoom's meeting
 > controls, a 301×45 panel, took every focus report while Accessibility named the call window main and
 > focused. The call window never entered the recency order, and cmd-` never found it as the current
-> window to rotate from.
+> window to switch from.
 
 ## Rapid presses
 

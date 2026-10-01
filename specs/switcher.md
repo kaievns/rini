@@ -5,10 +5,23 @@ switcher answers "every window I have, wherever it is".
 
 ## What is offered
 
-- The switcher MUST offer every window rini knows about: every workspace, every strip, every display.
-  It is not scoped to a display or a workspace.
-- Windows MUST NOT be bundled by application. One entry per window. A row standing for four Slack
-  windows cannot take you to the third one, which is the whole failing of the native switcher here.
+- The every-window switcher MUST cover every window rini knows about: every workspace, every strip,
+  every display. It is not scoped to a display or a workspace.
+- The every-window switcher MUST offer one entry per application that has a window it covers, drawn
+  as a stack of that application's windows, and MUST step between applications. One entry per window
+  made it too long to use. Reaching one particular window of an application is the job of the
+  application switcher and the workspace switcher, and both MUST stay one entry per window.
+- An application MUST be one process, the unit the application switcher scopes to. Two processes of
+  one bundle are two stacks.
+- An application with no window rini has placed MUST NOT get a stack: choosing it would have nothing
+  to focus. The Dock's switcher lists such applications; rini's does not.
+
+> **Asked 2026-10-01.** "i kind of dislike the all apps apps switcher. the one that is wired to
+> cmd-caps at the momemnt, it's too long and unweilding. I want you to redesign it so that it would
+> show stacks of app windows and let me switch between the groups. think of it as sort of like the
+> the normal Dock app switcher, just instead of app icons, you'd show stacks of app windows with an
+> icon." This reverses the unbundling asked for on 2026-09-24 for the every-window switcher. The
+> workspace and application switchers keep it.
 - Minimised windows MUST be offered. macOS's own switcher shows them, and leaving them out makes a
   window you minimised unreachable by the one key whose job is reaching windows.
 - A window with no workspace assignment MAY be omitted: there is nowhere to switch to for a window rini
@@ -35,22 +48,43 @@ switcher answers "every window I have, wherever it is".
 
 ## Order
 
-- The order MUST be most-recently-focused first. That is what makes the switcher useful: the window you
-  want next is nearly always the one you were in before this one.
-- The application scope is the exception: its windows MUST rotate in a fixed order starting from the
-  current one. By recency, quick taps toggle between the two most recent and a third window is never
-  reached — which is what macOS's own cmd-` did to three Ghostty windows over two rini workspaces.
+- Every switcher MUST order most-recently-focused first, and the every-window switcher MUST order
+  applications by their most recently focused window. That is what makes the switcher useful: the
+  window you want next is nearly always the one you were in before this one.
+- The application switcher MUST go by recency like the other two. A fixed rotation made it the one
+  switcher that ordered differently, which read as inconsistent. By recency a quick tap toggles
+  between the two most recent windows, and a held switch reaches the rest. The case the rotation was
+  for, three Ghostty windows over two rini workspaces, is answered by the scope: every one is offered
+  wherever it is, and the third is two steps into a held switch.
+
+> **Asked 2026-10-01.** "also while you're at it, switch the app windows switcher (cmd-tilda) from
+> cycling to recent windows as the rest of the app-switcher popups, because cycling is incosistent
+> with the others and it's  confusing as fuck."
 - A window rini has never seen focused MUST still appear, after the ones it has, ordered by space, then
   workspace position, then window id. The enumeration arrives from a hash map whose order differs run
   to run, so the tail MUST be sorted explicitly or the list reshuffles between two presses of the same
-  key.
+  key. An application none of whose windows has been focused follows in the same way, placed by its
+  first window in that tail.
 - Workspace position MUST come from the canonical workspace order, not from a workspace id — the ids
   are opaque and sort into an order the user never sees.
-- A switch MUST open on the SECOND entry. The first is the window you are already in, so opening there
-  would make a quick step do nothing.
+- A switch MUST open on the SECOND entry. The first is the window, or the application, you are already
+  in, so opening there would make a quick step do nothing.
 - Re-focusing the window already at the front MUST change nothing. One raise produces a focus report
   per window it touches, and raising a strip window lifts the whole visible strip, so a switcher that
   reshuffled on every report would destroy the order it exists to keep.
+
+## Stacks
+
+- A stack's windows MUST be in recency order with minimised windows after the rest. Its first window
+  is drawn on top, and choosing the stack MUST focus that window wherever it is. rini does not
+  un-minimise a window it focuses, so a minimised window on top would make choosing an application
+  with a window on screen land on nothing.
+- An application whose windows are all minimised MUST still get a stack, because minimised windows
+  are offered.
+- A stack MUST draw its top window and at most two behind it. Three cards read as a stack; more would
+  thin each to a sliver.
+- A stack's caption MUST be the application's name over the number of its windows the switch covers,
+  `1 window` or `N windows`, counting the undrawn and the minimised.
 
 ## Stepping
 
@@ -120,9 +154,9 @@ switcher answers "every window I have, wherever it is".
 
 ## The popup
 
-- Holding the modifier MUST show a strip of the candidate windows with the selection highlighted, and
+- Holding the modifier MUST show a strip of the switch's entries with the selection highlighted, and
   releasing it MUST take the strip away.
-- The strip MUST show every candidate. A list too long to fit MUST scroll to keep the selection visible
+- The strip MUST show every entry. A list too long to fit MUST scroll to keep the selection visible
   rather than being capped — a cap hides exactly the tail a global switcher exists to reach.
 - The panel MUST be sized to its content up to a fraction of the screen, so three windows get a small
   panel rather than an empty band.
@@ -141,9 +175,10 @@ switcher answers "every window I have, wherever it is".
   a blurred surface above it samples — which is what stopped the switcher's blur working at all.
 - A click in a gap or the padding MUST select nothing. Guessing at the nearest row selects a window the
   user did not point at.
-- A click on a row MUST commit that window, whatever the keyboard had selected, through the same cursor
-  every other selection change uses. It MUST identify the window rather than the row's position, so a
-  click can never commit a different entry from the one drawn under the pointer.
+- A click on a row MUST commit that row's window, a stack's top window, whatever the keyboard had
+  selected, through the same cursor every other selection change uses. It MUST identify the window
+  rather than the row's position, so a click can never commit a different entry from the one drawn
+  under the pointer.
 - The first click MUST count. The panel is never the key window, and a click that only made it key
   would need a second click to do anything.
 - A click MUST NOT make the panel the key window, or the keys typed next go to the panel rather than to
@@ -156,12 +191,14 @@ switcher answers "every window I have, wherever it is".
 
 ## The pictures
 
-- Each row MUST show a picture of its window where one is available, scaled to fit rather than cropped —
-  a cropped thumbnail of a browser is a rectangle of text.
+- A row's top card MUST show a picture of its window where one is available, scaled to fit rather than
+  cropped — a cropped thumbnail of a browser is a rectangle of text. A card behind it MAY be filled and
+  cropped instead: only its top edge shows, and a fitted picture would leave that edge a band of
+  placeholder.
 - A picture MUST NOT be captured while the switch is opening. Capture costs about 40ms plus 14.5ms per
   window, measured, and the popup has to appear at once. The panel draws what is already cached and
   nothing else.
-- A row with no picture MUST still read as a row. It keeps a placeholder rather than leaving a hole.
+- A card with no picture MUST still read as a card. It keeps a placeholder rather than leaving a hole.
 - A picture arriving after the popup is already up MUST be drawn. The cache is asked on the open and
   answers a moment later, so the first open of a switch would otherwise stay blank.
 - A picture MUST be refused if it does not cover its window. The cheap capture route returns a sliver
@@ -169,8 +206,8 @@ switcher answers "every window I have, wherever it is".
   40x1081 and 1x28 — and a sliver stretched across a row is worse than no picture.
 - Age MUST NOT be a reason to refuse one. A ten-minute-old picture of a window beats a grey box;
   staleness is a reason to capture again, not to withhold.
-- Opening a switch MAY queue captures for the rows that have none, so the next open has them. That work
-  MUST be in the background and MUST NOT touch any window.
+- Opening a switch MAY queue captures for the windows it draws that have none, so the next open has
+  them. That work MUST be in the background and MUST NOT touch any window.
 - Each row MUST carry its application's icon as a small badge, as a cue that is readable faster than a
   thumbnail or a title.
 - An application's badge MUST be replaceable by an image named in the config's `recent-windows › icons`,
@@ -186,14 +223,21 @@ switcher answers "every window I have, wherever it is".
 > at launch and handed to the Dock alone. Checked: `NSRunningApplication.icon`, the bundle's file icon,
 > Ghostty's own preferences (a description of the style, not an image) and the Dock's Accessibility
 > tree (no image attribute) all lack it.
-- A tile MUST be as wide as its window is, in proportion — a full-width window reading as wide and a
+- A row MUST be as wide as its top window is, in proportion, at the height that window's card is drawn,
+  so the fitted picture fills its card without bands — a full-width window reading as wide and a
   third-width column as narrow is most of what tells two windows of one application apart at a glance.
   Widths MUST be clamped: a third-width column beside a maximised window is 86pt against 260pt at the
   tile height, and 86pt has no room for an icon badge and a caption.
-- Every tile MUST be the same height, so the captions line up.
+- Every row MUST be the same height, a stack of any depth included: a stack's cards share the row's top
+  and bottom edges, so the captions line up and the selection ring is one size.
+- Each card behind MUST sit 8pt higher than the card in front of it and 12pt narrower on each side, so
+  the stack shows as edges above the top card. The inset MUST be wider than a tile's corner radius, or
+  a card behind shows through the top card's rounded corner.
+- A stack MUST be dimmed as one when its top window is minimised, which is only when all of its windows
+  are.
 - Colours MUST come from the Okibi design system's resolved tokens rather than being chosen here.
   Specifically: the panel is a floating surface, so it takes the content plane `--n2` with a 1px
-  `--line` hairline and a shadow; a tile with no picture takes the raised plane `--n3`; captions take
+  `--line` hairline and a shadow; a card with no picture takes the raised plane `--n3`; captions take
   `--n11`; and the selected row takes an `--ember-soft` fill inside a 2px `--ember` ring. Radii are
   `--radius-card` 7px for the panel and `--radius-control` 5px inside it, because "corners stay crisp;
   only pills/circles fully round".
@@ -213,13 +257,14 @@ switcher answers "every window I have, wherever it is".
   never frontmost.
 - The panel MUST pin a dark appearance rather than inheriting one, so a machine in light mode does not
   get light glass under a dark layer.
-- Every tile MUST have a faint default edge, light rather than dark, so a tile reads as a window whatever
-  the window looks like. The tiles are mostly dark windows, and a hairline darker than them disappears.
+- Every card, a stack's cards behind included, MUST have a faint default edge, light rather than dark,
+  so a card reads as a window whatever the window looks like. The cards are mostly dark windows, and a
+  hairline darker than them disappears.
 - The panel's corner radius MUST follow macOS's floating surfaces rather than the design system's card
   radius. The system tops out at 7px with "corners stay crisp", which is right for a card in a document
   and wrong for a panel that sits beside Spotlight and the volume HUD.
-- A tile's corner radius MUST follow the window it is a picture of, not the system's control radius. A
-  square-cornered tile reads as a screenshot of a window rather than as a window.
+- A card's corner radius MUST follow the window it is a picture of, not the system's control radius. A
+  square-cornered card reads as a screenshot of a window rather than as a window.
 - The panel's inset BELOW the captions MUST be tighter than the one above the tiles. The eye measures
   from the tiles, because a tile is a bright slab and a caption is two thin lines that read as part of
   the surrounding space — so equal insets look bottom-heavy however the arithmetic is written.
@@ -336,8 +381,10 @@ switcher answers "every window I have, wherever it is".
 
 ## Where it lives
 
-`src/switcher/domain/layout.rs` is where the rows go, `src/switcher/platform/panel.rs` the popup itself,
-`src/switcher/domain/candidates.rs` is who is offered and in what order,
+`src/switcher/domain/layout.rs` is where the rows and a stack's cards go,
+`src/switcher/platform/panel.rs` the popup itself, `src/switcher/domain/candidates.rs` is who is
+offered and in what order, `src/switcher/domain/entries.rs` what a switch steps between, a window or an
+application's stack,
 `src/switcher/domain/selection.rs` the cursor, `src/switcher/domain/trigger.rs` which binding holds a
 switch open, and `src/input/domain/switch_session.rs` the tap's side of it. The focus order itself is a fact about focus and lives
 with the rest of it, in `src/windows/domain/focus_order.rs`. Reaching a window anywhere is

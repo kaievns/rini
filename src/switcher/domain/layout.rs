@@ -1,4 +1,5 @@
-//! Where the switcher's rows go on screen, and which row a click landed on.
+//! Where the switcher's rows go on screen, where a stack's cards go inside its row, and which row a
+//! click landed on.
 //!
 //! Pure arithmetic, kept out of the panel for the usual reason: a wrong row rect and a wrong hit test
 //! look identical from the outside — the click selects the neighbour — and neither can be debugged by
@@ -18,16 +19,27 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 /// what they are assuming, and so a setting can be threaded in later without touching the arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Metrics {
-    /// Every tile is this tall. Only the width varies, so the row of captions lines up.
+    /// Every row's pictures are this tall, a stack's from its deepest card's top to its front card's
+    /// bottom. Only the width varies, so the row of captions lines up.
     pub tile_height: f64,
-    /// A tile is as wide as its window is, in proportion — so a full-width window reads as wide and a
-    /// third-width column reads as narrow, which is most of what tells two terminals apart at a glance.
+    /// A row is as wide as its top window is, in proportion, at the height that window's card is
+    /// drawn — so a full-width window reads as wide and a third-width column reads as narrow, which is
+    /// most of what tells two terminals apart at a glance.
     ///
     /// Clamped, because the proportions in a real strip are extreme: a third-width column beside a
     /// maximised window is 86pt against 260pt at this height, and 86pt has no room for an icon badge
     /// and a caption.
     pub min_tile_width: f64,
     pub max_tile_width: f64,
+    /// How much higher each card behind a stack's top one sits than the card in front of it.
+    pub stack_rise: f64,
+    /// How much narrower each card behind sits, on each side. Wider than `tile_corner`, or a card
+    /// behind shows through the rounded top corner of the card in front.
+    pub stack_inset: f64,
+    /// A card's corner radius, and a departure from the design system: `--radius-control` is 5px, a
+    /// button's radius. A card is a picture of a window, and macOS rounds windows at about 10px, so a
+    /// square-cornered card reads as a screenshot of a window rather than as a window.
+    pub tile_corner: f64,
     /// Between rows.
     pub gap: f64,
     /// Inside the panel's edge, at the sides and above the strip.
@@ -59,6 +71,9 @@ impl Default for Metrics {
             tile_height: 163.0,
             min_tile_width: 104.0,
             max_tile_width: 340.0,
+            stack_rise: 8.0,
+            stack_inset: 12.0,
+            tile_corner: 11.0,
             gap: 14.0,
             padding: 22.0,
             bottom_padding: 9.0,
@@ -70,16 +85,42 @@ impl Default for Metrics {
 }
 
 impl Metrics {
-    /// How wide a tile showing a window of `size` should be.
+    /// How tall each card of a stack with `depth` cards behind its top one is drawn.
+    pub fn card_height(&self, depth: usize) -> f64 {
+        self.tile_height - depth as f64 * self.stack_rise
+    }
+
+    /// How wide a row whose top window is `size` should be, with `depth` cards behind it.
     ///
-    /// A window with no usable size — zero or negative, which is what a window still opening reports —
-    /// gets the widest allowed rather than a sliver, because a sliver reads as a broken row.
-    pub fn tile_width(&self, size: CGSize) -> f64 {
+    /// At the top card's own height, so the fitted picture fills it without side bands. A window with
+    /// no usable size — zero or negative, which is what a window still opening reports — gets the
+    /// widest allowed rather than a sliver, because a sliver reads as a broken row.
+    pub fn card_width(&self, size: CGSize, depth: usize) -> f64 {
         if size.width <= 0.0 || size.height <= 0.0 {
             return self.max_tile_width;
         }
-        (self.tile_height * (size.width / size.height))
+        (self.card_height(depth) * (size.width / size.height))
             .clamp(self.min_tile_width, self.max_tile_width)
+    }
+
+    /// The cards of a stack drawn in `row`, top card first.
+    ///
+    /// Every depth shares one silhouette: the deepest card's top is the row's top and the front card's
+    /// bottom is `tile_height` below it, so captions line up and the selection ring is one size.
+    pub fn cards(&self, row: CGRect, depth: usize) -> Vec<CGRect> {
+        let height = self.card_height(depth);
+        (0..=depth)
+            .map(|k| {
+                let inset = k as f64 * self.stack_inset;
+                CGRect::new(
+                    CGPoint::new(
+                        row.origin.x + inset,
+                        row.origin.y + (depth - k) as f64 * self.stack_rise,
+                    ),
+                    CGSize::new(row.size.width - 2.0 * inset, height),
+                )
+            })
+            .collect()
     }
 
     fn row_height(&self) -> f64 {
@@ -120,23 +161,26 @@ impl Strip {
     }
 }
 
-/// Lay out one row per window in `windows`, with `selected` highlighted, centred on `screen`.
+/// One row to lay out: its top window's size, and how many cards are drawn behind it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tile {
+    pub size: CGSize,
+    pub depth: usize,
+}
+
+/// Lay out one row per entry in `tiles`, with `selected` highlighted, centred on `screen`.
 ///
-/// Each row is as wide as its window is in proportion, so the strip reads as a map of the layout rather
-/// than as a row of identical squares. The panel is as wide as its content up to
+/// Each row is as wide as its top window is in proportion, so the strip reads as a map of the layout
+/// rather than as a row of identical squares. The panel is as wide as its content up to
 /// `max_screen_fraction` of the screen, then the strip scrolls inside it so the selection is always
-/// visible. Scrolling rather than capping: the ask was every window, and a cap hides exactly the tail
-/// that a global switcher exists to reach.
-pub fn lay_out(
-    windows: &[CGSize],
-    selected: usize,
-    screen: CGRect,
-    metrics: Metrics,
-) -> Option<Strip> {
-    if windows.is_empty() {
+/// visible. Scrolling rather than capping: a cap hides exactly the tail that a global switcher exists
+/// to reach.
+pub fn lay_out(tiles: &[Tile], selected: usize, screen: CGRect, metrics: Metrics) -> Option<Strip> {
+    if tiles.is_empty() {
         return None;
     }
-    let widths: Vec<f64> = windows.iter().map(|size| metrics.tile_width(*size)).collect();
+    let widths: Vec<f64> =
+        tiles.iter().map(|tile| metrics.card_width(tile.size, tile.depth)).collect();
     // Left edge of each row within the strip, before scrolling.
     let mut lefts = Vec::with_capacity(widths.len());
     let mut cursor = 0.0;
@@ -196,17 +240,28 @@ mod tests {
         Metrics::default()
     }
 
+    fn tile(width: f64, height: f64) -> Tile {
+        Tile {
+            size: CGSize::new(width, height),
+            depth: 0,
+        }
+    }
+
     /// A maximised window on the built-in display, and a third-width column beside it.
-    fn wide() -> CGSize {
-        CGSize::new(1720.0, 1081.0)
+    fn wide() -> Tile {
+        tile(1720.0, 1081.0)
     }
 
-    fn third() -> CGSize {
-        CGSize::new(573.0, 1081.0)
+    fn third() -> Tile {
+        tile(573.0, 1081.0)
     }
 
-    fn square() -> CGSize {
-        CGSize::new(800.0, 800.0)
+    fn square() -> Tile {
+        tile(800.0, 800.0)
+    }
+
+    fn stack(tile: Tile, depth: usize) -> Tile {
+        Tile { depth, ..tile }
     }
 
     #[test]
@@ -219,8 +274,8 @@ mod tests {
     #[test]
     fn a_tile_is_as_wide_as_its_window_is_in_proportion() {
         let m = metrics();
-        assert!(m.tile_width(wide()) > m.tile_width(square()));
-        assert!(m.tile_width(square()) > m.tile_width(third()));
+        assert!(m.card_width(wide().size, 0) > m.card_width(square().size, 0));
+        assert!(m.card_width(square().size, 0) > m.card_width(third().size, 0));
     }
 
     /// The proportions in a real strip are extreme, and a sliver has no room for an icon badge and a
@@ -231,16 +286,154 @@ mod tests {
         let sliver = CGSize::new(40.0, 1081.0);
         let panorama = CGSize::new(5120.0, 600.0);
 
-        assert_eq!(m.tile_width(sliver), m.min_tile_width);
-        assert_eq!(m.tile_width(panorama), m.max_tile_width);
+        for depth in 0..=2 {
+            assert_eq!(m.card_width(sliver, depth), m.min_tile_width);
+            assert_eq!(m.card_width(panorama, depth), m.max_tile_width);
+        }
     }
 
     /// A window still opening reports a zero size. A sliver there reads as a broken row.
     #[test]
     fn a_window_with_no_usable_size_gets_the_widest_tile() {
         let m = metrics();
-        assert_eq!(m.tile_width(CGSize::new(0.0, 0.0)), m.max_tile_width);
-        assert_eq!(m.tile_width(CGSize::new(-10.0, 100.0)), m.max_tile_width);
+        assert_eq!(m.card_width(CGSize::new(0.0, 0.0), 0), m.max_tile_width);
+        assert_eq!(m.card_width(CGSize::new(-10.0, 100.0), 2), m.max_tile_width);
+    }
+
+    /// At the top card's own height, so a maximised window's fitted picture fills its card. At the full
+    /// row height it would leave bands at both sides of a three-card stack.
+    #[test]
+    fn a_stack_is_as_wide_as_its_top_window_at_its_card_height() {
+        let m = metrics();
+        let size = wide().size;
+        let strip = lay_out(&[stack(wide(), 2)], 0, screen(), m).expect("strip");
+        let front = m.cards(strip.rows[0], 2)[0];
+
+        assert_eq!(m.card_height(2), m.tile_height - 2.0 * m.stack_rise);
+        assert!((front.size.width / front.size.height - size.width / size.height).abs() < 1e-9);
+        assert!(m.card_width(size, 2) < m.card_width(size, 0));
+    }
+
+    #[test]
+    fn every_row_has_the_same_silhouette_whatever_its_depth() {
+        let m = metrics();
+        let strip = lay_out(
+            &[stack(wide(), 0), stack(third(), 1), stack(square(), 2)],
+            0,
+            screen(),
+            m,
+        )
+        .expect("strip");
+        for (depth, row) in strip.rows.iter().enumerate() {
+            let cards = m.cards(*row, depth);
+            let deepest = cards.last().expect("at least the front card");
+            let front = cards[0];
+            assert_eq!(
+                deepest.origin.y, row.origin.y,
+                "depth {depth}: the deepest card is the top"
+            );
+            assert_eq!(
+                front.origin.y + front.size.height,
+                row.origin.y + m.tile_height,
+                "depth {depth}: the front card's bottom is the tile's bottom"
+            );
+            assert_eq!(front.origin.x, row.origin.x);
+            assert_eq!(front.size.width, row.size.width);
+        }
+    }
+
+    #[test]
+    fn each_card_behind_is_raised_and_narrowed() {
+        let m = metrics();
+        let row = CGRect::new(CGPoint::new(100.0, 22.0), CGSize::new(250.0, 195.0));
+        let cards = m.cards(row, 2);
+
+        assert_eq!(cards.len(), 3, "the top card and two behind");
+        for pair in cards.windows(2) {
+            let (front, behind) = (pair[0], pair[1]);
+            assert_eq!(front.origin.y - behind.origin.y, m.stack_rise);
+            assert_eq!(behind.origin.x - front.origin.x, m.stack_inset);
+            assert_eq!(front.size.width - behind.size.width, 2.0 * m.stack_inset);
+            assert_eq!(behind.size.height, front.size.height);
+        }
+    }
+
+    #[test]
+    fn a_card_behind_never_reaches_past_the_top_card_sideways() {
+        let m = metrics();
+        let strip = lay_out(&[stack(third(), 2)], 0, screen(), m).expect("strip");
+        let cards = m.cards(strip.rows[0], 2);
+        let front = cards[0];
+        for behind in &cards[1..] {
+            assert!(behind.origin.x > front.origin.x);
+            assert!(behind.origin.x + behind.size.width < front.origin.x + front.size.width);
+            assert!(
+                behind.size.width > 0.0,
+                "even the narrowest stack keeps its cards"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stack_of_one_is_a_plain_tile() {
+        let m = metrics();
+        let strip = lay_out(&[wide()], 0, screen(), m).expect("strip");
+        let row = strip.rows[0];
+
+        assert_eq!(
+            m.cards(row, 0),
+            vec![CGRect::new(
+                row.origin,
+                CGSize::new(row.size.width, m.tile_height)
+            )]
+        );
+        assert_eq!(row.size.width, m.card_width(wide().size, 0));
+    }
+
+    /// A card behind sits under the top card's rounded corner. Inset by less than the radius, it shows
+    /// through the curve.
+    #[test]
+    fn the_inset_clears_a_tiles_corner() {
+        let m = metrics();
+        assert!(m.stack_inset > m.tile_corner);
+    }
+
+    /// A stack is a row like any other to the hit test: a click on a card behind lands in its row.
+    #[test]
+    fn a_click_on_a_card_behind_lands_in_its_row() {
+        let m = metrics();
+        let strip = lay_out(&[wide(), stack(wide(), 2)], 0, screen(), m).expect("strip");
+        let deepest = m.cards(strip.rows[1], 2)[2];
+        let point = CGPoint::new(
+            deepest.origin.x + deepest.size.width / 2.0,
+            deepest.origin.y + m.stack_rise / 2.0,
+        );
+        assert_eq!(strip.row_at(point), Some(1));
+    }
+
+    /// Three-card stacks of maximised windows: about six fit on the laptop before the strip scrolls,
+    /// and every one is still there to scroll to.
+    #[test]
+    fn more_applications_than_fit_scroll_rather_than_drop() {
+        let m = metrics();
+        let stacks: Vec<Tile> = std::iter::repeat(stack(wide(), 2)).take(9).collect();
+        let strip = lay_out(&stacks, 8, screen(), m).expect("strip");
+        let inner_right = strip.panel.size.width - m.padding;
+        let showing = strip
+            .rows
+            .iter()
+            .filter(|row| row.origin.x >= m.padding - 1.0)
+            .filter(|row| row.origin.x + row.size.width <= inner_right + 1.0)
+            .count();
+
+        assert_eq!(strip.rows.len(), 9);
+        assert!(strip.scroll > 0.0);
+        assert!((5..=6).contains(&showing), "{showing} stacks fully showing");
+        let last = strip.rows[8];
+        assert!(
+            last.origin.x + last.size.width <= inner_right + 1.0,
+            "the selection is showing"
+        );
     }
 
     /// The reported asymmetry. A caption layer draws from its top, so a box taller than its text leaves
@@ -312,7 +505,7 @@ mod tests {
     #[test]
     fn the_panel_is_sized_to_its_content() {
         let three = lay_out(&[third(), third(), third()], 0, screen(), metrics()).expect("strip");
-        let many: Vec<CGSize> = std::iter::repeat(wide()).take(10).collect();
+        let many: Vec<Tile> = std::iter::repeat(wide()).take(10).collect();
         let ten = lay_out(&many, 0, screen(), metrics()).expect("strip");
 
         assert!(three.panel.size.width < ten.panel.size.width);
@@ -341,7 +534,7 @@ mod tests {
     #[test]
     fn the_panel_never_exceeds_its_share_of_the_screen() {
         let m = metrics();
-        let many: Vec<CGSize> = std::iter::repeat(wide()).take(60).collect();
+        let many: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
         let strip = lay_out(&many, 0, screen(), m).expect("strip");
 
         assert!(
@@ -354,7 +547,7 @@ mod tests {
     /// The ask was every window, so a list too long to fit scrolls rather than being cut short.
     #[test]
     fn a_list_too_long_to_fit_keeps_every_row() {
-        let many: Vec<CGSize> = std::iter::repeat(wide()).take(60).collect();
+        let many: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
         let strip = lay_out(&many, 0, screen(), metrics()).expect("strip");
         assert_eq!(strip.rows.len(), 60, "no row is dropped");
     }
@@ -365,7 +558,7 @@ mod tests {
     #[test]
     fn the_selection_is_always_inside_the_panel() {
         let m = metrics();
-        let windows: Vec<CGSize> = (0..60)
+        let windows: Vec<Tile> = (0..60)
             .map(|i| match i % 3 {
                 0 => wide(),
                 1 => third(),
@@ -398,7 +591,7 @@ mod tests {
     #[test]
     fn the_ends_of_the_list_are_flush() {
         let m = metrics();
-        let windows: Vec<CGSize> = std::iter::repeat(wide()).take(60).collect();
+        let windows: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
 
         let first = lay_out(&windows, 0, screen(), m).expect("strip");
         assert_eq!(first.scroll, 0.0);
@@ -455,7 +648,7 @@ mod tests {
     #[test]
     fn a_row_scrolled_out_of_view_is_not_hit_by_a_click_inside_the_panel() {
         let m = metrics();
-        let windows: Vec<CGSize> = std::iter::repeat(wide()).take(60).collect();
+        let windows: Vec<Tile> = std::iter::repeat(wide()).take(60).collect();
         let strip = lay_out(&windows, 40, screen(), m).expect("strip");
 
         let offscreen: Vec<usize> = strip

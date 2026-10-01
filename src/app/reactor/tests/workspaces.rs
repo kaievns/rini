@@ -954,46 +954,66 @@ fn reconnect_under_a_new_space_id_keeps_every_windows_workspace() {
     );
 }
 
-/// Moving a window to another workspace keeps the width the user gave it.
-///
-/// Adding a window to a workspace creates a FRESH column at the default ratio, so a window
-/// sized to a third or two thirds snapped back on every move. Reported as the size resetting
-/// to 50%. Asserts the laid-out width, which is what is actually visible.
-/// The switcher offers EVERY window, across applications and workspaces, most recently focused first.
-///
-/// Where the application switcher is scoped to the focused application and rotates, this is
-/// scoped to nothing and ordered by recency. Both halves are asserted: the list spans two apps and two
-/// workspaces, and the order is the order they were focused in rather than the order they were added.
-#[test]
-fn the_switcher_offers_every_window_in_focus_order() {
+/// What a commit or a tap asked to focus.
+fn focus_target(outcome: &EventOutcome) -> Option<WindowId> {
+    outcome.raise_requests.iter().find_map(|request| match request {
+        crate::windows::domain::raise::Event::RaiseRequest(request) => {
+            request.focus_window.map(|(window, _)| window)
+        }
+        _ => None,
+    })
+}
+
+/// Focus `window` the way a real focus change arrives: the layout hears it, the window server
+/// reports it, and it becomes the window a switch treats as current.
+fn focus_reported(reactor: &mut Reactor, space: SpaceId, window: WindowId) {
+    reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
+    reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    reactor.set_test_focus(window);
+}
+
+/// One display holding `windows`, each on the workspace at its index, focused in `focus` order so the
+/// last one is current.
+fn switch_desk(windows: &[(WindowId, usize)], focus: &[WindowId]) -> (Reactor, SpaceId) {
     let mut reactor = test_reactor();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
     let space = SpaceId::new(1);
+    let wsids: Vec<u32> = (0..windows.len() as u32).map(|at| 901 + at).collect();
+    set_space_membership(&[(space, &wsids)]);
+    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
+    let mut pids: Vec<rini_core::ids::pid_t> =
+        windows.iter().map(|(window, _)| window.pid).collect();
+    pids.sort_unstable();
+    pids.dedup();
+    for pid in pids {
+        reactor.add_test_app(pid);
+    }
+    let workspaces = reactor.test_workspace_ids(space);
+    for ((window, at), wsid) in windows.iter().zip(&wsids) {
+        reactor.add_test_window(*window, WindowServerId::new(*wsid), Some(space), screen);
+        assert!(reactor.assign_test_window_to_workspace(space, *window, workspaces[*at]));
+        reactor.send_layout_event(LayoutEvent::WindowAdded(space, *window));
+    }
+    for window in focus {
+        focus_reported(&mut reactor, space, *window);
+    }
+    (reactor, space)
+}
+
+/// The every-window switcher steps between APPLICATIONS, most recently used first, each one a stack of
+/// its windows across every workspace.
+///
+/// Both halves are asserted: the flat list spans two apps and two workspaces in the order they were
+/// focused rather than the order they were added, and the stacks group it by application.
+#[test]
+fn the_every_window_switch_offers_one_stack_per_application_in_focus_order() {
     let ghostty = WindowId::new(1, 1);
     let other_ghostty = WindowId::new(1, 2);
     let slack = WindowId::new(2, 1);
-
-    set_space_membership(&[(space, &[901, 902, 903])]);
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    reactor.add_test_app(1);
-    reactor.add_test_app(2);
-    let workspaces = reactor.test_workspace_ids(space);
-    // Two applications, two workspaces: the exact shape neither existing cycler covers.
-    for (window, wsid, workspace) in [
-        (ghostty, 901u32, workspaces[0]),
-        (other_ghostty, 902, workspaces[1]),
-        (slack, 903, workspaces[0]),
-    ] {
-        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
-        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
-        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
-    }
-
-    // Focus them in a known order, so recency and insertion order disagree.
-    for window in [other_ghostty, slack, ghostty] {
-        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
-        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
-    }
+    let (mut reactor, _) = switch_desk(
+        &[(ghostty, 0), (other_ghostty, 1), (slack, 0)],
+        &[other_ghostty, slack, ghostty],
+    );
 
     let list = reactor.probe_switch_candidates(SwitchScope::Everything);
     assert_eq!(
@@ -1002,18 +1022,163 @@ fn the_switcher_offers_every_window_in_focus_order() {
         "every window, both apps, both workspaces, most recently focused first"
     );
 
-    // One step lands on the window focused before this one, which is what a quick tap is for.
-    let outcome = reactor.probe_switch_window(false, SwitchScope::Everything);
-    let target = outcome.raise_requests.iter().find_map(|request| match request {
-        crate::windows::domain::raise::Event::RaiseRequest(request) => {
-            request.focus_window.map(|(window, _)| window)
-        }
-        _ => None,
-    });
+    let stacks = reactor.probe_switch_entries(SwitchScope::Everything);
+    assert_eq!(stacks.len(), 2, "one entry per application");
+    assert_eq!(stacks[0].front().window, ghostty);
     assert_eq!(
-        target,
+        stacks[0].behind().iter().map(|c| c.window).collect::<Vec<_>>(),
+        vec![other_ghostty],
+        "the window on the other workspace is in its application's stack"
+    );
+    assert_eq!(stacks[1].front().window, slack);
+    assert_eq!(stacks[1].count(), 1);
+
+    assert_eq!(
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::Everything)),
         Some(slack),
-        "a single step goes to the previously focused window, in another application"
+        "a single step goes to the previous application, not to Ghostty's other window"
+    );
+}
+
+/// A held every-window switch moves a stack at a time: two steps past an application with three
+/// windows land on the third application, not on the first one's third window.
+#[test]
+fn a_held_every_window_switch_steps_between_applications_not_windows() {
+    use crate::input::domain::switch_session::Signal;
+
+    let (a1, a2, a3) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    let (b, c) = (WindowId::new(2, 1), WindowId::new(3, 1));
+    let (mut reactor, _) =
+        switch_desk(&[(a1, 0), (a2, 0), (a3, 0), (b, 0), (c, 0)], &[c, a2, a3, b, a1]);
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
+    reactor.dispatch_test_switch(Signal::Step(1));
+    let committed = reactor.dispatch_test_switch(Signal::Commit);
+
+    assert_eq!(focus_target(&committed), Some(c));
+}
+
+/// Choosing a stack focuses its application's most recent window, wherever it is, and the display
+/// follows to that window's workspace.
+#[test]
+fn a_stack_commits_its_applications_most_recent_window_wherever_it_is() {
+    let older = WindowId::new(1, 1);
+    let recent = WindowId::new(1, 2);
+    let current = WindowId::new(2, 1);
+    let current_other = WindowId::new(2, 2);
+    let (mut reactor, space) = switch_desk(
+        &[(older, 0), (recent, 1), (current, 0), (current_other, 0)],
+        &[older, recent, current_other, current],
+    );
+    let workspaces = reactor.test_workspace_ids(space);
+    assert!(reactor.set_test_active_workspace(space, workspaces[0]));
+
+    let outcome = reactor.probe_switch_window(false, SwitchScope::Everything);
+
+    assert_eq!(
+        focus_target(&outcome),
+        Some(recent),
+        "not the current application's other window, and not the older window beside us"
+    );
+    assert_eq!(
+        reactor.test_active_workspace(space),
+        Some(workspaces[1]),
+        "the display shows the workspace of the window focus landed on"
+    );
+}
+
+/// rini does not un-minimise a window it focuses, so a stack whose most recent window is minimised
+/// goes to the application's window on screen instead.
+#[test]
+fn a_stack_on_top_skips_a_minimised_window() {
+    let visible = WindowId::new(2, 1);
+    let minimised = WindowId::new(2, 2);
+    let current = WindowId::new(1, 1);
+    let (mut reactor, _) = switch_desk(
+        &[(current, 0), (visible, 0), (minimised, 0)],
+        &[visible, minimised, current],
+    );
+    reactor.state.windows.window_mut(minimised).expect("tracked").info.is_minimized = true;
+
+    let stacks = reactor.probe_switch_entries(SwitchScope::Everything);
+    assert_eq!(stacks[1].count(), 2, "the minimised window is still offered");
+    assert_eq!(
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::Everything)),
+        Some(visible)
+    );
+}
+
+/// The popup is sent one row per application: its top window, at most two behind it, and the count.
+#[test]
+fn the_popup_draws_one_stack_per_application() {
+    use crate::input::domain::switch_session::Signal;
+    use crate::switcher::platform::actor;
+
+    let ghostty: Vec<WindowId> = (1..=4).map(|idx| WindowId::new(1, idx)).collect();
+    let slack = WindowId::new(2, 1);
+    let mut windows: Vec<(WindowId, usize)> = ghostty.iter().map(|window| (*window, 0)).collect();
+    windows.push((slack, 0));
+    let (mut reactor, _) = switch_desk(
+        &windows,
+        &[ghostty[3], ghostty[2], slack, ghostty[1], ghostty[0]],
+    );
+    let mut popup = reactor.connect_test_switcher();
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
+
+    let mut drawn = None;
+    while let Ok((_, event)) = popup.try_recv() {
+        if let actor::Event::Show { rows, selected, .. } = event {
+            drawn = Some((rows, selected));
+        }
+    }
+    let (rows, selected) = drawn.expect("the open draws the switch");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].window, ghostty[0]);
+    assert_eq!(
+        rows[0].behind,
+        vec![ghostty[1], ghostty[2]],
+        "two behind, nearest first"
+    );
+    assert_eq!(rows[0].detail, "4 windows");
+    assert_eq!(rows[1].window, slack);
+    assert!(rows[1].behind.is_empty());
+    assert_eq!(rows[1].detail, "1 window");
+    assert_eq!(selected, 1, "the previous application");
+}
+
+/// The workspace switcher is unchanged: one entry per window, by recency, so a tap reaches the other
+/// window of the application beside you, which the every-window switch steps over.
+#[test]
+fn a_workspace_switch_stays_one_entry_per_window() {
+    let editor = WindowId::new(1, 1);
+    let other_editor = WindowId::new(1, 2);
+    let elsewhere = WindowId::new(1, 3);
+    let slack = WindowId::new(2, 1);
+    let (mut reactor, _) = switch_desk(
+        &[(editor, 0), (other_editor, 0), (elsewhere, 1), (slack, 0)],
+        &[slack, other_editor, editor],
+    );
+
+    let entries = reactor.probe_switch_entries(SwitchScope::Workspace);
+    assert_eq!(
+        entries.iter().map(|entry| entry.front().window).collect::<Vec<_>>(),
+        vec![editor, other_editor, slack]
+    );
+    assert!(entries.iter().all(|entry| entry.count() == 1));
+    assert_eq!(
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::Workspace)),
+        Some(other_editor)
+    );
+    assert_eq!(
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::Everything)),
+        Some(slack)
     );
 }
 
@@ -1149,7 +1314,7 @@ fn an_app_switch_stays_inside_the_focused_application() {
         assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
         reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
     }
-    // Slack last-but-one, so a switch by recency would go there.
+    // Slack last-but-one, so it is where an every-window switch would go.
     for window in [controls, slack, meeting] {
         reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
         reactor.handle_event(Event::WindowServerFocusChanged(window, space));
@@ -1171,13 +1336,11 @@ fn an_app_switch_stays_inside_the_focused_application() {
         scope: SwitchScope::App,
     });
     let committed = reactor.dispatch_test_switch(Signal::Commit);
-    let target = committed.raise_requests.iter().find_map(|request| match request {
-        crate::windows::domain::raise::Event::RaiseRequest(request) => {
-            request.focus_window.map(|(window, _)| window)
-        }
-        _ => None,
-    });
-    assert_eq!(target, Some(controls), "not Slack, which recency would pick");
+    assert_eq!(
+        focus_target(&committed),
+        Some(controls),
+        "not Slack: another application is outside the scope"
+    );
 }
 
 /// With nothing focused there is no application to switch within, so the switch does nothing rather
@@ -1209,91 +1372,44 @@ fn an_app_switch_with_nothing_focused_offers_nothing() {
 fn a_held_switch_focuses_only_on_the_commit() {
     use crate::input::domain::switch_session::Signal;
 
-    let mut reactor = test_reactor();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
-    let space = SpaceId::new(1);
     let first = WindowId::new(1, 1);
-    let second = WindowId::new(1, 2);
-    let third = WindowId::new(1, 3);
-
-    set_space_membership(&[(space, &[901, 902, 903])]);
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    reactor.add_test_app(1);
-    let workspace = reactor.test_workspace(space, 0);
-    for (window, wsid) in [(first, 901u32), (second, 902), (third, 903)] {
-        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
-        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
-        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
-    }
+    let second = WindowId::new(2, 1);
+    let third = WindowId::new(3, 1);
     // Focus order: third (oldest), second, first (current).
-    for window in [third, second, first] {
-        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
-        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
-    }
-
-    let raised = |outcome: &crate::app::reactor::EventOutcome| {
-        outcome.raise_requests.iter().find_map(|request| match request {
-            crate::windows::domain::raise::Event::RaiseRequest(request) => {
-                request.focus_window.map(|(window, _)| window)
-            }
-            _ => None,
-        })
-    };
+    let (mut reactor, _) =
+        switch_desk(&[(first, 0), (second, 0), (third, 0)], &[third, second, first]);
 
     // Open selects the second entry, and one step moves to the third. Neither touches a window.
     let opened = reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
     });
-    assert_eq!(raised(&opened), None, "opening a switch focuses nothing");
+    assert_eq!(focus_target(&opened), None, "opening a switch focuses nothing");
     let stepped = reactor.dispatch_test_switch(Signal::Step(1));
-    assert_eq!(raised(&stepped), None, "stepping focuses nothing");
+    assert_eq!(focus_target(&stepped), None, "stepping focuses nothing");
 
     let committed = reactor.dispatch_test_switch(Signal::Commit);
     assert_eq!(
-        raised(&committed),
+        focus_target(&committed),
         Some(third),
         "the release focuses the selection, once: second entry plus one step"
     );
 }
 
-/// A click on a row commits THAT window, whatever the keyboard had selected, and only while a switch
-/// is open. A window the switch does not offer commits nothing rather than something nearby.
+/// A click on a row commits THAT row's window, whatever the keyboard had selected, and only while a
+/// switch is open. A window the switch does not offer commits nothing rather than something nearby.
 #[test]
 fn a_click_on_a_row_commits_that_window() {
     use crate::input::domain::switch_session::Signal;
 
-    let mut reactor = test_reactor();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
-    let space = SpaceId::new(1);
     let first = WindowId::new(1, 1);
-    let second = WindowId::new(1, 2);
-    let third = WindowId::new(1, 3);
-
-    set_space_membership(&[(space, &[901, 902, 903])]);
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    reactor.add_test_app(1);
-    let workspace = reactor.test_workspace(space, 0);
-    for (window, wsid) in [(first, 901u32), (second, 902), (third, 903)] {
-        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
-        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
-        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
-    }
-    for window in [third, second, first] {
-        reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
-        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
-    }
-    let raised = |outcome: &crate::app::reactor::EventOutcome| {
-        outcome.raise_requests.iter().find_map(|request| match request {
-            crate::windows::domain::raise::Event::RaiseRequest(request) => {
-                request.focus_window.map(|(window, _)| window)
-            }
-            _ => None,
-        })
-    };
+    let second = WindowId::new(2, 1);
+    let third = WindowId::new(3, 1);
+    let (mut reactor, _) =
+        switch_desk(&[(first, 0), (second, 0), (third, 0)], &[third, second, first]);
 
     assert_eq!(
-        raised(&reactor.dispatch_test_pick(third)),
+        focus_target(&reactor.dispatch_test_pick(third)),
         None,
         "no switch open: a click has nothing to commit"
     );
@@ -1303,20 +1419,42 @@ fn a_click_on_a_row_commits_that_window() {
         scope: SwitchScope::Everything,
     });
     assert_eq!(
-        raised(&reactor.dispatch_test_pick(WindowId::new(9, 9))),
+        focus_target(&reactor.dispatch_test_pick(WindowId::new(9, 9))),
         None,
         "a window the switch does not offer commits nothing"
     );
     assert_eq!(
-        raised(&reactor.dispatch_test_pick(third)),
+        focus_target(&reactor.dispatch_test_pick(third)),
         Some(third),
         "the keyboard had the second entry selected; the click wins"
     );
     assert_eq!(
-        raised(&reactor.dispatch_test_switch(Signal::Commit)),
+        focus_target(&reactor.dispatch_test_switch(Signal::Commit)),
         None,
         "and the modifier's release afterwards has nothing left to commit"
     );
+}
+
+/// The panel hands over the window a row is drawn for, which for a stack is its top window. A window
+/// drawn behind is no row of its own.
+#[test]
+fn a_click_on_a_stack_commits_its_top_window() {
+    use crate::input::domain::switch_session::Signal;
+
+    let (a1, a2) = (WindowId::new(1, 1), WindowId::new(1, 2));
+    let (b1, b2) = (WindowId::new(2, 1), WindowId::new(2, 2));
+    let (mut reactor, _) = switch_desk(&[(a1, 0), (a2, 0), (b1, 0), (b2, 0)], &[b2, a2, b1, a1]);
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::Everything,
+    });
+    assert_eq!(
+        focus_target(&reactor.dispatch_test_pick(b2)),
+        None,
+        "b2 is drawn behind b1, and no row is drawn for it"
+    );
+    assert_eq!(focus_target(&reactor.dispatch_test_pick(b1)), Some(b1));
 }
 
 /// Escape leaves everything where it was.
@@ -1324,27 +1462,18 @@ fn a_click_on_a_row_commits_that_window() {
 fn a_cancelled_switch_focuses_nothing() {
     use crate::input::domain::switch_session::Signal;
 
-    let mut reactor = test_reactor();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
-    let space = SpaceId::new(1);
     let first = WindowId::new(1, 1);
-    let second = WindowId::new(1, 2);
-
-    set_space_membership(&[(space, &[901, 902])]);
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    reactor.add_test_app(1);
-    let workspace = reactor.test_workspace(space, 0);
-    for (window, wsid) in [(first, 901u32), (second, 902)] {
-        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
-        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
-        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
-    }
-    reactor.handle_event(Event::WindowServerFocusChanged(first, space));
+    let second = WindowId::new(2, 1);
+    let (mut reactor, _) = switch_desk(&[(first, 0), (second, 0)], &[second, first]);
 
     reactor.dispatch_test_switch(Signal::Open {
         backward: false,
         scope: SwitchScope::Everything,
     });
+    assert!(
+        reactor.live_switch.is_some(),
+        "two applications: the switch opened"
+    );
     reactor.dispatch_test_switch(Signal::Cancel);
     let after = reactor.dispatch_test_switch(Signal::Commit);
 
@@ -1354,75 +1483,71 @@ fn a_cancelled_switch_focuses_nothing() {
     );
 }
 
-/// Cycling an app's windows must reach the ones on OTHER workspaces.
-///
-/// macOS's cmd-` only offers windows on the visible workspace, so three Ghostty windows
-/// split across two workspaces cycled between the two that shared one: "i have three
-/// ghostty windows between different displays/workspaces and i can only swap between the
-/// two on the same workspace". rini knows where all of them are, so the application switcher
-/// rotates through every one and switches the display's workspace to follow.
-#[test]
-fn cycling_app_windows_reaches_every_workspace() {
-    let mut reactor = test_reactor();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));
-    let space = SpaceId::new(1);
+/// Three Ghostty windows, two sharing a workspace and one on another: "i have three ghostty windows
+/// between different displays/workspaces and i can only swap between the two on the same workspace".
+fn three_ghosttys() -> (Reactor, SpaceId, [WindowId; 3]) {
     let first = WindowId::new(1, 1);
     let second = WindowId::new(1, 2);
     let elsewhere = WindowId::new(1, 3);
-
-    set_space_membership(&[(space, &[901, 902, 903])]);
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    reactor.add_test_app(1);
+    let (mut reactor, space) = switch_desk(
+        &[(first, 0), (second, 0), (elsewhere, 1)],
+        &[elsewhere, second, first],
+    );
     let workspaces = reactor.test_workspace_ids(space);
-    // Two windows share workspace 0; the third sits on workspace 1, which is the one macOS
-    // could never reach.
-    for (window, wsid, workspace) in [
-        (first, 901u32, workspaces[0]),
-        (second, 902, workspaces[0]),
-        (elsewhere, 903, workspaces[1]),
-    ] {
-        reactor.add_test_window(window, WindowServerId::new(wsid), Some(space), screen);
-        assert!(reactor.assign_test_window_to_workspace(space, window, workspace));
-        reactor.send_layout_event(LayoutEvent::WindowAdded(space, window));
-    }
-    reactor.send_layout_event(LayoutEvent::WindowFocused(space, first));
-    reactor.set_test_focus(first);
+    assert!(reactor.set_test_active_workspace(space, workspaces[0]));
+    (reactor, space, [first, second, elsewhere])
+}
 
-    // Rotate through the whole set. Focus is normally applied by the raise manager, which
-    // does not run under test, so read the requested target out of the outcome and apply it
-    // by hand — otherwise every iteration rotates from the same starting point.
-    let mut visited = vec![first];
-    for _ in 0..3 {
-        let outcome = reactor.probe_switch_window(false, SwitchScope::App);
-        let target = outcome.raise_requests.iter().find_map(|request| match request {
-            crate::windows::domain::raise::Event::RaiseRequest(request) => {
-                request.focus_window.map(|(window, _)| window)
-            }
-            _ => None,
-        });
-        let Some(target) = target else { break };
-        visited.push(target);
-        reactor.set_test_focus(target);
-        reactor.send_layout_event(LayoutEvent::WindowFocused(space, target));
-    }
+/// cmd-` goes by recency like the other switchers: quick taps toggle between the two most recent
+/// windows rather than moving on through the rest.
+#[test]
+fn an_app_switch_quick_tap_toggles_the_two_most_recent() {
+    let (mut reactor, space, [first, second, _]) = three_ghosttys();
 
-    assert!(
-        visited.contains(&elsewhere),
-        "the window on another workspace must be reachable; visited {visited:?}"
-    );
-    assert!(
-        visited.contains(&second),
-        "the window sharing the workspace must still be reachable; visited {visited:?}"
-    );
-    // And reaching it must have brought the display along, or focus would sit on a window
-    // parked off-screen and the keystroke would look like it did nothing.
+    let tapped = focus_target(&reactor.probe_switch_window(false, SwitchScope::App));
+    assert_eq!(tapped, Some(second));
+    focus_reported(&mut reactor, space, second);
+
     assert_eq!(
-        reactor.test_workspace_for_window(space, *visited.last().expect("non-empty")),
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::App)),
+        Some(first),
+        "back to the first, not on to the third"
+    );
+}
+
+/// The window on another workspace is offered, two steps into a held switch, and reaching it brings
+/// the display along — or focus would sit on a window parked off-screen and the key would look dead.
+#[test]
+fn an_app_switch_reaches_a_window_on_another_workspace_with_a_hold() {
+    use crate::input::domain::switch_session::Signal;
+
+    let (mut reactor, space, [_, second, elsewhere]) = three_ghosttys();
+    assert_eq!(
+        focus_target(&reactor.probe_switch_window(false, SwitchScope::App)),
+        Some(second),
+        "a quick tap goes to the previous window"
+    );
+
+    reactor.dispatch_test_switch(Signal::Open {
+        backward: false,
+        scope: SwitchScope::App,
+    });
+    reactor.dispatch_test_switch(Signal::Step(1));
+    let committed = reactor.dispatch_test_switch(Signal::Commit);
+
+    assert_eq!(focus_target(&committed), Some(elsewhere));
+    assert_eq!(
+        reactor.test_workspace_for_window(space, elsewhere),
         reactor.test_active_workspace(space),
         "the display must be showing the workspace of the window focus landed on"
     );
 }
 
+/// Moving a window to another workspace keeps the width the user gave it.
+///
+/// Adding a window to a workspace creates a FRESH column at the default ratio, so a window
+/// sized to a third or two thirds snapped back on every move. Reported as the size resetting
+/// to 50%. Asserts the laid-out width, which is what is actually visible.
 #[test]
 fn moving_a_window_between_workspaces_keeps_its_column_width() {
     let mut reactor = test_reactor();

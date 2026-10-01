@@ -1,7 +1,8 @@
-//! The switcher's decisions, with no macOS in them: which windows are offered, in what order, and
-//! where the cursor sits.
+//! The switcher's decisions, with no macOS in them: which windows are offered, in what order, how
+//! they are grouped, and where the cursor sits.
 
 pub mod candidates;
+pub mod entries;
 pub mod layout;
 pub mod motion;
 pub mod reveal;

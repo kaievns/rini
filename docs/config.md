@@ -88,7 +88,7 @@ cursor hiding, take niri's default: off. They were on, and a default-on flag can
 | `workspace "name" { focus-at-startup; }` | the workspace shown at launch | niri's word, from `output`; rini's workspaces span every display |
 | `binds` | a held key fires once; `repeat=true` opts in | Kai's decision: a repeat re-fired commands such as workspace back-and-forth |
 | `binds` keys | macOS's keys under niri's names; `Super` is Cmd, and a side can be named (`LAlt`, `RCmd`) | niri's mouse, wheel, touchpad and tablet triggers are refused, not yet supported, and `XF86` media keys never reach the tap as keys |
-| `recent-windows › binds` | `next-window filter="app-id"` ROTATES the application's windows | cmd-` rather than cmd-tab: by recency, quick taps toggle between the last two and never reach a third |
+| `recent-windows › binds` | `next-window` without `filter` or `scope="workspace"` steps between applications, each drawn as a stack of its windows | Kai's ask (`specs/switcher.md`): one entry per window was too long to use. niri's switcher is one entry per window |
 | `recent-windows › binds` | `scope="workspace"` spans every display | a rini workspace is one context across displays; `scope="output"` is refused |
 | `recent-windows › binds` | no defaults | niri's default, Alt+Tab, is `Mod+Tab` under rini's default `mod-key`, which is `focus-workspace-previous`; and Cmd+Tab belongs to the Dock |
 | `config-notification { disable-failed; }` | turns off the bar's `✕ config` marker | niri shows an on-screen notification; rini's bar is where it says things |

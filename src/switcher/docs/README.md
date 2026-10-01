@@ -1,18 +1,19 @@
-# `switcher` — every window, in the order you last used them
+# `switcher` — every window, by application or one by one, in the order you last used them
 
 The strip answers "what is beside this window on this display". The switcher answers a
 different question: "every window I have, wherever it is". Different question, different
-feature — it reads the workspace assignments rather than any one layout tree, and it groups
-nothing.
+feature — it reads the workspace assignments rather than any one layout tree. The every-window
+switch groups windows into application stacks; the other two group nothing.
 
 ## What it owns
 
 | | |
 |---|---|
 | **Who is offered** | `domain/candidates.rs` — `Candidate`, `Scope`, `switch_list`, `opening_selection` |
+| **What it steps between** | `domain/entries.rs` — `Entry`, `entries`: a window, or for the every-window switch an application's stack |
 | **Where the cursor is** | `domain/selection.rs` — `Selection`: stepping with wrap, clicking, and following its row when the list changes under it |
 | **Which binding holds it** | `domain/trigger.rs` — each switcher's session keys, derived from its own binding rather than configured twice |
-| **Where the rows go** | `domain/layout.rs` — the panel rect, one rect per row, the scroll that keeps the selection visible, and the hit test |
+| **Where the rows go** | `domain/layout.rs` — the panel rect, one rect per row, a stack's cards inside its row, the scroll that keeps the selection visible, and the hit test |
 | **Whether a draw travels** | `domain/motion.rs` — how long the ring takes to move, and the one case where moving is right |
 | **When the popup appears** | `domain/reveal.rs` — only once a switch has been held, never on a quick combo |
 | **The popup** | `platform/panel.rs` — the `NSPanel` and its layer tree; `platform/actor.rs` — the main thread it must live on |
@@ -22,8 +23,13 @@ of the focus tracking in `src/windows/domain/focus_order.rs` and this feature re
 
 ## The shape that matters
 
-**One row per window, never per application.** A row standing for four Slack windows cannot
-take you to the third one.
+**One stack per application for every window, one row per window for the other two.** A row
+per window made the every-window popup too long to use, so it steps between applications, as the
+Dock's switcher does, with each one drawn as a stack of its windows. Reaching a particular window
+is what cmd-` and the workspace switch are for, and they stay one row per window. An application is
+a process, the unit `Scope::App` filters on, so cmd-` from any window of a stack offers exactly that
+stack. The grouping runs after `switch_list`, on its ordered output: an application sits where its
+most recent window sits, so recency is decided in one place.
 
 **Focus order first, then a stable tail.** The window you want next is nearly always the one
 you were in before this one. But a window rini has never seen focused has no place in that
@@ -44,22 +50,23 @@ because the window-server visible/hidden sweeps overwrite it.
 arrow keys, and a mouse click. Any two of them keeping their own idea of the selected row is a
 race that shows up as the popup highlighting one window while the release focuses another.
 
-**Three switchers, one machinery.** Every window (cmd-tab), the focused workspace, and the focused
+**Three switchers, one machinery.** Every window, the focused workspace, and the focused
 application's windows (cmd-`) share the session, the popup, the selection and the commit. They differ
-in `Scope`: which candidates are admitted and, for the application, the order. The application's
-cycle, now `next-window filter="app-id"`, used to be its own code path with its own list; it is now
-this with a scope.
+in `Scope`: which candidates are admitted and, for every window, whether they are grouped
+(`Scope::stacks`). The application's cycle, now `next-window filter="app-id"`, used to be its own
+code path with its own list; it is now this with a scope.
 
 **A workspace switch spans every display.** A workspace is one context spread across displays, and
 its id is the same on all of them, so the scope is the workspace rather than the display the switch
 was opened on. Picking a window hidden on the other display switches that display to it, which is what
 reaching any window already does.
 
-**An application's windows rotate; everything else goes by recency.** That is the difference between
-cmd-` and cmd-tab, and it is not cosmetic. By recency, quick taps toggle between the two most recent
-windows and never reach a third — which is exactly the reported failure of macOS's own cmd-` with three
-Ghostty windows over two rini workspaces. The rotation starts at the current window, so every list
-still opens on its second entry.
+**Everything goes by recency.** cmd-` used to rotate through an application's windows in a fixed
+order, and that made it the one switcher that ordered differently. By recency, quick taps toggle
+between the two most recent windows and a held switch reaches the rest. The case the rotation was
+built for, macOS's own cmd-` never reaching the third of three Ghostty windows over two rini
+workspaces, is answered by the scope: rini offers every one of them wherever it is, and the third is
+two steps into a held switch.
 
 **One session, several triggers.** The tap holds one live session at most, remembering which trigger
 opened it: that trigger's key steps it and its modifiers hold it. Another switcher's trigger pressed
@@ -89,15 +96,16 @@ the one thing a switcher exists to do.
 (measured, `src/animation/docs/capture-overlay-research.md`), so the panel cannot take one while the
 popup is opening. The animation engine already keeps a cache for the overlay, and
 `Event::LendSnapshots` is a READ of it — a hash lookup per window. The engine answers through an
-installed callback that the APP wires to this actor, so neither feature names the other. Opening a
-switch also queues warms for the rows with no picture, so the next open has them.
+installed callback that the APP wires to this actor, so neither feature names the other. Only the
+windows drawn are lent and warmed, a stack's top card and the two behind it, and opening a switch
+queues warms for those with no picture, so the next open has them.
 
 **`usable`, not `get`.** The cheap capture route returns a sliver for exactly the off-screen and
 hidden-workspace windows this feature exists to show, and a sliver stretched across a row is worse than
 a placeholder. Age is not a reason to refuse one, though: a ten-minute-old picture beats a grey box.
 
 **Colours are tokens, not choices.** The panel draws from the Okibi design system's resolved values:
-`--n1` for the plane it sits on, `--n3` for a tile with no picture yet, `--line` for the hairline,
+`--n1` for the plane it sits on, `--n3` for a card with no picture yet, `--line` for the hairline,
 `--n11` for captions, and an `--ember-soft` fill inside a 2px `--ember` ring for the selection.
 
 **The blur needed something removed, not added — once.** The first blurred backing was in place and
@@ -121,8 +129,8 @@ this desktop as the native switcher a step darker. The appearance is pinned dark
 machine does not get light glass under a dark wash. The glass draws its own rim, so the panel has no
 hairline of its own.
 
-**Every tile has a faint edge.** A 1px `--n11` hairline at `TILE_EDGE_ALPHA`, drawn over the picture.
-Light rather than `--line`, because the tiles are mostly dark windows and a hairline darker than them
+**Every card has a faint edge.** A 1px `--n11` hairline at `TILE_EDGE_ALPHA`, drawn over the picture.
+Light rather than `--line`, because the cards are mostly dark windows and a hairline darker than them
 disappears.
 
 Four deliberate departures from the defaults, all because a switcher is not a document. It sits on
@@ -142,9 +150,26 @@ the tiles, and a caption is two thin lines of small text that read as part of th
 equal insets put the tile 22pt below the top edge and 54pt above the bottom one, and the panel looks
 bottom-heavy however evenly the arithmetic is written. Reported twice before this was the answer.
 
-**A tile is as wide as its window.** Every tile shares one height so the captions line up, and the
-width comes from the window's own proportions — which is most of what tells two windows of the same
-application apart. Clamped at both ends, because the proportions in a real strip are extreme.
+**A row is as wide as its top window, at its card's height.** Every row shares one height so the
+captions line up, and the width comes from the top window's own proportions — which is most of what
+tells two windows of the same application apart. Taken at the height the top card is drawn rather
+than the row's, so a fitted picture fills its card: at the row's 163pt a maximised window's card in a
+three-card stack would be 259pt wide around a 234pt picture. Clamped at both ends, because the
+proportions in a real strip are extreme.
+
+**A stack is three cards with one silhouette.** The top window and at most two behind it, each card
+behind 8pt higher (`stack_rise`) and 12pt narrower on each side (`stack_inset`). The deepest card's
+top is the row's top and the front card's bottom is the row's bottom whatever the depth, so the ring,
+the hit test and the panel height are what they are for a single tile, and a stack of one is exactly
+one. The inset is wider than the 11pt `tile_corner`, or a card behind would show through the front
+card's rounded corner; `layout.rs` tests that relation. Cards behind are FILLED and cropped rather
+than fitted, because only their top 8pt shows, and a fitted picture in a narrower card is centred
+vertically and leaves that strip a band of placeholder. A portrait window behind a landscape one
+shows a middle strip; that is the cost. Minimised windows go to the back of their stack, because rini
+never un-minimises a window it focuses, so the top card is the most recent window on screen; a stack
+whose top is minimised is minimised throughout and dims as one. Cards behind are not dimmed: the
+rise, the inset and the hairline are the depth cue. Whether they read clearly over a dark desktop has
+not been checked on screen; a `--n0` wash on the cards behind is the first thing to try if not.
 
 **Two layers for the selection, not one.** The `--ember-soft` wash sits UNDER the tiles, where it tints
 a row whose picture has not arrived; the ring sits OVER them. They cannot be one layer: under the tiles
@@ -171,8 +196,9 @@ the window meanwhile so the first popup does not pay the 112ms either. A second 
 which only a step produces — draws at once.
 
 **A click is a commit, made where the selection lives.** The view hit-tests with `Strip::row_at`
-against the strip it last drew and hands the app the WINDOW under the pointer. The app forwards it to
-the reactor, which selects that window in the one cursor, commits, and tells the tap the switch is over.
+against the strip it last drew and hands the app the WINDOW the row under the pointer is drawn for, a
+stack's top one. The app forwards it to the reactor, which selects that window's row in the one
+cursor, commits, and tells the tap the switch is over.
 The panel accepts the first click without becoming the key window, because it is never key and a click
 that only made it so would need a second one.
 
@@ -188,8 +214,9 @@ nothing else, because the switch is already correct on the other side.
 
 ## Reading order
 
-`domain/candidates.rs`, then `domain/selection.rs`, then `domain/layout.rs`, then the four lines of
-`domain/motion.rs`. All four are pure and fully tested without a reactor, a window server or a screen.
+`domain/candidates.rs`, then `domain/entries.rs`, then `domain/selection.rs`, then
+`domain/layout.rs`, then the four lines of `domain/motion.rs`. All five are pure and fully tested
+without a reactor, a window server or a screen.
 `platform/` after that.
 
 ## Detail

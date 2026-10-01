@@ -307,7 +307,7 @@ impl FromStr for SwitcherScope {
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SwitcherFilter {
-    /// The focused application's windows, rotating rather than by recency.
+    /// The focused application's windows, most recently focused first.
     AppId,
 }
 
