@@ -31,7 +31,7 @@ fn switch(backward: bool, scope: SwitchScope) -> Lowered {
     reactor(R::SwitchWindow { backward, scope })
 }
 
-/// The design's table, one row per action: what each one is on the wire.
+/// One row per action: what each one is on the wire.
 fn table() -> Vec<(Action, Lowered)> {
     use Direction::*;
     let d = DisplaySelector::Direction;

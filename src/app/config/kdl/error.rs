@@ -71,7 +71,10 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
-    pub fn new(name: &str, text: &str, problems: Vec<Problem>) -> Self {
+    /// The report on `text`, its problems in the order they are written, any that point nowhere
+    /// last.
+    pub fn new(name: &str, text: &str, mut problems: Vec<Problem>) -> Self {
+        problems.sort_by_key(|problem| problem.offset().unwrap_or(usize::MAX));
         Self {
             name: name.to_owned(),
             source_code: NamedSource::new(name, text.to_owned()),

@@ -20,24 +20,22 @@ pub fn wants_restore(restore: bool, no_restore: bool) -> bool {
 
 /// The config, or the built-in defaults and the reason the file could not be used.
 ///
-/// A broken config MUST NOT stop rini starting. This used to be an unwrap, so one unparseable line
-/// took the whole window manager down at launch — and with no window manager running there is no
-/// way to open an editor except from a terminal that happens to be open already. One mistyped
-/// keybinding was enough.
+/// A broken config MUST NOT stop rini starting: with no window manager running there is no way to
+/// open an editor except from a terminal that happens to be open already. On the defaults rini keeps
+/// its binds and re-reads the file when it is saved, so the file can be fixed in place.
 ///
-/// Falling back keeps windows managed and the hotkeys for editing the config reachable, which is the
-/// only state a user can actually recover from. A missing file is not an error: it means the defaults.
+/// A missing file means the defaults, unless the TOML config sits beside it (`leftover_toml`).
 pub fn config_or_default(path: &Path) -> (Config, Option<String>) {
     if !path.exists() {
-        return (Config::default(), None);
+        return (Config::default(), leftover_toml(path));
     }
     match Config::read(path) {
         Ok(config) => (config, None),
         Err(error) => (
             Config::default(),
             Some(format!(
-                "Could not use the config at {}; starting with the built-in defaults so rini \
-                 stays usable. Fix the config and it is read again as soon as it is saved.\n{}",
+                "Could not use the config at {}; starting on the built-in defaults, \
+                 rini.default.kdl. Fix the config and it is read again as soon as it is saved.\n{}",
                 path.display(),
                 error.render()
             )),
@@ -45,11 +43,30 @@ pub fn config_or_default(path: &Path) -> (Config, Option<String>) {
     }
 }
 
+/// Why a missing `path` is not simply the defaults: a `config.toml` beside it is a config that was
+/// written and is no longer read.
+fn leftover_toml(path: &Path) -> Option<String> {
+    let toml = path.with_file_name("config.toml");
+    toml.exists().then(|| {
+        format!(
+            "No config at {}, but {} is there: rini's config is KDL, and until {} exists rini runs \
+             on its built-in defaults, rini.default.kdl. docs/config.md has the format.",
+            path.display(),
+            toml.display(),
+            path.display()
+        )
+    })
+}
+
 /// What `rini --validate` says about the config: a line naming it when it is good, the report when
-/// it is not. A missing file is good: it means the defaults.
+/// it is not. A missing file is good, since it means the defaults, unless `leftover_toml` says why
+/// not.
 pub fn validate_config(path: &Path) -> Result<String, String> {
     if !path.exists() {
-        return Ok(format!("No config at {}; rini uses its built-in defaults", path.display()));
+        return match leftover_toml(path) {
+            Some(complaint) => Err(complaint),
+            None => Ok(format!("No config at {}; rini uses its built-in defaults", path.display())),
+        };
     }
     Config::read(path)
         .map(|_| format!("config is valid: {}", path.display()))
@@ -114,6 +131,26 @@ mod tests {
             complaint, None,
             "no file means the defaults, which is not a failure"
         );
+    }
+
+    /// The defaults run every Space inactive, so starting on them silently in place of a TOML config
+    /// looks like rini is broken.
+    #[test]
+    fn a_missing_config_beside_a_toml_one_is_a_config_that_cannot_be_used() {
+        let (dir, toml) = temp_config("config.toml", "[settings]\nanimate = false\n");
+        let kdl = dir.path().join("config.kdl");
+
+        let (config, complaint) = config_or_default(&kdl);
+
+        let complaint = complaint.expect("the TOML file is named, not ignored");
+        for named in [kdl.display().to_string(), toml.display().to_string()] {
+            assert!(complaint.contains(&named), "{named} missing: {complaint}");
+        }
+        assert!(complaint.contains("docs/config.md"), "{complaint}");
+        assert_eq!(config.settings, Config::default().settings);
+
+        let report = validate_config(&kdl).unwrap_err();
+        assert!(report.contains("config.toml"), "{report}");
     }
 
     /// The history this exists for: one mistyped keybinding used to take the window manager down at

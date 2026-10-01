@@ -3,7 +3,8 @@
 //!
 //! Singleton sections merge field by field, so a part that leaves a setting out keeps what is
 //! there. A part's `workspace` and `window-rule` nodes replace the list, and its binds replace the
-//! binds for their keys.
+//! binds for their keys. The checks across nodes run on the config that results, so a running bind
+//! or rule the part does not mention is checked against what the part changes.
 
 use std::collections::BTreeMap;
 use std::str::FromStr;
@@ -18,8 +19,10 @@ use super::layout::{LayoutPart, ProportionPart};
 use super::value::{Flag, Number};
 use super::window_rule::{FixedPart, MatchPart, WindowRulePart};
 use crate::app::config::{BASE_ANIMATION_SECONDS, Config, MAX_WORKSPACES};
-use crate::input::domain::binding::{Action, Bind, WorkspaceReference};
-use crate::input::domain::key::{Hotkey, KeyCode, Modifiers, normalize_spec};
+use crate::input::domain::binding::{Action, Bind};
+use crate::input::domain::key::{
+    Hotkey, KeyCode, ModKey, Modifiers, normalize_spec, substitute_mod,
+};
 use crate::windows::domain::rules::{FloatingPosition, RuleMatch, WindowRule};
 
 pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
@@ -177,15 +180,35 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
         apply_workspaces(&part.workspaces, workspaces, &mut problems);
     }
 
+    let names = (!part.undecoded.workspace_names).then(|| workspaces.workspace_names.clone());
     if !part.window_rules.is_empty() {
         workspaces.app_rules = part
             .window_rules
             .into_iter()
-            .map(|rule| window_rule(rule, &workspaces.workspace_names, &mut problems))
+            .map(|rule| window_rule(rule, names.as_deref(), &mut problems))
             .collect();
+    } else if let Some(names) = &names {
+        for name in workspaces.app_rules.iter().filter_map(|rule| rule.open_on_workspace.as_ref()) {
+            if !names.contains(name) {
+                problems.push(
+                    Problem::new(format!(
+                        "a running window rule opens on workspace `{name}`, which is not declared"
+                    ))
+                    .help(declared(names)),
+                );
+            }
+        }
     }
 
-    apply_binds(part.binds, switcher_binds, config, &mut problems);
+    let checks = BindChecks {
+        mod_keys: if part.undecoded.mod_key {
+            ModKey::ALL.to_vec()
+        } else {
+            vec![config.settings.mod_key]
+        },
+        names,
+    };
+    apply_binds(part.binds, switcher_binds, &checks, config, &mut problems);
     problems
 }
 
@@ -330,7 +353,11 @@ fn apply_workspaces(
     settings.workspace_names = parts.iter().map(|workspace| workspace.name.clone()).collect();
 }
 
-fn window_rule(part: WindowRulePart, names: &[String], problems: &mut Vec<Problem>) -> WindowRule {
+fn window_rule(
+    part: WindowRulePart,
+    names: Option<&[String]>,
+    problems: &mut Vec<Problem>,
+) -> WindowRule {
     let line = |part: MatchPart, problems: &mut Vec<Problem>| {
         let patterns = [&part.app_id, &part.title, &part.app_name];
         if patterns
@@ -365,7 +392,9 @@ fn window_rule(part: WindowRulePart, names: &[String], problems: &mut Vec<Proble
     let excludes = part.excludes.into_iter().map(|m| line(m, problems)).collect();
 
     let open_on_workspace = part.open_on_workspace.map(|workspace| {
-        check_workspace_name(&workspace.name, &workspace.span, names, problems);
+        if let Some(names) = names {
+            check_workspace_name(&workspace.name, &workspace.span, names, problems);
+        }
         workspace.name
     });
     let fixed = |part: Option<FixedPart>, problems: &mut Vec<Problem>| {
@@ -416,50 +445,71 @@ fn check_workspace_name(name: &str, span: &Span, names: &[String], problems: &mu
     if !names.iter().any(|configured| configured == name) {
         problems.push(
             Problem::at(span, format!("there is no workspace `{name}`"), "not declared")
-                .help(format!("the workspaces are: {}", names.join(", "))),
+                .help(declared(names)),
         );
     }
 }
 
-/// A bind that survived its checks, with the chords it answers to.
-struct Resolved<'a> {
+fn declared(names: &[String]) -> String { format!("the workspaces are: {}", names.join(", ")) }
+
+/// What the checks across binds read, settled after every other section is applied.
+struct BindChecks {
+    /// What `Mod` may stand for: `mod-key`, or every modifier while the `input` that sets it could
+    /// not be decoded.
+    mod_keys: Vec<ModKey>,
+    /// The declared workspaces, unless a `workspace` could not be decoded.
+    names: Option<Vec<String>>,
+}
+
+type Chords = HashSet<(Modifiers, KeyCode)>;
+
+impl BindChecks {
+    /// Every combination of physical modifiers `key` answers to, one set for each `Mod` it may
+    /// stand for: `Alt` is either side or both.
+    fn chords(&self, key: &str) -> Result<Vec<Chords>, String> {
+        self.mod_keys
+            .iter()
+            .map(|mod_key| {
+                let hotkey = Hotkey::from_str(&substitute_mod(key, *mod_key))
+                    .map_err(|error| error.to_string())?;
+                Ok(hotkey
+                    .modifiers
+                    .expand_to_specific()
+                    .into_iter()
+                    .map(|mods| (mods, hotkey.key_code))
+                    .collect())
+            })
+            .collect()
+    }
+}
+
+/// Whether two keys are pressed the same way whatever `Mod` stands for.
+fn same_key(a: &[Chords], b: &[Chords]) -> bool { a.iter().zip(b).all(|(a, b)| !a.is_disjoint(b)) }
+
+/// A bind this text writes, with the chords it answers to; `bind` is `None` once it is refused.
+struct Written<'a> {
     part: &'a BindPart,
-    bind: Bind,
-    chords: HashSet<(Modifiers, KeyCode)>,
+    in_switcher: bool,
+    bind: Option<Bind>,
+    chords: Vec<Chords>,
 }
 
-/// Every combination of physical modifiers a key answers to: `Alt` is either side or both.
-fn chords(hotkey: &Hotkey) -> HashSet<(Modifiers, KeyCode)> {
-    hotkey
-        .modifiers
-        .expand_to_specific()
-        .into_iter()
-        .map(|mods| (mods, hotkey.key_code))
-        .collect()
-}
-
-fn resolve_hotkey(key: &str, config: &Config) -> Result<Hotkey, String> {
-    let resolved = crate::input::domain::key::substitute_mod(key, config.settings.mod_key);
-    Hotkey::from_str(&resolved).map_err(|error| error.to_string())
-}
-
+/// The text's binds replace the running ones on the same keys. Both are checked against the
+/// `mod-key` and workspaces the whole config ends up with, so a text that changes either cannot
+/// leave a running bind on a clashing key or naming a workspace that is gone.
 fn apply_binds(
     binds: Option<BindsPart>,
     switcher: Option<BindsPart>,
+    checks: &BindChecks,
     config: &mut Config,
     problems: &mut Vec<Problem>,
 ) {
-    if binds.is_none() && switcher.is_none() {
-        return;
-    }
-    let mut resolved: Vec<(bool, Resolved)> = Vec::new();
-    let blocks = [(false, binds.as_ref()), (true, switcher.as_ref())];
-    for (in_switcher, block) in blocks {
-        for part in block.into_iter().flat_map(|block| &block.binds) {
-            let Some(action) = &part.action else { continue };
+    let mut written: Vec<Written> = Vec::new();
+    for (in_switcher, block) in [(false, &binds), (true, &switcher)] {
+        for part in block.iter().flat_map(|block| &block.binds) {
             let key = normalize_spec(part.key.trim());
-            let hotkey = match resolve_hotkey(&key, config) {
-                Ok(hotkey) => hotkey,
+            let chords = match checks.chords(&key) {
+                Ok(chords) => chords,
                 Err(error) => {
                     let why = super::suggest::niri_trigger(&key).map_or(error, str::to_owned);
                     problems.push(
@@ -473,26 +523,7 @@ fn apply_binds(
                     continue;
                 }
             };
-            if !check_action(
-                action,
-                in_switcher,
-                part,
-                &config.virtual_workspaces.workspace_names,
-                problems,
-            ) {
-                continue;
-            }
-            let entry = Resolved {
-                part,
-                bind: Bind {
-                    key,
-                    action: action.clone(),
-                    repeat: part.repeat,
-                },
-                chords: chords(&hotkey),
-            };
-            if let Some((_, earlier)) =
-                resolved.iter().find(|(_, earlier)| !earlier.chords.is_disjoint(&entry.chords))
+            if let Some(earlier) = written.iter().find(|earlier| same_key(&earlier.chords, &chords))
             {
                 problems.push(
                     Problem::at(&part.key_span, format!("`{}` is bound twice", part.key), "bound again here")
@@ -501,39 +532,84 @@ fn apply_binds(
                 );
                 continue;
             }
-            resolved.push((in_switcher, entry));
+            let bind = part
+                .action
+                .as_ref()
+                .filter(|action| {
+                    check_action(action, in_switcher, part, checks.names.as_deref(), problems)
+                })
+                .map(|action| Bind {
+                    key,
+                    action: action.clone(),
+                    repeat: part.repeat,
+                });
+            written.push(Written {
+                part,
+                in_switcher,
+                bind,
+                chords,
+            });
         }
     }
 
-    let taken: Vec<&HashSet<(Modifiers, KeyCode)>> =
-        resolved.iter().map(|(_, r)| &r.chords).collect();
-    let keeps = |bind: &Bind| {
-        let Ok(hotkey) = resolve_hotkey(&bind.key, config) else {
-            return true;
-        };
-        let own = chords(&hotkey);
-        taken.iter().all(|chords| chords.is_disjoint(&own))
-    };
-    let kept_binds: Vec<Bind> = config.binds.iter().filter(|bind| keeps(bind)).cloned().collect();
-    let kept_switcher: Vec<Bind> =
-        config.switcher_binds.iter().filter(|bind| keeps(bind)).cloned().collect();
-    config.binds = kept_binds;
-    config.switcher_binds = kept_switcher;
-    for (in_switcher, entry) in resolved {
+    let running = config.binds.iter().map(|bind| (false, bind));
+    let running = running.chain(config.switcher_binds.iter().map(|bind| (true, bind)));
+    let mut kept: Vec<(bool, Bind, Vec<Chords>)> = Vec::new();
+    for (in_switcher, bind) in running {
+        let chords = checks
+            .chords(&bind.key)
+            .unwrap_or_else(|_| vec![Chords::default(); checks.mod_keys.len()]);
+        if written.iter().any(|written| same_key(&written.chords, &chords)) {
+            continue;
+        }
+        if let Some((_, earlier, _)) =
+            kept.iter().find(|(_, _, earlier)| same_key(earlier, &chords))
+        {
+            problems.push(
+                Problem::new(format!(
+                    "with `mod-key \"{}\"`, the running binds `{}` and `{}` are the same key",
+                    config.settings.mod_key.name(),
+                    earlier.key,
+                    bind.key
+                ))
+                .help("a key takes one action; rebind one of them in the same fragment"),
+            );
+        }
+        if let (Some(names), Some(name)) = (&checks.names, bind.action.workspace_name())
+            && !names.iter().any(|declared| declared == name)
+        {
+            problems.push(
+                Problem::new(format!(
+                    "the running bind `{}` names workspace `{name}`, which is not declared",
+                    bind.key
+                ))
+                .help(declared(names)),
+            );
+        }
+        kept.push((in_switcher, bind.clone(), chords));
+    }
+
+    let (mut binds, mut switcher_binds) = (Vec::new(), Vec::new());
+    let kept = kept.into_iter().map(|(in_switcher, bind, _)| (in_switcher, bind));
+    let written = written.into_iter().filter_map(|w| Some((w.in_switcher, w.bind?)));
+    for (in_switcher, bind) in kept.chain(written) {
         if in_switcher {
-            config.switcher_binds.push(entry.bind);
+            switcher_binds.push(bind);
         } else {
-            config.binds.push(entry.bind);
+            binds.push(bind);
         }
     }
+    config.binds = binds;
+    config.switcher_binds = switcher_binds;
 }
 
-/// Whether `action` may be bound where it is written; says why not when it may not.
+/// Whether `action` may be bound where it is written; says why not when it may not. A workspace
+/// name is checked only when `names` are known.
 fn check_action(
     action: &Action,
     in_switcher: bool,
     part: &BindPart,
-    names: &[String],
+    names: Option<&[String]>,
     problems: &mut Vec<Problem>,
 ) -> bool {
     let refuse = |problems: &mut Vec<Problem>, message: String, help: &str| {
@@ -568,12 +644,13 @@ fn check_action(
             "`spawn` needs a program".into(),
             "`spawn \"program\" \"arg\"`",
         ),
-        Action::FocusWorkspace(WorkspaceReference::Name(name))
-        | Action::MoveWindowToWorkspace(WorkspaceReference::Name(name), _) => {
-            let before = problems.len();
-            check_workspace_name(name, &part.span, names, problems);
-            problems.len() == before
-        }
-        _ => true,
+        _ => match (action.workspace_name(), names) {
+            (Some(name), Some(names)) => {
+                let before = problems.len();
+                check_workspace_name(name, &part.span, names, problems);
+                problems.len() == before
+            }
+            _ => true,
+        },
     }
 }

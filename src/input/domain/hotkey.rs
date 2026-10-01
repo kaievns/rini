@@ -16,7 +16,8 @@ pub struct HotkeyTable {
 
 impl HotkeyTable {
     /// The table for `binds`, each key already free of `Mod`. `resolve` names the physical key, which
-    /// depends on the keyboard layout; a key it cannot resolve is left out and returned.
+    /// depends on the keyboard layout; a key it cannot resolve is left out and returned. The config
+    /// refuses a key bound twice, so no chord is claimed by two binds.
     pub fn build(binds: &[Bind], resolve: impl Fn(&str) -> Option<Hotkey>) -> (Self, Vec<String>) {
         let mut table = HotkeyTable::default();
         let mut unresolved = Vec::new();
@@ -42,7 +43,7 @@ impl HotkeyTable {
 
     /// What a key-down of `hotkey` fires: `None` when nothing is bound to it, so the key goes on to
     /// the application. A held key's repeats fire only a bind written `repeat=true`; otherwise they
-    /// are swallowed, because a repeat re-fired commands such as workspace back-and-forth.
+    /// are swallowed, because a repeat re-fires commands such as workspace back-and-forth.
     pub fn press(&self, hotkey: &Hotkey, is_repeat: bool) -> Option<Option<Action>> {
         let (action, repeat) = self.binds.get(hotkey)?;
         Some((!is_repeat || *repeat).then(|| action.clone()))
@@ -99,7 +100,7 @@ mod tests {
 
     fn left_alt(key: KeyCode) -> Hotkey { Hotkey::new(Modifiers::ALT_LEFT, key) }
 
-    /// D3: a held key fires once unless its bind asks for repeats.
+    /// A held key fires once unless its bind asks for repeats.
     #[test]
     fn a_repeat_fires_only_a_bind_that_asks_for_repeats() {
         let table = table(&[

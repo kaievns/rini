@@ -35,7 +35,7 @@ type mach_port_t = u32;
 unsafe extern "C" {
     fn IOServiceMatching(name: *const c_char) -> *mut CFType;
     fn IOServiceGetMatchingServices(
-        master: mach_port_t,
+        main_port: mach_port_t,
         matching: *mut CFType,
         iter: *mut io_iterator_t,
     ) -> kern_return_t;

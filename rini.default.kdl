@@ -3,17 +3,19 @@
 // rini reads ~/.config/rini/config.kdl. This file is the reference: it is compiled into rini and
 // used whenever that file is missing or cannot be used. Copy it there to start.
 //
-// The syntax is KDL v1, the same as niri's, and so are the names wherever rini and niri share a
-// concept: a niri `layout`, `binds` or `window-rule` snippet pastes in as written. A name niri does
-// not have is rini's own. Every section is optional, and a setting left out keeps the value shown
-// here, except binds and window rules: a file that writes none has none. A name rini does not know
-// is an error that names the line.
+// The syntax is KDL v1, the same as niri's, and so are the names, nesting and values wherever rini
+// and niri share a concept, so what a niri `layout`, `binds` or `window-rule` snippet says about
+// those means the same here. What it names that rini does not have is refused with the reason, and
+// docs/config.md lists where rini differs. A name niri does not have is rini's own. Every section is
+// optional, and a setting left out keeps the value shown here, except binds and window rules: a
+// file that writes none has none. A name rini does not know is an error that names the line.
 //
 // The file is re-read whenever it changes. A version that cannot be used is reported, and rini
 // keeps running on the last good one.
 
 input {
-    // The modifier `Mod` stands for in `binds`: "Alt", "Ctrl", "Shift" or "Super" (Cmd).
+    // The modifier `Mod` stands for in `binds`: "Alt", "Ctrl" or "Super" (Cmd). "Shift" is taken
+    // too, but makes every Mod+Shift bind below the same key as its Mod bind, which is refused.
     // niri's default is Super; on macOS Cmd belongs to the applications.
     mod-key "Alt"
 
@@ -418,7 +420,7 @@ binds {
     Mod+Shift+Space { toggle-window-floating; }
     Mod+F { maximize-column; }
     // Briefly bring focus to the floating windows and back.
-    Mod+Shift+Ctrl+Space { switch-focus-between-floating-and-tiling; }
+    Mod+Shift+V { switch-focus-between-floating-and-tiling; }
 
     Mod+Shift+Equal { set-column-width "+5%"; }
     Mod+Shift+Minus { set-column-width "-5%"; }

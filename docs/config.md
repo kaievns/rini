@@ -27,16 +27,29 @@ the format, and every place rini knowingly differs from niri.
    when the name is niri's. knus's own report of the same node, an unexpected node in a struct or a
    failed conversion in an enum, is matched by where the node starts and dropped.
 3. Each section decodes into a part type (`kdl/{input,layout,gestures,bar,binds,window_rule}.rs`)
-   whose every field is optional. Ranges are checked here, with the span.
-4. `kdl/apply.rs` lays the parts over a `Config`, field by field, and runs the checks that need more
-   than one node: widths that nest, one `focus-at-startup`, unique workspace names, workspace names
-   that exist, keys bound once.
+   whose every field is optional. Ranges are checked here, with the span. knus keeps no value of a
+   node with an error anywhere in it and stops a struct at its first bad child, as niri's knuffel
+   does, so a section with a problem is left out of the part. A bind block is the exception: it
+   decodes each bind on its own and carries their errors, so one bad bind leaves the rest.
+4. `kdl/apply.rs` lays whatever decoded over a `Config`, field by field, and runs the checks that
+   need more than one node on the config that results: widths that nest, one `focus-at-startup`,
+   unique workspace names, workspace names that exist, keys bound once. A check that needs a node
+   that did not decode is skipped (`Undecoded`): with an `input` left out, a clash counts only if it
+   holds whatever `mod-key` says; with a `workspace` left out, no name is checked.
+5. Both lists of problems go into one report, in file order.
 
 Loading the file is `apply(parse(file), code defaults)`; `config set` is
 `apply(parse(fragment), running config)`. The defaults are each feature's `Default` impl and nothing
 else, which is why an empty section cannot mean something different from an absent one: an absent
-part and an empty part both leave every field alone. The features' settings types carry no parsing;
-only `app/config` knows the file has a format.
+part and an empty part both leave every field alone. Because the checks run on the result, a running
+bind or rule a fragment does not mention is still checked against the `mod-key` and workspaces the
+fragment leaves.
+
+The format lives in `app/config/kdl`, except for what a bind names. `input::domain::binding` derives
+knus's `Decode` for `Action` and decodes the values its actions take: `Decimal`,
+`WorkspaceReference` and `MonitorReference` as knus scalars, and `SizeChange`, `SwitcherScope` and
+`SwitcherFilter` from the config's spelling with `FromStr`, as `rini-ipc` does for `RestoreScope`
+and `RestoreSource`. The features' settings types carry no parsing.
 
 ## Naming
 
@@ -60,14 +73,16 @@ cursor hiding, take niri's default: off. They were on, and a default-on flag can
 | `animations › slowdown` | the one movement's length is 0.35s times `slowdown` | rini has one movement animation; niri scales each animation's own base |
 | `layout › preset-column-widths` | the default adds `proportion 1.0` | 1.0 is the maximise mode, so a maximised column can be stepped back down (`src/layout/docs/strip.md`) |
 | `layout › center-focused-column "always"` | the first and last columns sit flush with the display edge | there is nothing beyond them to scroll to; niri centres them. `"on-overflow"` is refused, not yet supported |
-| `layout › gaps`, `struts` | as niri: `gaps` between windows and at the edges, a strut adds to one edge | one gap value; rini's separate horizontal and vertical inner gaps are gone |
-| `output "UUID"` | a display UUID, and only `layout › gaps` and `struts` | niri names outputs by connector or make, model and serial; macOS owns the rest of what niri puts in `output` |
+| `layout › gaps`, `struts` | as niri: `gaps` between windows and at the edges, a strut adds to one edge; but a strut is 0 or more | one gap value, so rini's separate horizontal and vertical inner gaps are gone. niri's negative struts are refused, not yet supported |
+| `output "UUID"` | a display UUID, and only `layout › gaps` and `struts` | niri names outputs by connector or make, model and serial, so a niri name such as `"eDP-1"` is taken as a UUID and matches no display; macOS owns the rest of what niri puts in `output` |
 | `window-rule › open-on-output` | `"internal"` or `"external"`, a ROLE | a UUID differs between the monitor at home and the one at the office; a pin is a default, not a law (`specs/displays.md`) |
 | `window-rule › open-on-workspace` | a name only | as niri |
 | `window-rule › default-floating-position` | logical pixels from that corner of the display | as niri; rini's old form was a fraction of the screen |
 | `window-rule › default-column-width`, `default-window-height` | `fixed` only | a floating window opens at it; a tiled one is resized once |
 | `window-rule › open-focused` | `true` only | rini cannot stop a new window taking focus yet |
 | `window-rule › match` | adds `app-name`, `ax-role`, `ax-subrole`, `is-modal` | macOS's names for what niri reads from Wayland |
+| `window-rule › match` with no matcher | refused | niri matches every window with it; leaving the line out already does that |
+| `spawn`, `spawn-at-startup` | the program as written: a leading `~` is not expanded | niri expands it; not yet supported, so write the full path |
 | `workspace "name" { focus-at-startup; }` | the workspace shown at launch | niri's word, from `output`; rini's workspaces span every display |
 | `binds` | a held key fires once; `repeat=true` opts in | Kai's decision: a repeat re-fired commands such as workspace back-and-forth |
 | `binds` keys | macOS's keys under niri's names; `Super` is Cmd, and a side can be named (`LAlt`, `RCmd`) | niri's mouse, wheel, touchpad and tablet triggers are refused, not yet supported, and `XF86` media keys never reach the tap as keys |

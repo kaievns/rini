@@ -12,7 +12,8 @@ current behaviour annoys me.
 - **A bad keybinding discards the whole config.** No longer fatal: rini reports the error
   and falls back to the built-in defaults, so the WM starts and the hotkeys for editing the
   config stay reachable, and a reload that cannot be used keeps the running config. Every
-  problem in the file is reported at once, with its line. But one bad action name still
+  problem in the file is reported at once, with its line, bar the two kinds `specs/config.md`
+  lets show only once another is fixed. But one bad action name still
   costs every other setting in the file, as it does in niri. One bad binding should be
   reported and skipped, not the file abandoned.
 - **Blank built-in display after manual window moves.** Untested since the workspace

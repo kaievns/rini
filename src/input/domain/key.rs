@@ -601,33 +601,21 @@ fn canonical_spec_token(word: &str) -> String {
     }
 }
 
-/// Canonicalises a key spec as written in `binds`: single letters upper-cased, arrow words to
-/// `ArrowUp` and kin.
-///
-/// Splits on anything non-alphabetic and puts the separators back unchanged, so `Alt + Shift + Down`
-/// keeps its spacing and its pluses. The token rule was written out twice here — once for the words
-/// inside the loop and once for a trailing word with no separator after it — which is two places for
-/// one rule to be fixed in.
+/// Canonicalises a key spec as written in `binds`: a single letter upper-cased, an arrow word to
+/// `ArrowUp` and kin. Each `+`-separated token is taken whole and keeps its spacing, so
+/// `Alt + Shift + Down` stays spaced and `Page_Down` stays the key it names.
 pub fn normalize_spec(key: &str) -> String {
-    let mut out = String::with_capacity(key.len());
-    let mut word = String::new();
-
-    for ch in key.chars() {
-        if ch.is_alphabetic() {
-            word.push(ch);
-            continue;
-        }
-        if !word.is_empty() {
-            out.push_str(&canonical_spec_token(&word));
-            word.clear();
-        }
-        out.push(ch);
-    }
-    if !word.is_empty() {
-        out.push_str(&canonical_spec_token(&word));
-    }
-
-    out
+    key.split('+')
+        .map(|token| {
+            let word = token.trim();
+            if word.is_empty() {
+                token.to_owned()
+            } else {
+                token.replacen(word, &canonical_spec_token(word), 1)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// The modifier `Mod` stands for in a key: `input › mod-key`, niri's name for it.
@@ -641,6 +629,8 @@ pub enum ModKey {
 }
 
 impl ModKey {
+    pub const ALL: [ModKey; 4] = [ModKey::Alt, ModKey::Ctrl, ModKey::Shift, ModKey::Super];
+
     pub fn name(self) -> &'static str {
         match self {
             ModKey::Alt => "Alt",
@@ -955,8 +945,6 @@ mod tests {
         assert_eq!(normalize_spec("Ctrl + A"), "Ctrl + A");
     }
 
-    /// A trailing word takes the same rule as a word inside the spec. This was written out twice, and
-    /// a fix to one copy and not the other is the failure the duplication invited.
     #[test]
     fn the_last_token_is_canonicalised_the_same_as_the_others() {
         assert_eq!(normalize_spec("Alt + down"), "Alt + ArrowDown");
@@ -980,6 +968,14 @@ mod tests {
         assert_eq!(normalize_spec("Ctrl + F13"), "Ctrl + F13");
     }
 
+    /// niri's XKB names hold arrow words: `Page_Down` is one key, not `Page_` and an arrow.
+    #[test]
+    fn a_key_name_holding_an_arrow_word_is_one_token() {
+        assert_eq!(normalize_spec("Mod+Page_Down"), "Mod+Page_Down");
+        assert_eq!(normalize_spec("Mod + Ctrl + Page_Up"), "Mod + Ctrl + Page_Up");
+        assert_eq!(normalize_spec("Mod+Shift+Down"), "Mod+Shift+ArrowDown");
+    }
+
     #[test]
     fn an_empty_spec_canonicalises_to_nothing() {
         assert_eq!(normalize_spec(""), "");
@@ -987,7 +983,14 @@ mod tests {
 
     #[test]
     fn canonicalising_twice_changes_nothing_the_second_time() {
-        for spec in ["Alt + Shift + Down", "ctrl+a", "down", "Ctrl + F13", ""] {
+        for spec in [
+            "Alt + Shift + Down",
+            "ctrl+a",
+            "down",
+            "Ctrl + F13",
+            "Mod+Page_Up",
+            "",
+        ] {
             let once = normalize_spec(spec);
             assert_eq!(normalize_spec(&once), once, "{spec:?} is not stable");
         }

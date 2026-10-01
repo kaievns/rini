@@ -20,7 +20,7 @@ keep working, be configured around, and be reasoned about when something breaks.
 lot of the hard bugs in a scrolling layout are *specific to it*: what a column's width
 means, what happens to a scrolled-away window, what "the same workspace" means when two
 displays show different parts of it. Those questions have no good answer that is also
-correct for BSP and master-stack, so in a multi-layout codebase they get answered
+correct for BSP and main-stack, so in a multi-layout codebase they get answered
 conservatively, or not at all.
 
 Rini answers them for scrolling only, and accepts breaking changes to do it. A soft fork
@@ -107,10 +107,12 @@ Config lives at `~/.config/rini/config.kdl`; saved layout state at `~/.rini/layo
 `rini.default.kdl` in this repo is the annotated reference, and is compiled in and used
 whenever the file is missing or cannot be used.
 
-The format is niri's: KDL v1 with niri's section and node names wherever rini and niri share
-a concept, so niri's [configuration wiki](https://niri-wm.github.io/niri/Configuration:-Introduction)
-explains the shared sections (`layout`, `binds`, `window-rule`, `workspace`) and a niri
-snippet for them pastes in as written. Where rini differs, and why, is `docs/config.md`.
+The format is niri's: KDL v1 with niri's section names, node names, nesting and values
+wherever rini and niri share a concept, so niri's [configuration wiki](https://niri-wm.github.io/niri/Configuration:-Introduction)
+explains the shared sections (`layout`, `binds`, `window-rule`, `workspace`). A niri snippet
+does not always paste in whole: what it names that rini lacks, such as `focus-ring`, a niri
+action rini has no counterpart for, or `cooldown-ms` on a bind, is refused with the reason.
+Where rini differs, and why, is `docs/config.md`.
 
 ## Interop
 

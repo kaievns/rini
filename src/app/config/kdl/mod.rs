@@ -1,5 +1,6 @@
 //! The file format: KDL v1, decoded with knus into one part type per section, niri's shape, every
-//! field optional, and then laid over a `Config` by `apply`. Only this module knows the format.
+//! field optional, and then laid over a `Config` by `apply`. Where else the format reaches is
+//! `docs/config.md`.
 
 pub mod apply;
 pub mod bar;
@@ -50,10 +51,23 @@ pub struct ConfigPart {
     pub workspaces: Vec<WorkspacePart>,
     pub window_rules: Vec<WindowRulePart>,
     pub startup: Vec<StartupCommand>,
+    pub undecoded: Undecoded,
 }
 
-/// Decodes `text`, reporting every problem in it at once. `name` is what the report calls it.
-pub fn parse(name: &str, text: &str) -> Result<ConfigPart, ConfigError> {
+/// What the nodes that could not be decoded leave unknown. A check across nodes that needs it is
+/// skipped: run on what was there before, it would report problems the text does not have.
+#[derive(Debug, Default)]
+pub struct Undecoded {
+    /// An `input` failed or was written twice, so `Mod` may stand for another modifier.
+    pub mod_key: bool,
+    /// A `workspace` failed, so the names are not all known.
+    pub workspace_names: bool,
+}
+
+/// Decodes `text` as far as it goes, with every problem found on the way. Only a syntax error
+/// stops it; a node that cannot be decoded is left out of the part. `name` is what a report calls
+/// the text.
+pub fn parse(name: &str, text: &str) -> Result<(ConfigPart, Vec<Problem>), ConfigError> {
     let document = knus::parse_ast::<Span>(name, text).map_err(|error| {
         let problems = miette::Diagnostic::related(&error)
             .map(|related| related.map(Problem::from_diagnostic).collect())
@@ -104,6 +118,14 @@ pub fn parse(name: &str, text: &str) -> Result<ConfigPart, ConfigError> {
             _ => {}
         }
     }
+    let switcher = part.recent_windows.as_mut().and_then(|recent| recent.binds.as_mut());
+    for block in part.binds.iter_mut().chain(switcher) {
+        decoding.errors.append(&mut block.errors);
+    }
+    part.undecoded = Undecoded {
+        mod_key: decoding.failed.contains(&"input"),
+        workspace_names: decoding.failed.contains(&"workspace"),
+    };
 
     // knus reports a node it does not know where the node starts, as an unexpected node in a struct
     // or a failed conversion in an enum; the walk has reported those already, with a suggestion.
@@ -124,12 +146,7 @@ pub fn parse(name: &str, text: &str) -> Result<ConfigPart, ConfigError> {
         } => Some(suggest::unknown_action(&message, &span)),
         other => Some(Problem::from(other)),
     }));
-    problems.sort_by_key(|problem| problem.offset().unwrap_or(usize::MAX));
-    if problems.is_empty() {
-        Ok(part)
-    } else {
-        Err(ConfigError::new(name, text, problems))
-    }
+    Ok((part, problems))
 }
 
 #[derive(Default)]
@@ -137,12 +154,17 @@ struct Decoding<'a> {
     errors: Vec<DecodeError<Span>>,
     problems: Vec<Problem>,
     first: Vec<(&'a str, Span)>,
+    /// The nodes, by name, left out of the part.
+    failed: Vec<&'a str>,
 }
 
 impl<'a> Decoding<'a> {
-    fn decode<T: Decode<Span>>(&mut self, node: &SpannedNode<Span>) -> Option<T> {
+    fn decode<T: Decode<Span>>(&mut self, node: &'a SpannedNode<Span>) -> Option<T> {
         knus::decode::node::<T, Span>(node)
-            .map_err(|errors| self.errors.extend(errors))
+            .map_err(|errors| {
+                self.errors.extend(errors);
+                self.failed.push(&**node.node_name);
+            })
             .ok()
     }
 
@@ -156,6 +178,7 @@ impl<'a> Decoding<'a> {
                     .also(first, "first written here")
                     .help("a section is written once; put everything in the first one"),
             );
+            self.failed.push(name);
             return;
         }
         self.first.push((name, here));

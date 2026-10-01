@@ -150,8 +150,9 @@ pub enum MetricsCommand {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigCommand {
-    /// A KDL fragment, applied over the running config as if appended to the file. It lasts until
-    /// the next reload.
+    /// A KDL fragment laid over the running config until the next reload. It is not appended: what
+    /// it writes replaces what is running, setting by setting, `workspace` and `window-rule` lists
+    /// whole, and binds key by key (`specs/config.md`, "Changing the running config").
     Set(String),
     GetConfig,
     ReloadConfig,

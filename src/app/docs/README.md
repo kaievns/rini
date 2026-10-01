@@ -37,8 +37,9 @@ state; the actors it talks to have their own run loops and their own threads.
 
 **A broken config must not stop rini starting.** One mistyped binding used to take the
 window manager down. It now reports and falls back to the defaults, which is the only
-state a user can recover from. A broken reload keeps the running config and says why,
-in the log and with a mark on every bar.
+state a user can recover from. A missing `config.kdl` with a `config.toml` beside it is
+reported the same way, since the defaults are not what that file configured. A broken
+reload keeps the running config and says why, in the log and with a mark on every bar.
 
 **Decisions leave, orchestration stays.** Pure feature logic has been moved out to each
 feature's `domain/` over several passes. What remains in `reactor/mod.rs` reads and

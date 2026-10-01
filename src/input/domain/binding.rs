@@ -22,7 +22,7 @@ pub struct Bind {
     /// The key as written, canonicalised, with `Mod` still standing for `input › mod-key`.
     pub key: String,
     pub action: Action,
-    /// Fire again while the key is held. Off unless asked for: a repeat used to re-fire commands such
+    /// Fire again while the key is held. Off unless asked for, since a repeat re-fires commands such
     /// as workspace back-and-forth on every one.
     pub repeat: bool,
 }
@@ -146,6 +146,15 @@ impl Action {
     /// Whether this is one of the switcher's two actions, which belong in `recent-windows › binds`.
     pub fn is_switcher(&self) -> bool {
         matches!(self, Action::NextWindow { .. } | Action::PreviousWindow { .. })
+    }
+
+    /// The workspace this names by name, which has to be declared.
+    pub fn workspace_name(&self) -> Option<&str> {
+        match self {
+            Action::FocusWorkspace(WorkspaceReference::Name(name))
+            | Action::MoveWindowToWorkspace(WorkspaceReference::Name(name), _) => Some(name),
+            _ => None,
+        }
     }
 }
 
@@ -345,6 +354,21 @@ mod tests {
         let previous = Action::PreviousWindow { scope: None, filter: None };
         assert!(next.is_switcher() && previous.is_switcher());
         assert!(!Action::FocusColumnLeft.is_switcher());
+    }
+
+    #[test]
+    fn only_a_workspace_named_by_name_is_a_workspace_name() {
+        let named = |name: &str| WorkspaceReference::Name(name.into());
+        assert_eq!(Action::FocusWorkspace(named("mail")).workspace_name(), Some("mail"));
+        assert_eq!(
+            Action::MoveWindowToWorkspace(named("code"), true).workspace_name(),
+            Some("code")
+        );
+        assert_eq!(
+            Action::FocusWorkspace(WorkspaceReference::Index(2)).workspace_name(),
+            None
+        );
+        assert_eq!(Action::FocusWorkspaceUp(None).workspace_name(), None);
     }
 
     #[test]

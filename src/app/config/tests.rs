@@ -60,6 +60,27 @@ fn the_reference_means_the_same_settings_and_workspaces_as_an_empty_file() {
     assert!(!Config::default().binds.is_empty());
 }
 
+/// Under `"Shift"` each Mod+Shift bind is its Mod bind, as the reference's comment says.
+#[test]
+fn the_reference_is_usable_under_every_mod_key_it_offers() {
+    for (name, usable) in [
+        ("Alt", true),
+        ("Ctrl", true),
+        ("Super", true),
+        ("Shift", false),
+    ] {
+        let written = format!("mod-key \"{name}\"");
+        let text = DEFAULT_KDL.replace("mod-key \"Alt\"", &written);
+        assert!(text.contains(&written));
+        let file = Config::parse("rini.default.kdl", &text);
+        let report = file.as_ref().err().map(ConfigError::render).unwrap_or_default();
+        assert_eq!(file.is_ok(), usable, "{name}:\n{report}");
+        let fragment =
+            Config::default().with("config set", &format!("input {{\n    {written}\n}}\n"));
+        assert_eq!(fragment.is_ok(), usable, "config set {written}");
+    }
+}
+
 #[test]
 fn an_empty_section_means_the_same_as_an_absent_one() {
     let absent = parse("");
@@ -89,8 +110,7 @@ fn an_empty_section_means_the_same_as_an_absent_one() {
     assert_eq!(parse("layout {\n    preset-column-widths {\n    }\n}\n"), absent);
 }
 
-/// The two settings whose default depended on whether their TOML table was written: both have one
-/// default now.
+/// Each has one default, whether its section is written or not (`specs/config.md`).
 #[test]
 fn skipping_empty_workspaces_and_the_drag_swap_overlap_have_one_default() {
     let config = parse("gestures {\n    pass-through false\n}\n");
@@ -455,7 +475,7 @@ fn a_window_rule_carries_its_matchers_and_properties() {
     assert_eq!(rule.open_on_output, Some(DisplayRole::Internal));
 }
 
-/// D1, through the file: every rule that applies is folded in order.
+/// Every rule that applies is folded in file order, a later one overriding an earlier one.
 #[test]
 fn rules_from_the_file_fold_in_order() {
     let config = parse(concat!(
@@ -579,6 +599,25 @@ fn niri_triggers_that_are_not_keys_are_refused_with_the_reason() {
             .contains("triggers are not supported yet")
     );
     assert!(refused("binds {\n    XF86AudioMute { spawn \"true\"; }\n}\n").contains("media keys"));
+}
+
+/// niri's default config binds these.
+#[test]
+fn niri_page_keys_bind() {
+    let config = parse(concat!(
+        "binds {\n",
+        "    Mod+Page_Down { focus-workspace-down; }\n",
+        "    Mod+Page_Up { focus-workspace-up; }\n",
+        "    Mod+Ctrl+Page_Down { move-window-to-workspace-down; }\n",
+        "    Mod+Shift+Page_Up { move-window-to-workspace-up; }\n",
+        "}\n",
+    ));
+    assert_eq!(bind_keys(&config), [
+        "Mod+Page_Down",
+        "Mod+Page_Up",
+        "Mod+Ctrl+Page_Down",
+        "Mod+Shift+Page_Up"
+    ]);
 }
 
 #[test]
@@ -767,6 +806,72 @@ fn every_problem_in_the_file_is_reported_at_once() {
 }
 
 #[test]
+fn what_does_not_decode_and_the_checks_across_nodes_are_one_report() {
+    let report = refused(concat!(
+        "layout {\n    gasp 3\n    gaps -1\n}\n",
+        "layout {\n}\n",
+        "binds {\n",
+        "    Mod+J { focus-column-left; }\n",
+        "    Mod+J { focus-column-right; }\n",
+        "    Ctrl+J+K { debug; }\n",
+        "    Mod+Q { focus-colum-left; }\n",
+        "}\n",
+    ));
+    for expected in [
+        "`gasp`",
+        "from 0 to 65535",
+        "`layout` is written twice",
+        "`Mod+J` is bound twice",
+        "`Ctrl+J+K` is not a key rini can bind",
+        "`focus-colum-left`",
+    ] {
+        assert!(report.contains(expected), "{expected} missing:\n{report}");
+    }
+}
+
+#[test]
+fn a_bind_whose_action_does_not_decode_still_holds_its_key() {
+    let report =
+        refused("binds {\n    Mod+J { focus-colum-left; }\n    Mod+J { focus-column-right; }\n}\n");
+    assert!(report.contains("`focus-colum-left`"), "{report}");
+    assert!(report.contains("`Mod+J` is bound twice"), "{report}");
+}
+
+/// A line from niri's default config.
+#[test]
+fn a_wheel_trigger_with_a_cooldown_is_told_both_reasons() {
+    let report =
+        refused("binds {\n    Mod+WheelScrollDown cooldown-ms=150 { focus-workspace-down; }\n}\n");
+    assert!(report.contains("`cooldown-ms` is not supported yet"), "{report}");
+    assert!(
+        report.contains("wheel, touchpad and tablet triggers"),
+        "{report}"
+    );
+}
+
+/// Run on what was there instead, these checks would report problems the file does not have.
+#[test]
+fn a_check_that_needs_a_node_that_did_not_decode_is_not_run() {
+    let report = refused(concat!(
+        "input {\n    mod-key \"Ctrl\"\n    warp-mouse-to-focus 3\n}\n",
+        "workspace \"a\" {\n    focus-at-startup 3\n}\n",
+        "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"a\"\n}\n",
+        "binds {\n",
+        "    Mod+J { focus-workspace \"a\"; }\n",
+        "    Alt+J { debug; }\n",
+        "    Mod+K { debug; }\n",
+        "    Mod+K { serialize; }\n",
+        "}\n",
+    ));
+    assert!(!report.contains("`Alt+J` is bound twice"), "{report}");
+    assert!(!report.contains("there is no workspace"), "{report}");
+    assert!(
+        report.contains("`Mod+K` is bound twice"),
+        "one key whatever mod-key says: {report}"
+    );
+}
+
+#[test]
 fn a_section_written_twice_is_an_error_with_both_places() {
     let report = refused("layout {\n    gaps 1\n}\nlayout {\n    gaps 2\n}\n");
     assert!(report.contains("`layout` is written twice"), "{report}");
@@ -897,4 +1002,54 @@ fn a_fragments_binds_replace_the_binds_for_their_keys() {
     assert_eq!(changed.binds.len(), running.binds.len());
     let h = changed.binds.iter().find(|bind| bind.key == "Mod+H").unwrap();
     assert_eq!(h.action, Action::Debug);
+}
+
+fn refused_fragment(running: &Config, fragment: &str) -> String {
+    match running.with("config set", fragment) {
+        Ok(_) => panic!("accepted:\n{fragment}"),
+        Err(error) => error.render().split_whitespace().collect::<Vec<_>>().join(" "),
+    }
+}
+
+#[test]
+fn a_fragment_that_makes_two_running_binds_one_key_is_refused() {
+    let running = parse("binds {\n    Mod+J { focus-column-left; }\n    Ctrl+J { debug; }\n}\n");
+    let report = refused_fragment(&running, "input {\n    mod-key \"Ctrl\"\n}\n");
+    assert!(
+        report.contains("the running binds `Mod+J` and `Ctrl+J` are the same key"),
+        "{report}"
+    );
+    let rebound = running
+        .with(
+            "config set",
+            "input {\n    mod-key \"Ctrl\"\n}\nbinds {\n    Ctrl+J { debug; }\n}\n",
+        )
+        .expect("rebinding the key in the same fragment settles it");
+    assert_eq!(bind_keys(&rebound), ["Ctrl+J"]);
+}
+
+#[test]
+fn a_fragment_that_drops_a_workspace_a_running_bind_or_rule_names_is_refused() {
+    let running = parse(concat!(
+        "workspace \"a\"\nworkspace \"b\"\n",
+        "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"b\"\n}\n",
+        "binds {\n    Mod+B { focus-workspace \"b\"; }\n}\n",
+    ));
+    let report = refused_fragment(&running, "workspace \"a\"\nworkspace \"c\"\n");
+    assert!(
+        report.contains("the running bind `Mod+B` names workspace `b`"),
+        "{report}"
+    );
+    assert!(
+        report.contains("a running window rule opens on workspace `b`"),
+        "{report}"
+    );
+    assert!(
+        running
+            .with(
+                "config set",
+                "workspace \"a\"\nworkspace \"b\"\nworkspace \"c\"\n"
+            )
+            .is_ok()
+    );
 }

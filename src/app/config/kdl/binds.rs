@@ -10,9 +10,12 @@ use strum::VariantNames;
 
 use crate::input::domain::binding::Action;
 
+/// A bind block. knus keeps no value of a node with an error anywhere in it, so the block carries
+/// its binds' errors itself, and one bad bind leaves the others for the checks across binds.
 #[derive(Debug, Default)]
 pub struct BindsPart {
     pub binds: Vec<BindPart>,
+    pub errors: Vec<DecodeError<Span>>,
 }
 
 #[derive(Debug)]
@@ -21,7 +24,7 @@ pub struct BindPart {
     /// The node name as written.
     pub key: String,
     pub key_span: Span,
-    /// `None` when the action failed to decode, which has been reported already.
+    /// `None` when the action failed to decode, which is in the block's errors.
     pub action: Option<Action>,
     pub repeat: bool,
 }
@@ -46,34 +49,79 @@ const REFUSED_PROPERTIES: [(&str, &str); 4] = [
 impl Decode<Span> for BindsPart {
     fn decode_node(
         node: &SpannedNode<Span>,
-        ctx: &mut Context<Span>,
+        _: &mut Context<Span>,
     ) -> Result<Self, DecodeError<Span>> {
+        let mut errors = Vec::new();
         for argument in &node.arguments {
-            ctx.emit_error(DecodeError::unexpected(
+            errors.push(DecodeError::unexpected(
                 &argument.literal,
                 "argument",
                 "`binds` takes no arguments",
             ));
         }
         for name in node.properties.keys() {
-            ctx.emit_error(DecodeError::unexpected(
+            errors.push(DecodeError::unexpected(
                 name,
                 "property",
                 "`binds` takes no properties",
             ));
         }
-        let mut binds = Vec::new();
-        for child in node.children() {
-            match BindPart::decode_node(child, ctx) {
-                Ok(bind) => binds.push(bind),
-                Err(error) => ctx.emit_error(error),
-            }
-        }
-        Ok(BindsPart { binds })
+        let binds = node.children().map(|child| BindPart::decode(child, &mut errors)).collect();
+        Ok(BindsPart { binds, errors })
     }
 }
 
-impl Decode<Span> for BindPart {
+impl BindPart {
+    /// One bind, as much of it as decodes; what does not is added to `errors`.
+    fn decode(node: &SpannedNode<Span>, errors: &mut Vec<DecodeError<Span>>) -> BindPart {
+        let repeat = match knus::decode::node::<KeyOptions, Span>(node) {
+            Ok(KeyOptions { repeat }) => repeat,
+            Err(found) => {
+                errors.extend(found);
+                false
+            }
+        };
+        let mut bind = BindPart {
+            span: *node.span(),
+            key: node.node_name.to_string(),
+            key_span: *node.node_name.span(),
+            action: None,
+            repeat,
+        };
+        let mut children = node.children();
+        let Some(child) = children.next() else {
+            errors.push(DecodeError::missing(
+                node,
+                "expected an action for this key, in braces",
+            ));
+            return bind;
+        };
+        for extra in children {
+            errors.push(DecodeError::unexpected(extra, "node", "a key takes one action"));
+        }
+        let name = &**child.node_name;
+        if !Action::VARIANTS.contains(&name) {
+            errors.push(DecodeError::unexpected(
+                &child.node_name,
+                super::UNKNOWN_ACTION,
+                name,
+            ));
+            return bind;
+        }
+        match knus::decode::node::<Action, Span>(child) {
+            Ok(action) => bind.action = Some(action),
+            Err(found) => errors.extend(found),
+        }
+        bind
+    }
+}
+
+/// What a key's node says besides its action: no type name, no arguments, and `repeat=`.
+struct KeyOptions {
+    repeat: bool,
+}
+
+impl Decode<Span> for KeyOptions {
     fn decode_node(
         node: &SpannedNode<Span>,
         ctx: &mut Context<Span>,
@@ -108,38 +156,6 @@ impl Decode<Span> for BindPart {
                 }
             }
         }
-
-        let mut bind = BindPart {
-            span: *node.span(),
-            key: node.node_name.to_string(),
-            key_span: *node.node_name.span(),
-            action: None,
-            repeat,
-        };
-        let mut children = node.children();
-        let Some(child) = children.next() else {
-            ctx.emit_error(DecodeError::missing(
-                node,
-                "expected an action for this key, in braces",
-            ));
-            return Ok(bind);
-        };
-        for extra in children {
-            ctx.emit_error(DecodeError::unexpected(extra, "node", "a key takes one action"));
-        }
-        let name = &**child.node_name;
-        if !Action::VARIANTS.contains(&name) {
-            ctx.emit_error(DecodeError::unexpected(
-                &child.node_name,
-                super::UNKNOWN_ACTION,
-                name,
-            ));
-            return Ok(bind);
-        }
-        match Action::decode_node(child, ctx) {
-            Ok(action) => bind.action = Some(action),
-            Err(error) => ctx.emit_error(error),
-        }
-        Ok(bind)
+        Ok(KeyOptions { repeat })
     }
 }

@@ -94,8 +94,8 @@ fn layout_char_keycode(ch: &str, fallback: KeyCode) -> KeyCode {
     keycode_from_char(ch).unwrap_or(fallback)
 }
 
-/// The modifiers a spec names and its one key, if it has one. A second key is an error: `Ctrl + J + K`
-/// used to bind Ctrl+K and say nothing.
+/// The modifiers a spec names and its one key, if it has one. A second key is an error, never a
+/// silent choice between `Ctrl + J + K`'s two.
 fn parse_mods_and_optional_key(s: &str) -> Result<(Modifiers, Option<KeyCode>), anyhow::Error> {
     let parts: Vec<&str> = s.split('+').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
 
@@ -640,24 +640,27 @@ mod tests {
         assert!("".parse::<HotkeySpec>().is_err());
     }
 
-    /// The last key used to win silently, so `Ctrl + J + K` bound Ctrl+K.
     #[test]
     fn a_spec_naming_two_keys_is_refused() {
         let error = "Ctrl+J+K".parse::<Hotkey>().unwrap_err().to_string();
         assert!(error.contains("two keys"), "{error}");
     }
 
+    /// Through `normalize_spec`, as a bind's key reaches `Hotkey::from_str`.
     #[test]
     fn niri_key_names_resolve_to_macos_keys() {
         for (name, key) in [
             ("BackSpace", KeyCode::Backspace),
             ("Return", KeyCode::Enter),
             ("Page_Up", KeyCode::PageUp),
+            ("Page_Down", KeyCode::PageDown),
             ("Escape", KeyCode::Escape),
             ("space", KeyCode::Space),
             ("F19", KeyCode::F19),
         ] {
-            assert_eq!(KeyCode::from_str(name).unwrap(), key, "{name}");
+            let spec = crate::input::domain::key::normalize_spec(&format!("Alt+{name}"));
+            let hotkey = Hotkey::from_str(&spec).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(hotkey.key_code, key, "{name}");
         }
     }
 }

@@ -12,9 +12,10 @@
 - rini MUST read its config from `~/.config/rini/config.kdl`, or the path `--config` names, written in
   KDL v1, the version niri reads.
 - Wherever rini and niri share a concept, the config MUST use niri's section names, node names,
-  nesting and value forms, so a niri snippet for a shared section (`layout`, `binds`, `window-rule`,
-  `workspace`) pastes in as written. A concept niri does not have MAY have a name of rini's own, in the
-  section niri would put it in.
+  nesting and value forms, so what a niri snippet for a shared section (`layout`, `binds`,
+  `window-rule`, `workspace`) says about a shared concept means the same in rini. What the snippet
+  names that rini lacks MUST be refused with the reason (below), so a snippet need not paste in whole.
+  A concept niri does not have MAY have a name of rini's own, in the section niri would put it in.
 - Every section MUST be optional. A setting left out keeps its default; binds and window rules are the
   exception, and a file that writes none has none, as in niri.
 - An empty section MUST mean exactly what an absent one does. Two TOML settings broke this: a
@@ -29,12 +30,20 @@
 - A name rini does not know MUST be refused, naming the line. When a known name is near, the report
   MUST say which; when the name is niri's and rini does not have it, the report MUST say why rather
   than offer a lookalike.
-- Every problem in a file MUST be reported in one report, each with its line and column.
+- Every problem in a file MUST be reported in one report, each with its line and column: what does
+  not decode and what the checks across nodes find (a key bound twice, a workspace that is not
+  declared, widths that do not nest) alike. Two kinds MAY show only once another problem is fixed.
+  One is a second problem inside one node: decoding a node stops at its first bad child or value, as
+  niri's does, though every bind is a node of its own. The other is a check across nodes that needs a
+  node that did not decode, which would otherwise report a problem the file does not have.
 - A section that may be written once, written twice, and a key bound twice, MUST be refused with both
   places named.
 - A number out of range MUST be refused where it is written, at launch as well as on a reload.
 - A config that cannot be used at launch MUST NOT stop rini starting: it starts on the built-in
   defaults and reports why (`specs/persistence.md`).
+- A missing `config.kdl` means the built-in defaults, with nothing to report, unless a `config.toml`
+  sits beside it. Then the launch MUST report it as a config that cannot be used, naming both files,
+  and `rini --validate` MUST fail: the defaults are not what that file configured.
 - A reload that cannot be used, whether the file changed, `load-config-file` was pressed or
   `rini-cli execute config reload` asked, MUST keep the running config and report why in the log.
   `rini-cli` MUST get the report as its error.
@@ -74,6 +83,9 @@
   settings replace the running ones, binds replace the binds for their keys, and `workspace` or
   `window-rule` nodes replace the running list. A fragment that cannot be used MUST change nothing.
   It lasts until the next reload; the file is the config.
+- The config a fragment leaves MUST pass every check a file does. A fragment that changes `mod-key`
+  so two running binds become one key, or replaces the workspaces so a running bind or rule names one
+  that is gone, MUST be refused, naming them.
 - `rini-cli execute config get` MUST print the running config.
 
 ## Where it lives

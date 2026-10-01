@@ -10,8 +10,9 @@
 - niri's triggers that are not keys (`WheelScrollDown`, `MouseLeft`, `TouchpadScrollDown`, `XF86…`)
   MUST be refused with the reason, not as an unknown key.
 - A single letter is case-insensitive: `a` and `A` name the same physical key.
-- Arrow words are accepted and canonicalised: `Down` means `ArrowDown`. niri's XKB names for keys macOS
-  has (`Return`, `BackSpace`, `Page_Up`, `space`, `grave`) MUST name those keys.
+- Arrow words are accepted and canonicalised: `Down` means `ArrowDown`, as a whole token between `+`s
+  only. niri's XKB names for keys macOS has (`Return`, `BackSpace`, `Page_Up`, `Page_Down`, `space`,
+  `grave`) MUST name those keys.
 - A token rini does not recognise is left exactly as written. It is either a key name the keyboard
   layer resolves or a typo the config decoder refuses, naming the line, and guessing would turn the
   second into the first.
@@ -21,7 +22,11 @@
 
 - A key MUST be bound once, across `binds` and `recent-windows › binds` together. A second binding is
   refused with both places named. Keys are compared as pressed: `Mod+H` and `Alt+H` under
-  `mod-key "Alt"` are one key, and `LAlt+H` overlaps `Alt+H`.
+  `mod-key "Alt"` are one key, and `LAlt+H` overlaps `Alt+H`. This holds for the config a
+  `config set` fragment leaves too, so a fragment changing `mod-key` is checked against the running
+  binds.
+- `rini.default.kdl` MUST be usable under `mod-key` `"Alt"`, `"Ctrl"` and `"Super"`. Under `"Shift"`
+  each `Mod+Shift` bind is its `Mod` bind, and the reference says so.
 - A held key MUST fire once. A bind written `repeat=true` fires again on every repeat while held.
 
 > **Reported 2026-10-01.** The switch to KDL asked whether a held key should repeat, niri's default.

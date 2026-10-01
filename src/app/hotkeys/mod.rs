@@ -12,7 +12,7 @@ use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::app::config::actor as config;
-use crate::input::domain::binding::Action;
+use crate::input::domain::binding::{Action, Bind};
 use crate::input::platform::gesture_tap;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::pid_t;
@@ -185,9 +185,8 @@ impl WmController {
                 self.events_tx.send(Event::ApplicationTerminated(pid));
             }
             ConfigUpdated(new_cfg) => {
-                let old = &self.config.config;
-                let binds_changed = (&old.binds, &old.switcher_binds, old.settings.mod_key)
-                    != (&new_cfg.binds, &new_cfg.switcher_binds, new_cfg.settings.mod_key);
+                let binds_changed =
+                    Registration::of(&self.config.config) != Registration::of(&new_cfg);
 
                 self.config.config = new_cfg;
 
@@ -286,19 +285,7 @@ impl WmController {
 
     fn register_hotkeys(&mut self) {
         debug!("register_hotkeys");
-        let config = &self.config.config;
-        let mod_key = config.settings.mod_key;
-        let resolve = |binds: &[crate::input::domain::binding::Bind]| {
-            binds
-                .iter()
-                .map(|bind| crate::input::domain::binding::Bind {
-                    key: bind.resolved_key(mod_key),
-                    ..bind.clone()
-                })
-                .collect::<Vec<_>>()
-        };
-        let binds = resolve(&config.binds);
-        let switcher_binds = resolve(&config.switcher_binds);
+        let Registration { binds, switcher_binds } = Registration::of(&self.config.config);
         // Derived from the same bindings rather than configured separately, so the chord that opens a
         // switch and the modifier that holds it open cannot disagree.
         let switch_keys =
@@ -330,12 +317,87 @@ impl WmController {
             error!("Failed to request config reload: {error_message}");
         }
     }
+}
 
+/// What the tap is given for a config's keys: every bind and switcher bind with `Mod` replaced by
+/// `mod-key`. A config change re-registers exactly when this changes.
+#[derive(Debug, PartialEq)]
+struct Registration {
+    binds: Vec<Bind>,
+    switcher_binds: Vec<Bind>,
+}
+
+impl Registration {
+    fn of(config: &crate::app::config::Config) -> Self {
+        let mod_key = config.settings.mod_key;
+        let resolve = |binds: &[Bind]| {
+            binds
+                .iter()
+                .map(|bind| Bind {
+                    key: bind.resolved_key(mod_key),
+                    ..bind.clone()
+                })
+                .collect()
+        };
+        Registration {
+            binds: resolve(&config.binds),
+            switcher_binds: resolve(&config.switcher_binds),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn registration(text: &str) -> Registration {
+        let config = crate::app::config::Config::parse("test.kdl", text)
+            .unwrap_or_else(|error| panic!("{}", error.render()));
+        Registration::of(&config)
+    }
+
+    fn keys(binds: &[Bind]) -> Vec<&str> {
+        binds.iter().map(|bind| bind.key.as_str()).collect()
+    }
+
+    const BINDS: &str = concat!(
+        "binds {\n    Mod+J { focus-column-left; }\n    Alt+K { debug; }\n}\n",
+        "recent-windows {\n    binds {\n        Mod+Tab { next-window; }\n    }\n}\n",
+    );
+
+    #[test]
+    fn every_mod_bind_is_registered_on_the_mod_key_switcher_binds_too() {
+        let ctrl = registration(&format!("input {{\n    mod-key \"Ctrl\"\n}}\n{BINDS}"));
+        assert_eq!(keys(&ctrl.binds), ["Ctrl+J", "Alt+K"]);
+        assert_eq!(keys(&ctrl.switcher_binds), ["Ctrl+Tab"]);
+        for key in keys(&ctrl.binds).into_iter().chain(keys(&ctrl.switcher_binds)) {
+            assert!(
+                <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(key).is_ok(),
+                "{key} would not register"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reload_that_only_changes_mod_key_re_registers() {
+        let alt = registration(BINDS);
+        let super_key = registration(&format!("input {{\n    mod-key \"Super\"\n}}\n{BINDS}"));
+        assert_ne!(alt, super_key);
+        assert_eq!(keys(&super_key.binds), ["Super+J", "Alt+K"]);
+    }
+
+    #[test]
+    fn a_reload_that_leaves_every_key_alone_does_not_re_register() {
+        assert_eq!(
+            registration(BINDS),
+            registration(&format!("layout {{\n    gaps 8\n}}\n{BINDS}"))
+        );
+        assert_eq!(
+            registration("binds {\n    Mod+J { focus-column-left; }\n}\n"),
+            registration("binds {\n    Alt+J { focus-column-left; }\n}\n"),
+            "`Mod+J` under the default mod-key registers what `Alt+J` does"
+        );
+    }
 
     #[test]
     fn a_clock_change_is_passed_to_the_reactor() {

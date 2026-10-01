@@ -141,11 +141,12 @@ impl Config {
         Self::code_defaults().with(name, text)
     }
 
-    /// `text` laid over this config, as `config set` applies a fragment.
+    /// `text` laid over this config, as `config set` applies a fragment. What does not decode and
+    /// what the checks across nodes find come back in one report.
     pub fn with(&self, name: &str, text: &str) -> Result<Config, ConfigError> {
-        let part = kdl::parse(name, text)?;
+        let (part, mut problems) = kdl::parse(name, text)?;
         let mut config = self.clone();
-        let problems = kdl::apply::apply(part, &mut config);
+        problems.extend(kdl::apply::apply(part, &mut config));
         if problems.is_empty() {
             Ok(config)
         } else {

@@ -166,19 +166,6 @@ fn main() {
     preflight();
 
     let config_path = rini::app::boot::config_path(opt.config.clone());
-    // The fallback rule and its history are `app::boot::config_or_default`, which is also where its
-    // tests are: this path is only reachable by running the binary.
-    let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
-    let config_usable = complaint.is_none();
-    if let Some(complaint) = complaint {
-        eprintln!("{complaint}");
-    }
-    rini::app::boot::apply_flag_overrides(
-        &mut config.settings,
-        opt.no_animate,
-        opt.default_disable,
-    );
-
     if opt.validate {
         match rini::app::boot::validate_config(&config_path) {
             Ok(line) => println!("{line}"),
@@ -200,6 +187,19 @@ fn main() {
         }
         process::exit(0);
     }
+
+    // The fallback rule is `app::boot::config_or_default`, which is also where its tests are: this
+    // path is only reachable by running the binary.
+    let (mut config, complaint) = rini::app::boot::config_or_default(&config_path);
+    let config_usable = complaint.is_none();
+    if let Some(complaint) = complaint {
+        eprintln!("{complaint}");
+    }
+    rini::app::boot::apply_flag_overrides(
+        &mut config.settings,
+        opt.no_animate,
+        opt.default_disable,
+    );
 
     execute_startup_commands(&config.settings.run_on_start);
 
