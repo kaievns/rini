@@ -1053,3 +1053,50 @@ fn a_fragment_that_drops_a_workspace_a_running_bind_or_rule_names_is_refused() {
             .is_ok()
     );
 }
+
+/// The list a fragment's `window-rule` or bind block would have replaced is not known, so the
+/// running rules or binds are not checked; the ones it leaves alone still are.
+#[test]
+fn a_fragment_whose_rules_or_binds_did_not_decode_does_not_check_the_running_ones() {
+    let running = parse(concat!(
+        "workspace \"a\"\nworkspace \"b\"\n",
+        "window-rule {\n    match app-id=\"x\"\n    open-on-workspace \"b\"\n}\n",
+        "binds {\n    Mod+B { focus-workspace \"b\"; }\n    Ctrl+J { debug; }\n}\n",
+        "recent-windows {\n    binds {\n        Mod+J { next-window; }\n    }\n}\n",
+    ));
+
+    let report = refused_fragment(
+        &running,
+        "workspace \"a\"\nwindow-rule {\n    match app-id=\"y\"\n    bogus 1\n}\n",
+    );
+    assert!(report.contains("`bogus`"), "{report}");
+    assert!(!report.contains("a running window rule"), "{report}");
+    assert!(
+        report.contains("the running bind `Mod+B` names workspace `b`"),
+        "{report}"
+    );
+
+    let report = refused_fragment(
+        &running,
+        concat!(
+            "workspace \"a\"\nbinds {\n}\n",
+            "binds {\n    Mod+B { focus-workspace \"a\"; }\n}\n",
+        ),
+    );
+    assert!(report.contains("`binds` is written twice"), "{report}");
+    assert!(!report.contains("the running bind"), "{report}");
+    assert!(
+        report.contains("a running window rule opens on workspace `b`"),
+        "{report}"
+    );
+
+    let report = refused_fragment(
+        &running,
+        concat!(
+            "input {\n    mod-key \"Ctrl\"\n}\n",
+            "recent-windows {\n    bogus 1\n    binds {\n        Alt+J { next-window; }\n    }\n}\n",
+        ),
+    );
+    assert!(report.contains("`bogus`"), "{report}");
+    assert!(!report.contains("the running binds"), "{report}");
+}

@@ -62,6 +62,11 @@ pub struct Undecoded {
     pub mod_key: bool,
     /// A `workspace` failed, so the names are not all known.
     pub workspace_names: bool,
+    /// A `window-rule` failed, so the list that replaces the running rules is not all known.
+    pub window_rules: bool,
+    /// A `binds` or `recent-windows` failed or was written twice, so which running binds the text
+    /// replaces is not known.
+    pub binds: bool,
 }
 
 /// Decodes `text` as far as it goes, with every problem found on the way. Only a syntax error
@@ -125,6 +130,8 @@ pub fn parse(name: &str, text: &str) -> Result<(ConfigPart, Vec<Problem>), Confi
     part.undecoded = Undecoded {
         mod_key: decoding.failed.contains(&"input"),
         workspace_names: decoding.failed.contains(&"workspace"),
+        window_rules: decoding.failed.contains(&"window-rule"),
+        binds: decoding.failed.iter().any(|name| ["binds", "recent-windows"].contains(name)),
     };
 
     // knus reports a node it does not know where the node starts, as an unexpected node in a struct

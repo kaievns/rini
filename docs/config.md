@@ -35,7 +35,9 @@ the format, and every place rini knowingly differs from niri.
    need more than one node on the config that results: widths that nest, one `focus-at-startup`,
    unique workspace names, workspace names that exist, keys bound once. A check that needs a node
    that did not decode is skipped (`Undecoded`): with an `input` left out, a clash counts only if it
-   holds whatever `mod-key` says; with a `workspace` left out, no name is checked.
+   holds whatever `mod-key` says; with a `workspace` left out, no name is checked; with a
+   `window-rule`, `binds` or `recent-windows` left out, the running rules or binds it would have
+   replaced are not checked.
 5. Both lists of problems go into one report, in file order.
 
 Loading the file is `apply(parse(file), code defaults)`; `config set` is

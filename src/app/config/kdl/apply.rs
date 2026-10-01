@@ -187,7 +187,9 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
             .into_iter()
             .map(|rule| window_rule(rule, names.as_deref(), &mut problems))
             .collect();
-    } else if let Some(names) = &names {
+    } else if !part.undecoded.window_rules
+        && let Some(names) = &names
+    {
         for name in workspaces.app_rules.iter().filter_map(|rule| rule.open_on_workspace.as_ref()) {
             if !names.contains(name) {
                 problems.push(
@@ -207,6 +209,7 @@ pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
             vec![config.settings.mod_key]
         },
         names,
+        running: !part.undecoded.binds,
     };
     apply_binds(part.binds, switcher_binds, &checks, config, &mut problems);
     problems
@@ -459,6 +462,9 @@ struct BindChecks {
     mod_keys: Vec<ModKey>,
     /// The declared workspaces, unless a `workspace` could not be decoded.
     names: Option<Vec<String>>,
+    /// Whether the running binds the text leaves are checked: not while a bind block could not be
+    /// decoded, since which of them it replaces is not known.
+    running: bool,
 }
 
 type Chords = HashSet<(Modifiers, KeyCode)>;
@@ -562,29 +568,31 @@ fn apply_binds(
         if written.iter().any(|written| same_key(&written.chords, &chords)) {
             continue;
         }
-        if let Some((_, earlier, _)) =
-            kept.iter().find(|(_, _, earlier)| same_key(earlier, &chords))
-        {
-            problems.push(
-                Problem::new(format!(
-                    "with `mod-key \"{}\"`, the running binds `{}` and `{}` are the same key",
-                    config.settings.mod_key.name(),
-                    earlier.key,
-                    bind.key
-                ))
-                .help("a key takes one action; rebind one of them in the same fragment"),
-            );
-        }
-        if let (Some(names), Some(name)) = (&checks.names, bind.action.workspace_name())
-            && !names.iter().any(|declared| declared == name)
-        {
-            problems.push(
-                Problem::new(format!(
-                    "the running bind `{}` names workspace `{name}`, which is not declared",
-                    bind.key
-                ))
-                .help(declared(names)),
-            );
+        if checks.running {
+            if let Some((_, earlier, _)) =
+                kept.iter().find(|(_, _, earlier)| same_key(earlier, &chords))
+            {
+                problems.push(
+                    Problem::new(format!(
+                        "with `mod-key \"{}\"`, the running binds `{}` and `{}` are the same key",
+                        config.settings.mod_key.name(),
+                        earlier.key,
+                        bind.key
+                    ))
+                    .help("a key takes one action; rebind one of them in the same fragment"),
+                );
+            }
+            if let (Some(names), Some(name)) = (&checks.names, bind.action.workspace_name())
+                && !names.iter().any(|declared| declared == name)
+            {
+                problems.push(
+                    Problem::new(format!(
+                        "the running bind `{}` names workspace `{name}`, which is not declared",
+                        bind.key
+                    ))
+                    .help(declared(names)),
+                );
+            }
         }
         kept.push((in_switcher, bind.clone(), chords));
     }
