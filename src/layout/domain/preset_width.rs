@@ -7,8 +7,8 @@
 /// The width a preset step asks a column to take.
 ///
 /// Full width is a case of its own rather than `Ratio(1.0)` because an ordinary column's ratio is
-/// clamped to `max_column_width_ratio` — 0.66667 in the shipped config — so asking for 1.0 as a
-/// ratio yields two thirds, not the viewport. Maximising is a mode that bypasses the clamp, which
+/// clamped to `max-column-width` — below 1.0 on purpose — so asking for 1.0 as a ratio yields
+/// that, not the viewport. Maximising is a mode that bypasses the clamp, which
 /// is why the caller has to be told which of the two it is applying.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PresetWidth {

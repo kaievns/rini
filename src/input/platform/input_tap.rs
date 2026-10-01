@@ -30,13 +30,12 @@ use crate::windows::platform::mouse::{MouseState, set_mouse_state};
 use crate::windows::platform::window_server;
 use rini_core::ids::WindowServerId;
 use rini_runloop::channel;
-use rustc_hash::FxHashMap as HashMap;
 
 use std::time::Instant;
 
-use crate::input::domain::binding::WmCommand;
+use crate::input::domain::binding::Bind;
 use crate::input::domain::held_keys::HeldKeys;
-use crate::input::domain::hotkey::modifiers_satisfy;
+use crate::input::domain::hotkey::{HotkeyTable, modifiers_satisfy};
 use crate::input::domain::key::{Hotkey, KeyCode};
 use crate::input::domain::pointer;
 use crate::input::domain::switch_session::{
@@ -57,7 +56,8 @@ pub enum Request {
     EnforceHidden,
     SetEventProcessing(bool),
     SetFocusFollowsMouseEnabled(bool),
-    SetHotkeys(Vec<(String, WmCommand)>),
+    /// Every bind, its key free of `Mod`.
+    SetHotkeys(Vec<Bind>),
     KeyboardLayoutChanged,
     SettingsUpdated(InputSettings),
     SetLowPowerMode(bool),
@@ -80,7 +80,7 @@ pub struct InputTap {
     tap: RefCell<Option<tap::EventTap>>,
     tap_generation: Cell<u64>,
     disable_hotkey: RefCell<Option<Hotkey>>,
-    hotkey_specs: RefCell<Vec<(String, WmCommand)>>,
+    hotkey_specs: RefCell<Vec<Bind>>,
     hotkeys: SharedHotkeyTable,
 }
 
@@ -124,7 +124,7 @@ impl Default for State {
 pub type Sender = channel::Sender<Request>;
 pub type Receiver = channel::Receiver<Request>;
 
-pub type SharedHotkeyTable = Arc<ArcSwap<HashMap<Hotkey, Vec<WmCommand>>>>;
+pub type SharedHotkeyTable = Arc<ArcSwap<HotkeyTable>>;
 
 struct CallbackCtx {
     this: Arc<InputTap>,
@@ -281,7 +281,7 @@ impl InputTap {
             tap_generation: Cell::new(0),
             disable_hotkey: RefCell::new(disable_hotkey),
             hotkey_specs: RefCell::new(Vec::new()),
-            hotkeys: Arc::new(ArcSwap::from_pointee(HashMap::default())),
+            hotkeys: Arc::new(ArcSwap::from_pointee(HotkeyTable::default())),
         }
     }
 
@@ -763,10 +763,10 @@ impl InputTap {
 
         // The switcher session, BEFORE the hotkey table.
         //
-        // Ordering rather than relaxing: the autorepeat suppression below lives inside the table
-        // branch and exists because a repeat re-fired real commands (workspace_auto_back_and_forth
-        // toggled on every one). A session that needs repeats to advance the selection gets them by
-        // being asked first, leaving that rule exactly as it was.
+        // Ordering rather than relaxing: the table swallows a held key's repeats unless its bind asks
+        // for them, because a repeat re-fired real commands (workspace back-and-forth toggled on
+        // every one). A session that needs repeats to advance the selection gets them by being asked
+        // first, leaving that rule exactly as it was.
         if let Some(key_code) = key_code_opt {
             let kind = match event_type {
                 CGEventType::KeyDown => Some(KeyEventKind::Down),
@@ -804,22 +804,12 @@ impl InputTap {
                     modifiers_from_flags_with_keys(state.current_flags, state.held.pressed()),
                     key_code,
                 );
-                let bindings = self.hotkeys.load();
-                if let Some(commands) = bindings.get(&hotkey) {
-                    // A held key generates repeated KeyDown events. Hotkeys
-                    // are press-triggered, so dispatching those repeats can
-                    // execute a command over and over. This is especially
-                    // surprising for workspace_auto_back_and_forth, where
-                    // each repeat toggles back to the other workspace.
-                    let is_repeat = CGEvent::integer_value_field(
-                        Some(event),
-                        CGEventField::KeyboardEventAutorepeat,
-                    ) != 0;
-                    if is_repeat {
-                        return false;
-                    }
-                    for cmd in commands {
-                        self.events.send(Event::Command(cmd.clone()));
+                let is_repeat =
+                    CGEvent::integer_value_field(Some(event), CGEventField::KeyboardEventAutorepeat)
+                        != 0;
+                if let Some(fired) = self.hotkeys.load().press(&hotkey, is_repeat) {
+                    if let Some(action) = fired {
+                        self.events.send(Event::Action(action));
                     }
                     return false;
                 }
@@ -830,36 +820,13 @@ impl InputTap {
     }
 
     fn rebuild_hotkeys_for_current_layout(&self) {
-        let specs = self.hotkey_specs.borrow();
-        let mut map: HashMap<Hotkey, Vec<WmCommand>> = HashMap::default();
-
-        for (spec, command) in specs.iter() {
-            let Ok(hotkey) = Hotkey::from_str(spec) else {
-                warn!(%spec, "Skipping hotkey that no longer resolves for current keyboard layout");
-                continue;
-            };
-
-            if hotkey.modifiers.has_generic_modifiers() {
-                for expanded_mods in hotkey.modifiers.expand_to_specific() {
-                    let expanded_hotkey = Hotkey::new(expanded_mods, hotkey.key_code);
-                    let entry = map.entry(expanded_hotkey).or_default();
-                    if !entry.contains(command) {
-                        entry.push(command.clone());
-                    }
-                }
-            } else {
-                let entry = map.entry(hotkey).or_default();
-                if !entry.contains(command) {
-                    entry.push(command.clone());
-                }
-            }
+        let (table, unresolved) =
+            HotkeyTable::build(&self.hotkey_specs.borrow(), |spec| Hotkey::from_str(spec).ok());
+        for spec in unresolved {
+            warn!(%spec, "Skipping hotkey that no longer resolves for current keyboard layout");
         }
-
-        trace!(
-            "Updated hotkey bindings for current keyboard layout: {}",
-            map.len()
-        );
-        self.hotkeys.store(Arc::new(map));
+        trace!("Updated hotkey bindings for current keyboard layout: {}", table.len());
+        self.hotkeys.store(Arc::new(table));
     }
 }
 

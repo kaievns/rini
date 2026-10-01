@@ -19,9 +19,9 @@ knows the features and converts what they emit.
 | `reactor/bar.rs` | The bar's half here: its model built from the stores after every batch and sent only when it changed, and what a click on it asks for |
 | `reactor/managers.rs` | The handles: eight manager structs plus the layout manager |
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
-| `config/` | `config.toml`: parsing into each feature's settings, validation that spans features, watching and reload |
+| `config/` | `config.kdl`: `config/kdl/` decodes each section into a part type and `kdl/apply.rs` lays the parts over each feature's settings, with the checks that span sections; then watching and reload. The format's decisions are [`docs/config.md`](../../../docs/config.md) |
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
-| `hotkeys/` | The controller: app launches, hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a binding alias to a `reactor::Command`, which is where the tests are |
+| `hotkeys/` | The controller: app launches, hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a bound `Action` to a `reactor::Command`, which is where the tests are |
 | `notifications.rs` | The NSWorkspace demultiplexer |
 | `boot.rs` | What the flags and the config file say before anything is built: whether to restore, and the config-or-defaults fallback |
 | `launch_agent.rs`, `startup.rs`, `logging.rs`, `channels.rs` | The service plist, configured startup commands, tracing, and the span-carrying channel every actor is wired with |
@@ -37,16 +37,17 @@ state; the actors it talks to have their own run loops and their own threads.
 
 **A broken config must not stop rini starting.** One mistyped binding used to take the
 window manager down. It now reports and falls back to the defaults, which is the only
-state a user can recover from.
+state a user can recover from. A broken reload keeps the running config and says why.
 
 **Decisions leave, orchestration stays.** Pure feature logic has been moved out to each
 feature's `domain/` over several passes. What remains in `reactor/mod.rs` reads and
 writes several stores per event, which is what the application is for.
 
-**A binding alias is a translation, not a side effect.** `hotkeys/lower.rs` turns a
-`WmCmd` into a `reactor::Command`, an `Exec`, a config reload, or a named refusal. It
-was ninety match arms inside `handle_event`, each ending in a `send`, so nothing could
-check that two aliases did not lower to the same command.
+**A bound action is a translation, not a side effect.** `hotkeys/lower.rs` turns an
+`Action` into a `reactor::Command`, a program to spawn, a config reload, or a named
+refusal. It was ninety match arms inside `handle_event`, each ending in a `send`, so
+nothing could check that two actions did not lower to the same command; now a table test
+names every action's target.
 
 ## Where the reactor's tests are
 

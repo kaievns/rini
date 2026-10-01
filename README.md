@@ -103,13 +103,14 @@ which makes every diff a conflict.
 
 ## Configuration
 
-Config lives at `~/.config/rini/config.toml`; saved layout state at `~/.rini/layout.ron`.
-`rini.default.toml` in this repo is the annotated reference and is compiled in as the
-default.
+Config lives at `~/.config/rini/config.kdl`; saved layout state at `~/.rini/layout.ron`.
+`rini.default.kdl` in this repo is the annotated reference, and is compiled in and used
+whenever the file is missing or cannot be used.
 
-The config format is inherited from rift and has diverged. Upstream's
-[wiki](https://github.com/acsandmann/rift/wiki/Config) is still the best explanation of
-the shared parts, but scrolling-specific and multi-display settings differ.
+The format is niri's: KDL v1 with niri's section and node names wherever rini and niri share
+a concept, so niri's [configuration wiki](https://niri-wm.github.io/niri/Configuration:-Introduction)
+explains the shared sections (`layout`, `binds`, `window-rule`, `workspace`) and a niri
+snippet for them pastes in as written. Where rini differs, and why, is `docs/config.md`.
 
 ## Interop
 

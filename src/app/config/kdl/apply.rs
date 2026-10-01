@@ -1,0 +1,575 @@
+//! Laying a decoded part over a `Config`, field by field, and the checks that need more than one
+//! node: widths that nest, unique workspace names, names that exist, keys bound once.
+//!
+//! Singleton sections merge field by field, so a part that leaves a setting out keeps what is
+//! there. A part's `workspace` and `window-rule` nodes replace the list, and its binds replace the
+//! binds for their keys.
+
+use std::collections::BTreeMap;
+use std::str::FromStr;
+
+use knus::span::Span;
+use rustc_hash::FxHashSet as HashSet;
+
+use super::ConfigPart;
+use super::binds::{BindPart, BindsPart};
+use super::error::Problem;
+use super::layout::{LayoutPart, ProportionPart};
+use super::value::{Flag, Number};
+use super::window_rule::{FixedPart, MatchPart, WindowRulePart};
+use crate::app::config::{BASE_ANIMATION_SECONDS, Config, MAX_WORKSPACES};
+use crate::input::domain::binding::{Action, Bind, WorkspaceReference};
+use crate::input::domain::key::{Hotkey, KeyCode, Modifiers, normalize_spec};
+use crate::windows::domain::rules::{FloatingPosition, RuleMatch, WindowRule};
+
+pub fn apply(part: ConfigPart, config: &mut Config) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let settings = &mut config.settings;
+    let workspaces = &mut config.virtual_workspaces;
+
+    if let Some(input) = part.input {
+        if let Some(mod_key) = input.mod_key {
+            settings.mod_key = mod_key;
+        }
+        if let Some(focus) = input.focus_follows_mouse {
+            settings.focus_follows_mouse = focus.on;
+            if focus.suspend_while_held.is_some() {
+                settings.focus_follows_mouse_disable_hotkey = focus.suspend_while_held;
+            }
+        }
+        if let Some(Flag(on)) = input.warp_mouse_to_focus {
+            settings.mouse_follows_focus = on;
+        }
+        if let Some(Flag(on)) = input.workspace_auto_back_and_forth {
+            workspaces.workspace_auto_back_and_forth = on;
+        }
+        if let Some(warp) = input.warp_mouse_across_stacked_outputs {
+            settings.warp_cursor_between_stacked_displays = warp.on;
+            if let Some(side) = warp.upper_side {
+                settings.stacked_display_upper_is = side;
+            }
+            if let Some(top) = warp.lower_top_at {
+                settings.stacked_display_lower_top_at = top.get();
+            }
+        }
+        if !input.ignore_app_activation.is_empty() {
+            settings.auto_focus_denylist = input.ignore_app_activation;
+        }
+    }
+
+    if let Some(Flag(on)) = part.cursor.and_then(|cursor| cursor.hide_on_focus_change) {
+        settings.mouse_hides_on_focus = on;
+    }
+
+    if let Some(layout) = part.layout {
+        apply_layout(layout, &mut settings.layout, &mut problems);
+    }
+
+    for output in part.outputs {
+        let Some(layout) = output.layout else { continue };
+        let entry = settings.layout.gaps.per_display.entry(output.uuid).or_default();
+        if let Some(gaps) = layout.gaps {
+            entry.gaps = Some(gaps.get());
+        }
+        if let Some(struts) = layout.struts {
+            entry.struts = Some(struts.edges());
+        }
+    }
+
+    if let Some(animations) = part.animations {
+        if let Some(Flag(off)) = animations.off {
+            settings.animate = !off;
+        }
+        if let Some(slowdown) = animations.slowdown {
+            settings.animation_duration = BASE_ANIMATION_SECONDS * slowdown.get();
+        }
+    }
+
+    if let Some(gestures) = part.gestures {
+        if let Some(swipe) = gestures.swipe_workspace_switch {
+            let g = &mut settings.gestures;
+            if let Some(on) = on_off(swipe.on, swipe.off, &swipe.span, &mut problems) {
+                g.enabled = on;
+            }
+            if let Some(fingers) = swipe.fingers {
+                g.fingers = fingers.get() as usize;
+            }
+            if let Some(distance) = swipe.trigger_distance {
+                g.distance_pct = distance.get();
+            }
+            if let Some(tolerance) = swipe.vertical_tolerance {
+                g.swipe_vertical_tolerance = tolerance.get();
+            }
+            if let Some(Flag(invert)) = swipe.invert {
+                g.invert_horizontal_swipe = invert;
+            }
+            if let Some(haptics) = swipe.haptics {
+                g.haptics_enabled = haptics.0.is_some();
+                if let Some(pattern) = haptics.0 {
+                    g.haptic_pattern = pattern;
+                }
+            }
+        }
+        if let Some(swipe) = gestures.swipe_view_scroll {
+            let g = &mut settings.layout.scrolling.gestures;
+            if let Some(on) = on_off(swipe.on, swipe.off, &swipe.span, &mut problems) {
+                g.enabled = on;
+            }
+            if let Some(fingers) = swipe.fingers {
+                g.fingers = fingers.get() as usize;
+            }
+            if let Some(distance) = swipe.trigger_distance {
+                g.distance_pct = distance.get();
+            }
+            if let Some(tolerance) = swipe.vertical_tolerance {
+                g.vertical_tolerance = tolerance.get();
+            }
+            if let Some(Flag(invert)) = swipe.invert {
+                g.invert_horizontal = invert;
+            }
+            if let Some(overscroll) = swipe.switch_workspace_on_overscroll {
+                g.switch_workspace_on_overscroll = overscroll.on;
+                if let Some(threshold) = overscroll.threshold {
+                    g.workspace_switch_threshold = threshold.get();
+                }
+            }
+        }
+        if let Some(Flag(pass)) = gestures.pass_through {
+            settings.gestures.consume_dock_swipe = !pass;
+        }
+        if let Some(Flag(visit)) = gestures.visit_empty_workspaces {
+            settings.gestures.skip_empty = !visit;
+        }
+        if let Some(overlap) = gestures.drag_swap_overlap {
+            settings.window_snapping.drag_swap_fraction = overlap.get();
+        }
+    }
+
+    let mut switcher_binds = None;
+    if let Some(recent) = part.recent_windows {
+        if let Some(icons) = recent.icons {
+            settings.switcher.icons = icons
+                .into_iter()
+                .map(|icon| (icon.bundle_id, icon.path))
+                .collect::<BTreeMap<_, _>>();
+        }
+        switcher_binds = recent.binds;
+    }
+
+    if let Some(Flag(off)) = part.bar.and_then(|bar| bar.off) {
+        settings.bar.enabled = !off;
+    }
+
+    if let Some(Flag(on)) = part.activate_spaces_by_default {
+        settings.default_disable = !on;
+    }
+    if let Some(Flag(on)) = part.reapply_window_rules_on_title_change {
+        workspaces.reapply_app_rules_on_title_change = on;
+    }
+    if !part.startup.is_empty() {
+        settings.run_on_start = part.startup;
+    }
+
+    if !part.workspaces.is_empty() {
+        apply_workspaces(&part.workspaces, workspaces, &mut problems);
+    }
+
+    if !part.window_rules.is_empty() {
+        workspaces.app_rules = part
+            .window_rules
+            .into_iter()
+            .map(|rule| window_rule(rule, &workspaces.workspace_names, &mut problems))
+            .collect();
+    }
+
+    apply_binds(part.binds, switcher_binds, config, &mut problems);
+    problems
+}
+
+/// A block's `on` and `off`: which one was written, and both is an error.
+fn on_off(
+    on: Option<Flag>,
+    off: Option<Flag>,
+    span: &Span,
+    problems: &mut Vec<Problem>,
+) -> Option<bool> {
+    match (on, off) {
+        (Some(_), Some(_)) => {
+            problems.push(Problem::at(span, "`on` and `off` are both written", "here"));
+            None
+        }
+        (Some(Flag(on)), None) => Some(on),
+        (None, Some(Flag(off))) => Some(!off),
+        (None, None) => None,
+    }
+}
+
+fn apply_layout(
+    layout: LayoutPart,
+    settings: &mut crate::layout::settings::LayoutSettings,
+    problems: &mut Vec<Problem>,
+) {
+    if let Some(gaps) = layout.gaps {
+        settings.gaps.gaps = gaps.get();
+    }
+    if let Some(struts) = layout.struts {
+        settings.gaps.struts = struts.edges();
+    }
+    let scrolling = &mut settings.scrolling;
+    let proportion = |part: Option<ProportionPart>,
+                      target: &mut f64,
+                      problems: &mut Vec<Problem>| {
+        let part = part?;
+        match part.proportion {
+            Some(value) => *target = value.get(),
+            None => problems.push(
+                Problem::at(&part.span, "expected a size, `{ proportion 0.5; }`", "no size here")
+                    .help("rini sizes columns by proportion; a window deciding its own width is not supported yet"),
+            ),
+        }
+        Some(part.span)
+    };
+    let default = proportion(
+        layout.default_column_width,
+        &mut scrolling.column_width_ratio,
+        problems,
+    );
+    let min = proportion(
+        layout.min_column_width,
+        &mut scrolling.min_column_width_ratio,
+        problems,
+    );
+    let max = proportion(
+        layout.max_column_width,
+        &mut scrolling.max_column_width_ratio,
+        problems,
+    );
+    let (low, mid, high) = (
+        scrolling.min_column_width_ratio,
+        scrolling.column_width_ratio,
+        scrolling.max_column_width_ratio,
+    );
+    if !(low <= mid && mid <= high) {
+        let mut problem = Problem::new(format!(
+            "column widths must nest: min-column-width {low} ≤ default-column-width {mid} ≤ max-column-width {high}"
+        ));
+        for (span, label) in [(min, "min"), (default, "default"), (max, "max")] {
+            if let Some(span) = span {
+                problem = problem.also(&span, label);
+            }
+        }
+        problems.push(problem);
+    }
+    if let Some(presets) = layout.preset_column_widths.filter(|presets| !presets.is_empty()) {
+        scrolling.preset_column_widths = presets
+            .into_iter()
+            .map(|super::layout::PresetPart::Proportion(value)| value.get())
+            .collect();
+    }
+    if let Some(center) = layout.center_focused_column {
+        scrolling.center_focused_column = center;
+    }
+    if let Some(point) = layout.window_insertion_point {
+        scrolling.window_insertion_point = point;
+    }
+}
+
+fn apply_workspaces(
+    parts: &[super::window_rule::WorkspacePart],
+    settings: &mut crate::workspaces::settings::VirtualWorkspaceSettings,
+    problems: &mut Vec<Problem>,
+) {
+    if parts.len() > MAX_WORKSPACES {
+        problems.push(Problem::at(
+            &parts[MAX_WORKSPACES].span,
+            format!("at most {MAX_WORKSPACES} workspaces"),
+            "one too many",
+        ));
+    }
+    let mut focused: Option<&Span> = None;
+    for (index, workspace) in parts.iter().enumerate() {
+        if workspace.name.is_empty() {
+            problems.push(Problem::at(&workspace.span, "a workspace needs a name", "empty"));
+        }
+        if let Some(earlier) = parts[..index]
+            .iter()
+            .find(|earlier| earlier.name.to_lowercase() == workspace.name.to_lowercase())
+        {
+            problems.push(
+                Problem::at(
+                    &workspace.span,
+                    format!("workspace `{}` is declared twice", workspace.name),
+                    "again here",
+                )
+                .also(&earlier.span, "first here")
+                .help("names are compared ignoring case"),
+            );
+        }
+        if workspace.focus_at_startup.is_some_and(|Flag(on)| on) {
+            if let Some(first) = focused {
+                problems.push(
+                    Problem::at(
+                        &workspace.span,
+                        "`focus-at-startup` is on two workspaces",
+                        "again here",
+                    )
+                    .also(first, "first here"),
+                );
+            } else {
+                focused = Some(&workspace.span);
+                settings.default_workspace = index;
+            }
+        }
+    }
+    if focused.is_none() {
+        settings.default_workspace = 0;
+    }
+    settings.workspace_names = parts.iter().map(|workspace| workspace.name.clone()).collect();
+}
+
+fn window_rule(part: WindowRulePart, names: &[String], problems: &mut Vec<Problem>) -> WindowRule {
+    let line = |part: MatchPart, problems: &mut Vec<Problem>| {
+        let patterns = [&part.app_id, &part.title, &part.app_name];
+        if patterns
+            .iter()
+            .any(|pattern| pattern.as_ref().is_some_and(|p| p.as_str().is_empty()))
+        {
+            problems.push(
+                Problem::at(&part.span, "an empty pattern matches every window", "here")
+                    .help("leave the matcher out instead"),
+            );
+        }
+        let names_nothing = patterns.iter().all(|pattern| pattern.is_none())
+            && part.ax_role.is_none()
+            && part.ax_subrole.is_none()
+            && part.is_modal.is_none();
+        if names_nothing {
+            problems.push(
+                Problem::at(&part.span, "this line names no matcher", "matches every window")
+                    .help("a rule with no `match` line already applies to every window"),
+            );
+        }
+        RuleMatch {
+            app_id: part.app_id,
+            title: part.title,
+            app_name: part.app_name,
+            ax_role: part.ax_role,
+            ax_subrole: part.ax_subrole,
+            is_modal: part.is_modal,
+        }
+    };
+    let matches = part.matches.into_iter().map(|m| line(m, problems)).collect();
+    let excludes = part.excludes.into_iter().map(|m| line(m, problems)).collect();
+
+    let open_on_workspace = part.open_on_workspace.map(|workspace| {
+        check_workspace_name(&workspace.name, &workspace.span, names, problems);
+        workspace.name
+    });
+    let fixed = |part: Option<FixedPart>, problems: &mut Vec<Problem>| {
+        let part = part?;
+        if part.fixed.is_none() {
+            problems.push(
+                Problem::at(&part.span, "expected a size, `{ fixed 640; }`", "no size here")
+                    .help("a window deciding its own size is what leaving this out means"),
+            );
+        }
+        part.fixed.map(Number::get)
+    };
+    let default_column_width = fixed(part.default_column_width, problems);
+    let default_window_height = fixed(part.default_window_height, problems);
+    if let Some(focused) = &part.open_focused
+        && !focused.value
+    {
+        problems.push(
+            Problem::at(
+                &focused.span,
+                "`open-focused false` is not supported yet",
+                "here",
+            )
+            .help("rini cannot stop a new window taking focus yet; leave it out"),
+        );
+    }
+    WindowRule {
+        matches,
+        excludes,
+        open_on_workspace,
+        open_floating: part.open_floating,
+        default_floating_position: part.default_floating_position.map(|position| {
+            FloatingPosition {
+                x: position.x.get(),
+                y: position.y.get(),
+                relative_to: position.relative_to.unwrap_or_default(),
+            }
+        }),
+        default_column_width,
+        default_window_height,
+        open_focused: part.open_focused.map(|focused| focused.value),
+        manage: part.manage,
+        open_on_output: part.open_on_output,
+    }
+}
+
+fn check_workspace_name(name: &str, span: &Span, names: &[String], problems: &mut Vec<Problem>) {
+    if !names.iter().any(|configured| configured == name) {
+        problems.push(
+            Problem::at(span, format!("there is no workspace `{name}`"), "not declared")
+                .help(format!("the workspaces are: {}", names.join(", "))),
+        );
+    }
+}
+
+/// A bind that survived its checks, with the chords it answers to.
+struct Resolved<'a> {
+    part: &'a BindPart,
+    bind: Bind,
+    chords: HashSet<(Modifiers, KeyCode)>,
+}
+
+/// Every combination of physical modifiers a key answers to: `Alt` is either side or both.
+fn chords(hotkey: &Hotkey) -> HashSet<(Modifiers, KeyCode)> {
+    hotkey
+        .modifiers
+        .expand_to_specific()
+        .into_iter()
+        .map(|mods| (mods, hotkey.key_code))
+        .collect()
+}
+
+fn resolve_hotkey(key: &str, config: &Config) -> Result<Hotkey, String> {
+    let resolved = crate::input::domain::key::substitute_mod(key, config.settings.mod_key);
+    Hotkey::from_str(&resolved).map_err(|error| error.to_string())
+}
+
+fn apply_binds(
+    binds: Option<BindsPart>,
+    switcher: Option<BindsPart>,
+    config: &mut Config,
+    problems: &mut Vec<Problem>,
+) {
+    if binds.is_none() && switcher.is_none() {
+        return;
+    }
+    let mut resolved: Vec<(bool, Resolved)> = Vec::new();
+    let blocks = [(false, binds.as_ref()), (true, switcher.as_ref())];
+    for (in_switcher, block) in blocks {
+        for part in block.into_iter().flat_map(|block| &block.binds) {
+            let Some(action) = &part.action else { continue };
+            let key = normalize_spec(part.key.trim());
+            let hotkey = match resolve_hotkey(&key, config) {
+                Ok(hotkey) => hotkey,
+                Err(error) => {
+                    problems.push(
+                        Problem::at(
+                            &part.key_span,
+                            format!("`{}` is not a key rini can bind", part.key),
+                            "here",
+                        )
+                        .help(error),
+                    );
+                    continue;
+                }
+            };
+            if !check_action(
+                action,
+                in_switcher,
+                part,
+                &config.virtual_workspaces.workspace_names,
+                problems,
+            ) {
+                continue;
+            }
+            let entry = Resolved {
+                part,
+                bind: Bind {
+                    key,
+                    action: action.clone(),
+                    repeat: part.repeat,
+                },
+                chords: chords(&hotkey),
+            };
+            if let Some((_, earlier)) =
+                resolved.iter().find(|(_, earlier)| !earlier.chords.is_disjoint(&entry.chords))
+            {
+                problems.push(
+                    Problem::at(&part.key_span, format!("`{}` is bound twice", part.key), "bound again here")
+                        .also(&earlier.part.key_span, "first bound here")
+                        .help("a key takes one action; keys are compared as pressed, so `Mod` and the modifier it stands for are the same key"),
+                );
+                continue;
+            }
+            resolved.push((in_switcher, entry));
+        }
+    }
+
+    let taken: Vec<&HashSet<(Modifiers, KeyCode)>> =
+        resolved.iter().map(|(_, r)| &r.chords).collect();
+    let keeps = |bind: &Bind| {
+        let Ok(hotkey) = resolve_hotkey(&bind.key, config) else {
+            return true;
+        };
+        let own = chords(&hotkey);
+        taken.iter().all(|chords| chords.is_disjoint(&own))
+    };
+    let kept_binds: Vec<Bind> = config.binds.iter().filter(|bind| keeps(bind)).cloned().collect();
+    let kept_switcher: Vec<Bind> =
+        config.switcher_binds.iter().filter(|bind| keeps(bind)).cloned().collect();
+    config.binds = kept_binds;
+    config.switcher_binds = kept_switcher;
+    for (in_switcher, entry) in resolved {
+        if in_switcher {
+            config.switcher_binds.push(entry.bind);
+        } else {
+            config.binds.push(entry.bind);
+        }
+    }
+}
+
+/// Whether `action` may be bound where it is written; says why not when it may not.
+fn check_action(
+    action: &Action,
+    in_switcher: bool,
+    part: &BindPart,
+    names: &[String],
+    problems: &mut Vec<Problem>,
+) -> bool {
+    let refuse = |problems: &mut Vec<Problem>, message: String, help: &str| {
+        problems.push(Problem::at(&part.span, message, "here").help(help.to_owned()));
+        false
+    };
+    match action {
+        Action::NextWindow { .. } | Action::PreviousWindow { .. } if !in_switcher => refuse(
+            problems,
+            "the switcher's actions go in `recent-windows › binds`".into(),
+            "that is where a held modifier keeps the switcher open",
+        ),
+        _ if in_switcher && !action.is_switcher() => refuse(
+            problems,
+            "`recent-windows › binds` takes `next-window` and `previous-window`".into(),
+            "every other action goes in the top-level `binds`",
+        ),
+        Action::NextWindow {
+            scope: Some(_),
+            filter: Some(_),
+        }
+        | Action::PreviousWindow {
+            scope: Some(_),
+            filter: Some(_),
+        } => refuse(
+            problems,
+            "a switcher takes `scope=` or `filter=`, not both".into(),
+            "filter=\"app-id\" already reaches the application's windows everywhere",
+        ),
+        Action::Spawn(argv) if argv.is_empty() => refuse(
+            problems,
+            "`spawn` needs a program".into(),
+            "`spawn \"program\" \"arg\"`",
+        ),
+        Action::FocusWorkspace(WorkspaceReference::Name(name))
+        | Action::MoveWindowToWorkspace(WorkspaceReference::Name(name), _) => {
+            let before = problems.len();
+            check_workspace_name(name, &part.span, names, problems);
+            problems.len() == before
+        }
+        _ => true,
+    }
+}

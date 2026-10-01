@@ -1,0 +1,436 @@
+// rini config
+//
+// rini reads ~/.config/rini/config.kdl. This file is the reference: it is compiled into rini and
+// used whenever that file is missing or cannot be used. Copy it there to start.
+//
+// The syntax is KDL v1, the same as niri's, and so are the names wherever rini and niri share a
+// concept: a niri `layout`, `binds` or `window-rule` snippet pastes in as written. A name niri does
+// not have is rini's own. Every section is optional, and a setting left out keeps the value shown
+// here, except binds and window rules: a file that writes none has none. A name rini does not know
+// is an error that names the line.
+//
+// The file is re-read whenever it changes. A version that cannot be used is reported, and rini
+// keeps running on the last good one.
+
+input {
+    // The modifier `Mod` stands for in `binds`: "Alt", "Ctrl", "Shift" or "Super" (Cmd).
+    // niri's default is Super; on macOS Cmd belongs to the applications.
+    mod-key "Alt"
+
+    // Moving the mouse into a window focuses it. Off unless written.
+    // suspend-while-held= names a key, or modifiers alone, that pause it while held.
+    // focus-follows-mouse suspend-while-held="Fn"
+
+    // When focus changes, move the mouse to the focused window. Off unless written.
+    // warp-mouse-to-focus
+
+    // Switching to the workspace that is already shown goes back to the previous one instead.
+    // workspace-auto-back-and-forth
+
+    // With displays arranged VERTICALLY, pushing the pointer off a left or right edge crosses to the
+    // display above or below, as if they sat side by side. Off unless written. It only makes sense
+    // for the stacked arrangement the scrolling layout needs: off-strip columns park at negative x,
+    // which lands inside a horizontally adjacent monitor (rift issue #266). Displays that really are
+    // side by side are left alone, since macOS crosses those natively.
+    //
+    // upper-side: which side the logically-upper display physically sits on, "left" or "right".
+    //   macOS knows the displays are stacked and nothing about the desk, so this cannot be inferred.
+    //   With "left", pushing the pointer LEFT off the lower display continues onto the upper one's
+    //   RIGHT edge, which is what a left-to-right sweep across both screens feels like.
+    // lower-top-at: where the LOWER display's top edge sits on the UPPER display's height, as a
+    //   fraction from 0 to 1 measured up from the upper display's BOTTOM edge. Each display's
+    //   physical size comes from CGDisplayScreenSize, so a crossing maps by real-world position
+    //   rather than by fraction along the edge. That matters whenever the screens differ in size: a
+    //   391mm external beside a 223mm laptop has its midpoint level with the laptop's TOP. 1.0
+    //   aligns top edges.
+    // warp-mouse-across-stacked-outputs upper-side="left" lower-top-at=0.4
+
+    // Applications whose activation must not switch workspaces or move focus, by bundle id,
+    // one line each. `rini-cli query applications` lists what is running. Examples:
+    // ignore-app-activation "com.apple.Spotlight"
+    // ignore-app-activation "com.apple.dock"
+}
+
+cursor {
+    // Hide the mouse cursor whenever focus moves to another window. Off unless written.
+    // hide-on-focus-change
+}
+
+layout {
+    // Logical pixels between windows, and between windows and the display edge.
+    gaps 0
+
+    // Extra space at each display edge, on top of `gaps`, in logical pixels. While the bar is on it
+    // keeps its own 32pt band clear, so `top` needs nothing for it.
+    struts {
+        // left 0
+        // right 0
+        // top 0
+        // bottom 0
+    }
+
+    // A new column's width, as a fraction of the display's tiling width.
+    default-column-width { proportion 0.7; }
+
+    // The narrowest and widest set-column-width makes a column. Full width (maximize-column, or
+    // `proportion 1.0` below) is a mode rather than a width, so these do not hold it back.
+    min-column-width { proportion 0.3; }
+    max-column-width { proportion 0.9; }
+
+    // The widths switch-preset-column-width steps through, ascending, wrapping. niri's stop at two
+    // thirds; rini adds full width, so a maximised column can be stepped back down. 1.0 is the
+    // maximised mode.
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+        proportion 1.0
+    }
+
+    // How the strip follows focus:
+    // - "never": the strip moves only as far as it must to show the focused column.
+    // - "always": the focused column sits in the middle, except the first and last columns, which
+    //   sit flush with the display edge (niri centres those too).
+    center-focused-column "never"
+
+    // Where a new window goes: "next-to-selection" (right after the focused window) or
+    // "end-of-tree" (the end of the strip).
+    window-insertion-point "next-to-selection"
+}
+
+// Per-display overrides of `layout`, by display UUID (`rini-cli query displays`). `gaps` and
+// `struts` each replace the value above as a whole: `struts { top 20; }` here leaves the other
+// three sides of this display at 0. Example:
+// output "11111111-2222-3333-4444-555555555555" {
+//     layout {
+//         gaps 8
+//         struts { top 20; }
+//     }
+// }
+
+animations {
+    // Every layout change, strip movement and workspace switch is drawn as one Core Animation
+    // flight in an overlay (src/animation/docs/animation-smoothness.md). Uncomment to place
+    // windows at once instead.
+    // off
+
+    // Multiplies the length of every animation. 1.0 is a 0.35s movement; below 1 is faster.
+    slowdown 1.0
+}
+
+gestures {
+    // Horizontal trackpad swipes switch workspaces. Off unless `on`.
+    swipe-workspace-switch {
+        // on
+        fingers 3
+        // How far the fingers travel before the switch fires, as a fraction of the trackpad's width.
+        trigger-distance 0.08
+        // How far the fingers may drift vertically and still count as a horizontal swipe:
+        // a fraction (0.4) or a percentage (40).
+        vertical-tolerance 0.4
+        // Swap the two directions.
+        // invert
+        // Haptic feedback when the switch commits: "level-change", "alignment", "generic" or "off".
+        haptics "level-change"
+    }
+
+    // Horizontal trackpad swipes scroll the strip, column by column. Off unless `on`.
+    swipe-view-scroll {
+        // on
+        fingers 3
+        trigger-distance 0.08
+        vertical-tolerance 0.4
+        // invert
+        // Scrolling `threshold` columns past either end of the strip switches workspace, so one
+        // long swipe runs on through the next workspace's strip.
+        // switch-workspace-on-overscroll threshold=0.15
+    }
+
+    // Let macOS and the frontmost application see the swipes rini handles, too.
+    // pass-through
+
+    // Stop on empty workspaces when a swipe switches workspace, instead of skipping them.
+    // visit-empty-workspaces
+
+    // Dragging a window over another swaps the two once their overlap reaches this share of the
+    // area they cover together (intersection over union, above 0 and up to 1). Lower swaps sooner.
+    drag-swap-overlap 0.3
+}
+
+recent-windows {
+    // An image to badge an application's switcher rows with in place of its own icon, by bundle id.
+    // For applications that set their icon while running, which only the Dock can see; Ghostty's
+    // macos-icon is one. A path starting ~/ is under the home directory. An image that cannot be
+    // read falls back to the application's own icon.
+    icons {
+        // "com.mitchellh.ghostty" "~/.config/rini/icons/ghostty.png"
+    }
+
+    // The switcher's keys. Bind them with a modifier: the modifier holds the switch open. A quick
+    // tap steps to the window you were in before; holding the modifier and pressing the key again
+    // steps further, Shift steps back, the arrow keys move the selection, Escape cancels, and
+    // releasing the modifier commits. Bound without a modifier it is a one-shot step.
+    //
+    // - next-window: every window, on every workspace and display, most recently focused first.
+    //   One row per window, not per application.
+    // - next-window scope="workspace": the shown workspace only, on every display it spans.
+    // - next-window filter="app-id": the focused application's windows, wherever they are. These
+    //   ROTATE rather than follow recency, like cmd-` rather than cmd-tab, so quick taps reach
+    //   every window instead of toggling between the last two.
+    // - previous-window takes the same properties and starts the other way.
+    //
+    // Cmd+Tab belongs to the Dock and cannot be taken. Examples:
+    binds {
+        // Super+F19 { next-window; }
+        // Super+F18 { next-window scope="workspace"; }
+        // Super+F17 { next-window filter="app-id"; }
+    }
+}
+
+bar {
+    // rini's 32pt bar across the top of every display: the workspaces, the shown workspace's
+    // applications, the focused window, the menu extras and the time. While it is on, every display
+    // keeps its top 32pt clear of windows. Uncomment to draw no bar and give the band back, for
+    // running another bar in its place.
+    // off
+}
+
+// The workspaces, top to bottom. Each always exists, and there are as many as are listed (at most
+// 128). `focus-at-startup` on one shows it at launch; otherwise the first. Leaving every one out
+// gives these four.
+workspace "Main"
+workspace "Development"
+workspace "Communication"
+workspace "Utilities"
+
+// Window rules: what happens to a window that matches.
+//
+// A rule applies to a window that matches ANY of its `match` lines and NONE of its `exclude`
+// lines; a rule with no `match` applies to every window. Every matcher on one line must hold.
+// Every rule that applies is applied, in file order, so a later rule overrides an earlier one,
+// property by property.
+//
+// Matchers:
+// - app-id: the bundle id, as a regular expression.
+// - title: the window title, as a regular expression.
+// - app-name: the application's name, as a regular expression.
+// - ax-role, ax-subrole: the exact macOS Accessibility role and subrole ("AXWindow", "AXDialog",
+//   "AXSystemDialog", "AXToolbar"), for telling dialogs, sheets and toolbars apart.
+// - is-modal: the window's AXModal attribute. Electron and Zoom report their dialogs as
+//   AXStandardWindow, so this is what tells those from application windows.
+// Regular expressions are case-sensitive and match anywhere in the text: anchor them with ^ and $,
+// or start them with (?i) to ignore case. Raw strings save escaping: r"^com\.apple\.finder$".
+// An invalid one is an error naming the line.
+//
+// Properties:
+// - open-on-workspace "name": the workspace the window opens on.
+// - open-floating true|false.
+// - default-floating-position x=40 y=40 relative-to="top-left": where a floating window first
+//   appears, in logical pixels from that corner of the display ("top-left", "top-right",
+//   "bottom-left", "bottom-right"), or from the middle of a side ("top", "bottom", "left",
+//   "right"). It moves freely afterwards.
+// - default-column-width { fixed 640; } and default-window-height { fixed 480; }: the first size,
+//   in logical pixels. A floating window opens at it; a tiled one is resized to it once, after it
+//   joins the strip.
+// - open-focused true: focus the window when it opens, switching to its workspace.
+// - manage false: rini leaves the window alone completely.
+// - open-on-output "internal"|"external": keep the window on that display.
+//
+//   A ROLE, not a display. The external monitor at home and the one at the office have different
+//   UUIDs, so a rule naming one would be silently inert at the other desk. "internal" is the
+//   machine's own screen (CGDisplayIsBuiltin); "external" is anything else, the leftmost when there
+//   are two.
+//
+//   A default, not a law. It decides where a window belongs when the current display arrangement
+//   has not been told otherwise, so it corrects an app that OPENS on the wrong screen, and an
+//   explicit move (a binding, a drag, a command) still wins and is remembered per arrangement. A
+//   role nothing fills, "internal" with the lid shut, is inert: the window lives wherever there is
+//   rather than being held off a screen that is not there.
+
+// Modal dialogs float rather than take a column. A later rule can decide otherwise for the windows
+// it matches, for example `match app-id=r"^com\.example\.X$" is-modal=true` with
+// `open-floating false`.
+window-rule {
+    match is-modal=true
+    open-floating true
+}
+
+// Examples.
+//
+// Float any window with "Preferences" in its title:
+// window-rule {
+//     match title="Preferences"
+//     open-floating true
+// }
+//
+// Send Calendar to the "Communication" workspace, floating:
+// window-rule {
+//     match app-name="^Calendar$"
+//     open-on-workspace "Communication"
+//     open-floating true
+// }
+//
+// Float, place, size and focus one application's windows:
+// window-rule {
+//     match app-id=r"^com\.example\.X$"
+//     open-floating true
+//     default-floating-position x=400 y=300
+//     default-column-width { fixed 640; }
+//     default-window-height { fixed 480; }
+//     open-focused true
+// }
+//
+// Float one application's dialogs:
+// window-rule {
+//     match app-id=r"^com\.example\.X$" ax-subrole="AXDialog"
+//     open-floating true
+// }
+//
+// Keep chat applications on the laptop's own screen:
+// window-rule {
+//     match app-id=r"^com\.tinyspeck\.slackmacgap$"
+//     match app-id=r"^com\.apple\.MobileSMS$"
+//     open-on-output "internal"
+// }
+
+// Re-run the window rules when a window's title changes, for windows identified by a title that
+// appears after the window does. Off unless written.
+// reapply-window-rules-on-title-change
+
+// rini starts with every macOS Space inactive: it manages no windows there until the Space is
+// turned on with toggle-space-activated (Mod+Z below). Uncomment to manage every Space from the
+// start instead. `rini --default-disable` forces the inactive start for one run.
+// activate-spaces-by-default
+
+// Commands run once when rini starts. spawn-at-startup runs a program with its arguments, one
+// string each, and interprets nothing. spawn-sh-at-startup hands one string to `sh -c`, so pipes,
+// $VARIABLES and quoting work.
+//
+// A command subscribed with `rini-cli subscribe` receives the event in its environment:
+//   RINI_EVENT_TYPE            "workspace_changed" | "windows_changed" | "window_title_changed" | "focused_window_changed"
+//   RINI_WORKSPACE_ID          workspace id
+//   RINI_WORKSPACE_NAME        workspace name
+//   RINI_SPACE_ID              native macOS space id
+//   RINI_DISPLAY_UUID          display UUID (absent when the display is unknown)
+//   RINI_WORKSPACE_INDEX       workspace index (window_title_changed and focused_window_changed)
+//   RINI_WINDOW_COUNT          number of windows (windows_changed only)
+//   RINI_WINDOWS               comma-separated window ids (windows_changed only)
+//   RINI_WINDOW_ID             window id (window_title_changed and focused_window_changed)
+//   RINI_PREVIOUS_WINDOW_TITLE previous title (window_title_changed only)
+//   RINI_WINDOW_TITLE          new title (window_title_changed only)
+//   RINI_EVENT_JSON            the whole event as JSON
+//
+// Example, a SketchyBar trigger:
+// spawn-sh-at-startup "rini-cli subscribe cli --event workspace_changed --command sh --args -c --args 'sketchybar --trigger rini_workspace_changed RINI_WORKSPACE_NAME=\"$RINI_WORKSPACE_NAME\" RINI_WORKSPACE_ID=\"$RINI_WORKSPACE_ID\"'"
+
+binds {
+    // A key is modifiers and one key joined by +, like Mod+Shift+H. Mod is input's mod-key.
+    // Modifiers: Mod, Ctrl (Control), Shift, Alt (Option), Super (Cmd, Command, Win); a side can be
+    // named, as in LAlt or RCmd. Keys: letters and digits (a letter means the key in that place on
+    // the current keyboard layout), F1-F20, Left Right Up Down, Tab, Space, Return, Escape,
+    // BackSpace, Delete, Home, End, Page_Up, Page_Down, Insert, Fn, Minus, Equal, Comma, Period,
+    // Slash, Semicolon, Apostrophe, Grave, Backslash, BracketLeft, BracketRight.
+    //
+    // Each key takes exactly one action, and a key written twice is an error. A held key fires
+    // once; repeat=true makes it repeat while held.
+    //
+    // Actions. N is a workspace (1 is the first) or a quoted workspace name; a monitor is N (1 is
+    // the first, in physical order) or a quoted display UUID. "-next" steps to the next display in
+    // physical order and WRAPS, so one key goes back and forth between two; a direction does not
+    // wrap, and right from the rightmost display does nothing.
+    //
+    //   focus-column-left / focus-column-right        stop at the end of the strip
+    //   focus-window-or-monitor-up / -down            within the column, then the display above/below
+    //   move-window-left / move-window-right          a lone window swaps columns; a stacked one leaves as a new column
+    //   move-window-up-or-to-monitor-up / move-window-down-or-to-monitor-down
+    //   toggle-fold-left / toggle-fold-right          fold the window into the column on that side, or back
+    //                                                 out to the row it came from; pressing one key twice undoes it
+    //   toggle-stack                                  in a joined column, give every OTHER window its own column;
+    //                                                 otherwise move the window into the column on its left
+    //   cycle-visible-windows / cycle-visible-windows-back   step through the windows on screen, wrapping
+    //   toggle-window-floating
+    //   switch-focus-between-floating-and-tiling
+    //   maximize-column                               the column fills the tiling area and keeps scrolling with
+    //                                                 the strip; macOS's own fullscreen stays the green button
+    //   switch-preset-column-width                    step through layout's preset-column-widths
+    //   set-column-width "+5%" / "-5%"                within min-column-width and max-column-width
+    //   set-window-height "+5%" / "-5%"               windows stacked in one column
+    //   set-column-width-or-window-height "+5%"       the height in a stacked column, the width otherwise
+    //   center-column
+    //   scroll-strip 0.5                              scroll the strip by that many columns
+    //   snap-strip                                    align the strip to column boundaries
+    //   focus-workspace N
+    //   focus-workspace-up / focus-workspace-down     skip-empty=true|false; never wrap
+    //   focus-workspace-previous                      the workspace shown before this one
+    //   move-window-to-workspace N                    focus=true (default) follows the window
+    //   move-window-to-workspace-up / -down           focus=true|false
+    //   create-workspace
+    //   focus-monitor-left/-right/-up/-down/-next, focus-monitor MONITOR
+    //   move-window-to-monitor-left/-right/-up/-down/-next, move-window-to-monitor MONITOR
+    //   move-mouse-to-monitor-left/-right/-up/-down/-next, move-mouse-to-monitor MONITOR
+    //   switch-space-left / switch-space-right        the native macOS Space
+    //   toggle-space-activated                        start or stop managing this macOS Space
+    //   close-window
+    //   spawn "program" "arg" ...                     run a program; each argument in its own string
+    //   spawn-sh "command"                            run a command line through sh -c
+    //   load-config-file                              re-read this file now
+    //   quit                                          save the layout and exit
+    //   save-layout "path" / restore-layout "path" scope="workspace"|"space" source="saved-active-space"|"current-space"
+    //   redistribute-windows                          spread windows back across workspaces by where they belong
+    //   serialize, debug, debug-warm-snapshots, show-timing,
+    //   debug-overlay-slide dx=-400 dy=0 duration-ms=250
+    // The switcher's next-window and previous-window go in recent-windows' binds.
+
+    Mod+Z { toggle-space-activated; }
+
+    Mod+H { focus-column-left; }
+    Mod+J { focus-window-or-monitor-down; }
+    Mod+K { focus-window-or-monitor-up; }
+    Mod+L { focus-column-right; }
+
+    Mod+Shift+H { move-window-left; }
+    Mod+Shift+J { move-window-down-or-to-monitor-down; }
+    Mod+Shift+K { move-window-up-or-to-monitor-up; }
+    Mod+Shift+L { move-window-right; }
+
+    Mod+1 { focus-workspace 1; }
+    Mod+2 { focus-workspace 2; }
+    Mod+3 { focus-workspace 3; }
+    Mod+4 { focus-workspace 4; }
+
+    Mod+Shift+1 { move-window-to-workspace 1 focus=false; }
+    Mod+Shift+2 { move-window-to-workspace 2 focus=false; }
+    Mod+Shift+3 { move-window-to-workspace 3 focus=false; }
+    Mod+Shift+4 { move-window-to-workspace 4 focus=false; }
+
+    Mod+Tab { focus-workspace-previous; }
+
+    Mod+Comma { toggle-fold-left; }
+    Mod+Period { toggle-fold-right; }
+    Mod+Shift+Comma { toggle-stack; }
+
+    Mod+Shift+Space { toggle-window-floating; }
+    Mod+F { maximize-column; }
+    // Briefly bring focus to the floating windows and back.
+    Mod+Shift+Ctrl+Space { switch-focus-between-floating-and-tiling; }
+
+    Mod+Shift+Equal { set-column-width "+5%"; }
+    Mod+Shift+Minus { set-column-width "-5%"; }
+    // For windows stacked in one column:
+    // Mod+Ctrl+Equal { set-window-height "+5%"; }
+    // Mod+Ctrl+Minus { set-window-height "-5%"; }
+
+    // Displays:
+    // Mod+Shift+A { move-mouse-to-monitor 1; }
+    // Mod+Shift+F { focus-monitor-right; }
+    // Mod+Ctrl+Up { move-window-to-monitor-up; }
+    // Mod+Ctrl+Down { move-window-to-monitor-down; }
+    // Ctrl+M { move-window-to-monitor-next; }
+
+    Mod+Return { spawn "/usr/bin/open" "-a" "/System/Applications/Utilities/Terminal.app"; }
+
+    // Prints the layout tree.
+    Mod+Shift+D { debug; }
+    Mod+Ctrl+S { serialize; }
+    Mod+Ctrl+Q { quit; }
+}

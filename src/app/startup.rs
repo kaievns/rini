@@ -1,127 +1,71 @@
-//! `run_on_start`: the shell commands the config asks the `rini` binary to run once at launch.
+//! Running programs: the config's `spawn-at-startup` and `spawn-sh-at-startup`, and the `spawn`
+//! and `spawn-sh` actions.
+use serde::Serialize;
 use tracing::{error, trace};
 
-pub fn parse_command(command: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut current_part = String::new();
-    let mut in_quotes = false;
-    let mut chars = command.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\'' | '"' => {
-                if in_quotes {
-                    in_quotes = false;
-                } else {
-                    in_quotes = true;
-                }
-            }
-            ' ' | '\t' if !in_quotes => {
-                if !current_part.is_empty() {
-                    parts.push(current_part.clone());
-                    current_part.clear();
-                }
-            }
-            '\\' if in_quotes => {
-                if let Some(next_ch) = chars.next() {
-                    match next_ch {
-                        'n' => current_part.push('\n'),
-                        't' => current_part.push('\t'),
-                        'r' => current_part.push('\r'),
-                        '\\' => current_part.push('\\'),
-                        '\'' => current_part.push('\''),
-                        '"' => current_part.push('"'),
-                        _ => {
-                            current_part.push('\\');
-                            current_part.push(next_ch);
-                        }
-                    }
-                } else {
-                    current_part.push('\\');
-                }
-            }
-            _ => {
-                current_part.push(ch);
-            }
-        }
-    }
-
-    if !current_part.is_empty() {
-        parts.push(current_part);
-    }
-
-    parts
+/// A command the config asks rini to run once at launch.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum StartupCommand {
+    /// A program and its arguments, as written.
+    Spawn(Vec<String>),
+    /// One command line for `sh -c`.
+    SpawnSh(String),
 }
 
-pub fn execute_startup_commands(commands: &[String]) {
-    if commands.is_empty() {
-        return;
-    }
-
-    trace!("Executing {} startup commands", commands.len());
-
-    for (i, command) in commands.iter().enumerate() {
-        trace!("Executing startup command {}: {}", i + 1, command);
-
-        let parts = parse_command(command);
-        if parts.is_empty() {
-            error!("Empty startup command at index {}", i);
-            continue;
+impl StartupCommand {
+    pub fn argv(&self) -> Vec<String> {
+        match self {
+            StartupCommand::Spawn(argv) => argv.clone(),
+            StartupCommand::SpawnSh(command) => shell(command),
         }
-
-        let (cmd, args) = parts.split_first().unwrap();
-
-        let cmd_owned = cmd.to_string();
-        let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let command_str = command.clone();
-
-        std::thread::spawn(move || {
-            let output = std::process::Command::new(&cmd_owned).args(&args_owned).output();
-
-            match output {
-                Ok(output) => {
-                    if output.status.success() {
-                        trace!("Startup command completed successfully: {}", command_str);
-                    } else {
-                        error!(
-                            "Startup command failed with status {}: {}",
-                            output.status, command_str
-                        );
-                        if !output.stderr.is_empty() {
-                            error!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to execute startup command '{}': {}", command_str, e);
-                }
-            }
-        });
     }
+}
+
+/// The argv that hands `command` to `sh -c`, so pipes, `$VARIABLES` and quoting work.
+pub fn shell(command: &str) -> Vec<String> {
+    vec!["/bin/sh".to_owned(), "-c".to_owned(), command.to_owned()]
+}
+
+pub fn execute_startup_commands(commands: &[StartupCommand]) {
+    for command in commands {
+        spawn(command.argv());
+    }
+}
+
+/// Runs `argv` on a thread of its own, logging a failure or a non-zero exit with its output.
+pub fn spawn(argv: Vec<String>) {
+    std::thread::spawn(move || {
+        let [program, args @ ..] = argv.as_slice() else {
+            error!("asked to run an empty command");
+            return;
+        };
+        trace!(?argv, "running");
+        match std::process::Command::new(program).args(args).output() {
+            Ok(output) if output.status.success() => trace!(?argv, "finished"),
+            Ok(output) => {
+                error!(?argv, status = %output.status, "command failed");
+                error!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+                error!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+            }
+            Err(e) => error!(?argv, "could not run: {e}"),
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_command;
+    use super::*;
 
     #[test]
-    fn splits_on_unquoted_whitespace_only() {
-        assert_eq!(parse_command("a  b\tc"), ["a", "b", "c"]);
-        assert_eq!(parse_command("say 'hello world'"), ["say", "hello world"]);
-        assert_eq!(parse_command(r#"say "a b" c"#), ["say", "a b", "c"]);
+    fn spawn_runs_its_arguments_as_written() {
+        let command = StartupCommand::Spawn(vec!["open".into(), "-a".into(), "My App".into()]);
+        assert_eq!(command.argv(), ["open", "-a", "My App"]);
     }
 
     #[test]
-    fn escapes_apply_inside_quotes_and_unknown_ones_are_kept() {
-        assert_eq!(parse_command(r#""x\ny""#), ["x\ny"]);
-        assert_eq!(parse_command(r#""a\"b""#), ["a\"b"]);
-        assert_eq!(parse_command(r#""a\qb""#), ["a\\qb"]);
-        assert_eq!(parse_command(r#""tail\"#), ["tail\\"]);
-    }
-
-    #[test]
-    fn empty_input_yields_no_parts() {
-        assert!(parse_command("").is_empty());
-        assert!(parse_command("   ").is_empty());
+    fn spawn_sh_hands_the_whole_line_to_the_shell() {
+        let command = StartupCommand::SpawnSh("echo \"$HOME\" | wc -c".into());
+        assert_eq!(command.argv(), ["/bin/sh", "-c", "echo \"$HOME\" | wc -c"]);
     }
 }

@@ -406,7 +406,7 @@ fn topology_change_clears_stale_pending_hide_target_before_next_workspace_layout
         window.frame_monotonic = CGRect::new(CGPoint::new(200.0, 200.0), CGSize::new(400.0, 400.0));
     }
 
-    let gaps = reactor.config.settings.layout.gaps.clone();
+    let gaps = reactor.config.settings.layout.gaps.effective_for_display(None);
     let hidden_target = reactor
         .layout_manager
         .layout_engine

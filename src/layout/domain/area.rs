@@ -1,6 +1,6 @@
 use objc2_core_foundation::CGRect;
 
-pub fn compute_tiling_area(screen: CGRect, gaps: &crate::layout::settings::GapSettings) -> CGRect {
+pub fn compute_tiling_area(screen: CGRect, gaps: &crate::layout::settings::Gaps) -> CGRect {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use rini_geometry::Round;
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn outer_gaps_inset_each_edge_and_never_go_negative() {
-        let mut gaps = crate::layout::settings::GapSettings::default();
+        let mut gaps = crate::layout::settings::Gaps::default();
         gaps.outer.top = 10.0;
         gaps.outer.left = 4.0;
         gaps.outer.bottom = 6.0;

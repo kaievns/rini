@@ -14,7 +14,6 @@ use anyhow::anyhow;
 use objc2_core_foundation::CFData;
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags};
 use parking_lot::Mutex;
-use serde::Deserialize;
 
 use crate::input::domain::key::{
     F_KEYS, Hotkey, HotkeySpec, KeyCode, MOD_FAMILIES, Modifiers, normalize_token,
@@ -56,6 +55,7 @@ impl FromStr for KeyCode {
 
             "tab" => KeyCode::Tab,
             "space" => KeyCode::Space,
+            "backspace" => KeyCode::Backspace,
             "enter" | "return" => KeyCode::Enter,
             "esc" | "escape" => KeyCode::Escape,
             "fn" => KeyCode::Fn,
@@ -94,21 +94,26 @@ fn layout_char_keycode(ch: &str, fallback: KeyCode) -> KeyCode {
     keycode_from_char(ch).unwrap_or(fallback)
 }
 
+/// The modifiers a spec names and its one key, if it has one. A second key is an error: `Ctrl + J + K`
+/// used to bind Ctrl+K and say nothing.
 fn parse_mods_and_optional_key(s: &str) -> Result<(Modifiers, Option<KeyCode>), anyhow::Error> {
     let parts: Vec<&str> = s.split('+').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
 
     let mut mods = Modifiers::empty();
-    let mut key_opt: Option<KeyCode> = None;
+    let mut key_opt: Option<(&str, KeyCode)> = None;
 
     for part in parts {
         if mods.insert_from_token(part) {
             continue;
         }
         let code = KeyCode::from_str(part)?;
-        key_opt = Some(code);
+        if let Some((first, _)) = key_opt {
+            return Err(anyhow!("`{s}` names two keys, `{first}` and `{part}`; a binding has one"));
+        }
+        key_opt = Some((part, code));
     }
 
-    Ok((mods, key_opt))
+    Ok((mods, key_opt.map(|(_, code)| code)))
 }
 
 impl FromStr for Hotkey {
@@ -118,29 +123,6 @@ impl FromStr for Hotkey {
         let (mods, key_opt) = parse_mods_and_optional_key(s)?;
         let key_code = key_opt.ok_or_else(|| anyhow!("No key specified in hotkey: {}", s))?;
         Ok(Hotkey::new(mods, key_code))
-    }
-}
-
-impl<'de> Deserialize<'de> for Hotkey {
-    fn deserialize<D>(deserializer: D) -> Result<Hotkey, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum HotkeyRepr {
-            Str(String),
-            Map {
-                modifiers: Modifiers,
-                key_code: KeyCode,
-            },
-        }
-
-        let repr = HotkeyRepr::deserialize(deserializer)?;
-        match repr {
-            HotkeyRepr::Str(s) => Hotkey::from_str(&s).map_err(serde::de::Error::custom),
-            HotkeyRepr::Map { modifiers, key_code } => Ok(Hotkey::new(modifiers, key_code)),
-        }
     }
 }
 
@@ -508,51 +490,21 @@ fn fallback_keycode_from_char(ch: &str) -> Option<KeyCode> {
     Some(code)
 }
 
-impl<'de> serde::de::Deserialize<'de> for HotkeySpec {
-    fn deserialize<D>(deserializer: D) -> Result<HotkeySpec, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        #[serde(untagged)]
-        enum HotkeyRepr {
-            Str(String),
-            Map {
-                modifiers: Option<Modifiers>,
-                key_code: Option<KeyCode>,
-            },
-        }
+/// A full hotkey, modifiers alone (`"Alt"`), or a lone key (`"Fn"`).
+impl FromStr for HotkeySpec {
+    type Err = anyhow::Error;
 
-        let repr = HotkeyRepr::deserialize(deserializer)?;
-        match repr {
-            HotkeyRepr::Str(s) => {
-                let (mods, key_opt) =
-                    parse_mods_and_optional_key(&s).map_err(serde::de::Error::custom)?;
-                if let Some(k) = key_opt {
-                    Ok(HotkeySpec::Hotkey(Hotkey::new(mods, k)))
-                } else if mods != Modifiers::empty() {
-                    Ok(HotkeySpec::ModifiersOnly { modifiers: mods })
-                } else {
-                    Err(serde::de::Error::custom(format!(
-                        "No key specified in hotkey: {}",
-                        s
-                    )))
-                }
-            }
-            HotkeyRepr::Map { modifiers, key_code } => {
-                let m = modifiers.unwrap_or(Modifiers::empty());
-                if let Some(k) = key_code {
-                    Ok(HotkeySpec::Hotkey(Hotkey::new(m, k)))
-                } else if m != Modifiers::empty() {
-                    Ok(HotkeySpec::ModifiersOnly { modifiers: m })
-                } else {
-                    Err(serde::de::Error::custom("No key specified in hotkey map"))
-                }
-            }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (mods, key_opt) = parse_mods_and_optional_key(s)?;
+        match key_opt {
+            Some(key) => Ok(HotkeySpec::Hotkey(Hotkey::new(mods, key))),
+            None if mods != Modifiers::empty() => Ok(HotkeySpec::ModifiersOnly { modifiers: mods }),
+            None => Err(anyhow!("No key specified in hotkey: {s}")),
         }
     }
 }
 
+#[cfg(test)]
 mod tests {
     #[allow(unused)]
     use super::*;
@@ -676,14 +628,37 @@ mod tests {
 
     #[test]
     fn a_modifiers_only_spec_gets_the_matching_modifier_key() {
-        let spec: HotkeySpec = serde_json::from_str(r#""Alt""#).unwrap();
+        let spec: HotkeySpec = "Alt".parse().unwrap();
         assert_eq!(spec, HotkeySpec::ModifiersOnly { modifiers: Modifiers::ALT });
         assert_eq!(spec.to_hotkey().unwrap().key_code, KeyCode::AltLeft);
-        let right: HotkeySpec = serde_json::from_str(r#""RAlt""#).unwrap();
+        let right: HotkeySpec = "RAlt".parse().unwrap();
         assert_eq!(right.to_hotkey().unwrap().key_code, KeyCode::AltRight);
-        let full: HotkeySpec = serde_json::from_str(r#""Alt + H""#).unwrap();
+        let full: HotkeySpec = "Alt + H".parse().unwrap();
         assert!(matches!(full, HotkeySpec::Hotkey(_)));
-        assert!(serde_json::from_str::<HotkeySpec>(r#""""#).is_err());
+        let fn_key: HotkeySpec = "Fn".parse().unwrap();
+        assert_eq!(fn_key, HotkeySpec::Hotkey(Hotkey::new(Modifiers::empty(), KeyCode::Fn)));
+        assert!("".parse::<HotkeySpec>().is_err());
+    }
+
+    /// The last key used to win silently, so `Ctrl + J + K` bound Ctrl+K.
+    #[test]
+    fn a_spec_naming_two_keys_is_refused() {
+        let error = "Ctrl+J+K".parse::<Hotkey>().unwrap_err().to_string();
+        assert!(error.contains("two keys"), "{error}");
+    }
+
+    #[test]
+    fn niri_key_names_resolve_to_macos_keys() {
+        for (name, key) in [
+            ("BackSpace", KeyCode::Backspace),
+            ("Return", KeyCode::Enter),
+            ("Page_Up", KeyCode::PageUp),
+            ("Escape", KeyCode::Escape),
+            ("space", KeyCode::Space),
+            ("F19", KeyCode::F19),
+        ] {
+            assert_eq!(KeyCode::from_str(name).unwrap(), key, "{name}");
+        }
     }
 }
 
@@ -699,7 +674,7 @@ mod mask_tests {
             ("Ctrl", CGEventFlags::MaskControl),
             ("Alt", CGEventFlags::MaskAlternate),
             ("Shift", CGEventFlags::MaskShift),
-            ("Meta", CGEventFlags::MaskCommand),
+            ("Super", CGEventFlags::MaskCommand),
         ];
         assert_eq!(
             MOD_FAMILIES.len(),

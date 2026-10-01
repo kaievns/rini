@@ -6,46 +6,39 @@
 
 use objc2_core_foundation::CGRect;
 
-use crate::layout::settings::{ScrollingAlignment, ScrollingFocusNavigationStyle};
+use crate::layout::settings::CenterFocusedColumn;
 
 /// Where the strip is pinned, in display coordinates: the x the selected column is drawn at before
 /// the scroll offset is subtracted.
 ///
-/// Niri navigation pins the strip to the left edge and lets the selection move within it, so a focus
-/// change never shifts an unrelated column. Anchored navigation moves the strip instead, and then the
-/// first and last columns are special: there is nothing beyond them to scroll to, so they sit flush
-/// rather than at the alignment the middle columns get. A centre override suspends all of that, since
-/// something has explicitly asked for one window to be centred.
+/// `never` pins the strip to the left edge and lets the selection move within it, so a focus change
+/// never shifts an unrelated column. `always` moves the strip instead to centre the selection, and
+/// then the first and last columns are special: there is nothing beyond them to scroll to, so they
+/// sit flush. A centre override suspends all of that, since something has explicitly asked for one
+/// window to be centred.
 pub fn anchor_x(
     tiling: CGRect,
     selected_width: f64,
     selected_col_idx: usize,
     column_count: usize,
-    alignment: ScrollingAlignment,
-    navigation: ScrollingFocusNavigationStyle,
+    center: CenterFocusedColumn,
     has_center_override: bool,
 ) -> f64 {
     let left = tiling.origin.x;
     let right = tiling.origin.x + tiling.size.width - selected_width;
     let centre = tiling.origin.x + (tiling.size.width - selected_width) / 2.0;
-    let niri = matches!(navigation, ScrollingFocusNavigationStyle::Niri);
+    let always = center == CenterFocusedColumn::Always;
 
-    if niri && !has_center_override {
+    if !always && !has_center_override {
         return left;
     }
-    // Anchored navigation, more than one column, no override: the ends sit flush.
-    let anchored_strip = !niri && !has_center_override && column_count > 1;
+    let anchored_strip = always && !has_center_override && column_count > 1;
     let first = selected_col_idx == 0;
     let last = selected_col_idx == column_count.saturating_sub(1);
-
-    match alignment {
-        ScrollingAlignment::Left if anchored_strip && last => right,
-        ScrollingAlignment::Left => left,
-        ScrollingAlignment::Center if anchored_strip && first => left,
-        ScrollingAlignment::Center if anchored_strip && last => right,
-        ScrollingAlignment::Center => centre,
-        ScrollingAlignment::Right if anchored_strip && first => left,
-        ScrollingAlignment::Right => right,
+    match () {
+        _ if anchored_strip && first => left,
+        _ if anchored_strip && last => right,
+        _ => centre,
     }
 }
 
@@ -125,76 +118,40 @@ mod tests {
 
     use super::*;
 
-    use ScrollingAlignment as Align;
-    use ScrollingFocusNavigationStyle as Nav;
+    use CenterFocusedColumn::{Always, Never};
 
     /// A 1000pt-wide viewport starting at x=0.
     fn tiling() -> CGRect {
         CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1000.0, 800.0))
     }
 
-    fn anchor(idx: usize, count: usize, align: Align, nav: Nav, override_: bool) -> f64 {
-        anchor_x(tiling(), 400.0, idx, count, align, nav, override_)
+    fn anchor(idx: usize, count: usize, center: CenterFocusedColumn, override_: bool) -> f64 {
+        anchor_x(tiling(), 400.0, idx, count, center, override_)
     }
 
     #[test]
-    fn niri_navigation_pins_the_strip_to_the_left_whatever_the_alignment() {
-        for align in [Align::Left, Align::Center, Align::Right] {
-            for idx in 0..3 {
-                assert_eq!(
-                    anchor(idx, 3, align, Nav::Niri, false),
-                    0.0,
-                    "{align:?} col {idx}"
-                );
-            }
+    fn never_pins_the_strip_to_the_left() {
+        for idx in 0..3 {
+            assert_eq!(anchor(idx, 3, Never, false), 0.0, "col {idx}");
         }
     }
 
     #[test]
-    fn a_centre_override_puts_the_selection_in_the_middle_even_under_niri() {
-        assert_eq!(anchor(1, 3, Align::Center, Nav::Niri, true), 300.0);
+    fn a_centre_override_puts_the_selection_in_the_middle_even_under_never() {
+        assert_eq!(anchor(1, 3, Never, true), 300.0);
     }
 
     #[test]
-    fn anchored_navigation_sits_the_ends_flush_and_the_middle_at_its_alignment() {
-        assert_eq!(
-            anchor(0, 3, Align::Center, Nav::Anchored, false),
-            0.0,
-            "first is flush left"
-        );
-        assert_eq!(
-            anchor(1, 3, Align::Center, Nav::Anchored, false),
-            300.0,
-            "middle is centred"
-        );
-        assert_eq!(
-            anchor(2, 3, Align::Center, Nav::Anchored, false),
-            600.0,
-            "last is flush right"
-        );
+    fn always_sits_the_ends_flush_and_centres_the_middle() {
+        assert_eq!(anchor(0, 3, Always, false), 0.0, "first is flush left");
+        assert_eq!(anchor(1, 3, Always, false), 300.0, "middle is centred");
+        assert_eq!(anchor(2, 3, Always, false), 600.0, "last is flush right");
     }
 
+    // With one column there is nothing to scroll to, so the end-of-strip exceptions do not apply.
     #[test]
-    fn left_alignment_only_makes_an_exception_for_the_last_column() {
-        assert_eq!(anchor(0, 3, Align::Left, Nav::Anchored, false), 0.0);
-        assert_eq!(anchor(1, 3, Align::Left, Nav::Anchored, false), 0.0);
-        assert_eq!(anchor(2, 3, Align::Left, Nav::Anchored, false), 600.0);
-    }
-
-    #[test]
-    fn right_alignment_only_makes_an_exception_for_the_first_column() {
-        assert_eq!(anchor(0, 3, Align::Right, Nav::Anchored, false), 0.0);
-        assert_eq!(anchor(1, 3, Align::Right, Nav::Anchored, false), 600.0);
-        assert_eq!(anchor(2, 3, Align::Right, Nav::Anchored, false), 600.0);
-    }
-
-    // With one column there is nothing to scroll to, so the end-of-strip exceptions do not apply and
-    // the alignment is taken at face value.
-    #[test]
-    fn a_lone_column_takes_its_alignment_literally() {
-        assert_eq!(anchor(0, 1, Align::Left, Nav::Anchored, false), 0.0);
-        assert_eq!(anchor(0, 1, Align::Center, Nav::Anchored, false), 300.0);
-        assert_eq!(anchor(0, 1, Align::Right, Nav::Anchored, false), 600.0);
+    fn a_lone_column_is_centred_under_always() {
+        assert_eq!(anchor(0, 1, Always, false), 300.0);
     }
 
     #[test]

@@ -79,7 +79,8 @@ context is arranged differently depending on what is plugged in, and rini rememb
 
 ## Pinning an app to a display
 
-- A config rule MAY pin matching windows to the `internal` or the `external` display.
+- A `window-rule` MAY pin the windows it applies to to the `internal` or the `external` display, with
+  `open-on-output "internal"` or `open-on-output "external"`.
 - A pin names a ROLE, never a display. The external at home and the one at the office have different
   UUIDs, so a rule naming one would be silently inert at the other desk.
 - A pin is a DEFAULT, not a law, and the precedence MUST be: an explicit move by the user, then the

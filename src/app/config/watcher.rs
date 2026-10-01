@@ -10,19 +10,20 @@ use notify_debouncer_mini::{
 };
 use tracing::{debug, info, trace, warn};
 
+use crate::app::config::ConfigCommand;
 use crate::app::config::actor::{self as config_actor, Event as ConfigEvent};
-use crate::app::config::{self as config, ConfigCommand};
 
+/// Re-reads the config whenever its file changes. A version that cannot be used is reported by the
+/// actor, which keeps running on the last good one.
 pub struct ConfigWatcher {
     file: PathBuf,
     real_file: Option<PathBuf>,
     real_file_id: Option<(u64, u64)>,
     config_tx: config_actor::Sender,
-    enabled: bool,
 }
 
 impl ConfigWatcher {
-    pub fn spawn(config_tx: config_actor::Sender, config: config::Config, config_path: PathBuf) {
+    pub fn spawn(config_tx: config_actor::Sender, config_path: PathBuf) {
         thread::Builder::new()
             .name("config-watcher".to_string())
             .spawn(move || {
@@ -39,7 +40,6 @@ impl ConfigWatcher {
                     real_file,
                     real_file_id,
                     config_tx,
-                    enabled: config.settings.hot_reload,
                 };
                 rini_runloop::executor::Executor::run(async move {
                     if let Err(e) = actor.run().await {
@@ -50,7 +50,7 @@ impl ConfigWatcher {
             .expect("failed to spawn config-watcher thread");
     }
 
-    async fn run(mut self) -> notify::Result<()> {
+    async fn run(self) -> notify::Result<()> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<DebouncedEvent>();
 
         let mut debouncer =
@@ -88,28 +88,9 @@ impl ConfigWatcher {
 
             trace!("change detected (debounced): {:?} {:?}", event.kind, event.path);
 
-            let mut should_reload = self.enabled;
-
-            if !should_reload {
-                match crate::app::config::Config::read(&self.file) {
-                    Ok(new_cfg) => {
-                        if let Ok(current_cfg) = self.query_config().await {
-                            if new_cfg.keys != current_cfg.keys {
-                                should_reload = true;
-                            }
-                        }
-                    }
-                    Err(e) => warn!("Failed to read config file for diff check: {:?}", e),
-                }
-            }
-
-            if should_reload {
-                if self.request_reload().await.is_ok()
-                    && let Ok(new_config) = self.query_config().await
-                {
-                    self.enabled = new_config.settings.hot_reload;
-                    debug!("config reloaded successfully");
-                }
+            match self.request_reload().await {
+                Ok(()) => debug!("config reloaded"),
+                Err(_) => debug!("config not reloaded"),
             }
         }
 
@@ -163,18 +144,5 @@ impl ConfigWatcher {
         }
 
         fut.await
-    }
-
-    async fn query_config(&self) -> Result<config::Config, ()> {
-        let (tx, fut) = r#continue::continuation();
-        let event = ConfigEvent::QueryConfig(tx);
-        if let Err(e) = self.config_tx.try_send(event) {
-            let tokio::sync::mpsc::error::SendError((_span, event)) = e;
-            if let ConfigEvent::QueryConfig(response) = event {
-                std::mem::forget(response);
-            }
-            return Err(());
-        }
-        Ok(fut.await)
     }
 }

@@ -129,7 +129,7 @@ no pixel changes. So SLS stores the requested value against our connection and
 the window server never applies it. Reading back through SLS confirms a move
 that did not happen.
 
-`SLSGetWindowTransform` does work, and returns the negated origin. For window
+`SLSGetWindowTransform` does work, and returns the origin with its sign flipped. For window
 28809 at origin (-857, 32) it returns `[tx 857 ty -32]`. That explains the
 revert: for a foreign window the transform is derived from the real frame rather
 than being independent state, so the window server recomputes it and discards
@@ -312,7 +312,7 @@ which is exactly the case that returns a sliver.
   56ms. Worth using wherever it is sufficient.
 - The transform convention is `CGAffineTransformMakeTranslation(-tx, -ty)`, the
   negative of the target origin in top-left space. This matches
-  `SLSGetWindowTransform` returning the negated origin, measured above.
+  `SLSGetWindowTransform` returning the origin with its sign flipped, measured above.
 - The binding already exists in `crates/rini-skylight-sys/src/lib.rs`
   (`SLSHWCaptureWindowList`), so reaching it is cheap.
 - Captures exclude the drop shadow, which is why yabai calls
@@ -447,12 +447,12 @@ with the real desktop, unchanged. Only the window is shorter: it starts at the
 bar's lower edge (`window_rect`), and the content layer is lifted by the band
 (`canvas_rect`) inside a clipping view, so the reserved top band is drawn and
 then clipped rather than squashed. The band comes from the reactor as
-`SetDisplay { top_band }`, which is `[settings.bar]`'s reserved height, or 0 with
-the bar off.
+`SetDisplay { top_band }`, which is the bar's reserved height, or 0 with the bar
+off (`bar { off; }`).
 
 rini's own bar is at level 20, above the overlay (18), so it stays live through a
 flight and nothing pictures it; the engine looks for a bar UNDER the overlay only
-while `[settings.bar] enabled = false`, where it is another app's. See
+while `bar { off; }`, where it is another app's. See
 `src/bar/docs/README.md`.
 
 The relevant layers on this machine:
@@ -690,7 +690,8 @@ reported recording the animation showed up as a textbook ease-out decay:
 ```
 
 `screencapture -v` records at about 21fps, too coarse to sample a 350ms
-animation. Stretching `animation_duration` and taking ordinary screenshots is a
+animation. Stretching the movement with `animations › slowdown` and taking ordinary
+screenshots is a
 better instrument, and the canvas now reports its own frame count when a
 movement finishes:
 
@@ -1017,8 +1018,8 @@ keeps changing and the strip visibly jerks.
 The distance now comes from where the layout says the strip starts on screen:
 `strip_origin(space)`, the anchor less the scroll offset, before and after. It
 needs no reference to any window's real frame, so the clamp is irrelevant to it.
-The scroll offset alone, negated, was used first and missed a change of anchor:
-under niri navigation with centre alignment, centring a column and then moving it
+The scroll offset alone, sign flipped, was used first and missed a change of anchor:
+with `center-focused-column "never"`, centring a column and then moving it
 cleared the centring, so every window moved 576pt on a 1728pt display while the
 offset stayed at 1152, and the move was drawn as the finished layout at frame zero.
 A pass that did not move the strip reports zero and starts nothing:
@@ -1371,7 +1372,7 @@ to a size that does not fit the screen it is on.
 ## What the overlay is NOT doing
 
 Recorded because it took a long time to establish and would otherwise be
-re-investigated. Reported as "the windows are scaled", the overlay's tiles were
+looked into again. Reported as "the windows are scaled", the overlay's tiles were
 measured and are not the cause:
 
 - Every tile's rendered rect equals the frame it was given. Checked with

@@ -1,0 +1,110 @@
+# The config format
+
+rini's config is `~/.config/rini/config.kdl`, in niri's shape: KDL v1, niri's sections and node
+names wherever the two share a concept, rini's own names where they do not. `rini.default.kdl` is
+the annotated reference; the requirements are `specs/config.md`. This file is the decisions behind
+the format, and every place rini knowingly differs from niri.
+
+## Parser: knus, KDL v1
+
+- **knus** decodes the file. It is the maintained fork of knuffel, the crate niri parses its config
+  with, and keeps knuffel's `#[derive(Decode)]` model, so rini's part types are shaped as niri's are.
+  Every error carries a source span and miette renders the report.
+- **KDL v1**, because that is the syntax niri ships, documents and its users paste. Of 254 `kdl`
+  blocks in niri's wiki and default config, every one parses as v1 and 70 fail as v2: bare
+  `true`/`false`, `r"…"` raw strings, bare `null`.
+- **Pinned to a commit, not the 3.4.0 release.** knus-derive 3.4.0 depends on `proc-macro-error2`,
+  whose future-incompatibility report cargo printed on every build. Commit `20eb6f7` ("Drop proc
+  macro error2 (#57)", 2026-09-02) removes it and no release carries it yet. Move to the release
+  that does.
+- **v2 later**, by niri's route: parse v1 or v2 with kdl-rs, convert to v1, decode with knus.
+
+## How a file becomes a config
+
+1. `kdl::parse` reads the text into knus's AST. A syntax error stops here.
+2. The schema walk (`kdl/suggest.rs`) checks every node name against `SCHEMA`, the names each
+   section takes, and reports an unknown one with a suggestion, or with niri's reason from `NIRI`
+   when the name is niri's. knus's own report of the same node, an unexpected node in a struct or a
+   failed conversion in an enum, is matched by where the node starts and dropped.
+3. Each section decodes into a part type (`kdl/{input,layout,gestures,bar,binds,window_rule}.rs`)
+   whose every field is optional. Ranges are checked here, with the span.
+4. `kdl/apply.rs` lays the parts over a `Config`, field by field, and runs the checks that need more
+   than one node: widths that nest, one `focus-at-startup`, unique workspace names, workspace names
+   that exist, keys bound once.
+
+Loading the file is `apply(parse(file), code defaults)`; `config set` is
+`apply(parse(fragment), running config)`. The defaults are each feature's `Default` impl and nothing
+else, which is why an empty section cannot mean something different from an absent one: an absent
+part and an empty part both leave every field alone. The features' settings types carry no parsing;
+only `app/config` knows the file has a format.
+
+## Naming
+
+| Rule | Why |
+|---|---|
+| A shared concept takes niri's exact node name, nesting and value form | niri snippets and muscle memory carry over |
+| A rini-only concept is a kebab-case node in the section niri would use | `input` for focus and the pointer, `layout` for the strip, `gestures` for trackpad and drag, the top level for whole-WM flags, as niri's `prefer-no-csd` |
+| A bare flag turns something on, and flags are named for the non-default behaviour | niri's convention; a flag also takes `true` or `false` |
+| An unknown node, property or argument is an error | niri's behaviour; the TOML silently accepted typos in one table |
+| Indices start at 1 | niri's `focus-workspace 1` is the first workspace (Kai's decision, `specs/input.md`) |
+
+The three pointer flags niri has off by default, `focus-follows-mouse`, `warp-mouse-to-focus` and
+cursor hiding, take niri's default: off. They were on, and a default-on flag can only be written as
+`x false`, which no niri config contains.
+
+## Where rini differs from niri
+
+| Node | rini | Why |
+|---|---|---|
+| `input › mod-key` | `"Alt"` unless written | on macOS Cmd, niri's `Super`, belongs to the applications |
+| `animations › slowdown` | the one movement's length is 0.35s times `slowdown` | rini has one movement animation; niri scales each animation's own base |
+| `layout › preset-column-widths` | the default adds `proportion 1.0` | 1.0 is the maximise mode, so a maximised column can be stepped back down (`src/layout/docs/strip.md`) |
+| `layout › center-focused-column "always"` | the first and last columns sit flush with the display edge | there is nothing beyond them to scroll to; niri centres them. `"on-overflow"` is refused, not yet supported |
+| `layout › gaps`, `struts` | as niri: `gaps` between windows and at the edges, a strut adds to one edge | one gap value; rini's separate horizontal and vertical inner gaps are gone |
+| `output "UUID"` | a display UUID, and only `layout › gaps` and `struts` | niri names outputs by connector or make, model and serial; macOS owns the rest of what niri puts in `output` |
+| `window-rule › open-on-output` | `"internal"` or `"external"`, a ROLE | a UUID differs between the monitor at home and the one at the office; a pin is a default, not a law (`specs/displays.md`) |
+| `window-rule › open-on-workspace` | a name only | as niri |
+| `window-rule › default-floating-position` | logical pixels from that corner of the display | as niri; rini's old form was a fraction of the screen |
+| `window-rule › default-column-width`, `default-window-height` | `fixed` only | a floating window opens at it; a tiled one is resized once |
+| `window-rule › open-focused` | `true` only | rini cannot stop a new window taking focus yet |
+| `window-rule › match` | adds `app-name`, `ax-role`, `ax-subrole`, `is-modal` | macOS's names for what niri reads from Wayland |
+| `workspace "name" { focus-at-startup; }` | the workspace shown at launch | niri's word, from `output`; rini's workspaces span every display |
+| `binds` | a held key fires once; `repeat=true` opts in | Kai's decision: a repeat re-fired commands such as workspace back-and-forth |
+| `recent-windows › binds` | `next-window filter="app-id"` ROTATES the application's windows | cmd-` rather than cmd-tab: by recency, quick taps toggle between the last two and never reach a third |
+| `recent-windows › binds` | `scope="workspace"` spans every display | a rini workspace is one context across displays; `scope="output"` is refused |
+| `recent-windows › binds` | no defaults | niri's default, Alt+Tab, is `Mod+Tab` under rini's default `mod-key`, which is `focus-workspace-previous`; and Cmd+Tab belongs to the Dock |
+| `quit` | saves the layout and exits, never asks | so `skip-confirmation=` is refused |
+| `load-config-file` | bindable | IPC-only in niri |
+| `focus-window-or-monitor-down`, `-up` | the only vertical focus | at the column's end it crosses to the display below; niri's `focus-window-down` would not, so it is not offered |
+| `set-column-width "+5%"` | relative percentages only | niri's absolute `"50%"` and pixel forms are refused, not yet supported |
+
+rini-only actions keep rini's own words: `move-window-left` and `-right` (a lone window swaps
+columns, a stacked one leaves as a new column, which niri's `move-column-left` never does),
+`toggle-fold-left` and `-right` (niri's `consume-or-expel-window-left` never round-tripped:
+`src/layout/docs/strip.md`), `toggle-stack`, `cycle-visible-windows`, `scroll-strip`,
+`snap-strip`, `create-workspace`, `move-mouse-to-monitor-…`, `switch-space-left` and `-right`,
+`toggle-space-activated`, the layout save and restore, and the debug actions. Every action and the
+wire command it lowers to is the table in `src/app/hotkeys/lower/tests.rs`.
+
+## What went with the TOML
+
+| What | Why |
+|---|---|
+| `hot_reload` | the file is always re-read, and a failed reload keeps the running config, so there is nothing to guard |
+| `virtual_workspaces.enabled` | nothing read it |
+| `default_workspace_count` | the `workspace` nodes are the count; "Workspace N" padding went with it |
+| `prevent_wrapping` | workspace stepping never wraps, as niri's `focus-workspace-up` and `-down` do not |
+| `modifier_combinations` | `Mod` with `mod-key` covers it: Kai's `comb1` is `Mod+Shift`, `comb2` is `Mod+Alt` |
+| anchored `left` and `right` alignment | not expressible in niri's vocabulary, and no config used it |
+| separate horizontal and vertical inner gaps | niri has one `gaps` |
+| `exec`'s string form, split on single spaces, and the startup commands' own quote-aware splitter | `spawn` takes argv as written and `spawn-sh` hands one string to `sh -c` |
+| `title_substring`, `app_name`'s substring either way, a rule's workspace index, a fractional position | niri's regex matchers and pixel position replace them |
+| `float_modal_windows` | the modal rule is an ordinary `window-rule` in `rini.default.kdl` |
+| `Meta` as a modifier name | niri's `Super`, or `Cmd` |
+| `swap_windows`, `focus_window`, and window ids in binds | a config cannot know a window id; they are IPC only, as niri's `#[knuffel(skip)]` actions |
+| `config save` | it rewrote the file without its comments and could not write `focus_follows_mouse_disable_hotkey` back. The file is the config |
+| the typed `config set-…` setters and the JSON-path `config set` | `config set '<KDL>'` applies a fragment through the same code as the file |
+| the legacy bare `resize_window_grow` migration | it existed for TOML, and made every parse error lose its span |
+
+A recording (`rini --record`) no longer carries the config, since a config has no written form but
+its file; `replay` takes one.

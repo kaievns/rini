@@ -11,7 +11,6 @@ use rini_ipc::protocol::{self as reactor, DisplaySelector};
 use rini_ipc::protocol::{EventKind, RiniRequest, RiniResponse, SwitchScope};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 #[derive(Parser)]
 #[command(name = "rini-cli")]
@@ -343,58 +342,18 @@ enum LayoutCommands {
 
 #[derive(Subcommand)]
 enum ConfigCommands {
-    /// Update animation settings
-    SetAnimate {
-        value: String,
-    },
-    SetAnimationDuration {
-        value: f64,
-    },
-
-    /// Update mouse settings
-    SetMouseFollowsFocus {
-        value: bool,
-    },
-    SetMouseHidesOnFocus {
-        value: bool,
-    },
-    SetFocusFollowsMouse {
-        value: bool,
-    },
-
-    SetOuterGaps {
-        top: f64,
-        left: f64,
-        bottom: f64,
-        right: f64,
-    },
-    SetInnerGaps {
-        horizontal: f64,
-        vertical: f64,
-    },
-
-    /// Update workspace settings
-    SetWorkspaceNames {
-        names: Vec<String>,
-    },
-
-    /// Generic set: set an arbitrary config key (dot-separated path) to a JSON value.
-    /// Example: rini-cli execute config set --key settings.animate --value true
+    /// Apply a KDL fragment over the running config, e.g. `set 'layout { gaps 8; }'`. A section's
+    /// settings replace the running ones, binds replace the binds for their keys, and `workspace`
+    /// or `window-rule` nodes replace the running list. Lasts until the next reload.
     Set {
-        /// Dot-separated key path (e.g. settings.animate or settings.layout.gaps.outer.top)
-        key: String,
-        /// Value should be valid JSON (true, 1, "string", {"a":1}), but if it's not valid JSON
-        /// it will be treated as a string.
-        value: String,
+        /// The fragment, written as in config.kdl.
+        kdl: String,
     },
 
-    /// Get current config
+    /// Print the running config as JSON
     Get,
 
-    /// Save current config to file
-    Save,
-
-    /// Reload config from file
+    /// Read the config file again now
     Reload,
 }
 
@@ -755,7 +714,7 @@ fn map_window_command(cmd: WindowCommands) -> Result<CliCommand, String> {
             reactor::Command::Layout(LC::ResizeWindowShrink(orientation.into())),
         )),
         WindowCommands::ResizeBy { amount } => Ok(CliCommand::Reactor(reactor::Command::Layout(
-            LC::ResizeWindowBy { amount },
+            LC::ResizeWindowBy { amount, orientation: Default::default() },
         ))),
         WindowCommands::Close { window_id } => {
             let window_server_id = window_id.as_deref().map(parse_window_server_id).transpose()?;
@@ -887,42 +846,8 @@ fn map_config_command(cmd: ConfigCommands) -> Result<CliCommand, String> {
     use rini_ipc::protocol::ConfigCommand;
 
     let cfg_cmd = match cmd {
-        ConfigCommands::SetAnimate { value } => {
-            let bool_value = match value.to_lowercase().as_str() {
-                "true" | "on" => true,
-                "false" | "off" => false,
-                _ => return Err(format!("Invalid boolean value: {}. Use true/false", value)),
-            };
-            ConfigCommand::SetAnimate(bool_value)
-        }
-        ConfigCommands::SetAnimationDuration { value } => {
-            ConfigCommand::SetAnimationDuration(value)
-        }
-        ConfigCommands::SetMouseFollowsFocus { value } => {
-            ConfigCommand::SetMouseFollowsFocus(value)
-        }
-        ConfigCommands::SetMouseHidesOnFocus { value } => {
-            ConfigCommand::SetMouseHidesOnFocus(value)
-        }
-        ConfigCommands::SetFocusFollowsMouse { value } => {
-            ConfigCommand::SetFocusFollowsMouse(value)
-        }
-        ConfigCommands::SetOuterGaps { top, left, bottom, right } => {
-            ConfigCommand::SetOuterGaps { top, left, bottom, right }
-        }
-        ConfigCommands::SetInnerGaps { horizontal, vertical } => {
-            ConfigCommand::SetInnerGaps { horizontal, vertical }
-        }
-        ConfigCommands::SetWorkspaceNames { names } => ConfigCommand::SetWorkspaceNames(names),
-        ConfigCommands::Set { key, value } => {
-            let parsed_value: Value = match serde_json::from_str(&value) {
-                Ok(v) => v,
-                Err(_) => Value::String(value.clone()),
-            };
-            ConfigCommand::Set { key, value: parsed_value }
-        }
+        ConfigCommands::Set { kdl } => ConfigCommand::Set(kdl),
         ConfigCommands::Get => ConfigCommand::GetConfig,
-        ConfigCommands::Save => ConfigCommand::SaveConfig,
         ConfigCommands::Reload => ConfigCommand::ReloadConfig,
     };
 
@@ -1064,14 +989,14 @@ mod tests {
     #[test]
     fn config_commands_are_not_embedded_as_json_strings() {
         let request = build_execute_request(ExecuteCommands::Config {
-            config_cmd: ConfigCommands::SetAnimate { value: "true".into() },
+            config_cmd: ConfigCommands::Set { kdl: "layout { gaps 8; }".into() },
         })
         .unwrap();
 
         assert_eq!(
             serde_json::to_value(request).unwrap(),
             serde_json::json!({
-                "execute_command": { "command": { "config": { "set_animate": true } } }
+                "execute_command": { "command": { "config": { "set": "layout { gaps 8; }" } } }
             })
         );
     }

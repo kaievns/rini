@@ -42,7 +42,7 @@ struct Cli {
     #[arg(long)]
     one: bool,
 
-    /// Disable new spaces by default.
+    /// Start with every Space inactive, whatever activate-spaces-by-default says.
     ///
     /// Ignored if --one is used.
     #[arg(long)]
@@ -52,7 +52,7 @@ struct Cli {
     #[arg(long)]
     no_animate: bool,
 
-    /// Check whether the saved layout snapshot can be loaded.
+    /// Check the config file and the saved layout snapshot, then exit.
     #[arg(long)]
     validate: bool,
 
@@ -72,7 +72,7 @@ struct Cli {
     #[arg(long)]
     record: Option<PathBuf>,
 
-    /// Path to configuration file to use (overrides default).
+    /// Path to the config file (KDL) to use instead of ~/.config/rini/config.kdl.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -179,6 +179,13 @@ fn main() {
     );
 
     if opt.validate {
+        match rini::app::boot::validate_config(&config_path) {
+            Ok(line) => println!("{line}"),
+            Err(report) => {
+                eprintln!("{report}");
+                process::exit(1);
+            }
+        }
         let path = restore_file();
         match LayoutEngine::load(path.clone()) {
             Ok(_) => println!("Saved layout file is valid: {}", path.display()),
@@ -273,7 +280,7 @@ fn main() {
         config_path.clone(),
     );
 
-    ConfigWatcher::spawn(config_tx.clone(), config.clone(), config_path.clone());
+    ConfigWatcher::spawn(config_tx.clone(), config_path.clone());
 
     let server_state = match ipc::run_mach_server(rini::app::api::backend::IpcBackend::new(
         reactor.clone(),
@@ -437,9 +444,9 @@ fn main() {
 
     if config.settings.default_disable {
         println!(
-            "NOTICE: by default rini starts in a deactivated state.
-            you must activate it by using the toggle_space_activated command.
-            by default this is bound to Alt+Z but can be changed in the config file."
+            "NOTICE: rini starts with every Space inactive. Turn a Space on with the \
+             toggle-space-activated action (Mod+Z in rini.default.kdl), or write \
+             activate-spaces-by-default in the config to manage every Space from the start."
         );
     }
 

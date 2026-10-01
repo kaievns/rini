@@ -18,7 +18,7 @@ principle, and deliberately is not reused — see "Why this shape" in
 | `domain/preset_width.rs` | Which width the next `ctrl-R` asks for, and whether that width is the maximise mode |
 | `domain/area.rs` | The tiling rect: the usable frame minus the outer gaps |
 | `domain/boundary.rs` | What a swipe means once the strip has run out: which workspace step a strip edge implies, and the inversion flag that swaps it |
-| `settings.rs` | Ratios, gaps, presets, alignment, navigation style |
+| `settings.rs` | Ratios, gaps and struts, presets, where focus sits (`center-focused-column`), insertion |
 
 ## The shape that matters
 
@@ -38,7 +38,7 @@ strip-relative x, so the column still scrolls. The second mode rift had is delet
 
 **Maximized is a width, and also a mode.** It is the widest entry in the preset cycle,
 so `ctrl-R` reaches it and a step off it unmaximizes. It cannot be stored as a ratio
-because `max_column_width_ratio` is below 1.0 on purpose, which is why every rule that
+because `max-column-width` is below 1.0 on purpose, which is why every rule that
 asks how wide a column is has to ask `column_ratio` rather than adding up the offset.
 
 ## Reading order

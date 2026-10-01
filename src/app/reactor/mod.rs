@@ -597,7 +597,7 @@ impl Reactor {
         // Apps that are no longer running were already dropped from the restored state, at load
         // rather than here: `discard_unmatchable_startup_candidates` refuses a candidate whose
         // window server id is gone AND whose bundle is not running.
-        record.start(&config, &layout_engine, &display_memory);
+        record.start(&layout_engine, &display_memory);
         let (raise_manager_tx, _rx) = channels::channel();
         let (window_notify_tx, window_tx_store) = match window_notify {
             Some((tx, store)) => (Some(tx), store),
@@ -4775,7 +4775,7 @@ impl Reactor {
         }
 
         if let Some(dir) = boundary_hit
-            && self.config.settings.layout.scrolling.gestures.propagate_to_workspace_swipe
+            && self.config.settings.layout.scrolling.gestures.switch_workspace_on_overscroll
         {
             let cmd = workspace_step_at_boundary(
                 dir,

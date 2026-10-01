@@ -22,9 +22,10 @@ the strip fresh.
   refused at the load boundary. Admitting one creates windows no later cleanup can identify.
 - A refusal MUST say what is wrong and what follows from it, because the user's only other signal is
   that their layout is gone.
-- A broken CONFIG file MUST NOT stop rini starting. One mistyped binding used to take the window
-  manager down, and with nothing managing windows there is no way to open an editor to fix it. rini
-  reports the problem and starts with the built-in defaults.
+- A broken CONFIG file (`config.kdl`) MUST NOT stop rini starting. One mistyped binding used to take
+  the window manager down, and with nothing managing windows there is no way to open an editor to fix
+  it. rini reports the problem and starts with the built-in defaults. `specs/config.md` has the rest of
+  what a config owes.
 
 ## Restoring
 

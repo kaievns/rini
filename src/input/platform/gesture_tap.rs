@@ -18,7 +18,6 @@ use tracing::{trace, warn};
 use rini_ipc::protocol::{Command, LayoutCommand as LC};
 use rini_runloop::channel;
 
-use crate::input::domain::binding::WmCommand;
 use crate::input::domain::gesture::{
     ScrollStep, SwipePhase, SwipeToward, SwipeTrack, normalized_fraction, scroll_step,
     touch_centroid,
@@ -478,8 +477,7 @@ impl GestureTap {
             if cfg.haptics_enabled {
                 let _ = haptics::perform_haptic(cfg.haptic_pattern);
             }
-            self.events
-                .send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
+            self.events.send(Event::Command(Command::Layout(cmd)));
         }
         cfg.consume_dock_swipe && outcome.consume
     }
@@ -521,8 +519,7 @@ impl GestureTap {
 
     fn send_scroll(&self, delta: f64) {
         let cmd = LC::ScrollStrip { delta };
-        self.events
-            .send(Event::Command(WmCommand::ReactorCommand(Command::Layout(cmd))));
+        self.events.send(Event::Command(Command::Layout(cmd)));
     }
 
     /// Returns whether this event belongs to a horizontal scrolling gesture

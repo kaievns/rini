@@ -1,152 +1,367 @@
-//! What a key binding can name: a wire command, or the few things only a key can ask for
-//! (`exec`, `reload_config`, a workspace by name). Plain data; the application interprets it.
+//! What a key binding can name: rini's actions, in the config's own words. Plain data; the
+//! application lowers each to a wire command or does it itself.
+//!
+//! The names are niri's where rini does what niri does, and follow niri's grammar where it does not
+//! (`docs/config.md` has the table). Directions are part of the name, as niri's are.
 
-use std::borrow::Cow;
+use std::str::FromStr;
 
-use once_cell::sync::Lazy;
-pub use rini_ipc::protocol::Command;
-use rini_ipc::protocol::WorkspaceSelector;
-use serde::{Deserialize, Serialize};
-use strum::VariantNames;
+use knus::ast::{Literal, TypeName};
+use knus::decode::{Context, Kind};
+use knus::errors::DecodeError;
+use knus::span::Spanned;
+use knus::traits::ErrorSpan;
+pub use rini_ipc::protocol::{Command, RestoreScope, RestoreSource, SwitchScope};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum WmCommand {
-    Wm(WmCmd),
-    ReactorCommand(Command),
+use crate::input::domain::key::{ModKey, substitute_mod};
+
+/// One `binds` entry.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct Bind {
+    /// The key as written, canonicalised, with `Mod` still standing for `input › mod-key`.
+    pub key: String,
+    pub action: Action,
+    /// Fire again while the key is held. Off unless asked for: a repeat used to re-fire commands such
+    /// as workspace back-and-forth on every one.
+    pub repeat: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, strum_macros::VariantNames)]
-#[serde(rename_all = "snake_case")]
-pub enum WmCmd {
-    ToggleSpaceActivated,
-    Exec(ExecCmd),
-    ReloadConfig,
+impl Bind {
+    /// The key with `Mod` replaced by the modifier it stands for.
+    pub fn resolved_key(&self, mod_key: ModKey) -> String { substitute_mod(&self.key, mod_key) }
+}
 
-    NextWorkspace,
-    PrevWorkspace,
-    SwitchToWorkspace(WorkspaceSelector),
-    MoveWindowToWorkspace(WorkspaceSelector),
+#[derive(knus::Decode, strum::VariantNames, Serialize, Debug, Clone, PartialEq)]
+#[strum(serialize_all = "kebab-case")]
+#[serde(rename_all = "kebab-case")]
+pub enum Action {
+    FocusColumnLeft,
+    FocusColumnRight,
+    /// Within the column, then the display below at its end.
+    FocusWindowOrMonitorDown,
+    FocusWindowOrMonitorUp,
+    /// A lone window swaps columns; a stacked one leaves as a new column.
+    MoveWindowLeft,
+    MoveWindowRight,
+    MoveWindowDownOrToMonitorDown,
+    MoveWindowUpOrToMonitorUp,
+    ToggleFoldLeft,
+    ToggleFoldRight,
+    ToggleStack,
+    /// The windows on screen, wrapping.
+    CycleVisibleWindows,
+    CycleVisibleWindowsBack,
+    ToggleWindowFloating,
+    SwitchFocusBetweenFloatingAndTiling,
+    MaximizeColumn,
+    SwitchPresetColumnWidth,
+    CenterColumn,
+    SetColumnWidth(#[knus(argument, str)] SizeChange),
+    SetWindowHeight(#[knus(argument, str)] SizeChange),
+    SetColumnWidthOrWindowHeight(#[knus(argument, str)] SizeChange),
+    /// By that many columns.
+    ScrollStrip(#[knus(argument)] Decimal),
+    SnapStrip,
+    FocusWorkspace(#[knus(argument)] WorkspaceReference),
+    FocusWorkspaceDown(#[knus(property(name = "skip-empty"))] Option<bool>),
+    FocusWorkspaceUp(#[knus(property(name = "skip-empty"))] Option<bool>),
+    FocusWorkspacePrevious,
+    MoveWindowToWorkspace(
+        #[knus(argument)] WorkspaceReference,
+        #[knus(property(name = "focus"), default = true)] bool,
+    ),
+    MoveWindowToWorkspaceDown(#[knus(property(name = "focus"), default = true)] bool),
+    MoveWindowToWorkspaceUp(#[knus(property(name = "focus"), default = true)] bool),
     CreateWorkspace,
-    SwitchToLastWorkspace,
-
+    FocusMonitorLeft,
+    FocusMonitorRight,
+    FocusMonitorUp,
+    FocusMonitorDown,
+    /// The next display in physical order, wrapping.
+    FocusMonitorNext,
+    FocusMonitor(#[knus(argument)] MonitorReference),
+    MoveWindowToMonitorLeft,
+    MoveWindowToMonitorRight,
+    MoveWindowToMonitorUp,
+    MoveWindowToMonitorDown,
+    MoveWindowToMonitorNext,
+    MoveWindowToMonitor(#[knus(argument)] MonitorReference),
+    MoveMouseToMonitorLeft,
+    MoveMouseToMonitorRight,
+    MoveMouseToMonitorUp,
+    MoveMouseToMonitorDown,
+    MoveMouseToMonitorNext,
+    MoveMouseToMonitor(#[knus(argument)] MonitorReference),
+    /// The native macOS Space.
+    SwitchSpaceLeft,
+    SwitchSpaceRight,
+    ToggleSpaceActivated,
     CloseWindow,
-
-    /// Cycle the focused app's windows across workspaces and displays.
-    ///
-    /// Two unit variants rather than one taking `{ backward: bool }`. `WmCommand` is
-    /// `#[serde(untagged)]`, so a struct-bodied variant whose only field has a default
-    /// cannot be written as a bare string in a keybinding: `"cycle_app_windows"` matched
-    /// neither arm, and rini PANICS at startup on an unparseable binding rather than
-    /// skipping it, so the whole WM failed to start. Unit variants keep both directions
-    /// expressible as plain strings.
-    CycleAppWindows,
-    CycleAppWindowsBackward,
-
-    /// Step through EVERY window, on every workspace and display, in the order they were last
-    /// focused. Unbundled: one entry per window, not per application.
-    ///
-    /// Two unit variants for the same reason as the pair above — a struct-bodied variant cannot be
-    /// written as a bare string in a keybinding, and rini panics at startup on one it cannot parse.
-    SwitchWindow,
-    SwitchWindowBackward,
-
-    /// The same switch over the focused workspace only, on every display it spans.
-    SwitchWorkspaceWindow,
-    SwitchWorkspaceWindowBackward,
+    /// A program and its arguments, one string each, interpreting nothing.
+    Spawn(#[knus(arguments)] Vec<String>),
+    /// One command line, through `sh -c`.
+    SpawnSh(#[knus(argument)] String),
+    LoadConfigFile,
+    /// Save the layout and exit.
+    Quit,
+    SaveLayout(#[knus(argument)] String),
+    RestoreLayout {
+        #[knus(argument)]
+        path: String,
+        #[knus(property, str)]
+        scope: RestoreScope,
+        #[knus(property, str)]
+        source: Option<RestoreSource>,
+    },
+    RedistributeWindows,
+    Serialize,
+    Debug,
+    DebugWarmSnapshots,
+    DebugOverlaySlide {
+        #[knus(property)]
+        dx: i32,
+        #[knus(property)]
+        dy: i32,
+        #[knus(property)]
+        duration_ms: u64,
+    },
+    ShowTiming,
+    /// The switcher, only in `recent-windows › binds`.
+    NextWindow {
+        #[knus(property, str)]
+        scope: Option<SwitcherScope>,
+        #[knus(property, str)]
+        filter: Option<SwitcherFilter>,
+    },
+    PreviousWindow {
+        #[knus(property, str)]
+        scope: Option<SwitcherScope>,
+        #[knus(property, str)]
+        filter: Option<SwitcherFilter>,
+    },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+impl Action {
+    /// Whether this is one of the switcher's two actions, which belong in `recent-windows › binds`.
+    pub fn is_switcher(&self) -> bool {
+        matches!(self, Action::NextWindow { .. } | Action::PreviousWindow { .. })
+    }
+}
+
+/// The wire's scope for a switcher written `scope=` and `filter=`. Both at once is refused when the
+/// config is read.
+pub fn switch_scope(scope: Option<SwitcherScope>, filter: Option<SwitcherFilter>) -> SwitchScope {
+    match (scope, filter) {
+        (_, Some(SwitcherFilter::AppId)) => SwitchScope::App,
+        (Some(SwitcherScope::Workspace), None) => SwitchScope::Workspace,
+        (Some(SwitcherScope::All) | None, None) => SwitchScope::Everything,
+    }
+}
+
+/// A number written as an integer or a decimal.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(transparent)]
+pub struct Decimal(pub f64);
+
+impl<S: ErrorSpan> knus::DecodeScalar<S> for Decimal {
+    fn type_check(type_name: &Option<Spanned<TypeName, S>>, ctx: &mut Context<S>) {
+        if let Some(type_name) = type_name {
+            ctx.emit_error(DecodeError::unexpected(
+                type_name,
+                "type name",
+                "no type name expected",
+            ));
+        }
+    }
+
+    fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
+        let parsed = match &**value {
+            Literal::Int(int) => i64::try_from(int).map(|n| n as f64).map_err(|e| e.to_string()),
+            Literal::Decimal(decimal) => f64::try_from(decimal).map_err(|e| e.to_string()),
+            _ => return Err(DecodeError::scalar_kind(Kind::Decimal, value)),
+        };
+        parsed.map(Decimal).map_err(|message| DecodeError::conversion(value, message))
+    }
+}
+
+/// A workspace: an integer is its position, 1 being the first; a string is its name.
+#[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
-pub enum ExecCmd {
-    String(String),
-    Array(Vec<String>),
+pub enum WorkspaceReference {
+    Index(usize),
+    Name(String),
 }
 
-static BUILTIN_WM_CMD_VARIANTS: Lazy<Vec<String>> = Lazy::new(|| {
-    WmCmd::VARIANTS
-        .iter()
-        .map(|v| {
-            let mut out = String::with_capacity(v.len());
-            for (i, ch) in v.chars().enumerate() {
-                if ch.is_uppercase() {
-                    if i != 0 {
-                        out.push('_');
-                    }
-                    for lc in ch.to_lowercase() {
-                        out.push(lc);
-                    }
-                } else {
-                    out.push(ch);
-                }
-            }
-            out
+/// A display: an integer is its position in physical order, 1 being the first; a string its UUID.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum MonitorReference {
+    Index(usize),
+    Uuid(String),
+}
+
+fn decode_reference<S: ErrorSpan>(
+    value: &Spanned<Literal, S>,
+    what: &str,
+) -> Result<Result<usize, String>, DecodeError<S>> {
+    match &**value {
+        Literal::Int(int) => match u64::try_from(int) {
+            Ok(n) if n >= 1 => Ok(Ok(n as usize)),
+            _ => Err(DecodeError::conversion(
+                value,
+                format!("{what} numbers start at 1, the first; 0 is not one"),
+            )),
+        },
+        Literal::String(name) => Ok(Err(name.to_string())),
+        _ => Err(DecodeError::scalar_kind(Kind::String, value)),
+    }
+}
+
+impl<S: ErrorSpan> knus::DecodeScalar<S> for WorkspaceReference {
+    fn type_check(type_name: &Option<Spanned<TypeName, S>>, ctx: &mut Context<S>) {
+        Decimal::type_check(type_name, ctx);
+    }
+
+    fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
+        Ok(match decode_reference(value, "workspace")? {
+            Ok(index) => WorkspaceReference::Index(index),
+            Err(name) => WorkspaceReference::Name(name),
         })
-        .collect()
-});
-
-impl WmCmd {
-    pub fn snake_case_variants() -> &'static [String] {
-        &BUILTIN_WM_CMD_VARIANTS
     }
 }
 
-impl WmCommand {
-    pub fn builtin_candidates() -> &'static [String] {
-        WmCmd::snake_case_variants()
+impl<S: ErrorSpan> knus::DecodeScalar<S> for MonitorReference {
+    fn type_check(type_name: &Option<Spanned<TypeName, S>>, ctx: &mut Context<S>) {
+        Decimal::type_check(type_name, ctx);
+    }
+
+    fn raw_decode(value: &Spanned<Literal, S>, _: &mut Context<S>) -> Result<Self, DecodeError<S>> {
+        Ok(match decode_reference(value, "monitor")? {
+            Ok(index) => MonitorReference::Index(index),
+            Err(uuid) => MonitorReference::Uuid(uuid),
+        })
     }
 }
 
-impl ExecCmd {
-    /// The argv to run. The string form splits on single spaces only; quoting is not
-    /// interpreted, so use the array form for arguments that contain spaces.
-    pub fn as_array(&self) -> Cow<'_, [String]> {
-        match self {
-            ExecCmd::Array(vec) => Cow::Borrowed(vec),
-            ExecCmd::String(s) => s.split(' ').map(|s| s.to_owned()).collect::<Vec<_>>().into(),
+/// A relative change of a proportion: `"+5%"` or `"-5%"`.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
+#[serde(transparent)]
+pub struct SizeChange(pub f64);
+
+impl FromStr for SizeChange {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let not_yet = || {
+            format!(
+                "`{text}`: rini takes a relative percentage, \"+5%\" or \"-5%\"; an absolute \
+                 percentage or a size in pixels is not supported yet"
+            )
+        };
+        let (sign, rest) = match text.as_bytes().first() {
+            Some(b'+') => (1.0, &text[1..]),
+            Some(b'-') => (-1.0, &text[1..]),
+            _ => return Err(not_yet()),
+        };
+        let number = rest.strip_suffix('%').ok_or_else(not_yet)?;
+        let value: f64 = number.parse().map_err(|_| not_yet())?;
+        Ok(SizeChange(sign * value / 100.0))
+    }
+}
+
+/// Which windows the switcher steps through.
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SwitcherScope {
+    All,
+    Workspace,
+}
+
+impl FromStr for SwitcherScope {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "all" => Ok(SwitcherScope::All),
+            "workspace" => Ok(SwitcherScope::Workspace),
+            "output" => Err(
+                "rini's workspaces span every display, so there is no switcher for \
+                             one display; use scope=\"workspace\""
+                    .to_owned(),
+            ),
+            other => Err(format!("expected `all` or `workspace`, found `{other}`")),
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SwitcherFilter {
+    /// The focused application's windows, rotating rather than by recency.
+    AppId,
+}
+
+impl FromStr for SwitcherFilter {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "app-id" => Ok(SwitcherFilter::AppId),
+            other => Err(format!("expected `app-id`, found `{other}`")),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use strum::VariantNames;
+
     use super::*;
-    use rini_ipc::protocol::LayoutCommand;
 
     #[test]
-    fn every_builtin_candidate_is_the_name_the_config_accepts() {
-        let candidates = WmCommand::builtin_candidates();
-        assert_eq!(candidates.len(), WmCmd::VARIANTS.len());
-        for name in candidates {
-            assert!(
-                name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
-                "{name} is not snake_case"
-            );
-            let bare = serde_json::Value::String(name.clone());
-            let with_payload = serde_json::json!({ name: 1 });
-            let parses = serde_json::from_value::<WmCommand>(bare).is_ok()
-                || serde_json::from_value::<WmCommand>(with_payload).is_ok()
-                || serde_json::from_value::<WmCommand>(serde_json::json!({ name: "x" })).is_ok();
-            assert!(parses, "{name} is suggested but the config does not accept it");
+    fn a_relative_percentage_is_a_proportion() {
+        assert_eq!("+5%".parse::<SizeChange>(), Ok(SizeChange(0.05)));
+        assert_eq!("-10%".parse::<SizeChange>(), Ok(SizeChange(-0.1)));
+        for not_yet in ["5%", "+10", "640", "+5", "-", "+x%"] {
+            assert!(not_yet.parse::<SizeChange>().is_err(), "{not_yet}");
         }
-        assert!(candidates.iter().any(|c| c == "cycle_app_windows_backward"));
     }
 
     #[test]
-    fn a_bare_string_that_is_not_a_wm_command_falls_through_to_the_reactor_commands() {
-        let parsed: WmCommand = serde_json::from_str(r#""next_window""#).unwrap();
-        assert_eq!(
-            parsed,
-            WmCommand::ReactorCommand(Command::Layout(LayoutCommand::NextWindow))
-        );
-        assert!(serde_json::from_str::<WmCommand>(r#""no_such_command""#).is_err());
+    fn every_action_name_is_kebab_case_and_counted() {
+        assert_eq!(Action::VARIANTS.len(), 67);
+        for name in Action::VARIANTS {
+            assert!(
+                name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "{name} is not kebab-case"
+            );
+        }
     }
 
     #[test]
-    fn exec_string_form_splits_on_spaces_without_quote_handling() {
-        let cmd: ExecCmd = serde_json::from_str(r#""open -a 'My App'""#).unwrap();
-        assert_eq!(cmd.as_array().as_ref(), ["open", "-a", "'My", "App'"]);
-        let cmd: ExecCmd = serde_json::from_str(r#"["open", "-a", "My App"]"#).unwrap();
-        assert_eq!(cmd.as_array().as_ref(), ["open", "-a", "My App"]);
+    fn only_the_two_switcher_actions_are_switcher_actions() {
+        let next = Action::NextWindow { scope: None, filter: None };
+        let previous = Action::PreviousWindow { scope: None, filter: None };
+        assert!(next.is_switcher() && previous.is_switcher());
+        assert!(!Action::FocusColumnLeft.is_switcher());
+    }
+
+    #[test]
+    fn a_switcher_scoped_to_one_display_is_refused_with_the_reason() {
+        let error = "output".parse::<SwitcherScope>().unwrap_err();
+        assert!(error.contains("span every display"), "{error}");
+        assert_eq!("workspace".parse(), Ok(SwitcherScope::Workspace));
+    }
+
+    #[test]
+    fn mod_resolves_to_the_mod_key() {
+        let bind = Bind {
+            key: "Mod+Shift+J".into(),
+            action: Action::MoveWindowLeft,
+            repeat: false,
+        };
+        assert_eq!(bind.resolved_key(ModKey::Ctrl), "Ctrl+Shift+J");
+        assert_eq!(bind.resolved_key(ModKey::Alt), "Alt+Shift+J");
     }
 }

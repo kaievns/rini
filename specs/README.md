@@ -51,6 +51,7 @@ Rules for keeping this honest:
 | [`animation.md`](animation.md) | What moves, and what must never be seen to move |
 | [`service.md`](service.md) | Running as a launchd agent, and which build it runs |
 | [`bar.md`](bar.md) | The menu bar across the top of every display |
+| [`config.md`](config.md) | The config file: niri's format, what a bad one costs, and changing it live |
 
 ## What rini is
 

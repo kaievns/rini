@@ -15,8 +15,8 @@ you are in, and the time. It replaces a sketchybar setup, and keeps that setup's
 
 ## Showing it
 
-- There MUST be one bar per display, 32pt tall, across the top. `[settings.bar] enabled = false`
-  turns every bar off.
+- There MUST be one bar per display, 32pt tall, across the top. `bar { off; }` in the config turns
+  every bar off.
 - The bar's ground MUST be the desktop behind it, blurred, under the ground's colour. It MUST be a
   still picture, taken again when the display or the wallpaper changes and never while a flight
   runs, so nothing is blurred again as windows move. Windows passing under the bar are not seen

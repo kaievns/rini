@@ -1536,10 +1536,11 @@ fn arranging_one_setup_does_not_disturb_another() {
 fn a_pinned_app_is_homed_to_its_role_in_every_arrangement() {
     let mut reactor = test_reactor();
     reactor.config.settings.layout.gaps = Default::default();
-    reactor.set_test_app_rules(vec![crate::windows::domain::rules::AppWorkspaceRule {
-        app_id: Some("com.tinyspeck.slackmacgap".to_owned()),
-        display: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
-        ..default_app_rule()
+    reactor.set_test_app_rules(vec![crate::windows::domain::rules::WindowRule {
+        open_on_output: Some(crate::workspaces::domain::display_pin::DisplayRole::Internal),
+        ..crate::windows::domain::rules::WindowRule::when(
+            crate::windows::domain::rules::RuleMatch::app("com.tinyspeck.slackmacgap"),
+        )
     }]);
 
     let builtin_frame = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1440., 900.));

@@ -36,12 +36,24 @@ pub fn config_or_default(path: &Path) -> (Config, Option<String>) {
         Err(error) => (
             Config::default(),
             Some(format!(
-                "Could not read the config at {}; starting with the built-in defaults so rini \
-                 stays usable. Fix the config and restart. Error: {error}",
-                path.display()
+                "Could not use the config at {}; starting with the built-in defaults so rini \
+                 stays usable. Fix the config and it is read again as soon as it is saved.\n{}",
+                path.display(),
+                error.render()
             )),
         ),
     }
+}
+
+/// What `rini --validate` says about the config: a line naming it when it is good, the report when
+/// it is not. A missing file is good: it means the defaults.
+pub fn validate_config(path: &Path) -> Result<String, String> {
+    if !path.exists() {
+        return Ok(format!("No config at {}; rini uses its built-in defaults", path.display()));
+    }
+    Config::read(path)
+        .map(|_| format!("config is valid: {}", path.display()))
+        .map_err(|error| error.render())
 }
 
 /// Where the config is, given whatever `--config` said.
@@ -87,11 +99,17 @@ mod tests {
         assert!(wants_restore(true, true));
     }
 
+    fn temp_config(name: &str, text: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).unwrap();
+        (dir, path)
+    }
+
     #[test]
     fn a_missing_config_file_is_not_an_error() {
-        let path = std::env::temp_dir().join(format!("rini-absent-{}.toml", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        let (_, complaint) = config_or_default(&path);
+        let dir = tempfile::tempdir().unwrap();
+        let (_, complaint) = config_or_default(&dir.path().join("config.kdl"));
         assert_eq!(
             complaint, None,
             "no file means the defaults, which is not a failure"
@@ -102,15 +120,13 @@ mod tests {
     /// launch, and with nothing managing windows there is no way to open an editor to fix it.
     #[test]
     fn an_unparseable_config_falls_back_to_the_defaults_and_says_so() {
-        let path = std::env::temp_dir().join(format!("rini-broken-{}.toml", std::process::id()));
-        std::fs::write(&path, "[settings]\nanimate = \"not a bool\"\n\n[keys]\n").unwrap();
+        let (_dir, path) = temp_config("config.kdl", "animations {\n    off \"not a bool\"\n}\n");
 
         let (config, complaint) = config_or_default(&path);
-        let _ = std::fs::remove_file(&path);
 
         let complaint = complaint.expect("a refused config has to say why");
         assert!(complaint.contains("built-in defaults"), "{complaint}");
-        assert!(complaint.contains("Fix the config and restart"), "{complaint}");
+        assert!(complaint.contains("config.kdl:2:"), "the report names the line: {complaint}");
         assert_eq!(
             config.settings.animate,
             Config::default().settings.animate,
@@ -118,39 +134,48 @@ mod tests {
         );
     }
 
-    /// A binding naming a command that does not exist is the exact shape of the failure: deleting a
-    /// command from the protocol invalidates a config that used it, and that must not be fatal.
+    /// A binding naming an action that does not exist is the exact shape of the failure: renaming an
+    /// action invalidates a config that used it, and that must not be fatal.
     #[test]
-    fn a_config_naming_an_unknown_command_falls_back_rather_than_failing() {
-        let path = std::env::temp_dir().join(format!("rini-unknown-{}.toml", std::process::id()));
-        std::fs::write(&path, "[keys]\n\"Alt + Q\" = \"no_such_command\"\n").unwrap();
+    fn a_config_naming_an_unknown_action_falls_back_rather_than_failing() {
+        let (_dir, path) = temp_config("config.kdl", "binds {\n    Alt+Q { no-such-action; }\n}\n");
 
         let (_, complaint) = config_or_default(&path);
-        let _ = std::fs::remove_file(&path);
 
         assert!(
-            complaint.is_some(),
-            "an unknown command is a refusal, not a silent ignore"
+            complaint.is_some_and(|complaint| complaint.contains("unknown action `no-such-action`")),
+            "an unknown action is a refusal, not a silent ignore"
         );
     }
 
+    /// Every section is optional: a file with only one setting in it is a whole config.
     #[test]
     fn a_valid_config_produces_no_complaint() {
-        let path = std::env::temp_dir().join(format!("rini-ok-{}.toml", std::process::id()));
-        // `keys` is a TOP-LEVEL table and is required: the binding table has no default, because a
-        // window manager with no bindings is not a state anyone should reach by omission.
-        std::fs::write(&path, "[settings]\nanimate = false\n\n[keys]\n").unwrap();
+        let (_dir, path) = temp_config("config.kdl", "animations {\n    off\n}\n");
 
         let (config, complaint) = config_or_default(&path);
-        let _ = std::fs::remove_file(&path);
 
         assert_eq!(complaint, None);
         assert!(!config.settings.animate);
     }
 
     #[test]
+    fn validate_names_a_good_config_and_reports_a_bad_one_with_its_line() {
+        let (_dir, good) = temp_config("good.kdl", "layout {\n    gaps 4\n}\n");
+        assert!(validate_config(&good).unwrap().starts_with("config is valid: "));
+
+        let (_dir, bad) = temp_config("bad.kdl", "layout {\n    gasp 4\n}\n");
+        let report = validate_config(&bad).unwrap_err();
+        assert!(report.contains("bad.kdl:2:5"), "{report}");
+        assert!(report.contains("did you mean `gaps`?"), "{report}");
+
+        let missing = good.with_file_name("absent.kdl");
+        assert!(validate_config(&missing).unwrap().contains("built-in defaults"));
+    }
+
+    #[test]
     fn a_named_config_path_is_taken_as_given() {
-        let named = PathBuf::from("/tmp/somewhere/rini.toml");
+        let named = PathBuf::from("/tmp/somewhere/rini.kdl");
         assert_eq!(config_path(Some(named.clone())), named);
     }
 
@@ -164,7 +189,7 @@ mod tests {
     /// behind the user's actual settings.
     #[test]
     fn a_named_path_that_does_not_exist_is_not_second_guessed() {
-        let absent = PathBuf::from("/tmp/rini-does-not-exist-9e7c.toml");
+        let absent = PathBuf::from("/tmp/rini-does-not-exist-9e7c.kdl");
         assert_eq!(config_path(Some(absent.clone())), absent);
         assert_ne!(config_path(Some(absent)), rini_core::paths::config_file());
     }

@@ -173,7 +173,8 @@ switcher answers "every window I have, wherever it is".
   MUST be in the background and MUST NOT touch any window.
 - Each row MUST carry its application's icon as a small badge, as a cue that is readable faster than a
   thumbnail or a title.
-- An application's badge MUST be replaceable by an image named in the config, per bundle identifier.
+- An application's badge MUST be replaceable by an image named in the config's `recent-windows › icons`,
+  per bundle identifier.
   Some applications set their icon while running, and only the Dock can see it: every API another
   process can call still returns the icon in the bundle, so the switcher would show the stock icon
   where the rest of macOS shows the custom one.

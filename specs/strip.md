@@ -28,8 +28,9 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - `ctrl-R` steps through the configured preset widths in order and wraps: a third, a half, two thirds,
   full, then a third again. A column at a width that is no preset — what the incremental resize keys
   leave behind — MUST join the cycle at the first preset above it rather than at the start.
-- The configured widths MAY be any ratios in `(0, 1]`; anything else is ignored. A ratio of 1.0 means
-  full width, which is the maximise mode rather than a ratio.
+- The configured widths (`layout › preset-column-widths`) MAY be any proportions in `(0, 1]`; anything
+  else MUST be refused when the config is read, naming the line. A proportion of 1.0 means full width,
+  which is the maximise mode rather than a ratio.
 
 ## Full width and height
 
@@ -43,13 +44,13 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 - A full-width window MUST come back full-width after a restart.
 - **Full width is the widest of the preset widths, not a state outside them.** `ctrl-R` MUST size a
   full-width window like any other, and MUST reach full width when the cycle comes round to it — even
-  though full width is above `max_column_width_ratio`, which deliberately stops the incremental resize
+  though full width is above `max-column-width`, which deliberately stops the incremental resize
   keys from crawling to 100%.
 - **Being given a width is what ends full width.** A window sized by `ctrl-R` or by a resize key MUST
   stay where it is and MUST NOT be returned to the stack `ctrl-F` pulled it out of. It becomes an
   ordinary column with nowhere to return to, and the next `ctrl-F` MAY maximise it afresh.
 - Growing an already-full-width column MUST do nothing: there is nothing wider than the viewport, and
-  a "grow" that lands on `max_column_width_ratio` would make the window smaller. Shrinking one MUST
+  a "grow" that lands on `max-column-width` would make the window smaller. Shrinking one MUST
   end full width and start from the width it HAS, not the width it had before being maximised.
 - **A window the user zooms from its title bar MUST become the full-width column**, the same one
   `ctrl-F` makes, whatever size the app zooms it to: the screen, or its content as Safari and Finder
@@ -67,7 +68,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > **Reported 2026-09-30.** "when i double tap a window title to maximise it, rini doesn't pick up the
 > change and when i click to the window again it gets resized back to original rini's size. it should
 > just go the normal rini full-size window". The zoom reached rini as ordinary resize reports: either
-> adopted as a column width, clamped to `max_column_width_ratio`, or swallowed as a late echo of
+> adopted as a column width, clamped to `max-column-width`, or swallowed as a late echo of
 > rini's own last write. Either way the next click's layout pass wrote the column back. Nothing in
 > Accessibility marks a zoom, so a double-click on the window's title bar, seen by the input tap, is
 > the evidence: that window's first resize within 1 second of the click toggles full width.
@@ -81,7 +82,7 @@ The strip scrolls left and right under a fixed viewport; it never pans within a 
 > niri's direction after considering a downward cycle: ascending, with full width wrapping to 1/3.
 
 > **Found 2026-09-24, not reported.** The same blind spot in the scroll gesture, which computed its own
-> column widths: it stepped the strip by `max_column_width_ratio` of the viewport for a column
+> column widths: it stepped the strip by `max-column-width` of the viewport for a column
 > occupying all of it, so one swipe left the next column part-way on screen.
 
 > **Reported 2026-09-22.** "Most of the windows/apps that were in full-size mode don't come back as

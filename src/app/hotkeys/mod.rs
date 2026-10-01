@@ -9,11 +9,10 @@ use std::path::PathBuf;
 use dispatchr::queue;
 use dispatchr::time::Time;
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication};
-use serde_json;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::app::config::actor as config;
-pub use crate::input::domain::binding::{ExecCmd, WmCmd, WmCommand};
+use crate::input::domain::binding::Action;
 use crate::input::platform::gesture_tap;
 use crate::windows::platform::app::NSRunningApplicationExt;
 use rini_core::ids::pid_t;
@@ -39,15 +38,14 @@ pub enum WmEvent {
     AppTerminated(pid_t),
     /// Everything the displays context reports; forwarded to the reactor as is.
     Displays(crate::displays::event::Event),
-    /// Everything the input context reports: bindings become `Command`, pointer events go to the
-    /// reactor.
+    /// Everything the input context reports: a bound action is lowered here, pointer events go to
+    /// the reactor.
     Input(crate::input::event::Event),
     PowerStateChanged(bool),
     KeyboardLayoutChanged,
     /// The system clock was set, or the time zone changed.
     ClockChanged,
     ConfigUpdated(crate::app::config::Config),
-    Command(WmCommand),
 }
 
 impl From<crate::input::event::Event> for WmEvent {
@@ -130,12 +128,14 @@ impl WmController {
         debug!("handle_event");
         use reactor::Event;
 
-        use self::WmCommand::*;
         use self::WmEvent::*;
 
         match event {
             Displays(event) => self.events_tx.send(Event::from(event)),
-            Input(crate::input::event::Event::Command(cmd)) => self.handle_event(Command(cmd)),
+            Input(crate::input::event::Event::Action(action)) => self.carry_out(action),
+            Input(crate::input::event::Event::Command(command)) => {
+                self.events_tx.send(reactor::Event::Command(command))
+            }
             Input(crate::input::event::Event::Switch(signal)) => {
                 self.events_tx.send(Event::Switch(signal))
             }
@@ -185,7 +185,9 @@ impl WmController {
                 self.events_tx.send(Event::ApplicationTerminated(pid));
             }
             ConfigUpdated(new_cfg) => {
-                let old_keys_ser = serde_json::to_string(&self.config.config.keys).ok();
+                let old = &self.config.config;
+                let binds_changed = (&old.binds, &old.switcher_binds, old.settings.mod_key)
+                    != (&new_cfg.binds, &new_cfg.switcher_binds, new_cfg.settings.mod_key);
 
                 self.config.config = new_cfg;
 
@@ -205,18 +207,11 @@ impl WmController {
                     return;
                 }
 
-                if let Some(old_ser) = old_keys_ser {
-                    if serde_json::to_string(&self.config.config.keys).ok().as_deref()
-                        != Some(&old_ser)
-                    {
-                        debug!("hotkey bindings changed; reloading hotkeys");
-                        self.register_hotkeys();
-                    } else {
-                        debug!("hotkey bindings unchanged; skipping reload");
-                    }
-                } else {
-                    debug!("could not compare hotkey bindings; reloading hotkeys");
+                if binds_changed {
+                    debug!("hotkey bindings changed; reloading hotkeys");
                     self.register_hotkeys();
+                } else {
+                    debug!("hotkey bindings unchanged; skipping reload");
                 }
             }
             PowerStateChanged(is_low_power_mode) => {
@@ -227,25 +222,18 @@ impl WmController {
                 _ = self.event_tap_tx.send(event_tap::Request::KeyboardLayoutChanged);
             }
             ClockChanged => self.events_tx.send(Event::ClockChanged),
-            // Every binding alias is a translation; `lower` is that translation and is tested on
-            // its own. What is left here is the two things only the controller can carry out.
-            Command(Wm(cmd)) => {
-                match lower::lower(cmd, &self.config.config.virtual_workspaces.workspace_names) {
-                    lower::Lowered::Command(cmd) => {
-                        self.events_tx.send(reactor::Event::Command(cmd));
-                    }
-                    lower::Lowered::Exec(cmd) => self.exec_cmd(cmd),
-                    lower::Lowered::ReloadConfig => self.reload_config(),
-                    lower::Lowered::UnknownWorkspace(selector) => {
-                        warn!(
-                            ?selector,
-                            "a binding asked for a workspace that is not configured; ignoring"
-                        );
-                    }
-                }
-            }
-            Command(ReactorCommand(cmd)) => {
-                self.events_tx.send(reactor::Event::Command(cmd));
+        }
+    }
+
+    /// Every bound action is a translation; `lower` is that translation and is tested on its own.
+    /// What is left here is the two things only the controller can carry out.
+    fn carry_out(&self, action: Action) {
+        match lower::lower(action, &self.config.config.virtual_workspaces.workspace_names) {
+            lower::Lowered::Command(cmd) => self.events_tx.send(reactor::Event::Command(cmd)),
+            lower::Lowered::Spawn(argv) => crate::app::startup::spawn(argv),
+            lower::Lowered::ReloadConfig => self.reload_config(),
+            lower::Lowered::UnknownWorkspace(name) => {
+                warn!(%name, "a binding asked for a workspace that is not configured; ignoring");
             }
         }
     }
@@ -298,19 +286,32 @@ impl WmController {
 
     fn register_hotkeys(&mut self) {
         debug!("register_hotkeys");
-        let bindings: Vec<(String, WmCommand)> =
-            self.config.config.key_specs.iter().cloned().collect();
+        let config = &self.config.config;
+        let mod_key = config.settings.mod_key;
+        let resolve = |binds: &[crate::input::domain::binding::Bind]| {
+            binds
+                .iter()
+                .map(|bind| crate::input::domain::binding::Bind {
+                    key: bind.resolved_key(mod_key),
+                    ..bind.clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        let binds = resolve(&config.binds);
+        let switcher_binds = resolve(&config.switcher_binds);
         // Derived from the same bindings rather than configured separately, so the chord that opens a
         // switch and the modifier that holds it open cannot disagree.
         let switch_keys =
-            crate::switcher::domain::trigger::switch_keys_from_bindings(&bindings, |spec| {
+            crate::switcher::domain::trigger::switch_keys_from_bindings(&switcher_binds, |spec| {
                 let hotkey =
                     <crate::input::domain::key::Hotkey as std::str::FromStr>::from_str(spec)
                         .ok()?;
                 Some((hotkey.modifiers, hotkey.key_code))
             });
         _ = self.event_tap_tx.send(event_tap::Request::SetSwitchKeys(switch_keys));
-        _ = self.event_tap_tx.send(event_tap::Request::SetHotkeys(bindings));
+        _ = self
+            .event_tap_tx
+            .send(event_tap::Request::SetHotkeys(binds.into_iter().chain(switcher_binds).collect()));
     }
 
     fn reload_config(&self) {
@@ -330,31 +331,6 @@ impl WmController {
         }
     }
 
-    fn exec_cmd(&self, cmd_args: ExecCmd) {
-        std::thread::spawn(move || {
-            let cmd_args = cmd_args.as_array();
-            let [cmd, args @ ..] = &*cmd_args else {
-                error!("Empty argument list passed to exec");
-                return;
-            };
-            let output = std::process::Command::new(cmd).args(args).output();
-            let output = match output {
-                Ok(o) => o,
-                Err(e) => {
-                    error!("Failed to execute command {cmd:?}: {e:?}");
-                    return;
-                }
-            };
-            if !output.status.success() {
-                error!(
-                    "Exec command exited with status {}: {cmd:?} {args:?}",
-                    output.status
-                );
-                error!("stdout: {}", String::from_utf8_lossy(&*output.stdout));
-                error!("stderr: {}", String::from_utf8_lossy(&*output.stderr));
-            }
-        });
-    }
 }
 
 #[cfg(test)]

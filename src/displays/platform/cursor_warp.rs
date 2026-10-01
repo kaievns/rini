@@ -42,8 +42,8 @@
 //! the left, not at its near edge.
 //!
 //! Which side the upper display occupies cannot be derived from the coordinate space: macOS knows
-//! the displays are stacked and nothing about the desk. It comes from
-//! `settings.stacked_display_upper_is`, defaulting to `left`.
+//! the displays are stacked and nothing about the desk. It comes from the config's
+//! `warp-mouse-across-stacked-outputs upper-side=`, defaulting to `left`.
 //!
 //! This was originally implemented the other way round, pairing right-goes-up with left-goes-down,
 //! which sent the pointer to the opposite screen AND to the wrong edge of it.
@@ -81,7 +81,7 @@ use crate::displays::domain::screen::ScreenInfo;
 
 /// Which side of a side-by-side pair is the upper one when the pair is stacked. Settings vocabulary.
 /// Which side of the desk the logically-upper display sits on; macOS cannot tell us. Semantics in
-/// `rini.default.toml` under `stacked_display_upper_is`.
+/// `rini.default.kdl` under `warp-mouse-across-stacked-outputs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StackedUpperSide {

@@ -5,15 +5,17 @@ use std::time::Instant;
 use objc2_core_foundation::CGPoint;
 use rini_core::ids::WindowServerId;
 
-use crate::input::domain::binding::WmCommand;
+use crate::input::domain::binding::{Action, Command};
 
 #[derive(Debug)]
 pub enum Event {
-    /// A key binding or gesture fired.
-    Command(WmCommand),
+    /// A key binding fired.
+    Action(Action),
+    /// A gesture fired.
+    Command(Command),
     /// A switcher session opened, moved, committed or was cancelled.
     ///
-    /// On the same channel as `Command`, so an Open, its Steps and its Commit cannot be reordered
+    /// On the same channel as `Action`, so an Open, its Steps and its Commit cannot be reordered
     /// relative to each other however long the far side takes to read them.
     Switch(crate::input::domain::switch_session::Signal),
     /// A mouse button was released while the tap was processing mouse events.
