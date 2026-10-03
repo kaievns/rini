@@ -7,6 +7,8 @@ use rini_core::ids::WindowId;
 use rini_ipc::protocol::Direction;
 
 use super::easing::{CubicBezier, EASE_IN_OUT, MOTION_CURVE, nudge_displacement};
+use super::plan::GroupKey;
+use super::score::{Channel, Node, Track, Value};
 use super::surface::SurfaceWindow;
 
 /// Frames this close in x are one column.
@@ -139,6 +141,25 @@ pub fn nudge_samples(offset: CGPoint, seconds: f64, step: f64) -> Vec<CGPoint> {
             CGPoint::new(offset.x * d, offset.y * d)
         })
         .collect()
+}
+
+/// The nudge on `container` from `begin` on the media clock, as the overlay hands it to Core
+/// Animation: `nudge_samples` evenly spaced over `seconds`, additive.
+pub fn nudge_track(
+    container: GroupKey,
+    offset: CGPoint,
+    begin: f64,
+    seconds: f64,
+    step: f64,
+) -> Track {
+    let samples = nudge_samples(offset, seconds, step).into_iter().map(Value::Point);
+    Track::samples(
+        Node::Container(container),
+        Channel::Nudge,
+        samples,
+        begin,
+        seconds,
+    )
 }
 
 #[cfg(test)]
@@ -296,6 +317,54 @@ mod tests {
             let t = i as f64 / 1000.0;
             assert!(1003.0 * nudge_rate(t).abs() / seconds <= peak(1003.0) + 1e-6);
         }
+    }
+
+    /// The nudge plays as its samples, evenly spaced and joined by straight lines, on top of the
+    /// container's model: exactly `nudge_samples` at the key times, and within half a point of
+    /// `sin²(πt)` between them at a third of a 1720pt viewport.
+    #[test]
+    fn the_nudge_plays_as_its_samples() {
+        use crate::animation::domain::motion::score::{Curve, Score};
+
+        let (offset, begin, seconds, step) = (
+            CGPoint::new(-1720.0 * NUDGE_SHARE, 0.0),
+            3.0,
+            0.35 * NUDGE_STRETCH,
+            1.0 / 120.0,
+        );
+        let samples = nudge_samples(offset, seconds, step);
+        let track = nudge_track(GroupKey::STILL, offset, begin, seconds, step);
+        assert_eq!(track.channel(), Channel::Nudge);
+        assert_eq!((track.begin(), track.seconds()), (begin, seconds));
+        assert!(track.curves().iter().all(|c| *c == Curve::Linear));
+        let keys: Vec<Value> = track.keys().iter().map(|(_, v)| *v).collect();
+        assert_eq!(
+            keys,
+            samples.iter().copied().map(Value::Point).collect::<Vec<_>>()
+        );
+
+        let node = Node::Container(GroupKey::STILL);
+        let model = CGPoint::new(-861.0, 0.0);
+        let mut score = Score::default();
+        score.place(node, Value::Point(model));
+        score.add(track);
+        let drawn = |at: f64| match score.sample(node, at) {
+            Some(Value::Point(p)) => p.x - model.x,
+            other => panic!("a container holds a point: {other:?}"),
+        };
+        let gaps = samples.len() - 1;
+        let mut furthest = 0.0f64;
+        for k in 0..gaps {
+            let at = begin + seconds * k as f64 / gaps as f64;
+            assert!((drawn(at) - samples[k].x).abs() < 1e-9, "key {k}");
+            let middle = begin + seconds * (k as f64 + 0.5) / gaps as f64;
+            let line = (samples[k].x + samples[k + 1].x) / 2.0;
+            assert!((drawn(middle) - line).abs() < 1e-9, "between {k} and {}", k + 1);
+            let t = (k as f64 + 0.5) / gaps as f64;
+            furthest = furthest.max((drawn(middle) - offset.x * nudge_displacement(t)).abs());
+        }
+        assert!(furthest > 0.3 && furthest < 0.5, "{furthest}");
+        assert_eq!(drawn(begin + seconds), 0.0, "home");
     }
 
     use crate::animation::domain::motion::glide::Leg;

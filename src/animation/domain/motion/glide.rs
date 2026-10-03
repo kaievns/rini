@@ -4,6 +4,8 @@
 use objc2_core_foundation::CGPoint;
 
 use super::easing::CubicBezier;
+use super::plan::GroupKey;
+use super::score::{Channel, Curve, Node, Track, Value};
 
 /// Within this of its target and slower than `SETTLED_SPEED`, a spring has landed.
 const SETTLED_PT: f64 = 0.5;
@@ -200,12 +202,41 @@ impl Leg {
         points.push(self.to());
         (points, steps as f64 * step)
     }
+
+    /// The leg on `container` as the overlay hands it to Core Animation: a curve as one, a spring
+    /// as its `samples` every `step`, which Core Animation joins with straight lines.
+    pub fn track(&self, container: GroupKey, step: f64) -> Track {
+        let node = Node::Container(container);
+        match *self {
+            Leg::Curve {
+                from,
+                to,
+                begin,
+                seconds,
+                curve,
+            } => Track::between(
+                node,
+                Channel::Base,
+                Value::Point(from),
+                Value::Point(to),
+                begin,
+                seconds,
+                Curve::Bezier(curve),
+            ),
+            Leg::Spring { begin, .. } => {
+                let (points, seconds) = self.samples(step);
+                let values = points.into_iter().map(Value::Point);
+                Track::samples(node, Channel::Base, values, begin, seconds)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
+    use crate::animation::domain::motion::score::Score;
 
     const DURATION: f64 = 0.35;
     const COLUMN: f64 = 861.0;
@@ -404,5 +435,78 @@ mod tests {
         let left = Leg::leaving(Some(&crossing), install, CGPoint::new(-1723.0, 0.0), now, omega);
         assert_eq!(left.position_at(now), install);
         assert!(close(left.velocity_at(now).x, crossing.velocity_at(now).x, 1e-6));
+    }
+
+    const STEP: f64 = 1.0 / 120.0;
+
+    fn drawn(leg: &Leg, at: f64) -> f64 {
+        let mut score = Score::default();
+        let node = Node::Container(GroupKey::STILL);
+        score.place(node, Value::Point(leg.to()));
+        score.add(leg.track(GroupKey::STILL, STEP));
+        match score.sample(node, at) {
+            Some(Value::Point(p)) => p.x,
+            other => panic!("a container holds a point: {other:?}"),
+        }
+    }
+
+    /// A leg on one curve plays as that curve, so the score draws it where the leg has it.
+    #[test]
+    fn a_curve_leg_plays_as_its_curve() {
+        let leg = curve(0.0, -COLUMN);
+        let track = leg.track(GroupKey::STILL, STEP);
+        assert_eq!(track.curves(), [Curve::Bezier(MOTION_CURVE)]);
+        assert_eq!(
+            track.keys(),
+            [
+                (0.0, Value::Point(CGPoint::new(0.0, 0.0))),
+                (1.0, Value::Point(CGPoint::new(-COLUMN, 0.0)))
+            ]
+        );
+        for step in 0..350 {
+            let at = step as f64 / 1000.0;
+            assert!(close(drawn(&leg, at), leg.position_at(at).x, 1e-9), "{at}");
+        }
+    }
+
+    /// A spring is handed over as its samples and Core Animation draws straight lines between
+    /// them, so the score draws that polyline: exactly the samples at the key times, and on the
+    /// line between them. It is not `position_at`: from rest, the spring leaves slowly and the
+    /// first line cuts the corner, 10.8pt off at 1722pt and 5.4pt at 861pt in the first 1/120s,
+    /// and less on every frame after.
+    #[test]
+    fn a_spring_plays_as_the_polyline_of_its_samples() {
+        let omega = spring_omega(DURATION);
+        for (reach, first_frame) in [(2.0 * COLUMN, 10.8), (COLUMN, 5.4)] {
+            let begin = 2.0;
+            let rest = CGPoint::new(0.0, 0.0);
+            let leg = Leg::toward(None, rest, CGPoint::new(reach, 0.0), begin, omega);
+            let (points, seconds) = leg.samples(STEP);
+            let track = leg.track(GroupKey::STILL, STEP);
+            assert_eq!((track.begin(), track.seconds()), (begin, seconds));
+            assert!(track.curves().iter().all(|c| *c == Curve::Linear));
+
+            let mut worst = vec![0.0f64; points.len() - 1];
+            for k in 0..points.len() - 1 {
+                for f in 0..20 {
+                    let f = f as f64 / 20.0;
+                    let at = begin + (k as f64 + f) * STEP;
+                    let line = points[k].x + (points[k + 1].x - points[k].x) * f;
+                    let x = drawn(&leg, at);
+                    assert!(close(x, line, 1e-9), "{reach}pt, frame {k} + {f}");
+                    worst[k] = worst[k].max((x - leg.position_at(at).x).abs());
+                }
+                if k + 1 < points.len() - 1 {
+                    let at = begin + k as f64 * STEP;
+                    assert!(close(drawn(&leg, at), leg.position_at(at).x, 1e-9), "key {k}");
+                }
+            }
+            assert!(
+                close(worst[0], first_frame, 0.05),
+                "{reach}pt: {:.3}pt in the first frame",
+                worst[0]
+            );
+            assert!(worst[1..].iter().all(|w| *w < worst[0]), "{reach}pt: {worst:?}");
+        }
     }
 }

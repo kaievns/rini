@@ -1003,7 +1003,7 @@ model value each node ends at. `Score::sample` is what Core Animation draws at a
 media time, so a merge can bend a flight from the score instead of reading the
 presentation layer back (step 5 of `docs/pictures-motion-transitions.md`).
 Nothing plays a score yet: the overlay still builds its animations itself, and
-`Bounce::track` is the track it installs for the bounce today.
+`Leg::track`, `nudge_track` and `Bounce::track` are the tracks it installs today.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
 an off-screen window, its presentation read at chosen `timeOffset`s.
@@ -1020,7 +1020,11 @@ an off-screen window, its presentation read at chosen `timeOffset`s.
 | A non-additive animation after an additive one | the additive one is not drawn while it plays | `sample` adds every accent playing |
 
 A Bezier segment is the one place the score and the screen part, by Core
-Animation's own solver: under 0.1pt.
+Animation's own solver: under 0.1pt. A spring leg is the polyline of its 1/120s
+samples, not `Leg::position_at`: from rest the first line cuts the corner by
+10.8pt at 1722pt and 5.4pt at 861pt (`a_spring_plays_as_the_polyline_of_its_samples`).
+The nudge's polyline is within 0.5pt of `sin²(πt)` at a third of a 1720pt
+viewport (`the_nudge_plays_as_its_samples`).
 
 Two rows are rules for whatever plays a score:
 
