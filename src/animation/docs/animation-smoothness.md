@@ -472,13 +472,18 @@ the windows already sit at) and adds the bounce to whatever is running
 otherwise, extending the clock to cover the return (`clock_for_bounce`). The
 overlay's `out_and_back` with `OutAndBack::Bounce` is one additive
 `CAKeyframeAnimation` per container
-(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; ease-out then ease-in-out) under
+(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; the motion curve out,
+`kCAMediaTimingFunctionEaseInEaseOut` home) under
 its own key, so an in-flight movement is neither replaced nor disturbed and
 the model positions stay put; `settled` reads false until it is home, which
 holds the lift. The floating container rides only a vertical bounce
 (`carries_out_and_back`), the rule a pan (pinned) and a switch (carried) already
-follow. Real windows never move. The shape is `bounce_displacement`, pinned
-by `a_bounce_goes_out_once_and_comes_home`. A push while a bounce is still
+follow. Real windows never move. The shape is `Bounce::from_rest`
+(`src/animation/domain/motion/bounce.rs`), pinned by
+`a_first_push_goes_out_once_and_comes_home`, and `Bounce::track` is those
+keyframes as a score track (`a_bounce_from_rest_is_the_keyframes_the_overlay_installs`).
+`Bounce::pushed` is the handover prototype's re-kick, a new bounce from wherever
+the last is drawn; the engine does not play it. A push while a bounce is still
 playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
 under the same key, so a burst of presses at the wall bounced once per press, and the
 presses the reactor reached late kept bouncing after the pressing had stopped.
@@ -986,6 +991,56 @@ Options, in order of expected value:
    203ms median against 16-24ms at idle (see "Capture work in flight").
    Two windows at 0.5 is the cap; more capture work in flight, not less, is
    what slowed it.
+
+## The score: what Core Animation plays
+
+`src/animation/domain/motion/score.rs` is the movement of a transition as data:
+tracks of keyframes on containers (a position) and tiles (a frame), on three
+channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
+model value each node ends at. `Score::sample` is what Core Animation draws at a
+media time, so a merge can bend a flight from the score instead of reading the
+presentation layer back (step 5 of `docs/pictures-motion-transitions.md`).
+Nothing plays a score yet: the overlay still builds its animations itself, and
+`Leg::track`, `nudge_track` and `Bounce::track` are the tracks it installs today.
+
+Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
+an off-screen window, its presentation read at chosen `timeOffset`s.
+
+| What | Core Animation | The score |
+|---|---|---|
+| Outside `[begin, begin + duration)` | draws the model | `Track::at` is none; `sample` is the model |
+| `kCAMediaTimingFunctionEaseInEaseOut` | control points `(0.42, 0, 0.58, 1)` | `EASE_IN_OUT` |
+| 1722pt over 0.35s on `MOTION_CURVE` | within 0.088pt of the exact Bezier | `CubicBezier::ease` |
+| The 72pt bounce over 0.35s | within 0.072pt of `Bounce::at` | `Bounce::track` |
+| Keyframes with no `keyTimes` or `timingFunctions` | evenly spaced, straight lines between | `Track::samples` |
+| `duration` 0 | plays for 0.25s | a cut |
+| `addAnimation:forKey:` on a key in use | the old one goes; the new one is last | `Score::add` replaces |
+| A non-additive animation after an additive one | the additive one is not drawn while it plays | `sample` adds every accent playing |
+
+A Bezier segment is the one place the score and the screen part, by Core
+Animation's own solver: under 0.1pt. A spring leg is the polyline of its 1/120s
+samples, not `Leg::position_at`: from rest the first line cuts the corner by
+10.8pt at 1722pt and 5.4pt at 861pt (`a_spring_plays_as_the_polyline_of_its_samples`).
+The nudge's polyline is within 0.5pt of `sin²(πt)` at a third of a 1720pt
+viewport (`the_nudge_plays_as_its_samples`).
+
+Two rows are rules for whatever plays a score:
+
+- **Order.** Core Animation composes a layer's animations in the order they were
+  added, and a non-additive one starts over from its own value. The score adds
+  every accent to the movement whatever order they came in, so a renderer that
+  replaces a `Base` track adds the node's accents again after it, in
+  `Score::tracks` order. The overlay does not: `retarget` adds `rini.group.move`
+  again on each retargeted container, after any bounce or nudge riding it, so
+  those are not drawn until the new leg ends. Inferred from the probe, not
+  reproduced in rini.
+- **No length.** A track of no length is a cut in the score and 0.25s in Core
+  Animation, so a renderer places the node and installs nothing.
+
+`Score::settled` is every track ended. The overlay's `settled` compares the
+presentation with the model within 0.5pt, which a `MOTION_CURVE` movement of
+1722pt reaches at 87% of its duration; the lift also waits for the clock, so the
+two part only where a track outlasts it.
 
 ## Structural findings
 
