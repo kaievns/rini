@@ -377,6 +377,7 @@ pub fn make_screen_snapshots(frames: Vec<CGRect>, spaces: Vec<Option<SpaceId>>) 
             space,
             display_uuid: format!("test-display-{idx}"),
             name: None,
+            scale: 2.0,
         })
         .collect()
 }
@@ -450,6 +451,7 @@ pub fn fullscreen_startup_space_state(
         space: None,
         display_uuid,
         name: None,
+        scale: 2.0,
     }]);
     state.fullscreen_spaces.insert(fullscreen_space);
     state.has_seen_display_set = true;

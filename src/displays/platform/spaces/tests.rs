@@ -28,6 +28,7 @@ fn make_screen(space: Option<SpaceId>) -> ScreenInfo {
         display_uuid: "display-1".to_string(),
         name: Some("Display".to_string()),
         space,
+        scale: 2.0,
     }
 }
 
@@ -46,6 +47,7 @@ fn make_screen_with(
         display_uuid: display_uuid.to_string(),
         name: Some(display_uuid.to_string()),
         space,
+        scale: 2.0,
     }
 }
 

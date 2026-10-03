@@ -358,6 +358,7 @@ fn fullscreen_space_in_screen_params_does_not_trigger_topology_relayout() {
             space: Some(space),
             display_uuid: display_uuid.clone(),
             name: None,
+            scale: 2.0,
         }]
     };
 
@@ -481,6 +482,7 @@ fn fullscreen_screen_params_preserves_window_layout() {
         space: None,
         display_uuid: "test-display-0".to_string(),
         name: None,
+        scale: 2.0,
     }]));
     apps.simulate_until_quiet(&mut reactor);
 

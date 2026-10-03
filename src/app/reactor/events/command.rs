@@ -454,6 +454,7 @@ mod tests {
             display_uuid: "uuid-1".into(),
             name: None,
             space,
+            scale: 2.0,
         }
     }
 

@@ -1434,6 +1434,7 @@ mod title_bar_zoom {
                 name: None,
                 space: Some(space),
                 is_builtin: false,
+                scale: 2.0,
             }]));
             make_active_app_with_count(&mut apps, &mut reactor, 1, 2, Some(WindowId::new(1, 1)));
             let window = WindowId::new(1, 1);

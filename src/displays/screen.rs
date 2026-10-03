@@ -16,7 +16,8 @@ use objc2_foundation::{MainThreadMarker, NSArray, NSNumber, ns_string};
 use tracing::{debug, warn};
 
 use crate::displays::domain::screen::{
-    CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, top_inset, usable_frame,
+    ASSUMED_SCALE, CoordinateConverter, DockEdge, ScreenInfo, menu_bar_inset, top_inset,
+    usable_frame,
 };
 use rini_core::ids::{ScreenId, SpaceId};
 use rini_skylight_sys::{
@@ -191,14 +192,16 @@ impl<S: System> ScreenCache<S> {
                             format!("cgdisplay-{}", cg_id.as_u32())
                         },
                     );
+                let ns_screen = ns_screens.iter().find(|s| s.cg_id == cg_id);
                 ScreenInfo {
                     id: cg_id,
                     frame,
                     bounds,
                     display_uuid,
-                    name: ns_screens.iter().find(|s| s.cg_id == cg_id).and_then(|s| s.name.clone()),
+                    name: ns_screen.and_then(|s| s.name.clone()),
                     space: None,
                     is_builtin: unsafe { rini_skylight_sys::CGDisplayIsBuiltin(cg_id.as_u32()) },
+                    scale: ns_screen.map_or(ASSUMED_SCALE, |s| s.scale),
                 }
             })
             .collect();
@@ -351,6 +354,7 @@ struct NSScreenInfo {
     visible_frame: CGRect,
     cg_id: ScreenId,
     name: Option<String>,
+    scale: f64,
 }
 
 pub struct Actual {
@@ -426,6 +430,7 @@ impl System for Actual {
                     visible_frame: s.visibleFrame(),
                     cg_id: s.get_number().ok()?,
                     name: Some(name),
+                    scale: s.backingScaleFactor(),
                 })
             })
             .collect()
@@ -718,6 +723,7 @@ mod test {
                         CGSize::new(3840.0, 2059.0),
                     ),
                     name: None,
+                    scale: 2.0,
                 },
                 NSScreenInfo {
                     cg_id: ScreenId::new(1),
@@ -727,6 +733,7 @@ mod test {
                         CGSize::new(1512.0, 950.0),
                     ),
                     name: None,
+                    scale: 2.0,
                 },
             ],
         };
@@ -756,6 +763,31 @@ mod test {
         );
     }
 
+    /// A Retina built-in beside a 1x external: each screen is measured in its own pixels, which is
+    /// what a capture read off its framebuffer comes back in.
+    #[test]
+    fn each_screen_carries_the_scale_its_display_reports() {
+        let bounds = |x: f64| CGRect::new(CGPoint::new(x, 0.0), CGSize::new(1440.0, 900.0));
+        let ns_screen = |id: u32, x: f64, scale: f64| NSScreenInfo {
+            cg_id: ScreenId::new(id),
+            frame: bounds(x),
+            visible_frame: bounds(x),
+            name: None,
+            scale,
+        };
+        let stub = Stub {
+            cg_screens: vec![
+                CGScreenInfo { cg_id: ScreenId::new(1), bounds: bounds(0.0) },
+                CGScreenInfo { cg_id: ScreenId::new(2), bounds: bounds(1440.0) },
+            ],
+            ns_screens: vec![ns_screen(1, 0.0, 2.0), ns_screen(2, 1440.0, 1.0)],
+        };
+        let (screens, _) = ScreenCache::new_with(stub).refresh().unwrap();
+        let scale_of = |id: u32| screens.iter().find(|s| s.id == ScreenId::new(id)).unwrap().scale;
+        assert_eq!(scale_of(1), 2.0);
+        assert_eq!(scale_of(2), 1.0);
+    }
+
     #[test]
     fn clears_cached_screen_identifiers_when_display_list_is_empty() {
         let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1440.0, 900.0));
@@ -775,6 +807,7 @@ mod test {
                     frame: bounds,
                     visible_frame,
                     name: None,
+                    scale: 2.0,
                 }],
                 vec![],
             ],
@@ -808,6 +841,7 @@ mod test {
             frame: bounds,
             visible_frame: bounds,
             name: None,
+            scale: 2.0,
         };
         let system = SequenceSystem::new(
             vec![vec![screen.clone()], vec![screen]],

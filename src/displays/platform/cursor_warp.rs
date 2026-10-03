@@ -770,6 +770,7 @@ mod tests {
             name: None,
             space: None,
             is_builtin: id == 1,
+            scale: 2.0,
         };
         vec![
             screen(1, rect(0.0, 32.0, 1728.0, 1085.0)),

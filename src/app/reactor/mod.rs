@@ -4156,10 +4156,7 @@ impl Reactor {
         _ = tx.send(crate::animation::platform::engine::Event::SetDisplay {
             id: screen.id.as_u32(),
             frame: objc2_core_graphics::CGDisplayBounds(screen.id.as_u32()),
-            // Backing scale is not carried on ScreenInfo. Every display rini has been run on is
-            // Retina, and a wrong scale only affects bitmap crispness rather than geometry, so 2.0
-            // is a safe default until there is a reason to plumb the real value through.
-            scale: 2.0,
+            scale: screen.scale,
             picture_bar: !self.config.settings.bar.enabled,
             top_band: self.config.settings.top_band(),
         });

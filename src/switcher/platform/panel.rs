@@ -764,9 +764,9 @@ fn caption_text(row: &Row) -> String {
 
 /// The backing scale to draw at.
 ///
-/// 2.0 rather than a per-display read, matching what the animation path already assumes
-/// (`publish_animation_display_for` hardcodes it). Drawing a retina panel at 1.0 is soft; drawing a
-/// 1x panel at 2.0 costs memory and nothing else, so the safe direction is up.
+/// 2.0 rather than the display's own: the panel is built once and shown on whichever display a
+/// switch is driven from. Drawing a retina panel at 1.0 is soft; drawing a 1x panel at 2.0 costs
+/// memory and nothing else, so the safe direction is up.
 fn backing_scale() -> f64 {
     2.0
 }
