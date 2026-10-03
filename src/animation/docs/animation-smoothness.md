@@ -736,7 +736,9 @@ changes is how the picture maps onto it (`content_mode` in
   in the slot it left the growth as backdrop, a hole in the strip (recording
   of 2026-09-15 3:28:10). `chase_reveal_pictures` follows the entering
   window like a grow: the queued SkyLight capture measured 170-300ms under
-  load, most of a flight; the chase's framed capture takes 16-24ms once the
+  load, most of a flight, the load being ScreenCaptureKit captures it waits
+  behind (27ms alone, 204ms behind four; "SkyLight in parallel" in
+  `capture-overlay-research.md`); the chase's framed capture takes 16-24ms once the
   app has painted. `claim` requires the fit; a smaller picture is refused
   and the hold goes on. `claim_reveal` adds the zero-width tile to the
   frame-zero composition (`install`). The flight starts when the last
@@ -771,7 +773,7 @@ changes is how the picture maps onto it (`content_mode` in
   behind a still frame. A chase thread polls the real frame every 8ms
   (`REVEAL_CHASE_INTERVAL`, 125 attempts, about a second in all), a cheap
   window-server read; SkyLight-capture polling measured 170-300ms per attempt
-  under load and lost the race. Once the size is there it takes ONE framed
+  behind queued ScreenCaptureKit captures and lost the race. Once the size is there it takes ONE framed
   capture per attempt (`capture_via_framed_with_dressing`): the window plus
   one ring, hairline included, the picture cropped back out of the same
   pixels. The frame resizes instantly while the app's pixels lag behind, and
@@ -921,7 +923,8 @@ running, carrying real border windows as tiles:
   the real screen does, since the border tool only catches up after the
   window lands.
 - The mid-flight focus recapture rode the framed route (16-24ms measured,
-  against 170-300ms for SkyLight under animation load) until racing it
+  against 170-300ms for SkyLight behind queued ScreenCaptureKit captures; the
+  animation itself does not slow it, 22.7ms median during a slide) until racing it
   against the ScreenCaptureKit route was found to swap the tile 2-3 times
   per flight; it now takes the service route only, and the swap requires
   the same route as the cached picture (see "Mid-flight passes"). The swap

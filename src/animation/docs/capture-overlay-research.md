@@ -77,9 +77,20 @@ Otherwise hidden windows are not enumerated at all.
 
 ### SLSHWCaptureWindowList captures only the visible portion
 
-This is the SkyLight SPI yabai uses. It works and it is fast, but it grabs the
-framebuffer, not the window surface. A window with 40pt showing returns a
-40x1081 image. A window on a hidden workspace returns 1x28.
+This is the SkyLight SPI yabai uses. It works and it is fast, but it returns only
+the part of the window inside a display's bounds. A window with 40pt showing
+returns a 40x1081 image. A window on a hidden workspace returns 1x28, a parked one
+2pt wide.
+
+Covering windows do not matter. Measured 2026-10-02: Zoom sat behind two tiled
+windows that covered nearly all of it, and the capture returned the whole Zoom
+window, current content included, with neither covering window in it. The screen
+in the same rect showed the two windows. The capture is the window alone, like
+`CGWindowListCreateImage` with `OptionIncludingWindow` (0.6% of pixels differ): a
+translucent Ghostty came back with its own per-pixel alpha (3.9% of pixels
+opaque) and nothing from behind it, and no blur-behind or hairline (see
+"Translucency is three things" and "The hairline is composited outside every
+capture").
 
 Batched behaviour is worth recording because it surprised us. Passing 19 window
 ids returns 1 composited 3456x2170 image of the display, not 19 images, in about
@@ -88,6 +99,41 @@ remains useful for anything that only needs what is currently displayed. It
 cannot drive a slide-in, because incoming windows have no pixels yet.
 
 Per-window calls cost about 16ms each, so batching beats them 12 to 1.
+
+**SkyLight in parallel** (2026-10-02, 10 rounds): calls are served one at a time.
+One call 27ms; two at once 48ms for both, four 122ms, eight 205ms, so threads
+buy nothing. A call issued behind four ScreenCaptureKit captures took 204ms, and
+those captures 131ms each; beside a framed capture it took 32ms. During an
+overlay slide it took 22.7ms median (45.8 p99), so an animation does not slow
+it; queued ScreenCaptureKit work does.
+
+**No option bit makes a material transparent.** All 32 bits, alone and added to
+yabai's, on Outlook, whose vibrancy covers 20% of the window and differs from the
+screen there by 33 levels: none changed a pixel in those regions. Bit 0 returns
+a larger image (12px wider, 76px taller at 2x), bit 9 a 1x image, bits 16 and 17
+nothing. A blur-behind region can only be found by comparing against a capture
+of the window with what is below it.
+
+**A batched call composites in the order given, front-most first, and carries the blur of whatever
+it composites behind a window.** Outlook's vibrancy regions against the screen, mean difference in
+levels (2026-10-02):
+
+```
+Outlook alone                                  24.9    flat grey, as every per-window route
+desktop windows first, then Outlook            27.3    the wallpaper drawn over Outlook: no Outlook at all
+Outlook, then the desktop windows               0.5    the real blur, matching the screen
+Outlook, then every other window, then desktop 21.4    windows parked or hidden at the edges composited in
+window plus below (CGWindowListCreateImage)     0.0
+```
+
+The desktop windows are the six at a negative window level (wallpaper, icons, widgets). The same
+call with the desktop windows alone is a picture of the desktop, icons and widgets included, in
+42ms.
+
+**A sidebar that samples the window's own content captures whole.** Messages'
+macOS 26 glass sidebar came back identical to the screen through every route:
+its material blurs the window's own pixels, which are in the surface. Only a
+material that samples what is behind the window is lost.
 
 ### CGWindowListCreateImage is gone
 
@@ -1692,19 +1738,26 @@ display filter cropped to the window rect, not `SLSHWCaptureWindowList` under
 any option bit probed (0, 1<<4..1<<13, 1<<16, 1<<19). Like the shadow, it is
 drawn at composite time outside the app's surface.
 
-Unlike the shadow it cannot be synthesised as a constant, because its value
-depends on what it lands on. Lossless screenshots of this display, focused
-windows, hairline against the window's own edge pixel:
+It can be synthesised as a constant: white at 20% over the window's own edge
+pixel, 1pt wide (two pixels at 2x), 18% on an unfocused window. Measured
+2026-10-02 in dark mode on 27 window edges across 11 applications, the
+window-only `CGWindowListCreateImage` (hairline composited) against the SkyLight
+capture of the same window (no hairline):
 
 ```
-window                          edge pixel   hairline   white-alpha fit
-Kiro (opaque, dark)              21,23,26    80,81,83   0.25
-Outlook calendar (opaque)        42,42,40    80,80,79   none (0.25 gives 95)
-Ghostty (translucent)            15,16,18    44,45,46   ~0.13 — while focused
+window                 edge pixel     with hairline    0.20 white over it
+Kiro                    0, 0, 0       51, 51, 51       51
+Outlook                69,69,68      106,106,105      106
+Zen                    76,76,76      112,112,112      112
+Chrome                 17,18,23       65, 65, 69       65
+Ghostty (translucent)  18,19,21 a243  65, 66, 67 a245  65
 ```
 
-A drawn 0.25-alpha white border matched the opaque editor exactly and missed
-the translucent terminal by 2x, which read as a visible pop at the handover.
+The blend fits every focused edge to 0.3 levels rms and every unfocused one to
+0.1; a constant colour misses by 59. An earlier fit from single screenshots
+put it at 0.25 and failed on Outlook and on a translucent terminal; the
+window-only capture against SkyLight is the comparison that isolates the
+hairline. Light mode is not measured.
 
 The one API that composites framing into its output is the obsoleted
 `CGWindowListCreateImage` (alive in the dylib, deprecated since 14.0, removed
@@ -2028,3 +2081,190 @@ movement.
 
 A framed recapture of a window wholly on a display carries its blur too; see
 "A composite of the window and what is below it carries the blur".
+
+## Sequencing a focus change behind the overlay
+
+Measured 2026-10-02 with a scratch sequencer (branch `scratch/perf-timing`) that holds rini's raise and
+frame writes and re-issues them in a chosen order, animations off, the overlay held up for 800ms.
+Interleaved ABBA, 64 presses per order, load average 6 to 11 with the endpoint agents busy, so the
+absolute numbers are a loaded machine's; the comparisons hold. Times in ms, p50/p99.
+
+**A window covered by the overlay may stop painting.** Ghostty under the overlay never reached its
+final focused look within 450ms (0 of 24); uncovered it did every time. Chrome kept painting but
+took 181 against 157. Either change below restores both to their uncovered times, 24 of 24:
+
+```
+                        Ghostty final look   Chrome final look   (ms after the focus call)
+uncovered               153 / 256            159 / 208
+overlay                 never                181 / 245
+overlay + 1pt hole      159 / 193            157 / 196
+overlay + 8pt hole      155 / 184            159 / 215
+overlay at alpha 0.99   165 / 278            153 / 188
+```
+
+The hole is a 1pt transparent square in the overlay over the new window's final frame, so the
+window server counts the window as visible.
+
+**Orders**, parked target, overlay with the hole, frame-zero pictures from one batched SkyLight call:
+
+```
+order                                   focused    placed    old pic    old pic before   new pic   all three
+                                                                        it moved
+B   frames, then focus                  410/621    200/388   559/579     4/20            428/630   565/638
+PAR focus and frames together           339/634    250/489   525/548     7/20            419/626   530/635
+R   focus, frames on RaiseCompleted     294/465    379/615   294/391     8/20            404/632   454/642
+RW  focus, frames on the focus report   273/438    376/639   377/440    10/20            385/630   440/654
+K   new window's frame, focus, the      345/546    395/529   410/573    20/20            403/605   472/607
+    rest on RaiseCompleted
+```
+
+Only K leaves the old window on screen until it has repainted as inactive, so only K can always take
+the old window's end-state picture with SkyLight. The raise-first orders focus 50-70ms sooner but
+move the old window first half the time. "All three" pairs old picture, new picture and placement
+from different presses, so it is an estimate.
+
+**Queued ScreenCaptureKit work slows every step.** With four captures in flight at the press, the
+frame-zero capture took 92-97 against 26-33, the overlay came up at 176-180 against 84-86, focus
+landed 100-165 later and the windows were placed 140-176 later. A capture already issued cannot be
+stopped, so the queue has to stop issuing before a focus change.
+
+**Frame zero:** one batched SkyLight call of the on-screen windows, 26-33 / 55-76, against 71 / 163
+for one call per window (three windows). A crop of the batched picture is identical to the window's
+own capture (0 to 0.02% of pixels differ) unless windows overlap: a floating window under two tiled
+ones put 60% of the pixels off.
+
+**No repaint notification.** `WindowUpdated` (723), registered with every window asked for through
+`SLSRequestNotificationsForWindows`, delivered nothing in 40s across 128 windows while five windows
+changed, among them a parked VS Code seven times. Parked windows do repaint.
+
+**A ScreenCaptureKit filter can be kept.** One window list, then each window captured through its
+kept `SCContentFilter`: 22.8ms against 83 for a fresh list plus 26 for the capture, and the same
+picture in 61 of 63 windows, 62 of 63 after four strip moves; the misses were windows whose content
+was changing.
+
+**A low-rate `SCStream` costs nothing while a window is still and a lot while frames flow.** Four
+streams on still windows delivered one frame each in 15s. Sixteen streams at 2fps delivered 855
+frames with pixels in 30s, of which 90 differed from the one before, and held the WindowServer at
+43% CPU against 9.5% without them. A frame's arrival is not a change signal; comparing it is.
+SkyLight captures were not slowed by the streams.
+
+**rini's own work before the raise is 2.4 / 4.9 / 12.6** (p50 / p90 / p99, 506 presses of normal use,
+2026-10-03): the press to the raise's dispatch. The make-key call goes out at 6.5 / 15.6 / 32.2.
+
+## Where a moving focus change spends its time
+
+Measured 2026-10-03 on an idle machine with an outside probe (`tools/focuslab/focuslab.swift`,
+see `tools/focuslab/README.md`): a 1ms poller on `_SLPSGetFrontProcess`, `SLPSGetKeyFocusProcess` and
+`SLSGetWindowBounds`, and an `SCStream` of the titlebar band at 120fps timed by each frame's
+`displayTime`. Raw data in `docs/data/2026-10-03-focus/`, one JSON line per press.
+
+**A focus change with nothing moving is at the floor.** Two half-width windows side by side, the
+focused look visible on screen, ms after the input, p50 / p90:
+
+```
+                                      Chrome          Ghostty
+native click                          69 / 77         62 / 66
+rini key press                        52 / 60         53 / 66
+the make-key call itself, no rini     47 / 68         47 / 54
+```
+
+The window server changes the front process 1.1-1.6ms after the make-key call, with or without
+captures running; the rest is the app activating and repainting.
+
+**The window server has a written frame at once.** For seven apps, a parked window's AX position
+write took 0.4-0.8ms and `SLSGetWindowBounds` showed the new frame 0.04-0.1ms after it returned,
+`CGWindowList` about 1ms after. During a flight it is different: an app still activating applies the
+write late. Ghostty's write returned at 42-47ms and the server showed the move at 62-75ms.
+
+**A SkyLight capture costs what the time since the previous one says**, not the picture's size:
+
+```
+gap since the last capture   0     5     10    20    35    60    120   300   800 ms
+capture, p50                 15.9  15.7  16.8  21.7  24.1  29.9  39.1  43.0  43.3 ms
+```
+
+4.9 and 7.4 Mpx cost the same cold (39-47) and warm (21-23). A 20ms CPU spin in the calling
+process before a cold capture cut it to 33; a 20ms GPU burst, the caller's QoS, a 1pt animating
+window and tiny keep-alive captures did nothing. Calls on separate `SLSNewConnection`s still run
+one at a time. The frame-zero capture is always the cold one: 27-35 in a press.
+
+**The breakdown**, strip focus changes on the comms strip, VS Code to Ghostty and back, the two
+builds' flags interleaved in blocks of six in one run, 24 presses each, ms after rini takes the
+press, p50 / p90:
+
+```
+                                  before          after
+frame-zero capture starts         17.6 / 31.6      5.7 / 11.3
+frame-zero pictures ready         70.1 / 83.5     53.0 / 71.5
+overlay up, frames sent           71.5 / 84.2     53.4 / 71.9
+target write returns              78.8 / 97.5     58.4 / 75.9
+rini sees it landed              105.9 /119.4     76.9 / 99.0
+focused picture captured         123.3 /140.7    104.9 /121.4
+```
+
+What moved it: the frame-zero capture starts before the flight is composed; pictures are regions of
+the batched composite drawn through `contentsRect` (a crop handed to Core Animation cost 2-5ms of
+main-thread decode per quarter window, a standalone copy 14ms per flight); a background window
+wholly behind an opaque one at frame zero is captured after the overlay is up, not in a second
+frame-zero call; landing is read from `SLSGetWindowBounds` and watched from the moment the frames
+are sent. Making the window key before the raise's Accessibility calls changed nothing measurable.
+
+**The focused look can fly from frame zero.** After every flight the off-screen warm-up recaptures the
+window just left, unfocused, so a parked target's tile showed the unfocused look until its landing
+capture. Keeping each window's last focused picture, dropped once a newer capture shows different
+content below the titlebar, gives the tile the focused look at overlay-up, 48ms.
+
+## The handover, measured: an end-state mirror
+
+Measured 2026-10-02 with a scratch prototype (branch `scratch/handover`, files `proto.rs` and the
+`lab_*` hooks), against the deployed engine, interleaved ABBA, animations on, 64 presses per
+condition on the strip and 32 per swap or resize condition.
+
+**The metric:** the overlay window's own picture (one SkyLight call on the overlay) just before it
+lifts, against the screen just after, over every window that ends wholly on screen. Interior is
+inset 4pt; the edge band is the 1pt either side of the window's outline. Mean RGB difference, p50/p99:
+
+```
+                                  deployed engine            prototype
+strip, focused window   interior  0.35 / 4.28                0.26 / 3.39
+                        edge in   4.79 / 53.13               0.37 / 2.67
+                        edge out  4.30 / 17.54               1.56 / 3.10
+strip, other window     interior  4.14 / 8.15                0.79 / 1.51
+                        edges     16.6-17.7 / 33.7-33.9      1.08-2.26 / 1.23-2.49
+swap, focused window    edges     0.84 / 4.46                0.34 / 1.37
+swap, other window      edge in   5.68 / 24.78               5.30 / 6.07
+resize, focused window  interior  0.11 / 14.23               1.57 / 1.66
+```
+
+What each part of the prototype fixed:
+
+- **A constant hairline and outline replace the harvest.** A 1pt ring of white at 20% (18%
+  unfocused) inside the edge, and a 0.5pt stroke of black at 90% half a point outside it, drawn
+  as layers over every tile. The harvest leaves a tile with no outline whenever it has not run,
+  which is the 53-level tail. A border layer at a half-point origin landed one pixel too far out,
+  so the outline is a `CAShapeLayer` stroke; both have to be set after the tile's frame, or a pooled
+  layer's autoresizing carries the old size, and both follow a resize on its own timing.
+- **Every window that ends on screen gets a 1pt hole in the overlay** over its final frame, not only
+  the focused one: the window losing focus is occluded too, and repainted as unfocused only at the
+  lift.
+- **The end-state mirror.** From frame zero until the lift, the windows that end wholly on screen
+  are captured back to back in one batched SkyLight call with the desktop windows after them, and
+  every pass re-asserts its pictures, so a picture swapped in meanwhile (a reveal chase's framed one,
+  hairline baked in) is not what the lift lands on.
+- **Tiles snap to the real frame.** A strip pans by a fractional vector and the window server rounds
+  each window on its own, so a tile in a rigid group ended a point from its window (861 against 860
+  wide). When the mirror sees a window land, its tile is moved onto the real frame while still in
+  motion.
+- **A window counts as landed when its frame is stable between two polls and within 20pt of its
+  target**, and the crop uses the real frame: a terminal shrinking to half width sat at 862 against 860
+  requested before settling.
+- **A resize places the real windows at frame zero.** The deployed engine applies them at half the
+  flight, which left the app no time to render before the lift; the mirror's picture arrived 50ms
+  after it.
+- **Fresh frame zero:** one batched SkyLight call of the strip windows on screen, 16 / 84ms on the
+  main thread. The cached pictures it replaces differed from the screen by 2.3 / 8.1 levels, 2% / 8%
+  of pixels changed visibly, at an age of 1.6s p50.
+
+Cost: no measurable CPU. Over 16-press sweeps the WindowServer ran 42-46% and rini 14.6-16.4% with
+or without the prototype. A 400ms flight was no better than 350ms. Grows still lift at about 700ms
+because of the frame-zero reveal hold.
