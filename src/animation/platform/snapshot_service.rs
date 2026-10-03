@@ -3,7 +3,7 @@
 //! Fills a cache rather than capturing on demand: a capture is too slow to run at switch time.
 //! Results are `IOSurface` to keep a warm cache off the heap. See `src/animation/docs/capture-overlay-research.md`.
 
-use crate::animation::domain::request::SnapshotTarget;
+use crate::pictures::domain::target::PictureTarget;
 #[cfg(test)]
 use rini_core::ids::WindowServerId;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -26,9 +26,8 @@ use objc2_screen_capture_kit::{
 
 use tracing::{debug, warn};
 
-use crate::animation::platform::window_snapshot::{
-    Coverage, SnapshotImage, SnapshotSource, WindowSnapshot,
-};
+use crate::animation::platform::window_snapshot::{SnapshotImage, SnapshotSource, WindowSnapshot};
+use crate::pictures::domain::coverage::Coverage;
 use rini_core::ids::WindowId;
 
 /// Concurrent captures. ScreenCaptureKit serialises internally, so wall clock stops improving past
@@ -154,7 +153,7 @@ fn own_copy(source: &IOSurfaceRef) -> Option<CFRetained<IOSurfaceRef>> {
 
 /// A window to capture, and the size its pixels should represent.
 struct PendingCapture {
-    target: SnapshotTarget,
+    target: PictureTarget,
     /// The window's frame size at enumeration: what the capture is of. Mid-resize it differs from
     /// `target.size`.
     size: CGSize,
@@ -237,9 +236,9 @@ impl SnapshotService {
 
     /// Requests captures for `targets`, skipping any already in flight. `onScreenWindowsOnly` must be
     /// false or hidden-workspace windows are never enumerated.
-    pub fn request(&self, targets: Vec<SnapshotTarget>) {
+    pub fn request(&self, targets: Vec<PictureTarget>) {
         let revision = self.revision.load(Ordering::Acquire);
-        let targets: Vec<SnapshotTarget> = {
+        let targets: Vec<PictureTarget> = {
             let mut state = self.state.lock().unwrap();
             targets
                 .into_iter()
@@ -371,7 +370,7 @@ impl SnapshotService {
                 .iter()
                 .filter(|window| {
                     let layer = unsafe { window.windowLayer() } as i64;
-                    layer >= 0 || crate::animation::platform::backdrop::is_bar_layer(layer)
+                    layer >= 0 || crate::pictures::domain::backdrop::is_bar_layer(layer)
                 })
                 .collect();
             let excluded_refs: Vec<&SCWindow> = excluded.iter().map(|window| &**window).collect();
@@ -506,7 +505,7 @@ impl SnapshotService {
 
     fn finish(
         &self,
-        target: SnapshotTarget,
+        target: PictureTarget,
         size: CGSize,
         revision: u64,
         scale: f64,
@@ -566,7 +565,7 @@ impl SnapshotService {
     }
 
     /// Releases targets that will never produce a result, so they can be requested again later.
-    fn abandon(&self, targets: &[SnapshotTarget]) {
+    fn abandon(&self, targets: &[PictureTarget]) {
         let mut state = self.state.lock().unwrap();
         for target in targets {
             state.in_flight.remove(&target.window);
@@ -651,8 +650,8 @@ mod tests {
         }
     }
 
-    fn target(idx: u32) -> SnapshotTarget {
-        SnapshotTarget {
+    fn target(idx: u32) -> PictureTarget {
+        PictureTarget {
             window: wid(idx),
             server_id: WindowServerId::new(idx),
             size: CGSize::new(859.0, 1081.0),

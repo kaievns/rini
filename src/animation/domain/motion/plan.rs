@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 
-use crate::animation::domain::motion::fit::is_a_resize;
+use rini_geometry::stretch::is_a_resize;
 use crate::animation::domain::motion::surface::{
     SurfaceWindow, TileGeometry, pan_travel, to_overlay_space,
 };

@@ -8,7 +8,8 @@ every layout decision needs. Pure, and the only crate that tests without linking
 
 `CGRectExt` (`mid`, `intersection`, `union`, `area`, `contains`, `contains_rect`), `Round`,
 `SameAs` and `IsWithin` for float comparison, `centered_in`, `is_off_screen` and
-`park_entry_frame`.
+`park_entry_frame`. `stretch`: the stretch tolerance (`MIN_STRETCH`, `MAX_STRETCH`),
+`within_stretch` and `is_a_resize`.
 
 ## The shape that matters
 
@@ -19,3 +20,7 @@ from both the requested frame and the server's. See "Parking" in
 
 **Float comparison is explicit.** `SameAs` and `IsWithin` exist so no layout test
 compares `f64` with `==` and no production code rounds by accident.
+
+**One stretch tolerance.** Half a percent either way. A picture fits a frame, and a size change
+is not a resize, by the same test (`within_stretch`), so `pictures` and `animation` cannot
+disagree about which moves need a fresh picture.

@@ -642,7 +642,7 @@ bounces as before, on top of whatever is playing.
 cold cache had no picture of it, and the strip surface drew nothing for a
 window with no picture: a hole in the side the step opens. The surface path now
 takes the stand-in the per-window path does (`picture_or_stand_in` in
-`src/animation/domain/admission.rs`, shared by both): a known window parked off
+`src/pictures/domain/stand_in.rs`, shared by both): a known window parked off
 this display with no picture flies as the dark `--n3` tile, uncached. A window
 on this display with no picture is still placed and not drawn. A strip
 movement starts at once and never holds, so the real picture of a stand-in

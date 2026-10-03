@@ -4,7 +4,7 @@ use tracing::{debug, trace};
 use crate::animation::domain::motion::travel::travels_visibly;
 use crate::animation::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::animation::platform::power;
-use crate::animation::platform::window_snapshot::is_a_resize;
+use rini_geometry::stretch::is_a_resize;
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::Present;
 use crate::windows::domain::request::Request;
@@ -96,11 +96,11 @@ impl AnimationManager {
         reactor
             .pictured_windows
             .retain(|window| reactor.state.windows.window(*window).is_some());
-        let first_laid_out: Vec<crate::animation::domain::request::SnapshotTarget> = layout
+        let first_laid_out: Vec<crate::pictures::domain::target::PictureTarget> = layout
             .iter()
             .filter(|(window, _)| !reactor.pictured_windows.contains(window))
             .filter_map(|&(window, frame)| {
-                Some(crate::animation::domain::request::SnapshotTarget {
+                Some(crate::pictures::domain::target::PictureTarget {
                     window,
                     server_id: reactor.state.windows.window(window)?.info.sys_id?,
                     size: frame.size,

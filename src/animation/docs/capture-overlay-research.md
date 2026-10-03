@@ -1661,7 +1661,7 @@ is fixed overhead, not area.
 
 The composite has no transparency: the rounded corners came back filled with the
 stripes behind them. So it is merged with the window's own capture
-(`animation::domain::translucency`): the window's own pixel wherever it is not
+(`pictures::domain::translucency`): the window's own pixel wherever it is not
 fully opaque — corners, and real per-pixel transparency, which captures
 correctly on its own (see the next section) — and the composite's wherever it
 is. Opaque content is pixel-identical between the two, so the merge only

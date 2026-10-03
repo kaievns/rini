@@ -3073,11 +3073,11 @@ impl Reactor {
             ));
             // And queue captures for the rest, so the NEXT open has them. Background work; nothing is
             // drawn and no window is touched.
-            let targets: Vec<crate::animation::domain::request::SnapshotTarget> = windows
+            let targets: Vec<crate::pictures::domain::target::PictureTarget> = windows
                 .iter()
                 .filter_map(|window| {
                     let state = self.state.windows.window(*window)?;
-                    Some(crate::animation::domain::request::SnapshotTarget {
+                    Some(crate::pictures::domain::target::PictureTarget {
                         window: *window,
                         server_id: state.info.sys_id?,
                         size: state.frame_monotonic.size,
@@ -3641,7 +3641,7 @@ impl Reactor {
             .gaps
             .effective_for_display(screen.display_uuid_opt());
 
-        let mut targets: Vec<crate::animation::domain::request::SnapshotTarget> = Vec::new();
+        let mut targets: Vec<crate::pictures::domain::target::PictureTarget> = Vec::new();
         for (workspace_id, _) in &workspaces {
             let layout = self.layout_manager.layout_engine.calculate_layout_for_workspace(
                 &self.state.windows,
@@ -3655,7 +3655,7 @@ impl Reactor {
                     continue;
                 };
                 let Some(server_id) = window.info.sys_id else { continue };
-                targets.push(crate::animation::domain::request::SnapshotTarget {
+                targets.push(crate::pictures::domain::target::PictureTarget {
                     window: wid,
                     server_id,
                     size: frame.size,
@@ -4083,7 +4083,7 @@ impl Reactor {
             };
             let Some(server_id) = state.info.sys_id else { continue };
             _ = tx.send(crate::animation::platform::engine::Event::RefreshFocus(
-                crate::animation::domain::request::SnapshotTarget {
+                crate::pictures::domain::target::PictureTarget {
                     window,
                     server_id,
                     size: state.frame_monotonic.size,

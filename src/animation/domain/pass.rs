@@ -8,7 +8,7 @@ use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::{Round, SameAs};
 
 use crate::animation::domain::request::AnimationRequest;
-use crate::animation::domain::request::SnapshotTarget;
+use crate::pictures::domain::target::PictureTarget;
 
 /// A window as the layout pass sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,7 +54,7 @@ pub struct PassPlan {
     pub unmoved: Vec<AnimationRequest>,
     /// Every moving window with a server id, visible or not: the ones that slide in on a later
     /// switch are exactly the ones sitting off-strip now, and only capturable ahead of time.
-    pub warm: Vec<SnapshotTarget>,
+    pub warm: Vec<PictureTarget>,
     /// Whether any window's frame changes, counting windows whose app is gone.
     pub any_frame_changed: bool,
 }
@@ -104,7 +104,7 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
             continue;
         }
         if let Some(server_id) = w.server_id {
-            out.warm.push(SnapshotTarget {
+            out.warm.push(PictureTarget {
                 window: w.window,
                 server_id,
                 size: to.size,

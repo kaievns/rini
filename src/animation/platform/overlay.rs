@@ -1250,7 +1250,7 @@ impl TileOverlay {
         place_tile(entry, to, z);
         let timing = Timing::starting_now(duration);
         // Proportional tolerance, not equality: a sub-tolerance re-fit rides the plain move.
-        if !crate::animation::platform::window_snapshot::is_a_resize(from.size, to.size) {
+        if !rini_geometry::stretch::is_a_resize(from.size, to.size) {
             entry.resize_leg = None;
             // addAnimation copies, so one instance serves picture and shadow.
             let animation = position_animation(from.origin, to.origin, timing);

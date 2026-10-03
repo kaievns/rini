@@ -5,7 +5,9 @@ use std::time::Instant;
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
-use crate::animation::domain::motion::fit::{fits_frame, is_a_resize, outgrows};
+use rini_geometry::stretch::is_a_resize;
+
+use crate::pictures::domain::coverage::{fits_frame, outgrows};
 
 /// How a tile's picture is fitted to the frame it is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq)]

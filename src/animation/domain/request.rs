@@ -1,9 +1,9 @@
-//! What the flight engine and the snapshot service are asked for.
+//! What the flight engine is asked for.
 //!
-//! The ports into `crate::animation::platform`: `domain::motion` and `domain::pass` plan a pass in
-//! these terms, and the engine and the capture service carry them out.
+//! The port into `crate::animation::platform`: `domain::motion` and `domain::pass` plan a pass in
+//! these terms, and the engine carries them out.
 
-use objc2_core_foundation::{CGRect, CGSize};
+use objc2_core_foundation::CGRect;
 
 use rini_core::ids::{WindowId, WindowServerId};
 
@@ -17,12 +17,4 @@ pub struct AnimationRequest {
     pub to: CGRect,
     /// Off the strip, and so in the other z-order group.
     pub floating: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SnapshotTarget {
-    pub window: WindowId,
-    pub server_id: WindowServerId,
-    /// The window's full size in points, as the layout intends it.
-    pub size: CGSize,
 }

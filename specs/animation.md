@@ -164,8 +164,10 @@ destination for a window already moving.
 
 `src/animation/domain/motion/` is the planning, `src/animation/domain/motion/strip_move.rs` the move
 along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
-`src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. Measurements are in
-`src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.
+`src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. What a picture is worth,
+the stand-in and the capture work a flight permits are `src/pictures/domain/`; the captures are still in
+`src/animation/platform/`. Measurements are in `src/animation/docs/animation-smoothness.md` and
+`capture-overlay-research.md`.
 
 ## Windows with no picture yet
 

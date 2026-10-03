@@ -6,4 +6,3 @@ pub mod motion;
 pub mod pass;
 pub mod request;
 pub mod timing;
-pub mod translucency;

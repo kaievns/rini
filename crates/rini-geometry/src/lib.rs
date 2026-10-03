@@ -4,6 +4,8 @@ use objc2_core_foundation as ic;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::{DeserializeAs, SerializeAs};
 
+pub mod stretch;
+
 pub trait Round {
     fn round(&self) -> Self;
 }

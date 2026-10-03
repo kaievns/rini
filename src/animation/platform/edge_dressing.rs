@@ -126,12 +126,6 @@ pub struct EdgeDressing {
 // SAFETY: CGImage is immutable, like `SnapshotImage::Bitmap`.
 unsafe impl Send for EdgeDressing {}
 
-/// Which dressing the cache holds after a capture lands: a fresh harvest wins, otherwise the
-/// window keeps what it last wore, whether or not the capture's pixels were accepted.
-pub fn dressing_after_insert<D>(worn: Option<D>, harvested: Option<D>) -> Option<D> {
-    harvested.or(worn)
-}
-
 /// The window rect grown by one ring on every side, so a framed capture carries the outer dark
 /// outline too (see [`boundary_layout`]).
 pub fn ring_expanded(frame: CGRect) -> CGRect {
@@ -403,17 +397,6 @@ mod tests {
         // Measured: alpha 244 of 255.
         assert!(dressing_is_real(244.0 / 255.0));
         assert!(dressing_is_real(1.0));
-    }
-
-    #[test]
-    fn a_fresh_harvest_replaces_what_the_window_wore() {
-        assert_eq!(dressing_after_insert(Some(1), Some(2)), Some(2));
-    }
-
-    #[test]
-    fn a_failed_harvest_keeps_the_last_known_dressing() {
-        assert_eq!(dressing_after_insert(Some(1), None), Some(1));
-        assert_eq!(dressing_after_insert::<u32>(None, None), None);
     }
 
     /// A `w` x `h` pixel image filled with one colour at `alpha`.

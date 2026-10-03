@@ -1,9 +1,11 @@
-//! When a picture fits the frame it is drawn into. Sizes only, so every rule here is testable
-//! without an image. Measurements behind the tolerances are in `src/animation/docs/capture-overlay-research.md`.
+//! When a picture covers its window and fits the frame it is drawn into. Sizes only, so every rule
+//! here is testable without an image. Measurements behind the tolerances are in
+//! `src/animation/docs/capture-overlay-research.md`; the stretch tolerance is `rini_geometry::stretch`.
 
 use std::time::Duration;
 
 use objc2_core_foundation::CGSize;
+use rini_geometry::stretch::{MAX_STRETCH, within_stretch};
 
 /// How much smaller than its real size a capture may be before it is not worth drawing.
 ///
@@ -54,13 +56,6 @@ pub fn should_replace(existing: Option<Coverage>, incoming: Coverage) -> bool {
 /// rounding is normal; anything more means it does not describe this display.
 const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
 
-/// How far a picture may be from the size it is drawn at before the stretch is visible.
-///
-/// A layer's `contentsGravity` defaults to resize, so contents are stretched to fill the layer with no
-/// regard for their own proportions. Half a percent is rounding; more than that is distortion.
-const MAX_STRETCH: f64 = 1.005;
-const MIN_STRETCH: f64 = 0.995;
-
 /// Can this picture be drawn at `frame` without visibly distorting it?
 ///
 /// Distinct from [`Coverage::is_usable`], which compares a capture against the window it was taken
@@ -68,22 +63,10 @@ const MIN_STRETCH: f64 = 0.995;
 /// longer matches. See "A capture can be usable and still be the wrong shape" in
 /// `src/animation/docs/capture-overlay-research.md`.
 pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
-    if frame.0 <= 0.0 || frame.1 <= 0.0 {
-        return false;
-    }
-    let wide = covered.0 / frame.0;
-    let tall = covered.1 / frame.1;
-    (MIN_STRETCH..=MAX_STRETCH).contains(&wide) && (MIN_STRETCH..=MAX_STRETCH).contains(&tall)
-}
-
-/// Whether a layout change resizes a window, rather than merely moving it.
-///
-/// The threshold is `fits_frame`'s, so "this move is a resize" and "this picture no longer fits"
-/// agree by construction. Rounding is not a resize; treating a one-point re-fit as one measurably
-/// tore the strip apart. See "A one-point size change sent the whole strip to the Accessibility
-/// engine" in `src/animation/docs/capture-overlay-research.md`.
-pub fn is_a_resize(from: CGSize, to: CGSize) -> bool {
-    !fits_frame((from.width, from.height), (to.width, to.height))
+    within_stretch(
+        CGSize::new(covered.0, covered.1),
+        CGSize::new(frame.0, frame.1),
+    )
 }
 
 /// Whether `size` needs pixels this picture does not have: bigger than the capture in either
@@ -185,54 +168,6 @@ mod tests {
             !spans_display((1725.0, 1117.0), (1728.0, 1117.0)),
             "3pt short is not the display"
         );
-    }
-
-    /// The measured case. A strip re-fit took a window from 918pt to 917pt, and treating that one
-    /// point as a resize sent the whole layout to the Accessibility engine, which writes every
-    /// window separately and lets the strip come apart.
-    #[test]
-    fn a_point_of_rounding_is_not_a_resize() {
-        assert!(!is_a_resize(
-            CGSize::new(918.0, 1081.0),
-            CGSize::new(917.0, 1081.0)
-        ));
-        assert!(!is_a_resize(
-            CGSize::new(1720.0, 1081.0),
-            CGSize::new(1719.0, 1081.0)
-        ));
-        assert!(!is_a_resize(
-            CGSize::new(859.0, 1081.0),
-            CGSize::new(859.0, 1081.0)
-        ));
-    }
-
-    /// A real resize is drawn anchored and cropped rather than stretched, so the overlay has to
-    /// know which one it is looking at.
-    #[test]
-    fn a_column_changing_width_is_a_resize() {
-        assert!(is_a_resize(
-            CGSize::new(1440.0, 1081.0),
-            CGSize::new(859.0, 1081.0)
-        ));
-        assert!(is_a_resize(
-            CGSize::new(859.0, 1081.0),
-            CGSize::new(1720.0, 1081.0)
-        ));
-        assert!(is_a_resize(
-            CGSize::new(859.0, 1081.0),
-            CGSize::new(859.0, 540.0)
-        ));
-    }
-
-    /// The tolerance is proportional, so a point means more on a small window than a large one. That
-    /// is the right way round: a point of stretch is invisible across 918pt and obvious across 40pt.
-    #[test]
-    fn the_tolerance_scales_with_the_window() {
-        assert!(!is_a_resize(
-            CGSize::new(400.0, 400.0),
-            CGSize::new(401.0, 400.0)
-        ));
-        assert!(is_a_resize(CGSize::new(40.0, 400.0), CGSize::new(41.0, 400.0)));
     }
 
     /// Fresh pictures are left alone — re-capturing every animated window per keystroke is churn —

@@ -3,22 +3,16 @@
 //! SkyLight captures what is on screen, fresh; ScreenCaptureKit serves everything else from a
 //! background cache. Constraints and costs of both: `src/animation/docs/capture-overlay-research.md`.
 
-use std::collections::HashMap;
 use std::ffi::c_int;
 
 use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
-use crate::animation::platform::edge_dressing::dressing_after_insert;
-use rini_core::ids::WindowId;
+use crate::pictures::domain::cache::{CarriesOver, HasCoverage, dressing_after_insert, keeps_blur};
+use crate::pictures::domain::coverage::{Coverage, fits_frame};
 use rini_core::ids::WindowServerId;
 use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
-
-pub use crate::animation::domain::motion::fit::{
-    Coverage, fits_frame, is_a_resize, is_backdrop_worth_drawing, needs_capture, outgrows,
-    picture_is_stale, should_replace, spans_display,
-};
 
 /// Undocumented `SLSHWCaptureWindowList` option bits, as yabai passes them. See "What yabai
 /// actually does" in `src/animation/docs/capture-overlay-research.md`.
@@ -43,14 +37,15 @@ pub struct WindowSnapshot {
     pub coverage: Coverage,
     pub source: SnapshotSource,
     /// The hairline this window wore when last seen composited; carried across cache refreshes by
-    /// [`SnapshotCache::insert`]. See [`crate::animation::platform::edge_dressing`].
+    /// [`crate::pictures::domain::cache::PictureCache::insert`]. See
+    /// [`crate::animation::platform::edge_dressing`].
     pub dressing: Option<crate::animation::platform::edge_dressing::EdgeDressing>,
     /// When the pixels were captured; staleness is a reason to re-warm.
     pub taken: std::time::Instant,
     /// Whether this picture carries a blur its window's own surface lacks: taken as a composite with
     /// what was below the window, and different from the window's own capture where it matters. A
     /// picture like this is not given up for a same-sized capture of the window alone, which would
-    /// be flat grey exactly where the blur is. See [`crate::animation::domain::translucency`].
+    /// be flat grey exactly where the blur is. See [`crate::pictures::domain::translucency`].
     pub carries_blur: bool,
 }
 
@@ -190,9 +185,9 @@ fn with_blur(
     composite: &CGImage,
 ) -> Option<(
     CFRetained<CGImage>,
-    crate::animation::domain::translucency::Merged,
+    crate::pictures::domain::translucency::Merged,
 )> {
-    use crate::animation::domain::translucency::{Pictures, merge};
+    use crate::pictures::domain::translucency::{Pictures, merge};
     let (width, height) = (CGImage::width(Some(own)), CGImage::height(Some(own)));
     if CGImage::width(Some(composite)) != width || CGImage::height(Some(composite)) != height {
         return None;
@@ -336,29 +331,6 @@ pub fn placeholder_image(scale: f64) -> Option<(CFRetained<CGImage>, f64)> {
     ))
 }
 
-/// Anything the cache can hold and judge, so the replacement policy can be tested on plain sizes.
-pub trait HasCoverage {
-    fn coverage(&self) -> Coverage;
-}
-
-/// State a cache payload keeps alive across captures, independently of the pixel replacement rule.
-/// The dressing comes from the screen composite, not the capture buffer, so it replaces on its own.
-pub trait CarriesOver: Sized {
-    /// Called on an incoming payload that is about to replace `previous`.
-    fn inherit(&mut self, _previous: &Self) {}
-    /// Called on the kept payload when `refused` lost to the replacement rule.
-    fn absorb(&mut self, _refused: Self) {}
-    /// Whether this payload is worth more than `incoming` even though the coverage rule would replace
-    /// it.
-    fn keeps_over(&self, _incoming: &Self) -> bool {
-        false
-    }
-    /// Whether this payload may be cached at all.
-    fn cacheable(&self) -> bool {
-        true
-    }
-}
-
 impl HasCoverage for WindowSnapshot {
     fn coverage(&self) -> Coverage {
         self.coverage
@@ -393,24 +365,6 @@ impl CarriesOver for WindowSnapshot {
     }
 }
 
-/// The rule behind `keeps_over`, on plain values.
-pub fn keeps_blur(
-    held: bool,
-    incoming: bool,
-    held_coverage: Coverage,
-    incoming_coverage: Coverage,
-) -> bool {
-    held && !incoming && held_coverage.window == incoming_coverage.window
-}
-
-impl HasCoverage for Coverage {
-    fn coverage(&self) -> Coverage {
-        *self
-    }
-}
-
-impl CarriesOver for Coverage {}
-
 /// Captures several windows as one composited image, for the backdrop.
 pub fn capture_composite_via_skylight(
     windows: &[WindowServerId],
@@ -418,78 +372,6 @@ pub fn capture_composite_via_skylight(
     scale: f64,
 ) -> Option<WindowSnapshot> {
     capture_list_via_skylight(windows, covers, scale)
-}
-
-/// Snapshots held per window, so a switch can composite without capturing anything synchronously.
-/// Keyed by [`WindowId`] because window server ids are recycled when a window closes and reopens.
-pub struct SnapshotCache<T = WindowSnapshot> {
-    entries: HashMap<WindowId, T>,
-}
-
-impl<T: HasCoverage> Default for SnapshotCache<T> {
-    fn default() -> Self {
-        Self { entries: HashMap::new() }
-    }
-}
-
-impl<T: HasCoverage + CarriesOver> SnapshotCache<T> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Stores a snapshot, subject to [`should_replace`] for its pixels, with [`CarriesOver`]
-    /// deciding what survives of the rest either way. True when its pixels are now the ones held.
-    pub fn insert(&mut self, window: WindowId, mut snapshot: T) -> bool {
-        if !snapshot.cacheable() {
-            return false;
-        }
-        if let Some(existing) = self.entries.get_mut(&window) {
-            if !should_replace(Some(existing.coverage()), snapshot.coverage())
-                || existing.keeps_over(&snapshot)
-            {
-                existing.absorb(snapshot);
-                return false;
-            }
-            snapshot.inherit(existing);
-        }
-        self.entries.insert(window, snapshot);
-        true
-    }
-
-    pub fn get(&self, window: WindowId) -> Option<&T> {
-        self.entries.get(&window)
-    }
-
-    pub fn get_mut(&mut self, window: WindowId) -> Option<&mut T> {
-        self.entries.get_mut(&window)
-    }
-
-    /// The snapshot to actually draw, or `None` if what we hold is not worth drawing.
-    pub fn usable(&self, window: WindowId) -> Option<&T> {
-        self.entries.get(&window).filter(|s| s.coverage().is_usable())
-    }
-
-    pub fn forget(&mut self, window: WindowId) {
-        self.entries.remove(&window);
-    }
-
-    /// Drops snapshots for windows rini no longer manages.
-    pub fn retain_only(&mut self, live: &dyn Fn(WindowId) -> bool) {
-        self.entries.retain(|wid, _| live(*wid));
-    }
-
-    /// Every cached entry, for the debug dump.
-    pub fn iter(&self) -> impl Iterator<Item = (&WindowId, &T)> {
-        self.entries.iter()
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
 }
 
 /// A 1x1 bitmap for tests that need a real `CGImage` but never read its pixels.
@@ -545,21 +427,15 @@ pub(crate) fn test_snapshot(size: CGSize) -> WindowSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
+    use rini_core::ids::WindowId;
 
     use super::*;
-
-    fn size(w: f64, h: f64) -> Coverage {
-        Coverage {
-            covered: (w, h),
-            window: (w, h),
-        }
-    }
+    use crate::pictures::domain::cache::PictureCache;
 
     /// A stand-in never enters the cache, where it would be lent to the switcher as a picture.
     #[test]
     fn a_stand_in_is_never_cached() {
-        let mut cache: SnapshotCache<WindowSnapshot> = SnapshotCache::new();
+        let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
         let window = WindowId::new(1, 1);
         assert!(!cache.insert(window, placeholder(CGSize::new(859.0, 1081.0), test_bitmap())));
         assert!(cache.get(window).is_none());
@@ -579,7 +455,7 @@ mod tests {
     /// replaced by a later capture of the window on its own, which is flat grey where the blur is.
     #[test]
     fn a_picture_with_its_blur_is_kept_over_a_grey_one_of_the_same_size() {
-        let mut cache: SnapshotCache<WindowSnapshot> = SnapshotCache::new();
+        let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
         let window = WindowId::new(1, 1);
         let mut blurred = test_snapshot(CGSize::new(859.0, 1081.0));
         blurred.carries_blur = true;
@@ -590,30 +466,6 @@ mod tests {
             "and the refusal is reported, so a flight in the air does not draw the grey one either"
         );
         assert!(cache.get(window).unwrap().carries_blur, "the blur stays");
-    }
-
-    /// A resize means the old picture no longer fits the window, blur or not.
-    #[test]
-    fn a_resized_window_takes_the_new_picture_even_without_its_blur() {
-        assert!(!keeps_blur(
-            true,
-            false,
-            size(859.0, 1081.0),
-            size(1720.0, 1081.0)
-        ));
-        assert!(keeps_blur(true, false, size(859.0, 1081.0), size(859.0, 1081.0)));
-    }
-
-    /// A newer picture WITH its blur always replaces an older one, so an on-screen window refreshes.
-    #[test]
-    fn a_newer_blurred_picture_replaces_an_older_one() {
-        assert!(!keeps_blur(true, true, size(859.0, 1081.0), size(859.0, 1081.0)));
-        assert!(!keeps_blur(
-            false,
-            false,
-            size(859.0, 1081.0),
-            size(859.0, 1081.0)
-        ));
     }
 
     /// The reported failure: the window was parked between reading its frame and taking the composite,
@@ -689,124 +541,5 @@ mod tests {
             !fully_on_a_display(at(4.0, 32.0, 100.0, 100.0), &[]),
             "no displays known"
         );
-    }
-
-    fn wid(idx: u32) -> WindowId {
-        WindowId {
-            pid: 1,
-            idx: NonZeroU32::new(idx).unwrap(),
-        }
-    }
-
-    fn coverage(covered: (f64, f64), window: (f64, f64)) -> Coverage {
-        Coverage { covered, window }
-    }
-
-    fn cache() -> SnapshotCache<Coverage> {
-        SnapshotCache::new()
-    }
-
-    /// Stands in for `WindowSnapshot` and its dressing without needing a bitmap.
-    #[derive(Clone, Copy)]
-    struct Dressed {
-        coverage: Coverage,
-        dressing: Option<u32>,
-    }
-
-    impl HasCoverage for Dressed {
-        fn coverage(&self) -> Coverage {
-            self.coverage
-        }
-    }
-
-    impl CarriesOver for Dressed {
-        fn inherit(&mut self, previous: &Self) {
-            self.dressing = crate::animation::platform::edge_dressing::dressing_after_insert(
-                previous.dressing,
-                self.dressing,
-            );
-        }
-
-        fn absorb(&mut self, refused: Self) {
-            self.dressing = crate::animation::platform::edge_dressing::dressing_after_insert(
-                self.dressing,
-                refused.dressing,
-            );
-        }
-    }
-
-    #[test]
-    fn a_refused_capture_still_delivers_its_dressing() {
-        let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
-        let good = coverage((859.0, 1081.0), (859.0, 1081.0));
-        let sliver = coverage((40.0, 1081.0), (859.0, 1081.0));
-        cache.insert(
-            wid(1),
-            Dressed {
-                coverage: good,
-                dressing: Some(1),
-            },
-        );
-        cache.insert(
-            wid(1),
-            Dressed {
-                coverage: sliver,
-                dressing: Some(2),
-            },
-        );
-        let held = cache.get(wid(1)).unwrap();
-        assert_eq!(held.coverage.covered.0, 859.0, "the pixels were refused");
-        assert_eq!(held.dressing, Some(2), "but the fresher ring was kept");
-    }
-
-    #[test]
-    fn an_accepted_capture_without_a_harvest_inherits_the_worn_dressing() {
-        let mut cache: SnapshotCache<Dressed> = SnapshotCache::new();
-        let good = coverage((859.0, 1081.0), (859.0, 1081.0));
-        cache.insert(
-            wid(1),
-            Dressed {
-                coverage: good,
-                dressing: Some(1),
-            },
-        );
-        cache.insert(wid(1), Dressed { coverage: good, dressing: None });
-        assert_eq!(cache.get(wid(1)).unwrap().dressing, Some(1));
-    }
-
-    #[test]
-    fn cache_applies_the_no_downgrade_rule() {
-        let mut cache = cache();
-        cache.insert(wid(1), coverage((859.0, 1081.0), (859.0, 1081.0)));
-        cache.insert(wid(1), coverage((40.0, 1081.0), (859.0, 1081.0)));
-        assert_eq!(cache.get(wid(1)).unwrap().covered.0, 859.0);
-        assert!(cache.usable(wid(1)).is_some());
-    }
-
-    #[test]
-    fn cache_holds_a_sliver_but_reports_it_as_not_worth_drawing() {
-        let mut cache = cache();
-        cache.insert(wid(1), coverage((40.0, 1081.0), (859.0, 1081.0)));
-        assert!(cache.get(wid(1)).is_some(), "held");
-        assert!(cache.usable(wid(1)).is_none(), "but not drawable");
-    }
-
-    #[test]
-    fn forget_drops_one_window() {
-        let mut cache = cache();
-        cache.insert(wid(1), coverage((859.0, 1081.0), (859.0, 1081.0)));
-        cache.forget(wid(1));
-        assert!(cache.is_empty());
-    }
-
-    #[test]
-    fn retain_only_drops_windows_that_are_gone() {
-        let mut cache = cache();
-        cache.insert(wid(1), coverage((859.0, 1081.0), (859.0, 1081.0)));
-        cache.insert(wid(2), coverage((859.0, 1081.0), (859.0, 1081.0)));
-        cache.retain_only(&|w| w == wid(1));
-        assert_eq!(cache.len(), 1);
-        assert!(cache.get(wid(1)).is_some());
-        assert!(cache.get(wid(2)).is_none());
     }
 }

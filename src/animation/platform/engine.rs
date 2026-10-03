@@ -7,6 +7,7 @@ use crate::animation::domain::admission::*;
 use crate::animation::domain::flight::*;
 use crate::animation::domain::request::AnimationRequest;
 use crate::animation::domain::timing::*;
+use crate::pictures::domain::schedule::*;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -14,12 +15,15 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
-use crate::animation::domain::request::SnapshotTarget;
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
 use crate::animation::platform::snapshot_service::SnapshotService;
 use crate::animation::platform::window_snapshot::{
-    SnapshotCache, WindowSnapshot, capture_via_framed_with_dressing, is_wholly_on_a_display,
+    WindowSnapshot, capture_via_framed_with_dressing, is_wholly_on_a_display,
 };
+use crate::pictures::domain::cache::PictureCache;
+use crate::pictures::domain::settle::chase_settled;
+use crate::pictures::domain::stand_in::picture_or_stand_in;
+use crate::pictures::domain::target::PictureTarget;
 use rini_core::ids::WindowId;
 use rini_core::ids::WindowServerId;
 use rini_geometry::SameAs;
@@ -112,10 +116,10 @@ pub enum Event {
     RefreshBar,
     /// Recapture this window because focus moved to or from it: focus changes the rendering
     /// without changing the size, so the ordinary warm's size test cannot see it.
-    RefreshFocus(SnapshotTarget),
+    RefreshFocus(PictureTarget),
     /// Warm the cache for these windows. Only queues background work.
     /// Targets come from the reactor because only it knows each window's real [`WindowId`].
-    WarmWindows(Vec<SnapshotTarget>),
+    WarmWindows(Vec<PictureTarget>),
     /// Warm from the window server rather than rini's window table. Debug command only.
     WarmCache,
     /// Hand out the pictures already cached for these windows, to whoever installed `lend_snapshots`.
@@ -149,11 +153,11 @@ pub type Receiver = channel::Receiver<Event>;
 fn refresh_requests(
     tiles: &[(WindowId, WindowServerId, CGSize)],
     wanted: &[WindowId],
-) -> (Vec<WindowId>, Vec<SnapshotTarget>) {
-    let requests: Vec<SnapshotTarget> = wanted
+) -> (Vec<WindowId>, Vec<PictureTarget>) {
+    let requests: Vec<PictureTarget> = wanted
         .iter()
         .filter_map(|window| tiles.iter().find(|(w, _, _)| w == window))
-        .map(|&(window, server_id, size)| SnapshotTarget { window, server_id, size })
+        .map(|&(window, server_id, size)| PictureTarget { window, server_id, size })
         .collect();
     let covered = requests.iter().map(|t| t.window).collect();
     (covered, requests)
@@ -197,8 +201,8 @@ fn desktop_render_wanted(render: Option<(Duration, (f64, f64))>, display: (f64, 
     match render {
         None => true,
         Some((age, covered)) => {
-            !crate::animation::platform::window_snapshot::spans_display(covered, display)
-                || crate::animation::platform::window_snapshot::picture_is_stale(age)
+            !crate::pictures::domain::coverage::spans_display(covered, display)
+                || crate::pictures::domain::coverage::picture_is_stale(age)
         }
     }
 }
@@ -348,7 +352,7 @@ fn nudge_on(
 /// The capture work a lift leaves for the quiet period.
 #[derive(Default)]
 struct AfterFlight {
-    targets: Vec<SnapshotTarget>,
+    targets: Vec<PictureTarget>,
     harvested: HashSet<WindowId>,
 }
 
@@ -507,14 +511,14 @@ impl RunningAnimation {
             return TileState::NotTiled;
         };
         let fits = snapshot.fits(tile.to.size);
-        if crate::animation::platform::window_snapshot::outgrows(
+        if crate::pictures::domain::coverage::outgrows(
             tile.snapshot.coverage.covered,
             tile.to.size,
         ) {
             return TileState::Reveal { fits };
         }
         let resizing =
-            crate::animation::platform::window_snapshot::is_a_resize(tile.from.size, tile.to.size);
+            rini_geometry::stretch::is_a_resize(tile.from.size, tile.to.size);
         if self.refresh.is_target(window) {
             TileState::MovingRefreshTarget { fits, resizing }
         } else {
@@ -697,7 +701,7 @@ pub struct FlightEngine {
     tx: Sender,
     mtm: MainThreadMarker,
     overlay: Option<TileOverlay>,
-    cache: SnapshotCache,
+    cache: PictureCache<WindowSnapshot>,
     /// Full-size captures for windows SkyLight cannot serve. Results go through `cache`, never
     /// straight to a tile.
     service: SnapshotService,
@@ -716,9 +720,9 @@ pub struct FlightEngine {
     /// The capture work the last flights owe, run at `Quiet`.
     after_flight: Option<AfterFlight>,
     /// Windows from the most recent animation, so the post-animation refresh uses real ids.
-    last_animated: Vec<SnapshotTarget>,
+    last_animated: Vec<PictureTarget>,
     /// Warms asked for during a flight, one per window, requested at `finish`.
-    deferred_warm: Vec<SnapshotTarget>,
+    deferred_warm: Vec<PictureTarget>,
     /// Whether the desktop render was missing or stale at composition; re-rendered at `finish`.
     deferred_desktop: bool,
     /// The focus the previous flight landed on, for `refresh_targets`. Kept across a flight that
@@ -760,7 +764,7 @@ impl FlightEngine {
             tx,
             mtm,
             overlay: None,
-            cache: SnapshotCache::new(),
+            cache: PictureCache::new(),
             service,
             display: None,
             display_id: None,
@@ -960,22 +964,22 @@ impl FlightEngine {
 
     /// Queues background captures for windows the reactor identified; during a flight they wait
     /// in `deferred_warm` for `finish`. Returns the windows requested now.
-    fn warm_windows(&mut self, targets: Vec<SnapshotTarget>) -> Vec<WindowId> {
+    fn warm_windows(&mut self, targets: Vec<PictureTarget>) -> Vec<WindowId> {
         if !capture_work_allowed(self.phase(), CaptureKind::Warm) {
             defer_warm(&mut self.deferred_warm, targets);
             return Vec::new();
         }
-        let wanted: Vec<SnapshotTarget> = targets
+        let wanted: Vec<PictureTarget> = targets
             .into_iter()
             // A usable picture of the wrong size, or a stale one, is recaptured. See "A window
             // that was resized keeps a usable picture" in `src/animation/docs/capture-overlay-research.md`.
             .filter(|target| {
                 let cached = self.cache.usable(target.window);
-                crate::animation::platform::window_snapshot::needs_capture(
+                crate::pictures::domain::coverage::needs_capture(
                     cached.map(|snapshot| snapshot.coverage),
                     (target.size.width, target.size.height),
                 ) || cached.is_some_and(|snapshot| {
-                    crate::animation::platform::window_snapshot::picture_is_stale(
+                    crate::pictures::domain::coverage::picture_is_stale(
                         snapshot.taken.elapsed(),
                     )
                 })
@@ -1021,9 +1025,9 @@ impl FlightEngine {
         };
         let windows =
             crate::windows::platform::window_server::visible_windows_on_display(display_frame);
-        let targets: Vec<SnapshotTarget> = windows
+        let targets: Vec<PictureTarget> = windows
             .into_iter()
-            .map(|(server_id, frame)| SnapshotTarget {
+            .map(|(server_id, frame)| PictureTarget {
                 window: synthetic_window_id(server_id),
                 server_id,
                 size: frame.size,
@@ -1092,7 +1096,7 @@ impl FlightEngine {
         if let Some(running) = self.running.as_mut() {
             running.refresh.ask(wanted, Instant::now());
         }
-        let (framed, clipped): (Vec<SnapshotTarget>, Vec<SnapshotTarget>) = requests
+        let (framed, clipped): (Vec<PictureTarget>, Vec<PictureTarget>) = requests
             .into_iter()
             .partition(|target| is_wholly_on_a_display(target.server_id));
         debug!(
@@ -1220,7 +1224,7 @@ impl FlightEngine {
                         let Some(info) = crate::windows::platform::window_server::get_window(server_id) else {
                             continue;
                         };
-                        let frame_fits = crate::animation::platform::window_snapshot::fits_frame(
+                        let frame_fits = crate::pictures::domain::coverage::fits_frame(
                             (info.frame.size.width, info.frame.size.height),
                             (size.width, size.height),
                         );
@@ -1343,8 +1347,8 @@ impl FlightEngine {
         display: CGRect,
         anchors: &[(CGRect, &OverlayTile)],
         exclude: &std::collections::HashSet<u32>,
-        needs_capture: &mut Vec<SnapshotTarget>,
-    ) -> (Vec<OverlayTile>, Vec<SnapshotTarget>) {
+        needs_capture: &mut Vec<PictureTarget>,
+    ) -> (Vec<OverlayTile>, Vec<PictureTarget>) {
         if anchors.is_empty() {
             return (Vec::new(), Vec::new());
         }
@@ -1382,14 +1386,14 @@ impl FlightEngine {
                 ),
                 "border companion matched"
             );
-            targets.push(SnapshotTarget {
+            targets.push(PictureTarget {
                 window,
                 server_id,
                 size: frame.size,
             });
             match self.cache.usable(window).cloned() {
                 Some(snapshot) => tiles.push(border_tile(anchor, real, (window, frame), snapshot)),
-                None => needs_capture.push(SnapshotTarget {
+                None => needs_capture.push(PictureTarget {
                     window,
                     server_id,
                     size: frame.size,
@@ -1424,7 +1428,7 @@ impl FlightEngine {
         let depths = crate::windows::platform::window_server::front_to_back_depths();
 
         let any_resize = windows.iter().any(|request| {
-            crate::animation::platform::window_snapshot::is_a_resize(
+            rini_geometry::stretch::is_a_resize(
                 request.from.size,
                 request.to.size,
             )
@@ -1434,7 +1438,7 @@ impl FlightEngine {
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
         let mut offscreen = 0usize;
-        let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
+        let mut needs_capture: Vec<PictureTarget> = Vec::new();
         let mut entrances: Vec<PendingEntrance> = Vec::new();
         let mut awaiting: Vec<(WindowId, CGSize)> = Vec::new();
         // Newly opened windows travelling from their spawn frame.
@@ -1487,7 +1491,7 @@ impl FlightEngine {
                 s.source == crate::animation::platform::window_snapshot::SnapshotSource::SkyLight
                     && !s.is_usable()
             }) {
-                needs_capture.push(SnapshotTarget {
+                needs_capture.push(PictureTarget {
                     window: request.window,
                     server_id: request.server_id,
                     size: request.from.size,
@@ -1515,7 +1519,7 @@ impl FlightEngine {
             match snapshot {
                 Some(snapshot) => {
                     // A grow whose picture cannot cover the destination holds for the reveal.
-                    if crate::animation::platform::window_snapshot::outgrows(
+                    if crate::pictures::domain::coverage::outgrows(
                         snapshot.coverage.covered,
                         request.to.size,
                     ) {
@@ -1660,7 +1664,7 @@ impl FlightEngine {
         // Companions included: a border recolors when focus moves.
         self.last_animated = windows
             .iter()
-            .map(|request| SnapshotTarget {
+            .map(|request| PictureTarget {
                 window: request.window,
                 server_id: request.server_id,
                 size: request.to.size,
@@ -2004,7 +2008,7 @@ impl FlightEngine {
         // Remembered before anything can fail, so a window with no picture is still warmed.
         self.last_animated = windows
             .iter()
-            .map(|w| SnapshotTarget {
+            .map(|w| PictureTarget {
                 window: w.window,
                 server_id: w.server_id,
                 size: w.frame.size,
@@ -2025,7 +2029,7 @@ impl FlightEngine {
         let mut missing = 0usize;
         let mut misshapen = 0usize;
         let mut stand_ins = 0usize;
-        let mut needs_capture: Vec<SnapshotTarget> = Vec::new();
+        let mut needs_capture: Vec<PictureTarget> = Vec::new();
         let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
         let display_frame = self.display.map(|(frame, _)| frame);
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
@@ -2407,7 +2411,7 @@ impl FlightEngine {
         // Size-checked: a render for the other display can land after a display change. See "A
         // render of the wrong display, drawn at its own size" in `src/animation/docs/capture-overlay-research.md`.
         if let Some(rendered) = self.pictures.desktop.clone().filter(|rendered| {
-            crate::animation::platform::window_snapshot::spans_display(
+            crate::pictures::domain::coverage::spans_display(
                 rendered.coverage.covered,
                 display_size,
             )
@@ -2424,7 +2428,7 @@ impl FlightEngine {
             scale,
         );
         let usable = composite.filter(|snapshot| {
-            crate::animation::platform::window_snapshot::is_backdrop_worth_drawing(
+            crate::pictures::domain::coverage::is_backdrop_worth_drawing(
                 self.pictures.drawn_once,
                 desktop.has_wallpaper(),
                 snapshot.coverage.covered,
@@ -3601,8 +3605,8 @@ mod tests {
             }
         }
 
-        fn target(idx: u32, width: f64) -> SnapshotTarget {
-            SnapshotTarget {
+        fn target(idx: u32, width: f64) -> PictureTarget {
+            PictureTarget {
                 window: wid(idx),
                 server_id: WindowServerId::new(idx),
                 size: CGSize::new(width, 1081.0),
@@ -3658,7 +3662,7 @@ mod tests {
         /// 2.2, 3.4.
         #[test]
         fn a_mid_flight_warm_is_deferred_once_per_window_and_drained_once() {
-            let mut deferred: Vec<SnapshotTarget> = Vec::new();
+            let mut deferred: Vec<PictureTarget> = Vec::new();
             defer_warm(&mut deferred, vec![target(1, 859.0), target(2, 859.0)]);
             defer_warm(&mut deferred, vec![target(1, 1147.0), target(3, 859.0)]);
             let windows: Vec<WindowId> = deferred.iter().map(|t| t.window).collect();
@@ -4098,9 +4102,8 @@ mod tests {
     mod render_stability_preservation {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
-        use crate::animation::platform::window_snapshot::{
-            SnapshotCache, WindowSnapshot, needs_capture, outgrows, should_replace, test_snapshot,
-        };
+        use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::pictures::domain::coverage::{needs_capture, outgrows, should_replace};
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -4262,7 +4265,7 @@ mod tests {
             let mut refused = 0usize;
             let mut decisions: Vec<SwapDecision> = Vec::new();
             for _ in 0..RUNS {
-                let mut cache: SnapshotCache = SnapshotCache::new();
+                let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
                 let size = rng.on_screen().size;
                 for _ in 0..rng.below(4) + 1 {
                     let incoming = if rng.coin() {
@@ -4406,7 +4409,7 @@ mod tests {
             let mut rng = Gen(95);
             for _ in 0..RUNS {
                 let slot = rng.on_screen();
-                let mut cache: SnapshotCache = SnapshotCache::new();
+                let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
                 cache.insert(wid(2), clipped(slot.size));
                 assert!(cache.usable(wid(1)).is_none(), "seed 95: never captured");
                 assert!(cache.usable(wid(2)).is_none(), "seed 95: a sliver");
@@ -4477,7 +4480,7 @@ mod tests {
     mod preservation {
         use super::*;
         use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
-        use crate::animation::platform::window_snapshot::{SnapshotCache, test_snapshot};
+        use crate::animation::platform::window_snapshot::test_snapshot;
 
         pub(super) const DISPLAY: CGRect = CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
@@ -4842,7 +4845,7 @@ mod tests {
         /// P-3.10.
         #[test]
         fn forgetting_a_window_empties_the_cache_even_while_a_clone_is_held() {
-            let mut cache: SnapshotCache = SnapshotCache::new();
+            let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
             let size = CGSize::new(859.0, 1081.0);
             cache.insert(wid(1), test_snapshot(size));
             let held = cache.usable(wid(1)).cloned().expect("inserted");
@@ -6366,7 +6369,7 @@ mod tests {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
         use crate::animation::platform::engine::plan::*;
-        use crate::animation::platform::window_snapshot::is_a_resize;
+        use rini_geometry::stretch::is_a_resize;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -6941,7 +6944,8 @@ mod tests {
 
         #[test]
         fn a_grow_still_enters_awaiting() {
-            use crate::animation::platform::window_snapshot::{outgrows, test_snapshot};
+            use crate::animation::platform::window_snapshot::test_snapshot;
+            use crate::pictures::domain::coverage::outgrows;
             let a = column(0.0);
             let grown = rect(a.origin.x, a.origin.y, a.size.width + 600.0, a.size.height);
             let snapshot = test_snapshot(a.size);

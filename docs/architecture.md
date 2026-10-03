@@ -12,6 +12,7 @@ src/displays/     screens, native spaces, coordinates
 src/layout/       the scrolling strip
 src/workspaces/   virtual workspaces and their persistence
 src/input/        keys, bindings, gestures, drags
+src/pictures/     pictures of windows, the desktop and the bar
 src/animation/    movement on screen
 src/switcher/     the window switcher popup
 src/bar/          the menu bar across the top of every display
@@ -47,7 +48,8 @@ touches nothing outside itself.
 | `layout` | strips, columns, the scrolling layout | the layout tree and its operations, gaps, insertion; `ScrollingLayoutSystem` is the seam; tiling settings |
 | `workspaces` | virtual workspaces | assignment of windows to workspaces, activation, stacked-workspace geometry, `WindowStore`; `layout.ron` save/restore in `engine/persistence/`, launch memory, floating positions; workspace settings |
 | `input` | what the user asked for | `Modifiers`, `KeyCode` and `Hotkey`, the token and spec parsing that needs no keyboard, what a bind names (`domain::binding`, the config's actions and their knus decoding), the binding table, gesture and drag-swap recognition, and the rules the taps apply (`domain::gesture`, `domain::hotkey`). `platform/`: CGEventTap adapters, the layout-dependent `FromStr` impls (`platform::keyboard`), Carbon hotkeys, the haptic engine, the cursor. Emits `input::event::Event`: a bind fires its `Action`, which the application lowers to the `rini-ipc` command a CLI call would send (`app/hotkeys/lower`), so the reactor cannot tell a hotkey from a CLI call; a gesture emits its command. Hands every left press to a callback the application wires (`OnLeftPress`) |
-| `animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`domain::pass`), which final frame writes go out, the `AnimationRequest`/`SnapshotTarget` ports, and the flight engine's own decisions: when work happens (`domain::timing`), what a flight is and when it may capture (`domain::flight`), and how a request arriving mid-flight is admitted (`domain::admission`). `platform/`: window snapshots and capture (ScreenCaptureKit, SkyLight), the Core Animation tile overlay, the flight engine |
+| `pictures` | pictures of windows, the desktop and the bar | whether a capture covers its window and fits the frame it is drawn into (`domain::coverage`), the picture cache and its rules (`domain::cache`), the blur merge (`domain::translucency`), when a chase has settled (`domain::settle`), which window flies the stand-in (`domain::stand_in`), the desktop and bar levels (`domain::backdrop`), the `PictureTarget` port, and which capture work a flight permits (`domain::schedule`) |
+| `animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`domain::pass`), which final frame writes go out, the `AnimationRequest` port, and the flight engine's own decisions: when work happens (`domain::timing`), what a flight is (`domain::flight`), and how a request arriving mid-flight is admitted (`domain::admission`). `platform/`: window snapshots and capture (ScreenCaptureKit, SkyLight), the Core Animation tile overlay, the flight engine |
 | `switcher` | the window switcher: every window, by application or one by one, in the order you last used them | who a switch offers and in what order (`domain::candidates`), what a switch steps between, a window or an application's stack (`domain::entries`), the cursor over the list (`domain::selection`), each switcher's session keys (`domain::trigger`), where the rows and a stack's cards go and the hit test (`domain::layout`), how the ring moves (`domain::motion`), when the popup appears (`domain::reveal`); switcher settings. `platform/`: the popup `NSPanel` and its layer tree, and the main-thread actor that draws it. Focus order is `windows`' and is read here |
 | `bar` | the menu bar across the top of every display | what each display's bar shows (`domain::model`: `BarInput` in, `BarModel` out, `Action` back), where each piece goes by its ink and the hit test (`domain::layout`), how each piece is set (`domain::style`, `domain::palette`), which menu extras are drawn (`domain::extras`), the words (`domain::format`, `domain::glyphs`); bar settings. `platform/`: the main-thread actor that owns every display's bar window, and the thread that pictures the menu extras. Sent its model by the reactor, never asks |
 
@@ -82,7 +84,7 @@ permission, builds every actor and joins them.
    the domain needs and an adapter fills is a port: it is declared in `domain/`
    and `platform/` imports it. `windows/domain/info.rs` and
    `windows/domain/request.rs` are those ports for `windows`;
-   `animation/domain/request.rs` for `animation`.
+   `pictures/domain/target.rs` for `pictures`; `animation/domain/request.rs` for `animation`.
    `objc2_core_foundation`'s `CGRect`/`CGPoint`/`CGSize` are exempt — they are
    the arithmetic every layout decision is in. So are the window server's plain
    value types (`SpaceId`, `WindowServerId`, `DisplayReconfigFlags`), which are
@@ -91,7 +93,9 @@ permission, builds every actor and joins them.
    upstream: it knows nothing about screens. `displays` depends on it, because
    "which windows are on this space" is a window-server query over window ids.
    `layout` and `workspaces` sit above both; `input` and `animation` beside them,
-   reaching only for ids and frames. `switcher` and `bar` are the most downstream:
+   reaching only for ids and frames. `pictures` is upstream of `animation`: it
+   judges a picture over ids and sizes, and a flight's plans and tiles ask it
+   whether theirs still fits. `switcher` and `bar` are the most downstream:
    they draw what the reactor sends them. `switcher` takes its colours from
    `bar::domain::palette`, and no other feature depends on either.
 4. **Nothing in `crates/` knows what a workspace is.** A crate there is a

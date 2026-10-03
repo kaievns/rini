@@ -6,8 +6,6 @@
 
 use std::time::{Duration, Instant};
 
-use super::flight::FlightKind;
-
 /// Tick interval. Nothing is drawn on ticks; this only paces the mid-flight orchestration.
 pub(in crate::animation) const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
@@ -27,10 +25,6 @@ pub(in crate::animation) const REVEAL_APPLY_BEFORE: f64 = 0.6;
 /// flight still moves is the same change after it lands, at rest, which is what reads as a flicker.
 pub(in crate::animation) const REFRESH_APPLY_BEFORE: f64 = 0.9;
 
-/// How long after an animation to recapture the bar: a bar composite is too slow (31ms median)
-/// to pay per switch, so a burst of switches pays it once, at the end.
-pub(in crate::animation) const BAR_REFRESH_DELAY: Duration = Duration::from_millis(250);
-
 /// Progress at which a move-only layout flight places the real windows. Resizes and strips place
 /// earlier (`apply_frames_at`). See "The apply point" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) const APPLY_FRAMES_AT: f64 = 0.75;
@@ -49,6 +43,15 @@ pub(in crate::animation) const APPLY_FRAMES_AT_RESIZE: f64 = 0.5;
 /// The apply point for a strip movement: frame zero, so a switch's serialized AX writes land
 /// before lift. See "The apply point" in `src/animation/docs/animation-smoothness.md`.
 pub(in crate::animation) const APPLY_FRAMES_AT_PAN: f64 = 0.0;
+
+/// Which path composed a flight. See "The apply point" in `src/animation/docs/animation-smoothness.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::animation) enum FlightKind {
+    /// A per-window layout pass: moves and resizes.
+    Layout,
+    /// A strip movement: pure translations.
+    Pan,
+}
 
 /// Which apply point an animation needs.
 pub(in crate::animation) fn apply_frames_at(kind: FlightKind, any_resize: bool) -> f64 {
@@ -79,12 +82,6 @@ pub(in crate::animation) fn hold_wait(
     let deadline = hold_deadline?;
     (now < deadline).then(|| (deadline - now).max(Duration::from_millis(10)))
 }
-
-/// Chase poll interval and attempt budget for a growing window's real frame (about a second).
-/// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(8);
-
-pub(in crate::animation) const REVEAL_CHASE_ATTEMPTS: usize = 125;
 
 /// How long a tile joining a flight already in motion travels: what is left of the flight.
 pub(in crate::animation) fn late_join_duration(duration: Duration, progress: f64) -> Duration {
@@ -161,10 +158,6 @@ pub(in crate::animation) fn lift_now(
 ) -> bool {
     clock_done && ((settled && landed) || overdue)
 }
-
-/// How many new windows one pass captures synchronously at spawn; the rest take a reservation.
-/// See "A window that opens travels from its spawn frame" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) const MAX_SYNC_ENTRANCE_CAPTURES: usize = 4;
 
 #[cfg(test)]
 mod tests {
