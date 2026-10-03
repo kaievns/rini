@@ -4,6 +4,8 @@ Swift probes that time focus changes, window placement and SkyLight captures on 
 absolute time), without going through rini. They are what the numbers in
 `src/animation/docs/capture-overlay-research.md` ("Where a moving focus change spends its time")
 were measured with, and the regression check for any change to how a transition is sequenced.
+`playback.swift` is the exception: it reads what Core Animation draws, for "The score" in
+`src/animation/docs/animation-smoothness.md`.
 
 ## The probes
 
@@ -15,6 +17,7 @@ were measured with, and the regression check for any change to how a transition 
 | `spacing.swift`, `coldsize.swift`, `gpuwarm.swift`, `qos.swift`, `keepalive.swift` | a SkyLight capture's cost against the gap since the last one, picture size, a GPU or CPU warm-up, the caller's QoS, keep-alive captures |
 | `par.swift` | SkyLight captures in parallel, on the main and on separate connections |
 | `cap1x.swift`, `ca.swift` | capture cost at 2x and with bit 9; Core Animation's commit cost for a whole composite, a crop, and copies |
+| `playback.swift` | what Core Animation draws for the overlay's animations at chosen media times, against the curves `Score` evaluates; touches nothing on screen and needs no grant |
 
 `e2.sh` runs `focuslab` in blocks with the flags file switched between them; `e1.py`, `e2.py`,
 `firstcap.py` read its JSON lines; `journal-parse.py`, `critpath.py`, `focus-path.py` and
