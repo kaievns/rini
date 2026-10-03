@@ -9,11 +9,11 @@ use objc2_core_graphics::{
     CGContext, CGImage, kCGColorSpaceSRGB,
 };
 
-use crate::animation::platform::backdrop::desktop_backdrop_windows;
-use crate::animation::platform::edge_dressing::rgba_bitmap_context;
 use crate::bar::domain::ground::{self, BLUR};
 use crate::bar::domain::palette::N1;
 use crate::bar::platform::menu_extras::capture;
+use crate::pictures::platform::bitmap::rgba_bitmap_context;
+use crate::pictures::platform::desktop::desktop_backdrop_windows;
 
 /// One display's ground, `scale` pixels per point.
 pub struct Ground {

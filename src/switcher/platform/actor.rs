@@ -41,7 +41,7 @@ pub enum Event {
     Pictures(
         Vec<(
             rini_core::ids::WindowId,
-            crate::animation::platform::window_snapshot::WindowSnapshot,
+            crate::pictures::platform::picture::Picture,
         )>,
     ),
 }

@@ -1,16 +1,16 @@
-//! The macOS window hairline, harvested from a framed capture and worn by tiles as sublayers.
+//! The macOS window hairline, harvested from a framed capture (`skylight`) and worn by tiles as
+//! sublayers.
 //!
-//! No surface capture carries the hairline, and it cannot be synthesised: its value depends on the
-//! window's own edge pixels. See "The hairline is composited outside every capture" in
+//! No surface capture carries the hairline. See "The hairline is composited outside every capture" in
 //! `src/animation/docs/capture-overlay-research.md`.
 
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGBitmapContextCreateImage, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData,
-    CGColorSpace, CGContext, CGImage, CGImageAlphaInfo, CGWindowListOption,
+    CGBitmapContextCreateImage, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGContext,
+    CGImage,
 };
 
-use rini_core::ids::WindowServerId;
+use crate::pictures::platform::bitmap::rgba_bitmap_context;
 
 /// Corner radius of a macOS window, measured. See "The hairline is composited outside every
 /// capture" in `src/animation/docs/capture-overlay-research.md`.
@@ -88,33 +88,6 @@ pub fn dressing_is_real(mean_alpha: f64) -> bool {
     mean_alpha >= MIN_MEAN_ALPHA
 }
 
-/// The side of the square a [`thumbprint`] samples an image down to.
-const THUMBPRINT_SIDE: usize = 32;
-
-/// A small fingerprint of an image's content, for the reveal chase's settledness check.
-pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
-    let side = THUMBPRINT_SIDE;
-    let ctx = rgba_bitmap_context(side, side)?;
-    CGContext::draw_image(
-        Some(&ctx),
-        CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(side as f64, side as f64)),
-        Some(image),
-    );
-    let data = CGBitmapContextGetData(Some(&ctx)) as *const u8;
-    if data.is_null() {
-        return None;
-    }
-    let stride = CGBitmapContextGetBytesPerRow(Some(&ctx));
-    let mut out = Vec::with_capacity(side * side * 4);
-    for y in 0..side {
-        // SAFETY: y < side, rows within the context's own buffer.
-        out.extend_from_slice(unsafe {
-            std::slice::from_raw_parts(data.add(y * stride), side * 4)
-        });
-    }
-    Some(out)
-}
-
 /// The harvested hairline: small owned bitmaps, in [`DressingLayout`] order. Owned copies, because
 /// a crop keeps the whole window-sized parent image alive.
 #[derive(Clone, Debug)]
@@ -123,7 +96,7 @@ pub struct EdgeDressing {
     pub corners: [Option<CFRetained<CGImage>>; 4],
 }
 
-// SAFETY: CGImage is immutable, like `SnapshotImage::Bitmap`.
+// SAFETY: CGImage is immutable, like `Pixels::Bitmap`.
 unsafe impl Send for EdgeDressing {}
 
 /// The window rect grown by one ring on every side, so a framed capture carries the outer dark
@@ -145,31 +118,6 @@ pub fn picture_within_ring(px_w: f64, px_h: f64, scale: f64) -> CGRect {
         CGPoint::new(ring, ring),
         CGSize::new((px_w - 2.0 * ring).max(0.0), (px_h - 2.0 * ring).max(0.0)),
     )
-}
-
-/// One framed capture of the window plus its ring, or `None` when the window server returned an
-/// image of another size.
-pub fn capture_ring_expanded(
-    server_id: WindowServerId,
-    frame: CGRect,
-    scale: f64,
-) -> Option<CFRetained<CGImage>> {
-    let expanded = ring_expanded(frame);
-    #[allow(deprecated)]
-    let framed = objc2_core_graphics::CGWindowListCreateImage(
-        expanded,
-        CGWindowListOption::OptionIncludingWindow,
-        server_id.as_u32(),
-        objc2_core_graphics::CGWindowImageOption::empty(),
-    )?;
-    let px_w = CGImage::width(Some(&framed)) as f64;
-    let px_h = CGImage::height(Some(&framed)) as f64;
-    if (px_w - expanded.size.width * scale).abs() > 2.0
-        || (px_h - expanded.size.height * scale).abs() > 2.0
-    {
-        return None;
-    }
-    Some(framed)
 }
 
 /// Crops the ring out of `framed`, a capture of the window expanded by one `RING_PT` on every
@@ -212,37 +160,6 @@ pub fn harvest_from_capture(framed: &CGImage, frame: CGSize, scale: f64) -> Opti
             copy_region(framed, px_w, px_h, crop(region), Some(radius_px)).map(|(image, ..)| image);
     }
     Some(EdgeDressing { strips, corners })
-}
-
-/// A fresh `width` x `height` RGBA bitmap context, alpha last and premultiplied, owning its buffer.
-pub(crate) fn rgba_bitmap_context(width: usize, height: usize) -> Option<CFRetained<CGContext>> {
-    let space = CGColorSpace::new_device_rgb()?;
-    // SAFETY: a fresh context; CG owns and frees the backing store with it.
-    let ctx = unsafe {
-        CGBitmapContextCreate(
-            std::ptr::null_mut(),
-            width,
-            height,
-            8,
-            0,
-            Some(&space),
-            CGImageAlphaInfo::PremultipliedLast.0,
-        )
-    };
-    unsafe { Some(CFRetained::from_raw(std::ptr::NonNull::new(ctx)?)) }
-}
-
-// Not bound by objc2-core-graphics 0.3, which only generates the adaptive variant.
-unsafe extern "C-unwind" {
-    fn CGBitmapContextCreate(
-        data: *mut core::ffi::c_void,
-        width: usize,
-        height: usize,
-        bits_per_component: usize,
-        bytes_per_row: usize,
-        space: Option<&CGColorSpace>,
-        bitmap_info: u32,
-    ) -> *mut CGContext;
 }
 
 /// Copies `region` (top-left pixel coordinates) of `image` into a small owned image, reporting the

@@ -10,7 +10,7 @@ This section goes when the last row is done.
 
 | # | Step | State |
 |---|---|---|
-| 1 | `pictures`: capture, cache and layer helpers out of `animation`; switcher and bar its clients | in progress |
+| 1 | `pictures`: capture, cache and layer helpers out of `animation`; switcher and bar its clients | done |
 | 2 | Region pictures, batched SkyLight with per-window knowledge, the capture schedule and its thread | |
 | 3 | `transitions`: the coordinator's decisions out of `animation`; the lifecycle as a pure state machine | |
 | 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; the mid-flight refresh and the harvest deleted | |
@@ -109,3 +109,4 @@ tile's end. A focus report arriving while Preparing is kept for Playing.
 | A focus end clipped by the display edge takes one ScreenCaptureKit capture through the hold | keeps `specs/animation.md`'s rule that both ends of a focus change are recaptured | let a clipped end change at rest |
 | Baked pictures are clipped to the window's measured corner radius | a crop of a desktop composite fills the rounded corners with wallpaper | capture the corners' alpha separately |
 | The bar's menu-extras thread stays in `bar` for now | it has its own pacing and pauses for flights already | move it behind the pictures thread |
+| The hairline harvest moved into `pictures` in step 1 with the captures, though step 4 deletes it | the framed capture harvests the ring and a `Picture` carries it, so left in `animation` it would have had `pictures` name `animation` | leave it in `animation` and accept a two-way edge until step 4 |

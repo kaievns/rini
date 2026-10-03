@@ -1,9 +1,7 @@
-//! The desktop and the bar as the window server lists them: what the overlay draws behind and over
-//! the tiles. See "The wallpaper is not reliably a window" and "The bar has to be captured on its
-//! own" in `src/animation/docs/capture-overlay-research.md`.
-use crate::windows::platform::window_server::{
-    bounds_from_dict, get_num, get_string, get_windows_raw, overlaps,
-};
+//! The desktop and the bar as the window server lists them: the windows a picture of either is
+//! composited from. The flight overlay draws them behind and over its tiles, and the bar grounds
+//! itself on the desktop. See "The wallpaper is not reliably a window" and "The bar has to be captured
+//! on its own" in `src/animation/docs/capture-overlay-research.md`.
 use objc2_core_foundation::{CFDictionary, CFString, CFType, CGRect};
 use objc2_core_graphics::{
     CGWindowListOption, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowName,
@@ -13,6 +11,9 @@ use rini_core::ids::WindowServerId;
 use rini_geometry::CGRectExt;
 
 use crate::pictures::domain::backdrop::{is_bar_layer, is_desktop_layer};
+use crate::windows::platform::window_server::{
+    bounds_from_dict, get_num, get_string, get_windows_raw, overlaps,
+};
 
 /// The windows making up the desktop backdrop, and which of them are the wallpaper.
 pub struct DesktopBackdrop {

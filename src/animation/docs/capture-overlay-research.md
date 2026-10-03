@@ -426,7 +426,7 @@ image is not perceptible.
 **rini needs the Screen Recording grant.** It did not have it when this was
 written. (The rift-inherited overview overlay that first carried a
 ScreenCaptureKit pipeline has since been removed;
-`src/animation/platform/snapshot_service.rs` is the pipeline now.)
+`src/pictures/platform/screencapturekit.rs` is the pipeline now.)
 
 **Capture in a background thread.** At 14.5ms per window, refreshing even a few
 windows would blow several frames if it ran on the animation thread.
@@ -603,7 +603,8 @@ just not owned by anything called "Wallpaper":
         -20  sketchybar     24 windows across the strip
 ```
 
-Two consequences followed, and both have since been fixed in `backdrop.rs`:
+Two consequences followed, and both have since been fixed in `pictures`' `domain/backdrop.rs`
+and `platform/desktop.rs`:
 
 - `desktop_backdrop_windows` excluded -2147483624 as `DOCK_LEVEL`, on the earlier
   reading that the Dock lives there. On this system that level holds the
@@ -671,7 +672,7 @@ SCContentFilter(display:excludingWindows:)  excluding every window at layer >= 0
   -> 3456x2234  brightness 23.4   wallpaper, icons, widgets, no app windows
 ```
 
-This is why `snapshot_service.rs` has a desktop path. It costs the usual
+This is why `screencapturekit.rs` has a desktop path. It costs the usual
 ScreenCaptureKit ~40ms, so it fills a cache in the background and an animation
 draws whatever is in hand; the desktop changes rarely enough that a capture a
 few seconds old is indistinguishable.
@@ -1931,10 +1932,10 @@ The wallpaper appeared to zoom in during some animations and not others. Two
 compounding causes, both about a desktop render outliving the display it was taken
 of:
 
-- `SnapshotService::set_scale` was the only invalidation, and it acts on the backing
+- `ScreenCaptureKitQueue::set_scale` was the only invalidation, and it acts on the backing
   scale. Both displays here are 2x, so moving the overlay between them invalidated
   nothing, and a render already in flight for one display landed as the cached
-  desktop for the other. `SnapshotService::invalidate_desktop` bumps the desktop
+  desktop for the other. `ScreenCaptureKitQueue::invalidate_desktop` bumps the desktop
   render's revision on a display change so such a render cannot land. It first
   bumped the one revision every capture carried, which dropped every window
   capture in flight too; a window's picture belongs to no display, and with two

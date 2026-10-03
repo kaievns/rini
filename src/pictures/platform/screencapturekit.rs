@@ -26,8 +26,8 @@ use objc2_screen_capture_kit::{
 
 use tracing::{debug, warn};
 
-use crate::animation::platform::window_snapshot::{SnapshotImage, SnapshotSource, WindowSnapshot};
 use crate::pictures::domain::coverage::Coverage;
+use crate::pictures::platform::picture::{Picture, Pixels, Route};
 use rini_core::ids::WindowId;
 
 /// Concurrent captures. ScreenCaptureKit serialises internally, so wall clock stops improving past
@@ -169,20 +169,20 @@ unsafe impl Send for PendingCapture {}
 #[derive(Default)]
 struct ServiceState {
     /// Completed captures waiting to be collected.
-    ready: HashMap<WindowId, WindowSnapshot>,
+    ready: HashMap<WindowId, Picture>,
     /// Targets with a capture in flight, so a burst of events cannot queue the same window twice.
     in_flight: HashSet<WindowId>,
     queued: VecDeque<PendingCapture>,
     active: usize,
     /// The most recent desktop capture, waiting to be collected.
-    desktop: Option<WindowSnapshot>,
+    desktop: Option<Picture>,
     desktop_in_flight: bool,
 }
 
-/// Captures windows in the background and holds the results until collected. Every clone shares
-/// one queue and one result set.
+/// Captures windows and the desktop through ScreenCaptureKit in the background, and holds the results
+/// until collected. Every clone shares one queue and one result set.
 #[derive(Clone)]
-pub struct SnapshotService {
+pub struct ScreenCaptureKitQueue {
     state: Arc<Mutex<ServiceState>>,
     /// Bumped on a scale change; window captures taken against an older revision are dropped.
     revision: Arc<AtomicU64>,
@@ -194,7 +194,7 @@ pub struct SnapshotService {
     notify: Arc<dyn Fn() + Send + Sync>,
 }
 
-impl SnapshotService {
+impl ScreenCaptureKitQueue {
     pub fn new(scale: f64, notify: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self {
             state: Arc::new(Mutex::new(ServiceState::default())),
@@ -229,7 +229,7 @@ impl SnapshotService {
 
     /// Takes every completed capture, leaving the service empty. The caller owns the cache, so a
     /// capture landing mid-animation cannot mutate it mid-frame.
-    pub fn collect(&self) -> Vec<(WindowId, WindowSnapshot)> {
+    pub fn collect(&self) -> Vec<(WindowId, Picture)> {
         let mut state = self.state.lock().unwrap();
         state.ready.drain().collect()
     }
@@ -329,7 +329,7 @@ impl SnapshotService {
     }
 
     /// Takes the most recent desktop capture, if one has landed since the last call.
-    pub fn take_desktop(&self) -> Option<WindowSnapshot> {
+    pub fn take_desktop(&self) -> Option<Picture> {
         self.state.lock().unwrap().desktop.take()
     }
 
@@ -435,13 +435,13 @@ impl SnapshotService {
                     };
                     let width = surface.width() as f64 / scale;
                     let height = surface.height() as f64 / scale;
-                    state.desktop = Some(WindowSnapshot {
-                        image: SnapshotImage::Surface(surface),
+                    state.desktop = Some(Picture {
+                        image: Pixels::Surface(surface),
                         coverage: Coverage {
                             covered: (width, height),
                             window: (size.width, size.height),
                         },
-                        source: SnapshotSource::ScreenCaptureKit,
+                        source: Route::ScreenCaptureKit,
                         dressing: None,
                         taken: std::time::Instant::now(),
                         carries_blur: false,
@@ -535,13 +535,13 @@ impl SnapshotService {
                 let height = surface.height() as f64 / scale;
                 state.ready.insert(
                     target.window,
-                    WindowSnapshot {
-                        image: SnapshotImage::Surface(surface),
+                    Picture {
+                        image: Pixels::Surface(surface),
                         coverage: Coverage {
                             covered: (width, height),
                             window: (size.width, size.height),
                         },
-                        source: SnapshotSource::ScreenCaptureKit,
+                        source: Route::ScreenCaptureKit,
                         dressing: None,
                         // The window on its own: grey wherever it has a blur. See `translucency`.
                         carries_blur: false,
@@ -584,6 +584,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use super::*;
+    use crate::pictures::platform::picture::test_bitmap;
 
     #[test]
     fn a_captures_copy_is_its_own_surface_with_the_same_pixels() {
@@ -658,8 +659,8 @@ mod tests {
         }
     }
 
-    fn service() -> SnapshotService {
-        SnapshotService::new(2.0, Arc::new(|| {}))
+    fn service() -> ScreenCaptureKitQueue {
+        ScreenCaptureKitQueue::new(2.0, Arc::new(|| {}))
     }
 
     #[test]
@@ -729,13 +730,13 @@ mod tests {
             let mut state = service.state.lock().unwrap();
             state.ready.insert(
                 wid(7),
-                WindowSnapshot {
-                    image: SnapshotImage::Bitmap(tiny_bitmap()),
+                Picture {
+                    image: Pixels::Bitmap(test_bitmap()),
                     coverage: Coverage {
                         covered: (859.0, 1081.0),
                         window: (859.0, 1081.0),
                     },
-                    source: SnapshotSource::ScreenCaptureKit,
+                    source: Route::ScreenCaptureKit,
                     dressing: None,
                     taken: std::time::Instant::now(),
                     carries_blur: false,
@@ -753,7 +754,7 @@ mod tests {
     fn notify_fires_only_when_a_capture_actually_produced_pixels() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
-        let service = SnapshotService::new(
+        let service = ScreenCaptureKitQueue::new(
             2.0,
             Arc::new(move || {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -806,43 +807,5 @@ mod tests {
     #[test]
     fn a_zero_sized_buffer_is_not_painted() {
         assert!(!edges_are_painted(0, 0, painted(0, 0)));
-    }
-
-    /// A 1x1 CPU bitmap. Not an IOSurface: creating one from a test thread races SkyLight's lazy
-    /// initialisation and aborts the suite.
-    fn tiny_bitmap() -> CFRetained<objc2_core_graphics::CGImage> {
-        use objc2_core_graphics::{
-            CGBitmapInfo, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
-        };
-
-        static PIXEL: [u8; 4] = [0, 0, 0, 255];
-        // SAFETY: the data outlives the provider, being a static, so no release callback is needed.
-        let provider = unsafe {
-            CGDataProvider::with_data(
-                std::ptr::null_mut(),
-                PIXEL.as_ptr() as *const std::ffi::c_void,
-                PIXEL.len(),
-                None,
-            )
-        }
-        .expect("data provider");
-        let space = CGColorSpace::new_device_rgb().expect("colour space");
-        // SAFETY: 1x1 BGRA, and the provider holds exactly those four bytes.
-        unsafe {
-            CGImage::new(
-                1,
-                1,
-                8,
-                32,
-                4,
-                Some(&space),
-                CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0),
-                Some(&provider),
-                std::ptr::null(),
-                false,
-                objc2_core_graphics::CGColorRenderingIntent::RenderingIntentDefault,
-            )
-        }
-        .expect("image")
     }
 }

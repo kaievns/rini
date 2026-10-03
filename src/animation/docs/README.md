@@ -15,12 +15,13 @@ edge bounce are all flights of the same thing.
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/strip_stack.rs` | The stacked-workspace geometry a switch moves through |
 | `domain/motion/strip_move.rs` | A window moved along the strip: where the two columns changing places start, which moves step the whole strip, and the column such a move holds on it |
-| `domain/timing.rs`, `flight.rs`, `admission.rs` | When work happens, what a flight is, and how a mid-flight request is admitted. Which capture work a flight permits, and whether a picture fits its tile, are `pictures`' (`src/pictures/docs/README.md`) |
+| `domain/timing.rs`, `flight.rs`, `admission.rs` | When work happens, what a flight is, and how a mid-flight request is admitted |
 | `domain/pass.rs` | Sorting a layout pass into moves, unmoved windows and warm targets |
-| `platform/engine.rs` | `FlightEngine`: the actor. The overlay, the snapshot cache, the timer |
+| `platform/engine.rs` | `FlightEngine`: the actor. The overlay, the timer, and for now the picture cache and the ScreenCaptureKit queue |
 | `platform/overlay.rs` | `TileOverlay`: the `CALayer` tree and the one `CATransaction` per flight |
-| `platform/window_snapshot.rs`, `snapshot_service.rs` | Capturing windows, through SkyLight and ScreenCaptureKit |
-| `platform/backdrop.rs`, `edge_dressing.rs` | The desktop behind the tiles, and the dressing on them |
+
+Capturing the pictures a flight draws, judging them, and which capture work a flight
+permits are `pictures`' (`src/pictures/docs/README.md`).
 
 ## The shape that matters
 

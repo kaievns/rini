@@ -35,11 +35,11 @@ use objc2_quartz_core::{
 };
 use tracing::{debug, warn};
 
-use crate::animation::platform::overlay::{set_contents, set_layer_contents};
 use crate::bar::domain::palette;
-use crate::animation::platform::window_snapshot::WindowSnapshot;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
+use crate::pictures::platform::layer::{set_contents, set_layer_contents};
+use crate::pictures::platform::picture::Picture;
 use crate::switcher::domain::entries::{BEHIND, CardBehind, Entry, cards_behind};
 use crate::switcher::domain::layout::{Metrics, Strip, Tile, lay_out};
 use crate::switcher::domain::motion::{GLIDE_SECONDS, glides};
@@ -253,7 +253,7 @@ pub struct SwitcherPanel {
     ///
     /// Kept across opens: a picture that was good enough to draw last time is still better than a grey
     /// box, and the engine only ever sends more.
-    pictures: HashMap<rini_core::ids::WindowId, WindowSnapshot>,
+    pictures: HashMap<rini_core::ids::WindowId, Picture>,
 }
 
 impl SwitcherPanel {
@@ -445,7 +445,7 @@ impl SwitcherPanel {
     }
 
     /// Take the pictures the animation engine holds, and redraw if the panel is up.
-    pub fn set_pictures(&mut self, pictures: Vec<(rini_core::ids::WindowId, WindowSnapshot)>) {
+    pub fn set_pictures(&mut self, pictures: Vec<(rini_core::ids::WindowId, Picture)>) {
         for (window, snapshot) in pictures {
             self.pictures.insert(window, snapshot);
         }

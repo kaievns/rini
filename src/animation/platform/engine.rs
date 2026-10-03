@@ -1,4 +1,5 @@
-//! Drives the capture-based animation overlay: owns the overlay and the snapshot cache.
+//! Drives the capture-based animation overlay: owns the overlay, and for now the picture cache and
+//! the ScreenCaptureKit queue, both `crate::pictures`'.
 //! Runs on the main thread because Core Animation requires it.
 //!
 //! Design in `src/animation/docs/animation-smoothness.md`; measurements in `src/animation/docs/capture-overlay-research.md`.
@@ -16,14 +17,15 @@ use objc2_foundation::MainThreadMarker;
 use tracing::{debug, warn};
 
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
-use crate::animation::platform::snapshot_service::SnapshotService;
-use crate::animation::platform::window_snapshot::{
-    WindowSnapshot, capture_via_framed_with_dressing, is_wholly_on_a_display,
-};
 use crate::pictures::domain::cache::PictureCache;
 use crate::pictures::domain::settle::chase_settled;
 use crate::pictures::domain::stand_in::picture_or_stand_in;
 use crate::pictures::domain::target::PictureTarget;
+use crate::pictures::platform::picture::Picture;
+use crate::pictures::platform::screencapturekit::ScreenCaptureKitQueue;
+use crate::pictures::platform::skylight::{
+    capture_via_framed_with_dressing, is_wholly_on_a_display,
+};
 use rini_core::ids::WindowId;
 use rini_core::ids::WindowServerId;
 use rini_geometry::SameAs;
@@ -97,20 +99,20 @@ pub enum Event {
     StartMoving,
     /// No flight began for `SETTLE_BEFORE_CAPTURES` after a lift; run the owed captures.
     Quiet,
-    /// A background capture has landed. Posted by the snapshot service.
+    /// A background capture has landed. Posted by the ScreenCaptureKit queue.
     SnapshotsReady,
     /// A framed recapture has landed. `settled` (`chase_settled`) means the window has repainted;
     /// only settled pictures may satisfy a reveal hold or replace a resizing tile's picture.
     PictureReady {
         window: WindowId,
-        snapshot: WindowSnapshot,
+        snapshot: Picture,
         settled: bool,
     },
     /// A hairline harvest finished. Harvested off the capture service's completion queue, which
-    /// the framed capture behind it would deadlock (see `snapshot_service`).
+    /// the framed capture behind it would deadlock (see `screencapturekit`).
     DressingReady {
         window: WindowId,
-        dressing: crate::animation::platform::edge_dressing::EdgeDressing,
+        dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
     },
     /// Recapture the bar, now that nothing is animating over it. Posted by the refresh timer.
     RefreshBar,
@@ -144,7 +146,7 @@ pub type OnFlight = Box<dyn Fn(bool)>;
 ///
 /// Only windows with a picture worth drawing appear; the rest are absent rather than present and
 /// empty, so the caller does not have to know what makes a snapshot usable.
-pub type LendSnapshots = Box<dyn Fn(Vec<(WindowId, WindowSnapshot)>)>;
+pub type LendSnapshots = Box<dyn Fn(Vec<(WindowId, Picture)>)>;
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
@@ -208,10 +210,10 @@ fn desktop_render_wanted(render: Option<(Duration, (f64, f64))>, display: (f64, 
 }
 
 /// The thumbprint of a snapshot's bitmap; `None` for a surface, which cannot be compared.
-fn bitmap_thumbprint(snapshot: &WindowSnapshot) -> Option<Vec<u8>> {
+fn bitmap_thumbprint(snapshot: &Picture) -> Option<Vec<u8>> {
     match &snapshot.image {
-        crate::animation::platform::window_snapshot::SnapshotImage::Bitmap(image) => {
-            crate::animation::platform::edge_dressing::thumbprint(image)
+        crate::pictures::platform::picture::Pixels::Bitmap(image) => {
+            crate::pictures::platform::bitmap::thumbprint(image)
         }
         _ => None,
     }
@@ -242,7 +244,7 @@ fn border_tile(
     anchor: &OverlayTile,
     real: CGRect,
     border: (WindowId, CGRect),
-    snapshot: WindowSnapshot,
+    snapshot: Picture,
 ) -> OverlayTile {
     let (window, frame) = border;
     let offset = CGPoint::new(frame.origin.x - real.origin.x, frame.origin.y - real.origin.y);
@@ -285,7 +287,7 @@ fn stand_in_chase(
                 .find(|(window, _)| *window == tile.window)
                 .map_or(tile.to, |(_, frame)| to_overlay_space(*frame, display));
             tile.snapshot.source
-                == crate::animation::platform::window_snapshot::SnapshotSource::Placeholder
+                == crate::pictures::platform::picture::Route::StandIn
                 && chases_stand_in(lands, viewport)
         })
         .map(|tile| (tile.window, tile.to.size))
@@ -358,7 +360,7 @@ struct AfterFlight {
 
 /// The tile for a reserved entrance whose picture has landed: frontmost and focused, since a
 /// window is raised on open and about to hold focus.
-fn entrance_tile(entrance: &PendingEntrance, snapshot: &WindowSnapshot) -> OverlayTile {
+fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture) -> OverlayTile {
     OverlayTile {
         window: entrance.window,
         from: entrance_from(entrance.to),
@@ -500,7 +502,7 @@ impl RunningAnimation {
     }
 
     /// What `window` is doing in this flight when a picture of it lands, for `should_swap_mid_flight`.
-    fn tile_state(&self, window: WindowId, snapshot: &WindowSnapshot) -> TileState {
+    fn tile_state(&self, window: WindowId, snapshot: &Picture) -> TileState {
         if self.entrances.iter().any(|e| e.window == window) {
             return TileState::Awaiting;
         }
@@ -563,7 +565,7 @@ impl RunningAnimation {
 
     /// Takes a settled picture for a window this flight is holding for. The picture must fit the
     /// destination, for entrances too. See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
-    fn claim(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> Option<Claimed> {
+    fn claim(&mut self, window: WindowId, snapshot: &Picture) -> Option<Claimed> {
         if self.started.is_some() {
             return None;
         }
@@ -600,7 +602,7 @@ impl RunningAnimation {
     fn admit(
         &mut self,
         window: WindowId,
-        snapshot: &WindowSnapshot,
+        snapshot: &Picture,
     ) -> Option<(OverlayTile, Duration)> {
         if self.started.is_none() || !snapshot.is_usable() {
             return None;
@@ -679,11 +681,11 @@ impl RunningAnimation {
 #[derive(Default)]
 struct DisplayPictures {
     /// Whatever the backdrop is currently showing; reused rather than recaptured.
-    shown: Option<WindowSnapshot>,
+    shown: Option<Picture>,
     /// The desktop as ScreenCaptureKit rendered it: the only source that reliably has the wallpaper.
-    desktop: Option<WindowSnapshot>,
+    desktop: Option<Picture>,
     /// The last usable picture of the bar; capturable only while the overlay is not covering it.
-    bar: Option<WindowSnapshot>,
+    bar: Option<Picture>,
     /// Whether a usable desktop has ever been drawn; until then a wallpaper-less capture beats black.
     drawn_once: bool,
 }
@@ -701,10 +703,10 @@ pub struct FlightEngine {
     tx: Sender,
     mtm: MainThreadMarker,
     overlay: Option<TileOverlay>,
-    cache: PictureCache<WindowSnapshot>,
+    cache: PictureCache<Picture>,
     /// Full-size captures for windows SkyLight cannot serve. Results go through `cache`, never
     /// straight to a tile.
-    service: SnapshotService,
+    service: ScreenCaptureKitQueue,
     display: Option<(CGRect, f64)>,
     /// Which display the overlay is on, for the desktop capture.
     display_id: Option<u32>,
@@ -753,7 +755,7 @@ impl FlightEngine {
     pub fn new(rx: Receiver, tx: Sender, mtm: MainThreadMarker) -> Self {
         // The service completes on a background queue and wakes this actor through its channel.
         let notify_tx = tx.clone();
-        let service = SnapshotService::new(
+        let service = ScreenCaptureKitQueue::new(
             2.0,
             std::sync::Arc::new(move || {
                 _ = notify_tx.send(Event::SnapshotsReady);
@@ -925,7 +927,7 @@ impl FlightEngine {
 
     /// Offers a picture the cache just took to the running flight per `should_swap_mid_flight`. One
     /// the cache refused is never offered: a flight would draw what the next one will not.
-    fn offer_mid_flight(&mut self, window: WindowId, snapshot: &WindowSnapshot, settled: bool) {
+    fn offer_mid_flight(&mut self, window: WindowId, snapshot: &Picture, settled: bool) {
         let Some(running) = self.running.as_ref() else { return };
         let progress = running.progress_if_started();
         let state = running.tile_state(window, snapshot);
@@ -1011,7 +1013,7 @@ impl FlightEngine {
         let Some(lend) = &self.lend_snapshots else {
             return;
         };
-        let held: Vec<(WindowId, WindowSnapshot)> = windows
+        let held: Vec<(WindowId, Picture)> = windows
             .into_iter()
             .filter_map(|window| self.cache.usable(window).cloned().map(|snap| (window, snap)))
             .collect();
@@ -1136,12 +1138,12 @@ impl FlightEngine {
     }
 
     /// Framed captures of `windows` on a plain thread, each turned into what `event` sends back. Never
-    /// on the service's completion queue, which must not make capture calls (see `snapshot_service`).
+    /// on the service's completion queue, which must not make capture calls (see `screencapturekit`).
     fn capture_framed(
         &self,
         name: &str,
         windows: Vec<WindowId>,
-        event: fn(WindowId, WindowSnapshot) -> Option<Event>,
+        event: fn(WindowId, Picture) -> Option<Event>,
     ) {
         if windows.is_empty() {
             return;
@@ -1168,7 +1170,7 @@ impl FlightEngine {
     fn dressing_ready(
         &mut self,
         window: WindowId,
-        dressing: crate::animation::platform::edge_dressing::EdgeDressing,
+        dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
     ) {
         if let Some(snapshot) = self.cache.get_mut(window) {
             snapshot.dressing = Some(dressing.clone());
@@ -1181,7 +1183,7 @@ impl FlightEngine {
     }
 
     /// Takes a framed recapture: a chase's reveal, or the destination refresh.
-    fn picture_ready(&mut self, window: WindowId, snapshot: WindowSnapshot, settled: bool) {
+    fn picture_ready(&mut self, window: WindowId, snapshot: Picture, settled: bool) {
         if snapshot.dressing.is_some() {
             if let Some(running) = self.running.as_mut() {
                 running.harvested.insert(window);
@@ -1233,7 +1235,7 @@ impl FlightEngine {
                             continue;
                         }
                         let Some(snapshot) =
-                            crate::animation::platform::window_snapshot::capture_via_framed_with_dressing(
+                            crate::pictures::platform::skylight::capture_via_framed_with_dressing(
                                 server_id, scale,
                             )
                         else {
@@ -1265,7 +1267,7 @@ impl FlightEngine {
 
     /// Takes a landed picture for a window a holding flight is waiting on. Returns whether the
     /// hold claimed it.
-    fn claim_reveal(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
+    fn claim_reveal(&mut self, window: WindowId, snapshot: &Picture) -> bool {
         let Some(running) = self.running.as_mut() else {
             return false;
         };
@@ -1301,7 +1303,7 @@ impl FlightEngine {
 
     /// Adds the tile for a reserved entrance whose first picture landed after the flight started
     /// moving. Returns whether the picture was taken.
-    fn admit_entrance(&mut self, window: WindowId, snapshot: &WindowSnapshot) -> bool {
+    fn admit_entrance(&mut self, window: WindowId, snapshot: &Picture) -> bool {
         let Some(running) = self.running.as_mut() else {
             return false;
         };
@@ -1322,13 +1324,13 @@ impl FlightEngine {
     }
 
     /// A stand-in for a window of `size`, never cached. `None` only if the pixels cannot be drawn.
-    fn placeholder_for(&mut self, size: CGSize, scale: f64) -> Option<WindowSnapshot> {
+    fn placeholder_for(&mut self, size: CGSize, scale: f64) -> Option<Picture> {
         if self.placeholder_image.as_ref().is_none_or(|(at, _)| *at != scale) {
-            let (image, _) = crate::animation::platform::window_snapshot::placeholder_image(scale)?;
+            let (image, _) = crate::pictures::platform::picture::placeholder_image(scale)?;
             self.placeholder_image = Some((scale, image));
         }
         let (_, image) = self.placeholder_image.as_ref()?;
-        Some(crate::animation::platform::window_snapshot::placeholder(
+        Some(crate::pictures::platform::picture::placeholder(
             size,
             image.clone(),
         ))
@@ -1336,7 +1338,7 @@ impl FlightEngine {
 
     /// The snapshot to draw for one window: any usable cached picture, whatever its shape; a
     /// wrong-shaped one is drawn cropped. See "Resizes through the overlay" in the doc.
-    fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<WindowSnapshot> {
+    fn snapshot_for(&mut self, request: &AnimationRequest) -> Option<Picture> {
         self.cache.usable(request.window).cloned()
     }
 
@@ -1488,7 +1490,7 @@ impl FlightEngine {
             let snapshot = self.snapshot_for(request);
             // Queued now so the next switch has pixels, even if this one does not.
             if snapshot.as_ref().is_none_or(|s| {
-                s.source == crate::animation::platform::window_snapshot::SnapshotSource::SkyLight
+                s.source == crate::pictures::platform::picture::Route::SkyLight
                     && !s.is_usable()
             }) {
                 needs_capture.push(PictureTarget {
@@ -2052,7 +2054,7 @@ impl FlightEngine {
                     // A wrong-shaped picture is stretched rather than dropped. See "A window that
                     // was resized keeps a usable picture" in `src/animation/docs/capture-overlay-research.md`.
                     if snapshot.source
-                        == crate::animation::platform::window_snapshot::SnapshotSource::Placeholder
+                        == crate::pictures::platform::picture::Route::StandIn
                     {
                         stand_ins += 1;
                     } else if !snapshot.fits(window.frame.size) {
@@ -2394,7 +2396,7 @@ impl FlightEngine {
 
     /// The desktop to draw behind the strips: the ScreenCaptureKit render when in hand, else a
     /// SkyLight composite. See "The wallpaper is not reliably a window" in the research doc.
-    fn capture_backdrop(&mut self) -> Option<WindowSnapshot> {
+    fn capture_backdrop(&mut self) -> Option<Picture> {
         let (display_frame, scale) = self.display?;
         let display_size = (display_frame.size.width, display_frame.size.height);
 
@@ -2421,8 +2423,8 @@ impl FlightEngine {
         }
 
         // No render yet: the synchronous composite covers the gap rather than leaving the overlay black.
-        let desktop = crate::animation::platform::backdrop::desktop_backdrop_windows(display_frame);
-        let composite = crate::animation::platform::window_snapshot::capture_composite_via_skylight(
+        let desktop = crate::pictures::platform::desktop::desktop_backdrop_windows(display_frame);
+        let composite = crate::pictures::platform::skylight::capture_list_via_skylight(
             &desktop.windows,
             display_size,
             scale,
@@ -2455,8 +2457,8 @@ impl FlightEngine {
     /// Records what the overlay was dressed with; a black backdrop is only diagnosable after the fact.
     fn log_dressing(
         path: &str,
-        backdrop: Option<&WindowSnapshot>,
-        bar: Option<&WindowSnapshot>,
+        backdrop: Option<&Picture>,
+        bar: Option<&Picture>,
         strip: Option<CGRect>,
         held: bool,
     ) {
@@ -2484,11 +2486,11 @@ impl FlightEngine {
 
     /// The bar's held picture and where it sits in overlay coordinates. Only the very first call
     /// captures inline; [`Self::refresh_bar`] pays for the rest after an animation.
-    fn bar_picture(&mut self) -> (Option<WindowSnapshot>, Option<CGRect>) {
+    fn bar_picture(&mut self) -> (Option<Picture>, Option<CGRect>) {
         let Some((display_frame, _)) = self.display.filter(|_| self.picture_bar) else {
             return (None, None);
         };
-        let strip = crate::animation::platform::backdrop::bar_strip(display_frame);
+        let strip = crate::pictures::platform::desktop::bar_strip(display_frame);
         let Some(bounds) = strip.bounds else {
             return (None, None);
         };
@@ -2526,9 +2528,9 @@ impl FlightEngine {
         if self.overlay.as_ref().is_some_and(TileOverlay::is_visible) {
             return;
         }
-        let strip = crate::animation::platform::backdrop::bar_strip(display_frame);
+        let strip = crate::pictures::platform::desktop::bar_strip(display_frame);
         let Some(bounds) = strip.bounds else { return };
-        let fresh = crate::animation::platform::window_snapshot::capture_composite_via_skylight(
+        let fresh = crate::pictures::platform::skylight::capture_list_via_skylight(
             &strip.windows,
             (bounds.size.width, bounds.size.height),
             scale,
@@ -2876,7 +2878,7 @@ mod tests {
     /// each test names the clause it pins.
     mod exploration {
         use super::*;
-        use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::pictures::platform::picture::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -3235,7 +3237,7 @@ mod tests {
     mod render_stability_fix {
         use super::preservation::{Gen, RUNS};
         use super::*;
-        use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::pictures::platform::picture::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -4102,7 +4104,7 @@ mod tests {
     mod render_stability_preservation {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
-        use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::pictures::platform::picture::test_snapshot;
         use crate::pictures::domain::coverage::{needs_capture, outgrows, should_replace};
 
         fn wid(idx: u32) -> WindowId {
@@ -4133,7 +4135,7 @@ mod tests {
         }
 
         /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
-        fn clipped(size: CGSize) -> WindowSnapshot {
+        fn clipped(size: CGSize) -> Picture {
             let mut snapshot = test_snapshot(size);
             snapshot.coverage.covered = (40.0, size.height);
             snapshot
@@ -4265,7 +4267,7 @@ mod tests {
             let mut refused = 0usize;
             let mut decisions: Vec<SwapDecision> = Vec::new();
             for _ in 0..RUNS {
-                let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
+                let mut cache: PictureCache<Picture> = PictureCache::new();
                 let size = rng.on_screen().size;
                 for _ in 0..rng.below(4) + 1 {
                     let incoming = if rng.coin() {
@@ -4409,7 +4411,7 @@ mod tests {
             let mut rng = Gen(95);
             for _ in 0..RUNS {
                 let slot = rng.on_screen();
-                let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
+                let mut cache: PictureCache<Picture> = PictureCache::new();
                 cache.insert(wid(2), clipped(slot.size));
                 assert!(cache.usable(wid(1)).is_none(), "seed 95: never captured");
                 assert!(cache.usable(wid(2)).is_none(), "seed 95: a sliver");
@@ -4480,7 +4482,7 @@ mod tests {
     mod preservation {
         use super::*;
         use crate::animation::domain::motion::z_group::{GROUP_STRIDE, MAX_TILE_DEPTH};
-        use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::pictures::platform::picture::test_snapshot;
 
         pub(super) const DISPLAY: CGRect = CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
@@ -4845,7 +4847,7 @@ mod tests {
         /// P-3.10.
         #[test]
         fn forgetting_a_window_empties_the_cache_even_while_a_clone_is_held() {
-            let mut cache: PictureCache<WindowSnapshot> = PictureCache::new();
+            let mut cache: PictureCache<Picture> = PictureCache::new();
             let size = CGSize::new(859.0, 1081.0);
             cache.insert(wid(1), test_snapshot(size));
             let held = cache.usable(wid(1)).cloned().expect("inserted");
@@ -5126,7 +5128,7 @@ mod tests {
     mod entrance_hold {
         use super::preservation::{Gen, RUNS, stacked};
         use super::*;
-        use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::pictures::platform::picture::test_snapshot;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -5201,7 +5203,7 @@ mod tests {
         /// and its real picture replaces the stand-in on the SAME tile when it lands at frame zero.
         #[test]
         fn a_stand_in_takes_its_real_picture_on_the_same_tile() {
-            use crate::animation::platform::window_snapshot::{placeholder, test_bitmap};
+            use crate::pictures::platform::picture::{placeholder, test_bitmap};
             let parked = rect(-1720.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let mut flight = flight(None);
@@ -5223,7 +5225,7 @@ mod tests {
             let tile = flight.tiles.iter().find(|t| t.window == wid(3)).expect("still one tile");
             assert_ne!(
                 tile.snapshot.source,
-                crate::animation::platform::window_snapshot::SnapshotSource::Placeholder,
+                crate::pictures::platform::picture::Route::StandIn,
                 "the stand-in is gone"
             );
             assert_eq!((tile.from, tile.to), (parked, slot), "and it travels as it did");
@@ -5238,7 +5240,7 @@ mod tests {
         /// for the next flight.
         #[test]
         fn a_stand_in_mid_flight_is_swapped_for_its_picture() {
-            use crate::animation::platform::window_snapshot::{placeholder, test_bitmap};
+            use crate::pictures::platform::picture::{placeholder, test_bitmap};
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let mut flight = flight(Some(Instant::now()));
             let mut tile = stacked(wid(3), slot, slot, Some(2), false);
@@ -6944,7 +6946,7 @@ mod tests {
 
         #[test]
         fn a_grow_still_enters_awaiting() {
-            use crate::animation::platform::window_snapshot::test_snapshot;
+            use crate::pictures::platform::picture::test_snapshot;
             use crate::pictures::domain::coverage::outgrows;
             let a = column(0.0);
             let grown = rect(a.origin.x, a.origin.y, a.size.width + 600.0, a.size.height);
@@ -7042,7 +7044,7 @@ mod tests {
 
         #[test]
         fn a_spawn_entrance_flies_without_a_hold_and_is_a_reveal_in_waiting() {
-            use crate::animation::platform::window_snapshot::test_snapshot;
+            use crate::pictures::platform::picture::test_snapshot;
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let spawn = rect(300.0, 200.0, 400.0, 300.0);
             let EntranceDecision::Travel { from, to } =
@@ -7112,7 +7114,7 @@ mod tests {
 
         #[test]
         fn a_spawn_entrances_early_chase_picture_is_taken_without_a_release() {
-            use crate::animation::platform::window_snapshot::test_snapshot;
+            use crate::pictures::platform::picture::test_snapshot;
             let slot = rect(867.0, 32.0, 859.0, 1081.0);
             let spawn = rect(300.0, 200.0, 400.0, 300.0);
             let mut running = RunningAnimation {
@@ -7480,7 +7482,7 @@ mod tests {
         use crate::animation::domain::motion::glide::Leg;
         use crate::animation::domain::motion::strip_move::stage_move;
         use crate::animation::platform::engine::plan::*;
-        use crate::animation::platform::window_snapshot::test_snapshot;
+        use crate::pictures::platform::picture::test_snapshot;
         use rini_ipc::protocol::Direction;
 
         /// A full-width column and the gap after it.
@@ -7771,7 +7773,7 @@ mod tests {
         /// the moved window while its real window parks, so it is not chased.
         #[test]
         fn a_stand_in_coming_on_screen_is_chased_and_one_staying_parked_is_not() {
-            use crate::animation::platform::window_snapshot::{placeholder, test_bitmap};
+            use crate::pictures::platform::picture::{placeholder, test_bitmap};
             let slot = rect(868.0, 32.0, 860.0, 1081.0);
             let park = rect(1732.0, 32.0, 860.0, 1081.0);
             let stand_in = |window, from: CGRect, to: CGRect| {

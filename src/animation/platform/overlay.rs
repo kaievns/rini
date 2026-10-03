@@ -12,7 +12,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
-use objc2_core_foundation::{CFRetained, CFType, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSArray, NSNumber, NSString, NSValue};
 use objc2_quartz_core::{
     CABasicAnimation, CAKeyframeAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction,
@@ -37,10 +37,11 @@ pub use crate::animation::domain::motion::tile::{
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::animation::domain::timing::OutAndBack;
-use crate::animation::platform::edge_dressing::{boundary_layout, tile_corner_radius};
-use crate::animation::platform::window_snapshot::{SnapshotImage, WindowSnapshot};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
+use crate::pictures::platform::edge_dressing::{boundary_layout, tile_corner_radius};
+use crate::pictures::platform::layer::{set_contents, set_layer_contents, stretch_region};
+use crate::pictures::platform::picture::Picture;
 use rini_core::ids::WindowId;
 use rini_geometry::{Round, SameAs};
 
@@ -72,7 +73,7 @@ pub struct OverlayTile {
     pub from: CGRect,
     /// Where the window ends up, in the overlay's coordinate space.
     pub to: CGRect,
-    pub snapshot: WindowSnapshot,
+    pub snapshot: Picture,
     /// In the other z-order band from the tiled windows. See `crate::animation::domain::motion::z_group`.
     pub floating: bool,
     /// The window server's front-to-back position, 0 frontmost; `None` when unreported.
@@ -380,7 +381,7 @@ struct Tile {
     shadow: Retained<CALayer>,
     /// Persistent, so a resize can animate its path; a swapped-in mask cannot be animated.
     shadow_mask: Retained<objc2_quartz_core::CAShapeLayer>,
-    /// Hairline sublayers with their index in [`crate::animation::platform::edge_dressing::DressingLayout`] order
+    /// Hairline sublayers with their index in [`crate::pictures::platform::edge_dressing::DressingLayout`] order
     /// (strips 0-3, corners 4-7).
     dressing: Vec<(usize, Retained<CALayer>)>,
     /// The four crop pieces, created on first crop-drawn animation and pooled with the tile.
@@ -556,7 +557,7 @@ impl TileOverlay {
 
     /// Draws the bar on top of the moving tiles; `strip` is its rect in the overlay's coordinates.
     /// A failed capture keeps the previous picture rather than hiding the bar.
-    pub fn set_bar(&mut self, snapshot: Option<&WindowSnapshot>, strip: Option<CGRect>) {
+    pub fn set_bar(&mut self, snapshot: Option<&Picture>, strip: Option<CGRect>) {
         let Some(strip) = strip else {
             self.bar.setHidden(true);
             return;
@@ -579,7 +580,7 @@ impl TileOverlay {
 
     /// Sets the still image drawn behind the moving tiles, at its own covered size so it stays in
     /// register with the real desktop. A failed capture keeps the previous picture.
-    pub fn set_backdrop(&mut self, snapshot: Option<&WindowSnapshot>) {
+    pub fn set_backdrop(&mut self, snapshot: Option<&Picture>) {
         let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
@@ -626,7 +627,7 @@ impl TileOverlay {
     pub fn set_tile_picture(
         &mut self,
         window: WindowId,
-        snapshot: &WindowSnapshot,
+        snapshot: &Picture,
         remaining: Option<Duration>,
     ) {
         let scale = self.scale;
@@ -685,7 +686,7 @@ impl TileOverlay {
     pub fn set_tile_dressing(
         &mut self,
         window: WindowId,
-        dressing: &crate::animation::platform::edge_dressing::EdgeDressing,
+        dressing: &crate::pictures::platform::edge_dressing::EdgeDressing,
     ) {
         let scale = self.scale;
         let Some(entry) = self.tile_layers.get_mut(&window) else {
@@ -1314,7 +1315,7 @@ impl TileOverlay {
         if let (Some(from_layout), Some(to_layout)) =
             (boundary_layout(from.size), boundary_layout(to.size))
         {
-            let rect_at = |layout: &crate::animation::platform::edge_dressing::DressingLayout,
+            let rect_at = |layout: &crate::pictures::platform::edge_dressing::DressingLayout,
                            index: usize| {
                 if index < 4 {
                     layout.strips[index]
@@ -1378,7 +1379,7 @@ fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
 
 /// The harvested image for one piece, in `DressingLayout` order: four strips, then four corners.
 fn dressing_image(
-    dressing: &crate::animation::platform::edge_dressing::EdgeDressing,
+    dressing: &crate::pictures::platform::edge_dressing::EdgeDressing,
     index: usize,
 ) -> Option<&CFRetained<objc2_core_graphics::CGImage>> {
     if index < 4 {
@@ -1391,7 +1392,7 @@ fn dressing_image(
 /// Every harvested piece, whatever `size`, so a fresh harvest swaps in place. See "Window borders
 /// during animations" in `src/animation/docs/animation-smoothness.md`.
 fn dressing_piece_indices(
-    dressing: &crate::animation::platform::edge_dressing::EdgeDressing,
+    dressing: &crate::pictures::platform::edge_dressing::EdgeDressing,
     size: CGSize,
 ) -> Vec<usize> {
     if boundary_layout(size).is_none() {
@@ -1404,7 +1405,7 @@ fn dressing_piece_indices(
 /// bare.
 fn apply_edge_dressing(
     tile: &mut Tile,
-    dressing: Option<&crate::animation::platform::edge_dressing::EdgeDressing>,
+    dressing: Option<&crate::pictures::platform::edge_dressing::EdgeDressing>,
     size: CGSize,
     scale: f64,
     swap_in_place: bool,
@@ -1563,7 +1564,7 @@ fn shadow_mask_frame(size: CGSize) -> CGRect {
 /// carry a crop into the next flight's stretch.
 fn set_tile_content(
     entry: &mut Tile,
-    snapshot: &WindowSnapshot,
+    snapshot: &Picture,
     mode: ContentMode,
     frame: CGSize,
     scale: f64,
@@ -1596,29 +1597,6 @@ fn set_tile_content(
     // Written on every install because tile layers are pooled: a layer that last held a stand-in must
     // not stretch the next window's picture nine-slice.
     entry.picture.setContentsCenter(stretch_region(snapshot));
-}
-
-/// The part of a tile's contents that stretches, in unit coordinates. All of it for a picture; for the
-/// stand-in only its middle, so the rounded corners keep the window's radius at any size.
-fn stretch_region(snapshot: &WindowSnapshot) -> CGRect {
-    use crate::animation::platform::window_snapshot::SnapshotSource;
-    let whole = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0));
-    let SnapshotImage::Bitmap(image) = &snapshot.image else {
-        return whole;
-    };
-    if snapshot.source != SnapshotSource::Placeholder {
-        return whole;
-    }
-    let side = objc2_core_graphics::CGImage::width(Some(image)) as f64;
-    if side < 3.0 {
-        return whole;
-    }
-    // The stand-in is a square of two corners and a two-pixel middle; see `placeholder_image`.
-    let corner = (side - 2.0) / 2.0;
-    CGRect::new(
-        CGPoint::new(corner / side, corner / side),
-        CGSize::new(2.0 / side, 2.0 / side),
-    )
 }
 
 /// Lays the crop grid out for the tile's current frame size.
@@ -1669,27 +1647,6 @@ fn reparent(layer: &CALayer, container: &CALayer) {
     container.addSublayer(layer);
 }
 
-/// Hands a captured picture to a layer, whichever kind of image it is.
-///
-/// `pub(crate)` so the switcher's panel draws pictures the same way the overlay does. The alternative
-/// was a second copy of these lines, and two places deciding how a snapshot becomes layer contents is
-/// exactly the kind of split that drifts.
-pub(crate) fn set_layer_contents(layer: &CALayer, snapshot: &WindowSnapshot) {
-    match &snapshot.image {
-        SnapshotImage::Bitmap(image) => set_contents(layer, image),
-        SnapshotImage::Surface(surface) => set_contents(layer, surface),
-    }
-}
-
-/// Hands `picture`, a `CGImage` or an `IOSurface`, to `layer` as its contents.
-///
-/// As an object: a `CGImage` or `IOSurfaceRef` pointer handed to `msg_send!` encodes as a struct
-/// pointer, which objc2 refuses for `setContents:` in any build with debug assertions.
-pub(crate) fn set_contents(layer: &CALayer, picture: &CFType) {
-    // SAFETY: Core Animation draws a CGImage or an IOSurface as a layer's contents, and retains it.
-    unsafe { layer.setContents(Some(picture.as_ref())) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1709,71 +1666,6 @@ mod tests {
 
         assert_eq!(window_rect(display, 0.0), display);
         assert_eq!(canvas_rect(display, 0.0).origin, CGPoint::new(0.0, 0.0));
-    }
-
-    fn test_surface() -> CFRetained<objc2_io_surface::IOSurfaceRef> {
-        use objc2_core_foundation::{CFDictionary, CFNumber, CFString};
-        use objc2_io_surface::{
-            IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfaceWidth,
-        };
-        let keys: [&CFString; 3] =
-            unsafe { [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement] };
-        let values = [
-            CFNumber::new_i64(1),
-            CFNumber::new_i64(1),
-            CFNumber::new_i64(4),
-        ];
-        let value_refs: [&CFNumber; 3] = std::array::from_fn(|i| &*values[i]);
-        // SAFETY: the three keys an IOSurface needs, each with a number.
-        unsafe { IOSurfaceRef::new(CFDictionary::from_slices(&keys, &value_refs).as_opaque()) }
-            .expect("a surface")
-    }
-
-    fn contents_address(layer: &CALayer) -> Option<usize> {
-        // SAFETY: a read of the layer's own property.
-        unsafe { layer.contents() }.map(|object| Retained::as_ptr(&object) as usize)
-    }
-
-    /// Either kind of picture reaches the layer, under the debug assertions every test build has.
-    /// Handed to `setContents:` as a raw `CGImage` or `IOSurfaceRef` pointer instead, the message
-    /// fails objc2's encoding check and panics, in a debug build on the first bar, flight or switch.
-    #[test]
-    fn a_layer_takes_a_picture_of_either_kind() {
-        use crate::animation::platform::window_snapshot::test_snapshot;
-        let layer = CALayer::layer();
-
-        let bitmap = test_snapshot(CGSize::new(1.0, 1.0));
-        set_layer_contents(&layer, &bitmap);
-        let SnapshotImage::Bitmap(image) = &bitmap.image else {
-            unreachable!("a test snapshot is a bitmap")
-        };
-        assert_eq!(contents_address(&layer), Some(&**image as *const _ as usize));
-
-        let surface = test_surface();
-        let on_surface = WindowSnapshot {
-            image: SnapshotImage::Surface(surface.clone()),
-            ..test_snapshot(CGSize::new(1.0, 1.0))
-        };
-        set_layer_contents(&layer, &on_surface);
-        assert_eq!(contents_address(&layer), Some(&*surface as *const _ as usize));
-    }
-
-    /// A stand-in stretches only its two-pixel middle, so its corners keep the window's radius; a real
-    /// picture stretches whole. Written every install, since tile layers are pooled.
-    #[test]
-    fn only_a_stand_in_stretches_nine_slice() {
-        use crate::animation::platform::window_snapshot::{
-            placeholder, placeholder_image, test_snapshot,
-        };
-        let (image, _) = placeholder_image(2.0).expect("drawn");
-        let stand_in = placeholder(CGSize::new(859.0, 1081.0), image);
-
-        let region = stretch_region(&stand_in);
-        assert!((region.origin.x - 20.0 / 42.0).abs() < 1e-9);
-        assert!((region.size.width - 2.0 / 42.0).abs() < 1e-9);
-
-        let whole = stretch_region(&test_snapshot(CGSize::new(859.0, 1081.0)));
-        assert_eq!(whole, CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
     }
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
@@ -1948,8 +1840,8 @@ mod tests {
 
     #[test]
     fn the_dressing_piece_set_does_not_depend_on_the_tile_size() {
-        use crate::animation::platform::edge_dressing::EdgeDressing;
-        use crate::animation::platform::window_snapshot::test_bitmap;
+        use crate::pictures::platform::edge_dressing::EdgeDressing;
+        use crate::pictures::platform::picture::test_bitmap;
         let piece = || Some(test_bitmap());
         let dressing = EdgeDressing {
             strips: [piece(), piece(), piece(), piece()],
@@ -1966,10 +1858,10 @@ mod tests {
         );
     }
 
-    fn full_dressing() -> crate::animation::platform::edge_dressing::EdgeDressing {
-        use crate::animation::platform::window_snapshot::test_bitmap;
+    fn full_dressing() -> crate::pictures::platform::edge_dressing::EdgeDressing {
+        use crate::pictures::platform::picture::test_bitmap;
         let piece = || Some(test_bitmap());
-        crate::animation::platform::edge_dressing::EdgeDressing {
+        crate::pictures::platform::edge_dressing::EdgeDressing {
             strips: [piece(), piece(), piece(), piece()],
             corners: [piece(), piece(), piece(), piece()],
         }

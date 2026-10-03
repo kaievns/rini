@@ -31,7 +31,6 @@ use objc2_quartz_core::{
 use rustc_hash::FxHashMap as HashMap;
 use tracing::info;
 
-use crate::animation::platform::overlay::set_contents;
 use crate::bar::domain::extras::Kind;
 use crate::bar::domain::layout::{self, Piece, Scene, Target};
 use crate::bar::domain::model::DisplayBar;
@@ -45,6 +44,7 @@ use crate::bar::platform::menu_extras::{Extra, Extras};
 use crate::bar::platform::text::{Picture, Text};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
+use crate::pictures::platform::layer::set_contents;
 
 /// Above the flight overlay (18), so a flight never pictures the bar; below notification banners
 /// (21) and the menu bar (24), so the menu bar revealed from the top edge draws over it.

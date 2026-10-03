@@ -21,7 +21,9 @@ the Okibi 燠火 design system. The requirements are in `specs/bar.md`.
 | **The menu extras' pictures** | `platform/menu_extras.rs`, a thread of its own |
 
 The reactor's half is `src/app/reactor/bar.rs`. It fills a `BarInput` from its stores after every
-batch of events and sends the model on only when it changed.
+batch of events and sends the model on only when it changed. The bar draws with `pictures`' helpers:
+the desktop listing its ground is pictured from, the RGBA context its words and pictures are drawn
+in, and the call that sets a layer's contents (`src/pictures/docs/README.md`).
 
 ## The shape that matters
 

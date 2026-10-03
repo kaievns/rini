@@ -711,7 +711,7 @@ changes is how the picture maps onto it (`content_mode` in
   with a cold cache took a 1s off-screen capture and flew in from the park.
   It used to take the reservation instead, which drew nothing in its slot
   until a picture landed — a hole in the strip after every restart. It now
-  flies with a stand-in (`stands_in`, `window_snapshot::placeholder`): a
+  flies with a stand-in (`stands_in`, `picture::placeholder`): a
   dark `--n3` tile, drawn nine-slice from a 42px image so its corners keep the
   window's radius, moving exactly as its picture would. The stand-in claims
   to cover nothing, so the flight holds for it and chases it like a grow,
@@ -976,7 +976,7 @@ Options, in order of expected value:
    changes, the CGS window events `window_notify` subscribes to — as "picture
    is dirty" triggers. Misses silent repaints; catches most others without
    polling.
-3. **Aged-cache sweeps.** `WindowSnapshot` is timestamped (`taken`) and
+3. **Aged-cache sweeps.** A `Picture` is timestamped (`taken`) and
    `warm_windows` re-warms anything older than `SNAPSHOT_STALE_AFTER` at
    animation end. A sweep of nearby workspaces on a slow idle timer is not
    done; it would break the "nothing polls" principle deliberately.

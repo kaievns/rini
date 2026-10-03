@@ -160,15 +160,6 @@ destination for a window already moving.
 > too". Over four restarts no picture landed for the first 11s, and 49% of the flights in the first
 > 30s were missing a window; after 2 minutes, 5%. The replays ran seconds after each restart.
 
-## Where it lives
-
-`src/animation/domain/motion/` is the planning, `src/animation/domain/motion/strip_move.rs` the move
-along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
-`src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. What a picture is worth,
-the stand-in and the capture work a flight permits are `src/pictures/domain/`; the captures are still in
-`src/animation/platform/`. Measurements are in `src/animation/docs/animation-smoothness.md` and
-`capture-overlay-research.md`.
-
 ## Windows with no picture yet
 
 - A window with no picture MUST NOT leave a hole in the strip. A known window parked off this display —
@@ -269,3 +260,14 @@ the stand-in and the capture work a flight permits are `src/pictures/domain/`; t
 > of the two its band names. A twin rather than one container per application, because only the
 > focused application changes band: every other application keeps the server's order among the rest,
 > which one container behind the strip already expresses.
+
+## Where it lives
+
+`src/animation/domain/motion/` is the planning, `src/animation/domain/motion/strip_move.rs` the move
+along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
+`src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. The pictures a flight
+draws are `src/pictures/`: whether one covers and fits its window, the stand-in, the blur and the
+capture work a flight permits in `src/pictures/domain/`, the captures in `src/pictures/platform/`
+(`src/pictures/platform/skylight.rs` for the framed capture with its blur,
+`src/pictures/platform/screencapturekit.rs` for the background queue). Measurements are in
+`src/animation/docs/animation-smoothness.md` and `capture-overlay-research.md`.

@@ -96,11 +96,12 @@ the one thing a switcher exists to do.
 
 **The pictures are borrowed, never captured here.** Capture costs ~40ms plus 14.5ms per window
 (measured, `src/animation/docs/capture-overlay-research.md`), so the panel cannot take one while the
-popup is opening. The animation engine already keeps a cache for the overlay, and
+popup is opening. The flight engine already keeps the picture cache for the overlay, and
 `Event::LendSnapshots` is a READ of it — a hash lookup per window. The engine answers through an
-installed callback that the APP wires to this actor, so neither feature names the other. Only the
-windows drawn are lent and warmed, a stack's top card and the two behind it, and opening a switch
-queues warms for those with no picture, so the next open has them.
+installed callback that the APP wires to this actor, so the switcher never names `animation`. It names
+`pictures`, whose `Picture` it is lent and whose `platform/layer.rs` sets its cards' contents
+(`src/pictures/docs/README.md`). Only the windows drawn are lent and warmed, a stack's top card and the
+two behind it, and opening a switch queues warms for those with no picture, so the next open has them.
 
 **`usable`, not `get`.** The cheap capture route returns a sliver for exactly the off-screen and
 hidden-workspace windows this feature exists to show, and a sliver stretched across a row is worse than
