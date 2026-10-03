@@ -13,6 +13,7 @@ edge bounce are all flights of the same thing.
 | `domain/motion/travel.rs`, `surface.rs` | How far each tile goes, and what a pinned one does |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
 | `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, evaluating to what Core Animation draws |
+| `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving mid-bounce, and its track |
 | `domain/translucency.rs` | Putting a window's blur back into its picture: merging its own capture with a composite of what is below it |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/strip_stack.rs` | The stacked-workspace geometry a switch moves through |

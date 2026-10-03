@@ -19,9 +19,7 @@ use objc2_quartz_core::{
     CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
 };
 
-pub use crate::animation::domain::motion::easing::{
-    BOUNCE_TURN, CubicBezier, MOTION_CURVE, bounce_displacement, ease,
-};
+pub use crate::animation::domain::motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE, ease};
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
 pub(crate) use crate::animation::domain::motion::plan::{
     AnimationTarget, animation_targets, carries_out_and_back,

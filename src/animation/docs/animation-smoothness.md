@@ -472,13 +472,20 @@ the windows already sit at) and adds the bounce to whatever is running
 otherwise, extending the clock to cover the return (`clock_for_bounce`). The
 overlay's `out_and_back` with `OutAndBack::Bounce` is one additive
 `CAKeyframeAnimation` per container
-(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; ease-out then ease-in-out) under
+(`0, overshoot, 0` at `0, BOUNCE_TURN, 1`; the motion curve out,
+`kCAMediaTimingFunctionEaseInEaseOut` home) under
 its own key, so an in-flight movement is neither replaced nor disturbed and
 the model positions stay put; `settled` reads false until it is home, which
 holds the lift. The floating container rides only a vertical bounce
 (`carries_out_and_back`), the rule a pan (pinned) and a switch (carried) already
-follow. Real windows never move. The shape is `bounce_displacement`, pinned
-by `a_bounce_goes_out_once_and_comes_home`. A push while a bounce is still
+follow. Real windows never move. The shape is `Bounce::from_rest`
+(`src/animation/domain/motion/bounce.rs`), pinned by
+`a_first_push_goes_out_once_and_comes_home`, and `Bounce::track` is those
+keyframes as a score track (`a_bounce_from_rest_is_the_keyframes_the_overlay_installs`).
+`bounce_displacement`, named here before it, came home on a cubic polynomial
+instead of the ease-in-out, 6.0pt off at 72pt, and nothing drew it.
+`Bounce::pushed` is the handover prototype's re-kick, a new bounce from wherever
+the last is drawn; the engine does not play it. A push while a bounce is still
 playing starts none (`OutAndBacks::admits`): each one restarted the keyframes
 under the same key, so a burst of presses at the wall bounced once per press, and the
 presses the reactor reached late kept bouncing after the pressing had stopped.
@@ -995,7 +1002,8 @@ channels (`Base`, the movement; `Bounce` and `Nudge`, added on top), and the
 model value each node ends at. `Score::sample` is what Core Animation draws at a
 media time, so a merge can bend a flight from the score instead of reading the
 presentation layer back (step 5 of `docs/pictures-motion-transitions.md`).
-Nothing plays a score yet: the overlay still builds its animations itself.
+Nothing plays a score yet: the overlay still builds its animations itself, and
+`Bounce::track` is the track it installs for the bounce today.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in
 an off-screen window, its presentation read at chosen `timeOffset`s.
@@ -1005,7 +1013,7 @@ an off-screen window, its presentation read at chosen `timeOffset`s.
 | Outside `[begin, begin + duration)` | draws the model | `Track::at` is none; `sample` is the model |
 | `kCAMediaTimingFunctionEaseInEaseOut` | control points `(0.42, 0, 0.58, 1)` | `EASE_IN_OUT` |
 | 1722pt over 0.35s on `MOTION_CURVE` | within 0.088pt of the exact Bezier | `CubicBezier::ease` |
-| The 72pt bounce over 0.35s, `0, 0.35, 1` | within 0.072pt of the exact curves | `Track::keyframes` |
+| The 72pt bounce over 0.35s | within 0.072pt of `Bounce::at` | `Bounce::track` |
 | Keyframes with no `keyTimes` or `timingFunctions` | evenly spaced, straight lines between | `Track::samples` |
 | `duration` 0 | plays for 0.25s | a cut |
 | `addAnimation:forKey:` on a key in use | the old one goes; the new one is last | `Score::add` replaces |

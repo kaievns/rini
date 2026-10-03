@@ -1,6 +1,6 @@
-//! The curve every movement runs on, the one the strip crosses on while a move steps it, and the
-//! shapes of the two out-and-backs: the edge bounce and a move's nudge. Core Animation takes the
-//! same control points, so the clock and the render server agree.
+//! The curve every movement runs on, the one the strip crosses on while a move steps it, where the
+//! edge bounce turns, and the shape of a move's nudge. Core Animation takes the same control
+//! points, so the clock and the render server agree.
 
 /// The curve every movement runs on but a stepping move's (`EASE_IN_OUT`), as CSS-style cubic
 /// Bezier control points `(x1, y1, x2, y2)`.
@@ -122,28 +122,9 @@ pub fn ease(t: f64) -> f64 {
     MOTION_CURVE.ease(t)
 }
 
-/// Where the return leg of a bounce begins, as a fraction of its duration. Out fast, back at
-/// leisure: a rubber band snaps taut and eases home.
+/// Where the way home of a bounce from rest begins, as a fraction of its duration. Out fast, back
+/// at leisure: a rubber band snaps taut and eases home. The shape is `bounce::Bounce`.
 pub const BOUNCE_TURN: f64 = 0.35;
-
-/// The displacement of a bounce at progress `t`, for a unit overshoot: out along an ease-out to
-/// the turn, back along an ease-in-out to rest. What `bounce_animation` asks Core Animation to
-/// draw, kept here so the shape can be checked on plain numbers.
-pub fn bounce_displacement(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    if t <= BOUNCE_TURN {
-        ease(t / BOUNCE_TURN)
-    } else {
-        let u = (t - BOUNCE_TURN) / (1.0 - BOUNCE_TURN);
-        // ease-in-out cubic, from 1 down to 0
-        let s = if u < 0.5 {
-            4.0 * u * u * u
-        } else {
-            1.0 - (-2.0 * u + 2.0).powi(3) / 2.0
-        };
-        1.0 - s
-    }
-}
 
 /// The displacement of a move's nudge at progress `t`, for a unit offset: `sin²(πt)`, at
 /// rest and motionless at both ends and furthest out at half time. Why not the bounce's shape is in
@@ -217,28 +198,6 @@ mod tests {
         // unclamped cubic would overshoot the target position.
         assert_eq!(ease(-0.5), 0.0);
         assert_eq!(ease(1.5), 1.0);
-    }
-
-    /// A bounce leaves rest, peaks at the turn, and is back at rest at the end, with no
-    /// second hump: out is monotone up to the turn, back is monotone down after it. The turn is
-    /// early, so the snap out is quicker than the settle home.
-    #[test]
-    fn a_bounce_goes_out_once_and_comes_home() {
-        assert_eq!(bounce_displacement(0.0), 0.0);
-        assert!((bounce_displacement(BOUNCE_TURN) - 1.0).abs() < 1e-12);
-        assert!(bounce_displacement(1.0).abs() < 1e-12);
-        let mut previous = 0.0;
-        for i in 1..=1000 {
-            let t = i as f64 / 1000.0;
-            let d = bounce_displacement(t);
-            if t <= BOUNCE_TURN {
-                assert!(d >= previous, "still going out at t={t}");
-            } else {
-                assert!(d <= previous + 1e-12, "coming back at t={t}");
-            }
-            previous = d;
-        }
-        assert!(BOUNCE_TURN < 0.5, "out fast, home at leisure");
     }
 
     /// The nudge leaves rest at no speed, is furthest out at half time and back at rest with no speed
