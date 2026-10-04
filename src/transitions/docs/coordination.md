@@ -61,8 +61,9 @@ prints from them, so a landing that looks the same is not delivered.
 
 The end state is four watches, kept and retargeted from one generation to the next (`EndWatches` in the
 engine): every end window, captured as soon as it is where it ends (`Settle::AsSoonAsThere`, watched for
-150ms); a window a pass grew or opened, or one flying as a stand-in, captured once it has repainted
-there (`Settle::Repainted`); the focus target, from its focus report until its look changes (`Change`);
+150ms); a window a layout pass grew or opened, or one it flies as a stand-in, captured once it has
+repainted there (`Settle::Repainted`), while a stand-in on a strip movement, which never holds, is an
+end window like any other; the focus target, from its focus report until its look changes (`Change`);
 and the floating windows behind the strip, kept fresh once that change is in (`Live`). One more capture
 of every end window is asked 110ms before the clock ends and never in its first 40ms (`AskFinal`). A
 press merged in flight starts the next generation and retargets every watch and the holes. A delivered
@@ -212,12 +213,17 @@ watch is looked at first in a round, and a window focused before it landed deliv
 as its landing, which the change watch then never saw change. That picture is swapped in, kept as its
 focused look, and focus hands over (`HandOverFocus`): the target's ring and shadow are drawn focused
 and the window left's not (`TileOverlay::set_tile_focused`). The window left is pictured again by the
-final capture, if its look has changed by then; so is the target, if its change watch ran out first,
-and that hands focus over too. If nothing has handed it over when the final capture is asked, focus
+final capture if it ends wholly on screen and its look has changed by then; one ending clipped by the
+display's edge keeps its frame-zero picture to the lift, only its ring and shadow turning, and its look
+turns at rest: SkyLight returns only its visible part, and the one ScreenCaptureKit capture a flight
+lets through is the target's ("Decisions taken while Kai was away" in
+`docs/pictures-motion-transitions.md`). The target is pictured again by the final capture too, if its
+change watch ran out first, and that hands focus over. If nothing has handed it over when the final capture is asked, focus
 hands over then, while the flight still moves: the window is reported focused, and a look that never
 showed a change (one already focused when the watch started, or an app whose title band looks the
-same either way) would otherwise turn at the lift. A target the pass opened, grew or flies as a
-stand-in hands over with its repainted picture. A
+same either way) would otherwise turn at the lift. A target a layout pass opened, grew or flies as a
+stand-in hands over with its repainted picture; a stand-in on a strip movement is pictured as it lands
+and hands over on its focus change or the final capture, as any target does. A
 target clipped by the display edge where it ends takes one ScreenCaptureKit capture through the hold, the
 only one a transition lets through: SkyLight returns only its visible sliver ("A clipped destination
 needs ScreenCaptureKit, not SkyLight" in `src/pictures/docs/capture-research.md`). A flight that moves

@@ -118,9 +118,10 @@ const STAND_IN_RGB: (f64, f64, f64) = (0.133, 0.145, 0.153);
 
 /// The stand-in for a window of `window` size with no picture.
 ///
-/// Claims to cover NOTHING of the window, which is honest and is also what makes a flight treat it as
-/// a picture waiting for its reveal: the window is watched until it has repainted where it ends, and
-/// its real picture replaces this one on the same tile.
+/// Claims to cover NOTHING of the window, which is honest and is also what makes a layout pass treat
+/// it as a picture waiting for its reveal: the flight holds for the window and watches it until it has
+/// repainted where it ends. A strip movement, which never holds, captures it once it lands there.
+/// Either way its real picture replaces this one on the same tile.
 pub fn stand_in_picture(window: CGSize, image: CFRetained<CGImage>) -> Picture {
     Picture {
         image: Pixels::Bitmap(image),
