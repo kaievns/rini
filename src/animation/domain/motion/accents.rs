@@ -1,8 +1,8 @@
 //! The accents a flight carries on top of its movement, the edge bounce and a move's step, and the
 //! tracks each plays on the containers that carry it. A push against an end re-kicks every
 //! carrier's bounce from where that carrier's is drawn (`push_tracks`), never held off; a step is
-//! taken only while none plays (`step_tracks`), or a burst of moves steps the strip once per press.
-//! Their shapes are `bounce` and `nudge`.
+//! taken only while none plays (`steps`), or a burst of moves steps the strip once per press, and
+//! plays on every carrier (`step_tracks`). Their shapes are `bounce` and `nudge`.
 
 use std::time::Duration;
 
@@ -43,13 +43,13 @@ pub fn push_tracks(playing: &Score, wall: CGPoint, seconds: f64, at: f64) -> Vec
         .collect()
 }
 
+/// Whether a press's step is taken at `at`: only while none plays anywhere in `playing`, or a burst
+/// of moves steps the strip once per press.
+pub fn steps(playing: &Score, at: f64) -> bool { !playing.plays(Channel::Nudge, at) }
+
 /// The step out by `offset` and back over `seconds` from `at`, one `nudge_track` on each container of
-/// `playing` that carries it; none while a step plays anywhere in it. See "The move flight" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// `playing` that carries it. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
 pub fn step_tracks(playing: &Score, offset: CGPoint, seconds: f64, at: f64) -> Vec<Track> {
-    if playing.plays(Channel::Nudge, at) {
-        return Vec::new();
-    }
     playing
         .containers()
         .filter(|key| carries_out_and_back(*key, offset))
@@ -201,30 +201,23 @@ mod tests {
         }
     }
 
-    /// A step is taken only while none plays: one on every carrier from rest, none for a press while
-    /// it plays however many come, and one again once it is home. A burst of moves steps the strip
-    /// once, not once per press.
+    /// A step is taken only while none plays: one from rest, on every carrier, none for a press
+    /// while it plays however many come, and one again once it is home. A burst of moves steps the
+    /// strip once, not once per press.
     #[test]
     fn a_step_is_taken_only_while_none_plays() {
         let mut score = surface();
         let (offset, seconds) = (CGPoint::new(-576.0, 0.0), 0.455);
+        assert!(steps(&score, 10.0), "from rest");
         let first = step_tracks(&score, offset, seconds, 10.0);
         assert_eq!(first, [nudge_track(STRIP, offset, 10.0, seconds, SAMPLE_STEP)]);
         for track in first {
             score.apply(&Edit::Add(track));
         }
         for at in [10.0, 10.1, 10.3, 10.455 - 1e-9] {
-            assert!(
-                step_tracks(&score, offset, seconds, at).is_empty(),
-                "{at}: one plays"
-            );
+            assert!(!steps(&score, at), "{at}: one plays");
         }
-        let home = 10.0 + seconds;
-        assert_eq!(
-            step_tracks(&score, offset, seconds, home),
-            [nudge_track(STRIP, offset, home, seconds, SAMPLE_STEP)],
-            "home: the next press steps again"
-        );
+        assert!(steps(&score, 10.0 + seconds), "home: the next press steps again");
     }
 
     /// The floating container carries only a vertical accent, as a pan pins it and a switch carries

@@ -15,7 +15,7 @@ use rini_geometry::{Round, SameAs};
 use rini_ipc::protocol::Direction;
 
 use super::{Choreography, Cue, Pass, Retarget, Stage, Staging, Strip};
-use crate::animation::domain::motion::accents::{Accent, push_tracks, step_tracks};
+use crate::animation::domain::motion::accents::{Accent, push_tracks, step_tracks, steps};
 use crate::animation::domain::motion::easing::MOTION_CURVE;
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
 use crate::animation::domain::motion::nudge::{NUDGE_SHARE, NUDGE_STRETCH, flight_curve};
@@ -208,7 +208,7 @@ impl Choreography for Slide {
     /// then the accents that waited. A step taken stretches the flight by `NUDGE_STRETCH` and flies
     /// it on the ease-in-out; a flight of no length is placed only.
     fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
-        let step = step_of(stage.accents).filter(|_| !playing.plays(Channel::Nudge, begin));
+        let step = step_of(stage.accents).filter(|_| steps(playing, begin));
         let seconds = if step.is_some() {
             stage.seconds * NUDGE_STRETCH
         } else {
@@ -281,7 +281,7 @@ impl Choreography for Slide {
             pass.focus,
             pass.viewport,
         );
-        let step = step_of(pass.accent.as_ref()).filter(|_| !playing.plays(Channel::Nudge, now));
+        let step = step_of(pass.accent.as_ref()).filter(|_| steps(playing, now));
         let seconds = if step.is_some() {
             pass.seconds * NUDGE_STRETCH
         } else {
@@ -751,6 +751,49 @@ mod tests {
         assert_eq!(
             track_on(&edits, Node::Container(GroupKey::Floating), Channel::Nudge),
             None
+        );
+    }
+
+    /// A step a press brings mid-flight while none plays is taken: every strip container steps from
+    /// the merge, the floating one not, and every leg of the merge runs `NUDGE_STRETCH` longer, its
+    /// spring stiffened to match.
+    #[test]
+    fn a_step_a_merge_brings_while_none_plays_is_taken_and_stretches_the_merge() {
+        let mut requests = strip(1, 3, -863.0);
+        let floating = rect(224.0, 95.0, 600.0, 400.0);
+        requests.push((wid(5), floating, floating, true));
+        let mut flight = Flight::posed(&requests);
+        flight.start(PLAIN, &[]);
+        let key = key_of(&flight.plan, wid(1));
+        let node = Node::Container(key);
+        let leg = flight.slide.legs[&key];
+        let now = BEGIN + 0.1;
+        let along = point(flight.score.along(node, now));
+        let offset = CGPoint::new(-576.0, 0.0);
+        let incoming = reflow_plan(
+            &strip(1, 3, -1726.0)
+                .into_iter()
+                .map(|(w, _, to, f)| (w, shifted(to, 863.0), to, f))
+                .collect::<Vec<_>>(),
+            DISPLAY,
+        );
+        let pan = CGPoint::new(-863.0, 0.0);
+        let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset }), now);
+        let stretched = PLAIN * NUDGE_STRETCH;
+        assert_eq!(
+            track_on(&bent.edits, node, Channel::Nudge),
+            Some(nudge_track(key, offset, now, stretched, SAMPLE_STEP))
+        );
+        assert!(flight.score.containers().any(|key| key == GroupKey::Floating));
+        assert_eq!(
+            track_on(&bent.edits, Node::Container(GroupKey::Floating), Channel::Nudge),
+            None
+        );
+        let to = point(flight.score.model(node));
+        let bends = Leg::toward(Some(&leg), along, to, now, spring_omega(stretched));
+        assert_eq!(
+            track_on(&bent.edits, node, Channel::Base),
+            Some(bends.track(key, SAMPLE_STEP))
         );
     }
 

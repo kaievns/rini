@@ -366,8 +366,8 @@ container jumped from the older bounce to rest on the last one's clock; pinned b
 `a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. A
 push of no length is a cut, drawn at rest (`a_push_of_no_length_is_a_cut`). A
 move's nudge (below) is the other out-and-back, on the same containers by the
-same rule, under its own key. Only a step still playing holds a step off (`step_tracks` in
-`src/animation/domain/motion/accents.rs` takes none while the score `plays` one) and the bounce never
+same rule, under its own key. Only a step still playing holds a step off (`steps` in
+`src/animation/domain/motion/accents.rs`, no while the score `plays` one) and the bounce never
 does; pinned by `a_step_is_taken_only_while_none_plays` and
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
@@ -461,7 +461,7 @@ few points into the outer gap beside the moved window until the lift. A
 container a merge opens after a step began does not carry the rest of it: its
 member leaves from where it is drawn, so it does not jump, but it stops
 stepping, as with the edge bounce. The coordinator's clock restarts to cover
-the score. A step still playing is not restarted (`step_tracks`, `Score::plays`): one step
+the score. A step still playing is not restarted (`steps`, `Score::plays`): one step
 per burst. A press after it has come home, 455ms at the default duration,
 starts another. A press at the end of the strip
 bounces as before, on top of whatever is playing.

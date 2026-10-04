@@ -130,6 +130,7 @@ mod tests {
     use objc2_core_foundation::CGPoint;
 
     use super::*;
+    use crate::animation::domain::motion::nudge::NUDGE_STRETCH;
     use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, reflow_plan};
     use crate::animation::domain::motion::score::{Channel, Node, Value};
     use crate::animation::domain::motion::testing::{DISPLAY, rect};
@@ -395,8 +396,9 @@ mod tests {
         let stepped = flight.merge_with(&ReflowPlan::empty(), None, Some(step), PLAIN, now);
         assert!(!stepped.delta.moves_anything(), "{:?}", stepped.delta);
         let left = Duration::from_secs_f64(BEGIN + PLAIN - now);
+        assert!(stepped.edits.iter().any(|e| matches!(e, Edit::Add(t) if t.channel() == Channel::Nudge)));
         let runs_on = flight.score.outlasting(left, now).expect("the step outlasts the clock");
-        assert!(runs_on > left, "{runs_on:?}");
+        assert!(runs_on.as_secs_f64() >= PLAIN * NUDGE_STRETCH - 1e-9, "{runs_on:?}");
         assert_eq!(runs_on, flight.score.remaining(now));
     }
 
