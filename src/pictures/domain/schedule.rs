@@ -377,6 +377,10 @@ impl<P> Schedule<P> {
     /// The display the overlay flies on, whose desktop and bar the service holds.
     pub fn display(&self) -> Option<Display> { self.display }
 
+    /// Whether a bar under the overlay is pictured and drawn over transitions: off while rini draws
+    /// its own bar above the overlay, which leaves nothing there to picture.
+    pub fn picture_bar(&self) -> bool { self.picture_bar }
+
     /// Whether a transition holds the service.
     pub fn held(&self) -> bool { self.hold != Hold::Released }
 
@@ -1092,13 +1096,18 @@ mod tests {
         assert!(schedule.owed().next().is_none(), "forgotten, every job of it");
     }
 
+    /// The one record of whether there is a bar to picture, which a transition is dressed by too.
     #[test]
     fn no_bar_is_pictured_while_rini_draws_its_own() {
         let now = Instant::now();
         let mut schedule = Schedule::<()>::default();
+        assert!(!schedule.picture_bar(), "a transition before the first display is dressed with none");
         schedule.set_display(built_in(), false, now);
+        assert!(!schedule.picture_bar());
         let _ = schedule.next(now, nothing_held);
         schedule.hold(Hold::Settling, now);
         assert!(matches!(schedule.next(now + BAR_REFRESH_DELAY, nothing_held), Next::Idle));
+        schedule.set_display(built_in(), true, now);
+        assert!(schedule.picture_bar(), "another app's bar, under the overlay");
     }
 }

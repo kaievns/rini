@@ -385,8 +385,10 @@ impl Pictures {
     /// which without one draws the display left behind, or black. The bar is read for presence on
     /// every transition, so a bar that has gone is not drawn, and composited once per display.
     /// `backdrop_drawn` says whether a desktop of `display` is already drawn, which a desktop without
-    /// its wallpaper must not replace.
-    pub fn dressing(&self, display: Display, picture_bar: bool, backdrop_drawn: bool) -> Dressing {
+    /// its wallpaper must not replace. Whether there is a bar to picture is the service's, as the
+    /// display it was last told says.
+    pub fn dressing(&self, display: Display, backdrop_drawn: bool) -> Dressing {
+        let picture_bar = self.lock().schedule.picture_bar();
         let strip = picture_bar.then(|| bar_strip(display.frame));
         let bar_on_screen = strip.as_ref().is_some_and(|strip| strip.bounds.is_some());
         let (desktop, bar) = {

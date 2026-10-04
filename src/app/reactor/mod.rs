@@ -4121,13 +4121,11 @@ impl Reactor {
             return;
         };
         let frame = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
-        let picture_bar = !self.config.settings.bar.enabled;
         if let Some(tx) = &self.communication_manager.transitions_tx {
             _ = tx.send(crate::transitions::platform::engine::Event::SetDisplay {
                 id: screen.id.as_u32(),
                 frame,
                 scale: screen.scale,
-                picture_bar,
                 top_band: self.config.settings.top_band(),
             });
         }
@@ -4138,7 +4136,7 @@ impl Reactor {
                     frame,
                     scale: screen.scale,
                 },
-                picture_bar,
+                !self.config.settings.bar.enabled,
             );
         }
     }

@@ -58,14 +58,12 @@ pub enum Event {
         focus: Option<WindowId>,
         duration: Duration,
     },
-    /// Display geometry for the overlay: the display's whole bounds. `picture_bar` says whether a
-    /// bar under the overlay is pictured and drawn over flights; it is off while rini draws its own
-    /// bar above the overlay, which leaves nothing there to picture.
+    /// Display geometry for the overlay: the display's whole bounds. Whether a bar under the
+    /// overlay is drawn over flights is the pictures service's, which the reactor tells.
     SetDisplay {
         id: u32,
         frame: CGRect,
         scale: f64,
-        picture_bar: bool,
         /// Points to leave clear at the top for the bar; the overlay window starts below it.
         top_band: f64,
     },
@@ -646,8 +644,6 @@ pub struct FlightEngine {
     quiet: Option<(Generation, RepeatingTimer)>,
     /// The window the window server last reported focused.
     focused: Option<WindowId>,
-    /// Whether a bar under the overlay is pictured; see `Event::SetDisplay`.
-    picture_bar: bool,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     on_flight: Option<OnFlight>,
@@ -685,7 +681,6 @@ impl FlightEngine {
             clock: None,
             quiet: None,
             focused: None,
-            picture_bar: true,
             place_frames: None,
             on_flight: None,
             nudge_playing: NudgePlaying::default(),
@@ -714,9 +709,8 @@ impl FlightEngine {
                 id,
                 frame,
                 scale,
-                picture_bar,
                 top_band,
-            } => self.set_display(id, frame, scale, picture_bar, top_band),
+            } => self.set_display(id, frame, scale, top_band),
             Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
             Event::AnimateSurface {
                 windows,
@@ -921,8 +915,7 @@ impl FlightEngine {
     }
 
     /// The overlay's geometry. The pictures of the display are the service's, told by the reactor.
-    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, picture_bar: bool, top_band: f64) {
-        self.picture_bar = picture_bar;
+    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, top_band: f64) {
         self.display = Some((frame, scale));
         self.display_id = Some(id);
         self.top_band = top_band;
@@ -1412,7 +1405,7 @@ impl FlightEngine {
         let backdrop_drawn = self.overlay.as_ref().is_some_and(TileOverlay::backdrop_drawn);
         let dressing = self
             .picture_display()
-            .map(|display| self.pictures.dressing(display, self.picture_bar, backdrop_drawn));
+            .map(|display| self.pictures.dressing(display, backdrop_drawn));
         let display_origin = self.display.map(|(frame, _)| frame.origin).unwrap_or_default();
         let Some(overlay) = self.ensure_overlay() else {
             self.abandon();
