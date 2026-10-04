@@ -3,7 +3,7 @@ use tracing::{debug, trace};
 
 use crate::animation::domain::motion::travel::travels_visibly;
 use crate::animation::domain::pass::{self, Move, PassPlan, PassWindow};
-use crate::animation::platform::power;
+use crate::app::power;
 use rini_geometry::stretch::is_a_resize;
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::Present;

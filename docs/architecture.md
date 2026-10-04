@@ -67,6 +67,7 @@ touches nothing outside itself.
 | `config/` | the `config.kdl` file: decoded section by section into part types (`config/kdl/`), laid over each feature's settings type with the checks that span sections, watching and reload. The format's decisions are `docs/config.md` |
 | `api/` | the outward surface: the Mach IPC backend bound to the reactor (`api/backend.rs`) and the shapes a query answers in (`api/dto.rs`) |
 | `notifications.rs` | the NSWorkspace demultiplexer, feeding the two features that want it |
+| `power.rs` | Low Power Mode, read at start and kept current from its notification: the input tap and the reactor's flight decision read it |
 | `hotkeys/` | the hotkey controller: lowers a bound `Action` to a `Command` |
 | `launch_agent.rs` | the launch agent plist and the service subcommands |
 | `startup.rs` | the configured startup commands |

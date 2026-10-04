@@ -3831,7 +3831,7 @@ impl Reactor {
     /// the real windows do not move. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
     fn start_edge_bounce(&mut self, space: SpaceId, direction: Direction) {
         if !self.config.settings.animate
-            || crate::animation::platform::power::is_low_power_mode_enabled()
+            || crate::app::power::is_low_power_mode_enabled()
         {
             return;
         }

@@ -401,7 +401,7 @@ fn main() {
     let input_settings = rini::input::settings::InputSettings::from(&config);
     let mut event_tap = InputTap::new(
         &input_settings,
-        rini::animation::platform::power::is_low_power_mode_enabled(),
+        rini::app::power::is_low_power_mode_enabled(),
         Box::new(wm_controller_sender.clone()),
         event_tap_rx,
     );
