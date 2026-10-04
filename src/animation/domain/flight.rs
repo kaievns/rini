@@ -315,17 +315,6 @@ pub(in crate::animation) fn managed_server_ids(
     ids
 }
 
-/// Which group a window belongs to.
-pub(in crate::animation) fn group_of(
-    floating: bool,
-) -> crate::animation::domain::motion::z_group::StackGroup {
-    if floating {
-        crate::animation::domain::motion::z_group::StackGroup::Floating
-    } else {
-        crate::animation::domain::motion::z_group::StackGroup::Tiled
-    }
-}
-
 /// What whoever installed `on_flight` is told: `true` when an overlay goes up, `false` once flying has
 /// settled. Settled is the quiet period after a lift (`SETTLE_BEFORE_CAPTURES`), not the lift, so a
 /// burst of flights reads as one: a flight beginning inside the quiet period says nothing, and the

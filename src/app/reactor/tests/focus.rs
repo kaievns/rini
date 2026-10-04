@@ -371,7 +371,7 @@ fn same_app_focus_change_hides_mouse_and_window_server_confirmation_reasserts_it
     ));
 }
 
-/// The strip is one z-order group (`model::z_group`): focus landing on a strip window while a floating
+/// The strip is one z-order group (`raise_order::regroup_tiled`): focus landing on a strip window while a floating
 /// window sits in front of any strip window raises the whole strip over it.
 /// The window an auto workspace switch focuses (`choose_switch_focus`): the window the switch is
 /// for is taken visible or not, because it is parked until the layout lands. A cmd-tab onto Kiro

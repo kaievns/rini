@@ -1730,9 +1730,8 @@ mod tests {
 
     #[test]
     fn every_possible_tile_draws_between_the_backdrop_and_the_bar() {
-        use crate::animation::domain::motion::z_group::{
-            MAX_TILE_DEPTH, StackGroup, Stacked, stack,
-        };
+        use crate::animation::domain::motion::z_group::{MAX_TILE_DEPTH, Stacked, stack};
+        use crate::windows::domain::raise_order::StackGroup;
         let app = |pid: i32, idx: u32| rini_core::ids::WindowId {
             pid,
             idx: std::num::NonZeroU32::new(idx).unwrap(),

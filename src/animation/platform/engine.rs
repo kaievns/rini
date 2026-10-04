@@ -347,7 +347,7 @@ fn stacked_windows(
         .filter(|t| t.companion.is_none())
         .map(|t| crate::animation::domain::motion::z_group::Stacked {
             window: t.window,
-            group: group_of(t.floating),
+            group: crate::windows::domain::raise_order::StackGroup::of(t.floating),
             server_order: t.server_order,
         })
         .collect()

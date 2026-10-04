@@ -63,7 +63,7 @@ use crate::switcher::domain::candidates::{Candidate, Scope, opening_selection, s
 use crate::switcher::domain::entries::{Entry, entries};
 use crate::switcher::domain::selection::Selection;
 use crate::windows::domain::focus::{FocusEvent, MainWindowTracker};
-use crate::windows::domain::raise_order;
+use crate::windows::domain::raise_order::{self, StackGroup, regroup_tiled};
 use crate::windows::domain::rules::AppRuleDecision;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::workspaces::domain::display_affinity::SetupChange;
@@ -4944,7 +4944,7 @@ impl Reactor {
         });
 
         // The strip goes up as one group. A focus move raises only the window it lands on, which leaves a
-        // floating window in front of the columns beside it. See `model::z_group`.
+        // floating window in front of the columns beside it. See `raise_order::regroup_tiled`.
         if let Some(target) = focus_window
             && let Some(space) = self.affinity().best_space_for_window_id(target)
         {
@@ -5000,15 +5000,8 @@ impl Reactor {
     }
 
     /// Which z-order group a window belongs to.
-    fn stack_group_of(
-        &self,
-        window: WindowId,
-    ) -> crate::animation::domain::motion::z_group::StackGroup {
-        if self.layout_manager.layout_engine.is_window_floating(window) {
-            crate::animation::domain::motion::z_group::StackGroup::Floating
-        } else {
-            crate::animation::domain::motion::z_group::StackGroup::Tiled
-        }
+    fn stack_group_of(&self, window: WindowId) -> StackGroup {
+        StackGroup::of(self.layout_manager.layout_engine.is_window_floating(window))
     }
 
     /// Puts the strip back in front of the windows that are not on it, after focus lands on the strip.
@@ -5788,7 +5781,7 @@ pub(crate) struct StackedWindow {
     pub(crate) window: WindowId,
     /// Front-to-back position, 0 being frontmost.
     pub(crate) depth: usize,
-    pub(crate) group: crate::animation::domain::motion::z_group::StackGroup,
+    pub(crate) group: StackGroup,
 }
 
 /// The windows to raise so the strip is one group in front of the floating windows, in raise order:
@@ -5801,15 +5794,13 @@ pub(crate) struct StackedWindow {
 pub(crate) fn strip_group_to_lift_for(
     order: &[StackedWindow],
     focused: WindowId,
-    focused_group: crate::animation::domain::motion::z_group::StackGroup,
+    focused_group: StackGroup,
 ) -> Vec<WindowId> {
-    use crate::animation::domain::motion::z_group::StackGroup;
-
     if focused_group == StackGroup::Floating {
         return Vec::new();
     }
     let groups: Vec<(WindowId, StackGroup)> = order.iter().map(|s| (s.window, s.group)).collect();
-    let back_to_front = crate::animation::domain::motion::z_group::regroup_tiled(&groups);
+    let back_to_front = regroup_tiled(&groups);
     let mut raise: Vec<WindowId> =
         back_to_front.iter().copied().filter(|wid| *wid != focused).collect();
     if back_to_front.contains(&focused) {

@@ -734,7 +734,7 @@ mod strip_regroup {
     use test_log::test;
 
     use super::*;
-    use crate::animation::domain::motion::z_group::StackGroup::{Floating, Tiled};
+    use crate::windows::domain::raise_order::StackGroup::{Floating, Tiled};
     use crate::app::reactor::{StackedWindow, strip_group_to_lift_for};
     use crate::windows::domain::raise::{self as raise_manager, RaiseRequest};
 

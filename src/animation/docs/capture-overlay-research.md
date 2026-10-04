@@ -897,7 +897,8 @@ after clicking the LEFT terminal (idx 90):
 ```
 
 Settings spans x = 383 to 1106 and idx 91 spans 865 to 1724, so the overlap is real
-and visible. The rule is in `motion::z_group`: focusing any window on the strip puts
+and visible. The rule is in `motion::z_group` for the tiles and in `windows::domain::raise_order`
+for the real windows: focusing any window on the strip puts
 the whole strip in front of everything off it, and focusing something off the strip
 puts ITS APPLICATION in front of the whole strip — not every off-strip window, which
 is what a two-value group once did. Within a band the window server's own order is
@@ -909,7 +910,7 @@ It decides two separate things:
   lifted off-strip windows, the strip, the off-strip windows behind it — with a
   stride between bands wide enough that no window count can make them interleave. Without it, the animation drew the floating
   window over the columns sliding past underneath.
-- **Real order.** `regroup_tiled` returns the strip windows back to front when a
+- **Real order.** `regroup_tiled` (`src/windows/domain/raise_order.rs`) returns the strip windows back to front when a
   floating window is INSIDE the strip — something on the strip in front of it and
   something on the strip behind it — and nothing at all when the order already obeys the
   rule — the common case, and it must cost nothing, because
