@@ -355,9 +355,11 @@ impl LayoutManager {
         let mut any_frame_changed = false;
 
         for (space, layout) in layout_result {
+            let movement = reactor.take_workspace_movement(space);
             if is_workspace_switch {
-                any_frame_changed |=
-                    AnimationManager::workspace_switch_layout(reactor, space, &layout, skip_wid);
+                any_frame_changed |= AnimationManager::workspace_switch_layout(
+                    reactor, space, movement, &layout, skip_wid,
+                );
             } else if reactor.workspace_switch_manager.active_workspace_switch.is_some() {
                 any_frame_changed |=
                     AnimationManager::instant_layout(reactor, space, &layout, skip_wid);

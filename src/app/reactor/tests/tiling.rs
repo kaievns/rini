@@ -1840,54 +1840,6 @@ fn moving_strip_with(
     (apps, reactor, animation_rx)
 }
 
-/// One strip movement the reactor sent.
-struct SurfaceFlight {
-    windows: Vec<crate::transitions::domain::request::SurfaceWindow>,
-    from_offset: SurfacePoint,
-    final_frames: Vec<(WindowId, ScreenRect)>,
-    focus: Option<WindowId>,
-    focused_before: Option<WindowId>,
-    key: Option<WindowId>,
-    cue: crate::animation::domain::choreography::Cue,
-    accent: Option<crate::animation::domain::motion::accents::Accent>,
-    duration: std::time::Duration,
-}
-
-/// Every strip movement the reactor sent since the last look.
-fn strip_movements(
-    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
-) -> Vec<SurfaceFlight> {
-    let mut out = Vec::new();
-    while let Ok((_, event)) = rx.try_recv() {
-        if let crate::transitions::platform::engine::Event::AnimateSurface {
-            windows,
-            from_offset,
-            final_frames,
-            focus,
-            focused_before,
-            key,
-            cue,
-            accent,
-            duration,
-            ..
-        } = event
-        {
-            out.push(SurfaceFlight {
-                windows,
-                from_offset,
-                final_frames,
-                focus,
-                focused_before,
-                key,
-                cue,
-                accent,
-                duration,
-            });
-        }
-    }
-    out
-}
-
 /// A click or an app activation reaches the reactor as a focus report before the pass it causes, and a
 /// key press as a command before rini's raise is reported: either way the strip movement names the
 /// window focused as the event began, which is still drawn focused on screen at frame zero.
@@ -1957,7 +1909,7 @@ fn causes(
 
 /// A flight's journal starts at the press: each request names the command it answers, stamped when
 /// the reactor took it, whichever of the five ways it goes to the flight engine. `None` is a press
-/// that may send nothing: the second column is in view, and the first switch has no origin yet.
+/// that may send nothing: the second column is in view.
 #[test]
 fn a_commands_flight_carries_its_cause() {
     let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
@@ -1968,7 +1920,7 @@ fn a_commands_flight_carries_its_cause() {
         layout(LayoutCommand::MoveFocus(Direction::Right)),
         sends(LayoutCommand::MoveFocus(Direction::Right), "movement"),
         sends(LayoutCommand::ToggleFullscreenWithinGaps, "pass"),
-        layout(LayoutCommand::NextWorkspace(None)),
+        sends(LayoutCommand::NextWorkspace(None), "movement"),
         sends(LayoutCommand::PrevWorkspace(None), "movement"),
         (
             Command::Reactor(ReactorCommand::DebugOverlaySlide { dx: 0, dy: 40, duration_ms: 350 }),
