@@ -325,11 +325,13 @@ the bounce kind when none is running: every tile at rest, nothing written and no
 bounce played as the motion starts, once frame zero is up. On a flight that moves it adds the bounce at
 once, and on one that does not move yet as it starts; either way the coordinator's clock runs on to cover
 the return (`Event::Extend`). Every push that reaches a moving flight shows: the
-actor keeps the bounce playing and when it began, and a push while it plays starts the next from
-where that one is drawn (`next_bounce`, pinned by
+actor keeps the bounce playing and when it began (`BounceRecord`), and a push while it plays starts
+the next from where that one is drawn (pinned by
 `every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn`), the clock extended to the new
-one's return. The record goes at the lift and when frame zero is installed again, which removes the
-animations it describes. How the bounce is drawn, and how a push re-kicks it, is "Edge bounce" in
+one's return. The record goes at the lift and whenever frame zero is installed again, which removes
+the animations it describes, so the next push starts from rest
+(`a_push_after_the_bounce_is_gone_starts_from_rest`); kept, it would push from where nothing is drawn
+and the surface would jump. How the bounce is drawn, and how a push re-kicks it, is "Edge bounce" in
 `src/animation/docs/animation-smoothness.md`.
 
 ## The move flight, staged

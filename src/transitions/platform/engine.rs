@@ -21,7 +21,6 @@ use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
 use crate::animation::domain::motion::accents::NudgePlaying;
-use crate::animation::domain::motion::bounce::Bounce;
 use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::nudge::flight_curve;
 use crate::animation::domain::motion::plan::{self, entrance_from};
@@ -649,9 +648,9 @@ pub struct FlightEngine {
     on_flight: Option<OnFlight>,
     /// When the move nudge playing now comes home.
     nudge_playing: NudgePlaying,
-    /// The edge bounce drawn on the containers now and when it began. None at the lift, so every
-    /// flight starts with none, and when frame zero is installed again.
-    bounce: Option<(Instant, Bounce)>,
+    /// The edge bounce drawn on the containers now and when it began, gone at the lift and when
+    /// frame zero is installed again.
+    bounce: BounceRecord,
 }
 
 impl FlightEngine {
@@ -684,7 +683,7 @@ impl FlightEngine {
             place_frames: None,
             on_flight: None,
             nudge_playing: NudgePlaying::default(),
-            bounce: None,
+            bounce: BounceRecord::default(),
         }
     }
 
@@ -952,7 +951,7 @@ impl FlightEngine {
         let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_ref()) else { return };
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         overlay.install(&running.plan, &running.tiles, &banding);
-        *bounce = None;
+        bounce.gone();
         self.clip_corners();
     }
 
@@ -1079,7 +1078,7 @@ impl FlightEngine {
         }
         self.running = None;
         self.clock = None;
-        self.bounce = None;
+        self.bounce.gone();
         self.delivered.clear();
         self.drive(lifecycle::Event::Abandon);
     }
@@ -1768,9 +1767,7 @@ impl FlightEngine {
     /// The bounce a push plays from now, on the containers, with the clock run on for it to come home.
     fn play_bounce(&mut self, overshoot: CGPoint, duration: Duration, now: Instant) {
         let Some(overlay) = self.overlay.as_mut() else { return };
-        let before = self.bounce.map(|(_, playing)| playing.overshoot);
-        let next = next_bounce(self.bounce, now, overshoot, duration);
-        self.bounce = Some((now, next));
+        let (next, before) = self.bounce.push(now, overshoot, duration);
         overlay.bounce(&next, before);
         debug!(
             overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
@@ -1851,7 +1848,7 @@ impl FlightEngine {
         }
         self.running = None;
         self.clock = None;
-        self.bounce = None;
+        self.bounce.gone();
         self.delivered.clear();
         let tx = self.tx.clone();
         match RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
