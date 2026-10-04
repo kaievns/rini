@@ -1105,6 +1105,43 @@ mod tests {
         assert_eq!(names(&marks[..1]), ["looks_turned"]);
     }
 
+    /// Drives `event` at `at` through a bare coordinator and through each journalled one: every drive
+    /// gives what the bare one says, in its order.
+    fn drives_alike(bare: &mut Coordinator, journalled: &mut [Journalled], event: Event, at: Instant) -> usize {
+        let said = bare.on(event.clone(), at);
+        for flights in journalled.iter_mut() {
+            assert_eq!(flights.drive(event.clone(), at).0, said, "{event:?}");
+        }
+        said.len()
+    }
+
+    /// Writing the journal or not changes nothing the coordinator says: a drive gives the commands a
+    /// bare coordinator gives for the same events at the same instants, never filtered, reordered or
+    /// held, with the journal never written, written, and turned on then off.
+    #[test]
+    fn a_drive_gives_what_the_coordinator_says_whether_the_journal_is_written_or_not() {
+        let now = Instant::now();
+        let mut written = Journalled::default();
+        written.set_writing(true);
+        let mut toggled = Journalled::default();
+        toggled.set_writing(true);
+        toggled.set_writing(false);
+        let mut journalled = [Journalled::default(), written, toggled];
+        let mut bare = Coordinator::default();
+        let mut said = drives_alike(&mut bare, &mut journalled, Event::Begin(pan()), now);
+        let at = |ms| now + Duration::from_millis(ms);
+        said += drives_alike(&mut bare, &mut journalled, Event::Merge { stage: pan(), moved: false }, at(5));
+        let g = bare.generation();
+        said += drives_alike(&mut bare, &mut journalled, Event::FrameZero(g), at(30));
+        said += drives_alike(&mut bare, &mut journalled, Event::Tick { settled: false, landed: false }, at(100));
+        let frame = r(0.0, 0.0, 200.0, 200.0);
+        said += drives_alike(&mut bare, &mut journalled, Event::LooksTurned(vec![(w(2), frame)]), at(120));
+        said += drives_alike(&mut bare, &mut journalled, Event::Tick { settled: true, landed: true }, now + PLAYS);
+        said += drives_alike(&mut bare, &mut journalled, Event::Quiet(g), now + PLAYS + SETTLE_BEFORE_CAPTURES);
+        assert!(said > 10, "a whole flight said something: {said}");
+        assert!(journalled.iter().all(|flights| flights.coordinator().generation() == g));
+    }
+
     #[test]
     fn a_settled_burst_is_given_once_while_writing() {
         let mut flights = Journalled::default();
