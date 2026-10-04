@@ -122,7 +122,10 @@ pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
     staging.accent = steps
         .then(|| nudge(area.frame.size.width, direction))
         .flatten()
-        .map(|offset| Accent::Step { offset });
+        .map(|offset| Accent::Step {
+            offset,
+            seconds: strip.seconds,
+        });
     staging
 }
 
@@ -144,12 +147,18 @@ fn nudge(viewport_width: f64, direction: Direction) -> Option<CGPoint> {
     }
 }
 
-/// The step an accent asks for, if any.
-fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<CGPoint> {
-    accents.into_iter().find_map(|accent| match accent {
-        Accent::Step { offset } => Some(*offset),
+/// The step an accent asks for, if any, and its press's plain length.
+fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<(CGPoint, f64)> {
+    accents.into_iter().find_map(|accent| match *accent {
+        Accent::Step { offset, seconds } => Some((offset, seconds)),
         Accent::Push { .. } => None,
     })
+}
+
+/// How long legs of `plain` length run with `step` taken: as long as the step, its press's length
+/// stretched by `NUDGE_STRETCH`, when that is longer.
+fn stepped(plain: f64, step: Option<(CGPoint, f64)>) -> f64 {
+    step.map_or(plain, |(_, seconds)| plain.max(seconds * NUDGE_STRETCH))
 }
 
 impl Choreography for Slide {
@@ -205,15 +214,12 @@ impl Choreography for Slide {
 
     /// The motion from frame zero, from `begin`: exactly what `animation_targets` names, every
     /// container on one curve over one length, every loose tile on `MOTION_CURVE` in its container,
-    /// then the accents that waited. A step taken stretches the flight by `NUDGE_STRETCH` and flies
-    /// it on the ease-in-out; a flight of no length is placed only.
+    /// then the accents that waited. A step taken runs over its own press's length stretched by
+    /// `NUDGE_STRETCH`, the flight at least as long, on the ease-in-out; a flight of no length is
+    /// placed only.
     fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
         let step = step_of(stage.accents).filter(|_| steps(playing, begin));
-        let seconds = if step.is_some() {
-            stage.seconds * NUDGE_STRETCH
-        } else {
-            stage.seconds
-        };
+        let seconds = stepped(stage.seconds, step);
         let curve = flight_curve(step.is_some());
         let mut making = Making::from(playing);
         for target in animation_targets(stage.plan) {
@@ -248,8 +254,8 @@ impl Choreography for Slide {
                 }
             }
         }
-        if let Some(offset) = step {
-            for track in step_tracks(&making.score, offset, seconds, begin) {
+        if let Some((offset, plain)) = step {
+            for track in step_tracks(&making.score, offset, plain * NUDGE_STRETCH, begin) {
                 making.push(Edit::Add(track));
             }
         }
@@ -270,8 +276,8 @@ impl Choreography for Slide {
     /// movement on a spring as fast as its leg is going; a container opened for a member leaving
     /// another carrying on that one's leg, and one opened for a newcomer on `MOTION_CURVE`; tiles
     /// joining; loose tiles bent from where the score draws them; what the flight no longer draws
-    /// dropped; and a step the pass brings, taken only while none plays, which stretches every leg
-    /// of the merge by `NUDGE_STRETCH`.
+    /// dropped; and a step the pass brings, taken only while none plays, over its press's length
+    /// stretched by `NUDGE_STRETCH`, every leg of the merge at least as long.
     fn retarget(&mut self, playing: &Score, plan: &FlightPlan, pass: &Pass, now: f64) -> Retarget {
         let (merged, delta) = merge_plans(
             plan,
@@ -282,11 +288,7 @@ impl Choreography for Slide {
             pass.viewport,
         );
         let step = step_of(pass.accent.as_ref()).filter(|_| steps(playing, now));
-        let seconds = if step.is_some() {
-            pass.seconds * NUDGE_STRETCH
-        } else {
-            pass.seconds
-        };
+        let seconds = stepped(pass.seconds, step);
         let omega = spring_omega(seconds);
         let drawn = |window: WindowId| pass.drawn.contains(&window);
         let position = |key: GroupKey| merged.positions.get(&key).copied();
@@ -433,8 +435,8 @@ impl Choreography for Slide {
             self.legs.remove(&key);
         }
 
-        if let Some(offset) = step {
-            for track in step_tracks(&making.score, offset, seconds, now) {
+        if let Some((offset, plain)) = step {
+            for track in step_tracks(&making.score, offset, plain * NUDGE_STRETCH, now) {
                 making.push(Edit::Add(track));
             }
         }
@@ -721,7 +723,7 @@ mod tests {
         requests.push((wid(5), floating, floating, true));
         let mut flight = Flight::posed(&requests);
         let offset = CGPoint::new(-576.0, 0.0);
-        let edits = flight.start(PLAIN, &[Accent::Step { offset }]);
+        let edits = flight.start(PLAIN, &[Accent::Step { offset, seconds: PLAIN }]);
         let stretched = PLAIN * NUDGE_STRETCH;
         let mut strips = 0;
         for target in animation_targets(&flight.plan) {
@@ -754,6 +756,32 @@ mod tests {
         );
     }
 
+    /// A step that waited for the motion runs over its own press's length stretched, whatever pass was
+    /// folded in after it, and the flight over that or its own length, whichever is longer. Stretched
+    /// from the latest pass folded in, a two-row switch folded in after a full-width move ran the
+    /// step and the flight 0.64s, where the move's step runs 0.455s.
+    #[test]
+    fn a_step_that_waited_runs_over_its_own_press_stretched() {
+        let offset = CGPoint::new(-576.0, 0.0);
+        let stretched = PLAIN * NUDGE_STRETCH;
+        for flies in [0.64, PLAIN, 0.2] {
+            let mut flight = Flight::posed(&strip(1, 2, -863.0));
+            let edits = flight.start(flies, &[Accent::Step {
+                offset,
+                seconds: PLAIN,
+            }]);
+            let node = Node::Container(key_of(&flight.plan, wid(1)));
+            let step = track_on(&edits, node, Channel::Nudge).expect("steps");
+            assert!((step.seconds() - stretched).abs() < 1e-9, "{flies}: {}", step.seconds());
+            let leg = track_on(&edits, node, Channel::Base).expect("flies");
+            assert!(
+                (leg.seconds() - flies.max(stretched)).abs() < 1e-9,
+                "{flies}: {}",
+                leg.seconds()
+            );
+        }
+    }
+
     /// A step a press brings mid-flight while none plays is taken: every strip container steps from
     /// the merge, the floating one not, and every leg of the merge runs `NUDGE_STRETCH` longer, its
     /// spring stiffened to match.
@@ -778,7 +806,7 @@ mod tests {
             DISPLAY,
         );
         let pan = CGPoint::new(-863.0, 0.0);
-        let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset }), now);
+        let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset, seconds: PLAIN }), now);
         let stretched = PLAIN * NUDGE_STRETCH;
         assert_eq!(
             track_on(&bent.edits, node, Channel::Nudge),
@@ -803,7 +831,7 @@ mod tests {
     fn a_step_while_one_plays_is_not_taken() {
         let mut flight = Flight::posed(&strip(1, 3, -863.0));
         let offset = CGPoint::new(-576.0, 0.0);
-        flight.start(PLAIN, &[Accent::Step { offset }]);
+        flight.start(PLAIN, &[Accent::Step { offset, seconds: PLAIN }]);
         let key = key_of(&flight.plan, wid(1));
         let node = Node::Container(key);
         let playing = flight.score.track(node, Channel::Nudge).cloned();
@@ -818,7 +846,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             DISPLAY,
         );
-        let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset }), now);
+        let bent = flight.merge(&incoming, Some(pan), Some(Accent::Step { offset, seconds: PLAIN }), now);
         assert_eq!(
             track_on(&bent.edits, node, Channel::Nudge),
             None,
@@ -1063,6 +1091,7 @@ mod tests {
         let (wall, offset) = (CGPoint::new(0.0, 72.0), CGPoint::new(-576.0, 0.0));
         let edits = flight.start(PLAIN, &[Accent::Push { wall, seconds: 0.35 }, Accent::Step {
             offset,
+            seconds: PLAIN,
         }]);
         let key = key_of(&flight.plan, wid(1));
         let tracks = adds(&edits);

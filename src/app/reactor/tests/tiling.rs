@@ -2047,7 +2047,7 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{direction:?}: its real window goes to the layout's frame, off screen: {real:?}"
         );
 
-        let Some(crate::animation::domain::motion::accents::Accent::Step { offset: nudge }) =
+        let Some(crate::animation::domain::motion::accents::Accent::Step { offset: nudge, seconds }) =
             flight.accent
         else {
             panic!("{direction:?}: a full-width move steps");
@@ -2063,6 +2063,7 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
             "{:?}",
             flight.duration
         );
+        assert!((seconds - plain).abs() < 1e-6, "the step runs over its press's length: {seconds}");
     }
 }
 

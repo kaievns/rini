@@ -482,9 +482,11 @@ The step starts only on a flight that moves: one still collecting passes
 poses frame zero again with each, which has nothing playing, so a move
 arriving then waits (`RunningAnimation::take_pass` keeps it with `FlightScore::wait`, a later step in
 place of the earlier) and steps when the flight starts moving; it used to be dropped, and a full-width move merged into a collecting layout
-pass showed nothing. A step is taken only while none plays (`steps`), one per burst. The look
-stretches a flight that steps to `NUDGE_STRETCH` (1.3x) the plain duration when it takes the step, so
-a flight that does not step keeps its length; the reactor asked for the stretch with every step it
+pass showed nothing. A step is taken only while none plays (`steps`), one per burst. The look runs
+the step over its own press's plain duration stretched by `NUDGE_STRETCH` (1.3x), which the step
+carries, and the flight that takes it over that or its own duration, whichever is longer, so a flight
+that does not step keeps its length, and a longer press folded in after the step, a switch of two or
+more rows, neither stretches it nor is stretched itself; the reactor asked for the stretch with every step it
 sent, stepped or not. The clock and lift wait for the step to come home (`Event::Extend` over the
 score, `FlightScore::settled`).
 

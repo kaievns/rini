@@ -392,6 +392,7 @@ mod tests {
         let now = BEGIN + 0.2;
         let step = Accent::Step {
             offset: CGPoint::new(-576.0, 0.0),
+            seconds: PLAIN,
         };
         let stepped = flight.merge_with(&ReflowPlan::empty(), None, Some(step), PLAIN, now);
         assert!(!stepped.delta.moves_anything(), "{:?}", stepped.delta);
@@ -411,7 +412,7 @@ mod tests {
         let (left, right) = (CGPoint::new(-72.0, 0.0), CGPoint::new(72.0, 0.0));
         let step = CGPoint::new(-576.0, 0.0);
         flight.score.wait(Accent::Push { wall: left, seconds: PLAIN });
-        flight.score.wait(Accent::Step { offset: step });
+        flight.score.wait(Accent::Step { offset: step, seconds: PLAIN });
         flight.score.wait(Accent::Push { wall: right, seconds: PLAIN });
         let plan = flight.plan.clone();
         flight.score.pose(&stage(&plan, &flight.drawn), Banding::default());
@@ -475,6 +476,7 @@ mod tests {
     fn a_lift_drops_the_score_and_every_accent_with_it() {
         let step = Accent::Step {
             offset: CGPoint::new(-576.0, 0.0),
+            seconds: PLAIN,
         };
         let mut lifted = Flight::posed(&strip(1, 2, 1.0, -863.0));
         lifted.score.wait(step);

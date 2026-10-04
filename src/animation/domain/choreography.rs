@@ -82,13 +82,15 @@ pub struct Area {
 }
 
 /// A strip movement as a look stages it: every tiled window at its new frame, the pair a move
-/// swapped, the screen, and the viewport's travel, which is where the camera starts.
+/// swapped, the screen, the viewport's travel, which is where the camera starts, and how long the
+/// movement runs, plain.
 #[derive(Clone, Copy, Debug)]
 pub struct Strip<'a> {
     pub windows: &'a [(WindowId, CGRect)],
     pub pair: &'a [PairStart],
     pub area: Area,
     pub travel: CGPoint,
+    pub seconds: f64,
 }
 
 /// What a look staged: windows that start elsewhere and cross from there, windows drawn held at a
@@ -334,6 +336,7 @@ mod tests {
             Vec::new(),
             vec![Accent::Step {
                 offset: CGPoint::new(-576.0, 0.0),
+                seconds: PLAIN,
             }],
             vec![Accent::Push {
                 wall: CGPoint::new(72.0, 0.0),
@@ -580,6 +583,7 @@ mod tests {
                     pair: &pair,
                     area,
                     travel: CGPoint::new(rng.pt(-900.0, 900.0), 0.0),
+                    seconds: PLAIN,
                 };
                 let staging = look.stage(&cue, &strip);
                 let mut seen: Vec<WindowId> = Vec::new();

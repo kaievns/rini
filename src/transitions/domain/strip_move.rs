@@ -73,12 +73,13 @@ pub fn swap_starts(
 /// stages it, and returns the accent the look asks to ride the movement. A window the look starts
 /// elsewhere crosses from there; one it holds is drawn at that frame on the strip, riding the strip,
 /// while its real window still goes to its layout frame. `area` is the screen in the overlay's
-/// space, and `travel` the viewport's.
+/// space, `travel` the viewport's, and `seconds` how long the movement runs, plain.
 pub fn stage_move(
     windows: &mut [SurfaceWindow],
     cue: &Cue,
     area: Area,
     travel: CGPoint,
+    seconds: f64,
     look: Look,
 ) -> Option<Accent> {
     let strip: Vec<(WindowId, CGRect)> =
@@ -92,6 +93,7 @@ pub fn stage_move(
         pair: &pair,
         area,
         travel,
+        seconds,
     });
     for (window, start) in staging.from {
         if let Some(surface) = windows.iter_mut().find(|w| w.window == window) {
@@ -143,8 +145,8 @@ pub(crate) mod tests {
             outer_left: GAP,
             outer_right: GAP,
         };
-        match stage_move(windows, &cue, area, travel, Look::Slide) {
-            Some(Accent::Step { offset }) => Some(offset),
+        match stage_move(windows, &cue, area, travel, PLAIN, Look::Slide) {
+            Some(Accent::Step { offset, .. }) => Some(offset),
             Some(Accent::Push { .. }) => panic!("a move pushes nothing"),
             None => None,
         }
@@ -523,9 +525,10 @@ pub(crate) mod tests {
                     pair: &pair,
                     area,
                     travel,
+                    seconds: PLAIN,
                 });
                 let mut windows = before.clone();
-                let accent = stage_move(&mut windows, &cue, area, travel, look);
+                let accent = stage_move(&mut windows, &cue, area, travel, PLAIN, look);
                 assert_eq!(accent, staging.accent, "{look:?} {direction:?}");
                 for (was, is) in before.iter().zip(&windows) {
                     let staged = |list: &[(WindowId, CGRect)]| {
@@ -548,7 +551,7 @@ pub(crate) mod tests {
 
             let (before, travel) = full_width_move(Direction::Right);
             let mut windows = before.clone();
-            assert_eq!(stage_move(&mut windows, &Cue::Plain, area, travel, look), None);
+            assert_eq!(stage_move(&mut windows, &Cue::Plain, area, travel, PLAIN, look), None);
             assert_eq!(windows, before, "{look:?}: a plain press");
         }
     }
@@ -708,8 +711,8 @@ pub(crate) mod tests {
                 outer_left: OUTER,
                 outer_right: OUTER,
             };
-            let step = match stage_move(&mut windows, &cue, area, OFFSET, Look::Slide) {
-                Some(Accent::Step { offset }) => Some(offset),
+            let step = match stage_move(&mut windows, &cue, area, OFFSET, super::PLAIN, Look::Slide) {
+                Some(Accent::Step { offset, .. }) => Some(offset),
                 _ => None,
             };
             (windows, step)

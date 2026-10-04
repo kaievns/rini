@@ -392,8 +392,8 @@ N crossed on `MOTION_CURVE` in about 60ms, so for nearly the whole step that
 was the desktop (a screen recording and the engine's debug log, 2026-09-30).
 
 **The curve.** While it steps, a flight's containers fly on CSS ease-in-out
-(`EASE_IN_OUT`, `(0.42, 0, 0.58, 1)`; `flight_curve`) over the stretched
-duration instead of `MOTION_CURVE`, so N lingers in the side the step opens.
+(`EASE_IN_OUT`, `(0.42, 0, 0.58, 1)`; `flight_curve`) over the step's stretched
+duration, or the flight's own when that is longer, instead of `MOTION_CURVE`, so N lingers in the side the step opens.
 `MOTION_CURVE` is 87% of the way at a quarter of the flight: it carries N
 beneath W before the step is out, and C fills the side instead. `Leg::Curve`
 carries its curve and the overlay hands Core Animation the same four numbers

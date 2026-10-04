@@ -2797,6 +2797,7 @@ mod tests {
 
             let steps = [Accent::Step {
                 offset: CGPoint::new(-576.0, 0.0),
+                seconds: 0.35,
             }];
             let stage = Stage {
                 plan: &plan,

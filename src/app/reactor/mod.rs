@@ -3809,16 +3809,17 @@ impl Reactor {
             outer_left: gaps.outer.left,
             outer_right: gaps.outer.right,
         };
+        // The plain duration: the look stretches the flight only when it takes the step.
+        let duration =
+            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         let accent = crate::transitions::domain::strip_move::stage_move(
             &mut windows,
             &cue,
             area,
             crate::animation::domain::motion::surface::pan_travel(from_offset, to_offset),
+            duration.as_secs_f64(),
             look,
         );
-        // The plain duration: the look stretches the flight only when it takes the step.
-        let duration =
-            std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
 
         self.publish_animation_display_for(Some(space));
         _ = tx.send(crate::transitions::platform::engine::Event::AnimateSurface {

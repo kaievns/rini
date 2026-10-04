@@ -2546,7 +2546,7 @@ mod tests {
         fn a_pass_before_the_flight_moves_is_folded_with_its_step_waiting_and_one_after_bends_it() {
             use crate::animation::domain::motion::score::Channel;
             let (mut running, again) = posed();
-            let step = Accent::Step { offset: CGPoint::new(-576.0, 0.0) };
+            let step = Accent::Step { offset: CGPoint::new(-576.0, 0.0), seconds: 0.35 };
             let drawn = running.drawn();
             let pass = Pass {
                 plan: &again,

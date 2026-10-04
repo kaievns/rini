@@ -18,8 +18,9 @@ use super::score::{Channel, Node, SAMPLE_STEP, Score, Track, Value};
 pub enum Accent {
     /// A push against an end: out toward `wall` and home over `seconds`.
     Push { wall: CGPoint, seconds: f64 },
-    /// A move's step: the whole strip out by `offset` and back, over the flight it rides.
-    Step { offset: CGPoint },
+    /// A move's step: the whole strip out by `offset` and back, over its press's plain `seconds`
+    /// stretched, the flight it rides lasting at least as long.
+    Step { offset: CGPoint, seconds: f64 },
 }
 
 /// The bounce a push against `wall` at `at` plays on each container of `playing` that carries it,
