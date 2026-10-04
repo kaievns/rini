@@ -9,9 +9,10 @@
 //! the journal to its writer (`crate::transitions::platform::journal`). When anything happens is the
 //! coordinator's, but for the hide of a lift held, while the handover is measured, for the overlay's
 //! own picture, which the journal decides (`crate::transitions::domain::journal::Journalled::heard`).
-//! Runs on the main thread beside the renderer, which it reaches only through `Draw` and hears only
-//! as `Event::Rendered`; every instant it reads is its `Clock`'s, and every begin time its
-//! `MediaClock`'s (`Parts`).
+//! Runs on the `transitions` thread, made there from `Parts`, and touches no Core Animation and no
+//! AppKit: the renderer, on the main thread, it reaches only through `Draw` and hears only as
+//! `Event::Rendered`; every instant it reads is its `Clock`'s, and every begin time its
+//! `MediaClock`'s.
 //!
 //! Design in `src/transitions/docs/coordination.md`; how a flight moves in
 //! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
@@ -162,17 +163,17 @@ pub enum Event {
 }
 
 /// Hands the renderer a batch of render commands, which it answers as `Event::Rendered`.
-pub type Draw = Box<dyn Fn(Batch)>;
+pub type Draw = Box<dyn Fn(Batch) + Send>;
 
 /// Called with real-window frames to apply while the overlay covers them.
-pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, ScreenRect)>)>;
+pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, ScreenRect)>) + Send>;
 
 /// Called with `true` when a transition is reported up and `false` once it has settled, the quiet
 /// after its lift; the coordinator's `ReportUp` and `ReportSettled`.
-pub type OnFlight = Box<dyn Fn(bool)>;
+pub type OnFlight = Box<dyn Fn(bool) + Send>;
 
 /// The instant now.
-pub type Clock = Box<dyn Fn() -> Instant>;
+pub type Clock = Box<dyn Fn() -> Instant + Send>;
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
@@ -3972,7 +3973,7 @@ mod tests {
         }
 
         /// Puts what it is handed in the outbox, as `sent` makes it.
-        fn sink<T: 'static>(outbox: &Arc<Mutex<Outbox>>, sent: fn(T) -> Sent) -> impl Fn(T) + 'static {
+        fn sink<T: 'static>(outbox: &Arc<Mutex<Outbox>>, sent: fn(T) -> Sent) -> impl Fn(T) + Send + 'static {
             let outbox = outbox.clone();
             move |what| outbox.lock().unwrap().push(sent(what))
         }

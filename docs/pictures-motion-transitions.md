@@ -5,21 +5,6 @@ the measurements it rests on are in `src/animation/docs/capture-overlay-research
 ("Where a moving focus change spends its time", "The handover, measured") and
 `src/pictures/docs/capture-research.md` ("What a capture costs in a press").
 
-## Progress
-
-This section goes when the last row is done.
-
-| # | Step | State |
-|---|---|---|
-| 1 | `pictures`: capture, cache and layer helpers out of `animation`; switcher and bar its clients | done |
-| 2 | The pictures service: the capture schedule and its thread, the cache and the ScreenCaptureKit captures moved in; the engine, the reactor and the switcher its clients | done |
-| 3 | `transitions`: the coordinator's decisions out of `animation`; the lifecycle as a pure state machine | done |
-| 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | done |
-| 5 | `animation` plays a `Score`; choreographies and accents produce one | done |
-| 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | done |
-| 7 | The coordinator on its own thread; the main thread renders only | |
-| 8 | The transitions journal | done |
-
 ## Three concerns, three owners
 
 | Feature | Owns | Never touches |
@@ -47,8 +32,10 @@ feature") records why, and `tests/architecture.rs` holds each one's `domain/` fr
                               switcher ─┘          └─ bar, exposé
 ```
 
-The main thread runs the renderer and nothing else. Merges never read Core Animation back: a score
-evaluates to exactly what the render server draws, so the coordinator retargets from the score.
+The coordinator runs on its own thread, `transitions`. The main thread runs what draws, the renderer,
+the switcher and the bar, and eight actors not yet moved off it (the `src/main.rs` row of "What is
+still not where the map says" in `docs/architecture.md`). Merges never read Core Animation back: a
+score evaluates to exactly what the render server draws, so the coordinator retargets from the score.
 
 ## `pictures`
 
@@ -130,7 +117,7 @@ service remembers it for a second.
 | Baked pictures are clipped to the window's measured corner radius | a crop of a desktop composite fills the rounded corners with wallpaper | capture the corners' alpha separately |
 | The bar's menu-extras thread stays in `bar` for now | it has its own pacing and pauses for flights already | move it behind the pictures thread |
 | A transition's hold has three states: up at its begin, before anything is composed, settling at the lift, released at the quiet after it | the bar is pictured 250ms after the lift, as it always was, while the warms the flight held wait for the quiet, which keeps a burst of presses off a busy compositor | release at the lift, and picture the bar 250ms after the quiet instead |
-| A transition on a display before its desktop render lands is dressed with a desktop composited on the main thread, and the first with a bar composited there too | the service holds no picture of a display the reactor names just before the flight on it, and renders one only once released; drawn without one, that transition shows black or the other display's wallpaper | let those transitions fly without them until step 4's coordinator waits for frame-zero pictures |
+| A transition on a display before its desktop render lands is dressed with a desktop composited on the `transitions` thread, and the first with a bar composited there too | the service holds no picture of a display the reactor names just before the flight on it, and renders one only once released; drawn without one, that transition shows black or the other display's wallpaper | let those transitions fly without them until step 4's coordinator waits for frame-zero pictures |
 | A warm or background ask settles 50ms before it is listed | the reactor sends a pass's warm straight to the service just after the request for its flight, so it usually arrives before that flight's hold, which the engine sends as it takes the request; one listed before a later hold is listed again at the release | have the reactor route those warms through the engine, which holds first |
 | Window captures stay at 2x on every display; the display's own scale is for what is read off its framebuffer | ScreenCaptureKit charges per call, a 1x capture flies soft on a Retina display, and a scale change no longer throws away window captures in flight | capture each window at the scale of the display the overlay is on |
 | A tile's ring is a layer beside its picture, with the outline as its child | a corner clip on a baked picture clips everything inside the picture, and the outline lies outside the window | draw the outline on the shadow caster, whose mask leaves only what is outside a 10pt silhouette |

@@ -35,7 +35,8 @@ pub enum Pixels {
     },
 }
 
-// SAFETY: CGImage is immutable and IOSurface is shareable across threads and processes.
+// SAFETY: for `Surface` alone, since `CFRetained<CGImage>` is `Send` already: an IOSurface is
+// shareable across threads and processes, and objc2-io-surface leaves `IOSurfaceRef` unmarked.
 unsafe impl Send for Pixels {}
 
 impl Pixels {

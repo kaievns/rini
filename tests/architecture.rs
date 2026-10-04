@@ -240,6 +240,40 @@ fn a_typed_feature_names_no_cg_geometry_outside_platform() {
     );
 }
 
+/// What only the main thread may touch, which `transitions` runs off it: Core Animation, AppKit, and
+/// the overlay that holds both.
+const MAIN_THREAD_ONLY: [&str; 7] = [
+    "objc2_quartz_core",
+    "objc2_app_kit",
+    "MainThreadMarker",
+    "MainThreadOnly",
+    "TileOverlay",
+    "CATransaction",
+    "CACurrentMediaTime",
+];
+
+#[test]
+fn transitions_never_touches_core_animation_or_app_kit() {
+    let mut broken = Vec::new();
+    for path in rust_files(Path::new("src/transitions")) {
+        let name = slash(&path);
+        for (line, code) in code_lines(&path) {
+            for surface in MAIN_THREAD_ONLY {
+                if code.contains(surface) {
+                    broken.push(format!("{name}:{line}: {surface} in {}", code.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "the flight engine runs on the `transitions` thread, and the overlay on the main one: the \
+         engine reaches it only through `Draw`, and reads the media clock it is handed. See \
+         \"Threads\" in src/transitions/docs/coordination.md:\n{}",
+        broken.join("\n")
+    );
+}
+
 #[test]
 fn every_named_exception_still_exists() {
     for name in MIXED {

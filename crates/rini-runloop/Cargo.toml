@@ -13,6 +13,7 @@ doctest = false
 continue = { workspace = true }
 dispatchr = { workspace = true }
 futures-task = { workspace = true }
+libc = { workspace = true }
 nix = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }

@@ -49,9 +49,9 @@ One thread, `pictures`, makes every background capture of a window, the desktop 
 capture of windows on screen a transition asks for or watches, every refresh, one SkyLight call at a
 time, and a measured lift's two pictures. Two kinds of capture are not its yet: a transition's desktop
 and bar, composited on the caller's thread until its display's first render lands, and the flight
-engine's spawn capture of a window that has just opened, taken on the main thread as it composes
-(both Known debt). It is started once, in `src/main.rs`, with a sink per client; the flight engine,
-the reactor and the switcher each hold a `Pictures` handle.
+engine's spawn capture of a window that has just opened, taken on the `transitions` thread as it
+composes (both Known debt). It is started once, in `src/main.rs`, with a sink per client; the flight
+engine, the reactor and the switcher each hold a `Pictures` handle.
 
 | A client | Through the handle |
 |---|---|
@@ -126,8 +126,8 @@ The costs are measured in [`capture-research.md`](capture-research.md): "Capture
 listing against a kept filter in "What a capture costs in a press".
 
 The flight engine's spawn capture, one framed capture of a window that has just opened, is not
-scheduled here: it takes it on the main thread as it composes and hands the picture over through the
-handle. Every other picture a transition draws it asks for or watches.
+scheduled here: it takes it on the `transitions` thread as it composes and hands the picture over
+through the handle. Every other picture a transition draws it asks for or watches.
 
 ## The watches
 
@@ -257,16 +257,16 @@ pictures it on screen.
 learns which those are from `Pictures::windows`, the windows with a picture held or owed. The managed
 set belongs to the reactor's world; it comes from there once the coordinator composes flights.
 
-**A transition on a display before its first render lands composites on the main thread.** `dressing`
-takes the desktop, and the first time the bar, synchronously while the service holds none of that
-display. The coordinator waits for frame zero's window pictures, not for a desktop: that would be one
+**A transition on a display before its first render lands composites on the `transitions` thread.**
+`dressing` takes the desktop, and the first time the bar, synchronously while the service holds none
+of that display. The coordinator waits for frame zero's window pictures, not for a desktop: that would be one
 more ask at the begin.
 
 **The flight engine takes one capture itself.** A window that has just opened is pictured at its spawn
 frame by one framed capture (`capture_via_framed`, 16-24ms, at most `MAX_SYNC_ENTRANCE_CAPTURES` a
-pass), taken on the main thread as the engine composes and handed over through `insert` ("A window
-that opens" in `src/transitions/docs/coordination.md`). It is the one picture of a window a
-transition draws that it neither asks for nor watches, and the main thread waits for it.
+pass), taken on the `transitions` thread as the engine composes and handed over through `insert` ("A
+window that opens" in `src/transitions/docs/coordination.md`). It is the one picture of a window a
+transition draws that it neither asks for nor watches, and the engine waits for it.
 
 **The bar still captures on its own.** Its menu extras and its ground are pictured on the bar's own
 thread (`src/bar/platform/menu_extras.rs`), with its own pacing and its own pause for flights.

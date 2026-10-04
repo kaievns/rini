@@ -423,8 +423,9 @@ fn main() {
     );
 
     // The renderer owns the overlay, on the main thread because Core Animation requires it, and plays
-    // what the flight engine draws; the engine runs beside it. Both stay idle until the reactor sends
-    // display geometry and something to animate.
+    // what the flight engine draws. The engine has a thread of its own, and is made there: its timers
+    // run on the loop that makes them. Both stay idle until the reactor sends display geometry and
+    // something to animate.
     let (render_tx, render_rx) = rini::app::channels::channel();
     let renderer = rini::animation::platform::renderer::Renderer::new(
         render_rx,
@@ -436,29 +437,35 @@ fn main() {
         }),
         mtm,
     );
-    let flight_engine = rini::transitions::platform::engine::FlightEngine::new(
-        rini::transitions::platform::engine::Parts {
-            rx: transitions_rx,
-            tx: transitions_tx.clone(),
-            pictures: pictures.clone(),
-            client: rini::pictures::domain::watch::Client(1),
-            draw: Box::new(move |batch| render_tx.send(batch)),
-            place_frames: Box::new({
-                let events_tx = events_tx.clone();
-                move |frames: Vec<(_, ScreenRect)>| {
-                    let frames = frames.into_iter().map(|(window, frame)| (window, frame.to_cg()));
-                    events_tx.send(reactor::Event::ApplyOverlayFrames(frames.collect()))
-                }
-            }),
-            // The bar stops picturing the menu extras while a flight runs and settles.
-            on_flight: Box::new({
-                let bar_tx = bar_tx.clone();
-                move |flying| bar_tx.send(rini::bar::platform::actor::Event::Flight(flying))
-            }),
-            media: rini::animation::platform::renderer::media_clock(),
-            clock: Box::new(std::time::Instant::now),
-        },
-    );
+    let flight_engine = rini::transitions::platform::engine::Parts {
+        rx: transitions_rx,
+        tx: transitions_tx.clone(),
+        pictures: pictures.clone(),
+        client: rini::pictures::domain::watch::Client(1),
+        draw: Box::new(move |batch| render_tx.send(batch)),
+        place_frames: Box::new({
+            let events_tx = events_tx.clone();
+            move |frames: Vec<(_, ScreenRect)>| {
+                let frames = frames.into_iter().map(|(window, frame)| (window, frame.to_cg()));
+                events_tx.send(reactor::Event::ApplyOverlayFrames(frames.collect()))
+            }
+        }),
+        // The bar stops picturing the menu extras while a flight runs and settles.
+        on_flight: Box::new({
+            let bar_tx = bar_tx.clone();
+            move |flying| bar_tx.send(rini::bar::platform::actor::Event::Flight(flying))
+        }),
+        media: rini::animation::platform::renderer::media_clock(),
+        clock: Box::new(std::time::Instant::now),
+    };
+    std::thread::Builder::new()
+        .name("transitions".into())
+        .spawn(move || {
+            let engine = rini::transitions::platform::engine::FlightEngine::new(flight_engine);
+            Executor::run_interactive(engine.run());
+            panic!("transitions thread exited");
+        })
+        .expect("failed to spawn transitions thread");
 
     // The switcher popup, on the main thread for the same reason the overlay is: AppKit and Core
     // Animation require it. Idle until a switch opens, and it builds its window on first use.
@@ -525,7 +532,6 @@ fn main() {
             supervise("process_actor", process_actor.run()),
             supervise("cursor_warp", cursor_warp.run()),
             supervise("renderer", renderer.run()),
-            supervise("flight_engine", flight_engine.run()),
             supervise("switcher", switcher_actor.run()),
             supervise("bar", bar_actor.run()),
         );

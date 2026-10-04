@@ -137,9 +137,9 @@ call that took it. On the probe's clock a `delivery`'s `t - sent_before_us` is t
   picture's start, that is every SkyLight call of the round, the server frames of each later set read
   between them, and then the band prints.
 - **Sent to the `delivery` mark is the wait for the engine.** The service putting the pictures in the
-  cache and deciding, the hop to the main thread, and whatever the engine was doing when the delivery
-  came. Composing the flight frame zero was asked for is one such thing; it ends at that generation's
-  `merge {moved: false}`.
+  cache and deciding, the hop to the `transitions` thread, and whatever the engine was doing when the
+  delivery came. Composing the flight frame zero was asked for is one such thing; it ends at that
+  generation's `merge {moved: false}`.
 
 A delivery under a generation the flight has moved on from is marked all the same, with `of != g`.
 
@@ -169,8 +169,8 @@ ring loses its oldest marks, and its header says how many.
 While the journal is written, `Journalled` gives a burst, every mark since the last one, at each
 `ReportSettled`: the quiet after a lift, or an abandon. It gives none between a `ReportUp` and its
 `ReportSettled`, so nothing touches the disk while a transition is up. Marks pushed at rest, a look
-turned with nothing flying, go with the next burst. On the main thread a write is one `Vec` copied out
-of the ring and one channel send; the `journal` thread formats and appends.
+turned with nothing flying, go with the next burst. On the `transitions` thread a write is one `Vec`
+copied out of the ring and one channel send; the `journal` thread formats and appends.
 
 The file is `~/Library/Logs/rini/transitions.jsonl` (`rini_core::paths::journal_file()`). Once it is
 past 50MB the next burst renames it `transitions.1.jsonl`, over the one before, and starts it afresh,
@@ -216,8 +216,9 @@ It is off unless asked for, and `off` turns it off with the writing.
   the display the engine last laid the overlay out for says where it starts on screen), and
   it tells the engine `OverlayTaken` at once. `AFTER_LIFT` (45ms) after that picture, as the research
   waited after its hide, it takes the screen through `CGWindowListCreateImage` on its own thread. The
-  research hid as its picture returned; here the hide waits for the hop to the main thread, so the
-  screen comes that much less after it. A thread of the check's own, `handover`, draws the two whole
+  research hid as its picture returned; here the hide waits for the hop to the `transitions` thread and
+  its hop on to the main thread, so the screen comes that much less after it. A thread of the check's
+  own, `handover`, draws the two whole
   and compares them over each window
   (`src/pictures/domain/handover.rs`: the research's sampling and thresholds), and the service tells
   the engine `Handover`, which the engine marks as it comes, usually before the quiet and so in the

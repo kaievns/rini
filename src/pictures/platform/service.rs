@@ -6,8 +6,8 @@
 //! thread of the check's own compares, and its ScreenCaptureKit asks, whose completions post back to
 //! it. A transition's dressing is composited on
 //! the caller's thread until its display's first render lands, and the flight engine takes its spawn
-//! capture of a window that has just opened on the main thread as it composes (Known debt in
-//! `src/pictures/docs/README.md`).
+//! capture of a window that has just opened on the `transitions` thread as it composes (Known debt
+//! in `src/pictures/docs/README.md`).
 //! A client asks, watches, hints, holds and forgets through a channel, reads from any thread through
 //! one lock, and hears of what lands through the sink it was started with. See "The service" in
 //! `src/pictures/docs/README.md`.
@@ -330,17 +330,11 @@ fn bar_read_kept(asked_before: u64, applied: u64, asked_after: u64) -> bool {
 /// A picture of a handover check, the overlay's own or the screen's, undrawn until it is compared.
 struct Whole(CFRetained<CGImage>);
 
-// SAFETY: CGImage is immutable, like `Pixels::Bitmap`.
-unsafe impl Send for Whole {}
-
 /// The stand-in's pixels, drawn once per scale.
 struct StandIn {
     scale: f64,
     image: CFRetained<CGImage>,
 }
-
-// SAFETY: CGImage is immutable, like `Pixels::Bitmap`.
-unsafe impl Send for StandIn {}
 
 impl Pictures {
     /// Starts the service on its own thread. Every sink hears of every picture the cache takes.

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSApp;
 use objc2_core_foundation::CFRunLoop;
+use tracing::{info, warn};
 
 use crate::run_loop::{RepeatingTimer, WakeupHandle};
 
@@ -33,6 +34,24 @@ impl Drop for Session {
 impl Executor {
     pub fn run(task: impl Future<Output = ()> + 'static) {
         Self::run_with_loop_fn(task, CFRunLoop::run);
+    }
+
+    /// `run`, at the quality of service Apple gives an app's main thread, `QOS_CLASS_USER_INTERACTIVE`.
+    /// The class the thread had is logged: what a thread std spawns starts at is not verified.
+    pub fn run_interactive(task: impl Future<Output = ()> + 'static) {
+        let (had, priority) = qos_class();
+        // SAFETY: sets the calling thread's own class; no pointer is passed.
+        let set = unsafe {
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+        };
+        let (thread, had) = (std::thread::current(), format!("{had:#x}"));
+        let thread = thread.name().unwrap_or("unnamed");
+        if set == 0 {
+            info!(thread, had, priority, "run loop raised to user-interactive");
+        } else {
+            warn!(thread, had, error = set, "run loop not raised to user-interactive");
+        }
+        Self::run(task);
     }
 
     pub fn run_main(mtm: MainThreadMarker, task: impl Future<Output = ()> + 'static) {
@@ -67,6 +86,21 @@ impl Executor {
             }
         })
     }
+}
+
+/// The calling thread's quality-of-service class, as the raw value `qos_class_t` numbers, and its
+/// relative priority. Read raw, so a class the enum does not name is a number, not a bad enum.
+fn qos_class() -> (u32, i32) {
+    let (mut class, mut priority) = (0u32, 0);
+    // SAFETY: both out-pointers are to locals that outlive the call; `qos_class_t` is `repr(u32)`.
+    unsafe {
+        libc::pthread_get_qos_class_np(
+            libc::pthread_self(),
+            (&raw mut class).cast::<libc::qos_class_t>(),
+            &raw mut priority,
+        )
+    };
+    (class, priority)
 }
 
 struct Handle(Rc<RefCell<State>>);
@@ -178,6 +212,18 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(true, dropped.take());
+    }
+
+    #[test]
+    fn an_interactive_loop_runs_at_the_main_threads_class() {
+        let class = thread::spawn(|| {
+            let class = Rc::new(Cell::new(0));
+            let read = class.clone();
+            Executor::run_interactive(async move { read.set(qos_class().0) });
+            class.get()
+        });
+        let interactive = libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE as u32;
+        assert_eq!(class.join().unwrap(), interactive);
     }
 
     #[test]

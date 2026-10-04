@@ -2,9 +2,15 @@
 
 Every thread that owns a `CFRunLoop` in rini drives one future from it:
 `executor::Executor::run` (or `run_main`, which calls `NSApp.run()` instead of
-`CFRunLoop::run`). The main thread joins twelve such loops; the reactor, the
-config actor, the input tap and each observed application have their own thread
-and their own loop.
+`CFRunLoop::run`, or `run_interactive`). The main thread joins eleven actors on
+its one loop; the reactor, the config actor, the config watcher, the input tap,
+the pictures service, the flight engine (`transitions`) and each observed
+application have their own thread and their own loop.
+
+`run_interactive` first asks for `QOS_CLASS_USER_INTERACTIVE`, the class Apple
+gives an app's main thread, and logs the class the thread had, since what a
+thread std spawns starts at is not verified. The flight engine runs on it: a
+press waits on that thread from the reactor's request to the overlay going up.
 
 ## Why not a tokio runtime
 

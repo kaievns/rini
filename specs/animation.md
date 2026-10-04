@@ -449,12 +449,14 @@ depth bands, the edge bounce and the nudge, and the hairline every tile wears. T
 (`src/animation/domain/choreography.rs`, Slide the default in
 `src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
 into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/renderer.rs`
-plays the score on Core Animation, on the overlay in `src/animation/platform/overlay.rs`. When each step happens is `src/transitions/`:
+plays the score on Core Animation on the main thread, on the overlay in
+`src/animation/platform/overlay.rs`. When each step happens is `src/transitions/`:
 `src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
 finds where a moved pair starts and puts the look's staging of it on the strip,
 `src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
 `src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
-`src/transitions/platform/engine.rs` is the actor that carries them out. The journal is kept with the
+`src/transitions/platform/engine.rs` is the actor that carries them out, on a thread of its own,
+which touches no Core Animation. The journal is kept with the
 lifecycle in `src/transitions/domain/journal.rs` and written by `src/transitions/platform/journal.rs`;
 what each line says is `src/transitions/docs/journal.md`, and `tools/focuslab/journal.py` reads it.
 A measured lift's handover is compared in `src/pictures/domain/handover.rs`.

@@ -1018,7 +1018,7 @@ the pictures service holds. A desktop composite measures 13ms to 36ms for 6
 windows, which is a frame or two of lag on every window focus change, while
 re-applying a picture already in hand is a pointer assignment. The service renders
 the desktop again at a release when it is missing or stale; until the first render
-of a display lands, a transition there composites it on the main thread
+of a display lands, a transition there composites it on the `transitions` thread
 ("Which route serves, and why the render wins" in
 `src/pictures/docs/capture-research.md`).
 

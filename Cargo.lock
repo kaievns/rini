@@ -1720,6 +1720,7 @@ dependencies = [
  "continue",
  "dispatchr",
  "futures-task",
+ "libc",
  "nix 0.30.1",
  "objc2",
  "objc2-app-kit",

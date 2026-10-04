@@ -213,8 +213,8 @@ It must never be called inside a ScreenCaptureKit completion. On modern macOS it
 proxied through the same capture machinery, so a call from the delivery queue deadlocks
 its own reply until a ~20s timeout, and every capture in the process serialises behind it
 (measured as half-minute window switches). The engine's one framed capture, of a window
-that has just opened, runs on the main thread as it composes; the service's SkyLight calls run on
-its own thread.
+that has just opened, runs on the `transitions` thread as it composes; the service's SkyLight calls
+run on its own thread.
 
 The system tool inherited this. `screencapture -l <windowid>` fails with "could
 not create image from window" even for a fully visible window.
@@ -1081,7 +1081,7 @@ of:
   to clear only the bar, and the overlay drew an external display's 3008x1692
   desktop behind a built-in display's strips on a 1728x1117 overlay. A transition is
   dressed with the render the service holds; without one it composites the desktop
-  on the main thread, 13ms to 36ms, a frame or two of lag, and keeps the backdrop it
+  on the `transitions` thread, 13ms to 36ms, a frame or two of lag, and keeps the backdrop it
   already shows only when that composite is refused. Re-applying a held render costs
   nothing.
 - The composite was size-checked, but the cached ScreenCaptureKit render was handed

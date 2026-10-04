@@ -43,6 +43,18 @@ ended in the overlay's favour.
 
 ## Threads
 
+The engine runs on a thread of its own, `transitions`, at the quality of service Apple gives an app's
+main thread (`Executor::run_interactive`), and the renderer on the main thread, which keeps what
+draws, the renderer, the switcher and the bar, and eight actors not yet moved off it (the
+`src/main.rs` row of "What is still not where the map says" in `docs/architecture.md`). The engine
+is made on its thread from `Parts`, since its timers run on the loop that makes them, and holds
+everything that decides: the coordinator with its journal, staging and merges, the flight's score,
+the pictures delivered, the frame clock, the quiet and the held lift's patience, what waits for the
+screen, and the window-server reads a compose and a landing make, the spawn capture of a window
+that has just opened and the dressing's composite among them. Nothing on it touches Core Animation
+or AppKit (`transitions_never_touches_core_animation_or_app_kit` in `tests/architecture.rs`).
+Neither thread ever waits on the other: both channels are unbounded, and each only sends.
+
 The engine and the renderer are two actors, and talk only by message. The engine hands the renderer
 what each event draws as one numbered batch of render commands (`Draw`); an event that draws nothing
 sends none, so a tick is no transaction. The renderer (`Renderer::run`) wakes on a batch, takes
@@ -71,8 +83,32 @@ read together, within 0.1ms of each other by `the_media_clock_reads_what_core_an
 count mach absolute time, so the two are inferred, not measured, never to drift apart): a command's
 at the instant of the drive that gave it, a merge's, a push's and an entrance's at the instant of the
 event. The engine never calls QuartzCore, and a batch played after it was sent plays from where the
-score already is. Both actors are joined on the main thread's loop, so a batch's answer comes a
-run-loop pass after the event that sent it, behind whatever else the loop runs first.
+score already is. A batch waits for the main thread's loop to reach the renderer, behind whatever
+else it runs first, so a stalled main skips the start of a motion by the length of the stall, and
+the flight still ends on time, which keeps the lift and the handover on schedule. A one-frame lead
+on every begin was rejected: it costs every press 8-16ms.
+
+The frame clock is the engine's own `RepeatingTimer`, at `FRAME_INTERVAL` from a transition's begin
+to its lift, on the `transitions` loop. A tick paces decisions only: frame zero's patience, the
+coalesce, the hold, the final ask, and the `settled` and `landed` checks with the overdue lift
+(`LIFT_GRACE`). Core Animation draws every frame on the render server from the tracks' begin times,
+so aligning ticks to the display buys no frame; the 60Hz timer that "dropped drawn frames" ("The
+overlay engine" in `src/animation/docs/animation-smoothness.md`) drew on its ticks, which nothing
+does now. `CADisplayLink` is rejected: it is made from main-thread objects, and scheduled on main a
+stalled main would stop the clock and with it the two deadlines that exist to bound a stall; whether
+it fires on another thread's loop is not verified. `CVDisplayLink` is rejected too: deprecated in
+macOS 15, and its callback thread is one more hop.
+
+*Not measured on the live build.* Moving the engine off main takes the compose, the engine's wait
+for a delivery and the reactor's request queue off the main thread, and adds a hop and one commit to
+the show: on an idle main the hop is expected well under 1ms, and press to overlay up no worse than
+the build before it (50.5 / 84.5 / 208ms at p50 / p90 / p99 over 16 presses, its overlay counted to
+the show given). The check is `journal.py summary` ("Reading it" in `journal.md`): press to overlay
+up with the hop to the renderer and the show's commit, the drains' wait for the renderer at most 2ms
+at p99 and the frame-zero drain played to its flush in at most 0.5ms, and `journal.py probe`'s
+overlay seen up after the show against 12ms. A wait over 2ms points first at the bar, which redraws
+on a focus change on main in the same milliseconds as the show's batch: deferring that redraw while
+a flight is up, as the bar already pauses its menu extras, is the fix to try.
 
 ## The lifecycle
 
@@ -395,7 +431,7 @@ overlay with rini's off, is pictured by the service `BAR_REFRESH_DELAY`
 measures 31ms median, and the delay lets the compositor drop the hidden
 overlay from the framebuffer and folds a burst of switches into one capture,
 at the end. A flight on a display before its first desktop render lands
-composites the desktop on the main thread: the render starts only once the
+composites the desktop on the `transitions` thread: the render starts only once the
 service is released, at the quiet after a flight, so a burst of flights on a
 newly entered display composites on every one, and a render that comes back
 empty or the wrong size is asked again at the next quiet. The bar is

@@ -7,7 +7,7 @@ that machinery, and nothing else: no window, no workspace, no layout.
 
 | | |
 |---|---|
-| `executor.rs` | `Executor::run` / `run_main`: one future per run loop, polled from a manual `CFRunLoopSource` |
+| `executor.rs` | `Executor::run` / `run_main`: one future per run loop, polled from a manual `CFRunLoopSource`; `run_interactive`, `run` at the main thread's quality of service |
 | `run_loop.rs` | `RepeatingTimer`, and `sleep` — the run-loop-backed replacements for `tokio::time` |
 | `timer.rs` | `Timer`: an awaitable `CFRunLoopTimer` |
 | `channel.rs` | An unbounded mpsc that carries the sender's tracing span with each message |
