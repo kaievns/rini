@@ -411,6 +411,15 @@ measured on a window shorter than the display. Nothing calls it yet: which
 windows get holes, and when, is the coordinator's (step 4 of
 `docs/pictures-motion-transitions.md`).
 
+**Corners of a baked picture.** A tile cut from a composite of the desktop
+carries the wallpaper in the window's rounded corners, where the window itself
+is transparent. `TileOverlay::set_tile_corner_clip` clips the tile's picture
+layer, crop pieces included, to a rounded rect of the window's radius
+(`cornerRadius` with `masksToBounds`, which follows a resize); the shadow
+caster is never clipped, and every install puts the picture back to whole
+(`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
+is in `docs/pictures-motion-transitions.md`; nothing bakes a picture yet.
+
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an

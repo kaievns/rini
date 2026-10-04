@@ -806,6 +806,19 @@ impl TileOverlay {
         commit_now();
     }
 
+    /// Clips a tile's picture to a rounded rect of `radius`, for a picture whose corners carry what
+    /// was behind its window, as a crop of a composite of the desktop does; `None` draws it whole,
+    /// which every install starts from.
+    pub fn set_tile_corner_clip(&mut self, window: WindowId, radius: Option<f64>) {
+        let Some(entry) = self.tile_layers.get(&window) else {
+            return;
+        };
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        clip_corners(&entry.picture, radius);
+        commit_now();
+    }
+
     /// Swaps one in-flight tile's hairline, for a harvest that landed after its picture did.
     pub fn set_tile_dressing(
         &mut self,
@@ -1078,6 +1091,7 @@ impl TileOverlay {
         entry.key = key;
         entry.companion = tile.companion.is_some();
         entry.picture.setContentsScale(self.scale);
+        clip_corners(&entry.picture, None);
         entry.resize_until = None;
         let covered = tile.snapshot.coverage.covered;
         let mode = content_mode(covered, tile.from.size, tile.to.size);
@@ -1598,8 +1612,9 @@ fn apply_edge_dressing(
     }
 }
 
-/// A tile: the picture, plus a caster behind it holding the shadow. No `masksToBounds`: it would
-/// clip the layer's own shadow, and contents cannot spill anyway.
+/// A tile: the picture, plus a caster behind it holding the shadow. No `masksToBounds` on the
+/// caster, which would clip its own shadow; the picture's contents cannot spill, and it clips only
+/// to round its corners (`clip_corners`).
 fn new_tile(container: &CALayer) -> Tile {
     let shadow = CALayer::layer();
     shadow.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -1635,6 +1650,13 @@ fn new_tile(container: &CALayer) -> Tile {
         key: None,
         companion: false,
     }
+}
+
+/// Clips `picture`, with the crop pieces under it, to a rounded rect of `radius`, or not at all.
+/// The clip follows the bounds through a resize.
+fn clip_corners(picture: &CALayer, radius: Option<f64>) {
+    picture.setCornerRadius(radius.unwrap_or(0.0));
+    picture.setMasksToBounds(radius.is_some());
 }
 
 /// Puts both of a tile's layers at `frame`, with the caster half a step behind the picture. The
@@ -2456,5 +2478,22 @@ mod tests {
                 "a whole picture is unchanged"
             );
         }
+    }
+
+    /// A baked picture's corners are clipped to the window's radius, and only the picture is: the
+    /// shadow caster behind it is never clipped. Without a radius the picture draws whole.
+    #[test]
+    fn a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not() {
+        let container = CALayer::layer();
+        let tile = new_tile(&container);
+        assert!(!tile.picture.masksToBounds(), "whole by default");
+        clip_corners(&tile.picture, Some(12.0));
+        assert_eq!(tile.picture.cornerRadius(), 12.0);
+        assert!(tile.picture.masksToBounds());
+        assert!(!tile.shadow.masksToBounds());
+        assert_eq!(tile.shadow.cornerRadius(), 0.0);
+        clip_corners(&tile.picture, None);
+        assert_eq!(tile.picture.cornerRadius(), 0.0);
+        assert!(!tile.picture.masksToBounds());
     }
 }
