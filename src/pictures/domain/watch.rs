@@ -388,9 +388,11 @@ impl Watches {
     }
 
     /// Replaces what `id` watches, keeping what it already knows: a window that landed where it still
-    /// ends stays landed, a repainting window settles against the picture held when the watch first
-    /// named it, a focus already seen stays seen, and the background keeps its pace. A window watched
-    /// to land somewhere new starts its print afresh: what the client was delivered of it was taken for
+    /// ends stays landed, a repainting window that has not landed settles against the picture held
+    /// when the watch first named it, or on two captures in a row if none was, a focus already seen
+    /// stays seen, and the background keeps its pace. A window that landed and is watched to land
+    /// somewhere new settles against the picture held now, the one it landed with. A window watched to
+    /// land somewhere new starts its print afresh: what the client was delivered of it was taken for
     /// the end before, which the client no longer draws.
     pub fn retarget(
         &mut self,
@@ -412,8 +414,10 @@ impl Watches {
                     else {
                         continue;
                     };
-                    // What the cache holds now is the watch's own capture, not the picture before.
-                    lands.before = kept.before.clone().or(lands.before.take());
+                    // Not landed, the cache may hold the watch's own capture, not the picture before.
+                    if kept.state != Arrival::Arrived {
+                        lands.before = kept.before.clone();
+                    }
                     if kept.end != lands.end {
                         self.prints.remove(&(new.tag.client, lands.target.window));
                     } else if kept.state == Arrival::Arrived {
@@ -2006,6 +2010,92 @@ mod tests {
             vec![(Why::Landed, vec![wid(1)])],
             "window 1 differs from the picture before; window 2 is what is held now"
         );
+    }
+
+    /// A repainting window still landing keeps the picture it settles against through a retarget
+    /// that moves its end, though the cache holds its own capture by then.
+    #[test]
+    fn a_retarget_to_a_new_end_keeps_the_picture_a_window_still_landing_settles_against() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
+            start,
+            &|_| Some(vec![50]),
+        );
+        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
+        assert!(outcome.deliveries.is_empty(), "the picture before: still settling");
+        let moved = rect(4.0, 32.0, 1200.0, 1081.0);
+        watches.retarget(
+            WatchId(1),
+            landing(&[(1, moved)], Settle::Repainted, start + ms(150)),
+            start + ms(1),
+            &|_| Some(vec![100]),
+        );
+        let (_, outcome) = round(&mut watches, start + ms(1), |_| Some(moved), |_| Some(2)).unwrap();
+        assert_eq!(
+            delivered(&outcome),
+            vec![(Why::Landed, vec![wid(1)])],
+            "differs from the picture before the first change"
+        );
+    }
+
+    /// A window that landed and is retargeted to a new end settles against the picture it landed
+    /// with, which the cache holds now: the server resizes the frame before the app repaints, so the
+    /// first capture there still shows it.
+    #[test]
+    fn a_retarget_to_a_new_end_settles_a_window_that_landed_against_the_picture_it_landed_with() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
+            start,
+            &|_| Some(vec![50]),
+        );
+        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
+        let moved = rect(4.0, 32.0, 1200.0, 1081.0);
+        watches.retarget(
+            WatchId(1),
+            landing(&[(1, moved)], Settle::Repainted, start + ms(150)),
+            start + ms(1),
+            &|_| Some(vec![100]),
+        );
+        let (_, outcome) = round(&mut watches, start + ms(1), |_| Some(moved), |_| Some(2)).unwrap();
+        assert!(outcome.deliveries.is_empty(), "the picture it landed with: not repainted yet");
+        let at = start + ms(1) + REPAINT_EVERY;
+        let (_, outcome) = round(&mut watches, at, |_| Some(moved), |_| Some(3)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "repainted");
+    }
+
+    /// A repainting window with no picture held when the watch first named it settles, through a
+    /// retarget, only on two captures in a row that match: the cache holds its own capture by then,
+    /// and differing from that is no repaint.
+    #[test]
+    fn a_retarget_never_takes_a_windows_own_capture_for_the_picture_before() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
+            start,
+            &none,
+        );
+        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
+        assert!(outcome.deliveries.is_empty());
+        watches.retarget(
+            WatchId(1),
+            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
+            start + ms(1),
+            &|_| Some(vec![50]),
+        );
+        let (_, outcome) = round(&mut watches, start + ms(1), |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert!(outcome.deliveries.is_empty(), "differs from its own capture: not settled");
+        let at = start + ms(1) + REPAINT_EVERY;
+        let (_, outcome) = round(&mut watches, at, |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "two in a row");
     }
 
     /// A window's landing delivered at one end, and its watch retargeted to another: the client draws

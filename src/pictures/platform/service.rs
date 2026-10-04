@@ -1427,7 +1427,8 @@ mod tests {
 
     /// A watched landing that has to repaint settles against the picture the cache held when it was
     /// watched: a first capture that differs from it is the window repainted, one that matches it is
-    /// not. A retarget keeps that picture, though the cache holds the watch's own capture by then.
+    /// not. A retarget keeps that picture for a window still landing, though the cache holds the
+    /// watch's own capture by then.
     #[test]
     fn a_repainting_landing_settles_against_the_picture_held_when_it_was_watched() {
         let now = Instant::now();
