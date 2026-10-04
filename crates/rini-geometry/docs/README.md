@@ -89,10 +89,14 @@ and `euclid_differs_from_the_cg_ops_at_the_edges` in `space.rs` pin the table.
 `libm` is on, and nothing the features ask needs either: intersection, union,
 center, translate, `Translation2D`, `lerp` and `is_empty` all build without them.
 Without the float module, euclid's `round` on an `f64` rect, point or size does
-not compile (E0599). That turns its halves-up rounding into a compile error rather
-than a frame a point off at a negative half (`rounded_takes_halves_away_from_zero`).
-The switch is euclid's own feature, so `num-traits/std` from another crate does not
-turn it on.
+not compile: E0599 on a rect, whose bound is on its impl, and E0277 on a point or
+size, whose bound is on the method. That turns its halves-up rounding into a compile
+error rather than a frame a point off at a negative half
+(`rounded_takes_halves_away_from_zero`). The switch is euclid's own feature, so
+`num-traits/std` from another crate does not turn it on, but a crate anywhere in the
+workspace that asks for euclid with its defaults does, for the whole build, by Cargo's
+feature unification. `euclids_float_module_stays_off` then fails to build: its
+fallback `round` is reachable only while a rect has no inherent one.
 
 ## The shape that matters
 

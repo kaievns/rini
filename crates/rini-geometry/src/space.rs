@@ -252,6 +252,19 @@ mod tests {
         assert_eq!(ScreenSize::new(858.5, 1080.5).rounded(), Size::new(859.0, 1081.0));
     }
 
+    trait NoInherentRound {
+        fn round(&self) -> u8 { 0 }
+    }
+
+    impl<T> NoInherentRound for T {}
+
+    /// Builds only while euclid's float module is off: with it on, `Rect`'s inherent `round` wins
+    /// over this fallback and gives back a rect.
+    #[test]
+    fn euclids_float_module_stays_off() {
+        assert_eq!(typed(-860.5, 31.5, 859.0, 1081.0).round(), 0u8);
+    }
+
     #[test]
     fn euclid_agrees_with_the_cg_ops_on_what_the_features_ask() {
         let mut seeded = Seeded(0x5eed);
