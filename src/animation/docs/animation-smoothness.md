@@ -218,9 +218,12 @@ a point from its window: 861 against 860 wide ("The handover, measured" in
 point and at most 20pt from its window at any edge (`snap_to`, with the pictures
 service's landing slack `END_SLACK`): under a quarter point nothing shows at the
 lift, and past 20pt the window has not landed where its tile ends. The caller
-decides with `snap_to`, once per window per generation, and
-`TileOverlay::snap_tile` moves the tile onto the real frame without checking
-again. A tile riding its container moves inside it at once, while the container
+decides with `snap_to`, once per window per generation and only once the motion
+has started: before it, the container stands at frame zero and the start would
+move the tile back. A window pictured where it ends before the start, or before a
+merge that can put its tile back on its model, is snapped again then, since a
+delivery comes only with a changed print. `TileOverlay::snap_tile` moves the tile
+onto the real frame without checking again. A tile riding its container moves inside it at once, while the container
 carries it on. A tile on a leg of its own is given the same leg, its begin,
 start and curve, ending on the real frame, so it lands there with the leg
 instead of popping at the lift
