@@ -22,6 +22,7 @@ pub enum Event {
         why: Why,
         pictures: Vec<(WindowId, Picture, CGRect)>,
     },
-    /// A window `tag` watched land was not where it ends by the deadline.
+    /// A window `tag` watched land whose picture will not come: it was not where it ends by the
+    /// deadline, it never settled, or the cache refused its capture for the picture it holds.
     Lost { tag: Tag, window: WindowId },
 }

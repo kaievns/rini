@@ -219,8 +219,19 @@ pub struct Seen {
     pub window: WindowId,
     /// Its server frame, `None` when it has none.
     pub frame: Option<CGRect>,
-    /// Its prints, when it was captured.
-    pub prints: Option<Prints>,
+    pub capture: Capture,
+}
+
+/// What came of capturing a window looked at. A watch decides only on pictures the cache took, so
+/// what it delivers, and the prints it judges news by, are what its client was given.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Capture {
+    /// No picture: the window was not where it was wanted, or the call brought none back.
+    Missed,
+    /// A picture the cache refused for the one it holds.
+    Refused,
+    /// A picture the cache took, with its prints.
+    Taken(Prints),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -329,6 +340,15 @@ struct Change {
     done: bool,
 }
 
+impl Change {
+    /// A try spent: the next is `every` from now, and with none left the watch is done.
+    fn spend(&mut self, now: Instant) {
+        self.left = self.left.saturating_sub(1);
+        self.done = self.left == 0;
+        self.next = now + self.every;
+    }
+}
+
 struct Live {
     tag: Tag,
     targets: Vec<PictureTarget>,
@@ -358,7 +378,8 @@ impl Watches {
     }
 
     /// Replaces what `id` watches, keeping what it already knows: a window that landed where it still
-    /// ends stays landed, a focus already seen stays seen, and the background keeps its pace.
+    /// ends stays landed, a repainting window settles against the picture held when the watch first
+    /// named it, a focus already seen stays seen, and the background keeps its pace.
     pub fn retarget(
         &mut self,
         id: WatchId,
@@ -374,13 +395,15 @@ impl Watches {
         match (&mut self.watches[at].1, old) {
             (Watching::Landing(new), Watching::Landing(old)) => {
                 for lands in &mut new.windows {
-                    if let Some(kept) = old.windows.iter().find(|o| {
-                        o.target.window == lands.target.window
-                            && o.end == lands.end
-                            && o.state == Arrival::Arrived
-                    }) {
+                    let Some(kept) =
+                        old.windows.iter().find(|o| o.target.window == lands.target.window)
+                    else {
+                        continue;
+                    };
+                    // What the cache holds now is the watch's own capture, not the picture before.
+                    lands.before = kept.before.clone().or(lands.before.take());
+                    if kept.end == lands.end && kept.state == Arrival::Arrived {
                         lands.state = Arrival::Arrived;
-                        lands.before = kept.before.clone();
                     }
                 }
             }
@@ -607,13 +630,17 @@ impl Watches {
     pub fn seen(&mut self, now: Instant, seen: &[Seen], display: Option<CGRect>) -> Outcome {
         let plan = std::mem::take(&mut self.plan);
         let of = |window: WindowId| seen.iter().find(|s| s.window == window);
-        let captured = |window: WindowId, accept: Accept| {
+        // The window's server frame, where `accept` takes it, and what its capture came to.
+        let looked_at = |window: WindowId, accept: Accept| {
             let seen = of(window)?;
             let frame = seen.frame?;
-            let prints = seen.prints.as_ref()?;
             display
                 .is_some_and(|display| accept.accepts(frame, display))
-                .then_some((frame, prints))
+                .then_some((frame, &seen.capture))
+        };
+        let taken = |window: WindowId, accept: Accept| match looked_at(window, accept)? {
+            (frame, Capture::Taken(prints)) => Some((frame, prints)),
+            (_, Capture::Missed | Capture::Refused) => None,
         };
         let mut out = Outcome::default();
 
@@ -624,8 +651,7 @@ impl Watches {
             }
             let mut delivered = Vec::new();
             for (target, expected) in ask.strip.iter().chain(&ask.background) {
-                let Some((frame, prints)) =
-                    captured(target.window, accept_for(ask.moment, *expected))
+                let Some((frame, prints)) = taken(target.window, accept_for(ask.moment, *expected))
                 else {
                     continue;
                 };
@@ -653,7 +679,7 @@ impl Watches {
                     if let Some(lands) =
                         landing.windows.iter_mut().find(|l| l.target.window == window)
                     {
-                        let there = captured(window, Accept::Near { end: lands.end, slack });
+                        let there = looked_at(window, Accept::Near { end: lands.end, slack });
                         land(lands, settle, tag, there, now, &mut self.prints, &mut out);
                     }
                     if landing.windows.iter().any(|l| l.state == Arrival::Pending) {
@@ -665,37 +691,42 @@ impl Watches {
                         end: change.end,
                         slack: END_SLACK,
                     };
-                    let frame = of(window).and_then(|seen| seen.frame);
-                    if let Some((frame, prints)) = captured(window, accept) {
-                        let known = self.prints.contains_key(&(change.tag.client, window));
-                        if news(&mut self.prints, change.tag.client, window, &prints.band) && known
-                        {
-                            change.done = true;
-                            out.deliver(change.tag, Why::FocusChanged, window, frame);
-                        } else {
-                            // With nothing delivered to judge a change by, the first capture is
-                            // delivered as the window where it ends, and the change judged from it.
-                            if !known {
-                                out.deliver(change.tag, Why::Landed, window, frame);
+                    match looked_at(window, accept) {
+                        Some((frame, Capture::Taken(prints))) => {
+                            let known = self.prints.contains_key(&(change.tag.client, window));
+                            if news(&mut self.prints, change.tag.client, window, &prints.band)
+                                && known
+                            {
+                                change.done = true;
+                                out.deliver(change.tag, Why::FocusChanged, window, frame);
+                            } else {
+                                // With nothing delivered to judge a change by, the first capture is
+                                // delivered as the window where it ends, and the change judged from it.
+                                if !known {
+                                    out.deliver(change.tag, Why::Landed, window, frame);
+                                }
+                                change.spend(now);
                             }
-                            change.left = change.left.saturating_sub(1);
-                            change.done = change.left == 0;
-                            change.next = now + change.every;
                         }
-                    } else if let (Some(frame), Some(display)) = (frame, display)
-                        && near(frame, change.end, END_SLACK)
-                        && clipped(frame, display)
-                    {
-                        change.done = true;
-                        out.clipped.push((change.tag, change.target, frame));
-                    } else {
-                        change.next = now + LANDING_POLL;
+                        Some((_, Capture::Refused)) => change.spend(now),
+                        Some((_, Capture::Missed)) | None => {
+                            let frame = of(window).and_then(|seen| seen.frame);
+                            if let (Some(frame), Some(display)) = (frame, display)
+                                && near(frame, change.end, END_SLACK)
+                                && clipped(frame, display)
+                            {
+                                change.done = true;
+                                out.clipped.push((change.tag, change.target, frame));
+                            } else {
+                                change.next = now + LANDING_POLL;
+                            }
+                        }
                     }
                 }
                 Watching::Live(live) => {
                     live.last = Some(now);
                     live.initial = None;
-                    if let Some((frame, prints)) = captured(window, Accept::OnDisplay) {
+                    if let Some((frame, prints)) = taken(window, Accept::OnDisplay) {
                         news(&mut self.prints, live.tag.client, window, &prints.band);
                         out.deliver(live.tag, Why::Background, window, frame);
                     }
@@ -823,28 +854,40 @@ fn news(
 }
 
 /// What one look at a landing window decides: delivered once there (or once settled there, for a
-/// repainting one), lost when a repainting one runs out of tries.
+/// repainting one); lost when a repainting one runs out of tries, or when the cache refuses its
+/// capture.
 fn land(
     lands: &mut Lands,
     settle: Settle,
     tag: Tag,
-    there: Option<(CGRect, &Prints)>,
+    there: Option<(CGRect, &Capture)>,
     now: Instant,
     prints: &mut HashMap<(Client, WindowId), Vec<u8>>,
     out: &mut Outcome,
 ) {
     let window = lands.target.window;
+    let refused = matches!(there, Some((_, Capture::Refused)));
+    let there = there.and_then(|(frame, capture)| match capture {
+        Capture::Taken(seen) => Some((frame, seen)),
+        Capture::Missed | Capture::Refused => None,
+    });
     let (left, last) = match std::mem::replace(&mut lands.state, Arrival::Arrived) {
+        done @ (Arrival::Arrived | Arrival::Lost) => {
+            lands.state = done;
+            return;
+        }
+        // Every later capture at this size is refused too: what the cache holds is the picture.
+        _ if refused => {
+            lands.state = Arrival::Lost;
+            out.lost.push((tag, window));
+            return;
+        }
         Arrival::Pending if there.is_none() => {
             lands.state = Arrival::Pending;
             return;
         }
         Arrival::Pending => (REVEAL_CHASE_ATTEMPTS, None),
         Arrival::Settling { left, last, .. } => (left, last),
-        done @ (Arrival::Arrived | Arrival::Lost) => {
-            lands.state = done;
-            return;
-        }
     };
     if settle == Settle::AsSoonAsThere {
         if let Some((frame, seen)) = there
@@ -1014,12 +1057,23 @@ mod tests {
     }
 
     /// One round: what `next` hands out, and what `seen` makes of each window being where `at` says,
-    /// captured with the band print `band` says (`None`: not captured), on the laptop.
+    /// captured and taken by the cache with the band print `band` says (`None`: not captured), on the
+    /// laptop.
     fn round(
         watches: &mut Watches,
         now: Instant,
         at: impl Fn(WindowId) -> Option<CGRect>,
         band: impl Fn(WindowId) -> Option<u8>,
+    ) -> Option<(Vec<Set>, Outcome)> {
+        round_of(watches, now, at, |window| band(window).map_or(Capture::Missed, taken))
+    }
+
+    /// One round in which what came of each capture is what `capture` says.
+    fn round_of(
+        watches: &mut Watches,
+        now: Instant,
+        at: impl Fn(WindowId) -> Option<CGRect>,
+        capture: impl Fn(WindowId) -> Capture,
     ) -> Option<(Vec<Set>, Outcome)> {
         let sets = watches.next(now)?;
         let seen: Vec<Seen> = sets
@@ -1033,16 +1087,21 @@ mod tests {
                 Seen {
                     window,
                     frame,
-                    // Thumbprints 50 levels apart per step: past the settle tolerance.
-                    prints: band(window).filter(|_| captured).map(|b| Prints {
-                        band: vec![b],
-                        thumb: Some(vec![b.wrapping_mul(50)]),
-                    }),
+                    capture: if captured { capture(window) } else { Capture::Missed },
                 }
             })
             .collect();
         let outcome = watches.seen(now, &seen, Some(LAPTOP));
         Some((sets, outcome))
+    }
+
+    /// A capture the cache took with band print `band`; thumbprints 50 levels apart per step, past the
+    /// settle tolerance.
+    fn taken(band: u8) -> Capture {
+        Capture::Taken(Prints {
+            band: vec![band],
+            thumb: Some(vec![band.wrapping_mul(50)]),
+        })
     }
 
     fn delivered(outcome: &Outcome) -> Vec<(Why, Vec<WindowId>)> {
@@ -1398,6 +1457,40 @@ mod tests {
         assert!(watches.expire(at + ms(500)).is_empty(), "lost once");
     }
 
+    /// A landing whose capture the cache refuses for the picture it holds is lost at once, waiting or
+    /// settling, and never delivered: every later capture at that size would be refused too.
+    #[test]
+    fn a_landing_the_cache_refuses_is_lost_at_once() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)),
+            start,
+            &none,
+        );
+        watches.watch(
+            WatchId(2),
+            landing(&[(2, RIGHT)], Settle::Repainted, start + ms(150)),
+            start,
+            &none,
+        );
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        let (_, outcome) = round_of(&mut watches, start, at, |w| {
+            if w == wid(1) { Capture::Refused } else { taken(1) }
+        })
+        .unwrap();
+        assert!(outcome.deliveries.is_empty(), "refused, and not settled yet");
+        assert_eq!(outcome.lost, vec![(tag(1), wid(1))], "at once, not at the deadline");
+
+        let next = start + REVEAL_CHASE_INTERVAL;
+        let (_, outcome) = round_of(&mut watches, next, at, |_| Capture::Refused).unwrap();
+        assert!(outcome.deliveries.is_empty());
+        assert_eq!(outcome.lost, vec![(tag(1), wid(2))], "settling, refused");
+        assert!(watches.next(start + ms(50)).is_none(), "looked at no more");
+        assert!(watches.expire(start + ms(150)).is_empty(), "each lost once");
+    }
+
     /// The focus target is captured only once its focus is reported; from then every 15ms, six times
     /// at most, stopping at the first change of its band print.
     #[test]
@@ -1471,6 +1564,46 @@ mod tests {
         watches.hint(Hint::Focused(wid(2)), start);
         watches.watch(WatchId(1), change(1, LEFT), start, &none);
         assert!(watches.next(start).is_none(), "another window's");
+    }
+
+    /// A change capture the cache refuses spends a try and is neither delivered nor judged: the watch
+    /// goes on, and is done only once its tries are spent.
+    #[test]
+    fn a_change_capture_the_cache_refuses_spends_a_try_and_finishes_nothing() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.ask(frame_zero(&[(1, LEFT)], &[]));
+        round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        let mut at = start;
+        for _ in 1..CHANGE_TRIES {
+            let (_, outcome) =
+                round_of(&mut watches, at, |_| Some(LEFT), |_| Capture::Refused).unwrap();
+            assert!(outcome.deliveries.is_empty());
+            assert!(watches.next(at + ms(14)).is_none(), "a try spent: the next is 15ms off");
+            at += CHANGE_EVERY;
+        }
+        let (_, outcome) = round(&mut watches, at, |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert_eq!(
+            delivered(&outcome),
+            vec![(Why::FocusChanged, vec![wid(1)])],
+            "the last try"
+        );
+
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), change(1, LEFT), start, &none);
+        let mut at = start;
+        let mut tries = 0;
+        while let Some((_, outcome)) =
+            round_of(&mut watches, at, |_| Some(LEFT), |_| Capture::Refused)
+        {
+            assert!(outcome.deliveries.is_empty(), "not delivered as landed either");
+            tries += 1;
+            at += CHANGE_EVERY;
+        }
+        assert_eq!(tries, CHANGE_TRIES);
     }
 
     /// Until the window is where it ends, a change watch only watches it land: no try is spent.
@@ -1764,6 +1897,39 @@ mod tests {
         assert!(
             watches.next(start + ms(2000)).is_none(),
             "another window: not armed"
+        );
+    }
+
+    /// A repainting window still landing settles, through a retarget, against the picture held when
+    /// the watch first named it: by then the cache holds the watch's own captures. A window new to the
+    /// watch settles against the picture held now.
+    #[test]
+    fn a_retarget_keeps_the_picture_a_repainting_window_settles_against() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT)], Settle::Repainted, start + ms(150)),
+            start,
+            &|_| Some(vec![50]),
+        );
+        watches.retarget(
+            WatchId(1),
+            landing(&[(1, LEFT), (2, RIGHT)], Settle::Repainted, start + ms(150)),
+            start,
+            &|_| Some(vec![100]),
+        );
+        let (_, outcome) = round(
+            &mut watches,
+            start,
+            |w| Some(if w == wid(1) { LEFT } else { RIGHT }),
+            |_| Some(2),
+        )
+        .unwrap();
+        assert_eq!(
+            delivered(&outcome),
+            vec![(Why::Landed, vec![wid(1)])],
+            "window 1 differs from the picture before; window 2 is what is held now"
         );
     }
 

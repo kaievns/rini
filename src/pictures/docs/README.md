@@ -56,9 +56,10 @@ queued before the next call is made, so the newest wins. Reads are not: they loc
 copy out, so the switcher draws without a round trip and the engine composes frame zero with what is
 held at that instant. Every capture that comes back goes into the cache first, and every sink hears of
 each one (`event.rs`): a client draws only a picture the cache took, so a flight and the switcher never
-draw what the next flight will not. A delivery under a tag carries only pictures the cache took too,
-each with the server frame it was taken at; every sink hears it, and a client takes its own by the
-tag's client.
+draw what the next flight will not. The watches are told which pictures the cache took before they
+decide anything: a delivery under a tag carries only those, each with the server frame it was taken
+at, and a capture the cache refused is neither delivered nor news. Every sink hears a delivery, and a
+client takes its own by the tag's client.
 
 ScreenCaptureKit is asked from the thread and completes on its own queues, which only copy the pixels
 out and post them back. No capture call is made there: `CGWindowListCreateImage` is proxied through the
@@ -122,13 +123,14 @@ release: it is what a transition waits on.
 | Frame zero takes the windows within 2pt of where their tiles start and wholly on the display, the strip in one set and the background in another, and delivers everything in one delivery, even an empty one | the overlay waits for it, so it must always come; in one composite with the strip, a translucent window would bake what is behind it |
 | No two overlapping windows are in one call, and windows with different `behind` are never in one call | the crop of the window behind would show the one in front; a material blurs what is composited after it |
 | `Landing` reads each window's frame every 1ms, captures it once it is within `slack` (20pt) of its end and wholly on the display, and reports it `Lost` at `until`; `Placed` reads at once | the server rounds each window on its own and an app may settle a point or two off; a window that never lands must not hold anything up |
+| A landing whose capture the cache refuses is `Lost` at once | the cache refuses a capture without the blur for a picture with it at the same size, and so every later capture there; what it holds is the picture to fly |
 | `Settle::Repainted` keeps capturing every 8ms, 125 times at most once there, until `chase_settled`, and delivers that capture whatever its band print; out of tries it is `Lost` | a grow or an entrance is not painted at its new size yet; the flight holds for it, so the picture must come or the hold must hear it will not |
-| `Change` starts at the window's focus report, captures it where it ends every 15ms, six times at most, and stops at the first band print that differs from the last picture delivered of it; with none delivered, the first capture is delivered as landed and the change judged from it; it spends no try before the window is there | a focus change shows in the title band; with nothing to compare, a first capture cannot be called a change |
+| `Change` starts at the window's focus report, captures it where it ends every 15ms, six times at most, and stops at the first band print that differs from the last picture delivered of it; with none delivered, the first capture is delivered as landed and the change judged from it; it spends no try before the window is there, and one on a capture the cache refuses | a focus change shows in the title band; with nothing to compare, a first capture cannot be called a change |
 | A focus report is remembered for a second, and a `Change` watch created after it starts armed | the report came before the watch in 136 of 225 flights of the prototype, and 135 of those never captured the focus (D1) |
 | A `Change` window whose frame is where it ends but cut by the display's edge takes one ScreenCaptureKit capture, at focus priority, through the hold, delivered as its focus change; one already out is followed by its own | SkyLight captures only what is on a display, and `specs/animation.md` has both ends of a focus change recaptured even clipped (`docs/pictures-motion-transitions.md`) |
 | `Live` refreshes every 16ms at most, never while a landing is pending or a change capture is due within 8ms, and only once its `after` watch is done, but once at `initial` regardless; every capture is delivered | refreshing ahead of the focus capture held it up 31ms; content behind the strip changes below the band, which a band print would not see |
 | Landing, change and final deliveries carry only band prints that are news to the client; frame zero starts the client's prints afresh | a picture the tile already shows is not swapped again; a window flying the cache's picture this time gets its landing whatever it looked like last time |
-| A retarget keeps a window landed where it still ends and a focus already seen, and watches the rest from now | a merged press moves some ends and not others; a window new to the watch is watched too, which the prototype missed |
+| A retarget keeps a window landed where it still ends, the picture a repainting window settles against, and a focus already seen, and watches the rest from now | a merged press moves some ends and not others; by then the cache holds the watch's own captures, not the picture from before the change; a window new to the watch is watched too, which the prototype missed |
 
 The constants are measured in `src/animation/docs/capture-overlay-research.md`: "Where a moving focus
 change spends its time" (the server's frame, the focused look), "The handover, measured" (the 20pt
