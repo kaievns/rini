@@ -138,8 +138,9 @@ it stops needing to be. `a_typed_feature_names_no_cg_geometry_outside_platform`
 holds each feature in `TYPED` to rini-geometry's spaces outside its `platform/`, no CG geometry and
 no `from_cg`, `to_cg`, `FromCg` or `ToCg` there, and keeps `cast_unit` in `src/` and `crates/` to
 `Respace`'s two impls. `transitions_never_touches_core_animation_or_app_kit` keeps Core Animation,
-AppKit, the main-thread markers and `TileOverlay` out of every code line in `src/transitions/`, whose
-engine runs on its own thread and reaches the overlay only by message. Rule 4 the compiler checks: a crate cannot name the
+AppKit, the main-thread markers, `TileOverlay` and the renderer's `media_clock` out of every code
+line in `src/transitions/`, whose engine runs on its own thread, reaches the overlay only by message
+and reads the media clock it is handed. Rule 4 the compiler checks: a crate cannot name the
 application's modules. `cargo build` catches the crudest breaches of rule 7 —
 an unread field or an unreachable branch is a warning, and the build carries
 none. Rules 3, 5, 6 and the rest of 7 are conventions.

@@ -240,9 +240,9 @@ fn a_typed_feature_names_no_cg_geometry_outside_platform() {
     );
 }
 
-/// What only the main thread may touch, which `transitions` runs off it: Core Animation, AppKit, and
-/// the overlay that holds both.
-const MAIN_THREAD_ONLY: [&str; 7] = [
+/// What only the main thread may touch, which `transitions` runs off it: Core Animation, AppKit, the
+/// overlay that holds both, and the renderer's read of the media clock, which the engine is handed.
+const MAIN_THREAD_ONLY: [&str; 8] = [
     "objc2_quartz_core",
     "objc2_app_kit",
     "MainThreadMarker",
@@ -250,6 +250,7 @@ const MAIN_THREAD_ONLY: [&str; 7] = [
     "TileOverlay",
     "CATransaction",
     "CACurrentMediaTime",
+    "media_clock",
 ];
 
 #[test]
