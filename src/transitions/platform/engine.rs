@@ -6,9 +6,9 @@
 //! (`crate::transitions::domain::flight_score`) and asks and watches the pictures service
 //! (`crate::pictures::platform::service`), and sends each burst of the journal to its writer
 //! (`crate::transitions::platform::journal`). When anything happens is the coordinator's, but for the
-//! hide of a lift held, while the handover is measured, for the overlay's own picture
-//! (`crate::transitions::domain::journal::hides`). Runs on the main thread because Core Animation
-//! requires it.
+//! hide of a lift held, while the handover is measured, for the overlay's own picture, which the
+//! journal decides (`crate::transitions::domain::journal::Journalled::heard`). Runs on the main thread
+//! because Core Animation requires it.
 //!
 //! Design in `src/transitions/docs/coordination.md`; how a flight moves in
 //! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
@@ -50,7 +50,7 @@ use crate::pictures::platform::skylight::capture_via_framed;
 use crate::transitions::domain::admission::*;
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::flight_score::FlightScore;
-use crate::transitions::domain::journal::{Heard, Hide, Journalled, LiftWait, OVERLAY_TAKE_PATIENCE, hides};
+use crate::transitions::domain::journal::{Heard, Journalled, OVERLAY_TAKE_PATIENCE, measures};
 use crate::transitions::domain::lifecycle::{
     self, Command, EndWatch, Generation, Kind, Start, StageSummary, TileSummary, drawn_focused,
     extend_latest, losing_focus,
@@ -768,11 +768,8 @@ pub struct FlightEngine {
     quiet: Option<(Generation, RepeatingTimer)>,
     /// The end windows the last watch named, ending wholly on screen: what a measured lift compares.
     ends: Vec<(WindowId, ScreenRect)>,
-    /// A lift whose hide waits, while the handover is measured, for the overlay's own picture, and the
-    /// timer of its patience.
-    lift_wait: Option<(LiftWait, RepeatingTimer)>,
-    /// The lift that hid on its overlay's picture and how long it waited, until its handover comes.
-    measured: Option<(Generation, Duration)>,
+    /// The patience of a lift held, while the handover is measured, for the overlay's own picture.
+    lift_patience: Option<RepeatingTimer>,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     on_flight: Option<OnFlight>,
@@ -807,8 +804,7 @@ impl FlightEngine {
             clock: None,
             quiet: None,
             ends: Vec::new(),
-            lift_wait: None,
-            measured: None,
+            lift_patience: None,
             place_frames: None,
             on_flight: None,
         }
@@ -920,9 +916,8 @@ impl FlightEngine {
         }
     }
 
-    /// The journal written or not, as the reactor says. Turned on, what the ring holds is written at
-    /// once, or at the settle of the burst up. A writer is started afresh when measuring the handover
-    /// turns on or off, so each burst's header says how it was taken.
+    /// The journal written or not, and each lift's handover measured or not, as the reactor says.
+    /// Turned on, what the ring holds is written at once, or at the settle of the burst up.
     fn set_journal(&mut self, settings: JournalSettings) {
         if self.journal == Some(settings) {
             return;
@@ -930,10 +925,8 @@ impl FlightEngine {
         if !settings.write {
             self.flights.set_writing(false);
             self.writer = None;
-        } else {
-            let Some(writer) = Writer::start(rini_core::paths::journal_file(), settings.measure_handover) else {
-                return;
-            };
+        } else if self.writer.is_none() {
+            let Some(writer) = Writer::start(rini_core::paths::journal_file()) else { return };
             if let Some(burst) = self.flights.set_writing(true) {
                 writer.send(burst);
             }
@@ -1037,17 +1030,13 @@ impl FlightEngine {
                 debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, "end window's picture will not come");
                 self.drive(lifecycle::Event::Lost { generation, window });
             }
-            crate::pictures::event::Event::OverlayTaken { tag } => {
+            crate::pictures::event::Event::OverlayTaken { tag, taken } => {
                 let Some(generation) = Generation::for_client(tag, self.client) else { return };
-                self.lift_heard(Heard::OverlayTaken(generation));
+                self.lift_heard(Heard::OverlayTaken { generation, taken });
             }
             crate::pictures::event::Event::Handover { tag, windows } => {
                 let Some(generation) = Generation::for_client(tag, self.client) else { return };
-                let Some((_, waited)) = self.measured.filter(|(measured, _)| *measured == generation) else {
-                    return;
-                };
-                self.measured = None;
-                self.flights.handover(Instant::now(), generation, windows, waited);
+                self.flights.handover(Instant::now(), generation, windows);
             }
         }
     }
@@ -2137,10 +2126,10 @@ impl FlightEngine {
     }
 
     /// What measuring `generation`'s lift compares: the overlay against the screen over the end windows
-    /// the last watch named. `None` unless the handover is measured, or with nothing to compare.
+    /// the last watch named. `None` unless the lift is measured (`journal::measures`).
     fn handover_check(&mut self, generation: Generation) -> Option<HandoverCheck> {
         let windows = std::mem::take(&mut self.ends);
-        if !self.journal.is_some_and(|journal| journal.measure_handover) || windows.is_empty() {
+        if !measures(self.journal.is_some_and(|journal| journal.measure_handover), &windows) {
             return None;
         }
         let overlay = self.overlay.as_ref()?;
@@ -2156,27 +2145,24 @@ impl FlightEngine {
     }
 
     /// The pictures service measures the lift, and the hide waits for the overlay's own picture, up to
-    /// `OVERLAY_TAKE_PATIENCE`; with no timer for the patience, it does not wait.
+    /// `OVERLAY_TAKE_PATIENCE`; with no timer for the patience, nothing is measured and it does not wait.
     fn hold_hide(&mut self, generation: Generation, check: HandoverCheck, now: Instant) {
-        self.pictures.check_handover(check);
         let tx = self.tx.clone();
-        match RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || _ = tx.send(Event::LiftPatience)) {
-            Some(timer) => self.lift_wait = Some((LiftWait { generation, since: now }, timer)),
-            None => self.hide(),
-        }
+        let Some(timer) = RepeatingTimer::every(OVERLAY_TAKE_PATIENCE, move || _ = tx.send(Event::LiftPatience)) else {
+            self.hide();
+            return;
+        };
+        self.pictures.check_handover(check);
+        self.lift_patience = Some(timer);
+        self.flights.lifted(generation, now);
     }
 
-    /// What a lift waiting for the overlay's picture hears: it hides once `hides` says so, and is
-    /// measured only if it hid on that picture.
+    /// What a lift held for the overlay's picture hears: it hides once the journal says so.
     fn lift_heard(&mut self, heard: Heard) {
-        let Some(waiting) = self.lift_wait.as_ref().map(|(waiting, _)| *waiting) else { return };
-        let Some(hide) = hides(waiting, heard, Instant::now()) else { return };
-        self.measured = match hide {
-            Hide::Measured { waited } => Some((waiting.generation, waited)),
-            Hide::Unmeasured => None,
-        };
-        self.lift_wait = None;
-        self.hide();
+        if self.flights.heard(heard, Instant::now()) {
+            self.lift_patience = None;
+            self.hide();
+        }
     }
 
     /// The overlay down, and its tiles let go.

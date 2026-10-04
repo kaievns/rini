@@ -133,11 +133,13 @@ class Handover(unittest.TestCase):
         self.assertEqual([(row["of"], row["kind"], row["focused"]) for row in rows], [(1, "pan", True), (1, "pan", False)])
         self.assertEqual([(row["interior"], row["edge_in"], row["edge_out"]) for row in rows],
                          [(0.26, 0.37, 1.56), (0.79, 1.08, 2.26)])
-        self.assertAlmostEqual(rows[0]["waited"], 31.4, places=6)
 
-    def test_a_lift_in_a_measured_burst_with_no_handover_went_unmeasured(self):
-        self.assertTrue(all(header["measure_handover"] for header, _ in self.bursts))
-        self.assertIn("1 of 2 lifts measured, 2 windows", journal.handover(self.bursts))
+    def test_each_held_lift_says_whether_it_hid_on_its_picture_and_how_long_it_held(self):
+        self.assertEqual([(row["measured"], row["waited"]) for row in journal.holds(self.bursts)],
+                         [(True, 31.4), (False, 60.0)])
+
+    def test_a_held_lift_that_hid_unmeasured_has_no_handover(self):
+        self.assertIn("1 of 2 held lifts measured, 2 windows", journal.handover(self.bursts))
 
     def test_the_headline_is_edge_in_p99_of_the_focused_window_on_pan_flights(self):
         text = journal.handover(self.bursts)

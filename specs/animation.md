@@ -385,7 +385,8 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 ## Watching transitions: the journal
 
 - rini MUST record every step of a transition: the press that began it, as rini took it, each thing
-  its lifecycle hears and decides, and each delivery of pictures to it with when the pictures service
+  its lifecycle hears and decides, a frame's tick only when it first finds the transition at rest or
+  landed, and each delivery of pictures to it with when the pictures service
   sent it and when each picture's capture started, all with when, so a glitch seen while moving around
   can be read back afterwards, and the time from a press to the overlay up split between rini's work
   on the press, the captures and the time the transition waited to hear of them.

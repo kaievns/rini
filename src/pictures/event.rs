@@ -28,9 +28,9 @@ pub enum Event {
     /// A window `tag` watched land whose picture will not come: it was not where it ends by the
     /// deadline, it never settled, or the cache refused its capture for the picture it holds.
     Lost { tag: Tag, window: WindowId },
-    /// The overlay's own picture for the handover check `tag` asked was taken, or was not: the overlay
+    /// The overlay's own picture for the handover check `tag` asked was `taken`, or was not: the overlay
     /// may come down.
-    OverlayTaken { tag: Tag },
+    OverlayTaken { tag: Tag, taken: bool },
     /// The check's measure: each window, the screen `AFTER_LIFT` after the overlay's picture against it.
     Handover { tag: Tag, windows: Vec<(WindowId, HandoverDiff)> },
 }

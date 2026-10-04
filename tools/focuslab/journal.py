@@ -382,7 +382,7 @@ def generations(bursts):
 
 def handovers(bursts):
     """Each window of each measured lift: the kind of the generation that lifted, whether the window
-    is its focus target, its differences, and how long the lift waited for the overlay's picture."""
+    is its focus target, and its differences."""
     named = generations(bursts)
     rows = []
     for _, marks in bursts:
@@ -397,25 +397,28 @@ def handovers(bursts):
                 "interior": mark["interior"],
                 "edge_in": mark["edge_in"],
                 "edge_out": mark["edge_out"],
-                "waited": mark["waited_us"] / 1000,
             })
     return rows
 
 
+def holds(bursts):
+    """Each lift held for the overlay's picture, as its `hide` says: whether it hid on that picture,
+    and how long it held, in ms."""
+    return [{"measured": mark["measured"], "waited": mark["waited_us"] / 1000}
+            for _, marks in bursts for mark in marks if mark["mark"] == "hide"]
+
+
 def handover(bursts):
     rows = handovers(bursts)
-    lifts = sum(1 for header, marks in bursts if header.get("measure_handover")
-                for mark in marks if mark["mark"] == "lift")
-    waited = {row["of"]: row["waited"] for row in rows}
+    held = holds(bursts)
     headline = sorted(row["edge_in"] for row in rows if row["kind"] == HEADLINE_KIND and row["focused"])
     p99 = f"{percentile(headline, 99):.2f}" if headline else "-"
     lines = [
-        f"{len(waited)} of {lifts} lifts measured, {len(rows)} windows",
+        f"{len({row['of'] for row in rows})} of {len(held)} held lifts measured, {len(rows)} windows",
         f"edge in p99, focused window, {HEADLINE_KIND}: {p99} n={len(headline)} ({RESEARCH})",
         "",
     ]
-    lines += table("lift held for the overlay's picture (ms)", [{"waited": ms} for ms in waited.values()],
-                   [("waited", "waited")])
+    lines += table("lift held for the overlay's picture (ms)", held, [("waited", "waited")])
     for kind in sorted({row["kind"] for row in rows if row["kind"]}):
         for focused in (True, False):
             group = [row for row in rows if row["kind"] == kind and row["focused"] == focused]

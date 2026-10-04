@@ -23,14 +23,13 @@ pub struct Writer {
 }
 
 impl Writer {
-    /// The thread, appending to `path`, each header saying whether the lifts were held to be measured;
-    /// `None`, logged, when it cannot be spawned.
-    pub fn start(path: PathBuf, measure_handover: bool) -> Option<Writer> {
+    /// The thread, appending to `path`; `None`, logged, when it cannot be spawned.
+    pub fn start(path: PathBuf) -> Option<Writer> {
         let (bursts, sent) = mpsc::channel::<Burst>();
         let spawned = thread::Builder::new().name("journal".to_owned()).spawn(move || {
             for burst in sent {
                 let anchor = Anchor { at: Instant::now(), uptime_ns: uptime_ns() };
-                if let Err(error) = append(&path, ROTATE_PAST, &anchor, unix_ms(), measure_handover, &burst) {
+                if let Err(error) = append(&path, ROTATE_PAST, &anchor, unix_ms(), &burst) {
                     warn!(%error, path = %path.display(), "could not write the transitions journal");
                 }
             }
@@ -50,15 +49,8 @@ impl Writer {
 }
 
 /// The burst's lines, appended to `path` once the file before them is moved aside if it is past
-/// `limit`; its header says the wall clock and whether the lifts were held to be measured.
-fn append(
-    path: &Path,
-    limit: u64,
-    anchor: &Anchor,
-    unix_ms: u64,
-    measure_handover: bool,
-    burst: &Burst,
-) -> io::Result<()> {
+/// `limit`; its header says the wall clock.
+fn append(path: &Path, limit: u64, anchor: &Anchor, unix_ms: u64, burst: &Burst) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -66,7 +58,7 @@ fn append(
         fs::rename(path, path.with_extension("1.jsonl"))?;
     }
     let mut file = BufWriter::new(OpenOptions::new().create(true).append(true).open(path)?);
-    for text in lines(anchor, unix_ms, measure_handover, burst) {
+    for text in lines(anchor, unix_ms, burst) {
         writeln!(file, "{text}")?;
     }
     file.flush()
@@ -108,14 +100,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rini").join("transitions.jsonl");
         let anchor = Anchor { at: Instant::now(), uptime_ns: 1_000 };
-        append(&path, ROTATE_PAST, &anchor, 42, false, &burst(2, 0)).unwrap();
-        append(&path, ROTATE_PAST, &anchor, 43, true, &burst(1, 5)).unwrap();
+        append(&path, ROTATE_PAST, &anchor, 42, &burst(2, 0)).unwrap();
+        append(&path, ROTATE_PAST, &anchor, 43, &burst(1, 5)).unwrap();
         let written = lines(&path);
         let marks: Vec<&str> = written.iter().map(|line| line["mark"].as_str().unwrap()).collect();
         assert_eq!(marks, ["burst", "hold", "hold", "burst", "hold"], "appended, the directory made");
         assert_eq!(written[3]["unix_ms"], 43);
         assert_eq!(written[3]["lost"], 5);
-        assert_eq!((&written[0]["measure_handover"], &written[3]["measure_handover"]), (&false.into(), &true.into()));
         assert_eq!(written[1]["g"], 7);
     }
 
@@ -124,16 +115,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("transitions.jsonl");
         let anchor = Anchor { at: Instant::now(), uptime_ns: 1_000 };
-        append(&path, ROTATE_PAST, &anchor, 1, false, &burst(1, 0)).unwrap();
+        append(&path, ROTATE_PAST, &anchor, 1, &burst(1, 0)).unwrap();
         let limit = fs::metadata(&path).unwrap().len();
-        append(&path, limit, &anchor, 2, false, &burst(1, 0)).unwrap();
+        append(&path, limit, &anchor, 2, &burst(1, 0)).unwrap();
         assert!(!dir.path().join("transitions.1.jsonl").exists(), "not past it yet");
-        append(&path, limit, &anchor, 3, false, &burst(1, 0)).unwrap();
+        append(&path, limit, &anchor, 3, &burst(1, 0)).unwrap();
         let before = lines(&dir.path().join("transitions.1.jsonl"));
         assert_eq!(before.len(), 4, "the two bursts before it, kept beside");
         assert_eq!(lines(&path).len(), 2, "started afresh");
         assert_eq!(lines(&path)[0]["unix_ms"], 3);
-        append(&path, 0, &anchor, 4, false, &burst(1, 0)).unwrap();
+        append(&path, 0, &anchor, 4, &burst(1, 0)).unwrap();
         assert_eq!(lines(&dir.path().join("transitions.1.jsonl"))[0]["unix_ms"], 3, "only the one before is kept");
     }
 

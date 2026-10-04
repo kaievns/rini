@@ -874,9 +874,10 @@ impl Service {
     /// its frame zero is asked of this thread.
     fn take_overlay(&mut self, overlay: WindowServerId) {
         let picture = if self.transition_waits() { None } else { skylight::capture_alone(overlay).map(Whole) };
+        let taken = picture.is_some();
         let tag = self.shared.lock().unwrap().schedule.overlay_taken(Instant::now(), picture);
         if let Some(tag) = tag {
-            self.tell(vec![Event::OverlayTaken { tag }]);
+            self.tell(vec![Event::OverlayTaken { tag, taken }]);
         }
     }
 

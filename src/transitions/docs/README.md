@@ -22,8 +22,8 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **When** | `domain/timing.rs` — the tick, the coalesce window, the reveal hold, the lift's grace and the quiet after it |
 | **The writes** | `domain/frame_writes.rs` — which final frames go out to the apps, and in what order |
 | **The lifecycle** | `domain/lifecycle.rs` — `Coordinator`: the lifecycle every kind runs through, as a pure state machine. `on(event, now)` returns the commands the engine carries out; generations tag every picture it asks for |
-| **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, the press each request answers, every event it takes, every command it gives, every delivery of pictures to it and each measured lift's handover a mark in a ring of 8192, and the burst due once a transition settles; the JSON lines a burst is written as; and when a lift held for the overlay's own picture hides (`hides`) |
-| **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer and the pictures service, placing the real windows through the reactor; while the handover is measured, it holds each lift's hide for the overlay's own picture |
+| **The journal** | `domain/journal.rs` — `Journalled`: the coordinator with its journal, the press each request answers, every command it gives, every event it takes but a picture and frame zero, a tick only by the first `at_rest` and `landed` it reads in a generation, every delivery of pictures to it and each held lift's hide and handover a mark in a ring of 8192, and the burst due once a transition settles; the JSON lines a burst is written as; and which lifts are held for the overlay's own picture (`measures`) and when one hides (`Journalled::heard`) |
+| **The engine** | `platform/engine.rs` — `FlightEngine`, the actor on the main thread: it holds the coordinator with its journal (`Journalled`), stages each request and merges each pass, and carries out what the coordinator says on the renderer and the pictures service, placing the real windows through the reactor; while the handover is measured, it holds each lift's hide for the overlay's own picture until the journal says it hides |
 | **The journal's writer** | `platform/journal.rs` — `Writer`: the `journal` thread, which appends each burst to `~/Library/Logs/rini/transitions.jsonl` and starts it afresh past 50MB |
 | **Settings** | `settings.rs` — `JournalSettings`: whether the journal is written and the handover measured (`animations › journal`) |
 
@@ -56,15 +56,17 @@ whether a flight is up (`OnFlight`, to the bar). The reactor never learns more o
 and instants; the engine reads the window server and the clock, and holds what each flight composed
 between events.
 
-**The journal observes, and nothing reads it back.** Every event the coordinator takes and every
-command it gives is a mark pushed by `Journalled::drive`, and so is each request's press, by the
-request's first drive; every delivery under the engine's tag is one pushed by
-`Journalled::delivery`, with when the pictures service sent it, and each measured lift's handover is
-pushed by `Journalled::handover`; no mark is pushed anywhere else. The engine branches on nothing the
-journal holds, and only hands each burst it gives to the writer, once a transition has settled. The
-one thing measuring changes is when a lift's overlay comes down: `journal::hides` holds it, up to
-60ms, for the overlay's own picture, and only with `measure-handover` on. What each mark says and when
-it is written: [`journal.md`](journal.md).
+**The journal observes, and nothing reads it back.** Every command the coordinator gives and every
+event it takes is a mark pushed by `Journalled::drive`, but a picture and frame zero, which their
+delivery marks, and a tick, marked only by the first `at_rest` and `landed` it reads in a generation;
+so is each request's press, by the request's first drive. Every delivery under the
+engine's tag is a mark pushed by `Journalled::delivery`, with when the pictures service sent it, and a
+held lift's hide and its handover are pushed by `Journalled::heard` and `Journalled::handover`; no
+mark is pushed anywhere else. The engine branches on nothing the journal holds, and only hands each
+burst it gives to the writer, once a transition has settled. The one thing measuring changes is when a
+lift's overlay comes down: with `measure-handover` on, a lift with a window ending on screen is held,
+up to 60ms, for the overlay's own picture, and `Journalled::heard` says when it hides. What each mark
+says and when it is written: [`journal.md`](journal.md).
 
 **One lifecycle for every kind.** `domain/lifecycle.rs` is the lifecycle as a state machine: a kind
 says what it stages, which pictures frame zero needs, whether it writes frames and what the lift must
