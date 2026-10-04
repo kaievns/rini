@@ -1650,6 +1650,23 @@ mod tests {
         assert!(has(&out, |c| matches!(c, Command::Lift { .. })), "overdue");
     }
 
+    /// Passes repeating the flight's destinations after its clock ran out, while a window has not
+    /// landed, do not hold off the lift past its grace.
+    #[test]
+    fn passes_moving_nothing_after_the_end_leave_the_lift_its_grace() {
+        let now = Instant::now();
+        let mut c = running(pan(), now);
+        let end = now + PLAYS;
+        let mut at = end;
+        while at < end + LIFT_GRACE {
+            assert!(!has(&c.on(Event::Tick { settled: true, landed: false }, at), |c| matches!(c, Command::Lift { .. })));
+            c.on(Event::Merge { stage: pan(), moved: false }, at + Duration::from_millis(1));
+            at += Duration::from_millis(100);
+        }
+        let out = c.on(Event::Tick { settled: true, landed: false }, end + LIFT_GRACE);
+        assert!(has(&out, |c| matches!(c, Command::Lift { .. })), "{out:?}");
+    }
+
     #[test]
     fn the_service_is_held_at_the_begin_settling_at_the_lift_and_released_at_the_quiet() {
         let now = Instant::now();

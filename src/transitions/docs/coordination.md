@@ -171,9 +171,11 @@ A pass confirming the flight's destinations is an empty `PlanDelta`: nothing is 
 presses neither restart nor extend the flight. Any real change restarts the coordinator's clock
 (`Merge { moved }`) at the pass's own length or what is left of the flight's score, whichever is
 longer (`FlightScore::clock`), so the teardown covers everything playing, a bounce outlasting the pass
-included; a merge that moves nothing runs the clock on for whatever it started, a step
-(`Event::Extend`). A pass arriving before the plan plays, behind the frame-zero wait or the coalesce
-window, is folded into frame zero instead, and frame zero posed again (`fold_before_moving`). It is
+included; a merge that moves nothing runs the clock on only for what it started that outlasts the
+clock, a step (`FlightScore::outlasting`, `Event::Extend`). Extended for every such merge, a pass
+after the clock ran out moved its end up to that pass, and the lift's 350ms grace with it: while a
+window had not landed, each pass repeating the destinations held the overlay up 350ms more. A pass
+arriving before the plan plays, behind the frame-zero wait or the coalesce window, is folded into frame zero instead, and frame zero posed again (`fold_before_moving`). It is
 folded by the flight's look (`FlightScore::fold`; Slide's is `merge_plans`, as a pass in flight is),
 with every container where frame zero installs it and taken to be where the last pass sends it: the
 reactor builds a pass from the layout where the press before left it, so its frames are places on the

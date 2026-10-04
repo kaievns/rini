@@ -1611,6 +1611,7 @@ impl FlightEngine {
     /// off the display flies its focused look, as the first pass's does.
     fn merge_group(&mut self, pass: Composed) {
         let at = media_now();
+        let left = self.coordinator.remaining(Instant::now()).unwrap_or_default();
         let viewport = self.viewport();
         let display = self.display.map(|(frame, _)| frame);
         let Self { overlay, running, .. } = self;
@@ -1716,8 +1717,7 @@ impl FlightEngine {
             shape.duration = running.score.clock(shape.duration, at);
         }
         let flown = running.flown;
-        // A step a merge takes runs the clock on even when the merge moves nothing.
-        let extend = (flown && !moved).then(|| running.score.remaining(at));
+        let extend = (flown && !moved).then(|| running.score.outlasting(left, at)).flatten();
         let focus_moved = running.focus != focus_before;
         let look = if focus_moved
             && let Some(target) = self.stage(shape.clone()).and_then(|stage| stage.parked_focus())

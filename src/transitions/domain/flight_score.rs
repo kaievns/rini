@@ -108,6 +108,14 @@ impl FlightScore {
     /// is longer.
     pub fn clock(&self, plain: Duration, now: f64) -> Duration { plain.max(self.remaining(now)) }
 
+    /// How long from `now` the clock runs on after a merge that moved nothing, with `left` of it to
+    /// go: as long as the score plays when that outlasts it, as a step the merge took does, and not
+    /// at all otherwise, so a pass repeating the flight's destinations never holds off its lift.
+    pub fn outlasting(&self, left: Duration, now: f64) -> Option<Duration> {
+        let plays = self.remaining(now);
+        (plays > left).then_some(plays)
+    }
+
     pub fn settled(&self, now: f64) -> bool { self.score.settled(now) }
 
     fn fold_in(&mut self, edits: &[Edit]) {
@@ -188,6 +196,17 @@ mod tests {
             seconds: f64,
             now: f64,
         ) -> Retarget {
+            self.merge_with(incoming, pan, None, seconds, now)
+        }
+
+        fn merge_with(
+            &mut self,
+            incoming: &ReflowPlan,
+            pan: Option<CGPoint>,
+            accent: Option<Accent>,
+            seconds: f64,
+            now: f64,
+        ) -> Retarget {
             let pass = Pass {
                 plan: incoming,
                 pan,
@@ -196,7 +215,7 @@ mod tests {
                 drawn: &self.drawn,
                 seconds,
                 cue: Cue::Plain,
-                accent: None,
+                accent,
             };
             let mut retarget = self.score.merge(&self.plan, &pass, now);
             self.plan = retarget.plan.clone();
@@ -352,6 +371,33 @@ mod tests {
             Duration::from_millis(350),
             "nothing playing: the pass's"
         );
+    }
+
+    /// A merge that moves nothing runs the clock on only for what outlasts it: a step it takes runs
+    /// it on as long as the step plays, and a pass repeating the flight's destinations past the
+    /// clock's end runs it on not at all. Run on for every such pass, the end moved up to each pass
+    /// and the lift's grace with it, so a window that never landed held the overlay up for as long
+    /// as the passes kept coming.
+    #[test]
+    fn a_merge_that_moves_nothing_runs_the_clock_on_only_for_what_outlasts_it() {
+        let mut flight = Flight::posed(&strip(1, 2, 1.0, -863.0));
+        flight.start();
+        let late = BEGIN + PLAIN + 0.2;
+        let again = pan(&flight, 0.0);
+        let confirmed = flight.merge(&again, None, PLAIN, late);
+        assert!(!confirmed.delta.moves_anything(), "{:?}", confirmed.delta);
+        assert_eq!(flight.score.outlasting(Duration::ZERO, late), None);
+
+        let now = BEGIN + 0.2;
+        let step = Accent::Step {
+            offset: CGPoint::new(-576.0, 0.0),
+        };
+        let stepped = flight.merge_with(&ReflowPlan::empty(), None, Some(step), PLAIN, now);
+        assert!(!stepped.delta.moves_anything(), "{:?}", stepped.delta);
+        let left = Duration::from_secs_f64(BEGIN + PLAIN - now);
+        let runs_on = flight.score.outlasting(left, now).expect("the step outlasts the clock");
+        assert!(runs_on > left, "{runs_on:?}");
+        assert_eq!(runs_on, flight.score.remaining(now));
     }
 
     /// An accent arriving before the motion waits for it, a later one of its kind in place of the
