@@ -1088,9 +1088,10 @@ impl FlightEngine {
         }
     }
 
-    /// The renderer's answer: a commit is journalled, then releases what waited for it, and with no
-    /// overlay to draw on the flight is abandoned, everything it owed dropped, since its `Abandon`
-    /// writes the final frames at once: a show sent since draws nothing either.
+    /// The renderer's answer: a commit is journalled, then releases what waited for it. A drain with
+    /// no overlay to draw on releases it too, as nothing will ever be drawn, and a flight running is
+    /// abandoned, what it owes dropped, since its `Abandon` writes the final frames at once: a show
+    /// sent since draws nothing either.
     fn rendered(&mut self, answer: crate::animation::event::Event) {
         match answer {
             crate::animation::event::Event::Committed { seq, overlay, shown, sent, began, flushed } => {
@@ -1103,10 +1104,12 @@ impl FlightEngine {
                 }
             }
             crate::animation::event::Event::Unavailable { seq } => {
-                self.drawn.abandon();
-                self.drawn.committed(seq);
                 self.dressed = false;
-                if self.flights.coordinator().is_flying() {
+                let flying = self.flights.coordinator().is_flying();
+                for owed in self.drawn.undrawn(seq, flying) {
+                    self.carry(owed);
+                }
+                if flying {
                     self.shown = self.shown.min(seq);
                     self.abandon();
                 }
@@ -4391,6 +4394,23 @@ mod tests {
             assert!(!h.engine.flights.coordinator().is_flying());
             let sent = h.step(Event::Rendered(Unavailable { seq: shown }));
             assert!(placed(&sent).is_empty() && batches(&sent).is_empty(), "abandoned once");
+        }
+
+        #[test]
+        fn a_lift_the_renderer_cannot_draw_still_writes_and_settles() {
+            let mut h = Harness::new();
+            h.shown();
+            h.advance(Duration::from_millis(300) + LIFT_GRACE + FRAME_INTERVAL);
+            let sent = h.step(Event::Tick);
+            let lift = lift_batch(&sent).expect("overdue, lifted with nothing drawn").seq;
+            assert!(placed(&sent).is_empty(), "the show is not drawn");
+            let sent = h.step(Event::Rendered(Unavailable { seq: lift }));
+            assert_eq!(placed(&sent), [vec![(wid(1), end())]], "nothing will be drawn: written at once");
+            assert_eq!(holds(&sent), [Hold::Settling]);
+            let quiet = h.engine.quiet.as_ref().map(|(generation, _)| *generation);
+            assert_eq!(quiet, Some(Generation(1)), "the quiet armed");
+            let sent = h.step(Event::Quiet(Generation(1)));
+            assert!(sent.iter().any(|sent| matches!(sent, Sent::Flying(false))), "settled");
         }
 
         #[test]

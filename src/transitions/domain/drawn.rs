@@ -1,6 +1,6 @@
 //! What waits for the screen: the effects of the coordinator's commands that must not happen before
 //! the batch of render commands carrying the overlay's change is drawn, numbered by batch and
-//! released as the renderer reports each one committed. See "One engine" in
+//! released as the renderer reports each one committed. See "Threads" in
 //! `src/transitions/docs/coordination.md`.
 
 use rini_core::ids::WindowId;
@@ -19,12 +19,16 @@ pub enum Owed {
     Quiet(Generation),
 }
 
-/// The batches handed to the renderer, the last it committed, and what waits for one.
+/// The batches handed to the renderer, the last it committed, and what waits for one, by the flight
+/// that owes it.
 #[derive(Debug, Default)]
 pub struct Drawn {
     next: u64,
     committed: u64,
-    owed: Vec<(u64, Owed)>,
+    /// The batch each effect waits for, and the flight it is owed by.
+    owed: Vec<(u64, u64, Owed)>,
+    /// The flight running, counted by its holds.
+    flight: u64,
 }
 
 impl Drawn {
@@ -39,7 +43,7 @@ impl Drawn {
         if after <= self.committed {
             return Some(owed);
         }
-        self.owed.push((after, owed));
+        self.owed.push((after, self.flight, owed));
         None
     }
 
@@ -48,9 +52,9 @@ impl Drawn {
         self.committed = self.committed.max(seq);
         let committed = self.committed;
         let (due, waiting): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut self.owed).into_iter().partition(|(after, _)| *after <= committed);
+            std::mem::take(&mut self.owed).into_iter().partition(|(after, _, _)| *after <= committed);
         self.owed = waiting;
-        due.into_iter().map(|(_, owed)| owed).collect()
+        due.into_iter().map(|(_, _, owed)| owed).collect()
     }
 
     /// Whether every batch handed over is committed.
@@ -58,16 +62,22 @@ impl Drawn {
         self.committed >= self.next
     }
 
-    /// The flight is abandoned: nothing it owes is carried out, since the lifecycle's `Abandon` writes
-    /// the final frames itself.
-    pub fn abandon(&mut self) {
-        self.owed.clear();
+    /// The renderer could not draw the batches up to `seq`, and never will: they count as drawn, and
+    /// what they release goes out all the same, but for what the flight running owes when it is
+    /// `abandoned`, since the lifecycle's `Abandon` writes its final frames itself.
+    pub fn undrawn(&mut self, seq: u64, abandoned: bool) -> Vec<Owed> {
+        if abandoned {
+            let flight = self.flight;
+            self.owed.retain(|(_, of, _)| *of != flight);
+        }
+        self.committed(seq)
     }
 
-    /// A new hold: the last lift's `Settle` and quiet are dropped, as on one thread they were carried
-    /// out before it, and the writes owed stay.
+    /// A new flight's hold: the last lift's `Settle` and quiet are dropped, since the transition hold
+    /// leaves no bar due and the quiet's generation is gone, and the writes owed stay.
     pub fn begun(&mut self) {
-        self.owed.retain(|(_, owed)| matches!(owed, Owed::Write(_)));
+        self.flight += 1;
+        self.owed.retain(|(_, _, owed)| matches!(owed, Owed::Write(_)));
     }
 }
 
@@ -127,14 +137,28 @@ mod tests {
     }
 
     #[test]
-    fn an_abandoned_flight_owes_nothing() {
+    fn an_undrawn_batch_releases_what_it_covers() {
         let mut drawn = Drawn::default();
-        let shown = drawn.batch();
+        drawn.begun();
+        let (shown, lifted) = (drawn.batch(), drawn.batch());
         drawn.owe(shown, write(1));
-        drawn.owe(shown, Owed::Quiet(Generation(1)));
-        drawn.abandon();
-        assert!(drawn.committed(shown).is_empty());
-        assert!(drawn.caught_up(), "the batch still counts as drawn");
+        drawn.owe(lifted, Owed::Settle);
+        drawn.owe(lifted, Owed::Quiet(Generation(1)));
+        assert_eq!(drawn.undrawn(lifted, false), vec![write(1), Owed::Settle, Owed::Quiet(Generation(1))]);
+        assert!(drawn.caught_up(), "the batches count as drawn");
+    }
+
+    #[test]
+    fn an_abandoned_flight_owes_nothing_and_the_flights_before_it_still_owe() {
+        let mut drawn = Drawn::default();
+        drawn.begun();
+        let lifted = drawn.batch();
+        drawn.owe(lifted, write(1));
+        drawn.begun();
+        let shown = drawn.batch();
+        drawn.owe(shown, write(2));
+        assert_eq!(drawn.undrawn(shown, true), vec![write(1)], "only the flight before it's");
+        assert!(drawn.caught_up(), "the batches still count as drawn");
     }
 
     #[test]

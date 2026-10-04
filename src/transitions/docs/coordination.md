@@ -63,19 +63,22 @@ answers once, with the highest number (`Event::Rendered`): a busy main thread co
 never a backlog of them. The answer is `Committed`, with the overlay's window number once the window
 server has numbered it and the drain's times, which the journal marks (`drawn` in `journal.md`)
 before what the commit releases goes out, or `Unavailable` when the drain dressed or posed a flight
-and there is no overlay to draw it on. The engine then abandons the flight, whose `Abandon` writes
-the final frames at once: nothing waits for a show sent since, which draws nothing either.
+and there is no overlay to draw it on. Nothing in that drain will ever be drawn, so what it covers
+releases what waited for it all the same: a lift that went out before the answer still writes its
+frames, pictures the bar and arms its quiet. A flight still running is abandoned, what it owes
+dropped, since its `Abandon` writes the final frames at once: nothing waits for a show sent since,
+which draws nothing either.
 
 What must not happen before the overlay's change is on screen waits for the batch that carries it
 (`src/transitions/domain/drawn.rs`): the real frames for the `Show`'s, since a window written before
 the overlay covering it is up jumps to its end while its tile still starts; the bar's picture
 (`Settle`) and the quiet for the `Lift`'s, since the bar is read off the screen 250ms after
 `Settling` (`BAR_REFRESH_DELAY`) and must not find the overlay there. Everything else goes out at
-once. A new hold drops the last lift's `Settle` and quiet: one thread always carried them out before
-it, which the schedule nets to a transition hold with no bar due. A flight is settled only once its
-score has ended and every batch is committed, since until then its tiles may not be drawn where they
-end. `protocol` in `src/transitions/platform/engine.rs` pins each wait against the renderer's answers
-given by hand.
+once. A new flight's hold drops the last lift's `Settle` and quiet: the transition hold leaves no
+bar due (`Schedule::hold`), and a quiet is ignored once its generation is gone. A flight is settled
+only once its score has ended and every batch is committed, since until then its tiles may not be
+drawn where they end. `protocol` in `src/transitions/platform/engine.rs` pins each wait against the
+renderer's answers given by hand.
 
 Every instant the engine reads is the clock it is handed (`Parts`), and every track begins on the
 media clock the renderer read on the main thread (`MediaClock`: `Instant` and `CACurrentMediaTime`
