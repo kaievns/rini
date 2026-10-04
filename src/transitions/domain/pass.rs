@@ -3,6 +3,7 @@
 //! here reads a store or sends a request.
 use objc2_core_foundation::CGRect;
 use rini_core::ids::{WindowId, WindowServerId};
+use rini_geometry::space::{FromCg, ScreenSize};
 use rini_geometry::{Round, SameAs};
 
 use crate::pictures::domain::target::PictureTarget;
@@ -81,7 +82,7 @@ impl PassPlan {
 pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
     let mut out = PassPlan::default();
     for w in windows {
-        let to = w.target.round();
+        let to = w.target.rounded();
         let stays = to.same_as(w.current) || w.pending.is_some_and(|p| p.same_as(to));
         if stays {
             if w.in_active_workspace
@@ -105,7 +106,7 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
             out.warm.push(PictureTarget {
                 window: w.window,
                 server_id,
-                size: to.size,
+                size: ScreenSize::from_cg(to.size),
             });
         }
         out.moves.push(Move {

@@ -10,9 +10,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::CGRectExt;
+use rini_geometry::space::{ScreenPoint, ScreenRect};
 
 use crate::pictures::domain::print::print_changed;
 use crate::pictures::domain::settle::repaint_settled;
@@ -86,10 +85,10 @@ pub struct OnScreen {
     pub tag: Tag,
     pub moment: Moment,
     /// The strip's windows, each with the frame it is expected at.
-    pub strip: Vec<(PictureTarget, CGRect)>,
+    pub strip: Vec<(PictureTarget, ScreenRect)>,
     /// Windows behind the strip that stay put. Captured in calls of their own: in one composite with
     /// the strip, a translucent window would bake what is behind it into its picture.
-    pub background: Vec<(PictureTarget, CGRect)>,
+    pub background: Vec<(PictureTarget, ScreenRect)>,
     /// Windows below the strip, listed after it in the baked call so its materials blur them.
     pub behind: Vec<WindowServerId>,
 }
@@ -115,7 +114,7 @@ pub enum Watch {
     /// the display; one not there by `until` is reported lost.
     Landing {
         tag: Tag,
-        windows: Vec<(PictureTarget, CGRect)>,
+        windows: Vec<(PictureTarget, ScreenRect)>,
         behind: Vec<WindowServerId>,
         slack: f64,
         settle: Settle,
@@ -127,7 +126,7 @@ pub enum Watch {
     Change {
         tag: Tag,
         window: PictureTarget,
-        end: CGRect,
+        end: ScreenRect,
         behind: Vec<WindowServerId>,
         every: Duration,
         tries: u32,
@@ -156,15 +155,15 @@ pub enum Hint {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Accept {
     /// Within `slack` of `end`, and wholly on the display.
-    Near { end: CGRect, slack: f64 },
+    Near { end: ScreenRect, slack: f64 },
     /// With its origin within `FRAME_ZERO_SLACK` of `at`, and wholly on the display.
-    Origin { at: CGPoint },
+    Origin { at: ScreenPoint },
     /// Wholly on the display, wherever.
     OnDisplay,
 }
 
 impl Accept {
-    pub fn accepts(&self, frame: CGRect, display: CGRect) -> bool {
+    pub fn accepts(&self, frame: ScreenRect, display: ScreenRect) -> bool {
         wholly_on(frame, display)
             && match self {
                 Self::Near { end, slack } => near(frame, *end, *slack),
@@ -178,7 +177,7 @@ impl Accept {
 }
 
 /// Whether `frame` lies wholly on `display`: SkyLight captures only what is on a display.
-pub fn wholly_on(frame: CGRect, display: CGRect) -> bool {
+pub fn wholly_on(frame: ScreenRect, display: ScreenRect) -> bool {
     frame.size.width > 0.0
         && frame.size.height > 0.0
         && frame.origin.x >= display.origin.x - ON_DISPLAY_SLACK
@@ -190,12 +189,12 @@ pub fn wholly_on(frame: CGRect, display: CGRect) -> bool {
 }
 
 /// Whether `frame` is cut by `display`'s edge: partly on it, not wholly.
-fn clipped(frame: CGRect, display: CGRect) -> bool {
-    frame.intersection(&display).area() > 0.0 && !wholly_on(frame, display)
+fn clipped(frame: ScreenRect, display: ScreenRect) -> bool {
+    frame.intersection(&display).is_some() && !wholly_on(frame, display)
 }
 
 /// Whether `a` is within `slack` of `b` in each of x, y, width and height.
-pub fn near(a: CGRect, b: CGRect, slack: f64) -> bool {
+pub fn near(a: ScreenRect, b: ScreenRect, slack: f64) -> bool {
     (a.origin.x - b.origin.x).abs() <= slack
         && (a.origin.y - b.origin.y).abs() <= slack
         && (a.size.width - b.size.width).abs() <= slack
@@ -223,7 +222,7 @@ pub struct Set {
 pub struct Seen {
     pub window: WindowId,
     /// Its server frame, `None` when it has none.
-    pub frame: Option<CGRect>,
+    pub frame: Option<ScreenRect>,
     pub capture: Capture,
 }
 
@@ -250,7 +249,7 @@ pub struct Prints {
 pub struct Delivery {
     pub tag: Tag,
     pub why: Why,
-    pub windows: Vec<(WindowId, CGRect)>,
+    pub windows: Vec<(WindowId, ScreenRect)>,
 }
 
 /// What a round of looking decided.
@@ -261,11 +260,11 @@ pub struct Outcome {
     pub lost: Vec<(Tag, WindowId)>,
     /// A changing window cut by the display's edge, which SkyLight cannot picture whole: one capture of
     /// it is owed through ScreenCaptureKit, delivered as its focus change.
-    pub clipped: Vec<(Tag, PictureTarget, CGRect)>,
+    pub clipped: Vec<(Tag, PictureTarget, ScreenRect)>,
 }
 
 impl Outcome {
-    fn deliver(&mut self, tag: Tag, why: Why, window: WindowId, frame: CGRect) {
+    fn deliver(&mut self, tag: Tag, why: Why, window: WindowId, frame: ScreenRect) {
         match self.deliveries.iter_mut().find(|d| d.tag == tag && d.why == why) {
             Some(delivery) => delivery.windows.push((window, frame)),
             None => self.deliveries.push(Delivery {
@@ -314,7 +313,7 @@ struct Landing {
 
 struct Lands {
     target: PictureTarget,
-    end: CGRect,
+    end: ScreenRect,
     /// The thumbprint of the picture held before the window changed, for `Settle::Repainted`.
     before: Option<Vec<u8>>,
     state: Arrival,
@@ -340,7 +339,7 @@ struct Change {
     /// The band print a change is judged from: what the client was delivered of the window as the
     /// watch started; with none then, what it was delivered by the first capture, else that capture.
     baseline: Option<Vec<u8>>,
-    end: CGRect,
+    end: ScreenRect,
     behind: Vec<WindowServerId>,
     every: Duration,
     left: u32,
@@ -652,7 +651,7 @@ impl Watches {
     }
 
     /// What the window server and the captures said of the windows `next` handed out.
-    pub fn seen(&mut self, now: Instant, seen: &[Seen], display: Option<CGRect>) -> Outcome {
+    pub fn seen(&mut self, now: Instant, seen: &[Seen], display: Option<ScreenRect>) -> Outcome {
         let plan = std::mem::take(&mut self.plan);
         let of = |window: WindowId| seen.iter().find(|s| s.window == window);
         // The window's server frame, where `accept` takes it, and what its capture came to.
@@ -896,7 +895,7 @@ fn land(
     lands: &mut Lands,
     settle: Settle,
     tag: Tag,
-    there: Option<(CGRect, &Capture)>,
+    there: Option<(ScreenRect, &Capture)>,
     now: Instant,
     prints: &mut HashMap<(Client, WindowId), Vec<u8>>,
     out: &mut Outcome,
@@ -965,7 +964,7 @@ impl Moment {
     }
 }
 
-fn accept_for(moment: Moment, expected: CGRect) -> Accept {
+fn accept_for(moment: Moment, expected: ScreenRect) -> Accept {
     match moment {
         Moment::FrameZero => Accept::Origin { at: expected.origin },
         Moment::Final => Accept::Near {
@@ -978,7 +977,7 @@ fn accept_for(moment: Moment, expected: CGRect) -> Accept {
 /// An ask's windows as the sets it is captured in: the strip with what is behind it, the background
 /// on its own.
 fn ask_sets(ask: &OnScreen) -> Vec<Set> {
-    let looks = |windows: &[(PictureTarget, CGRect)]| {
+    let looks = |windows: &[(PictureTarget, ScreenRect)]| {
         windows
             .iter()
             .map(|(target, expected)| look(*target, accept_for(ask.moment, *expected), false))
@@ -1034,17 +1033,14 @@ fn add_to(set: &mut Set, look: Look) {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGSize;
+    use rini_geometry::space::ScreenSize;
 
     use super::*;
 
-    const LAPTOP: CGRect = CGRect {
-        origin: CGPoint { x: 0.0, y: 0.0 },
-        size: CGSize { width: 1728.0, height: 1117.0 },
-    };
+    const LAPTOP: ScreenRect = rect(0.0, 0.0, 1728.0, 1117.0);
 
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    const fn rect(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        ScreenRect::new(ScreenPoint::new(x, y), ScreenSize::new(w, h))
     }
 
     fn wid(idx: u32) -> WindowId {
@@ -1055,7 +1051,7 @@ mod tests {
         PictureTarget {
             window: wid(idx),
             server_id: WindowServerId::new(idx),
-            size: CGSize::new(859.0, 1081.0),
+            size: ScreenSize::new(859.0, 1081.0),
         }
     }
 
@@ -1063,19 +1059,10 @@ mod tests {
         Tag { client: Client(1), generation }
     }
 
-    const LEFT: CGRect = CGRect {
-        origin: CGPoint { x: 4.0, y: 32.0 },
-        size: CGSize { width: 859.0, height: 1081.0 },
-    };
-    const RIGHT: CGRect = CGRect {
-        origin: CGPoint { x: 865.0, y: 32.0 },
-        size: CGSize { width: 859.0, height: 1081.0 },
-    };
+    const LEFT: ScreenRect = rect(4.0, 32.0, 859.0, 1081.0);
+    const RIGHT: ScreenRect = rect(865.0, 32.0, 859.0, 1081.0);
     /// Parked past the right edge.
-    const PARKED: CGRect = CGRect {
-        origin: CGPoint { x: 1727.0, y: 32.0 },
-        size: CGSize { width: 859.0, height: 1081.0 },
-    };
+    const PARKED: ScreenRect = rect(1727.0, 32.0, 859.0, 1081.0);
 
     fn none(_: WindowId) -> Option<Vec<u8>> {
         None
@@ -1098,7 +1085,7 @@ mod tests {
     fn round(
         watches: &mut Watches,
         now: Instant,
-        at: impl Fn(WindowId) -> Option<CGRect>,
+        at: impl Fn(WindowId) -> Option<ScreenRect>,
         band: impl Fn(WindowId) -> Option<u8>,
     ) -> Option<(Vec<Set>, Outcome)> {
         round_of(watches, now, at, |window| band(window).map_or(Capture::Missed, taken))
@@ -1108,7 +1095,7 @@ mod tests {
     fn round_of(
         watches: &mut Watches,
         now: Instant,
-        at: impl Fn(WindowId) -> Option<CGRect>,
+        at: impl Fn(WindowId) -> Option<ScreenRect>,
         capture: impl Fn(WindowId) -> Capture,
     ) -> Option<(Vec<Set>, Outcome)> {
         let sets = watches.next(now)?;
@@ -1148,7 +1135,7 @@ mod tests {
             .collect()
     }
 
-    fn frame_zero(strip: &[(u32, CGRect)], background: &[(u32, CGRect)]) -> OnScreen {
+    fn frame_zero(strip: &[(u32, ScreenRect)], background: &[(u32, ScreenRect)]) -> OnScreen {
         OnScreen {
             tag: tag(1),
             moment: Moment::FrameZero,
@@ -1158,14 +1145,14 @@ mod tests {
         }
     }
 
-    fn landing(windows: &[(u32, CGRect)], settle: Settle, until: Instant) -> Watch {
+    fn landing(windows: &[(u32, ScreenRect)], settle: Settle, until: Instant) -> Watch {
         landing_of(tag(1), vec![WindowServerId::new(9)], windows, settle, until)
     }
 
     fn landing_of(
         tag: Tag,
         behind: Vec<WindowServerId>,
-        windows: &[(u32, CGRect)],
+        windows: &[(u32, ScreenRect)],
         settle: Settle,
         until: Instant,
     ) -> Watch {
@@ -1179,7 +1166,7 @@ mod tests {
         }
     }
 
-    fn change(idx: u32, end: CGRect) -> Watch {
+    fn change(idx: u32, end: ScreenRect) -> Watch {
         Watch::Change {
             tag: tag(1),
             window: target(idx),
@@ -1706,7 +1693,7 @@ mod tests {
             "another size: captured again, armed long after the report"
         );
 
-        let tries = |watches: &mut Watches, mut at: Instant, end: CGRect| {
+        let tries = |watches: &mut Watches, mut at: Instant, end: ScreenRect| {
             let mut tries = 0;
             while round(watches, at, |_| Some(end), |_| Some(1)).is_some() {
                 tries += 1;
@@ -1741,7 +1728,7 @@ mod tests {
             round(
                 &mut watches,
                 at,
-                |_| Some(PARKED.intersection(&LAPTOP).union(&rect(900.0, 32.0, 1.0, 1.0))),
+                |_| PARKED.intersection(&LAPTOP).map(|on| on.union(&rect(900.0, 32.0, 1.0, 1.0))),
                 |_| Some(1),
             );
             at += LANDING_POLL;

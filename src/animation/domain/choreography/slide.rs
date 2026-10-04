@@ -193,7 +193,7 @@ impl Choreography for Slide {
             ));
             for (window, frame) in members {
                 score.apply(&Edit::Ride(window, key));
-                score.apply(&Edit::Place(Node::Tile(window), Value::Rect(frame.round())));
+                score.apply(&Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
             }
         };
         for group in &plan.groups {
@@ -228,7 +228,7 @@ impl Choreography for Slide {
                     if making.container(key).is_none() {
                         continue;
                     }
-                    let (from, to) = (from.round(), to.round());
+                    let (from, to) = (from.rounded(), to.rounded());
                     let leg = Leg::Curve {
                         from,
                         to,
@@ -248,8 +248,8 @@ impl Choreography for Slide {
                     else {
                         continue;
                     };
-                    let from = group_relative(from, offset).round();
-                    let to = group_relative(to, offset).round();
+                    let from = group_relative(from, offset).rounded();
+                    let to = group_relative(to, offset).rounded();
                     making.move_tile(window, from, to, begin, seconds);
                 }
             }
@@ -305,7 +305,7 @@ impl Choreography for Slide {
         for new in &delta.new_groups {
             making.push(Edit::Place(
                 Node::Container(new.key),
-                Value::Point(new.install.round()),
+                Value::Point(new.install.rounded()),
             ));
             self.legs.remove(&new.key);
             let Some(group) = merged.groups.iter().find(|g| g.key == new.key) else {
@@ -320,7 +320,7 @@ impl Choreography for Slide {
                 making.push(Edit::Ride(member.window, new.key));
                 making.push(Edit::Place(
                     Node::Tile(member.window),
-                    Value::Rect(member.rel.round()),
+                    Value::Rect(member.rel.rounded()),
                 ));
             }
         }
@@ -346,7 +346,7 @@ impl Choreography for Slide {
             );
             making.open(to_key, position(to_key).unwrap_or(origin));
             making.push(Edit::Ride(window, to_key));
-            making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.round())));
+            making.push(Edit::Place(Node::Tile(window), Value::Rect(frame.rounded())));
             if making.score.track(Node::Tile(window), Channel::Base).is_some() {
                 making.push(Edit::Cut(Node::Tile(window), Channel::Base));
             }
@@ -357,7 +357,7 @@ impl Choreography for Slide {
             let Some(Value::Point(along)) = making.score.along(Node::Container(key), now) else {
                 continue;
             };
-            let to = to.round();
+            let to = to.rounded();
             let leg = Leg::toward(self.legs.get(&key), along, to, now, omega);
             making.push(Edit::Place(Node::Container(key), Value::Point(to)));
             if seconds <= 0.0 {
@@ -369,8 +369,8 @@ impl Choreography for Slide {
         }
         for new in &delta.new_groups {
             let key = new.key;
-            let to = position(key).unwrap_or(new.install).round();
-            let install = new.install.round();
+            let to = position(key).unwrap_or(new.install).rounded();
+            let install = new.install.rounded();
             making.push(Edit::Place(Node::Container(key), Value::Point(to)));
             if seconds <= 0.0 || install.same_as(to) {
                 self.legs.remove(&key);
@@ -399,12 +399,12 @@ impl Choreography for Slide {
             making.push(Edit::Ride(window, key));
             match member {
                 Member::Rigid { rel, .. } => {
-                    making.push(Edit::Place(Node::Tile(window), Value::Rect(rel.round())))
+                    making.push(Edit::Place(Node::Tile(window), Value::Rect(rel.rounded())))
                 }
                 Member::Changing { from, to }
                 | Member::Entrance { from, to }
                 | Member::Floating { from, to } => {
-                    making.move_tile(window, from.round(), to.round(), now, seconds)
+                    making.move_tile(window, from.rounded(), to.rounded(), now, seconds)
                 }
             }
         }
@@ -420,7 +420,7 @@ impl Choreography for Slide {
                 making.score.sample(node, now)
             };
             let Some(Value::Rect(from)) = from else { continue };
-            making.move_tile(window, from, to.round(), now, seconds);
+            making.move_tile(window, from, to.rounded(), now, seconds);
         }
 
         let tiles: Vec<(WindowId, GroupKey)> = making.score.tiles().collect();
@@ -653,8 +653,8 @@ mod tests {
             match target {
                 AnimationTarget::Container { key, from, to } => {
                     let leg = Leg::Curve {
-                        from: from.round(),
-                        to: to.round(),
+                        from: from.rounded(),
+                        to: to.rounded(),
                         begin: BEGIN,
                         seconds: PLAIN,
                         curve: MOTION_CURVE,
@@ -664,13 +664,13 @@ mod tests {
                         track_on(&edits, node, Channel::Base),
                         Some(leg.track(key, SAMPLE_STEP))
                     );
-                    assert_eq!(flight.score.model(node), Some(Value::Point(to.round())));
+                    assert_eq!(flight.score.model(node), Some(Value::Point(to.rounded())));
                 }
                 AnimationTarget::Tile { window, from, to } => {
                     let key = flight.score.parent(window).expect("posed");
                     let at = point(flight.score.model(Node::Container(key)));
                     let (from, to) =
-                        (group_relative(from, at).round(), group_relative(to, at).round());
+                        (group_relative(from, at).rounded(), group_relative(to, at).rounded());
                     let node = Node::Tile(window);
                     let between = Track::between(
                         node,
@@ -730,8 +730,8 @@ mod tests {
                 continue;
             };
             let leg = Leg::Curve {
-                from: from.round(),
-                to: to.round(),
+                from: from.rounded(),
+                to: to.rounded(),
                 begin: BEGIN,
                 seconds: stretched,
                 curve: EASE_IN_OUT,
@@ -948,7 +948,7 @@ mod tests {
             .expect("a container of its own");
         assert_eq!(opened.leaving, Some(strip_key));
         let to = point(flight.score.model(Node::Container(key)));
-        let carried = Leg::toward(Some(&leg), opened.install.round(), to, now, spring_omega(PLAIN));
+        let carried = Leg::toward(Some(&leg), opened.install.rounded(), to, now, spring_omega(PLAIN));
         assert_eq!(
             track_on(&bent.edits, Node::Container(key), Channel::Base),
             Some(carried.track(key, SAMPLE_STEP))

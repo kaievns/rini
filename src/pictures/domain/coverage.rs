@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use objc2_core_foundation::CGSize;
+use rini_geometry::space::{PointSpace, ScreenSize, Size, ToCg};
 use rini_geometry::stretch::{MAX_STRETCH, within_stretch};
 
 /// How much smaller than its real size a capture may be before it is not worth drawing.
@@ -19,11 +19,11 @@ const MIN_USABLE_COVERAGE: f64 = 0.995;
 /// sizes alone, so keeping it here lets it be stated once and tested without building images.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Coverage {
-    /// Size in points that the captured pixels cover, which is NOT always the window's own size: a
+    /// The size the captured pixels cover, which is NOT always the window's own size: a
     /// SkyLight capture of a partly visible window covers only the visible part.
-    pub covered: (f64, f64),
-    /// The window's full size in points at capture time, for comparison against `covered`.
-    pub window: (f64, f64),
+    pub covered: ScreenSize,
+    /// The window's full size at capture time, for comparison against `covered`.
+    pub window: ScreenSize,
 }
 
 impl Coverage {
@@ -32,11 +32,11 @@ impl Coverage {
     /// A clipped capture is not merely lower quality, it is wrong: stretching a 40pt sliver across
     /// 859pt produces a smear that reads as a rendering bug.
     pub fn is_usable(&self) -> bool {
-        if self.window.0 <= 0.0 || self.window.1 <= 0.0 {
+        if self.window.width <= 0.0 || self.window.height <= 0.0 {
             return false;
         }
-        let wide = self.covered.0 / self.window.0;
-        let tall = self.covered.1 / self.window.1;
+        let wide = self.covered.width / self.window.width;
+        let tall = self.covered.height / self.window.height;
         wide >= MIN_USABLE_COVERAGE && tall >= MIN_USABLE_COVERAGE
     }
 }
@@ -62,11 +62,8 @@ const BACKDROP_SIZE_TOLERANCE: f64 = 2.0;
 /// FROM. This compares it against the frame it is drawn INTO, which a cached picture routinely no
 /// longer matches. See "A capture can be usable and still be the wrong shape" in
 /// `src/pictures/docs/capture-research.md`.
-pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
-    within_stretch(
-        CGSize::new(covered.0, covered.1),
-        CGSize::new(frame.0, frame.1),
-    )
+pub fn fits_frame<U: PointSpace>(covered: ScreenSize, frame: Size<U>) -> bool {
+    within_stretch(covered.to_cg(), frame.to_cg())
 }
 
 /// Whether `size` needs pixels this picture does not have: bigger than the capture in either
@@ -76,8 +73,8 @@ pub fn fits_frame(covered: (f64, f64), frame: (f64, f64)) -> bool {
 /// which is truthful; a grow needs content that does not exist until the app renders at the new
 /// size, so it holds for a fresh capture (see "Resizes through the overlay" in
 /// `src/animation/docs/animation-smoothness.md`).
-pub fn outgrows(covered: (f64, f64), size: CGSize) -> bool {
-    size.width > covered.0 * MAX_STRETCH || size.height > covered.1 * MAX_STRETCH
+pub fn outgrows<U: PointSpace>(covered: ScreenSize, size: Size<U>) -> bool {
+    size.width > covered.width * MAX_STRETCH || size.height > covered.height * MAX_STRETCH
 }
 
 /// Whether a window needs a fresh capture before it can be drawn at `size`.
@@ -85,7 +82,7 @@ pub fn outgrows(covered: (f64, f64), size: CGSize) -> bool {
 /// Having a drawable picture is not enough: it also has to match the size the window is now. A window
 /// resized from 859pt to 1147pt keeps a perfectly usable 859pt picture, and skipping it on that basis left
 /// it permanently the wrong shape, so every animation either stretched it or dropped it.
-pub fn needs_capture(cached: Option<Coverage>, size: (f64, f64)) -> bool {
+pub fn needs_capture<U: PointSpace>(cached: Option<Coverage>, size: Size<U>) -> bool {
     match cached {
         None => true,
         Some(coverage) => !fits_frame(coverage.covered, size),
@@ -101,8 +98,8 @@ pub fn needs_capture(cached: Option<Coverage>, size: (f64, f64)) -> bool {
 pub fn is_backdrop_worth_drawing(
     have_one_already: bool,
     has_wallpaper: bool,
-    covered: (f64, f64),
-    display: (f64, f64),
+    covered: ScreenSize,
+    display: ScreenSize,
 ) -> bool {
     spans_display(covered, display) && (has_wallpaper || !have_one_already)
 }
@@ -114,9 +111,9 @@ pub fn is_backdrop_worth_drawing(
 /// drawn on the built-in display's overlay is laid out at its own size, so only its top-left corner is
 /// visible and the wallpaper looks zoomed in. That happened intermittently, because a render requested for
 /// one display could land after the overlay had moved to the other.
-pub fn spans_display(covered: (f64, f64), display: (f64, f64)) -> bool {
-    (covered.0 - display.0).abs() <= BACKDROP_SIZE_TOLERANCE
-        && (covered.1 - display.1).abs() <= BACKDROP_SIZE_TOLERANCE
+pub fn spans_display(covered: ScreenSize, display: ScreenSize) -> bool {
+    (covered.width - display.width).abs() <= BACKDROP_SIZE_TOLERANCE
+        && (covered.height - display.height).abs() <= BACKDROP_SIZE_TOLERANCE
 }
 
 /// How old a fitting picture may grow before a warm re-captures it anyway.
@@ -135,8 +132,13 @@ pub fn picture_is_stale(age: Duration) -> bool {
 mod tests {
     use super::*;
 
+    fn size(width: f64, height: f64) -> ScreenSize { ScreenSize::new(width, height) }
+
     fn coverage(covered: (f64, f64), window: (f64, f64)) -> Coverage {
-        Coverage { covered, window }
+        Coverage {
+            covered: size(covered.0, covered.1),
+            window: size(window.0, window.1),
+        }
     }
 
     #[test]
@@ -156,16 +158,16 @@ mod tests {
     /// and only its corner was visible: the wallpaper appeared to zoom in for the length of an animation.
     #[test]
     fn a_picture_of_another_display_does_not_span_this_one() {
-        assert!(!spans_display((3008.0, 1692.0), (1728.0, 1117.0)));
-        assert!(!spans_display((1728.0, 1117.0), (3008.0, 1692.0)));
+        assert!(!spans_display(size(3008.0, 1692.0), size(1728.0, 1117.0)));
+        assert!(!spans_display(size(1728.0, 1117.0), size(3008.0, 1692.0)));
     }
 
     #[test]
     fn a_picture_of_this_display_spans_it_including_a_point_of_rounding() {
-        assert!(spans_display((1728.0, 1117.0), (1728.0, 1117.0)));
-        assert!(spans_display((1729.0, 1116.0), (1728.0, 1117.0)));
+        assert!(spans_display(size(1728.0, 1117.0), size(1728.0, 1117.0)));
+        assert!(spans_display(size(1729.0, 1116.0), size(1728.0, 1117.0)));
         assert!(
-            !spans_display((1725.0, 1117.0), (1728.0, 1117.0)),
+            !spans_display(size(1725.0, 1117.0), size(1728.0, 1117.0)),
             "3pt short is not the display"
         );
     }
@@ -183,18 +185,18 @@ mod tests {
     /// (reveal).
     #[test]
     fn a_grow_outgrows_its_picture_and_a_shrink_does_not() {
-        let picture = (859.0, 1081.0);
-        assert!(outgrows(picture, CGSize::new(1147.0, 1081.0)), "wider");
-        assert!(outgrows(picture, CGSize::new(859.0, 1300.0)), "taller");
-        assert!(!outgrows(picture, CGSize::new(859.0, 1081.0)), "same");
-        assert!(!outgrows(picture, CGSize::new(572.0, 1081.0)), "narrower");
+        let picture = size(859.0, 1081.0);
+        assert!(outgrows(picture, size(1147.0, 1081.0)), "wider");
+        assert!(outgrows(picture, size(859.0, 1300.0)), "taller");
+        assert!(!outgrows(picture, size(859.0, 1081.0)), "same");
+        assert!(!outgrows(picture, size(572.0, 1081.0)), "narrower");
         // Rounding is not a grow, same tolerance as everything else here.
-        assert!(!outgrows(picture, CGSize::new(861.0, 1081.0)));
+        assert!(!outgrows(picture, size(861.0, 1081.0)));
     }
 
     #[test]
     fn a_window_with_no_picture_needs_one() {
-        assert!(needs_capture(None, (859.0, 1081.0)));
+        assert!(needs_capture(None, size(859.0, 1081.0)));
     }
 
     /// The measured case: a strip re-fit widened a window from 859pt to 1147pt and its picture was never
@@ -206,15 +208,15 @@ mod tests {
             old.is_usable(),
             "the old picture is perfectly good for the old size"
         );
-        assert!(needs_capture(Some(old), (1147.0, 1081.0)));
+        assert!(needs_capture(Some(old), size(1147.0, 1081.0)));
     }
 
     #[test]
     fn a_picture_that_still_fits_needs_nothing() {
         let current = coverage((1147.0, 1081.0), (1147.0, 1081.0));
-        assert!(!needs_capture(Some(current), (1147.0, 1081.0)));
+        assert!(!needs_capture(Some(current), size(1147.0, 1081.0)));
         // Rounding is not a resize, the same tolerance the rest of the overlay uses.
-        assert!(!needs_capture(Some(current), (1146.0, 1081.0)));
+        assert!(!needs_capture(Some(current), size(1146.0, 1081.0)));
     }
 
     #[test]
@@ -284,8 +286,8 @@ mod tests {
         assert!(!is_backdrop_worth_drawing(
             true,
             false,
-            (1728.0, 1117.0),
-            (1728.0, 1117.0)
+            size(1728.0, 1117.0),
+            size(1728.0, 1117.0)
         ));
     }
 
@@ -294,8 +296,8 @@ mod tests {
         assert!(is_backdrop_worth_drawing(
             true,
             true,
-            (1728.0, 1117.0),
-            (1728.0, 1117.0)
+            size(1728.0, 1117.0),
+            size(1728.0, 1117.0)
         ));
     }
 
@@ -305,8 +307,8 @@ mod tests {
         assert!(is_backdrop_worth_drawing(
             false,
             false,
-            (1728.0, 1117.0),
-            (1728.0, 1117.0)
+            size(1728.0, 1117.0),
+            size(1728.0, 1117.0)
         ));
     }
 
@@ -317,14 +319,14 @@ mod tests {
         assert!(!is_backdrop_worth_drawing(
             true,
             true,
-            (1728.0, 1085.0),
-            (1728.0, 1117.0)
+            size(1728.0, 1085.0),
+            size(1728.0, 1117.0)
         ));
         assert!(!is_backdrop_worth_drawing(
             false,
             true,
-            (1728.0, 1085.0),
-            (1728.0, 1117.0)
+            size(1728.0, 1085.0),
+            size(1728.0, 1117.0)
         ));
     }
 
@@ -334,8 +336,8 @@ mod tests {
         assert!(!is_backdrop_worth_drawing(
             true,
             true,
-            (3456.0, 1117.0),
-            (1728.0, 1117.0)
+            size(3456.0, 1117.0),
+            size(1728.0, 1117.0)
         ));
     }
 
@@ -344,39 +346,39 @@ mod tests {
         assert!(is_backdrop_worth_drawing(
             true,
             true,
-            (1727.5, 1116.5),
-            (1728.0, 1117.0)
+            size(1727.5, 1116.5),
+            size(1728.0, 1117.0)
         ));
     }
 
     /// The measured failure: a full-width capture drawn into a half-width frame, squashed to fill.
     #[test]
     fn a_picture_of_the_wrong_shape_does_not_fit_its_frame() {
-        assert!(!fits_frame((1720.0, 1081.0), (859.0, 1081.0)));
-        assert!(!fits_frame((1720.0, 1081.0), (1499.0, 1656.0)));
+        assert!(!fits_frame(size(1720.0, 1081.0), size(859.0, 1081.0)));
+        assert!(!fits_frame(size(1720.0, 1081.0), size(1499.0, 1656.0)));
     }
 
     #[test]
     fn a_picture_of_the_right_shape_fits() {
-        assert!(fits_frame((859.0, 1081.0), (859.0, 1081.0)));
+        assert!(fits_frame(size(859.0, 1081.0), size(859.0, 1081.0)));
     }
 
     #[test]
     fn a_picture_a_rounding_error_off_still_fits() {
         // Captures land a pixel or two short, which is half a point at 2x, and rejecting those would
         // leave almost every window undrawn.
-        assert!(fits_frame((858.5, 1080.5), (859.0, 1081.0)));
+        assert!(fits_frame(size(858.5, 1080.5), size(859.0, 1081.0)));
     }
 
     #[test]
     fn a_picture_off_by_a_few_points_does_not_fit() {
         // Small enough to look like a near miss, large enough to shift the contents visibly.
-        assert!(!fits_frame((820.0, 1081.0), (859.0, 1081.0)));
+        assert!(!fits_frame(size(820.0, 1081.0), size(859.0, 1081.0)));
     }
 
     #[test]
     fn a_zero_sized_frame_never_fits_rather_than_dividing_by_zero() {
-        assert!(!fits_frame((859.0, 1081.0), (0.0, 0.0)));
+        assert!(!fits_frame(size(859.0, 1081.0), size(0.0, 0.0)));
     }
 
     /// A capture can cover its own window exactly and still be the wrong shape for where it is drawn.
@@ -386,7 +388,7 @@ mod tests {
         let full_width = coverage((1720.0, 1081.0), (1720.0, 1081.0));
         assert!(full_width.is_usable(), "it covers the window it was taken from");
         assert!(
-            !fits_frame(full_width.covered, (859.0, 1081.0)),
+            !fits_frame(full_width.covered, size(859.0, 1081.0)),
             "but not the frame it goes into"
         );
     }

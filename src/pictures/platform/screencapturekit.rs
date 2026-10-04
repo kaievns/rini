@@ -12,6 +12,7 @@ use block2::RcBlock;
 use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2_core_foundation::{CFRetained, CGSize};
+use rini_geometry::space::{FromCg, ScreenSize, ToCg};
 use objc2_core_media::CMSampleBuffer;
 use objc2_core_video::CVPixelBufferGetIOSurface;
 use objc2_foundation::{NSArray, NSError};
@@ -210,7 +211,7 @@ fn prepare(target: &PictureTarget, window: &SCWindow) -> Prepared {
     let size = if actual.width >= 1.0 && actual.height >= 1.0 {
         actual
     } else {
-        target.size
+        target.size.to_cg()
     };
     let filter = unsafe {
         SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), window)
@@ -290,11 +291,11 @@ fn window_picture(
     };
     Some(Picture {
         coverage: Coverage {
-            covered: (
+            covered: ScreenSize::new(
                 surface.width() as f64 / WINDOW_SCALE,
                 surface.height() as f64 / WINDOW_SCALE,
             ),
-            window: (size.width, size.height),
+            window: ScreenSize::from_cg(size),
         },
         image: Pixels::Surface(surface),
         source: Route::ScreenCaptureKit,
@@ -364,8 +365,11 @@ pub fn render_desktop(display: Display, done: impl Fn(Option<Picture>) + Send + 
                 .and_then(|buffer| CVPixelBufferGetIOSurface(Some(&buffer)));
             done(surface.as_deref().and_then(own_copy).map(|surface| Picture {
                 coverage: Coverage {
-                    covered: (surface.width() as f64 / scale, surface.height() as f64 / scale),
-                    window: (size.width, size.height),
+                    covered: ScreenSize::new(
+                        surface.width() as f64 / scale,
+                        surface.height() as f64 / scale,
+                    ),
+                    window: size,
                 },
                 image: Pixels::Surface(surface),
                 source: Route::ScreenCaptureKit,
@@ -454,7 +458,7 @@ mod tests {
         PictureTarget {
             window: rini_core::ids::WindowId::new(1, 1),
             server_id: rini_core::ids::WindowServerId::new(1),
-            size: CGSize::new(859.0, 1081.0),
+            size: ScreenSize::new(859.0, 1081.0),
         }
     }
 

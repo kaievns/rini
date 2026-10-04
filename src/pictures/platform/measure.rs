@@ -23,8 +23,9 @@ use crate::pictures::platform::picture::{Picture, Pixels, image_size};
 /// `BAND_PRINT`. `None` for a surface.
 pub fn band_print(picture: &Picture) -> Option<Vec<u8>> {
     let image = picture.image.bitmap()?;
-    let (width, height) = image_size(&image);
-    let scale = height / picture.coverage.covered.1.max(1.0);
+    let pixels = image_size(&image);
+    let (width, height) = (pixels.width, pixels.height);
+    let scale = height / picture.coverage.covered.height.max(1.0);
     let band = CGRect::new(
         CGPoint::new(0.0, 0.0),
         CGSize::new(width, (BAND_PT * scale).round().min(height)),
@@ -45,7 +46,8 @@ pub fn body_samples(picture: &Picture) -> Option<Vec<[u8; 3]>> {
         Pixels::Surface(surface) => surface_samples(surface),
         Pixels::Bitmap(_) | Pixels::Region { .. } => {
             let image = picture.image.bitmap()?;
-            let (width, height) = image_size(&image);
+            let pixels = image_size(&image);
+            let (width, height) = (pixels.width, pixels.height);
             let body = CGRect::new(
                 CGPoint::new(BODY_ACROSS.0 * width, BODY_DOWN.0 * height),
                 CGSize::new(
@@ -163,6 +165,7 @@ fn drawn(
 #[cfg(test)]
 mod tests {
     use objc2_core_graphics::CGBitmapContextCreateImage;
+    use rini_geometry::space::{FromCg, PixelRect, ScreenSize};
 
     use super::*;
     use crate::pictures::domain::coverage::Coverage;
@@ -200,7 +203,10 @@ mod tests {
         });
         Picture {
             image: Pixels::Bitmap(pixels),
-            coverage: Coverage { covered: size, window: size },
+            coverage: Coverage {
+                covered: ScreenSize::new(size.0, size.1),
+                window: ScreenSize::new(size.0, size.1),
+            },
             ..test_picture(CGSize::new(size.0, size.1))
         }
     }
@@ -257,7 +263,7 @@ mod tests {
         let region = Picture {
             image: Pixels::Region {
                 composite,
-                rect: rect(800.0, 0.0, 800.0, 600.0),
+                rect: PixelRect::from_cg(rect(800.0, 0.0, 800.0, 600.0)),
             },
             ..whole.clone()
         };

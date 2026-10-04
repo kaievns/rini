@@ -8,8 +8,8 @@
 
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::{CGRect, CGSize};
 use rini_core::ids::WindowId;
+use rini_geometry::space::{ScreenRect, ScreenSize};
 
 use crate::pictures::domain::coverage::{Coverage, needs_capture, picture_is_stale};
 use crate::pictures::domain::target::PictureTarget;
@@ -58,8 +58,8 @@ pub enum Hold {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Display {
     pub id: u32,
-    /// The whole display, in global coordinates.
-    pub frame: CGRect,
+    /// The whole display.
+    pub frame: ScreenRect,
     pub scale: f64,
 }
 
@@ -73,8 +73,8 @@ pub struct Held {
 /// Whether a warm captures a window drawn at `size`: nothing worth drawing is held, what is held no
 /// longer fits, or it is stale. See "A window that was resized keeps a usable picture" in
 /// `src/pictures/docs/capture-research.md`.
-pub fn wants_warm(held: Option<Held>, size: CGSize, now: Instant) -> bool {
-    needs_capture(held.map(|held| held.coverage), (size.width, size.height))
+pub fn wants_warm(held: Option<Held>, size: ScreenSize, now: Instant) -> bool {
+    needs_capture(held.map(|held| held.coverage), size)
         || held.is_some_and(|held| picture_is_stale(now.saturating_duration_since(held.taken)))
 }
 
@@ -144,7 +144,7 @@ struct Job<P> {
     /// Forgotten while its listing or capture was out, so what comes back is not kept.
     forgotten: bool,
     /// Clients owed the picture as a focus change, with the server frame they asked at.
-    deliver: Vec<(Tag, CGRect)>,
+    deliver: Vec<(Tag, ScreenRect)>,
 }
 
 impl<P> Job<P> {
@@ -280,7 +280,7 @@ impl<P> Schedule<P> {
 
     /// One capture of `target` for `tag`'s focus change. A capture already out began before the focus,
     /// so it is followed by one of its own.
-    fn ask_clipped(&mut self, tag: Tag, target: PictureTarget, frame: CGRect, now: Instant) {
+    fn ask_clipped(&mut self, tag: Tag, target: PictureTarget, frame: ScreenRect, now: Instant) {
         self.asked += 1;
         let waiting = self.jobs.iter_mut().find(|job| {
             job.target.window == target.window && matches!(job.stage, Stage::Waiting | Stage::Listed(_))
@@ -359,7 +359,7 @@ impl<P> Schedule<P> {
 
     /// A capture of `window` came back. `None` when what it brought may not be kept; else the clients
     /// owed it as a focus change, with the server frame each asked at.
-    pub fn captured(&mut self, window: WindowId) -> Option<Vec<(Tag, CGRect)>> {
+    pub fn captured(&mut self, window: WindowId) -> Option<Vec<(Tag, ScreenRect)>> {
         let at = self.position(window, |stage| matches!(stage, Stage::Capturing))?;
         let job = self.jobs.remove(at);
         (!job.forgotten).then_some(job.deliver)
@@ -484,8 +484,8 @@ impl<P> Schedule<P> {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGPoint;
     use rini_core::ids::WindowServerId;
+    use rini_geometry::space::ScreenPoint;
 
     use super::*;
 
@@ -495,7 +495,7 @@ mod tests {
         PictureTarget {
             window: wid(idx),
             server_id: WindowServerId::new(idx),
-            size: CGSize::new(width, 1081.0),
+            size: ScreenSize::new(width, 1081.0),
         }
     }
 
@@ -506,10 +506,14 @@ mod tests {
         }
     }
 
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> ScreenRect {
+        ScreenRect::new(ScreenPoint::new(x, y), ScreenSize::new(w, h))
+    }
+
     fn built_in() -> Display {
         Display {
             id: 1,
-            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0)),
+            frame: rect(0.0, 0.0, 1728.0, 1117.0),
             scale: 2.0,
         }
     }
@@ -517,7 +521,7 @@ mod tests {
     fn external() -> Display {
         Display {
             id: 2,
-            frame: CGRect::new(CGPoint::new(-670.0, -1692.0), CGSize::new(3008.0, 1692.0)),
+            frame: rect(-670.0, -1692.0, 3008.0, 1692.0),
             scale: 2.0,
         }
     }
@@ -763,16 +767,16 @@ mod tests {
         let now = Instant::now();
         let fits = Held {
             coverage: Coverage {
-                covered: (859.0, 1081.0),
-                window: (859.0, 1081.0),
+                covered: ScreenSize::new(859.0, 1081.0),
+                window: ScreenSize::new(859.0, 1081.0),
             },
             taken: now,
         };
-        assert!(!wants_warm(Some(fits), CGSize::new(859.0, 1081.0), now));
-        assert!(wants_warm(Some(fits), CGSize::new(1147.0, 1081.0), now), "resized");
-        assert!(wants_warm(None, CGSize::new(859.0, 1081.0), now), "nothing held");
+        assert!(!wants_warm(Some(fits), ScreenSize::new(859.0, 1081.0), now));
+        assert!(wants_warm(Some(fits), ScreenSize::new(1147.0, 1081.0), now), "resized");
+        assert!(wants_warm(None, ScreenSize::new(859.0, 1081.0), now), "nothing held");
         let later = now + Duration::from_secs(3);
-        assert!(wants_warm(Some(fits), CGSize::new(859.0, 1081.0), later), "stale");
+        assert!(wants_warm(Some(fits), ScreenSize::new(859.0, 1081.0), later), "stale");
 
         let mut schedule = Schedule::<()>::default();
         schedule.ask(ask(Priority::Warm, &[1, 2]), settled_by(now));
@@ -788,8 +792,8 @@ mod tests {
         let now = Instant::now();
         let fits = Held {
             coverage: Coverage {
-                covered: (859.0, 1081.0),
-                window: (859.0, 1081.0),
+                covered: ScreenSize::new(859.0, 1081.0),
+                window: ScreenSize::new(859.0, 1081.0),
             },
             taken: now,
         };
@@ -991,7 +995,7 @@ mod tests {
         }
     }
 
-    fn landing(window: u32, end: CGRect, until: Instant) -> Watch {
+    fn landing(window: u32, end: ScreenRect, until: Instant) -> Watch {
         Watch::Landing {
             tag: tag(),
             windows: vec![(target(window, 859.0), end)],
@@ -1002,7 +1006,7 @@ mod tests {
         }
     }
 
-    fn end() -> CGRect { CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(859.0, 1081.0)) }
+    fn end() -> ScreenRect { rect(4.0, 32.0, 859.0, 1081.0) }
 
     fn no_print(_: WindowId) -> Option<Vec<u8>> { None }
 
@@ -1072,7 +1076,7 @@ mod tests {
         let _ = schedule.desktop_rendered(built_in(), Some(now));
         schedule.hold(Hold::Transition, now);
         schedule.hint(Hint::Focused(wid(1)), now);
-        let clipped = CGRect::new(CGPoint::new(1300.0, 32.0), CGSize::new(859.0, 1081.0));
+        let clipped = rect(1300.0, 32.0, 859.0, 1081.0);
         schedule.watch(
             WatchId(1),
             Watch::Change {

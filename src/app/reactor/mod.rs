@@ -75,6 +75,7 @@ use events::{
 };
 use managers::LayoutManager;
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+use rini_geometry::space::{FromCg, ScreenRect, ScreenSize};
 pub use replay::{Record, replay};
 use rini_ipc::protocol::SwitchScope;
 use serde::{Deserialize, Serialize};
@@ -3105,7 +3106,7 @@ impl Reactor {
                     Some(crate::pictures::domain::target::PictureTarget {
                         window: *window,
                         server_id: state.info.sys_id?,
-                        size: state.frame_monotonic.size,
+                        size: ScreenSize::from_cg(state.frame_monotonic.size),
                     })
                 })
                 .collect();
@@ -3686,7 +3687,7 @@ impl Reactor {
                 targets.push(crate::pictures::domain::target::PictureTarget {
                     window: wid,
                     server_id,
-                    size: frame.size,
+                    size: ScreenSize::from_cg(frame.size),
                 });
             }
         }
@@ -4187,7 +4188,7 @@ impl Reactor {
             pictures.set_display(
                 crate::pictures::domain::schedule::Display {
                     id: screen.id.as_u32(),
-                    frame,
+                    frame: ScreenRect::from_cg(frame),
                     scale: screen.scale,
                 },
                 !self.config.settings.bar.enabled,

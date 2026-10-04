@@ -169,12 +169,14 @@ impl<T> Delivered<T> {
 mod tests {
     use std::num::NonZeroU32;
 
+    use rini_geometry::space::ScreenSize;
+
     use super::*;
 
     fn size(w: f64, h: f64) -> Coverage {
         Coverage {
-            covered: (w, h),
-            window: (w, h),
+            covered: ScreenSize::new(w, h),
+            window: ScreenSize::new(w, h),
         }
     }
 
@@ -209,7 +211,12 @@ mod tests {
         }
     }
 
-    fn coverage(covered: (f64, f64), window: (f64, f64)) -> Coverage { Coverage { covered, window } }
+    fn coverage(covered: (f64, f64), window: (f64, f64)) -> Coverage {
+        Coverage {
+            covered: ScreenSize::new(covered.0, covered.1),
+            window: ScreenSize::new(window.0, window.1),
+        }
+    }
 
     fn cache() -> PictureCache<Coverage> { PictureCache::new() }
 
@@ -218,7 +225,7 @@ mod tests {
         let mut cache = cache();
         cache.insert(wid(1), coverage((859.0, 1081.0), (859.0, 1081.0)));
         cache.insert(wid(1), coverage((40.0, 1081.0), (859.0, 1081.0)));
-        assert_eq!(cache.get(wid(1)).unwrap().covered.0, 859.0);
+        assert_eq!(cache.get(wid(1)).unwrap().covered.width, 859.0);
         assert!(cache.usable(wid(1)).is_some());
     }
 

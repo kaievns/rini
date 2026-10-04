@@ -8,6 +8,7 @@ use objc2_core_graphics::{
     CGBitmapContextCreateImage, CGBitmapContextGetBytesPerRow, CGBitmapContextGetData, CGColorSpace,
     CGContext, CGImage, kCGColorSpaceSRGB,
 };
+use rini_geometry::space::{FromCg, ScreenRect};
 
 use crate::bar::domain::ground::{self, BLUR};
 use crate::bar::domain::palette::N1;
@@ -26,8 +27,8 @@ pub struct Ground {
 /// unchanged wallpaper is not blurred and sent again. `None` when no wallpaper window is listed or
 /// the capture fails.
 pub fn picture_ground(bounds: CGRect) -> Option<(CFRetained<CGImage>, f64, u64)> {
-    let wallpaper: Vec<u32> =
-        desktop_backdrop_windows(bounds).wallpaper.iter().map(|id| id.as_u32()).collect();
+    let backdrop = desktop_backdrop_windows(ScreenRect::from_cg(bounds));
+    let wallpaper: Vec<u32> = backdrop.wallpaper.iter().map(|id| id.as_u32()).collect();
     if wallpaper.is_empty() {
         return None;
     }

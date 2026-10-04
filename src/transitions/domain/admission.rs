@@ -6,6 +6,7 @@
 
 use objc2_core_foundation::{CGRect, CGSize};
 use rini_core::ids::WindowId;
+use rini_geometry::space::{FromCg, ScreenSize};
 use rini_geometry::{SameAs, to_overlay_space};
 
 use crate::pictures::domain::coverage::outgrows;
@@ -90,8 +91,8 @@ pub(in crate::transitions) enum EndPicture {
 impl EndPicture {
     /// A window drawn from a picture covering `covered`: a grow its picture cannot cover at `to`, or a
     /// stand-in, which covers nothing, is awaited.
-    pub(in crate::transitions) fn of_picture(covered: (f64, f64), to: CGSize) -> Self {
-        if outgrows(covered, to) { Self::Awaited } else { Self::Lands }
+    pub(in crate::transitions) fn of_picture(covered: ScreenSize, to: CGSize) -> Self {
+        if outgrows(covered, ScreenSize::from_cg(to)) { Self::Awaited } else { Self::Lands }
     }
 
     /// A window that just opened: one flying from where it opened repaints where it ends, one already
@@ -325,10 +326,10 @@ mod tests {
     #[test]
     fn a_grow_and_a_stand_in_are_awaited_and_a_picture_that_covers_lands() {
         let column = CGSize::new(859.0, 1081.0);
-        assert_eq!(EndPicture::of_picture((859.0, 1081.0), CGSize::new(1720.0, 1081.0)), EndPicture::Awaited, "a grow");
-        assert_eq!(EndPicture::of_picture((0.0, 0.0), column), EndPicture::Awaited, "a stand-in covers nothing");
-        assert_eq!(EndPicture::of_picture((859.0, 1081.0), column), EndPicture::Lands);
-        assert_eq!(EndPicture::of_picture((1720.0, 1081.0), column), EndPicture::Lands, "a shrink crops");
+        assert_eq!(EndPicture::of_picture(ScreenSize::new(859.0, 1081.0), CGSize::new(1720.0, 1081.0)), EndPicture::Awaited, "a grow");
+        assert_eq!(EndPicture::of_picture(ScreenSize::new(0.0, 0.0), column), EndPicture::Awaited, "a stand-in covers nothing");
+        assert_eq!(EndPicture::of_picture(ScreenSize::new(859.0, 1081.0), column), EndPicture::Lands);
+        assert_eq!(EndPicture::of_picture(ScreenSize::new(1720.0, 1081.0), column), EndPicture::Lands, "a shrink crops");
     }
 
     /// A window that opened flies from where it opened and repaints at its slot, never held for; one

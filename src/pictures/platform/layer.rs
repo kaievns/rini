@@ -1,8 +1,9 @@
 //! Handing a picture to a Core Animation layer. One place decides how pixels become layer contents,
 //! for the flight overlay, the switcher's cards and the bar alike.
 
-use objc2_core_foundation::{CFType, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::CFType;
 use objc2_quartz_core::CALayer;
+use rini_geometry::space::{ContentsRect, Point, Size, ToCg};
 
 use crate::pictures::platform::picture::{Picture, Pixels, Route};
 
@@ -15,7 +16,7 @@ pub fn set_layer_contents(layer: &CALayer, picture: &Picture) {
         Pixels::Surface(surface) => set_contents(layer, surface),
         Pixels::Region { composite, .. } => set_contents(layer, composite),
     }
-    layer.setContentsRect(picture.image.unit_rect());
+    layer.setContentsRect(picture.image.unit_rect().to_cg());
 }
 
 /// Hands `picture`, a `CGImage` or an `IOSurface`, to `layer` as its contents.
@@ -27,11 +28,10 @@ pub fn set_contents(layer: &CALayer, picture: &CFType) {
     unsafe { layer.setContents(Some(picture.as_ref())) }
 }
 
-/// The part of a layer's contents that stretches, in unit coordinates, for `contentsCenter`. All of it
-/// for a picture; for the stand-in only its middle, so the rounded corners keep the window's radius at
-/// any size.
-pub fn stretch_region(picture: &Picture) -> CGRect {
-    let whole = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0));
+/// The part of a layer's contents that stretches, for `contentsCenter`. All of it for a picture; for
+/// the stand-in only its middle, so the rounded corners keep the window's radius at any size.
+pub fn stretch_region(picture: &Picture) -> ContentsRect {
+    let whole = ContentsRect::new(Point::new(0.0, 0.0), Size::new(1.0, 1.0));
     let Pixels::Bitmap(image) = &picture.image else {
         return whole;
     };
@@ -44,16 +44,17 @@ pub fn stretch_region(picture: &Picture) -> CGRect {
     }
     // The stand-in is a square of two corners and a two-pixel middle; see `stand_in_image`.
     let corner = (side - 2.0) / 2.0;
-    CGRect::new(
-        CGPoint::new(corner / side, corner / side),
-        CGSize::new(2.0 / side, 2.0 / side),
+    ContentsRect::new(
+        Point::new(corner / side, corner / side),
+        Size::new(2.0 / side, 2.0 / side),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use objc2::rc::Retained;
-    use objc2_core_foundation::CFRetained;
+    use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
+    use rini_geometry::space::{FromCg, PixelRect, ScreenSize};
 
     use super::*;
     use crate::pictures::platform::bitmap::rgba_bitmap_context;
@@ -171,7 +172,7 @@ mod tests {
             let region = Picture {
                 image: Pixels::Region {
                     composite: composite.clone(),
-                    rect,
+                    rect: PixelRect::from_cg(rect),
                 },
                 ..test_picture(CGSize::new(8.0, 4.0))
             };
@@ -201,7 +202,7 @@ mod tests {
         let top_right = Picture {
             image: Pixels::Region {
                 composite,
-                rect: CGRect::new(CGPoint::new(8.0, 0.0), CGSize::new(8.0, 4.0)),
+                rect: PixelRect::new(Point::new(8.0, 0.0), Size::new(8.0, 4.0)),
             },
             ..test_picture(CGSize::new(8.0, 4.0))
         };
@@ -219,7 +220,7 @@ mod tests {
         let region = Picture {
             image: Pixels::Region {
                 composite: quadrants(),
-                rect: CGRect::new(CGPoint::new(8.0, 0.0), CGSize::new(8.0, 4.0)),
+                rect: PixelRect::new(Point::new(8.0, 0.0), Size::new(8.0, 4.0)),
             },
             ..test_picture(CGSize::new(8.0, 4.0))
         };
@@ -229,7 +230,7 @@ mod tests {
             CGRect::new(CGPoint::new(0.5, 0.0), CGSize::new(0.5, 0.5))
         );
         set_layer_contents(&layer, &test_picture(CGSize::new(1.0, 1.0)));
-        assert_eq!(layer.contentsRect(), crate::pictures::domain::region::WHOLE);
+        assert_eq!(layer.contentsRect(), crate::pictures::domain::region::WHOLE.to_cg());
     }
 
     /// A stand-in stretches only its two-pixel middle, so its corners keep the window's radius; a real
@@ -237,13 +238,13 @@ mod tests {
     #[test]
     fn only_a_stand_in_stretches_nine_slice() {
         let (image, _) = stand_in_image(2.0).expect("drawn");
-        let stand_in = stand_in_picture(CGSize::new(859.0, 1081.0), image);
+        let stand_in = stand_in_picture(ScreenSize::new(859.0, 1081.0), image);
 
         let region = stretch_region(&stand_in);
         assert!((region.origin.x - 20.0 / 42.0).abs() < 1e-9);
         assert!((region.size.width - 2.0 / 42.0).abs() < 1e-9);
 
         let whole = stretch_region(&test_picture(CGSize::new(859.0, 1081.0)));
-        assert_eq!(whole, CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1.0, 1.0)));
+        assert_eq!(whole, ContentsRect::new(Point::new(0.0, 0.0), Size::new(1.0, 1.0)));
     }
 }

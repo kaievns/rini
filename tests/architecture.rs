@@ -21,9 +21,10 @@ const FEATURES: [&str; 10] = [
 ];
 
 /// macOS and FFI surfaces a pure module must not reach for. `objc2_core_foundation` is absent on
-/// purpose: `CGRect`, `CGPoint` and `CGSize` are the arithmetic every layout decision is in, and
-/// `rini-geometry` wraps them. `rini_skylight_sys` is absent too, but only for its plain value types
-/// — see `SKYLIGHT_VALUE_TYPES`.
+/// purpose for the features not yet on rini-geometry's spaces: there `CGRect`, `CGPoint` and `CGSize`
+/// are the arithmetic every layout decision is in, and `rini-geometry` wraps them. The features that
+/// are on the spaces are `TYPED`, and name no CG geometry outside `platform/`. `rini_skylight_sys` is
+/// absent too, but only for its plain value types — see `SKYLIGHT_VALUE_TYPES`.
 const MACOS: [&str; 15] = [
     "objc2::",
     "objc2_app_kit",
@@ -51,6 +52,13 @@ const SKYLIGHT_VALUE_TYPES: [&str; 5] = [
     "CGSEventType",
     "KnownCGSEvent",
 ];
+
+/// The features whose interfaces and `domain/` speak rini-geometry's spaces (`space` in
+/// `crates/rini-geometry`). CG geometry is their boundary, not their arithmetic.
+const TYPED: [&str; 1] = ["pictures"];
+
+/// CG geometry a typed feature leaves to its `platform/`.
+const CG_GEOMETRY: [&str; 4] = ["objc2_core_foundation", "CGRect", "CGPoint", "CGSize"];
 
 /// Still on both sides of the domain/platform line: a pure model mixed with the reads that fill it.
 /// `screen.rs` wants splitting on the `System` trait it is already generic over. Nothing may be added
@@ -177,6 +185,41 @@ fn nothing_outside_platform_touches_macos() {
         broken.is_empty(),
         "macOS lives in `platform/`. A pure module compiles and tests without AppKit, which is the \
          whole return on this layout:\n{}",
+        broken.join("\n")
+    );
+}
+
+#[test]
+fn a_typed_feature_names_no_cg_geometry_outside_platform() {
+    let mut broken = Vec::new();
+    for feature in TYPED {
+        for path in rust_files(&Path::new("src").join(feature)) {
+            let name = slash(&path);
+            if name.contains("/platform/") {
+                continue;
+            }
+            for (line, code) in code_lines(&path) {
+                for cg in CG_GEOMETRY {
+                    if code.contains(cg) {
+                        broken.push(format!("{name}:{line}: {cg} in {}", code.trim()));
+                    }
+                }
+            }
+        }
+    }
+    for path in rust_files(Path::new("src")) {
+        for (line, code) in code_lines(&path) {
+            if code.contains("cast_unit") {
+                broken.push(format!("{}:{line}: {}", slash(&path), code.trim()));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "a typed feature speaks rini-geometry's spaces: a CG value becomes typed on the line where it \
+         enters an interface or `domain/`, and CG again where it reaches objc2, in `platform/`. A \
+         size or a displacement crosses point spaces through `Respace`, never `cast_unit`. See \
+         crates/rini-geometry/docs/README.md:\n{}",
         broken.join("\n")
     );
 }

@@ -93,6 +93,7 @@ crossbeam-channel = "0.5"
 dashmap = "6.1.0"
 slotmap = { version = "1.0.7", features = ["serde"], default-features = false }
 dirs = "6.0.0"
+euclid = { version = "0.22.14", default-features = false }
 # The commit that dropped proc-macro-error2 (#57): 3.4.0 still pulls it, and its future-incompat
 # report printed on every build.
 knus = { git = "https://github.com/TheLostLambda/knus", rev = "20eb6f76530b73ff2f1b68e4cca415683f38a053" }

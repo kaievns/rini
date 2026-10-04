@@ -19,7 +19,7 @@ src/switcher/     the window switcher popup
 src/bar/          the menu bar across the top of every display
 
 crates/rini-core/           identity types and file locations
-crates/rini-geometry/       rect arithmetic
+crates/rini-geometry/       rect arithmetic and coordinate spaces
 crates/rini-runloop/        the CFRunLoop executor, timers, span channels
 crates/rini-ipc/            the wire language and its Mach transport
 crates/rini-mach-sys/       raw Mach messaging
@@ -89,10 +89,12 @@ permission, builds every actor and joins them.
    `windows/domain/request.rs` are those ports for `windows`;
    `pictures/domain/target.rs` for `pictures`; `animation/domain/motion/surface.rs` (`TileGeometry`,
    `SurfaceGeometry`) for `animation`; `transitions/domain/request.rs` for `transitions`.
-   `objc2_core_foundation`'s `CGRect`/`CGPoint`/`CGSize` are exempt — they are
-   the arithmetic every layout decision is in. So are the window server's plain
-   value types (`SpaceId`, `WindowServerId`, `DisplayReconfigFlags`), which are
-   vocabulary rather than API.
+   `objc2_core_foundation`'s `CGRect`/`CGPoint`/`CGSize` are exempt for the
+   features not yet on rini-geometry's spaces, where they are the arithmetic
+   every layout decision is in; `TYPED` in `tests/architecture.rs` lists those
+   that are, and their `domain/` names no CG geometry. So are the window server's
+   plain value types (`SpaceId`, `WindowServerId`, `DisplayReconfigFlags`), which
+   are vocabulary rather than API.
 3. **Features depend on features in one direction.** `windows` is the most
    upstream: it knows nothing about screens. `displays` depends on it, because
    "which windows are on this space" is a window-server query over window ids.
@@ -131,7 +133,9 @@ permission, builds every actor and joins them.
 `tests/architecture.rs` checks rules 1 and 2 against the tree on every
 `cargo test`, with comments stripped so prose about `platform` is not a
 dependency on it. One file is named as an exception, and a further test fails if
-it stops needing to be. Rule 4 the compiler checks: a crate cannot name the
+it stops needing to be. `a_typed_feature_names_no_cg_geometry_outside_platform`
+holds each feature in `TYPED` to rini-geometry's spaces outside its `platform/`,
+and keeps `cast_unit` out of `src/`. Rule 4 the compiler checks: a crate cannot name the
 application's modules. `cargo build` catches the crudest breaches of rule 7 —
 an unread field or an unreachable branch is a warning, and the build carries
 none. Rules 3, 5, 6 and the rest of 7 are conventions.

@@ -12,6 +12,7 @@ use std::time::Instant;
 use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGImage, CGWindowListOption};
 use rini_core::ids::{WindowId, WindowServerId};
+use rini_geometry::space::{FromCg, PixelRect, ScreenPoint, ScreenRect, ScreenSize, ToCg};
 use rini_skylight_sys::{SLSHWCaptureWindowList, SLSMainConnectionID};
 
 use crate::pictures::domain::coverage::Coverage;
@@ -45,16 +46,16 @@ fn composite(windows: &[WindowServerId]) -> Option<CFRetained<CGImage>> {
 /// One composite of several windows, as one picture: the desktop backdrop, and another app's bar.
 pub fn capture_list_via_skylight(
     windows: &[WindowServerId],
-    covers: (f64, f64),
+    covers: ScreenSize,
     scale: f64,
 ) -> Option<Picture> {
     let image = composite(windows)?;
     let scale = if scale > 0.0 { scale } else { 1.0 };
-    let (px_w, px_h) = image_size(&image);
+    let pixels = image_size(&image);
     Some(Picture {
         image: Pixels::Bitmap(image),
         coverage: Coverage {
-            covered: (px_w / scale, px_h / scale),
+            covered: ScreenSize::new(pixels.width / scale, pixels.height / scale),
             window: covers,
         },
         source: Route::SkyLight,
@@ -157,11 +158,12 @@ fn call(
         return None;
     }
     let mut ids: Vec<WindowServerId> = windows.iter().map(|window| window.server_id).collect();
-    let mut frames: Vec<CGRect> = windows.iter().map(|window| window.frame).collect();
+    let mut frames: Vec<ScreenRect> =
+        windows.iter().map(|window| ScreenRect::from_cg(window.frame)).collect();
     for (id, frame) in behind {
         if !ids.contains(id) {
             ids.push(*id);
-            frames.push(*frame);
+            frames.push(ScreenRect::from_cg(*frame));
         }
     }
     if let Some(desktop) = desktop {
@@ -169,9 +171,9 @@ fn call(
         frames.extend(desktop.bounds);
     }
     let image = composite(&ids)?;
-    let covers = composite_frame(&frames, display)?;
+    let covers = composite_frame(&frames, ScreenRect::from_cg(display))?;
     let scale = composite_scale(covers, image_size(&image))?;
-    Some((image, covers.origin, scale))
+    Some((image, covers.origin.to_cg(), scale))
 }
 
 /// The pixel rect of a window at `frame` in a composite whose top-left is `origin`, and its crop, if the
@@ -181,22 +183,22 @@ fn cut(
     origin: CGPoint,
     scale: f64,
     frame: CGRect,
-) -> Option<(CGRect, CFRetained<CGImage>)> {
-    let rect = pixel_rect(frame, origin, scale);
+) -> Option<(PixelRect, CFRetained<CGImage>)> {
+    let rect = pixel_rect(ScreenRect::from_cg(frame), ScreenPoint::from_cg(origin), scale);
     if !contains(image_size(composite), rect) {
         return None;
     }
-    Some((rect, CGImage::with_image_in_rect(Some(composite), rect)?))
+    Some((rect, CGImage::with_image_in_rect(Some(composite), rect.to_cg())?))
 }
 
 fn region(
     window: &OnScreen,
     composite: &CFRetained<CGImage>,
-    rect: CGRect,
+    rect: PixelRect,
     taken: Instant,
     carries_blur: bool,
 ) -> (WindowId, Picture) {
-    let size = (window.frame.size.width, window.frame.size.height);
+    let size = ScreenSize::from_cg(window.frame.size);
     (
         window.window,
         Picture {
@@ -227,7 +229,7 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
         return None;
     }
     let framed = capture_window_rect(window, frame, scale)?;
-    let (px_w, px_h) = image_size(&framed);
+    let pixels = image_size(&framed);
     let displays = active_display_bounds();
     let composite = fully_on_a_display(frame, &displays)
         .then(|| capture_below_and_including(window, frame))
@@ -243,8 +245,8 @@ pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture>
     Some(Picture {
         image: Pixels::Bitmap(image),
         coverage: framed_coverage(
-            (px_w / scale, px_h / scale),
-            (frame.size.width, frame.size.height),
+            ScreenSize::new(pixels.width / scale, pixels.height / scale),
+            ScreenSize::from_cg(frame.size),
             whole,
         ),
         source: Route::SkyLight,
@@ -283,9 +285,9 @@ fn capture_window_rect(
         server_id.as_u32(),
         objc2_core_graphics::CGWindowImageOption::empty(),
     )?;
-    let (px_w, px_h) = image_size(&framed);
-    if (px_w - frame.size.width * scale).abs() > 2.0
-        || (px_h - frame.size.height * scale).abs() > 2.0
+    let pixels = image_size(&framed);
+    if (pixels.width - frame.size.width * scale).abs() > 2.0
+        || (pixels.height - frame.size.height * scale).abs() > 2.0
     {
         return None;
     }
@@ -379,9 +381,9 @@ fn stayed_wholly_on_a_display(before: CGRect, after: Option<CGRect>, displays: &
 /// What a framed capture covers. The window server returns the full requested rect whatever is on
 /// screen, with the part off every display transparent, so the image's size says nothing: only a
 /// window that stayed wholly on a display is covered.
-fn framed_coverage(inner: (f64, f64), window: (f64, f64), whole: bool) -> Coverage {
+fn framed_coverage(inner: ScreenSize, window: ScreenSize, whole: bool) -> Coverage {
     Coverage {
-        covered: if whole { inner } else { (0.0, 0.0) },
+        covered: if whole { inner } else { ScreenSize::zero() },
         window,
     }
 }
@@ -436,7 +438,7 @@ mod tests {
         let laptop = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 1117.0));
         let half_off = CGRect::new(CGPoint::new(1300.0, 32.0), CGSize::new(859.0, 1081.0));
         let slot = CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(859.0, 1081.0));
-        let size = (859.0, 1081.0);
+        let size = ScreenSize::new(859.0, 1081.0);
 
         let whole = stayed_wholly_on_a_display(slot, Some(slot), &[laptop]);
         assert!(framed_coverage(size, size, whole).is_usable());

@@ -20,6 +20,7 @@ use objc2_quartz_core::{
     CAMediaTimingFunction, CAPropertyAnimation, CATransaction, kCAMediaTimingFunctionLinear,
 };
 use rini_core::ids::WindowId;
+use rini_geometry::space::{ContentsRect, FromCg, ToCg};
 
 use crate::animation::domain::motion::easing::CubicBezier;
 use crate::animation::domain::motion::hairline::{
@@ -463,7 +464,7 @@ fn install_crop_grid(tile: &Tile, track: &Track) {
             remove_under(layer, &[PIECE_SIZE_KEY]);
         }
         let contents = animation(track, "contentsRect", |value| {
-            rect_object(within(tile.region, piece(value).contents))
+            rect_object(within(tile.region, ContentsRect::from_cg(piece(value).contents)).to_cg())
         });
         add_under(layer, &contents, PIECE_CONTENTS_KEY);
     }
@@ -505,10 +506,9 @@ struct Tile {
     crop_grid: Option<CropGrid>,
     /// Size in points of the picture the crop pieces show; `None` when stretching.
     crop_of: Option<CGSize>,
-    /// The part of the contents image that is the tile's picture, in unit coordinates, which the
-    /// crop pieces' contents are composed with: all of it unless the picture is a region of a
-    /// composite.
-    region: CGRect,
+    /// The part of the contents image that is the tile's picture, which the crop pieces' contents
+    /// are composed with: all of it unless the picture is a region of a composite.
+    region: ContentsRect,
     companion: bool,
 }
 
@@ -715,10 +715,9 @@ impl TileOverlay {
         CATransaction::setDisableActions(true);
         match snapshot {
             Some(snapshot) => {
-                let (covered_w, covered_h) = snapshot.coverage.covered;
                 self.bar.setContentsScale(self.tree.scale);
                 set_layer_contents(&self.bar, snapshot);
-                self.bar.setFrame(bar_frame(strip, CGSize::new(covered_w, covered_h)));
+                self.bar.setFrame(bar_frame(strip, snapshot.coverage.covered.to_cg()));
                 self.bar_drawn = true;
                 self.bar.setHidden(false);
             }
@@ -733,10 +732,9 @@ impl TileOverlay {
         let Some(snapshot) = snapshot else { return };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        let (covered_w, covered_h) = snapshot.coverage.covered;
         self.backdrop.setFrame(CGRect::new(
             CGPoint::new(0.0, 0.0),
-            CGSize::new(covered_w, covered_h),
+            snapshot.coverage.covered.to_cg(),
         ));
         self.backdrop.setContentsScale(self.tree.scale);
         set_layer_contents(&self.backdrop, snapshot);
@@ -1517,14 +1515,13 @@ fn set_tile_content(
     }
     // Written on every install because tile layers are pooled: a layer that last held a stand-in must
     // not stretch the next window's picture nine-slice.
-    entry.picture.setContentsCenter(stretch_region(snapshot));
+    entry.picture.setContentsCenter(stretch_region(snapshot).to_cg());
 }
 
 /// Points a crop-drawn tile at `snapshot`: the size its pieces cut, and the part of the contents
 /// image that is the picture.
 fn crop_to(entry: &mut Tile, snapshot: &Picture) {
-    let covered = snapshot.coverage.covered;
-    entry.crop_of = Some(CGSize::new(covered.0, covered.1));
+    entry.crop_of = Some(snapshot.coverage.covered.to_cg());
     entry.region = snapshot.image.unit_rect();
 }
 
@@ -1535,7 +1532,7 @@ fn layout_crop_grid(entry: &Tile, frame: CGSize) {
     };
     for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
         layer.setFrame(piece.frame);
-        layer.setContentsRect(within(entry.region, piece.contents));
+        layer.setContentsRect(within(entry.region, ContentsRect::from_cg(piece.contents)).to_cg());
     }
 }
 
@@ -2037,7 +2034,9 @@ mod tests {
             );
             assert_eq!(
                 installed(layer, "rini.piece.contents", rect_in),
-                expected(&resizing, |v| within(tile.region, piece(v).contents))
+                expected(&resizing, |v| {
+                    within(tile.region, ContentsRect::from_cg(piece(v).contents)).to_cg()
+                })
             );
         }
         let corner = |v: Value| corner_radius(tile.radius, size(v));
@@ -2388,12 +2387,13 @@ mod tests {
         tile.crop_grid = Some(new_crop_grid(&tile.picture));
         let picture = CGSize::new(856.0, 1081.0);
         tile.crop_of = Some(picture);
-        tile.region = rect(0.5, 0.0, 0.5, 1.0);
+        tile.region = ContentsRect::from_cg(rect(0.5, 0.0, 0.5, 1.0));
         let frame = CGSize::new(600.0, 1081.0);
         layout_crop_grid(&tile, frame);
         let grid = tile.crop_grid.as_ref().unwrap();
         for (layer, piece) in grid.pieces.iter().zip(crop_pieces(picture, frame)) {
-            assert_eq!(layer.contentsRect(), within(tile.region, piece.contents));
+            let shown = within(tile.region, ContentsRect::from_cg(piece.contents)).to_cg();
+            assert_eq!(layer.contentsRect(), shown);
             assert!(
                 layer.contentsRect().origin.x >= 0.5,
                 "{:?}",
@@ -2408,8 +2408,9 @@ mod tests {
         for (layer, (a, b)) in grid.pieces.iter().zip(ends) {
             let contents = installed(layer, "rini.piece.contents", rect_in);
             assert_eq!(contents.form, Form::Between, "a basic animation");
-            assert_eq!(contents.keys[0].1, within(tile.region, a.contents));
-            assert_eq!(contents.keys[1].1, within(tile.region, b.contents));
+            let shown = |piece: CGRect| within(tile.region, ContentsRect::from_cg(piece)).to_cg();
+            assert_eq!(contents.keys[0].1, shown(a.contents));
+            assert_eq!(contents.keys[1].1, shown(b.contents));
         }
         tile.region = WHOLE;
         layout_crop_grid(&tile, frame);
@@ -2434,10 +2435,11 @@ mod tests {
         let region = test_region();
         set_tile_content(&mut tile, &region, ContentMode::Crop, frame, 2.0);
         assert_eq!(tile.region, region.image.unit_rect());
-        assert_eq!(tile.region, rect(0.5, 0.0, 0.5, 1.0));
+        assert_eq!(tile.region.to_cg(), rect(0.5, 0.0, 0.5, 1.0));
         let grid = tile.crop_grid.as_ref().unwrap();
         for (layer, piece) in grid.pieces.iter().zip(crop_pieces(frame, frame)) {
-            assert_eq!(layer.contentsRect(), within(tile.region, piece.contents));
+            let shown = within(tile.region, ContentsRect::from_cg(piece.contents)).to_cg();
+            assert_eq!(layer.contentsRect(), shown);
         }
         set_tile_content(&mut tile, &test_picture(frame), ContentMode::Crop, frame, 2.0);
         assert_eq!(tile.region, WHOLE);
@@ -2463,7 +2465,9 @@ mod tests {
             let piece = |v: Value| crop_pieces(landed, as_frame(v).size)[index];
             assert_eq!(
                 installed(layer, "rini.piece.contents", rect_in),
-                expected(&track, |v| within(tile.region, piece(v).contents))
+                expected(&track, |v| {
+                    within(tile.region, ContentsRect::from_cg(piece(v).contents)).to_cg()
+                })
             );
             assert_eq!(layer.frame(), crop_pieces(landed, to.size)[index].frame);
         }

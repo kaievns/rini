@@ -9,6 +9,7 @@ use objc2_core_graphics::{
 };
 use rini_core::ids::WindowServerId;
 use rini_geometry::CGRectExt;
+use rini_geometry::space::{FromCg, ScreenRect, ToCg};
 
 use crate::pictures::domain::backdrop::{is_bar_layer, is_desktop_layer};
 use crate::windows::platform::window_server::{
@@ -22,7 +23,7 @@ pub struct DesktopBackdrop {
     pub windows: Vec<WindowServerId>,
     pub wallpaper: Vec<WindowServerId>,
     /// The union of the windows' bounds, or `None` with none listed.
-    pub bounds: Option<CGRect>,
+    pub bounds: Option<ScreenRect>,
 }
 
 impl DesktopBackdrop {
@@ -33,7 +34,8 @@ impl DesktopBackdrop {
 }
 /// Window server ids of the desktop backdrop: everything at or below the desktop level on `display`.
 /// See "The wallpaper is not reliably a window" in `src/pictures/docs/capture-research.md`.
-pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
+pub fn desktop_backdrop_windows(display: ScreenRect) -> DesktopBackdrop {
+    let display = display.to_cg();
     let mut windows = Vec::new();
     let mut wallpaper = Vec::new();
     let mut union: Option<CGRect> = None;
@@ -77,7 +79,7 @@ pub fn desktop_backdrop_windows(display: CGRect) -> DesktopBackdrop {
     DesktopBackdrop {
         windows,
         wallpaper,
-        bounds: union,
+        bounds: union.map(ScreenRect::from_cg),
     }
 }
 /// The bar's windows and the rect they occupy together.
@@ -86,10 +88,11 @@ pub struct BarStrip {
     /// Union of the windows' bounds, or `None` without a bar. A composite capture covers only this
     /// union, so it must be drawn at the union's origin ("The bar has to be captured on its own" in
     /// `src/pictures/docs/capture-research.md`).
-    pub bounds: Option<CGRect>,
+    pub bounds: Option<ScreenRect>,
 }
 /// The bar sitting in the menu bar strip, with the rect it occupies.
-pub fn bar_strip(display: CGRect) -> BarStrip {
+pub fn bar_strip(display: ScreenRect) -> BarStrip {
+    let display = display.to_cg();
     let mut windows = Vec::new();
     let mut bounds: Option<CGRect> = None;
     for window in get_windows_raw::<CFDictionary<CFString, CFType>>(
@@ -123,5 +126,8 @@ pub fn bar_strip(display: CGRect) -> BarStrip {
         });
         windows.push(WindowServerId::new(id as u32));
     }
-    BarStrip { windows, bounds }
+    BarStrip {
+        windows,
+        bounds: bounds.map(ScreenRect::from_cg),
+    }
 }

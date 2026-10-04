@@ -15,9 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use objc2_core_foundation::{CFRetained, CGRect, CGSize};
+use objc2_core_foundation::{CFRetained, CGRect};
 use objc2_core_graphics::CGImage;
 use rini_core::ids::{WindowId, WindowServerId};
+use rini_geometry::space::{FromCg, ScreenRect, ScreenSize, ToCg};
 use rini_runloop::channel::{self, Receiver, Sender};
 use tracing::{debug, warn};
 
@@ -82,8 +83,8 @@ pub type Sink = Box<dyn Fn(Event) + Send>;
 pub struct Dressing {
     pub desktop: Option<Picture>,
     pub bar: Option<Picture>,
-    /// Where the bar sits, in global coordinates. With no picture, the picture already drawn stays.
-    pub strip: Option<CGRect>,
+    /// Where the bar sits. With no picture, the picture already drawn stays.
+    pub strip: Option<ScreenRect>,
 }
 
 /// The handle to the service. Any thread may hold one.
@@ -115,7 +116,7 @@ struct DisplayPictures {
     /// The desktop as ScreenCaptureKit rendered it: the only source that reliably has the wallpaper.
     desktop: Option<Picture>,
     /// The last usable picture of the bar, and the strip it covers.
-    bar: Option<(Picture, CGRect)>,
+    bar: Option<(Picture, ScreenRect)>,
     /// The desktop's windows, listed after a baked call's: read once per display, and again when a
     /// baked composite comes back another shape, which a desktop window gone from it makes.
     desktop_windows: Option<DesktopBackdrop>,
@@ -129,7 +130,7 @@ impl DisplayPictures {
         held: Option<Display>,
         display: Display,
         bar_on_screen: bool,
-    ) -> (Option<Picture>, Option<(Picture, CGRect)>) {
+    ) -> (Option<Picture>, Option<(Picture, ScreenRect)>) {
         if held != Some(display) {
             return (None, None);
         }
@@ -164,8 +165,8 @@ fn land_desktop<P>(
     display: Display,
     picture: Option<Picture>,
 ) -> bool {
-    let size = (display.frame.size.width, display.frame.size.height);
-    let picture = picture.filter(|picture| spans_display(picture.coverage.covered, size));
+    let picture =
+        picture.filter(|picture| spans_display(picture.coverage.covered, display.frame.size));
     let kept = schedule.desktop_rendered(display, picture.as_ref().map(|picture| picture.taken));
     if kept {
         held.desktop = picture;
@@ -190,7 +191,7 @@ fn landing(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
     window: WindowId,
-    kept: Option<Vec<(Tag, CGRect)>>,
+    kept: Option<Vec<(Tag, ScreenRect)>>,
     picture: Option<Picture>,
 ) -> Vec<Event> {
     let mut events = Vec::new();
@@ -222,7 +223,8 @@ fn wanted(looks: &[Look], frames: &[Option<CGRect>], display: Option<Display>) -
         .zip(frames)
         .filter_map(|(look, frame)| {
             let frame = (*frame)?;
-            look.accepts.iter().any(|accept| accept.accepts(frame, display.frame)).then_some(
+            let at = ScreenRect::from_cg(frame);
+            look.accepts.iter().any(|accept| accept.accepts(at, display.frame)).then_some(
                 skylight::OnScreen {
                     window: look.target.window,
                     server_id: look.target.server_id,
@@ -277,13 +279,13 @@ fn round<P>(
         .into_iter()
         .map(|(window, frame)| Seen {
             window,
-            frame,
+            frame: frame.map(ScreenRect::from_cg),
             capture: captures.get(&window).cloned().unwrap_or(Capture::Missed),
         })
         .collect();
     let outcome = schedule.seen(now, &seen);
     for delivery in outcome.deliveries {
-        let pictures: Vec<(WindowId, Picture, CGRect)> = delivery
+        let pictures: Vec<(WindowId, Picture, ScreenRect)> = delivery
             .windows
             .iter()
             .filter_map(|(window, frame)| Some((*window, took.get(window)?.clone(), *frame)))
@@ -426,7 +428,7 @@ impl Pictures {
 
     /// A stand-in for a window of `size` at `scale`, never cached. `None` only if its pixels cannot be
     /// drawn.
-    pub fn stand_in(&self, size: CGSize, scale: f64) -> Option<Picture> {
+    pub fn stand_in(&self, size: ScreenSize, scale: f64) -> Option<Picture> {
         let mut shared = self.lock();
         if shared.stand_in.as_ref().is_none_or(|drawn| drawn.scale != scale) {
             let (image, _) = stand_in_image(scale)?;
@@ -476,7 +478,7 @@ impl Pictures {
         Dressing { desktop, bar, strip }
     }
 
-    fn keep_bar(&self, display: Display, picture: Picture, strip: CGRect) {
+    fn keep_bar(&self, display: Display, picture: Picture, strip: ScreenRect) {
         let mut shared = self.lock();
         if shared.schedule.display() == Some(display) {
             shared.display.bar = Some((picture, strip));
@@ -506,7 +508,7 @@ fn held(cache: &PictureCache<Picture>, window: WindowId) -> Option<Held> {
 /// landed. See "Which route serves, and why the render wins" in
 /// `src/pictures/docs/capture-research.md`.
 fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
-    let size = (display.frame.size.width, display.frame.size.height);
+    let size = display.frame.size;
     let desktop = desktop_backdrop_windows(display.frame);
     let usable = capture_list_via_skylight(&desktop.windows, size, display.scale).filter(|picture| {
         is_backdrop_worth_drawing(drawn, desktop.has_wallpaper(), picture.coverage.covered, size)
@@ -515,7 +517,7 @@ fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
         debug!(
             windows = desktop.windows.len(),
             has_wallpaper = desktop.has_wallpaper(),
-            wanted = format!("{:.0}x{:.0}", size.0, size.1),
+            wanted = format!("{:.0}x{:.0}", size.width, size.height),
             "no drawable desktop yet; keeping whatever the backdrop already holds"
         );
     }
@@ -524,16 +526,12 @@ fn composite_desktop(display: Display, drawn: bool) -> Option<Picture> {
 
 /// The bar listed in `strip`, captured on its own to keep its alpha, and the strip it covers. See "The
 /// bar has to be captured on its own" in `src/pictures/docs/capture-research.md`.
-fn bar_of(strip: &BarStrip, scale: f64) -> (Option<Picture>, Option<CGRect>) {
+fn bar_of(strip: &BarStrip, scale: f64) -> (Option<Picture>, Option<ScreenRect>) {
     let Some(bounds) = strip.bounds else {
         return (None, None);
     };
-    let picture = capture_list_via_skylight(
-        &strip.windows,
-        (bounds.size.width, bounds.size.height),
-        scale,
-    )
-    .filter(|picture| picture.fits(bounds.size));
+    let picture = capture_list_via_skylight(&strip.windows, bounds.size, scale)
+        .filter(|picture| picture.fits(bounds.size));
     (picture, Some(bounds))
 }
 
@@ -700,13 +698,14 @@ impl Service {
     /// Every window on screen on `display`, pictured in the background under the ids a window rini
     /// does not manage is pictured under.
     fn warm_visible(&self, display: Display) {
+        let on = display.frame.to_cg();
         let targets: Vec<PictureTarget> =
-            crate::windows::platform::window_server::visible_windows_on_display(display.frame)
+            crate::windows::platform::window_server::visible_windows_on_display(on)
                 .into_iter()
                 .map(|(server_id, frame)| PictureTarget {
                     window: synthetic_window_id(server_id),
                     server_id,
-                    size: frame.size,
+                    size: ScreenSize::from_cg(frame.size),
                 })
                 .collect();
         if targets.is_empty() {
@@ -782,10 +781,13 @@ impl Service {
                     (shared.learned.clone(), shared.display.desktop_windows.clone())
                 });
                 let desktop = desktop.get_or_insert_with(|| desktop_backdrop_windows(display.frame));
-                let frames: Vec<CGRect> = wanted.iter().map(|window| window.frame).collect();
+                let frames: Vec<ScreenRect> =
+                    wanted.iter().map(|window| ScreenRect::from_cg(window.frame)).collect();
                 for group in apart(&frames) {
                     let windows: Vec<skylight::OnScreen> = group.into_iter().map(|at| wanted[at]).collect();
-                    let batch = skylight::capture_on_screen(&windows, &behind, desktop, display.frame, learned);
+                    let on = display.frame.to_cg();
+                    let batch =
+                        skylight::capture_on_screen(&windows, &behind, desktop, on, learned);
                     desktop_stale |= batch.desktop_stale;
                     captured.extend(batch.pictures);
                 }
@@ -865,11 +867,11 @@ impl Service {
                             idx = window.idx.get(),
                             covered = format!(
                                 "{:.0}x{:.0}",
-                                picture.coverage.covered.0, picture.coverage.covered.1
+                                picture.coverage.covered.width, picture.coverage.covered.height
                             ),
                             window_size = format!(
                                 "{:.0}x{:.0}",
-                                picture.coverage.window.0, picture.coverage.window.1
+                                picture.coverage.window.width, picture.coverage.window.height
                             ),
                             usable = picture.is_usable(),
                             "background snapshot landed"
@@ -897,7 +899,8 @@ impl Service {
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGPoint;
+    use objc2_core_foundation::{CGPoint, CGSize};
+    use rini_geometry::space::ScreenPoint;
 
     use super::*;
     use crate::pictures::domain::watch::{Accept, CHANGE_EVERY, CHANGE_TRIES, Moment, Settle};
@@ -909,14 +912,14 @@ mod tests {
 
     fn sliver() -> Picture {
         let mut picture = sized(859.0, 1081.0);
-        picture.coverage.covered = (40.0, 1081.0);
+        picture.coverage.covered = ScreenSize::new(40.0, 1081.0);
         picture
     }
 
     fn display(id: u32, width: f64, height: f64) -> Display {
         Display {
             id,
-            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width, height)),
+            frame: ScreenRect::from_size(ScreenSize::new(width, height)),
             scale: 2.0,
         }
     }
@@ -925,7 +928,7 @@ mod tests {
 
     fn external() -> Display { display(2, 3008.0, 1692.0) }
 
-    fn strip() -> CGRect { CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 32.0)) }
+    fn strip() -> ScreenRect { ScreenRect::from_size(ScreenSize::new(1728.0, 32.0)) }
 
     /// What every client hears of a background capture: the switcher redraws on `Taken`, a capture
     /// the cache refused is no news, and a closed window's capture is never put back in the cache.
@@ -963,7 +966,9 @@ mod tests {
         }
     }
 
-    fn frame() -> CGRect { CGRect::new(CGPoint::new(4.0, 32.0), CGSize::new(859.0, 1081.0)) }
+    fn frame() -> ScreenRect {
+        ScreenRect::new(ScreenPoint::new(4.0, 32.0), ScreenSize::new(859.0, 1081.0))
+    }
 
     /// The one ScreenCaptureKit capture of a clipped focus end is delivered to the client owed it as
     /// its focus change, once the cache has it; refused, it is delivered to no one.
@@ -990,7 +995,7 @@ mod tests {
         PictureTarget {
             window: wid(idx),
             server_id: WindowServerId::new(idx),
-            size: CGSize::new(859.0, 1081.0),
+            size: ScreenSize::new(859.0, 1081.0),
         }
     }
 
@@ -1035,8 +1040,8 @@ mod tests {
     }
 
     /// Every window `looks` names, with the server frame `frame`.
-    fn found(looks: &[Look], frame: Option<CGRect>) -> Vec<(WindowId, Option<CGRect>)> {
-        looks.iter().map(|look| (look.target.window, frame)).collect()
+    fn found(looks: &[Look], frame: Option<ScreenRect>) -> Vec<(WindowId, Option<CGRect>)> {
+        looks.iter().map(|look| (look.target.window, frame.map(ScreenRect::to_cg))).collect()
     }
 
     /// One SkyLight round of `ask`, every window found at `frame()` and captured as `pictures` says.
@@ -1148,18 +1153,20 @@ mod tests {
             accepts,
             thumbprint: false,
         };
-        let off = CGRect::new(CGPoint::new(1700.0, 32.0), CGSize::new(859.0, 1081.0));
+        let off = ScreenRect::new(ScreenPoint::new(1700.0, 32.0), ScreenSize::new(859.0, 1081.0));
         let looks = [
             look(1, vec![Accept::Origin { at: frame().origin }]),
             look(2, vec![Accept::OnDisplay]),
             look(3, vec![Accept::OnDisplay]),
             look(4, vec![Accept::Near { end: off, slack: 20.0 }, Accept::OnDisplay]),
         ];
-        let frames = [Some(frame()), None, Some(off), Some(frame())];
-        let wanted_now: Vec<(WindowId, WindowServerId, CGRect)> = wanted(&looks, &frames, Some(built_in()))
-            .iter()
-            .map(|window| (window.window, window.server_id, window.frame))
-            .collect();
+        let frames =
+            [Some(frame()), None, Some(off), Some(frame())].map(|frame| frame.map(ScreenRect::to_cg));
+        let wanted_now: Vec<(WindowId, WindowServerId, ScreenRect)> =
+            wanted(&looks, &frames, Some(built_in()))
+                .iter()
+                .map(|window| (window.window, window.server_id, ScreenRect::from_cg(window.frame)))
+                .collect();
         assert_eq!(
             wanted_now,
             vec![
@@ -1570,7 +1577,7 @@ mod tests {
         let target = |idx| PictureTarget {
             window: wid(idx),
             server_id: rini_core::ids::WindowServerId::new(idx),
-            size: CGSize::new(859.0, 1081.0),
+            size: ScreenSize::new(859.0, 1081.0),
         };
         {
             let mut shared = pictures.lock();

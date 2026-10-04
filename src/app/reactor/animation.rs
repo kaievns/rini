@@ -4,6 +4,7 @@ use tracing::{debug, trace};
 use crate::transitions::domain::travel::travels_visibly;
 use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::app::power;
+use rini_geometry::space::{FromCg, ScreenSize};
 use rini_geometry::stretch::is_a_resize;
 use crate::app::reactor::Reactor;
 use crate::app::reactor::present::{Present, instant_requests};
@@ -103,7 +104,7 @@ impl AnimationManager {
                 Some(crate::pictures::domain::target::PictureTarget {
                     window,
                     server_id: reactor.state.windows.window(window)?.info.sys_id?,
-                    size: frame.size,
+                    size: ScreenSize::from_cg(frame.size),
                 })
             })
             .collect();

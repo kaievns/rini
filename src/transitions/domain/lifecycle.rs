@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
 use rini_geometry::is_off_screen;
+use rini_geometry::space::{FromCg, ScreenPoint, ScreenRect};
 
 use crate::animation::domain::motion::tile::snap_to;
 use crate::pictures::domain::watch::{Accept, Client, END_SLACK, Tag, Why, near, wholly_on};
@@ -101,7 +102,7 @@ pub struct TileSummary {
 
 impl TileSummary {
     fn moves(&self) -> bool {
-        !near(self.start, self.end, 0.5)
+        !near(ScreenRect::from_cg(self.start), ScreenRect::from_cg(self.end), 0.5)
     }
 }
 
@@ -189,7 +190,10 @@ impl StageSummary {
     fn background_at_frame_zero(&self) -> (Vec<(WindowId, CGRect)>, bool) {
         let strip = self.frame_zero_strip();
         let (seen, hidden): (Vec<_>, Vec<_>) = self.background().into_iter().partition(|(_, frame)| {
-            !strip.iter().any(|(w, s)| wholly_on(*frame, *s) && self.opaque.contains(w))
+            let frame = ScreenRect::from_cg(*frame);
+            !strip
+                .iter()
+                .any(|(w, s)| wholly_on(frame, ScreenRect::from_cg(*s)) && self.opaque.contains(w))
         });
         (seen, !hidden.is_empty())
     }
@@ -398,7 +402,9 @@ impl Flight {
     /// tile: taken for the end the tile has now, within `END_SLACK` of it.
     fn takes(&self, generation: Generation, window: WindowId, frame: CGRect) -> bool {
         self.end_since.iter().any(|(w, since)| *w == window && generation >= *since)
-            && self.stage.tile(window).is_some_and(|tile| near(frame, tile.end, END_SLACK))
+            && self.stage.tile(window).is_some_and(|tile| {
+                near(ScreenRect::from_cg(frame), ScreenRect::from_cg(tile.end), END_SLACK)
+            })
     }
 
     /// Focus handed over to the target: drawn focused from now, the window left not; with the landing
@@ -443,7 +449,10 @@ impl Flight {
     /// can have placed it back on its model. A window no longer ending there is forgotten.
     fn snap_landed(&mut self, out: &mut Vec<Command>) {
         let stage = &self.stage;
-        self.landed.retain(|(w, frame)| stage.tile(*w).is_some_and(|t| near(*frame, t.end, END_SLACK)));
+        self.landed.retain(|(w, frame)| {
+            let at = ScreenRect::from_cg(*frame);
+            stage.tile(*w).is_some_and(|t| near(at, ScreenRect::from_cg(t.end), END_SLACK))
+        });
         for (window, frame) in self.landed.clone() {
             self.snap(window, frame, out);
         }
@@ -688,7 +697,10 @@ impl Coordinator {
         if why == Why::FrameZero {
             // Taken at the press, before any picture of the end: the cache's picture it replaces is
             // older, wherever the tile ends now.
-            if generation == f.began && !matches!(f.phase, Phase::Preparing { .. }) && near(frame, tile.start, END_SLACK) {
+            if generation == f.began
+                && !matches!(f.phase, Phase::Preparing { .. })
+                && near(ScreenRect::from_cg(frame), ScreenRect::from_cg(tile.start), END_SLACK)
+            {
                 out.push(Command::Swap { generation, window });
                 if frame_zero_look(f.stage.losing_focus, f.stage.key) == Some(window) {
                     out.push(Command::KeepFocusedLook { generation, window });
@@ -791,7 +803,11 @@ fn ask_frame_zero_again(f: &mut Flight, out: &mut Vec<Command>) {
         windows
             .into_iter()
             .filter(|(w, start)| {
-                !asked.iter().any(|(a, at)| a == w && Accept::Origin { at: at.origin }.accepts(*start, display))
+                !asked.iter().any(|(a, at)| {
+                    a == w
+                        && Accept::Origin { at: ScreenPoint::from_cg(at.origin) }
+                            .accepts(ScreenRect::from_cg(*start), ScreenRect::from_cg(display))
+                })
             })
             .collect()
     };
@@ -906,7 +922,7 @@ fn ended_since(
         .map(|t| {
             let kept = before
                 .and_then(|b| b.tile(t.window))
-                .filter(|b| near(b.end, t.end, 0.5))
+                .filter(|b| near(ScreenRect::from_cg(b.end), ScreenRect::from_cg(t.end), 0.5))
                 .and_then(|_| since.iter().find(|(w, _)| *w == t.window).map(|(_, g)| *g));
             (t.window, kept.unwrap_or(generation))
         })
@@ -916,7 +932,10 @@ fn ended_since(
 fn changed_frames(before: &[(WindowId, CGRect)], after: &[(WindowId, CGRect)]) -> Vec<(WindowId, CGRect)> {
     after
         .iter()
-        .filter(|(w, f)| !before.iter().any(|(b, g)| b == w && near(*f, *g, 0.5)))
+        .filter(|(w, f)| {
+            let at = ScreenRect::from_cg(*f);
+            !before.iter().any(|(b, g)| b == w && near(at, ScreenRect::from_cg(*g), 0.5))
+        })
         .copied()
         .collect()
 }
@@ -945,7 +964,9 @@ pub(in crate::transitions) fn extend_latest(
 
 /// Wholly on `display`, and big enough to be a window rather than a sliver.
 fn wholly_inside(frame: CGRect, display: CGRect) -> bool {
-    frame.size.width > 100.0 && frame.size.height > 100.0 && wholly_on(frame, display)
+    frame.size.width > 100.0
+        && frame.size.height > 100.0
+        && wholly_on(ScreenRect::from_cg(frame), ScreenRect::from_cg(display))
 }
 
 #[cfg(test)]

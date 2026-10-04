@@ -35,6 +35,11 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 The stretch tolerance a fit is judged by is `rini_geometry::stretch`, shared with `animation`'s "is
 this a resize" so the two agree.
 
+Its interface and `domain/` speak rini-geometry's spaces (`crates/rini-geometry/docs/README.md`):
+frames, display bounds, a target's size, coverage, watches and deliveries in `Screen`, a region's rect
+and an image's size in `Pixel`, and what a layer's `contentsRect` and `contentsCenter` are given in
+`Contents`. CG stays in `platform/`, on the lines that meet objc2.
+
 ## The service
 
 One thread, `pictures`, makes every background capture of a window, the desktop and the bar, and

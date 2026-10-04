@@ -1,19 +1,23 @@
-//! converting between different binding's geometry types
+//! Rect arithmetic over CoreGraphics geometry, and the coordinate spaces (`space`) the features
+//! speak at their interfaces.
 
 use objc2_core_foundation as ic;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::{DeserializeAs, SerializeAs};
 
+pub mod space;
 pub mod stretch;
 
+/// Rounded to whole points, halves away from zero. Not `round`: on a typed value that name is
+/// euclid's, which takes halves up.
 pub trait Round {
-    fn round(&self) -> Self;
+    fn rounded(&self) -> Self;
 }
 
 impl Round for ic::CGRect {
-    fn round(&self) -> Self {
-        let min_rounded = self.min().round();
-        let max_rounded = self.max().round();
+    fn rounded(&self) -> Self {
+        let min_rounded = self.min().rounded();
+        let max_rounded = self.max().rounded();
         ic::CGRect {
             origin: min_rounded,
             size: ic::CGSize {
@@ -25,7 +29,7 @@ impl Round for ic::CGRect {
 }
 
 impl Round for ic::CGPoint {
-    fn round(&self) -> Self {
+    fn rounded(&self) -> Self {
         ic::CGPoint {
             x: self.x.round(),
             y: self.y.round(),
@@ -34,7 +38,7 @@ impl Round for ic::CGPoint {
 }
 
 impl Round for ic::CGSize {
-    fn round(&self) -> Self {
+    fn rounded(&self) -> Self {
         ic::CGSize {
             width: self.width.round(),
             height: self.height.round(),
@@ -259,16 +263,21 @@ mod tests {
 
     #[test]
     fn round_snaps_both_edges_so_the_size_absorbs_the_difference() {
-        let r = rect(0.4, 0.6, 10.2, 10.2).round();
+        let r = rect(0.4, 0.6, 10.2, 10.2).rounded();
         assert_eq!((r.origin.x, r.origin.y), (0.0, 1.0));
         assert_eq!((r.size.width, r.size.height), (11.0, 10.0));
     }
 
     #[test]
     fn same_as_tolerates_a_tenth_of_a_point_and_not_more() {
+        use space::{FromCg, ScreenRect};
+        let typed = |x, y, w, h| ScreenRect::from_cg(rect(x, y, w, h));
         assert!(rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.09, 0.0, 10.0, 10.0)));
         assert!(!rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.1, 0.0, 10.0, 10.0)));
         assert!(!rect(0.0, 0.0, 10.0, 10.0).same_as(rect(0.0, 0.0, 10.0, 10.2)));
+        assert!(typed(0.0, 0.0, 10.0, 10.0).same_as(typed(0.09, 0.0, 10.0, 10.0)));
+        assert!(!typed(0.0, 0.0, 10.0, 10.0).same_as(typed(0.1, 0.0, 10.0, 10.0)));
+        assert!(!typed(0.0, 0.0, 10.0, 10.0).same_as(typed(0.0, 0.0, 10.0, 10.2)));
     }
 
     #[test]

@@ -9,6 +9,9 @@
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
+use rini_geometry::space::{
+    ContentsRect, PixelRect, PixelSize, PointSpace, ScreenSize, Size, ToCg,
+};
 
 use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
@@ -28,7 +31,7 @@ pub enum Pixels {
     /// it is replaced by a copy of its own once no transition holds the service.
     Region {
         composite: CFRetained<CGImage>,
-        rect: CGRect,
+        rect: PixelRect,
     },
 }
 
@@ -41,14 +44,16 @@ impl Pixels {
     pub fn bitmap(&self) -> Option<CFRetained<CGImage>> {
         match self {
             Self::Bitmap(image) => Some(image.clone()),
-            Self::Region { composite, rect } => CGImage::with_image_in_rect(Some(composite), *rect),
+            Self::Region { composite, rect } => {
+                CGImage::with_image_in_rect(Some(composite), rect.to_cg())
+            }
             Self::Surface(_) => None,
         }
     }
 
-    /// The part of the layer contents these pixels are, in unit space: a region's rect in its
-    /// composite, the whole of anything else.
-    pub fn unit_rect(&self) -> CGRect {
+    /// The part of the layer contents these pixels are: a region's rect in its composite, the whole
+    /// of anything else.
+    pub fn unit_rect(&self) -> ContentsRect {
         match self {
             Self::Region { composite, rect } => unit_rect(*rect, image_size(composite)),
             Self::Bitmap(_) | Self::Surface(_) => WHOLE,
@@ -56,9 +61,9 @@ impl Pixels {
     }
 }
 
-/// An image's size in pixels.
-pub fn image_size(image: &CGImage) -> (f64, f64) {
-    (CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
+/// An image's size.
+pub fn image_size(image: &CGImage) -> PixelSize {
+    PixelSize::new(CGImage::width(Some(image)) as f64, CGImage::height(Some(image)) as f64)
 }
 
 /// A window's pixels, plus how much of the window they cover and how they were taken.
@@ -107,8 +112,8 @@ impl Picture {
     }
 
     /// Can this picture be drawn at `size` without visibly distorting it? See [`fits_frame`].
-    pub fn fits(&self, size: CGSize) -> bool {
-        fits_frame(self.coverage.covered, (size.width, size.height))
+    pub fn fits<U: PointSpace>(&self, size: Size<U>) -> bool {
+        fits_frame(self.coverage.covered, size)
     }
 }
 
@@ -122,12 +127,12 @@ const STAND_IN_RGB: (f64, f64, f64) = (0.133, 0.145, 0.153);
 /// it as a picture waiting for its reveal: the flight holds for the window and watches it until it has
 /// repainted where it ends. A strip movement, which never holds, captures it once it lands there.
 /// Either way its real picture replaces this one on the same tile.
-pub fn stand_in_picture(window: CGSize, image: CFRetained<CGImage>) -> Picture {
+pub fn stand_in_picture(window: ScreenSize, image: CFRetained<CGImage>) -> Picture {
     Picture {
         image: Pixels::Bitmap(image),
         coverage: Coverage {
-            covered: (0.0, 0.0),
-            window: (window.width, window.height),
+            covered: ScreenSize::zero(),
+            window,
         },
         source: Route::StandIn,
         taken: std::time::Instant::now(),
@@ -223,12 +228,14 @@ pub(crate) fn test_bitmap() -> CFRetained<CGImage> {
 /// The right half of a 4x2 composite, as a region picture of a 2x2 window.
 #[cfg(test)]
 pub(crate) fn test_region() -> Picture {
+    use rini_geometry::space::Point;
+
     let ctx = rgba_bitmap_context(4, 2).expect("a context");
     let composite = objc2_core_graphics::CGBitmapContextCreateImage(Some(&ctx)).expect("an image");
     Picture {
         image: Pixels::Region {
             composite,
-            rect: CGRect::new(CGPoint::new(2.0, 0.0), CGSize::new(2.0, 2.0)),
+            rect: PixelRect::new(Point::new(2.0, 0.0), Size::new(2.0, 2.0)),
         },
         ..test_picture(CGSize::new(2.0, 2.0))
     }
@@ -237,11 +244,12 @@ pub(crate) fn test_region() -> Picture {
 /// A usable picture that claims to cover a window of `size`, for tests about geometry.
 #[cfg(test)]
 pub(crate) fn test_picture(size: CGSize) -> Picture {
+    use rini_geometry::space::FromCg;
     Picture {
         image: Pixels::Bitmap(test_bitmap()),
         coverage: Coverage {
-            covered: (size.width, size.height),
-            window: (size.width, size.height),
+            covered: ScreenSize::from_cg(size),
+            window: ScreenSize::from_cg(size),
         },
         source: Route::ScreenCaptureKit,
         taken: std::time::Instant::now(),
@@ -252,6 +260,7 @@ pub(crate) fn test_picture(size: CGSize) -> Picture {
 #[cfg(test)]
 mod tests {
     use rini_core::ids::WindowId;
+    use rini_geometry::space::Point;
 
     use super::*;
     use crate::pictures::domain::cache::PictureCache;
@@ -261,7 +270,10 @@ mod tests {
     fn a_stand_in_is_never_cached() {
         let mut cache: PictureCache<Picture> = PictureCache::new();
         let window = WindowId::new(1, 1);
-        assert!(!cache.insert(window, stand_in_picture(CGSize::new(859.0, 1081.0), test_bitmap())));
+        assert!(!cache.insert(
+            window,
+            stand_in_picture(ScreenSize::new(859.0, 1081.0), test_bitmap())
+        ));
         assert!(cache.get(window).is_none());
     }
 
@@ -294,7 +306,7 @@ mod tests {
         assert_eq!((CGImage::width(Some(&crop)), CGImage::height(Some(&crop))), (2, 2));
         assert_eq!(
             region.image.unit_rect(),
-            CGRect::new(CGPoint::new(0.5, 0.0), CGSize::new(0.5, 1.0))
+            ContentsRect::new(Point::new(0.5, 0.0), Size::new(0.5, 1.0))
         );
         assert_eq!(test_picture(CGSize::new(1.0, 1.0)).image.unit_rect(), WHOLE);
     }
@@ -326,6 +338,6 @@ mod tests {
         cache.forget(window);
         assert!(cache.usable(window).is_none());
         assert!(held.is_usable());
-        assert!(held.fits(size));
+        assert!(held.fits(ScreenSize::new(859.0, 1081.0)));
     }
 }

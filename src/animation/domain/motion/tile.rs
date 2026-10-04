@@ -5,6 +5,7 @@
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
 
+use rini_geometry::space::{FromCg, Overlay, ScreenRect, ScreenSize, Size};
 use rini_geometry::stretch::is_a_resize;
 
 use super::plan::group_relative;
@@ -27,8 +28,8 @@ pub enum ContentMode {
 
 /// Crop for a resize, and for any picture that no longer matches the frame it starts in; stretched
 /// only when picture and frames agree, where stretching is exact.
-pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMode {
-    if is_a_resize(from, to) || !fits_frame(covered, (from.width, from.height)) {
+pub fn content_mode(covered: ScreenSize, from: CGSize, to: CGSize) -> ContentMode {
+    if is_a_resize(from, to) || !fits_frame(covered, Size::<Overlay>::from_cg(from)) {
         stand_in_mode(covered, to)
     } else {
         ContentMode::Stretch
@@ -40,8 +41,8 @@ pub fn content_mode(covered: (f64, f64), from: CGSize, to: CGSize) -> ContentMod
 /// every mode fills the whole frame, so a stand-in never shows the backdrop. A top-left crop
 /// that left the growth undrawn was tried and read as a hole (see "A grow holds, then reveals"
 /// in `src/transitions/docs/coordination.md`).
-pub fn stand_in_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
-    if outgrows(covered, to) {
+pub fn stand_in_mode(covered: ScreenSize, to: CGSize) -> ContentMode {
+    if outgrows(covered, Size::<Overlay>::from_cg(to)) {
         ContentMode::Stretch
     } else {
         ContentMode::Crop
@@ -131,7 +132,8 @@ pub const SNAP_FROM: f64 = 0.25;
 /// own, so a tile of a rigid group can end a point from its window. See "Tiles snap to the real
 /// frame" in `src/animation/docs/animation-smoothness.md`.
 pub fn snap_to(model: CGRect, real: CGRect) -> Option<CGRect> {
-    (near(model, real, END_SLACK) && !near(model, real, SNAP_FROM)).then_some(real)
+    let (at, landed) = (ScreenRect::from_cg(model), ScreenRect::from_cg(real));
+    (near(at, landed, END_SLACK) && !near(at, landed, SNAP_FROM)).then_some(real)
 }
 
 /// The edits that move `window`'s tile onto `real`, its window's frame in the overlay's space, at
@@ -171,6 +173,8 @@ pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
 
 #[cfg(test)]
 mod tests {
+    use rini_geometry::space::ContentsRect;
+
     use super::*;
     use crate::pictures::domain::region::within;
 
@@ -219,11 +223,11 @@ mod tests {
     #[test]
     fn a_matching_movement_stretches_and_everything_else_crops() {
         let col = CGSize::new(859.0, 1081.0);
-        let picture = (859.0, 1081.0);
+        let picture = ScreenSize::new(859.0, 1081.0);
         assert_eq!(content_mode(picture, col, col), ContentMode::Stretch);
         assert_eq!(
             content_mode(
-                (918.0, 1081.0),
+                ScreenSize::new(918.0, 1081.0),
                 CGSize::new(918.0, 1081.0),
                 CGSize::new(917.0, 1081.0)
             ),
@@ -240,9 +244,9 @@ mod tests {
             ContentMode::Crop
         );
         // A stale narrow picture in a wider frame is the stand-in case too: the reveal fills it.
-        assert_eq!(content_mode((572.0, 1081.0), col, col), ContentMode::Stretch);
+        assert_eq!(content_mode(ScreenSize::new(572.0, 1081.0), col, col), ContentMode::Stretch);
         assert_eq!(
-            content_mode((918.0, 1081.0), col, col),
+            content_mode(ScreenSize::new(918.0, 1081.0), col, col),
             ContentMode::Crop,
             "a wider one crops"
         );
@@ -252,7 +256,7 @@ mod tests {
     /// the ordinary crop. Either way the whole frame is drawn.
     #[test]
     fn a_stand_in_never_shows_backdrop() {
-        let picture = (859.0, 1081.0);
+        let picture = ScreenSize::new(859.0, 1081.0);
         assert_eq!(
             stand_in_mode(picture, CGSize::new(1147.0, 1081.0)),
             ContentMode::Stretch
@@ -276,10 +280,10 @@ mod tests {
                 let to = CGSize::new(w, h);
                 match stand_in_mode(picture, to) {
                     ContentMode::Stretch => {
-                        assert!(outgrows(picture, to), "{to:?}")
+                        assert!(outgrows(picture, Size::<Overlay>::from_cg(to)), "{to:?}")
                     }
                     ContentMode::Crop => {
-                        assert!(!outgrows(picture, to), "{to:?}")
+                        assert!(!outgrows(picture, Size::<Overlay>::from_cg(to)), "{to:?}")
                     }
                 }
             }
@@ -410,7 +414,7 @@ mod tests {
         ] {
             for piece in crop_pieces(picture, frame) {
                 let whole = piece.contents;
-                let cut = within(region, whole);
+                let cut = within(ContentsRect::from_cg(region), ContentsRect::from_cg(whole));
                 let eps = 1e-12;
                 assert!(cut.origin.x >= region.origin.x - eps, "{frame:?}: {cut:?}");
                 assert!(cut.origin.y >= region.origin.y - eps, "{frame:?}: {cut:?}");

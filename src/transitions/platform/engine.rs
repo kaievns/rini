@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
 use rini_core::ids::{WindowId, WindowServerId};
+use rini_geometry::space::{FromCg, Overlay, ScreenRect, ScreenSize, Size, Surface, ToCg};
 use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
@@ -466,7 +467,9 @@ impl RunningAnimation {
     /// `target`'s tile flies `look`, drawn focused, if it fits where the tile starts. Whether it does.
     fn fly_focused_look(&mut self, target: WindowId, look: Option<Picture>) -> bool {
         let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else { return false };
-        let Some(look) = look.filter(|look| look.fits(tile.from.size)) else { return false };
+        let Some(look) = look.filter(|look| look.fits(Size::<Overlay>::from_cg(tile.from.size))) else {
+            return false;
+        };
         tile.snapshot = look;
         tile.focused = true;
         self.focused_look = Some(target);
@@ -589,12 +592,15 @@ fn target_at(window: WindowId, frame: CGRect) -> PictureTarget {
     PictureTarget {
         window,
         server_id: WindowServerId::from(window),
-        size: frame.size,
+        size: ScreenSize::from_cg(frame.size),
     }
 }
 
-fn targets_at(windows: &[(WindowId, CGRect)]) -> Vec<(PictureTarget, CGRect)> {
-    windows.iter().map(|&(window, frame)| (target_at(window, frame), frame)).collect()
+fn targets_at(windows: &[(WindowId, CGRect)]) -> Vec<(PictureTarget, ScreenRect)> {
+    windows
+        .iter()
+        .map(|&(window, frame)| (target_at(window, frame), ScreenRect::from_cg(frame)))
+        .collect()
 }
 
 fn server_ids(windows: &[WindowId]) -> Vec<WindowServerId> {
@@ -674,7 +680,7 @@ impl EndWatches {
             end.focus.map(|(window, frame)| Watch::Change {
                 tag,
                 window: target_at(window, frame),
-                end: frame,
+                end: ScreenRect::from_cg(frame),
                 behind: behind.clone(),
                 every: CHANGE_EVERY,
                 tries: CHANGE_TRIES,
@@ -949,9 +955,10 @@ impl FlightEngine {
     }
 
     /// Each delivered picture to the coordinator, which says whether it is swapped in.
-    fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, CGRect)>) {
+    fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
         for (window, picture, frame) in pictures {
             self.delivered.insert(window, (generation, picture));
+            let frame = frame.to_cg();
             self.drive(lifecycle::Event::Picture { generation, window, frame, why });
         }
     }
@@ -959,7 +966,7 @@ impl FlightEngine {
     /// Frame zero's pictures, put on their tiles while the overlay is not up yet, then the overlay can
     /// go up; once it is up without them, each is offered to its tile as a swap, and frame zero is
     /// never installed again under a moving flight.
-    fn frame_zero(&mut self, generation: Generation, pictures: Vec<(WindowId, Picture, CGRect)>) {
+    fn frame_zero(&mut self, generation: Generation, pictures: Vec<(WindowId, Picture, ScreenRect)>) {
         if self.coordinator.is_shown() {
             self.offer(generation, Why::FrameZero, pictures);
         } else if self.coordinator.generation() == generation
@@ -1070,7 +1077,11 @@ impl FlightEngine {
     /// The display the overlay is on, as the pictures of it are keyed.
     fn picture_display(&self) -> Option<Display> {
         let ((frame, scale), id) = (self.display?, self.display_id?);
-        Some(Display { id, frame, scale })
+        Some(Display {
+            id,
+            frame: ScreenRect::from_cg(frame),
+            scale,
+        })
     }
 
     /// Creates the overlay on first use and keeps it forever: creation is too slow to pay per
@@ -1171,7 +1182,7 @@ impl FlightEngine {
                 None => needs_capture.push(PictureTarget {
                     window,
                     server_id,
-                    size: frame.size,
+                    size: ScreenSize::from_cg(frame.size),
                 }),
             }
         }
@@ -1357,7 +1368,7 @@ impl FlightEngine {
                 needs_capture.push(PictureTarget {
                     window: request.window,
                     server_id: request.server_id,
-                    size: request.from.size,
+                    size: ScreenSize::from_cg(request.from.size),
                 });
                 debug!(
                     pid = request.window.pid,
@@ -1372,10 +1383,10 @@ impl FlightEngine {
                 snapshot,
                 || {
                     crate::windows::platform::window_server::get_window(request.server_id)
-                        .map(|info| info.frame)
+                        .map(|info| ScreenRect::from_cg(info.frame))
                 },
-                display_frame,
-                || self.pictures.stand_in(request.to.size, scale),
+                ScreenRect::from_cg(display_frame),
+                || self.pictures.stand_in(ScreenSize::from_cg(request.to.size), scale),
             );
             match snapshot {
                 Some(snapshot) => {
@@ -1564,6 +1575,7 @@ impl FlightEngine {
         };
         if let Some(dressing) = &dressing {
             let strip = dressing.strip.map(|strip| {
+                let strip = strip.to_cg();
                 CGRect::new(
                     CGPoint::new(
                         strip.origin.x - display_origin.x,
@@ -1824,9 +1836,9 @@ impl FlightEngine {
             // the per-window path; see `stands_in`.
             let snapshot = picture_or_stand_in(
                 cached,
-                || real_frames.get(&window.server_id).copied(),
-                display,
-                || self.pictures.stand_in(window.frame.size, scale),
+                || real_frames.get(&window.server_id).copied().map(ScreenRect::from_cg),
+                ScreenRect::from_cg(display),
+                || self.pictures.stand_in(ScreenSize::from_cg(window.frame.size), scale),
             );
             match snapshot {
                 Some(snapshot) => {
@@ -1834,7 +1846,7 @@ impl FlightEngine {
                     // was resized keeps a usable picture" in `src/pictures/docs/capture-research.md`.
                     if snapshot.source == Route::StandIn {
                         stand_ins += 1;
-                    } else if !snapshot.fits(window.frame.size) {
+                    } else if !snapshot.fits(Size::<Surface>::from_cg(window.frame.size)) {
                         misshapen += 1;
                     }
                     if let Some(frame) = real_frames.get(&window.server_id) {
@@ -2159,13 +2171,13 @@ fn log_dressing(
             .as_ref()
             .map(|b| format!(
                 "{:.0}x{:.0} {:?}",
-                b.coverage.covered.0, b.coverage.covered.1, b.source
+                b.coverage.covered.width, b.coverage.covered.height, b.source
             ))
             .unwrap_or_else(|| "NONE".to_string()),
         bar = dressing
             .bar
             .as_ref()
-            .map(|b| format!("{:.0}x{:.0}", b.coverage.covered.0, b.coverage.covered.1))
+            .map(|b| format!("{:.0}x{:.0}", b.coverage.covered.width, b.coverage.covered.height))
             .unwrap_or_else(|| "NONE".to_string()),
         strip = strip
             .map(|r| format!(
@@ -2229,7 +2241,7 @@ mod tests {
     /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
     fn clipped(size: CGSize) -> Picture {
         let mut snapshot = test_picture(size);
-        snapshot.coverage.covered = (40.0, size.height);
+        snapshot.coverage.covered = ScreenSize::new(40.0, size.height);
         snapshot
     }
 
@@ -2350,8 +2362,9 @@ mod tests {
             let floating = rect(224.0, 95.0, 600.0, 400.0);
             let ask = on_screen(tag, Moment::FrameZero, &[(wid(1), at)], &[(wid(9), floating)], &[wid(9)]);
             assert_eq!((ask.tag, ask.moment), (tag, Moment::FrameZero));
-            let target = PictureTarget { window: wid(1), server_id: WindowServerId::new(1), size: at.size };
-            assert_eq!(ask.strip, vec![(target, at)]);
+            let size = ScreenSize::from_cg(at.size);
+            let target = PictureTarget { window: wid(1), server_id: WindowServerId::new(1), size };
+            assert_eq!(ask.strip, vec![(target, ScreenRect::from_cg(at))]);
             assert_eq!(ask.background.len(), 1);
             assert_eq!(ask.behind, vec![WindowServerId::new(9)]);
             assert_eq!(sized_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
@@ -2461,7 +2474,7 @@ mod tests {
             let park = rect(1727.0, 32.0, 859.0, 1081.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let (image, _) = stand_in_image(2.0).expect("drawn");
-            let stand_in = stand_in_picture(slot.size, image);
+            let stand_in = stand_in_picture(ScreenSize::from_cg(slot.size), image);
             assert_eq!(EndPicture::of_picture(stand_in.coverage.covered, slot.size), EndPicture::Awaited);
             let mut running = flight();
             let mut tile = stacked(wid(1), park, slot, Some(0), false);
@@ -2621,7 +2634,7 @@ mod tests {
             assert!(!running.fly_focused_look(wid(3), Some(test_picture(park.size))), "no tile");
             assert_eq!((running.focused_look, running.tiles[0].focused), (None, false));
             let mut look = test_picture(park.size);
-            look.coverage.covered.1 -= 1.0;
+            look.coverage.covered.height -= 1.0;
             assert!(running.fly_focused_look(wid(2), Some(look.clone())));
             assert_eq!(running.tiles[0].snapshot.coverage, look.coverage);
             assert!(running.tiles[0].focused);
@@ -2641,7 +2654,7 @@ mod tests {
             running.shown_focus = Some(wid(1));
             running.tiles[0].focused = true;
             let mut look = test_picture(park.size);
-            look.coverage.covered.1 -= 1.0;
+            look.coverage.covered.height -= 1.0;
             assert!(running.fly_focused_look(wid(2), Some(look.clone())));
             let next = rect(867.0, 32.0, 859.0, 1081.0);
             let outcomes = running.merge_pass(vec![stacked(wid(2), park, next, Some(0), false)], None);
@@ -2710,7 +2723,7 @@ mod tests {
                 );
                 assert_eq!(report.count_over, 0);
 
-                let size = (slot.size.width, slot.size.height);
+                let size = ScreenSize::from_cg(slot.size);
                 assert!(needs_capture(None, size), "seed 95: warmed after the movement");
                 assert!(needs_capture(Some(clipped(slot.size).coverage), size));
                 assert!(!needs_capture(Some(test_picture(slot.size).coverage), size));
