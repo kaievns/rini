@@ -18,11 +18,10 @@ use crate::pictures::domain::watch::{Hint, OnScreen, Outcome, Seen, Set, Tag, Wa
 /// How urgently windows are wanted, most urgent first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
-    /// A transition composing now has no picture of these windows.
-    FrameZero,
-    /// The two ends of a focus change, whose rendering changed and whose size did not.
+    /// A focus target ending clipped by the display's edge, which SkyLight cannot picture whole.
     Focus,
-    /// Every window on the display, after a display change or on the debug command.
+    /// Every window on the display, after a display change or on the debug command; and a window whose
+    /// look turned with the key window, which keeps the size the cache holds it at.
     Background,
     /// Windows named for a later transition or the switcher: skipped where the picture held fits and is
     /// fresh.
@@ -30,9 +29,9 @@ pub enum Priority {
 }
 
 impl Priority {
-    /// Frame-zero and focus captures start through a hold, and at once: the transition holding the
-    /// service is the one waiting for them.
-    fn wanted_now(self) -> bool { matches!(self, Self::FrameZero | Self::Focus) }
+    /// A focus capture starts through a hold, and at once: the transition holding the service is the
+    /// one waiting for it.
+    fn wanted_now(self) -> bool { matches!(self, Self::Focus) }
 }
 
 /// Windows wanted, at one priority.
@@ -45,8 +44,8 @@ pub struct Ask {
 /// What a transition is doing to the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hold {
-    /// The overlay is up: only frame-zero and focus work starts, and the bar is not pictured, since a
-    /// picture of it is read off the framebuffer the overlay covers.
+    /// A transition runs: of ScreenCaptureKit's work only a focus capture starts, and the bar is not
+    /// pictured, since a picture of it is read off the framebuffer the overlay covers.
     Transition,
     /// The overlay has lifted and the transition is settling: the bar is pictured again, and the rest
     /// still waits.
@@ -79,11 +78,12 @@ pub fn wants_warm(held: Option<Held>, size: CGSize, now: Instant) -> bool {
         || held.is_some_and(|held| picture_is_stale(now.saturating_duration_since(held.taken)))
 }
 
-/// How long a background or warm ask waits before it is listed. A pass's warm is sent just after the
-/// flight it starts, and so reaches the service before that flight's hold does; listed at once, it
-/// would put ScreenCaptureKit to work at the flight's frame zero. A flight that composites its desktop
-/// on the main thread can hold later than this; what is listed meanwhile is listed again at the
-/// release (`hold`).
+/// How long a background or warm ask waits before it is listed. The reactor sends a pass's warm
+/// straight here just after the request for its flight, so it usually arrives before that flight's
+/// hold, which the flight engine sends as it takes the request; listed at once, it would put
+/// ScreenCaptureKit to work at the flight's frame zero. A flight whose request waits behind other work
+/// on the main thread holds later than this; what is listed meanwhile is listed again at the release
+/// (`hold`).
 pub const SETTLE_BEFORE_LISTING: Duration = Duration::from_millis(50);
 
 /// Concurrent ScreenCaptureKit captures. It serialises internally, so wall clock stops improving past
@@ -94,12 +94,6 @@ pub const MAX_CONCURRENT: usize = 4;
 /// too slow (31ms median) to pay per switch, so a burst of switches pays it once, and the compositor
 /// has dropped the hidden overlay from the framebuffer by then.
 pub const BAR_REFRESH_DELAY: Duration = Duration::from_millis(250);
-
-/// Chase poll interval and attempt budget for a growing window's real frame (about a second).
-/// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
-pub const REVEAL_CHASE_INTERVAL: Duration = Duration::from_millis(8);
-
-pub const REVEAL_CHASE_ATTEMPTS: usize = 125;
 
 /// How many new windows one pass captures synchronously at spawn; the rest take a reservation.
 /// See "A window that opens" in `src/transitions/docs/coordination.md`.
@@ -385,6 +379,10 @@ impl<P> Schedule<P> {
     /// The display the overlay flies on, whose desktop and bar the service holds.
     pub fn display(&self) -> Option<Display> { self.display }
 
+    /// Whether a bar under the overlay is pictured and drawn over transitions: off while rini draws
+    /// its own bar above the overlay, which leaves nothing there to picture.
+    pub fn picture_bar(&self) -> bool { self.picture_bar }
+
     /// Whether a transition holds the service.
     pub fn held(&self) -> bool { self.hold != Hold::Released }
 
@@ -552,11 +550,11 @@ mod tests {
         }
     }
 
-    /// From frame zero to the release nothing starts but what the transition waits for: its frame
-    /// zero and the two ends of its focus change. The engine's own chases and refreshes never come
-    /// here.
+    /// From the begin to the release nothing of ScreenCaptureKit's starts but what the transition waits
+    /// for: the one capture of a focus target clipped by the display's edge. Its own captures are
+    /// SkyLight's and never come here.
     #[test]
-    fn held_work_waits_and_only_frame_zero_and_focus_start_through_a_hold() {
+    fn held_work_waits_and_only_a_focus_capture_starts_through_a_hold() {
         for hold in [Hold::Transition, Hold::Settling] {
             let now = Instant::now();
             let mut schedule = Schedule::<()>::default();
@@ -564,8 +562,7 @@ mod tests {
             schedule.ask(ask(Priority::Warm, &[1]), settled_by(now));
             schedule.ask(ask(Priority::Background, &[2]), settled_by(now));
             schedule.ask(ask(Priority::Focus, &[3]), settled_by(now));
-            schedule.ask(ask(Priority::FrameZero, &[4]), settled_by(now));
-            assert_eq!(captures(&mut schedule, now), vec![wid(4), wid(3)], "{hold:?}");
+            assert_eq!(captures(&mut schedule, now), vec![wid(3)], "{hold:?}");
 
             schedule.hold(Hold::Released, now);
             assert_eq!(captures(&mut schedule, now), vec![wid(2), wid(1)], "released, in order");
@@ -575,12 +572,7 @@ mod tests {
     /// The full table, hold by priority: what starts.
     #[test]
     fn what_starts_under_each_hold() {
-        const PRIORITIES: [Priority; 4] = [
-            Priority::FrameZero,
-            Priority::Focus,
-            Priority::Background,
-            Priority::Warm,
-        ];
+        const PRIORITIES: [Priority; 3] = [Priority::Focus, Priority::Background, Priority::Warm];
         let mut started = 0usize;
         for hold in [Hold::Released, Hold::Transition, Hold::Settling] {
             for priority in PRIORITIES {
@@ -589,18 +581,17 @@ mod tests {
                 schedule.hold(hold, now);
                 schedule.ask(ask(priority, &[1]), settled_by(now));
                 let starts = !captures(&mut schedule, now).is_empty();
-                let expected = hold == Hold::Released
-                    || matches!(priority, Priority::FrameZero | Priority::Focus);
+                let expected = hold == Hold::Released || priority == Priority::Focus;
                 assert_eq!(starts, expected, "{hold:?}/{priority:?}");
                 started += starts as usize;
             }
         }
-        // Released 4, each hold 2.
-        assert_eq!(started, 8);
+        // Released 3, each hold 1.
+        assert_eq!(started, 5);
     }
 
-    /// A pass's warm reaches the service before the hold of the flight that pass started, so it waits
-    /// long enough for that hold to arrive, and then out the flight.
+    /// A pass's warm usually reaches the service before the hold of the flight that pass started, so
+    /// it waits long enough for that hold to arrive, and then out the flight.
     #[test]
     fn a_warm_asked_just_before_its_flight_holds_waits_out_the_flight() {
         let now = Instant::now();
@@ -621,13 +612,11 @@ mod tests {
     }
 
     #[test]
-    fn frame_zero_and_focus_are_listed_at_once() {
-        for priority in [Priority::FrameZero, Priority::Focus] {
-            let now = Instant::now();
-            let mut schedule = Schedule::<()>::default();
-            schedule.ask(ask(priority, &[1]), now);
-            assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
-        }
+    fn a_focus_capture_is_listed_at_once() {
+        let now = Instant::now();
+        let mut schedule = Schedule::<()>::default();
+        schedule.ask(ask(Priority::Focus, &[1]), now);
+        assert_eq!(listed_windows(schedule.next(now, nothing_held)), vec![wid(1)]);
     }
 
     /// A capture listed before the transition does not start inside it either: ScreenCaptureKit work
@@ -792,8 +781,8 @@ mod tests {
         assert!(schedule.owed().all(|window| window != wid(1)), "dropped, not kept waiting");
     }
 
-    /// The focus refresh, the frame-zero list and the display's visible windows are captured whatever
-    /// is held: none of them is about a size the cache could already have.
+    /// A clipped focus end, the display's visible windows and a turned look are captured whatever is
+    /// held: none is about a size the cache could already have.
     #[test]
     fn only_a_warm_is_filtered() {
         let now = Instant::now();
@@ -804,7 +793,7 @@ mod tests {
             },
             taken: now,
         };
-        for priority in [Priority::FrameZero, Priority::Focus, Priority::Background] {
+        for priority in [Priority::Focus, Priority::Background] {
             let mut schedule = Schedule::<()>::default();
             schedule.ask(ask(priority, &[1]), settled_by(now));
             assert_eq!(listed_windows(schedule.next(now, |_| Some(fits))), vec![wid(1)]);
@@ -1129,23 +1118,18 @@ mod tests {
         assert!(schedule.owed().next().is_none(), "forgotten, every job of it");
     }
 
+    /// The one record of whether there is a bar to picture, which a transition is dressed by too.
     #[test]
     fn no_bar_is_pictured_while_rini_draws_its_own() {
         let now = Instant::now();
         let mut schedule = Schedule::<()>::default();
+        assert!(!schedule.picture_bar(), "a transition before the first display is dressed with none");
         schedule.set_display(built_in(), false, now);
+        assert!(!schedule.picture_bar());
         let _ = schedule.next(now, nothing_held);
         schedule.hold(Hold::Settling, now);
         assert!(matches!(schedule.next(now + BAR_REFRESH_DELAY, nothing_held), Next::Idle));
-    }
-
-    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
-    #[test]
-    fn a_reveal_chase_polls_every_8ms_for_a_second() {
-        assert_eq!(REVEAL_CHASE_INTERVAL, Duration::from_millis(8));
-        assert_eq!(
-            REVEAL_CHASE_INTERVAL * REVEAL_CHASE_ATTEMPTS as u32,
-            Duration::from_secs(1)
-        );
+        schedule.set_display(built_in(), true, now);
+        assert!(schedule.picture_bar(), "another app's bar, under the overlay");
     }
 }

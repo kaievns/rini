@@ -4,7 +4,7 @@
 //! different destination for a window already moving, or with a window the first pass had not placed.
 //! Admitting one into the other without a visible jump is what these decisions are for. A move's
 //! nudge and a push against an end arrive the same way: the nudge waits for its flight to move, and a
-//! push while a bounce plays starts the next from where that one is drawn.
+//! push while a bounce plays starts the next from where that one is drawn, as long as it is drawn.
 
 use std::time::{Duration, Instant};
 
@@ -16,6 +16,7 @@ use tracing::debug;
 use crate::animation::domain::motion::accents::{NudgeAdmission, NudgePlaying, nudge_admission};
 use crate::animation::domain::motion::bounce::Bounce;
 use crate::animation::domain::motion::nudge::NUDGE_STRETCH;
+use crate::pictures::domain::coverage::outgrows;
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
@@ -51,26 +52,6 @@ pub(in crate::transitions) fn merge_action(
     }
 }
 
-/// Folds a later pass's destinations into the flight's; latest frame per window wins.
-pub(in crate::transitions) fn merge_final_frames(
-    existing: &mut Vec<(WindowId, CGRect)>,
-    incoming: Vec<(WindowId, CGRect)>,
-) -> bool {
-    let mut changed = false;
-    for (window, frame) in incoming {
-        if let Some(current) = existing.iter_mut().find(|(w, _)| *w == window) {
-            if !current.1.same_as(frame) {
-                changed = true;
-            }
-            current.1 = frame;
-        } else {
-            existing.push((window, frame));
-            changed = true;
-        }
-    }
-    changed
-}
-
 /// Points a flight's reserved entrances at a later pass's destinations; an entrance has no tile
 /// for `merge_pass` to retarget. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn retarget_entrances(
@@ -93,33 +74,6 @@ pub(in crate::transitions) fn retarget_entrances(
     moved
 }
 
-/// The frames a coalescing merge must send again: `step` will not place frame-zero frames twice.
-/// See "The reservation fallback" in `src/transitions/docs/coordination.md`.
-pub(in crate::transitions) fn reapply_set(
-    frames_applied: bool,
-    in_flight: bool,
-    changed: bool,
-    final_frames: &[(WindowId, CGRect)],
-) -> Option<Vec<(WindowId, CGRect)>> {
-    (frames_applied && !in_flight && changed).then(|| final_frames.to_vec())
-}
-
-/// A newly opened window's reservation, and the hold entry it adds to `awaiting`.
-pub(in crate::transitions) fn entrance_reservation(
-    window: WindowId,
-    to: CGRect,
-    floating: bool,
-) -> (PendingEntrance, (WindowId, CGSize)) {
-    (PendingEntrance { window, to, floating }, (window, to.size))
-}
-
-/// Whether a flight that does not hold chases the real picture of a window flying as the stand-in:
-/// when the window lands on this display, where a framed capture sees it once its frame is applied.
-/// One parked at both ends has nothing on screen to capture.
-pub(in crate::transitions) fn chases_stand_in(destination: CGRect, display: CGRect) -> bool {
-    !rini_geometry::is_off_screen(display, destination)
-}
-
 /// How a newly opened window enters a flight.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::transitions) enum EntranceDecision {
@@ -127,6 +81,36 @@ pub(in crate::transitions) enum EntranceDecision {
     Travel { from: CGRect, to: CGRect },
     /// No usable picture at spawn: a reservation held for the first picture, with the reason.
     Reserve(&'static str),
+}
+
+/// How a window's picture where it ends is waited for. See "A grow holds, then reveals" and "A window
+/// that opens" in `src/transitions/docs/coordination.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::transitions) enum EndPicture {
+    /// Held for, overlay up, and watched until it has repainted where it ends.
+    Awaited,
+    /// Watched until it has repainted where it ends, and never held for.
+    Repainting,
+    /// Captured once it is where it ends.
+    Lands,
+}
+
+impl EndPicture {
+    /// A window drawn from a picture covering `covered`: a grow its picture cannot cover at `to`, or a
+    /// stand-in, which covers nothing, is awaited.
+    pub(in crate::transitions) fn of_picture(covered: (f64, f64), to: CGSize) -> Self {
+        if outgrows(covered, to) { Self::Awaited } else { Self::Lands }
+    }
+
+    /// A window that just opened: one flying from where it opened repaints where it ends, one already
+    /// at its slot lands there, and a reservation is awaited.
+    pub(in crate::transitions) fn of_entrance(entrance: EntranceDecision) -> Self {
+        match entrance {
+            EntranceDecision::Travel { from, to } if from.same_as(to) => Self::Lands,
+            EntranceDecision::Travel { .. } => Self::Repainting,
+            EntranceDecision::Reserve(_) => Self::Awaited,
+        }
+    }
 }
 
 /// `Travel` iff the server reports a sized frame, the spawn capture is usable and budget remains.
@@ -149,29 +133,6 @@ pub(in crate::transitions) fn entrance_plan(
         return EntranceDecision::Reserve("capture unusable");
     }
     EntranceDecision::Travel { from, to: slot }
-}
-
-/// What a fresh flight does at frame zero: whether it holds, which windows the chase follows, and
-/// which frames go out now (all when holding, else the newcomers' slots so the chase can capture).
-pub(in crate::transitions) fn frame_zero_work(
-    awaiting: &[(WindowId, CGSize)],
-    chase: &[(WindowId, CGSize)],
-    final_frames: &[(WindowId, CGRect)],
-    entrance_frames: &[(WindowId, CGRect)],
-) -> (bool, Vec<(WindowId, CGSize)>, Vec<(WindowId, CGRect)>) {
-    let holding = !awaiting.is_empty();
-    let mut chase_set = awaiting.to_vec();
-    for entry in chase {
-        if !chase_set.iter().any(|(w, _)| *w == entry.0) {
-            chase_set.push(*entry);
-        }
-    }
-    let now_frames = if holding {
-        final_frames.to_vec()
-    } else {
-        entrance_frames.to_vec()
-    };
-    (holding, chase_set, now_frames)
 }
 
 /// A move's nudge arriving at a flight that does not move yet, kept with the move's plain duration
@@ -207,25 +168,42 @@ pub(in crate::transitions) fn starting_nudge(
     }
 }
 
-/// The bounce a push at `now` plays: from rest with none playing, else pushed from where the one
-/// playing is drawn.
-pub(in crate::transitions) fn next_bounce(
-    playing: Option<(Instant, Bounce)>,
-    now: Instant,
-    overshoot: CGPoint,
-    duration: Duration,
-) -> Bounce {
-    match playing {
-        Some((began, bounce)) => {
-            bounce.pushed(now.saturating_duration_since(began), overshoot, duration)
-        }
-        None => Bounce::from_rest(overshoot, duration),
+/// The edge bounce the containers draw, and when it began: what a push arriving while it plays
+/// starts the next from. Core Animation drops the bounce at the lift and whenever frame zero is
+/// installed again, and the record goes with it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(in crate::transitions) struct BounceRecord(Option<(Instant, Bounce)>);
+
+impl BounceRecord {
+    /// The bounce a push at `now` plays, from rest with none drawn, else from where the one drawn is;
+    /// and the overshoot of the one it replaces, which a container that did not carry starts from
+    /// rest.
+    pub(in crate::transitions) fn push(
+        &mut self,
+        now: Instant,
+        overshoot: CGPoint,
+        duration: Duration,
+    ) -> (Bounce, Option<CGPoint>) {
+        let next = match self.0 {
+            Some((began, bounce)) => {
+                bounce.pushed(now.saturating_duration_since(began), overshoot, duration)
+            }
+            None => Bounce::from_rest(overshoot, duration),
+        };
+        let before = self.0.map(|(_, drawn)| drawn.overshoot);
+        self.0 = Some((now, next));
+        (next, before)
+    }
+
+    /// The containers no longer draw it: the overlay lifted, or frame zero was installed again.
+    pub(in crate::transitions) fn gone(&mut self) {
+        self.0 = None;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGPoint;
+    use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
     use crate::animation::domain::motion::testing::{Gen, RUNS};
@@ -265,41 +243,6 @@ mod tests {
         let to = rect(10., 20., 100., 100.);
         let nudged = rect(10.000000001, 20., 100., 100.);
         assert_eq!(merge_action(Some(to), nudged), Admitted::Redundant);
-    }
-
-    #[test]
-    fn a_later_pass_overwrites_a_windows_destination_and_reports_the_change() {
-        let mut frames = vec![(window(1), rect(0., 0., 100., 100.))];
-        let changed =
-            merge_final_frames(&mut frames, vec![(window(1), rect(500., 0., 100., 100.))]);
-        assert!(changed);
-        assert_eq!(frames, [(window(1), rect(500., 0., 100., 100.))]);
-    }
-
-    /// Latest frame per window wins, and a repeat is not a change. The caller uses the flag to decide
-    /// whether to resend frames, so reporting a change that did not happen costs a round of writes.
-    #[test]
-    fn repeating_a_destination_reports_no_change() {
-        let to = rect(0., 0., 100., 100.);
-        let mut frames = vec![(window(1), to)];
-        assert!(!merge_final_frames(&mut frames, vec![(window(1), to)]));
-        assert_eq!(frames, [(window(1), to)]);
-    }
-
-    #[test]
-    fn a_window_not_in_the_flight_is_appended_as_a_change() {
-        let mut frames = vec![(window(1), rect(0., 0., 100., 100.))];
-        let changed =
-            merge_final_frames(&mut frames, vec![(window(2), rect(200., 0., 100., 100.))]);
-        assert!(changed);
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[1], (window(2), rect(200., 0., 100., 100.)));
-    }
-
-    #[test]
-    fn nothing_incoming_changes_nothing() {
-        let mut frames = vec![(window(1), rect(0., 0., 100., 100.))];
-        assert!(!merge_final_frames(&mut frames, vec![]));
     }
 
     /// An entrance has no tile yet, so `merge_pass` cannot retarget it; this is the path that does.
@@ -360,46 +303,10 @@ mod tests {
         );
     }
 
-    /// The reapply set exists for one case: a coalescing merge after frame zero has already gone out.
-    /// `step` will not place frame-zero frames twice, so a merge that changed something has to resend.
-    #[test]
-    fn frames_are_resent_only_after_they_went_out_and_something_changed() {
-        let frames = [(window(1), rect(0., 0., 100., 100.))];
-        assert_eq!(reapply_set(true, false, true, &frames), Some(frames.to_vec()));
-    }
 
-    #[test]
-    fn frames_that_never_went_out_are_not_resent() {
-        let frames = [(window(1), rect(0., 0., 100., 100.))];
-        assert_eq!(reapply_set(false, false, true, &frames), None);
-    }
 
-    /// A flight still in the air will place them itself.
-    #[test]
-    fn frames_are_not_resent_while_the_flight_is_running() {
-        let frames = [(window(1), rect(0., 0., 100., 100.))];
-        assert_eq!(reapply_set(true, true, true, &frames), None);
-    }
 
-    #[test]
-    fn nothing_changing_resends_nothing() {
-        let frames = [(window(1), rect(0., 0., 100., 100.))];
-        assert_eq!(reapply_set(true, false, false, &frames), None);
-    }
 
-    #[test]
-    fn a_reservation_holds_the_flight_for_the_window_it_reserves() {
-        let to = rect(100., 0., 300., 400.);
-        let (entrance, hold) = entrance_reservation(window(9), to, true);
-        assert_eq!(entrance.window, window(9));
-        assert_eq!(entrance.to, to);
-        assert!(entrance.floating);
-        assert_eq!(
-            hold,
-            (window(9), to.size),
-            "the hold carries the size to wait for"
-        );
-    }
 
     #[test]
     fn a_window_with_a_usable_picture_and_a_real_frame_travels() {
@@ -458,84 +365,10 @@ mod tests {
         );
     }
 
-    /// Holding at frame zero means every frame goes out now, because the flight is not going to place
-    /// them: it is waiting for a picture.
-    #[test]
-    fn a_flight_holding_for_an_entrance_sends_every_frame_immediately() {
-        let awaiting = [(window(1), CGSize::new(100., 100.))];
-        let finals = [
-            (window(1), rect(0., 0., 100., 100.)),
-            (window(2), rect(200., 0., 100., 100.)),
-        ];
-        let entrances = [(window(1), rect(0., 0., 100., 100.))];
 
-        let (holding, chase, now) = frame_zero_work(&awaiting, &[], &finals, &entrances);
 
-        assert!(holding);
-        assert_eq!(chase, awaiting.to_vec());
-        assert_eq!(now, finals.to_vec(), "all of them, not just the newcomers");
-    }
 
-    /// Not holding means only the newcomers' slots go out, so the chase has something to capture
-    /// while the rest of the flight animates normally.
-    #[test]
-    fn a_flight_with_nothing_to_wait_for_sends_only_the_newcomers() {
-        let finals = [
-            (window(1), rect(0., 0., 100., 100.)),
-            (window(2), rect(200., 0., 100., 100.)),
-        ];
-        let entrances = [(window(2), rect(200., 0., 100., 100.))];
 
-        let (holding, _, now) =
-            frame_zero_work(&[], &[(window(2), CGSize::new(100., 100.))], &finals, &entrances);
-
-        assert!(!holding);
-        assert_eq!(now, entrances.to_vec());
-    }
-
-    /// The chase set is the awaited windows plus the chased ones, without repeating a window that is
-    /// both. A duplicate would have the capture service chase one window twice.
-    #[test]
-    fn the_chase_set_does_not_repeat_a_window_that_is_both_awaited_and_chased() {
-        let awaiting = [(window(1), CGSize::new(100., 100.))];
-        let chase = [
-            (window(1), CGSize::new(100., 100.)),
-            (window(2), CGSize::new(50., 50.)),
-        ];
-
-        let (_, chase_set, _) = frame_zero_work(&awaiting, &chase, &[], &[]);
-
-        assert_eq!(
-            chase_set,
-            [
-                (window(1), CGSize::new(100., 100.)),
-                (window(2), CGSize::new(50., 50.))
-            ]
-        );
-    }
-
-    #[test]
-    fn a_flight_with_no_entrances_at_all_holds_for_nothing() {
-        let (holding, chase, now) = frame_zero_work(&[], &[], &[], &[]);
-        assert!(!holding);
-        assert!(chase.is_empty());
-        assert!(now.is_empty());
-    }
-
-    /// The column a move at the edge passes comes in from its park with no picture: its real
-    /// picture is chased once it is on screen. One parked at both ends is not, nor one on another
-    /// display.
-    #[test]
-    fn a_stand_in_landing_on_this_display_is_chased() {
-        let display = rect(0.0, 0.0, 1728.0, 1117.0);
-        assert!(chases_stand_in(rect(868.0, 32.0, 856.0, 1081.0), display));
-        assert!(
-            chases_stand_in(rect(-400.0, 32.0, 856.0, 1081.0), display),
-            "partly on"
-        );
-        assert!(!chases_stand_in(rect(1727.0, 1085.0, 1720.0, 1081.0), display));
-        assert!(!chases_stand_in(rect(-3446.0, 32.0, 1720.0, 1081.0), display));
-    }
 
     /// The 0.1pt tolerance is `same_as`'s: the layout recomputes destinations bit-for-bit only most
     /// of the time.
@@ -556,176 +389,31 @@ mod tests {
         assert_eq!(merge_action(None, to), Admitted::Joined);
     }
 
+
+
+
+
+
+
+    /// A grow its picture cannot cover and a stand-in are held for; a picture that covers lands.
     #[test]
-    fn a_coalescing_merge_re_requests_frames_it_already_applied() {
-        let moved = window(1);
-        let a = rect(1727.0, 1116.0, 859.0, 1081.0);
-        let b = rect(867.0, 32.0, 859.0, 1081.0);
-        let mut final_frames = vec![(moved, a)];
-
-        let changed = merge_final_frames(&mut final_frames, vec![(moved, b)]);
-        let reapply = reapply_set(true, false, changed, &final_frames);
-
-        assert!(changed, "B differs from A");
-        assert_eq!(final_frames, vec![(moved, b)], "latest frame wins");
-        assert_eq!(
-            reapply,
-            Some(vec![(moved, b)]),
-            "frames applied early and then merged must be re-requested; got {reapply:?}"
-        );
+    fn a_grow_and_a_stand_in_are_awaited_and_a_picture_that_covers_lands() {
+        let column = CGSize::new(859.0, 1081.0);
+        assert_eq!(EndPicture::of_picture((859.0, 1081.0), CGSize::new(1720.0, 1081.0)), EndPicture::Awaited, "a grow");
+        assert_eq!(EndPicture::of_picture((0.0, 0.0), column), EndPicture::Awaited, "a stand-in covers nothing");
+        assert_eq!(EndPicture::of_picture((859.0, 1081.0), column), EndPicture::Lands);
+        assert_eq!(EndPicture::of_picture((1720.0, 1081.0), column), EndPicture::Lands, "a shrink crops");
     }
 
+    /// A window that opened flies from where it opened and repaints at its slot, never held for; one
+    /// already at its slot, a cold cache rather than an open, lands; a reservation is held for.
     #[test]
-    fn a_merge_before_frames_were_applied_re_requests_nothing() {
-        let mut rng = Gen(35);
-        for _ in 0..RUNS {
-            let current = rng.on_screen();
-            let mut final_frames = vec![(window(1), current)];
-            let incoming = if rng.coin() { rng.on_screen() } else { current };
-            let action = merge_action(Some(current), incoming);
-            let expected = if current.same_as(incoming) {
-                Admitted::Redundant
-            } else {
-                Admitted::Retargeted
-            };
-            assert_eq!(action, expected);
-            let changed =
-                merge_final_frames(&mut final_frames, vec![(window(1), incoming)]);
-            assert_eq!(changed, action == Admitted::Retargeted);
-            assert_eq!(
-                final_frames,
-                vec![(window(1), incoming)],
-                "latest frame wins"
-            );
-            for in_flight in [false, true] {
-                assert_eq!(
-                    reapply_set(false, in_flight, changed, &final_frames),
-                    None
-                );
-            }
-        }
-        assert_eq!(
-            merge_action(None, rect(4.0, 32.0, 859.0, 1081.0)),
-            Admitted::Joined
-        );
-    }
-
-    #[test]
-    fn a_coalescing_merge_re_requests_exactly_the_merged_frames() {
-        let mut rng = Gen(63);
-        let mut re_requested = 0;
-        for _ in 0..RUNS {
-            let count = rng.below(4) as u32 + 1;
-            let mut final_frames: Vec<(WindowId, CGRect)> =
-                (1..=count).map(|i| (window(i), rng.on_screen())).collect();
-            let passes = rng.below(3) + 1;
-            let mut expected: Vec<(WindowId, CGRect)> = final_frames.clone();
-            for _ in 0..passes {
-                let mut incoming: Vec<(WindowId, CGRect)> = Vec::new();
-                for i in 1..=count + 1 {
-                    match rng.below(3) {
-                        0 => continue,
-                        1 => incoming.push((window(i), rng.on_screen())),
-                        _ => {
-                            if let Some(&(_, current)) =
-                                expected.iter().find(|(w, _)| *w == window(i))
-                            {
-                                incoming.push((window(i), current));
-                            }
-                        }
-                    }
-                }
-                let mut expected_changed = false;
-                for (window, frame) in &incoming {
-                    match expected.iter_mut().find(|(w, _)| w == window) {
-                        Some(current) => {
-                            expected_changed |= !current.1.same_as(*frame);
-                            current.1 = *frame;
-                        }
-                        None => {
-                            expected.push((*window, *frame));
-                            expected_changed = true;
-                        }
-                    }
-                }
-                let changed = merge_final_frames(&mut final_frames, incoming);
-                assert_eq!(changed, expected_changed, "seed 63");
-                let reapply = reapply_set(true, false, changed, &final_frames);
-                if changed {
-                    re_requested += 1;
-                    assert_eq!(
-                        reapply,
-                        Some(expected.clone()),
-                        "seed 63: merged set, latest wins"
-                    );
-                } else {
-                    assert_eq!(reapply, None, "seed 63: nothing changed, nothing re-requested");
-                }
-            }
-        }
-        assert!(
-            re_requested > RUNS / 2,
-            "generator sanity: {re_requested} re-requests"
-        );
-    }
-
-    #[test]
-    fn reapply_set_truth_table() {
-        let frames = vec![(window(1), rect(4.0, 32.0, 859.0, 1081.0))];
-        for frames_applied in [false, true] {
-            for in_flight in [false, true] {
-                for changed in [false, true] {
-                    let expected =
-                        (frames_applied && !in_flight && changed).then(|| frames.clone());
-                    assert_eq!(
-                        reapply_set(frames_applied, in_flight, changed, &frames),
-                        expected,
-                        "frames_applied={frames_applied} in_flight={in_flight} changed={changed}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// The reservation always brings a hold entry of the destination's size.
-    #[test]
-    fn an_entrance_always_holds_at_its_destination_size() {
-        let mut rng = Gen(61);
-        for _ in 0..RUNS {
-            let to = rng.on_screen();
-            let floating = rng.coin();
-            let (entrance, waiting) = entrance_reservation(window(2), to, floating);
-            assert_eq!(waiting, (window(2), to.size), "seed 61: {to:?}");
-            assert_eq!(entrance.to, to);
-            assert_eq!(entrance.floating, floating);
-        }
-    }
-
-    #[test]
-    fn a_fresh_flight_with_an_entrance_applies_and_chases_at_frame_zero() {
-        let mut rng = Gen(311);
-        for _ in 0..RUNS {
-            let to = rng.on_screen();
-            let (entrance, waiting) = entrance_reservation(window(3), to, false);
-            assert_eq!(entrance.window, window(3));
-            assert_eq!(entrance.to, to);
-            let awaiting: Vec<(WindowId, CGSize)> = vec![waiting];
-            let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
-            assert!(apply_now);
-            assert!(
-                chase.contains(&(window(3), to.size)),
-                "the entrance is chased: {chase:?}"
-            );
-
-            let awaiting = vec![(window(1), rng.on_screen().size)];
-            let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
-            assert!(apply_now);
-            assert_eq!(chase, awaiting);
-        }
-        assert_eq!(
-            frame_zero_work(&[], &[], &[], &[]),
-            (false, Vec::new(), Vec::new())
-        );
+    fn an_entrance_that_travels_repaints_one_standing_lands_and_a_reservation_is_awaited() {
+        let slot = rect(867.0, 32.0, 859.0, 1081.0);
+        let spawn = rect(400.0, 200.0, 700.0, 500.0);
+        assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: spawn, to: slot }), EndPicture::Repainting);
+        assert_eq!(EndPicture::of_entrance(EntranceDecision::Travel { from: slot, to: slot }), EndPicture::Lands);
+        assert_eq!(EndPicture::of_entrance(EntranceDecision::Reserve("capture budget")), EndPicture::Awaited);
     }
 
     #[test]
@@ -754,37 +442,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn frame_zero_work_sends_all_frames_when_holding_and_only_slots_otherwise() {
-        let slot = rect(867.0, 32.0, 859.0, 1081.0);
-        let grown = rect(4.0, 32.0, 1200.0, 1081.0);
-        let final_frames = vec![(window(1), grown), (window(2), slot)];
-        let (holding, chase_set, now) = frame_zero_work(
-            &[(window(1), grown.size)],
-            &[(window(2), slot.size)],
-            &final_frames,
-            &[(window(2), slot)],
-        );
-        assert!(holding);
-        assert_eq!(
-            now, final_frames,
-            "holding: every frame goes out under the overlay"
-        );
-        assert_eq!(chase_set, vec![(window(1), grown.size), (window(2), slot.size)]);
-
-        let (holding, chase_set, now) =
-            frame_zero_work(&[], &[(window(2), slot.size)], &final_frames, &[(window(2), slot)]);
-        assert!(!holding);
-        assert_eq!(
-            now,
-            vec![(window(2), slot)],
-            "not holding: the newcomer's slot alone"
-        );
-        assert_eq!(chase_set, vec![(window(2), slot.size)]);
-
-        let (holding, chase_set, now) = frame_zero_work(&[], &[], &final_frames, &[]);
-        assert!(!holding && chase_set.is_empty() && now.is_empty());
-    }
 
     #[test]
     fn entrance_plan_travels_exactly_when_it_can() {
@@ -846,13 +503,16 @@ mod tests {
                 1081.0,
             );
             let pan = CGPoint::new(-574.0, 0.0);
-            let (newcomer, _) =
-                entrance_reservation(window(51462), to_overlay_space(slot, EXTERNAL), false);
-            let (untouched, _) = entrance_reservation(
-                window(51463),
-                to_overlay_space(rect(2000.0, 32.0, 400.0, 1081.0), EXTERNAL),
-                false,
-            );
+            let newcomer = PendingEntrance {
+                window: window(51462),
+                to: to_overlay_space(slot, EXTERNAL),
+                floating: false,
+            };
+            let untouched = PendingEntrance {
+                window: window(51463),
+                to: to_overlay_space(rect(2000.0, 32.0, 400.0, 1081.0), EXTERNAL),
+                floating: false,
+            };
             let mut entrances = vec![newcomer, untouched.clone()];
             let frames = vec![
                 (window(1), rect(4.0, 32.0, 859.0, 1081.0)),
@@ -900,24 +560,37 @@ mod tests {
     mod bounce {
         use super::*;
 
+        const PLAYS: Duration = Duration::from_millis(350);
+        const WALL: CGPoint = CGPoint { x: -72.0, y: 0.0 };
+
         /// A push while a bounce plays is not dropped: it starts a bounce from where the last is
         /// drawn. One after it came home, or with none playing, starts from rest.
         #[test]
         fn every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn() {
-            let plays = Duration::from_millis(350);
-            let wall = CGPoint::new(-72.0, 0.0);
             let began = Instant::now();
-            let first = next_bounce(None, began, wall, plays);
-            assert_eq!(first, Bounce::from_rest(wall, plays));
+            let mut record = BounceRecord::default();
+            let (first, before) = record.push(began, WALL, PLAYS);
+            assert_eq!((first, before), (Bounce::from_rest(WALL, PLAYS), None));
             let later = began + Duration::from_millis(60);
-            let second = next_bounce(Some((began, first)), later, wall, plays);
+            let (second, before) = record.push(later, WALL, PLAYS);
             assert_eq!(second.from, first.at(Duration::from_millis(60)));
             assert_ne!(second.from, CGPoint::new(0.0, 0.0), "not over from rest");
-            let home = began + plays;
-            assert_eq!(
-                next_bounce(Some((began, first)), home, wall, plays),
-                Bounce::from_rest(wall, plays)
-            );
+            assert_eq!(before, Some(WALL), "it replaces the one drawn");
+            let home = later + second.duration;
+            assert_eq!(record.push(home, WALL, PLAYS).0, Bounce::from_rest(WALL, PLAYS));
+        }
+
+        /// The lift and a frame zero installed again remove the bounce's animations, so a push
+        /// while the one gone would still have played starts from rest, replacing nothing: from
+        /// where the record says it was, the surface would jump.
+        #[test]
+        fn a_push_after_the_bounce_is_gone_starts_from_rest() {
+            let began = Instant::now();
+            let mut record = BounceRecord::default();
+            record.push(began, WALL, PLAYS);
+            record.gone();
+            let (next, before) = record.push(began + Duration::from_millis(60), WALL, PLAYS);
+            assert_eq!((next, before), (Bounce::from_rest(WALL, PLAYS), None));
         }
     }
 }

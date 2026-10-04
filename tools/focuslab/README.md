@@ -19,11 +19,14 @@ sequenced.
 | `spacing.swift`, `coldsize.swift`, `gpuwarm.swift`, `qos.swift`, `keepalive.swift` | a SkyLight capture's cost against the gap since the last one, picture size, a GPU or CPU warm-up, the caller's QoS, keep-alive captures |
 | `par.swift` | SkyLight captures in parallel, on the main and on separate connections |
 | `cap1x.swift`, `ca.swift` | capture cost at 2x and with bit 9; Core Animation's commit cost for a whole composite, a crop, and copies |
+| `overlay.swift` | per Ctrl+key press, when rini's overlay window turns opaque and back (its alpha in the window list, 1ms poll): press to overlay up, and the lift. Neither overlay probe watches for foreign input |
+| `overlayrec.swift` | rini's overlay window alone through an `SCStream` while posting presses, one PNG per frame named by its milliseconds since the first press: what the tiles show mid-flight, whatever the screen shows beneath |
 | `playback.swift` | what Core Animation draws for the overlay's animations at chosen media times, against the curves `Score` evaluates; touches nothing on screen and needs no grant |
 
-`e2.sh` runs `focuslab` in blocks with the flags file switched between them; `e1.py`, `e2.py`,
-`firstcap.py` read its JSON lines; `journal-parse.py`, `critpath.py`, `focus-path.py` and
-`f0-overlap.py` read rini's own transitions journal.
+`e2.sh` runs `focuslab` on the strip's focus change in labelled blocks, against whichever build rini
+runs; `e1.py`, `e2.py`, `firstcap.py` read its JSON lines. `journal-parse.py`, `critpath.py`,
+`focus-path.py` and `f0-overlap.py` read the transitions journal the `scratch/handover` prototype
+wrote, by its mark names; rini writes none until step 8 of `docs/pictures-motion-transitions.md`.
 
 Build one with `swiftc -O <file>.swift -o <name>`. They need Accessibility and Screen Recording for
 the terminal they run from.

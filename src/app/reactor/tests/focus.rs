@@ -460,12 +460,18 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
     }
 }
 
-/// A window renders differently focused, and none of the difference is a size change: measured on a 1pt
-/// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window whose
-/// picture no longer fits its frame, so without this both tiles keep the wrong focus state and the border
-/// pops when the overlay lifts.
+/// Every focus report reaches the pictures service as a hint, rini's own raise's included: the hint
+/// arms the watch on the focus target's look, which is how a flight draws focus handing over. Every
+/// report that changes the key window tells the flight engine both windows whose look it turned, at
+/// their frames, so they are pictured again with nothing flying; a report of the window already key
+/// turns none. The reactor asks for no picture of either itself: the engine knows whether a flight
+/// will picture them.
 #[test]
-fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
+fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine_whose_look_turned() {
+    use crate::pictures::domain::schedule::Priority;
+    use crate::pictures::domain::watch::Hint;
+    use crate::pictures::platform::service::Command as Asked;
+    use crate::transitions::platform::engine::Event as Engine;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -475,48 +481,42 @@ fn a_focus_change_asks_for_fresh_pictures_of_both_windows() {
     reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
     apps.make_app_and_settle(&mut reactor, 1, make_windows(2));
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
+    reactor.main_window_tracker.set_focus_for_test(leaving);
 
     let mut pictures = reactor.connect_test_pictures();
+    let (transitions_tx, mut transitions_rx) = channels::channel();
+    reactor.communication_manager.transitions_tx = Some(transitions_tx);
 
-    reactor.handle_event(Event::WindowServerFocusChanged(arriving, space));
+    // A click elsewhere, rini's own raise coming back, and the window already key reported again.
+    for window in [arriving, leaving, leaving] {
+        reactor.handle_event(Event::WindowServerFocusChanged(window, space));
+    }
 
-    let refreshed = asked_at(
-        &pictures_asked(&mut pictures),
-        crate::pictures::domain::schedule::Priority::Focus,
-    );
+    let asked = pictures_asked(&mut pictures);
+    let hinted: Vec<WindowId> = asked
+        .iter()
+        .filter_map(|command| match command {
+            Asked::Hint(Hint::Focused(window)) => Some(*window),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hinted, [arriving, leaving, leaving]);
+    for priority in [Priority::Focus, Priority::Background] {
+        assert!(asked_at(&asked, priority).is_empty(), "the reactor captures neither end itself: {priority:?}");
+    }
+    let frame = |window: WindowId| reactor.state.windows.window(window).unwrap().frame_monotonic;
+    let mut turned = Vec::new();
+    while let Ok((_, event)) = transitions_rx.try_recv() {
+        if let Engine::LooksTurned(windows) = event {
+            turned.push(windows);
+        }
+    }
+    let ends: Vec<Vec<WindowId>> =
+        turned.iter().map(|ends| ends.iter().map(|(window, _)| *window).collect()).collect();
+    assert_eq!(ends, vec![vec![arriving, leaving], vec![leaving, arriving]]);
     assert!(
-        refreshed.contains(&arriving),
-        "the window gaining focus: {refreshed:?}"
-    );
-    assert!(
-        refreshed.contains(&leaving),
-        "the window losing it: {refreshed:?}"
-    );
-}
-
-/// Focus landing where it already is has no window losing it: only the window itself is asked for.
-#[test]
-fn focus_that_does_not_move_asks_for_the_window_alone() {
-    let (mut apps, mut reactor) = test_context();
-    let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
-    let space = SpaceId::new(1);
-    let window = WindowId::new(1, 1);
-
-    reactor.handle_event(space_state_event(vec![screen], vec![Some(space)]));
-    apps.make_app_and_settle(&mut reactor, 1, make_windows(1));
-    reactor.send_layout_event(LayoutEvent::WindowFocused(space, window));
-
-    let mut pictures = reactor.connect_test_pictures();
-    reactor.refresh_focus_pictures(window);
-
-    let refreshed = asked_at(
-        &pictures_asked(&mut pictures),
-        crate::pictures::domain::schedule::Priority::Focus,
-    );
-    assert_eq!(
-        refreshed,
-        vec![window],
-        "only the window itself, not a phantom second one"
+        turned.iter().flatten().all(|(window, at)| at.size == frame(*window).size),
+        "each at the frame the reactor has it at: {turned:?}"
     );
 }
 

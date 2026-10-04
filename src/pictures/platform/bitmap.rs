@@ -63,7 +63,7 @@ unsafe extern "C-unwind" {
 /// The side of the square a [`thumbprint`] samples an image down to.
 const THUMBPRINT_SIDE: usize = 32;
 
-/// A small fingerprint of an image's content, for the reveal chase's settledness check.
+/// A small fingerprint of an image's content, for telling when a window has finished repainting.
 pub fn thumbprint(image: &CGImage) -> Option<Vec<u8>> {
     let side = THUMBPRINT_SIDE;
     let ctx = rgba_bitmap_context(side, side)?;
@@ -135,7 +135,7 @@ mod tests {
         CGBitmapContextCreateImage(Some(&ctx)).unwrap()
     }
 
-    /// The chase compares prints of one window at two sizes, so a print is the same size whatever
+    /// A repaint is judged by prints of one window at two sizes, so a print is the same size whatever
     /// the image's, and the same content prints the same.
     #[test]
     fn a_thumbprint_is_one_small_square_whatever_the_image() {

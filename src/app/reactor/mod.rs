@@ -511,6 +511,10 @@ pub struct Reactor {
     live_spaces: space_affinity::LiveSpaces,
     /// Windows a layout pass has asked a picture of. See `animate_layout`.
     pictured_windows: HashSet<WindowId>,
+    /// The layout's focus as the event being handled began: the window still drawn focused on screen
+    /// when a pass the event asks for flies, which the flight engine draws focused until focus hands
+    /// over. A focus report reaches the reactor before the pass it causes.
+    focused_as_event_began: Option<WindowId>,
     /// The strip windows the current event's regroup already raised, so the post-layout judgment does
     /// not raise them a second time. See `regroup_after_layout`.
     regroup_raised: Vec<WindowId>,
@@ -630,6 +634,7 @@ impl Reactor {
             raise_echo: crate::windows::domain::focus::RaiseEcho::default(),
             live_spaces: space_affinity::LiveSpaces::default(),
             pictured_windows: HashSet::default(),
+            focused_as_event_began: None,
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
@@ -1259,6 +1264,8 @@ impl Reactor {
     #[instrument(name = "reactor::handle_event", skip(self), fields(event=?event))]
     fn handle_event(&mut self, event: Event) {
         let previously_focused_window = self.main_window();
+        let began = self.layout_manager.layout_engine.focused_window();
+        let outer = std::mem::replace(&mut self.focused_as_event_began, began);
         match self.dispatch_workflow(event) {
             Ok(mut outcome) => {
                 let focused_window = self.main_window();
@@ -1271,6 +1278,7 @@ impl Reactor {
             }
             Err(error) => warn!(%error, "reactor workflow failed"),
         }
+        self.focused_as_event_began = outer;
     }
 
     /// A focus report naming a window rini knows and does not manage is a panel's; see
@@ -1290,6 +1298,27 @@ impl Reactor {
         }
     }
 
+    /// Tells the flight engine whose look the key window turned if it changed, rini's own raise
+    /// included, each managed window at its frame: at rest the engine pictures both afresh, and in
+    /// flight whatever the flight does not picture. See "Focus changing during a flight" in
+    /// `src/transitions/docs/coordination.md`.
+    fn tell_looks_turned(&self, key_before: Option<WindowId>) {
+        let turned = crate::windows::domain::focus::looks_turned(
+            key_before,
+            self.main_window_tracker.key_window(),
+        );
+        let windows: Vec<(WindowId, CGRect)> = turned
+            .into_iter()
+            .filter_map(|window| {
+                let state = self.state.windows.window(window)?;
+                state.is_effectively_manageable().then_some((window, state.frame_monotonic))
+            })
+            .collect();
+        if let (false, Some(tx)) = (windows.is_empty(), &self.communication_manager.transitions_tx) {
+            _ = tx.send(crate::transitions::platform::engine::Event::LooksTurned(windows));
+        }
+    }
+
     fn dispatch_workflow(&mut self, event: Event) -> anyhow::Result<EventOutcome> {
         self.live_spaces.clear();
         self.log_event(&event);
@@ -1306,10 +1335,12 @@ impl Reactor {
                 if self.main_window_tracker.is_globally_frontmost(*pid)
         );
 
+        let key_before = self.main_window_tracker.key_window();
         let raised_window = event
             .focus_event()
             .map(|focus| self.recognise_panel(focus))
             .and_then(|focus| self.main_window_tracker.handle_event(focus));
+        self.tell_looks_turned(key_before);
         match event {
             Event::ApplicationLaunched {
                 pid,
@@ -3784,6 +3815,8 @@ impl Reactor {
             to_offset,
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
+            focused_before: self.focused_as_event_began,
+            key: self.main_window_tracker.key_window(),
             duration,
             nudge,
         });
@@ -4053,6 +4086,8 @@ impl Reactor {
             to_offset,
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
+            focused_before: self.focused_as_event_began,
+            key: self.main_window_tracker.key_window(),
             duration,
             nudge: None,
         });
@@ -4060,41 +4095,6 @@ impl Reactor {
         // the pictures service holds a warm until the quiet after the flight (`src/transitions/docs/coordination.md`).
         self.warm_all_workspaces(space);
         true
-    }
-
-    /// Asks for fresh pictures of the window gaining focus and the one losing it.
-    ///
-    /// A window's appearance depends on focus and none of the difference is a size change: measured on a 1pt
-    /// window border, 65 of 255 focused against 42 unfocused. The ordinary warm only recaptures a window
-    /// whose picture no longer FITS, so an unfocused capture stayed forever and its tile popped to the
-    /// focused rendering when the overlay lifted. Background work, so this costs nothing on the way in.
-    fn refresh_focus_pictures(&mut self, gaining: WindowId) {
-        let Some(pictures) = &self.communication_manager.pictures else {
-            return;
-        };
-        let losing = self
-            .layout_manager
-            .layout_engine
-            .focused_window()
-            .filter(|previous| *previous != gaining);
-        let targets: Vec<crate::pictures::domain::target::PictureTarget> = [Some(gaining), losing]
-            .into_iter()
-            .flatten()
-            .filter_map(|window| {
-                let state = self.state.windows.window(window)?;
-                Some(crate::pictures::domain::target::PictureTarget {
-                    window,
-                    server_id: state.info.sys_id?,
-                    size: state.frame_monotonic.size,
-                })
-            })
-            .collect();
-        if !targets.is_empty() {
-            pictures.ask(crate::pictures::domain::schedule::Ask {
-                priority: crate::pictures::domain::schedule::Priority::Focus,
-                targets,
-            });
-        }
     }
 
     /// How far the ACTIVE workspace's strip has moved on screen since a pass last looked at that strip,
@@ -4156,13 +4156,11 @@ impl Reactor {
             return;
         };
         let frame = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
-        let picture_bar = !self.config.settings.bar.enabled;
         if let Some(tx) = &self.communication_manager.transitions_tx {
             _ = tx.send(crate::transitions::platform::engine::Event::SetDisplay {
                 id: screen.id.as_u32(),
                 frame,
                 scale: screen.scale,
-                picture_bar,
                 top_band: self.config.settings.top_band(),
             });
         }
@@ -4173,7 +4171,7 @@ impl Reactor {
                     frame,
                     scale: screen.scale,
                 },
-                picture_bar,
+                !self.config.settings.bar.enabled,
             );
         }
     }

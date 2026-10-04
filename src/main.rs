@@ -428,6 +428,7 @@ fn main() {
         transitions_tx.clone(),
         mtm,
         pictures.clone(),
+        rini::pictures::domain::watch::Client(1),
     );
     flight_engine.set_place_frames(Box::new({
         let events_tx = events_tx.clone();

@@ -298,7 +298,6 @@ fn window_picture(
         },
         image: Pixels::Surface(surface),
         source: Route::ScreenCaptureKit,
-        dressing: None,
         // The window on its own: grey wherever it has a blur. See `translucency`.
         carries_blur: false,
         taken,
@@ -370,7 +369,6 @@ pub fn render_desktop(display: Display, done: impl Fn(Option<Picture>) + Send + 
                 },
                 image: Pixels::Surface(surface),
                 source: Route::ScreenCaptureKit,
-                dressing: None,
                 taken: std::time::Instant::now(),
                 carries_blur: false,
             }));

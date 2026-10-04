@@ -1012,11 +1012,14 @@ vertical slide had filled them, and the last picture afterwards. That matches
 the report exactly, of horizontal slides being almost black until a vertical
 slide, then working for a while.
 
-The per-window path now dresses the overlay too, reusing the held picture rather
-than capturing. A desktop composite measures 13ms to 36ms for 6 windows, which
-is a frame or two of lag on every window focus change, while re-applying a
-picture already in hand is a pointer assignment. The background refresh keeps
-that picture current.
+The per-window path now dresses the overlay too, with the render of the desktop
+the pictures service holds. A desktop composite measures 13ms to 36ms for 6
+windows, which is a frame or two of lag on every window focus change, while
+re-applying a picture already in hand is a pointer assignment. The service renders
+the desktop again at a release when it is missing or stale; until the first render
+of a display lands, a transition there composites it on the main thread
+("Which route serves, and why the render wins" in
+`src/pictures/docs/capture-research.md`).
 
 ## Sequencing a focus change behind the overlay
 
@@ -1146,22 +1149,25 @@ What each part of the prototype fixed:
 
 - **A constant hairline and outline replace the harvest.** A 1pt ring of white at 20% (18%
   unfocused) inside the edge, and a 0.5pt stroke of black at 90% half a point outside it, drawn
-  as layers over every tile. The harvest leaves a tile with no outline whenever it has not run,
+  as layers over every tile. The harvest left a tile with no outline whenever it had not run,
   which is the 53-level tail. A border layer at a half-point origin landed one pixel too far out,
   so the outline is a `CAShapeLayer` stroke; both have to be set after the tile's frame, or a pooled
   layer's autoresizing carries the old size, and both follow a resize on its own timing.
 - **Every window that ends on screen gets a 1pt hole in the overlay** over its final frame, not only
   the focused one: the window losing focus is occluded too, and repainted as unfocused only at the
   lift.
-- **The end-state mirror.** From frame zero until the lift, the windows that end wholly on screen
-  are captured back to back in one batched SkyLight call with the desktop windows after them, so a
-  picture swapped in meanwhile (a reveal chase's framed one, hairline baked in) is not what the lift
-  lands on. The build measured here sent every picture on every pass; the one kept sends a window's
-  picture only when its band print differs from the last one sent (`src/pictures/domain/watch.rs`).
+- **The end-state mirror.** From the overlay up until the lift, the windows that end wholly on
+  screen are captured through SkyLight as they land, so the tile the lift ends on shows the window
+  where it ends rather than a picture taken before it got there. The build measured here captured
+  them back to back and sent every picture on every pass. The one kept captures each window once it
+  is where it ends, the focus target again until its look changes and every one once more 110ms
+  before the clock ends, and swaps a picture in only when its band print differs from the last one
+  delivered (`src/pictures/domain/watch.rs`, "The lifecycle" in
+  `src/transitions/docs/coordination.md`).
 - **Tiles snap to the real frame.** A strip pans by a fractional vector and the window server rounds
   each window on its own, so a tile in a rigid group ended a point from its window (861 against 860
-  wide). When the mirror sees a window land, its tile is moved onto the real frame while still in
-  motion.
+  wide). When a window is pictured where it landed, its tile is moved onto the real frame while
+  still in motion.
 - **A window counts as landed when its frame is within 20pt of its target**, and the crop uses the real
   frame: a terminal shrinking to half width sat at 862 against 860 requested before settling. The build
   measured here waited for the frame to be stable between two polls; the one kept captures the window

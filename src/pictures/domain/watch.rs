@@ -15,13 +15,12 @@ use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::CGRectExt;
 
 use crate::pictures::domain::print::print_changed;
-use crate::pictures::domain::schedule::{REVEAL_CHASE_ATTEMPTS, REVEAL_CHASE_INTERVAL};
-use crate::pictures::domain::settle::chase_settled;
+use crate::pictures::domain::settle::repaint_settled;
 use crate::pictures::domain::target::PictureTarget;
 
 /// A window whose server frame is this close to where it ends, in each of x, y, width and height,
 /// has landed: the window server rounds each window on its own, and an app may settle a point or two
-/// off what it was asked. The same slack a transition draws a picture on its tile with.
+/// off what it was asked.
 pub const END_SLACK: f64 = 20.0;
 /// A window this close to where its tile starts is where frame zero expects it.
 const FRAME_ZERO_SLACK: f64 = 2.0;
@@ -32,6 +31,10 @@ pub const LANDING_POLL: Duration = Duration::from_millis(1);
 /// How often, and how many times, a window reported focused is captured until its look changes.
 pub const CHANGE_EVERY: Duration = Duration::from_millis(15);
 pub const CHANGE_TRIES: u32 = 6;
+/// How often, and how many times at most, a window that has to repaint is captured once it is where
+/// it ends: about a second. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+const REPAINT_EVERY: Duration = Duration::from_millis(8);
+const REPAINT_TRIES: usize = 125;
 /// The least time between two refreshes of the windows behind the strip.
 pub const LIVE_EVERY: Duration = Duration::from_millis(16);
 /// A refresh behind the strip waits for a change capture due this soon.
@@ -100,9 +103,9 @@ pub struct WatchId(pub u64);
 pub enum Settle {
     /// The first capture once the window is there.
     AsSoonAsThere,
-    /// The first capture whose rendering has settled, by `chase_settled`: for a window a transition
+    /// The first capture whose rendering has settled, by `repaint_settled`: for a window a transition
     /// holds its flight for, which grows or opens and is not painted at its new size yet. Captured every
-    /// `REVEAL_CHASE_INTERVAL`, `REVEAL_CHASE_ATTEMPTS` times at most once there.
+    /// `REPAINT_EVERY`, `REPAINT_TRIES` times at most once there.
     Repainted,
 }
 
@@ -119,7 +122,8 @@ pub enum Watch {
         until: Instant,
     },
     /// Armed by the window's focus report: captured where it ends every `every`, `tries` times at most,
-    /// until its band print changes from the last picture delivered of it.
+    /// until its band print changes from the last picture delivered of it as the watch starts, even
+    /// when another watch delivered the changed look first.
     Change {
         tag: Tag,
         window: PictureTarget,
@@ -190,7 +194,8 @@ fn clipped(frame: CGRect, display: CGRect) -> bool {
     frame.intersection(&display).area() > 0.0 && !wholly_on(frame, display)
 }
 
-fn near(a: CGRect, b: CGRect, slack: f64) -> bool {
+/// Whether `a` is within `slack` of `b` in each of x, y, width and height.
+pub fn near(a: CGRect, b: CGRect, slack: f64) -> bool {
     (a.origin.x - b.origin.x).abs() <= slack
         && (a.origin.y - b.origin.y).abs() <= slack
         && (a.size.width - b.size.width).abs() <= slack
@@ -279,6 +284,8 @@ pub struct Watches {
     watches: Vec<(WatchId, Watching)>,
     focused: Vec<(WindowId, Instant)>,
     prints: HashMap<(Client, WindowId), Vec<u8>>,
+    /// The tag whose frame zero each client's prints were last started afresh by.
+    started: HashMap<Client, Tag>,
     plan: Plan,
 }
 
@@ -330,6 +337,9 @@ enum Arrival {
 struct Change {
     tag: Tag,
     target: PictureTarget,
+    /// The band print a change is judged from: what the client was delivered of the window as the
+    /// watch started; with none then, what it was delivered by the first capture, else that capture.
+    baseline: Option<Vec<u8>>,
     end: CGRect,
     behind: Vec<WindowServerId>,
     every: Duration,
@@ -379,7 +389,9 @@ impl Watches {
 
     /// Replaces what `id` watches, keeping what it already knows: a window that landed where it still
     /// ends stays landed, a repainting window settles against the picture held when the watch first
-    /// named it, a focus already seen stays seen, and the background keeps its pace.
+    /// named it, a focus already seen stays seen, and the background keeps its pace. A window watched
+    /// to land somewhere new starts its print afresh: what the client was delivered of it was taken for
+    /// the end before, which the client no longer draws.
     pub fn retarget(
         &mut self,
         id: WatchId,
@@ -402,7 +414,9 @@ impl Watches {
                     };
                     // What the cache holds now is the watch's own capture, not the picture before.
                     lands.before = kept.before.clone().or(lands.before.take());
-                    if kept.end == lands.end && kept.state == Arrival::Arrived {
+                    if kept.end != lands.end {
+                        self.prints.remove(&(new.tag.client, lands.target.window));
+                    } else if kept.state == Arrival::Arrived {
                         lands.state = Arrival::Arrived;
                     }
                 }
@@ -410,6 +424,7 @@ impl Watches {
             (Watching::Change(new), Watching::Change(old))
                 if new.target.window == old.target.window =>
             {
+                new.baseline = old.baseline;
                 new.armed = old.armed;
                 new.left = old.left.min(new.left);
                 new.next = old.next;
@@ -646,7 +661,8 @@ impl Watches {
 
         for ask in plan.asks {
             let client = ask.tag.client;
-            if ask.moment == Moment::FrameZero {
+            // A transition's frame zero asked again, for what a merge brought on screen, adds to it.
+            if ask.moment == Moment::FrameZero && self.started.insert(client, ask.tag) != Some(ask.tag) {
                 self.prints.retain(|(held, _), _| *held != client);
             }
             let mut delivered = Vec::new();
@@ -693,18 +709,26 @@ impl Watches {
                     };
                     match looked_at(window, accept) {
                         Some((frame, Capture::Taken(prints))) => {
-                            let known = self.prints.contains_key(&(change.tag.client, window));
-                            if news(&mut self.prints, change.tag.client, window, &prints.band)
-                                && known
+                            let client = change.tag.client;
+                            // A landing may have delivered the changed look first: the change is
+                            // judged from what was delivered before it, not from the latest delivery.
+                            let judged = change
+                                .baseline
+                                .take()
+                                .or_else(|| self.prints.get(&(client, window)).cloned());
+                            news(&mut self.prints, client, window, &prints.band);
+                            if let Some(baseline) = judged.as_deref()
+                                && print_changed(Some(baseline), &prints.band)
                             {
                                 change.done = true;
                                 out.deliver(change.tag, Why::FocusChanged, window, frame);
                             } else {
                                 // With nothing delivered to judge a change by, the first capture is
                                 // delivered as the window where it ends, and the change judged from it.
-                                if !known {
+                                if judged.is_none() {
                                     out.deliver(change.tag, Why::Landed, window, frame);
                                 }
+                                change.baseline = Some(judged.unwrap_or_else(|| prints.band.clone()));
                                 change.spend(now);
                             }
                         }
@@ -783,6 +807,7 @@ impl Watches {
                 Watching::Change(Change {
                     tag,
                     target: window,
+                    baseline: self.prints.get(&(tag.client, window.window)).cloned(),
                     end,
                     behind,
                     every,
@@ -886,7 +911,7 @@ fn land(
             lands.state = Arrival::Pending;
             return;
         }
-        Arrival::Pending => (REVEAL_CHASE_ATTEMPTS, None),
+        Arrival::Pending => (REPAINT_TRIES, None),
         Arrival::Settling { left, last, .. } => (left, last),
     };
     if settle == Settle::AsSoonAsThere {
@@ -900,7 +925,7 @@ fn land(
     let thumb = there.and_then(|(_, seen)| seen.thumb.clone());
     let settled = thumb
         .as_deref()
-        .is_some_and(|thumb| chase_settled(last.as_deref(), thumb, lands.before.as_deref()));
+        .is_some_and(|thumb| repaint_settled(last.as_deref(), thumb, lands.before.as_deref()));
     match there {
         Some((frame, seen)) if settled => {
             news(prints, tag.client, window, &seen.band);
@@ -914,7 +939,7 @@ fn land(
             lands.state = Arrival::Settling {
                 left: left - 1,
                 last: thumb,
-                next: now + REVEAL_CHASE_INTERVAL,
+                next: now + REPAINT_EVERY,
             }
         }
     }
@@ -1326,6 +1351,27 @@ mod tests {
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
     }
 
+    /// Frame zero asked again under the same tag, for windows a merged pass brought on screen, adds to
+    /// the prints the first started rather than starting them afresh again.
+    #[test]
+    fn frame_zero_asked_again_under_its_tag_keeps_the_prints_the_first_started() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.ask(frame_zero(&[(1, LEFT)], &[]));
+        round(&mut watches, start, |_| Some(LEFT), |_| Some(7)).unwrap();
+        watches.ask(frame_zero(&[(2, RIGHT)], &[]));
+        round(&mut watches, start, |_| Some(RIGHT), |_| Some(7)).unwrap();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
+            start,
+            &none,
+        );
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        let (_, outcome) = round(&mut watches, start, at, |_| Some(7)).unwrap();
+        assert!(outcome.deliveries.is_empty(), "neither is news: {outcome:?}");
+    }
+
     /// A window not where it ends by the deadline is reported lost, once.
     #[test]
     fn a_window_not_landed_by_the_deadline_is_lost() {
@@ -1401,7 +1447,7 @@ mod tests {
                 painting.set(painting.get() + 1);
             }
             assert!(watches.next(at + ms(7)).is_none(), "every 8ms");
-            at += REVEAL_CHASE_INTERVAL;
+            at += REPAINT_EVERY;
         };
         assert_eq!(rounds, 4, "1, 2, 3, then 3 again");
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
@@ -1423,7 +1469,7 @@ mod tests {
         assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
     }
 
-    /// One that never settles is given up on after the chase's attempts, as the reveal chase did.
+    /// One that never settles is given up on after `REPAINT_TRIES` captures.
     #[test]
     fn a_repainting_landing_that_never_settles_is_lost() {
         let start = Instant::now();
@@ -1437,7 +1483,7 @@ mod tests {
         let counter = std::cell::Cell::new(0u8);
         let mut at = start;
         let mut lost = Vec::new();
-        for _ in 0..REVEAL_CHASE_ATTEMPTS {
+        for _ in 0..REPAINT_TRIES {
             let (_, outcome) = round(
                 &mut watches,
                 at,
@@ -1450,7 +1496,7 @@ mod tests {
             .unwrap();
             assert!(outcome.deliveries.is_empty());
             lost.extend(outcome.lost);
-            at += REVEAL_CHASE_INTERVAL;
+            at += REPAINT_EVERY;
         }
         assert_eq!(lost, vec![(tag(1), wid(1))]);
         assert!(watches.next(at).is_none());
@@ -1483,7 +1529,7 @@ mod tests {
         assert!(outcome.deliveries.is_empty(), "refused, and not settled yet");
         assert_eq!(outcome.lost, vec![(tag(1), wid(1))], "at once, not at the deadline");
 
-        let next = start + REVEAL_CHASE_INTERVAL;
+        let next = start + REPAINT_EVERY;
         let (_, outcome) = round_of(&mut watches, next, at, |_| Capture::Refused).unwrap();
         assert!(outcome.deliveries.is_empty());
         assert_eq!(outcome.lost, vec![(tag(1), wid(2))], "settling, refused");
@@ -1540,6 +1586,35 @@ mod tests {
             "never a focus change"
         );
         assert!(outcomes[1..].iter().all(|outcome| outcome.deliveries.is_empty()));
+    }
+
+    /// A window that was focused before it landed: its landing, looked at first in the same round,
+    /// delivers the focused look, and its change watch still sees it changed from frame zero's.
+    #[test]
+    fn a_change_watch_sees_the_look_a_landing_delivered_first() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.ask(frame_zero(&[(1, RIGHT)], &[]));
+        round(&mut watches, start, |_| Some(RIGHT), |_| Some(1)).unwrap();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start, &none);
+        watches.watch(WatchId(2), change(1, LEFT), start, &none);
+        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert_eq!(
+            delivered(&outcome),
+            vec![(Why::Landed, vec![wid(1)]), (Why::FocusChanged, vec![wid(1)])]
+        );
+
+        // A parked window, nothing delivered as the watch started: judged from what its landing
+        // delivered by the watch's first capture.
+        let mut watches = Watches::default();
+        watches.hint(Hint::Focused(wid(1)), start);
+        watches.watch(WatchId(1), landing(&[(1, LEFT)], Settle::AsSoonAsThere, start + ms(150)), start, &none);
+        watches.watch(WatchId(2), change(1, LEFT), start, &none);
+        let (_, outcome) = round(&mut watches, start, |_| Some(LEFT), |_| Some(1)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])], "one landing, delivered once");
+        let (_, outcome) = round(&mut watches, start + CHANGE_EVERY, |_| Some(LEFT), |_| Some(2)).unwrap();
+        assert_eq!(delivered(&outcome), vec![(Why::FocusChanged, vec![wid(1)])]);
     }
 
     /// The focus report often comes before the watch. Remembered for a second, it arms a watch
@@ -1933,6 +2008,39 @@ mod tests {
         );
     }
 
+    /// A window's landing delivered at one end, and its watch retargeted to another: the client draws
+    /// nothing taken for the end before, so the window is delivered where it lands now, looking the
+    /// same or not. One still ending where it landed is not delivered again.
+    #[test]
+    fn a_window_watched_to_land_somewhere_new_is_delivered_there_whatever_it_looks_like() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
+            start,
+            &none,
+        );
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        round(&mut watches, start, at, |_| Some(1)).unwrap();
+        let moved = rect(1000.0, 32.0, 700.0, 1081.0);
+        watches.retarget(
+            WatchId(1),
+            landing_of(
+                tag(2),
+                vec![WindowServerId::new(9)],
+                &[(1, moved), (2, RIGHT)],
+                Settle::AsSoonAsThere,
+                start + ms(300),
+            ),
+            start + ms(50),
+            &none,
+        );
+        let (sets, outcome) = round(&mut watches, start + ms(50), |_| Some(moved), |_| Some(1)).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(1)]]);
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
+    }
+
     /// Deliveries carry the tag of the watch as it is now, so a client tells its generations apart.
     #[test]
     fn a_retargeted_watch_delivers_under_its_new_tag() {
@@ -1997,5 +2105,12 @@ mod tests {
             !clipped(rect(2000.0, 32.0, 859.0, 1081.0), LAPTOP),
             "wholly off it"
         );
+    }
+
+    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+    #[test]
+    fn a_window_that_has_to_repaint_is_captured_every_8ms_for_a_second() {
+        assert_eq!(REPAINT_EVERY, Duration::from_millis(8));
+        assert_eq!(REPAINT_EVERY * REPAINT_TRIES as u32, Duration::from_secs(1));
     }
 }

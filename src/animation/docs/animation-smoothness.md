@@ -23,9 +23,9 @@ container. `fly` hands the whole plan to the render server in ONE
 per loose tile, one timebase, one curve (`MOTION_CURVE`, or the ease-in-out
 while a move steps the strip; see "The move flight"). Model layers jump to their
 destinations; the animations carry the presentation and are removed on
-completion. The tick loop paces only the mid-flight orchestration (frame
-placement at the apply point, the one destination recapture, teardown);
-nothing is drawn on ticks. Every overlay commit is flushed to the render
+completion. The tick loop paces only the coordinator (frame zero's wait,
+the coalesce window, the hold, the final capture, the lift); nothing is drawn
+on ticks. Every overlay commit is flushed to the render
 server at once (`commit_now`): the overlay shares the main thread with the
 reactor, and an explicit commit nested in the run loop's implicit
 transaction is only sent when that iteration ends, after the reactor's
@@ -88,7 +88,10 @@ was left a third of the display from its window; pinned by
 `a_border_arriving_mid_nudge_rides_with_the_moved_window`. A move's step rides
 every strip container, so a still window joining mid-step takes the still
 piece and steps with the strip; pinned by
-`a_still_window_joining_mid_step_steps_with_the_strip`. What the flight does about a merge,
+`a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded in
+by the same function, every container drawn where frame zero installs it and its leg taken to be where
+the last pass sends it: nothing has moved, and the pass's frames are places on the strip there
+(`fold_before_moving`). What the flight does about a merge,
 the clock, the frames already sent and the entrances still reserved, is "Mid-flight passes" in
 `src/transitions/docs/coordination.md`.
 
@@ -119,7 +122,8 @@ from where the member is drawn, as fast as the old container's leg is going
 move passes left the strip at 12x the speed it had a frame before, 5,700 to
 53,000pt/s in a full-width burst; pinned by
 `the_column_a_second_move_passes_keeps_its_speed`. The flight's clock covers
-the longest spring (`running.duration`).
+the longest spring: the coordinator restarts it with the merge's duration, at least as long as the
+longest leg `retarget` returns.
 
 Measured 2026-09-29 by tracing where each container is drawn every tick
 (`trace_presented`, enabled with `rini::animation::trace=trace` in `RUST_LOG`)
@@ -197,43 +201,78 @@ which `hide` and a new display frame call, removes the mask and puts the black
 back. Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
 `the_mask_leaves_out_exactly_the_holes`. The mask is in the view layer's
 coordinates, flipped as the canvas is; where a hole lands on screen was not
-measured on a window shorter than the display. Nothing calls it yet: which
-windows get holes, and when, is the coordinator's (step 4 of
-`docs/pictures-motion-transitions.md`).
+measured on a window shorter than the display. Which windows get holes, and
+when, is the coordinator's (`src/transitions/domain/lifecycle.rs`): every window
+it watches end wholly on screen, from the show to the lift.
 
 **Corners of a baked picture.** A tile cut from a composite of the desktop
 carries the wallpaper in the window's rounded corners, where the window itself
 is transparent. `TileOverlay::set_tile_corner_clip` clips the tile's picture
 layer, crop pieces included, to a rounded rect of the window's radius
 (`cornerRadius` with `masksToBounds`, which follows a resize); the shadow
-caster is never clipped, and every install puts the picture back to whole
+caster and the hairline are never clipped, and every install puts the picture back to whole
 (`a_tiles_picture_clips_to_its_corners_and_its_shadow_does_not`). The decision
 is in `docs/pictures-motion-transitions.md`. The pictures service bakes them
-(`capture_on_screen`), and nothing asks it for one yet.
+(`capture_on_screen`), and the flight engine clips every tile whose picture is
+a SkyLight one of a window the service bakes (`corner_clip`), at every install and swap.
 
 **Tiles snap to the real frame.** A strip pans by a fractional vector and the
 window server rounds each window on its own, so a tile of a rigid group can end
 a point from its window: 861 against 860 wide ("The handover, measured" in
-`capture-overlay-research.md`). `TileOverlay::snap_tile` takes the window's real
-frame and moves the tile onto it when the two are 0.25 to 20pt apart at any edge
-(`snap_to`): under a quarter point nothing shows at the lift, and past 20pt the
-window has not landed where its tile ends. A tile riding its container moves
-inside it at once, while the container carries it on. A tile on a leg of its
-own is given the same leg, its begin, start and curve, ending on the real frame,
-so it lands there with the leg instead of popping at the lift
+`capture-overlay-research.md`). A tile snaps when it ends more than a quarter
+point and at most 20pt from its window at any edge (`snap_to`, with the pictures
+service's landing slack `END_SLACK`): under a quarter point nothing shows at the
+lift, and past 20pt the window has not landed where its tile ends. The caller
+decides with `snap_to`, once per window per generation and only once the motion
+has started: before it, the container stands at frame zero and the start would
+move the tile back. A window pictured where it ends before the start, or before a
+merge that can put its tile back on its model, is snapped again then, since a
+delivery comes only with a changed print. `TileOverlay::snap_tile` moves the tile
+onto the real frame without checking again. A tile riding its container moves inside it at once, while the container
+carries it on. A tile on a leg of its own is given the same leg, its begin,
+start and curve, ending on the real frame, so it lands there with the leg
+instead of popping at the lift
 (`a_tile_on_its_own_leg_snaps_on_the_same_timing`); once the leg has played
 only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
-Nothing calls it yet: when to snap, once per window per generation, is the
-coordinator's.
+The caller is the coordinator (`src/transitions/domain/lifecycle.rs`); the
+flight engine carries its snaps out.
+
+**The hairline.** No capture carries the hairline macOS composites around a
+window ("The hairline is composited outside every capture" in
+`src/pictures/docs/capture-research.md`), so the overlay draws it over every
+tile as a constant (`domain::motion::hairline`). The ring is a `CALayer` with a
+1pt border (`RING_PT`) of white at 0.20 on the focused window and 0.18 on the
+rest (`ring_alpha`), the fit measured there in dark mode; light mode is not
+measured. The outline is a `CAShapeLayer` stroking 0.5pt (`OUTLINE_PT`) of
+black at 0.9 along a rounded rect a quarter point outside the window
+(`outline`), so the stroke covers the half point just past its edge; a border
+layer at a half-point origin landed one pixel too far out ("The handover,
+measured" in `capture-overlay-research.md`). Both round to the window's radius
+as `pictures` measured it (`OverlayTile::radius`, which the flight engine fills
+from `Pictures::knowledge`), else 10pt, never past half the shorter side
+(`corner_radius`). The ring is a third layer beside the picture and the
+caster, an eighth step in front of the picture and under a companion's quarter
+step (`RING_Z`), with the outline as its child: inside the picture, a corner
+clip would cut the outline away (`a_corner_clip_leaves_the_hairline_whole`).
+It rides every move with the picture; a resize carries its bounds on the
+tile's own leg and animates its corner and the outline's path between the two
+sizes (`a_resize_carries_the_hairline_on_the_tiles_timing`); a snap moves it
+with the tile. Both are laid after the tile's frame, on every placement, or a
+pooled layer's autoresizing carries the old size, and a pooled tile's radius
+can have been measured since its last flight. Companions wear none.
+`TileOverlay::set_tile_focused` switches the ring's white and the shadow's
+depth in a hard cut, for focus handing over mid-flight; the prototype set the
+ring only at install. When focus hands over is the coordinator's
+(`HandOverFocus`).
 
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
-  exponential ease-out. The actor's clock evaluates it by
+  exponential ease-out. A `Leg` and the score evaluate it by
   solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
   and Core Animation gets the same four control points (`timing_function`),
-  so the apply point and the drawn motion agree; pinned by
-  `the_clock_and_the_render_server_run_one_curve`. A flight that steps flies
+  so where a merge bends a container from and what is drawn agree; pinned by
+  `a_leg_the_score_and_the_render_server_run_one_curve`. A flight that steps flies
   its containers on CSS ease-in-out (`EASE_IN_OUT`) instead, the same way:
   `Leg::Curve` carries its curve (see "The move flight"). Progress at quarter,
   half and 70% of the duration: 0.87, 0.97, 0.995. Ease-out cubic
@@ -387,7 +426,7 @@ window, not to its slot: where the columns passed differ in width it ends a
 few points into the outer gap beside the moved window until the lift. A
 container a merge opens after a step began does not carry the rest of it: its
 member leaves from where it is drawn, so it does not jump, but it stops
-stepping, as with the edge bounce. The orchestration clock restarts to cover
+stepping, as with the edge bounce. The coordinator's clock restarts to cover
 the new legs. A step still playing is not restarted (`NudgePlaying`): one step
 per burst. A press after it has come home, 455ms at the default duration,
 starts another. A press at the end of the strip
@@ -412,8 +451,8 @@ changes is how the picture maps onto it (`content_mode` in
   anchors to the BOTTOM (a terminal's prompt rides the bottom edge), so the
   seam sits just below the title bar; cutting at the bottom instead read as
   the window sliding into a slot. Content never stretches — the moving edges
-  swallow or reveal it — and all four rounded corners plus the harvested
-  hairline ride through intact. A first cut used `contentsCenter` (nine-part
+  swallow or reveal it — and all four rounded corners ride through intact,
+  under a hairline drawn at every size ("The hairline"). A first cut used `contentsCenter` (nine-part
   stretching); it kept the corners but read as the window stretching, which
   it is. Wrong-shaped cached pictures use the same mapping instead of being
   dropped — rapid preset cycling used to drop the resized window's tile
@@ -430,7 +469,7 @@ changes is how the picture maps onto it (`content_mode` in
   contentsRects are linear functions of the tile frame while the band is
   constant (any side ≥ 89pt), so interpolating between the two endpoint grids
   IS the per-frame crop layout; one transaction installs frame, contentsRect,
-  shadow-path, ring-mask and hairline-band animations on the shared curve.
+  shadow-path, ring-mask, hairline-corner and outline-path animations on the shared curve.
   Below 89pt the band's `min` curve is approximated linearly, drifting the
   seam a few points mid-flight inside the window's own content. A loose
   tile's retarget continues from the PRESENTED position and size, so rapid
@@ -438,19 +477,6 @@ changes is how the picture maps onto it (`content_mode` in
 - **The band is dynamic:** `min(40pt, 45% of the frame's short side)`, so it
   degrades continuously into a plain reveal as a frame approaches zero — no
   seam pops mid-flight, no band ever wider than its frame.
-- **A fresh picture or hairline swaps in place.** Rebuilding the dressing on a
-  mid-flight recapture snapped the border to its final layout while the tile
-  was still travelling; a matching harvest now swaps pixels into the existing
-  layers and rides their animations. The match is on harvested pieces only,
-  not on the tile's size: a run with no extent (an entrance dressed at zero
-  width) still gets a zero-size layer, so a tile wears the same 8 pieces at
-  every size. A harvest can still come back short: a corner the alpha check
-  rejects on a partly covered window, or a window caught mid-resize. A
-  mismatched set is never rebuilt while a resize animates
-  (`dressing_rebuild_allowed`, `Tile.resize_until`): the worn ring stays on
-  the resize timeline, the new dressing is already on the cached snapshot,
-  and the next `install` wears it. Rebuilding placed the pieces at the
-  destination rectangle while the picture was still halfway.
 - The caster's ring mask is created once per tile and reshaped in place; a
   resize animates its path and the shadow's silhouette between the two
   endpoint shapes, which interpolate because both are built by the same

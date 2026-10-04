@@ -269,7 +269,6 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::plan::entrance_from;
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
-    use crate::transitions::domain::timing::{APPLY_FRAMES_AT, FlightKind, apply_frames_at};
 
     /// The debug slide invents a start for a window already at rest; correcting that "drift" from
     /// the window server made from equal to and silently killed the whole movement.
@@ -1009,7 +1008,6 @@ mod tests {
             checked > RUNS / 2,
             "generator sanity: {checked} of {RUNS} in scope"
         );
-        assert_eq!(apply_frames_at(FlightKind::Layout, false), APPLY_FRAMES_AT);
     }
 
     #[test]

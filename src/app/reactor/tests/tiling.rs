@@ -1271,7 +1271,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
 }
 
 /// P-3.13 (`.kiro/specs/exit-entrance-animation-regressions`): with animations off, a
-/// close sends the engine nothing but the forget, and the window state is still removed.
+/// close sends the engine no flight, and the window state is still removed.
 #[test]
 fn a_destroyed_window_does_not_exit_when_animations_are_off() {
     let (mut apps, mut reactor) = test_context();
@@ -1843,6 +1843,9 @@ struct SurfaceFlight {
     windows: Vec<crate::transitions::domain::request::SurfaceWindow>,
     from_offset: CGPoint,
     final_frames: Vec<(WindowId, CGRect)>,
+    focus: Option<WindowId>,
+    focused_before: Option<WindowId>,
+    key: Option<WindowId>,
     nudge: Option<CGPoint>,
     duration: std::time::Duration,
 }
@@ -1857,6 +1860,9 @@ fn strip_movements(
             windows,
             from_offset,
             final_frames,
+            focus,
+            focused_before,
+            key,
             nudge,
             duration,
             ..
@@ -1866,12 +1872,63 @@ fn strip_movements(
                 windows,
                 from_offset,
                 final_frames,
+                focus,
+                focused_before,
+                key,
                 nudge,
                 duration,
             });
         }
     }
     out
+}
+
+/// A click or an app activation reaches the reactor as a focus report before the pass it causes, and a
+/// key press as a command before rini's raise is reported: either way the strip movement names the
+/// window focused as the event began, which is still drawn focused on screen at frame zero.
+#[test]
+fn a_strip_movement_names_the_window_focused_as_its_event_began() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let space = SpaceId::new(1);
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let pressed = strip_movements(&mut rx);
+    let flight = pressed.last().expect("the press scrolls the strip");
+    assert_eq!((flight.focus, flight.focused_before), (Some(third), Some(second)));
+
+    // cmd-` onto the column scrolled off: macOS makes it key, and reports it, before the layout moves.
+    reactor.handle_event(Event::WindowServerFocusChanged(first, space));
+    let reported = strip_movements(&mut rx);
+    let flight = reported.last().expect("the report scrolls the strip");
+    assert_eq!((flight.focus, flight.focused_before), (Some(first), Some(third)));
+}
+
+/// Frame zero pictures the window focus leaves drawn focused only if it was the key window as the
+/// request went out. A key press goes out before rini's raise is reported, so it names the window focus
+/// leaves; another application's panel taking the keys leaves none; a click's report has made its
+/// target key first.
+#[test]
+fn a_strip_movement_names_the_key_window_as_it_went_out() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let space = SpaceId::new(1);
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+    reactor.main_window_tracker.set_focus_for_test(second);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flight = strip_movements(&mut rx).pop().expect("the press scrolls the strip");
+    assert_eq!((flight.focused_before, flight.key), (Some(second), Some(second)));
+
+    reactor.handle_event(Event::WindowServerFocusChanged(WindowId::new(2, 90), space));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let flight = strip_movements(&mut rx).pop().expect("the press scrolls the strip");
+    assert_eq!((flight.focused_before, flight.key), (Some(third), None), "a panel has the keys");
+
+    reactor.handle_event(Event::WindowServerFocusChanged(first, space));
+    let flight = strip_movements(&mut rx).pop().expect("the report scrolls the strip");
+    assert_eq!(flight.key, Some(first), "the click made its target key before the request");
 }
 
 /// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else

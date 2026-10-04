@@ -1,13 +1,13 @@
-//! How one tile fits its picture to the frame it is drawn in, and how its frame interpolates.
-//! Sizes and rects only; the layers that realise these live in the overlay.
-
-use std::time::Instant;
+//! How one tile fits its picture to the frame it is drawn in, how its frame interpolates, and when
+//! it snaps onto its window's real frame. Sizes and rects only; the layers that realise these live
+//! in the overlay.
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use rini_geometry::stretch::is_a_resize;
 
 use crate::pictures::domain::coverage::{fits_frame, outgrows};
+use crate::pictures::domain::watch::{END_SLACK, near};
 
 /// How a tile's picture is fitted to the frame it is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -43,34 +43,6 @@ pub fn stand_in_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
     } else {
         ContentMode::Crop
     }
-}
-
-/// What a fresh hairline does to the layers a tile already wears.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DressingAction {
-    /// Same piece set: new pixels into the existing layers, riding any installed animation.
-    SwapInPlace,
-    /// Different piece set: drop the ring and build it at the model size.
-    Rebuild,
-    /// Different piece set while a resize is animating: leave the worn ring alone.
-    Defer,
-}
-
-/// Whether a harvest may rebuild a tile's ring now. See "A fresh picture or hairline swaps in
-/// place" in `src/animation/docs/animation-smoothness.md`.
-pub fn dressing_rebuild_allowed(resize_in_flight: bool, worn_matches: bool) -> DressingAction {
-    if worn_matches {
-        DressingAction::SwapInPlace
-    } else if resize_in_flight {
-        DressingAction::Defer
-    } else {
-        DressingAction::Rebuild
-    }
-}
-
-/// Whether a tile's resize animation, ending at `resize_until`, is still riding at `now`.
-pub fn resize_in_flight(resize_until: Option<Instant>, now: Instant) -> bool {
-    resize_until.is_some_and(|until| now < until)
 }
 
 /// The trailing band preserved intact when a tile draws cropped, in points.
@@ -147,30 +119,16 @@ pub fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     ]
 }
 
-/// Off by less than this, a tile and its window agree: under a quarter point nothing shows at the
-/// lift.
+/// A tile this close to its window agrees with it: under a quarter point nothing shows at the lift.
 pub const SNAP_FROM: f64 = 0.25;
 
-/// Off by more than this, the window has not landed where its tile ends: the slack a landing is
-/// judged within. See "Tiles snap to the real frame" in
-/// `src/animation/docs/animation-smoothness.md`.
-pub const SNAP_UP_TO: f64 = 20.0;
-
-/// Where a tile ending at `model` goes when its window really landed at `real`: onto `real` when
-/// an edge or a side is `SNAP_FROM` to `SNAP_UP_TO` off, nowhere otherwise. A strip pans by a
-/// fractional vector and the window server rounds each window on its own, so a tile of a rigid
-/// group can end a point from its window.
+/// Where a tile ending at `model` goes when its window really landed at `real`: onto `real` when an
+/// edge or a side is more than `SNAP_FROM` off and the window has landed (`END_SLACK`), nowhere
+/// otherwise. A strip pans by a fractional vector and the window server rounds each window on its
+/// own, so a tile of a rigid group can end a point from its window. See "Tiles snap to the real
+/// frame" in `src/animation/docs/animation-smoothness.md`.
 pub fn snap_to(model: CGRect, real: CGRect) -> Option<CGRect> {
-    let off = [
-        real.origin.x - model.origin.x,
-        real.origin.y - model.origin.y,
-        real.size.width - model.size.width,
-        real.size.height - model.size.height,
-    ]
-    .into_iter()
-    .map(f64::abs)
-    .fold(0.0, f64::max);
-    (SNAP_FROM..=SNAP_UP_TO).contains(&off).then_some(real)
+    (near(model, real, END_SLACK) && !near(model, real, SNAP_FROM)).then_some(real)
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -188,99 +146,11 @@ pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
     use crate::pictures::domain::region::within;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-    }
-
-    /// T9 (1.5) of `.kiro/specs/flight-render-stability/bugfix.md`. A harvest with a different
-    /// piece set lands while the tile's resize is animating: rebuilding puts the ring at the
-    /// destination size over a picture still travelling. Asserts the fixed `Defer`; unfixed
-    /// rebuilds.
-    #[test]
-    fn a_mismatched_dressing_is_deferred_while_a_resize_is_in_flight() {
-        let action = dressing_rebuild_allowed(true, false);
-        assert_eq!(
-            action,
-            DressingAction::Defer,
-            "hairline rebuilt mid-resize: {action:?}"
-        );
-    }
-
-    #[test]
-    fn dressing_rebuild_allowed_full_table() {
-        assert_eq!(
-            dressing_rebuild_allowed(false, true),
-            DressingAction::SwapInPlace
-        );
-        assert_eq!(dressing_rebuild_allowed(true, true), DressingAction::SwapInPlace);
-        assert_eq!(dressing_rebuild_allowed(false, false), DressingAction::Rebuild);
-        assert_eq!(dressing_rebuild_allowed(true, false), DressingAction::Defer);
-    }
-
-    #[test]
-    fn a_resize_is_in_flight_until_its_end_instant() {
-        let now = Instant::now();
-        assert!(resize_in_flight(Some(now + Duration::from_millis(100)), now));
-        assert!(!resize_in_flight(Some(now - Duration::from_millis(1)), now));
-        assert!(
-            !resize_in_flight(Some(now), now),
-            "the end instant itself is over"
-        );
-        assert!(!resize_in_flight(None, now));
-    }
-
-    /// Exhaustive over worn × available 8-bit piece sets and both resize flags, matched the way
-    /// `apply_edge_dressing` matches them: a rebuild never lands while a resize is in flight.
-    #[test]
-    fn a_resize_in_flight_never_rebuilds_the_hairline() {
-        for worn_bits in 0u32..256 {
-            for available_bits in 0u32..256 {
-                let worn: Vec<usize> = (0..8).filter(|i| worn_bits & (1 << i) != 0).collect();
-                let available: Vec<usize> =
-                    (0..8).filter(|i| available_bits & (1 << i) != 0).collect();
-                let worn_matches = !worn.is_empty() && worn == available;
-                for resize_in_flight in [false, true] {
-                    let action = dressing_rebuild_allowed(resize_in_flight, worn_matches);
-                    if resize_in_flight {
-                        assert_ne!(
-                            action,
-                            DressingAction::Rebuild,
-                            "worn {worn:?} available {available:?}"
-                        );
-                    }
-                    if worn_matches {
-                        assert_eq!(action, DressingAction::SwapInPlace);
-                    } else if !resize_in_flight {
-                        assert_eq!(action, DressingAction::Rebuild);
-                    }
-                }
-            }
-        }
-    }
-
-    /// P-3.7 of `.kiro/specs/flight-render-stability/bugfix.md`. Observed: a harvest whose piece
-    /// set matches the worn set swaps pixels in place whether or not a resize is in flight, over
-    /// every non-empty piece set, matched the way `apply_edge_dressing` matches them.
-    #[test]
-    fn a_matching_piece_set_swaps_in_place_in_or_out_of_a_resize() {
-        for bits in 1u32..256 {
-            let worn: Vec<usize> = (0..8).filter(|i| bits & (1 << i) != 0).collect();
-            let available = worn.clone();
-            let worn_matches = !worn.is_empty() && worn == available;
-            assert!(worn_matches, "pieces {worn:?}");
-            for resize_in_flight in [false, true] {
-                assert_eq!(
-                    dressing_rebuild_allowed(resize_in_flight, worn_matches),
-                    DressingAction::SwapInPlace,
-                    "pieces {worn:?} resize_in_flight={resize_in_flight}"
-                );
-            }
-        }
     }
 
     #[test]
@@ -539,13 +409,13 @@ mod tests {
     }
 
     #[test]
-    fn a_tile_snaps_only_from_a_quarter_point_to_twenty_points_off() {
+    fn a_tile_snaps_only_past_a_quarter_point_and_up_to_twenty_points_off() {
         let model = rect(4.0, 32.0, 861.0, 1081.0);
         let off = |d: f64| rect(4.0 + d, 32.0, 861.0, 1081.0);
-        for d in [0.25, -0.25, 1.0, 19.5, 20.0, -20.0] {
+        for d in [0.26, -0.26, 1.0, 19.5, 20.0, -20.0] {
             assert_eq!(snap_to(model, off(d)), Some(off(d)), "{d}");
         }
-        for d in [0.0, 0.2, -0.24, 20.5, -21.0, 400.0] {
+        for d in [0.0, 0.2, -0.24, 0.25, 20.5, -21.0, 400.0] {
             assert_eq!(snap_to(model, off(d)), None, "{d}");
         }
         assert_eq!(

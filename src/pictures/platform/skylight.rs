@@ -1,6 +1,6 @@
 //! Every SkyLight and `CGWindowList` capture: one composite of a list of windows, the batched capture
-//! of the windows on screen as regions of it, and the framed capture of one window with its hairline
-//! and, wholly on a display, its blur.
+//! of the windows on screen as regions of it, and the framed capture of one window with, wholly on a
+//! display, its blur.
 //!
 //! SkyLight captures what is on screen, fresh. Constraints and costs:
 //! `src/pictures/docs/capture-research.md`.
@@ -19,9 +19,6 @@ use crate::pictures::domain::knowledge::{Call, Learned};
 use crate::pictures::domain::region::{composite_frame, composite_scale, contains, pixel_rect};
 use crate::pictures::platform::bitmap::rgba_bitmap_context;
 use crate::pictures::platform::desktop::DesktopBackdrop;
-use crate::pictures::platform::edge_dressing::{
-    harvest_from_capture, picture_within_ring, ring_expanded,
-};
 use crate::pictures::platform::measure::{first_sight, shows_material};
 use crate::pictures::platform::picture::{Picture, Pixels, Route, image_size};
 
@@ -61,7 +58,6 @@ pub fn capture_list_via_skylight(
             window: covers,
         },
         source: Route::SkyLight,
-        dressing: None,
         taken: std::time::Instant::now(),
         carries_blur: false,
     })
@@ -213,64 +209,48 @@ fn region(
                 window: size,
             },
             source: Route::SkyLight,
-            dressing: None,
             taken,
             carries_blur,
         },
     )
 }
 
-/// One framed capture that yields the picture and its hairline: the reveal chase's capture, and the
-/// harvest after a flight. See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+/// One framed capture of a window: a new window's at its spawn frame. See "A window that opens" in
+/// `src/transitions/docs/coordination.md`.
 ///
 /// For a window wholly on a display, the picture also gets its blur back: a second capture of the
 /// window with everything below it, merged in by `translucency::merge`. About 14ms, measured, which is
 /// why it is never taken for every tile at the start of a flight.
-pub fn capture_via_framed_with_dressing(
-    window: WindowServerId,
-    scale: f64,
-) -> Option<Picture> {
+pub fn capture_via_framed(window: WindowServerId, scale: f64) -> Option<Picture> {
     let frame = crate::windows::platform::window_server::get_window(window)?.frame;
     if frame.size.width <= 0.0 || frame.size.height <= 0.0 || scale <= 0.0 {
         return None;
     }
-    let framed = capture_ring_expanded(window, frame, scale)?;
-    let px_w = CGImage::width(Some(&framed)) as f64;
-    let px_h = CGImage::height(Some(&framed)) as f64;
-    let inner = picture_within_ring(px_w, px_h, scale);
-    // The hairline is harvested from the window's own capture, before any merge.
-    let dressing = harvest_from_capture(&framed, frame.size, scale);
+    let framed = capture_window_rect(window, frame, scale)?;
+    let (px_w, px_h) = image_size(&framed);
     let displays = active_display_bounds();
     let composite = fully_on_a_display(frame, &displays)
-        .then(|| capture_below_and_including(window, ring_expanded(frame)))
+        .then(|| capture_below_and_including(window, frame))
         .flatten();
     let after = crate::windows::platform::window_server::get_window(window).map(|w| w.frame);
     let whole = stayed_wholly_on_a_display(frame, after, &displays);
     let composite = composite.filter(|_| whole);
-    let (picture, carries_blur) =
+    let (image, carries_blur) =
         match composite.and_then(|composite| with_blur(&framed, &composite)) {
             Some((merged, merge)) if merge.carries_blur => (merged, true),
-            _ => (framed.clone(), false),
+            _ => (framed, false),
         };
-    let image = CGImage::with_image_in_rect(Some(&picture), inner)?;
     Some(Picture {
         image: Pixels::Bitmap(image),
         coverage: framed_coverage(
-            (inner.size.width / scale, inner.size.height / scale),
+            (px_w / scale, px_h / scale),
             (frame.size.width, frame.size.height),
             whole,
         ),
         source: Route::SkyLight,
-        dressing,
         taken: std::time::Instant::now(),
         carries_blur,
     })
-}
-
-/// Whether `window` lies wholly on one display now, which is when a framed capture of it is whole.
-pub fn is_wholly_on_a_display(window: WindowServerId) -> bool {
-    crate::windows::platform::window_server::get_window(window)
-        .is_some_and(|info| fully_on_a_display(info.frame, &active_display_bounds()))
 }
 
 /// The window and everything below it on screen, cropped to `rect`. Leaves out every window above it,
@@ -289,25 +269,23 @@ fn capture_below_and_including(
     )
 }
 
-/// One framed capture of the window plus its ring, or `None` when the window server returned an
-/// image of another size.
-fn capture_ring_expanded(
+/// One framed capture of the window's own rect, or `None` when the window server returned an image
+/// of another size.
+fn capture_window_rect(
     server_id: WindowServerId,
     frame: CGRect,
     scale: f64,
 ) -> Option<CFRetained<CGImage>> {
-    let expanded = ring_expanded(frame);
     #[allow(deprecated)]
     let framed = objc2_core_graphics::CGWindowListCreateImage(
-        expanded,
+        frame,
         CGWindowListOption::OptionIncludingWindow,
         server_id.as_u32(),
         objc2_core_graphics::CGWindowImageOption::empty(),
     )?;
-    let px_w = CGImage::width(Some(&framed)) as f64;
-    let px_h = CGImage::height(Some(&framed)) as f64;
-    if (px_w - expanded.size.width * scale).abs() > 2.0
-        || (px_h - expanded.size.height * scale).abs() > 2.0
+    let (px_w, px_h) = image_size(&framed);
+    if (px_w - frame.size.width * scale).abs() > 2.0
+        || (px_h - frame.size.height * scale).abs() > 2.0
     {
         return None;
     }
@@ -400,8 +378,7 @@ fn stayed_wholly_on_a_display(before: CGRect, after: Option<CGRect>, displays: &
 
 /// What a framed capture covers. The window server returns the full requested rect whatever is on
 /// screen, with the part off every display transparent, so the image's size says nothing: only a
-/// window that stayed wholly on a display is covered. The rest is a hairline to harvest, not a
-/// picture to draw.
+/// window that stayed wholly on a display is covered.
 fn framed_coverage(inner: (f64, f64), window: (f64, f64), whole: bool) -> Coverage {
     Coverage {
         covered: if whole { inner } else { (0.0, 0.0) },

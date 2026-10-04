@@ -209,6 +209,13 @@ it returns: the window with its framing ("The hairline is composited outside eve
 capture") and the window with what is below it ("A composite of the window and what is
 below it carries the blur").
 
+It must never be called inside a ScreenCaptureKit completion. On modern macOS it is
+proxied through the same capture machinery, so a call from the delivery queue deadlocks
+its own reply until a ~20s timeout, and every capture in the process serialises behind it
+(measured as half-minute window switches). The engine's one framed capture, of a window
+that has just opened, runs on the main thread as it composes; the service's SkyLight calls run on
+its own thread.
+
 The system tool inherited this. `screencapture -l <windowid>` fails with "could
 not create image from window" even for a fully visible window.
 
@@ -344,14 +351,21 @@ Bundling is not a factor. A signed `.app` bundle with
 
 ## Consequences for the design
 
-**Warm cache, refreshed in the background.** At switch time rini must capture
-nothing. It composites bitmaps it already holds. This matches the original
-instinct that only on-screen and incoming windows need fresh pixels, and the
-rest can be refreshed occasionally.
+**Warm cache, refreshed in the background.** At switch time the main thread
+captures nothing. It composites bitmaps the cache holds, but for the windows on
+screen at the press, which one batched SkyLight call on the pictures service's
+thread pictures while the overlay waits for it at most 80ms ("Nothing is captured
+on the main thread on the way in" below). This matches the original instinct that
+only on-screen and incoming windows need fresh pixels, and the rest can be
+refreshed occasionally.
 
-**Staleness is acceptable.** The bitmap is on screen for the duration of one
-animation and is replaced by the real window at the end. A slightly stale moving
-image is not perceptible.
+**Staleness is acceptable for a window that was off screen.** The bitmap is on
+screen for the duration of one animation and is replaced by the real window at the
+end. A slightly stale moving image of a window that comes in from a park is not
+perceptible. One on screen is: seen through a translucent window, its content
+changes while the flight runs, which is why the windows on screen are pictured at
+the press and kept live behind the strip (Kai, 2026-10-03, "The pictures a flight
+starts with" in `specs/animation.md`).
 
 **rini needs the Screen Recording grant.** It did not have it when this was
 written. (The rift-inherited overview overlay that first carried a
@@ -595,10 +609,10 @@ is a great deal better than 350ms of a hole. After both:
 canvas animation, requested=20, tiles=20, missing=0, misshapen=0
 ```
 
-## Nothing may be captured on the way in
+## Nothing is captured on the main thread on the way in
 
-The design said it from the start: at switch time rini captures nothing, it
-composites bitmaps it already holds. The code had drifted, because a stale or
+The design said it from the start: at switch time the main thread captures nothing,
+it composites bitmaps it already holds. The code had drifted, because a stale or
 unfocused picture looks wrong and the cheapest fix was to grab a fresh one first.
 Measured cost of that, per press:
 
@@ -614,10 +628,9 @@ nothing for about a tenth of a second, which reads as software that is thinking
 rather than responding, and on a redirection mid-flight it stalls the animation
 already running.
 
-Both are gone. The destination is still recaptured, but only mid-flight and only
-off the main thread, where it costs no frames and arrives as an event that swaps a
-tile's contents without touching its geometry. The desktop is held and refreshed in
-the background. Measured after, command to first frame:
+Both are gone from the main thread. The desktop is held and refreshed in the
+background. Measured once they had gone, before any press waited for a capture,
+command to first frame:
 
 ```
 1:04:44.994967  cmd=MoveFocus(Right)
@@ -627,10 +640,20 @@ the background. Measured after, command to first frame:
 2ms, against 56ms to 459ms before, with every tile present because the cache is
 warmed after each animation instead of during the next one.
 
-The trade is honest and worth stating: the destination now animates with whatever
-the cache holds, which for an app that dims when unfocused means it can slide in
-dim and correct itself as the off-thread capture lands. That capture measured 280ms
-on one occasion, which is most of a flight. Snappiness was the explicit preference.
+A press now waits for one capture on purpose, off the main thread: the windows on
+screen at the press are captured in one batched SkyLight call on the pictures
+service's thread, and the overlay waits for them at most 80ms, then again as they
+land behind it, each arriving as an event that swaps a tile's contents without
+touching its geometry. The overlay is up, frames sent, 53.4ms after the press at
+the median and 71.9 at p90 ("Where a moving focus change spends its time" in
+`src/animation/docs/capture-overlay-research.md`).
+
+The trade: a window not on screen at the press, the destination of a switch or a
+column coming in from its park, flies what the cache holds, its focused look when
+it gains focus, until its landing capture is swapped in. For an app that dims when
+unfocused, a cached picture taken unfocused slides in dim. The off-thread capture
+that once corrected it measured 280ms on one occasion, most of a flight; the
+end-state watches take each window as it lands.
 
 ## A capture can be usable and still be the wrong shape
 
@@ -758,18 +781,19 @@ content from whenever the workspace was last entered.
 Recapturing the windows on screen through SkyLight at switch time, frontmost first
 and capped at three, fixed it for a while: one window, 32ms to 35ms once warm, against
 the roughly 400ms that capturing all eighteen used to cost. It held every press back
-by 59ms to 71ms and went ("Nothing may be captured on the way in"). The cache is now
-refreshed at the quiet after each flight, a focus change recaptures both of its ends,
-and a warm recaptures a picture older than `PICTURE_STALE_AFTER` ("Snapshot staleness").
+by 59ms to 71ms and went ("Nothing is captured on the main thread on the way in"). The cache is now
+refreshed at the quiet after each flight, a flight pictures its windows on screen at the
+press and as they land and its focus target once its focus changes, and a warm recaptures a
+picture older than `PICTURE_STALE_AFTER` ("Snapshot staleness").
 
 The window being switched INTO cannot be recaptured as the movement starts: SkyLight
 reads the framebuffer and the destination workspace's windows are not on screen yet.
 
 ### Unfocused rendering
 
-Because the destination cannot be recaptured, its picture is whatever it last
-had, and if that was taken while the app was unfocused the tile slides in dimmed
-and snaps to focused at the handover. Ghostty greys out noticeably when
+Because the destination cannot be recaptured, its picture is its focused look when
+the service kept one, else whatever it last had, and if that was taken while the app
+was unfocused the tile slides in dimmed and snaps to focused at the handover. Ghostty greys out noticeably when
 unfocused.
 
 It takes a capture after focus has landed: mid-flight, off the main thread, once the
@@ -892,7 +916,7 @@ the start of a flight: at 14ms a window that would delay the flight.
 
 **And it is only kept if the window is still where it was once the capture
 returns.** The composite is the window and whatever is below it in a RECT. Found
-on the first live run: a workspace switch that raced a harvest parked Messages
+on the first live run: a workspace switch that raced a framed capture parked Messages
 between reading its frame and taking the composite, so the rect held the VS Code
 window that had just moved back under it, and the merge replaced every opaque
 pixel of Messages with VS Code. Far worse than grey. The frame is read again
@@ -901,23 +925,22 @@ thrown away (`stayed_wholly_on_a_display`).
 
 **The window's own framed capture needs the same check.** The window server
 returns the full requested rect whatever is on screen, with the part off every
-display transparent (a parked window's hairline reads alpha 0, "The hairline
-harvest" below), so the image's size says nothing about how much of the window it
+display transparent (a parked window reads alpha 0, "The hairline is composited
+outside every capture" below), so the image's size says nothing about how much of the window it
 holds. Found on the first live run of the mid-flight focus refresh: a strip pan
 moves the real windows while the flight flies, and a window read as wholly on
 screen was captured half past the edge, or already parked, then cut onto its
 tile as a half or fully missing window. A framed capture now covers the window
 only if it stayed wholly on one display through both captures
-(`framed_coverage`). Otherwise it holds a hairline to harvest and nothing to
-draw. The resize chase and the capture of a new window had the same exposure,
-for a window partly off the display.
+(`framed_coverage`). Otherwise it holds nothing to
+draw. The capture of a new window at its spawn frame has the same exposure, for a
+window partly off the display.
 
-One exposure is left as it was: the harvest names a window by the server id
-folded into its `WindowId`. For the rare window Accessibility reports without a
-server id, rini falls back to a counter there, which could name another window.
-The hairline harvest before this had the same exposure. It runs in
-the framed capture (`capture_via_framed_with_dressing`), which the harvest after
-a flight, the resize reveal and the capture of a new window all use. The picture
+One exposure is left as it was: the engine's framed captures name a window by the
+server id folded into its `WindowId`. For the rare window Accessibility reports
+without a server id, rini falls back to a counter there, which could name another
+window. The composite runs in the framed capture (`capture_via_framed`), which only
+the flight engine's capture of a new window at its spawn frame uses. The picture
 bakes in whatever was behind the window at that moment, which differs from the
 live blur only once the window has moved over something else.
 
@@ -990,8 +1013,7 @@ from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
   1pt sliver at the display edge) returns a fully transparent image of the
   right size. A window with only a couple of points visible has been seen to
   return full content WITH the hairline, so visibility is necessary but the
-  exact threshold is the compositor's business; the harvest validates alpha
-  instead of guessing geometry.
+  exact threshold is the compositor's business.
 - The hairline rides INSIDE the window bounds: the capture's outermost pixel
   pair at 2x is the hairline over the app's own edge pixel, which is exactly
   what the screen shows at rest.
@@ -999,9 +1021,10 @@ from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
   outline (measured rgb 0,0,0 at alpha 0.95 in the shadow margin of a null-rect
   capture), and only past it does the soft shadow begin. A tile wearing only
   the inner hairline had the caster's shadow bleeding straight against it, so
-  the border read darker mid-flight and snapped at the handover; the dressing
-  band therefore straddles the boundary, one point in and one point out
-  (`boundary_layout`), harvested from a capture rect inset by minus one ring.
+  the border read darker mid-flight and snapped at the handover. The renderer
+  therefore draws the outline too, 0.5pt of black at 0.9 (the handover
+  prototype's value) in the half point outside the window ("The hairline" in
+  `src/animation/docs/animation-smoothness.md`).
 
 ### The outline is captured, but it can be the wrong one
 
@@ -1056,10 +1079,11 @@ of:
   bar picture of one display, replaced together when the display changes, and a
   transition reads them only for the display it flies on: a display change used
   to clear only the bar, and the overlay drew an external display's 3008x1692
-  desktop behind a built-in display's strips on a 1728x1117 overlay. With nothing
-  new in hand the overlay keeps the backdrop it already shows rather than
-  recapturing: a desktop composite measures 13ms to 36ms, a frame or two of lag on
-  every focus change, while keeping a held picture costs nothing.
+  desktop behind a built-in display's strips on a 1728x1117 overlay. A transition is
+  dressed with the render the service holds; without one it composites the desktop
+  on the main thread, 13ms to 36ms, a frame or two of lag, and keeps the backdrop it
+  already shows only when that composite is refused. Re-applying a held render costs
+  nothing.
 - The composite was size-checked, but the cached ScreenCaptureKit render was handed
   over unchecked.
 
@@ -1129,16 +1153,16 @@ into an IOSurface this process owns, one copy per capture, off the main thread.
 ## Recapturing the destination once it is on screen
 
 The window being switched INTO cannot be recaptured when a movement starts,
-because the destination workspace's windows are not on screen yet. Its picture
-is therefore whatever it last had, and if that was taken while the app was
-unfocused the tile slides in dimmed and snaps to focused at the handover.
-Ghostty greys out noticeably, so this was the most visible flicker left after
-the sizing fixes.
+because the destination workspace's windows are not on screen yet: what its tile
+flies is "Unfocused rendering" above. Ghostty greys out noticeably, so a dimmed
+destination snapping to focused at the handover was the most visible flicker left
+after the sizing fixes.
 
 Fixed by recapturing it mid-flight, by which point the reactor has shown the
-workspace and moved focus, so SkyLight returns the focused rendering. The
-window being left is recaptured with it. When and by which route is in
-"Mid-flight passes" in `src/transitions/docs/coordination.md`.
+workspace and moved focus, so SkyLight returns the focused rendering: once its focus is
+reported, until its look changes. The window being left is pictured again by the last
+capture before the lift. When and by which route is "Focus changing during a flight" in
+`src/transitions/docs/coordination.md`.
 
 On the main thread this cost too much. Measured over a 494ms flight, capture
 times of 38ms to 179ms dropped the frame count from 30 to as low as 26. Moving
@@ -1149,10 +1173,12 @@ which yabai relies on as well, capturing on a pthread per window at
 and replaces contents only, never geometry, so a late arrival cannot disturb the
 movement.
 
-A framed recapture of a window wholly on a display carries its blur too; see
-"A composite of the window and what is below it carries the blur".
+The watches' batched capture (`capture_on_screen`) carries a material window's
+blur too, composited over the windows behind it and the desktop; see "A batched
+call composites in the order given, front-most first, and carries the blur of
+whatever it composites behind a window".
 
-## The hairline harvest
+## The hairline
 
 The long-standing "windows go flat and flicker" complaint took three attempts
 because the border's identity was misdiagnosed twice:
@@ -1171,50 +1197,27 @@ because the border's identity was misdiagnosed twice:
 
 A fourth attempt drew it as a constant (a 1pt white stroke at 0.25 alpha focused, 0.16 unfocused,
 fitted from single screenshots): pixel-exact on opaque windows, wrong by 2x on translucent ones.
-Refitted as a blend over each window's own edge pixel instead, a constant does match: white at 20%
-focused and 18% unfocused, within 0.3 levels rms over 27 edges in 11 apps, the translucent terminal
-included ("The hairline is composited outside every capture" above;
-dark mode only). The handover prototype draws that ring and a 0.5pt outline as layers; until it lands
-here, the harvest below is what draws the hairline.
-
-So the real composited pixels are harvested instead (`edge_dressing`):
-`CGWindowListCreateImage` is the one capture API that composites framing
-into its output, and a rect-bounded call returns exactly the asked rect
-with the framing composited, at 16-24ms. The framing is two lines — the
-light hairline on the window's outermost point and a near-black outline
-just outside the bounds, which is what separates border from shadow — so
-the harvested band straddles the boundary, one point in and one out. Four
-straight runs plus four corner boxes clipped to the outline's arc, ~200KB
-against the 28MB framed capture they are cropped from, cached on the
-snapshot and worn by the tile as sublayers. It only renders windows
-actually composited, so a parked window harvests transparent pixels and is
-rejected by an alpha check, keeping the ring from when it was last seen:
-the picture cache's own staleness model. The check believes a ring when the
-straight runs' mean alpha is at least 0.5 (`MIN_MEAN_ALPHA`): a parked
-window reads 0, the most translucent real edge measured (a see-through
-terminal) 244 of 255, and a border tool's overlay window fails it without a
-special case. Corner boxes are legitimately transparent outside the arc, so
-only the four runs are judged. The ring is 1pt (`RING_PT`), two device
-pixels at 2x. The harvest runs on a plain thread (`capture_framed` in the flight engine), never
-inside a ScreenCaptureKit completion: on modern macOS
-`CGWindowListCreateImage` is proxied through the same capture machinery, so
-a call from the delivery queue deadlocks its own reply until a ~20s
-timeout and every capture in the process serialises behind it (measured as
-half-minute window switches). The focused ring lands with the
-post-flight harvest of the animated set (`after_flight_captures`, at the quiet after the lift), or
-with the focus refresh's framed capture of a window wholly on a display, which carries its hairline
-and counts as that window's harvest ("Mid-flight passes" in `src/transitions/docs/coordination.md`).
+So the real composited pixels were cut out of a framed capture instead, the one capture that
+composites the framing, as a band one point either side of the window's edge that the tile wore.
+It only had a ring for a window composited when it ran, so a tile had no outline until a capture
+after a flight had run: the 53-level tail at the handover ("The handover, measured" in
+`src/animation/docs/capture-overlay-research.md`). Refitted as a blend over each window's own edge
+pixel instead, a constant does match: white at 20% focused and 18% unfocused, within 0.3 levels rms
+over 27 edges in 11 apps, the translucent terminal included ("The hairline is composited outside
+every capture" above; dark mode only). The renderer draws that ring and the outline outside it on
+every tile ("The hairline" in `src/animation/docs/animation-smoothness.md`).
 
 ## Snapshot staleness
 
-Staleness is accepted by construction ("a slightly stale moving image is not
-perceptible", "Consequences for the design" above) and the worst case — the
-destination's focus appearance — is patched mid-flight
-(`refresh_destination_among`, at 0.25 and 0.55, the two ends of a focus change). What that
-does not cover: content that changed while parked. Terminal output, chat,
-anything live — warmed only at animation end, focus change, and layout
-passes, so a window that repainted itself while hidden is stale until the
-next switch touches it. Capturing at switch time instead is ruled out by
+For a window that was off screen, staleness is accepted by construction
+("Consequences for the design" above), and the worst case, the destination's focus
+appearance, is patched mid-flight (the focus target's change watch, and its focused
+look when it starts parked). A window on screen is pictured at the press and as it
+lands, and one behind the strip is kept live ("The pictures a flight starts with" in
+`specs/animation.md`). What that does not cover: content that changed while parked. Terminal output, chat,
+anything live — warmed only at the quiet after a flight and at layout
+passes, and pictured at a press only while it is on screen, so a window that
+repainted itself while hidden is stale until the next switch touches it. Capturing at switch time instead is ruled out by
 measurement: 4 windows cost 94.5ms against a 180ms budget. Warming DURING the
 flight is ruled out too: see "Capture work in flight" in `src/transitions/docs/coordination.md`.
 
@@ -1238,10 +1241,14 @@ Options, in order of expected value:
    (`wants_warm`) re-captures anything older than `PICTURE_STALE_AFTER`; the
    engine warms every window it flew at the quiet after the lift. A sweep of nearby workspaces on a slow idle timer is not
    done; it would break the "nothing polls" principle deliberately.
-4. **Widen the mid-flight refresh.** Ruled out by measurement. The refresh
-   runs on its own thread, but the window server does not: with warms, the
-   desktop render and harvests queued behind it, the framed refresh took
-   203ms median against 16-24ms at idle (see "Capture work in flight" in
-   `src/transitions/docs/coordination.md`).
-   Two windows at 0.5 is the cap; more capture work in flight, not less, is
-   what slowed it.
+4. **Recapture more windows mid-flight.** Done for the windows on screen, through
+   SkyLight alone, while the pictures service holds the rest of its work off: the
+   landing watch takes each end window as it lands, the change watch the focus
+   target, the live watch the floating windows behind the strip every 16ms, and the
+   final ask every end window 110ms before the end ("The watches" in
+   `src/pictures/docs/README.md`). What stays ruled out is ScreenCaptureKit and
+   framed capture work in flight: with warms, the desktop render and other framed
+   captures queued behind it, the old framed focus refresh took 203ms median
+   against 16-24ms at idle ("Capture work in flight" in
+   `src/transitions/docs/coordination.md`). A window parked off screen has nothing
+   on screen to capture, which is what options 1 to 3 are for.

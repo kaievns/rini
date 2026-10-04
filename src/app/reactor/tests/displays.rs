@@ -2299,8 +2299,8 @@ fn the_animation_overlay_takes_the_scale_of_its_display() {
 }
 
 /// With rini's own bar above the overlay there is no bar under it to picture, so a flight spends
-/// nothing looking for one. Turned off, another bar may sit there and is pictured as before: the
-/// pictures service takes it, and the overlay draws it.
+/// nothing looking for one. Turned off, another bar may sit there and is pictured as before. Only the
+/// pictures service is told: it pictures the bar, and the overlay draws what it dresses a flight with.
 #[test]
 fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
     let (_apps, mut reactor) = test_context();
@@ -2308,24 +2308,15 @@ fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
         vec![CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.))],
         vec![Some(SpaceId::new(1))],
     ));
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let mut pictures = reactor.connect_test_pictures();
 
     let mut picture_bar = |reactor: &mut Reactor| {
         reactor.publish_animation_display();
-        let pictured = match pictures_asked(&mut pictures).as_slice() {
+        match pictures_asked(&mut pictures).as_slice() {
             [crate::pictures::platform::service::Command::SetDisplay { picture_bar, .. }] => {
                 *picture_bar
             }
             other => panic!("expected the display, got {other:?}"),
-        };
-        match animation_rx.try_recv().expect("a display should be published").1 {
-            crate::transitions::platform::engine::Event::SetDisplay { picture_bar, .. } => {
-                assert_eq!(picture_bar, pictured, "the overlay draws what is pictured");
-                picture_bar
-            }
-            other => panic!("expected SetDisplay, got {other:?}"),
         }
     };
     reactor.config.settings.bar.enabled = true;

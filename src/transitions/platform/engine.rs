@@ -1,65 +1,73 @@
-//! The flight engine: the actor that runs every transition. It owns the renderer
-//! (`crate::animation::platform::overlay`) and is a client of the pictures service
-//! (`crate::pictures::platform::service`) for what it draws. Runs on the main thread because Core
-//! Animation requires it.
+//! The flight engine: the actor that carries out every transition. It holds the lifecycle
+//! (`crate::transitions::domain::lifecycle`'s `Coordinator`), stages each request and merges each
+//! pass into the flight running, and does what the coordinator says: it drives the renderer
+//! (`crate::animation::platform::overlay`) and asks and watches the pictures service
+//! (`crate::pictures::platform::service`). When anything happens is the coordinator's. Runs on the
+//! main thread because Core Animation requires it.
 //!
 //! Design in `src/transitions/docs/coordination.md`; how a flight moves in
 //! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
 //! `src/animation/docs/capture-overlay-research.md`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
 use rini_core::ids::{WindowId, WindowServerId};
-use rini_geometry::{SameAs, to_overlay_space};
+use rini_geometry::{SameAs, from_overlay_space, to_overlay_space};
 use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
 use crate::animation::domain::motion::accents::NudgePlaying;
-use crate::animation::domain::motion::bounce::Bounce;
+use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::nudge::flight_curve;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
-use crate::pictures::domain::schedule::{
-    Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority, REVEAL_CHASE_ATTEMPTS,
-    REVEAL_CHASE_INTERVAL,
-};
-use crate::pictures::domain::settle::chase_settled;
+use crate::pictures::domain::knowledge::{Call, Knowledge};
+use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
 use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
-use crate::pictures::platform::picture::Picture;
-use crate::pictures::platform::service::Pictures;
-use crate::pictures::platform::skylight::{
-    capture_via_framed_with_dressing, is_wholly_on_a_display,
+use crate::pictures::domain::watch::{
+    CHANGE_EVERY, CHANGE_TRIES, Client, END_SLACK, LIVE_EVERY, Moment, OnScreen, Settle, Tag, Watch,
+    WatchId, Why,
 };
+use crate::pictures::platform::picture::{Picture, Route};
+use crate::pictures::platform::service::Pictures;
+use crate::pictures::platform::skylight::capture_via_framed;
 use crate::transitions::domain::admission::*;
 use crate::transitions::domain::flight::*;
+use crate::transitions::domain::lifecycle::{
+    self, Command, Coordinator, EndWatch, Generation, Kind, Start, StageSummary, TileSummary,
+    drawn_focused, extend_latest, losing_focus,
+};
 use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
 use crate::transitions::domain::timing::*;
 use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 
-/// One window's part in an animation, as the caller describes it.
+/// What the engine is told.
 #[derive(Debug)]
 pub enum Event {
-    /// Animate a set of windows. The caller must have already placed the real windows at their
-    /// final frames, or arrange to do so immediately after sending this.
+    /// Animate a set of windows: a layout pass. The engine writes their frames through `PlaceFrames`
+    /// once the overlay covers them.
     Animate {
         windows: Vec<AnimationRequest>,
         focus: Option<WindowId>,
+        /// The window focused as the pass began: what frame zero pictures focused.
+        focused_before: Option<WindowId>,
+        /// The key window as the pass went out, as far as the reactor has heard: whether frame zero
+        /// pictures `focused_before` drawn focused.
+        key: Option<WindowId>,
         duration: Duration,
     },
-    /// Display geometry for the overlay: the display's whole bounds. `picture_bar` says whether a
-    /// bar under the overlay is pictured and drawn over flights; it is off while rini draws its own
-    /// bar above the overlay, which leaves nothing there to picture.
+    /// Display geometry for the overlay: the display's whole bounds. Whether a bar under the
+    /// overlay is drawn over flights is the pictures service's, which the reactor tells.
     SetDisplay {
         id: u32,
         frame: CGRect,
         scale: f64,
-        picture_bar: bool,
         /// Points to leave clear at the top for the bar; the overlay window starts below it.
         top_band: f64,
     },
@@ -82,6 +90,10 @@ pub enum Event {
         final_frames: Vec<(WindowId, CGRect)>,
         /// The window that will hold focus once this settles, drawn in front of the rest.
         focus: Option<WindowId>,
+        /// The window focused as the movement began: what frame zero pictures focused.
+        focused_before: Option<WindowId>,
+        /// The key window as the movement went out, as for `Animate`.
+        key: Option<WindowId>,
         duration: Duration,
         /// The whole strip's step away from where a moved window went and back; drawn only.
         nudge: Option<CGPoint>,
@@ -95,90 +107,66 @@ pub enum Event {
         focus: Option<WindowId>,
         duration: Duration,
     },
-    /// One frame of the running animation. Posted by the run loop timer.
+    /// One frame of the clock that runs from a transition's begin to its lift. Posted by its timer.
     Tick,
-    /// The layout passes have settled; start the clock. Posted by the coalesce timer.
-    StartMoving,
-    /// No flight began for `SETTLE_BEFORE_CAPTURES` after a lift; run the owed captures.
-    Quiet,
-    /// A background capture has landed. Posted by the pictures service.
+    /// The quiet after the lift of `Generation` ran out. Posted by the quiet timer.
+    Quiet(Generation),
+    /// The key window changed, which turned these windows' looks, each at the frame it is at. Sent by
+    /// the reactor for every change it hears of, rini's own raises' included.
+    LooksTurned(Vec<(WindowId, CGRect)>),
+    /// What the pictures service landed. Posted by its sink.
     Pictures(crate::pictures::event::Event),
-    /// A framed recapture has landed. `settled` (`chase_settled`) means the window has repainted;
-    /// only settled pictures may satisfy a reveal hold or replace a resizing tile's picture.
-    PictureReady {
-        window: WindowId,
-        snapshot: Picture,
-        settled: bool,
-    },
-    /// A hairline harvest finished. Harvested off ScreenCaptureKit's completion queue, which the
-    /// framed capture behind it would deadlock (see `screencapturekit`).
-    DressingReady {
-        window: WindowId,
-        dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
-    },
 }
 
 /// Called with real-window frames to apply while the overlay covers them.
 pub type PlaceFrames = Box<dyn Fn(Vec<(WindowId, CGRect)>)>;
 
-/// Called with `true` when an overlay goes up and `false` once flying has settled; see
-/// `domain::flight::FlightReport`.
+/// Called with `true` when a transition is reported up and `false` once it has settled, the quiet
+/// after its lift; the coordinator's `ReportUp` and `ReportSettled`.
 pub type OnFlight = Box<dyn Fn(bool)>;
 
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
 
-/// The focus refresh's capture targets, one per wanted window that has a tile, and the windows covered.
-fn refresh_requests(
-    tiles: &[(WindowId, WindowServerId, CGSize)],
-    wanted: &[WindowId],
-) -> (Vec<WindowId>, Vec<PictureTarget>) {
-    let requests: Vec<PictureTarget> = wanted
-        .iter()
-        .filter_map(|window| tiles.iter().find(|(w, _, _)| w == window))
-        .map(|&(window, server_id, size)| PictureTarget { window, server_id, size })
-        .collect();
-    let covered = requests.iter().map(|t| t.window).collect();
-    (covered, requests)
-}
-
+/// What a flight composed: its tiles and the pictures they draw, its plan, the entrances still
+/// waiting for a picture, and what the renderer has been handed. When any of it changes is the
+/// coordinator's.
 struct RunningAnimation {
     tiles: Vec<OverlayTile>,
-    /// Where each window must end up, in display coordinates. Sent once the overlay covers them.
+    /// Where each window must end up, in display coordinates, across every pass merged in.
     final_frames: Vec<(WindowId, CGRect)>,
-    frames_applied: bool,
-    /// `None` while still collecting windows: on screen but not yet moving.
-    started: Option<Instant>,
-    duration: Duration,
-    /// Progress at which the real windows are placed (`apply_frames_at`).
-    apply_at: f64,
-    /// Windows waiting for a first picture; each also holds in `awaiting`.
+    /// Windows drawn once a first picture of them is swapped in.
     entrances: Vec<PendingEntrance>,
-    /// Windows whose pixels are still rendering, with the size that counts as ready. The flight
-    /// holds at frame zero until this empties or `hold_deadline` passes.
-    awaiting: Vec<(WindowId, CGSize)>,
-    /// When to stop waiting for reveal pixels and fly the stand-in (`HOLD_CAP` after the hold began).
-    hold_deadline: Option<Instant>,
-    /// The recapture of the focus change's two ends. See `refresh_destination_among`.
-    refresh: FocusRefresh,
-    /// Windows whose hairline landed this flight, so `after_flight_captures` harvests nothing
-    /// twice.
-    harvested: HashSet<WindowId>,
     /// The window gaining focus, from the latest pass that named one; its group is banded in front.
     focus: Option<WindowId>,
+    /// The window drawn focused until focus hands over: the one focused as the flight began.
+    shown_focus: Option<WindowId>,
+    /// The key window as the flight's first pass went out.
+    key: Option<WindowId>,
+    /// The focus target whose tile flies its focused look, until a picture is swapped onto it.
+    focused_look: Option<WindowId>,
     /// The flight as rigid pieces: what `install` composed and `fly` animates.
     /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
     plan: plan::FlightPlan,
+    /// The plan is playing on the renderer: a pass or a picture now retargets it rather than
+    /// installing frame zero again.
+    flown: bool,
     /// A move's nudge waiting for the flight to move, with the move's plain duration
     /// (`NudgeAdmission::Wait`).
     nudge: Option<(CGPoint, Duration)>,
-    /// Dropped when the animation ends, which invalidates the timer.
-    _clock: Option<RepeatingTimer>,
+    /// A push against an end that arrived before the flight moved, played as it starts: frame zero
+    /// may not be on screen yet.
+    bounce: Option<(CGPoint, Duration)>,
 }
 
-/// The thumbprint of a snapshot's bitmap or region; `None` for a surface, which cannot be compared.
-fn bitmap_thumbprint(snapshot: &Picture) -> Option<Vec<u8>> {
-    crate::pictures::platform::bitmap::thumbprint(&*snapshot.image.bitmap()?)
+/// What a swapped-in picture became.
+enum Took {
+    /// A reserved entrance's tile, joining the flight.
+    Entrance(OverlayTile),
+    /// The picture on the window's tile, which ends at this size.
+    Tile { size: CGSize },
+    /// Nothing draws the window.
+    Nothing,
 }
 
 /// Writes every tile's destination back from the merged plan: a member the pass did not compose
@@ -227,55 +215,8 @@ fn border_tile(
         depth: anchor.depth,
         companion: Some(anchor.window),
         focused: false,
+        radius: None,
     }
-}
-
-/// The stand-ins a flight that does not hold chases the real pictures of (`chases_stand_in`), with
-/// the size a picture must fit. A window lands where its real frame goes, `final_frames` on
-/// `display`, which for a column a move holds on the strip is not where its tile is drawn going;
-/// one with no frame to apply stays where its tile lands. The reveal swap puts the picture on the
-/// same tile mid-flight.
-fn stand_in_chase(
-    tiles: &[OverlayTile],
-    final_frames: &[(WindowId, CGRect)],
-    display: CGRect,
-) -> Vec<(WindowId, CGSize)> {
-    let viewport = to_overlay_space(display, display);
-    tiles
-        .iter()
-        .filter(|tile| {
-            let lands = final_frames
-                .iter()
-                .find(|(window, _)| *window == tile.window)
-                .map_or(tile.to, |(_, frame)| to_overlay_space(*frame, display));
-            tile.snapshot.source
-                == crate::pictures::platform::picture::Route::StandIn
-                && chases_stand_in(lands, viewport)
-        })
-        .map(|tile| (tile.window, tile.to.size))
-        .collect()
-}
-
-/// Steps the whole strip out by `offset` and back over `duration`, and holds the flight's clock and
-/// lift for it to come home. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
-fn nudge_on(
-    overlay: &mut TileOverlay,
-    running: &mut RunningAnimation,
-    playing: &mut NudgePlaying,
-    offset: CGPoint,
-    duration: Duration,
-) {
-    playing.start(Instant::now(), duration);
-    running.duration = clock_for_bounce(running.started, running.duration, duration);
-    overlay.nudge(offset, duration);
-    debug!(offset = format!("{:.0},{:.0}", offset.x, offset.y), "move nudge");
-}
-
-/// The capture work a lift leaves for the quiet period.
-#[derive(Default)]
-struct AfterFlight {
-    targets: Vec<PictureTarget>,
-    harvested: HashSet<WindowId>,
 }
 
 /// The tile for a reserved entrance whose picture has landed: frontmost and focused, since a
@@ -291,6 +232,7 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture) -> OverlayTile 
         depth: 0,
         companion: None,
         focused: true,
+        radius: None,
     }
 }
 
@@ -374,181 +316,180 @@ fn band_plan(
     }
 }
 
+/// What a pass says of itself beside its tiles: its kind, how it starts and runs, and which of its
+/// windows are not painted where they end yet.
+#[derive(Clone, Debug)]
+struct Shape {
+    kind: Kind,
+    start: Start,
+    duration: Duration,
+    /// Held for and watched until they repaint: grows, stand-ins and reserved entrances.
+    awaiting: Vec<WindowId>,
+    /// Watched until they repaint and never held for: windows flying from where they opened.
+    repainting: Vec<WindowId>,
+}
+
+/// One pass, composed: what `begin_group` installs or merges.
+struct Pass {
+    tiles: Vec<OverlayTile>,
+    final_frames: Vec<(WindowId, CGRect)>,
+    label: &'static str,
+    shape: Shape,
+    entrances: Vec<PendingEntrance>,
+    /// The focus it names, and the window focused as it began.
+    focus: (Option<WindowId>, Option<WindowId>),
+    /// The key window as it went out.
+    key: Option<WindowId>,
+    pan: Option<CGPoint>,
+    plan: plan::ReflowPlan,
+    nudge: Option<CGPoint>,
+}
+
+/// What the coordinator is told of a stage: `tiles` and `final_frames` in screen points.
+fn summary(
+    tiles: Vec<TileSummary>,
+    final_frames: Vec<(WindowId, CGRect)>,
+    focus: Option<WindowId>,
+    losing_focus: Option<WindowId>,
+    focused_look: Option<WindowId>,
+    key: Option<WindowId>,
+    shape: Shape,
+    display: CGRect,
+    opaque: &dyn Fn(WindowId) -> bool,
+) -> StageSummary {
+    let opaque = tiles.iter().map(|t| t.window).filter(|w| opaque(*w)).collect();
+    StageSummary {
+        kind: shape.kind,
+        tiles,
+        final_frames,
+        focus,
+        losing_focus,
+        key,
+        focused_look,
+        awaiting: shape.awaiting,
+        repainting: shape.repainting,
+        start: shape.start,
+        duration: shape.duration,
+        display,
+        opaque,
+    }
+}
+
 impl RunningAnimation {
-    /// Progress from the clock, not a frame count, so a late frame skips instead of stretching.
-    fn progress(&self) -> f64 {
-        let Some(started) = self.started else {
-            return 0.0;
-        };
-        if self.duration.is_zero() {
-            return 1.0;
-        }
-        let elapsed = started.elapsed().as_secs_f64();
-        (elapsed / self.duration.as_secs_f64()).clamp(0.0, 1.0)
+    /// Every tile and every reserved entrance, in screen points, as the coordinator sees them.
+    fn tile_summaries(&self, display: CGRect) -> Vec<TileSummary> {
+        let tiles = self.tiles.iter().map(|t| TileSummary {
+            window: t.window,
+            start: from_overlay_space(t.from, display),
+            end: from_overlay_space(t.to, display),
+            floating: t.floating,
+            companion: t.companion.is_some(),
+        });
+        let entrances = self.entrances.iter().map(|e| TileSummary {
+            window: e.window,
+            start: from_overlay_space(entrance_from(e.to), display),
+            end: from_overlay_space(e.to, display),
+            floating: e.floating,
+            companion: false,
+        });
+        tiles.chain(entrances).collect()
     }
 
-    fn is_done(&self) -> bool {
-        self.started.is_some() && self.progress() >= 1.0
+    /// The flight as composed, for the coordinator.
+    fn stage(&self, shape: Shape, display: CGRect, opaque: &dyn Fn(WindowId) -> bool) -> StageSummary {
+        summary(
+            self.tile_summaries(display),
+            self.final_frames.clone(),
+            self.focus,
+            losing_focus(self.focus, self.shown_focus),
+            self.focused_look,
+            self.key,
+            shape,
+            display,
+            opaque,
+        )
     }
 
-    /// Past the clock by more than `LIFT_GRACE`: lift whether or not the tiles report settled.
-    fn overdue(&self) -> bool {
-        self.started
-            .is_some_and(|started| started.elapsed() > self.duration + LIFT_GRACE)
-    }
-
-    /// Wall-clock time left before the overlay lifts.
-    fn remaining(&self) -> Duration {
-        self.duration.mul_f64((1.0 - self.progress()).max(0.0))
-    }
-
-    /// `progress` as `should_swap_mid_flight` wants it: `None` until the flight starts moving.
-    fn progress_if_started(&self) -> Option<f64> {
-        self.started.map(|_| self.progress())
-    }
-
-    /// Whether a focus refresh pass is due at `progress`; takes it when it is. Only a moving flight
-    /// refreshes: a hold has nothing in flight to cut a picture onto.
-    fn take_refresh(&mut self, progress: f64) -> bool {
-        self.refresh.take_pass(progress, self.started.is_some())
-    }
-
-    /// What this flight asks for the windows a pass has no picture of.
-    fn missing_pictures(&self) -> Priority {
-        missing_pictures_priority(self.started.is_some(), !self.awaiting.is_empty())
-    }
-
-    /// What `window` is doing in this flight when a picture of it lands, for `should_swap_mid_flight`.
-    fn tile_state(&self, window: WindowId, snapshot: &Picture) -> TileState {
-        if self.entrances.iter().any(|e| e.window == window) {
-            return TileState::Awaiting;
-        }
-        if let Some((_, size)) = self.awaiting.iter().find(|(w, _)| *w == window) {
-            return TileState::Reveal { fits: snapshot.fits(*size) };
-        }
-        let Some(tile) = self.tiles.iter().find(|tile| tile.window == window) else {
-            return TileState::NotTiled;
-        };
-        let fits = snapshot.fits(tile.to.size);
-        if crate::pictures::domain::coverage::outgrows(
-            tile.snapshot.coverage.covered,
-            tile.to.size,
-        ) {
-            return TileState::Reveal { fits };
-        }
-        let resizing =
-            rini_geometry::stretch::is_a_resize(tile.from.size, tile.to.size);
-        if self.refresh.is_target(window) {
-            TileState::MovingRefreshTarget { fits, resizing }
-        } else {
-            TileState::Moving { fits, resizing }
-        }
-    }
-
-    /// A later pass carrying reveal holds. A grow can only extend a hold, never stop a moving
-    /// flight. Returns the frames a held merge must apply now, so the app can rerender.
-    fn extend_hold(
-        &mut self,
-        awaiting: &[(WindowId, CGSize)],
-        in_flight: bool,
-        now: Instant,
-    ) -> Option<Vec<(WindowId, CGRect)>> {
-        if in_flight || awaiting.is_empty() {
-            return None;
-        }
-        for (window, size) in awaiting.iter().copied() {
-            if let Some(waiting) = self.awaiting.iter_mut().find(|(w, _)| *w == window) {
-                waiting.1 = size;
-            } else {
-                self.awaiting.push((window, size));
+    /// Frame zero's pictures, each on its window's tile; how many were taken.
+    fn wear(&mut self, pictures: Vec<(WindowId, Picture)>) -> usize {
+        let mut worn = 0;
+        for (window, picture) in pictures {
+            if let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) {
+                tile.snapshot = picture;
+                worn += 1;
             }
         }
-        if self.hold_deadline.is_none() {
-            self.hold_deadline = Some(now + HOLD_CAP);
-        }
-        self.frames_applied = true;
-        Some(self.final_frames.clone())
+        worn
     }
 
-    /// The frames the flight owes the reactor at `progress`: all of them, once at the apply point.
-    fn frames_due(&mut self, progress: f64) -> Option<Vec<(WindowId, CGRect)>> {
-        if progress < self.apply_at || self.frames_applied {
-            return None;
-        }
-        self.frames_applied = true;
-        Some(self.final_frames.clone())
-    }
-
-    /// Takes a settled picture for a window this flight is holding for. The picture must fit the
-    /// destination, for entrances too. See "The reservation fallback" in `src/transitions/docs/coordination.md`.
-    fn claim(&mut self, window: WindowId, snapshot: &Picture) -> Option<Claimed> {
-        if self.started.is_some() {
-            return None;
-        }
-        let Some(position) = self.awaiting.iter().position(|(w, _)| *w == window) else {
-            // Not a hold: a spawn-frame newcomer whose chase landed before the flight moved.
-            let tile = self.tiles.iter_mut().find(|tile| tile.window == window)?;
-            if !snapshot.is_usable() || !snapshot.fits(tile.to.size) {
-                return None;
-            }
-            tile.snapshot = snapshot.clone();
-            return Some(Claimed::Refreshed);
-        };
-        let (_, size) = self.awaiting[position];
-        if !snapshot.is_usable() || !snapshot.fits(size) {
-            return None;
-        }
-        self.awaiting.remove(position);
-        if let Some(at) = self.entrances.iter().position(|e| e.window == window) {
-            let entrance = self.entrances.remove(at);
-            self.merge(entrance_tile(&entrance, snapshot));
-            restack(&mut self.tiles, self.focus);
-        } else if let Some(tile) = self.tiles.iter_mut().find(|tile| tile.window == window) {
-            tile.snapshot = snapshot.clone();
-        }
-        Some(if self.awaiting.is_empty() {
-            Claimed::Released
-        } else {
-            Claimed::Held
-        })
-    }
-
-    /// Takes the first picture of a reserved entrance after the flight started moving. Returns the
-    /// banded tile and what is left of the flight for it to travel.
-    fn admit(
-        &mut self,
-        window: WindowId,
-        snapshot: &Picture,
-    ) -> Option<(OverlayTile, Duration)> {
-        if self.started.is_none() || !snapshot.is_usable() {
-            return None;
-        }
-        let position = self.entrances.iter().position(|e| e.window == window)?;
-        let entrance = self.entrances.remove(position);
-        self.merge(entrance_tile(&entrance, snapshot));
+    /// The tile a reserved entrance becomes with its first picture, banded with the rest; `None`
+    /// for a window not waiting to enter.
+    fn admit(&mut self, window: WindowId, picture: &Picture) -> Option<OverlayTile> {
+        let at = self.entrances.iter().position(|e| e.window == window)?;
+        let entrance = self.entrances.remove(at);
+        self.merge(entrance_tile(&entrance, picture));
         restack(&mut self.tiles, self.focus);
-        let tile = self
-            .tiles
-            .iter()
-            .find(|t| t.window == window)
-            .expect("merge just admitted it")
-            .clone();
-        Some((tile, late_join_duration(self.duration, self.progress())))
+        self.tiles.iter().find(|t| t.window == window).cloned()
     }
 
-    /// After an in-flight merge: stale frames are re-sent at the apply point.
-    fn absorb_in_flight_change(&mut self, changed: bool, frames_changed: bool) {
-        if mark_stale_on_untiled_change(changed, frames_changed) {
-            self.frames_applied = false;
+    /// A picture swapped in for `window`: a reserved entrance joins with it, else its tile takes it in
+    /// place, a stand-in's included, moving on as it was and flying no focused look from now.
+    fn take_picture(&mut self, window: WindowId, picture: &Picture) -> Took {
+        if let Some(tile) = self.admit(window, picture) {
+            return Took::Entrance(tile);
+        }
+        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == window && t.companion.is_none()) else {
+            return Took::Nothing;
+        };
+        tile.snapshot = picture.clone();
+        if self.focused_look == Some(window) {
+            self.focused_look = None;
+        }
+        Took::Tile { size: tile.to.size }
+    }
+
+    /// `target`'s tile flies `look`, drawn focused, if it fits where the tile starts. Whether it does.
+    fn fly_focused_look(&mut self, target: WindowId, look: Option<Picture>) -> bool {
+        let Some(tile) = self.tiles.iter_mut().find(|t| t.window == target) else { return false };
+        let Some(look) = look.filter(|look| look.fits(tile.from.size)) else { return false };
+        tile.snapshot = look;
+        tile.focused = true;
+        self.focused_look = Some(target);
+        true
+    }
+
+    /// A push against an end: played now on a flight that moves, else kept, the latest push winning,
+    /// until the motion starts. Frame zero may not be on screen yet, and the bounce is drawn on the
+    /// containers frame zero installs.
+    fn push_bounce(&mut self, overshoot: CGPoint, duration: Duration) -> Option<(CGPoint, Duration)> {
+        if self.flown {
+            return Some((overshoot, duration));
+        }
+        self.bounce = Some((overshoot, duration));
+        None
+    }
+
+    /// Focus handed over: `to` is drawn focused from now, `from` not.
+    fn hand_over_focus(&mut self, to: WindowId, from: Option<WindowId>) {
+        self.shown_focus = Some(to);
+        for tile in self.tiles.iter_mut() {
+            if tile.window == to {
+                tile.focused = true;
+            } else if Some(tile.window) == from {
+                tile.focused = false;
+            }
         }
     }
 
-    /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`.
+    /// Folds one later pass into the flight's tiles and focus; the overlay follows `merge_plans`. A
+    /// pass moving focus redraws which tiles are drawn focused, and none flies a focused look until
+    /// the engine gives the new target its own.
     fn merge_pass(
         &mut self,
         tiles: Vec<OverlayTile>,
         focus: Option<WindowId>,
     ) -> Vec<(WindowId, Admitted)> {
+        let focus_moved = focus.is_some() && focus != self.focus;
         if focus.is_some() {
             self.focus = focus;
         }
@@ -559,8 +500,34 @@ impl RunningAnimation {
                 (window, self.merge(tile))
             })
             .collect();
+        if focus_moved {
+            let losing = losing_focus(self.focus, self.shown_focus);
+            for tile in self.tiles.iter_mut().filter(|t| t.companion.is_none()) {
+                tile.focused = drawn_focused(tile.window, self.focus, losing);
+            }
+            self.focused_look = None;
+        }
         restack(&mut self.tiles, self.focus);
         outcomes
+    }
+
+    /// A later pass folded into a flight not yet moving, by the rules a moving flight's merge
+    /// follows, every container where frame zero installs it and the pass's frames taken as places on
+    /// the strip where the last pass sends it: a burst composes as one movement from frame zero, and
+    /// each tile starts where its container installs it.
+    fn fold_before_moving(&mut self, incoming: &plan::ReflowPlan, pan: Option<CGPoint>, viewport: CGRect) {
+        let presented = plan::Presented {
+            drawn: self.plan.positions.keys().map(|key| (*key, CGPoint::new(0.0, 0.0))).collect(),
+            along: self.plan.positions.clone(),
+        };
+        let (merged, _) = plan::merge_plans(&self.plan, incoming, pan, &presented, self.focus, viewport);
+        self.plan = merged;
+        for tile in self.tiles.iter_mut() {
+            if let Some(member) = self.plan.member(tile.window) {
+                tile.from = member.start_frame();
+            }
+        }
+        sync_tiles_to_plan(&mut self.tiles, &self.plan);
     }
 
     /// Adds or retargets one window without disturbing anything already moving.
@@ -577,18 +544,147 @@ impl RunningAnimation {
                     .iter_mut()
                     .find(|t| t.window == tile.window)
                     .expect("retarget implies the tile exists");
-                // The original start is kept so a moving window is not yanked backwards.
+                // The original start is kept so a moving window is not yanked backwards, and the
+                // picture and focus it is drawn with: a pass is composed from the cache, and a tile
+                // changes its picture only for one the flight took.
                 existing.to = tile.to;
-                existing.snapshot = tile.snapshot;
                 existing.floating = tile.floating;
                 existing.server_order = tile.server_order;
                 existing.depth = tile.depth;
                 existing.companion = tile.companion;
-                existing.focused = tile.focused;
             }
             Admitted::Joined => self.tiles.push(tile),
         }
         action
+    }
+}
+
+/// What the pictures service is asked for `window` drawn at `frame`.
+fn target_at(window: WindowId, frame: CGRect) -> PictureTarget {
+    PictureTarget {
+        window,
+        server_id: WindowServerId::from(window),
+        size: frame.size,
+    }
+}
+
+fn targets_at(windows: &[(WindowId, CGRect)]) -> Vec<(PictureTarget, CGRect)> {
+    windows.iter().map(|&(window, frame)| (target_at(window, frame), frame)).collect()
+}
+
+fn server_ids(windows: &[WindowId]) -> Vec<WindowServerId> {
+    windows.iter().map(|window| WindowServerId::from(*window)).collect()
+}
+
+/// The windows on screen at `strip` and `background`, asked for under `tag` at `moment`.
+fn on_screen(
+    tag: Tag,
+    moment: Moment,
+    strip: &[(WindowId, CGRect)],
+    background: &[(WindowId, CGRect)],
+    behind: &[WindowId],
+) -> OnScreen {
+    OnScreen {
+        tag,
+        moment,
+        strip: targets_at(strip),
+        background: targets_at(background),
+        behind: server_ids(behind),
+    }
+}
+
+/// Each window at the size of `frame`: what the quiet warms, at the frame each ended at, and what a
+/// turned look is asked for at.
+fn sized_targets(windows: Vec<(WindowId, CGRect)>) -> Vec<PictureTarget> {
+    windows.into_iter().map(|(window, frame)| target_at(window, frame)).collect()
+}
+
+/// Windows whose look turned with the key window, at background priority: no warm filter drops it
+/// for a picture that fits, and it waits for any transition's release.
+fn refresh(windows: Vec<(WindowId, CGRect)>) -> Ask {
+    Ask {
+        priority: Priority::Background,
+        targets: sized_targets(windows),
+    }
+}
+
+/// The radius a tile of `size` clips its picture to: a SkyLight picture of a window baked with the
+/// desktop behind it has the wallpaper in its corners. `None` draws it whole.
+fn corner_clip(knowledge: Knowledge, picture: &Picture, size: CGSize) -> Option<f64> {
+    (picture.source == Route::SkyLight && knowledge.after_alpha() == Call::Baked)
+        .then(|| corner_radius(knowledge.radius, size))
+}
+
+/// The end state's watches: one slot for each kind, kept from one generation to the next and
+/// retargeted, so a window already landed stays landed and a change watch stays armed.
+#[derive(Debug, Default, PartialEq)]
+struct EndWatches {
+    landing: Option<WatchId>,
+    awaiting: Option<WatchId>,
+    change: Option<WatchId>,
+    live: Option<WatchId>,
+}
+
+impl EndWatches {
+    /// Watches what `end` names, in place of what was watched, under `client`'s tag.
+    fn watch(&mut self, pictures: &Pictures, client: Client, end: &EndWatch) {
+        let tag = Tag {
+            client,
+            generation: end.generation.0,
+        };
+        let behind = server_ids(&end.behind);
+        let landing = |windows: &[(WindowId, CGRect)], settle, until| {
+            (!windows.is_empty()).then(|| Watch::Landing {
+                tag,
+                windows: targets_at(windows),
+                behind: behind.clone(),
+                slack: END_SLACK,
+                settle,
+                until,
+            })
+        };
+        let watches = [
+            landing(&end.landing, Settle::AsSoonAsThere, end.landing_until),
+            landing(&end.awaiting, Settle::Repainted, end.awaiting_until),
+            end.focus.map(|(window, frame)| Watch::Change {
+                tag,
+                window: target_at(window, frame),
+                end: frame,
+                behind: behind.clone(),
+                every: CHANGE_EVERY,
+                tries: CHANGE_TRIES,
+            }),
+        ];
+        for (slot, watch) in [&mut self.landing, &mut self.awaiting, &mut self.change].into_iter().zip(watches) {
+            put(slot, watch, pictures);
+        }
+        let live = (!end.background.is_empty()).then(|| Watch::Live {
+            tag,
+            windows: end.background.iter().map(|&(window, frame)| target_at(window, frame)).collect(),
+            every: LIVE_EVERY,
+            after: self.change,
+            initial: end.background_initial,
+        });
+        put(&mut self.live, live, pictures);
+    }
+
+    fn stop(&mut self, pictures: &Pictures) {
+        for slot in [&mut self.landing, &mut self.awaiting, &mut self.change, &mut self.live] {
+            put(slot, None, pictures);
+        }
+    }
+}
+
+/// `watch` in `slot`: retargeting the watch there, starting one, or stopping it.
+fn put(slot: &mut Option<WatchId>, watch: Option<Watch>, pictures: &Pictures) {
+    match (*slot, watch) {
+        (Some(id), Some(watch)) => pictures.retarget(id, watch),
+        (None, Some(watch)) => *slot = Some(pictures.watch(watch)),
+        (Some(id), None) => {
+            pictures.stop(id);
+            *slot = None;
+        }
+        (None, None) => {}
     }
 }
 
@@ -600,6 +696,8 @@ pub struct FlightEngine {
     overlay: Option<TileOverlay>,
     /// Every picture the flight draws, and the background captures that fill it.
     pictures: Pictures,
+    /// This engine as the pictures service tags what it delivers.
+    client: Client,
     display: Option<(CGRect, f64)>,
     /// Which display the overlay is on, for the pictures of it.
     display_id: Option<u32>,
@@ -607,55 +705,57 @@ pub struct FlightEngine {
     /// while its coordinates stay the full display's, so a captured desktop and the tiles keep their
     /// registration. Zero with the bar off.
     top_band: f64,
+    /// When everything happens.
+    coordinator: Coordinator,
     running: Option<RunningAnimation>,
-    /// Fires once after the layout passes settle, to start the animation moving.
-    coalesce: Option<RepeatingTimer>,
-    /// Fires once, `SETTLE_BEFORE_CAPTURES` after a lift, unless a flight begins first.
-    quiet: Option<RepeatingTimer>,
-    /// The capture work the last flights owe, run at `Quiet`.
-    after_flight: Option<AfterFlight>,
-    /// Windows from the most recent animation, so the post-animation refresh uses real ids.
-    last_animated: Vec<PictureTarget>,
-    /// The focus the previous flight landed on, for `refresh_targets`. Kept across a flight that
-    /// names no focus.
-    last_focus: Option<WindowId>,
-    /// Whether a bar under the overlay is pictured; see `Event::SetDisplay`.
-    picture_bar: bool,
+    /// The latest picture delivered of each window, under its generation, until it is swapped in: the
+    /// coordinator holds a landing back from over a focused look until focus hands over.
+    delivered: HashMap<WindowId, (Generation, Picture)>,
+    watches: EndWatches,
+    /// The frame clock, from a transition's begin to its lift.
+    clock: Option<RepeatingTimer>,
+    /// The quiet after the lift of a generation.
+    quiet: Option<(Generation, RepeatingTimer)>,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     on_flight: Option<OnFlight>,
-    flight_report: FlightReport,
     /// When the move nudge playing now comes home.
     nudge_playing: NudgePlaying,
-    /// The edge bounce drawn on the containers now and when it began. None at the lift, so every
-    /// flight starts with none, and when frame zero is installed again.
-    bounce: Option<(Instant, Bounce)>,
+    /// The edge bounce drawn on the containers now and when it began, gone at the lift and when
+    /// frame zero is installed again.
+    bounce: BounceRecord,
 }
 
 impl FlightEngine {
-    /// `pictures` tells this engine what lands through its sink, as `Event::Pictures`.
-    pub fn new(rx: Receiver, tx: Sender, mtm: MainThreadMarker, pictures: Pictures) -> Self {
+    /// `pictures` tells this engine what lands through its sink, as `Event::Pictures`; `client` is
+    /// the engine as the application numbers the service's clients.
+    pub fn new(
+        rx: Receiver,
+        tx: Sender,
+        mtm: MainThreadMarker,
+        pictures: Pictures,
+        client: Client,
+    ) -> Self {
         Self {
             rx,
             tx,
             mtm,
             overlay: None,
             pictures,
+            client,
             display: None,
             display_id: None,
             top_band: 0.0,
+            coordinator: Coordinator::default(),
             running: None,
-            coalesce: None,
+            delivered: HashMap::new(),
+            watches: EndWatches::default(),
+            clock: None,
             quiet: None,
-            after_flight: None,
-            last_animated: Vec::new(),
-            last_focus: None,
-            picture_bar: true,
             place_frames: None,
             on_flight: None,
-            flight_report: FlightReport::default(),
             nudge_playing: NudgePlaying::default(),
-            bounce: None,
+            bounce: BounceRecord::default(),
         }
     }
 
@@ -665,12 +765,6 @@ impl FlightEngine {
 
     pub fn set_on_flight(&mut self, on_flight: OnFlight) {
         self.on_flight = Some(on_flight);
-    }
-
-    fn report_flight(&self, edge: Option<bool>) {
-        if let (Some(flying), Some(on_flight)) = (edge, &self.on_flight) {
-            on_flight(flying);
-        }
     }
 
     pub async fn run(mut self) {
@@ -686,16 +780,19 @@ impl FlightEngine {
                 id,
                 frame,
                 scale,
-                picture_bar,
                 top_band,
-            } => self.set_display(id, frame, scale, picture_bar, top_band),
-            Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
+            } => self.set_display(id, frame, scale, top_band),
+            Event::Animate { windows, focus, focused_before, key, duration } => {
+                self.start(windows, (focus, focused_before), key, duration)
+            }
             Event::AnimateSurface {
                 windows,
                 from_offset,
                 to_offset,
                 final_frames,
                 focus,
+                focused_before,
+                key,
                 duration,
                 nudge,
             } => self.start_surface(
@@ -703,9 +800,11 @@ impl FlightEngine {
                 from_offset,
                 to_offset,
                 final_frames,
-                focus,
+                (focus, focused_before),
+                key,
                 duration,
                 nudge,
+                None,
             ),
             Event::Bounce {
                 windows,
@@ -715,80 +814,190 @@ impl FlightEngine {
                 duration,
             } => self.start_bounce(windows, overshoot, final_frames, focus, duration),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
-            Event::Tick => self.step(),
-            Event::StartMoving => self.start_moving(),
-            Event::Quiet => self.after_flight_captures(),
+            Event::Tick => self.tick(),
+            Event::Quiet(generation) => {
+                if self.quiet.as_ref().is_some_and(|(armed, _)| *armed == generation) {
+                    self.quiet = None;
+                }
+                self.drive(lifecycle::Event::Quiet(generation));
+            }
             Event::Pictures(landed) => self.pictures_landed(landed),
-            Event::PictureReady { window, snapshot, settled } => {
-                self.picture_ready(window, snapshot, settled)
-            }
-            Event::DressingReady { window, dressing } => self.dressing_ready(window, dressing),
+            Event::LooksTurned(windows) => self.drive(lifecycle::Event::LooksTurned(windows)),
         }
     }
 
-    /// Takes a background capture the pictures service landed: at rest its window's hairline is
-    /// harvested, and a picture the cache took is offered to the running flight.
-    fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
-        let (window, taken) = match landed {
-            crate::pictures::event::Event::Taken { window, picture } => (window, Some(picture)),
-            crate::pictures::event::Event::Refused { window } => (window, None),
-            // Asked for by watches and asks of windows on screen, which the engine makes none of.
-            crate::pictures::event::Event::Delivered { .. } | crate::pictures::event::Event::Lost { .. } => {
-                return;
-            }
-        };
-        let covered = taken.as_ref().is_none_or(Picture::is_usable);
-        if harvests_landing(self.running.is_some(), covered) {
-            self.harvest_dressings(vec![window]);
-        }
-        // Background captures are never settled: the service knows sizes, not paint states.
-        if let Some(picture) = taken.filter(Picture::is_usable) {
-            self.offer_mid_flight(window, &picture, false);
+    /// Tells the coordinator `event` and carries out what it says.
+    fn drive(&mut self, event: lifecycle::Event) {
+        let now = Instant::now();
+        for command in self.coordinator.on(event, now) {
+            self.carry_out(command, now);
         }
     }
 
-    /// Offers a picture the cache just took to the running flight per `should_swap_mid_flight`. One
-    /// the cache refused is never offered: a flight would draw what the next one will not.
-    fn offer_mid_flight(&mut self, window: WindowId, snapshot: &Picture, settled: bool) {
-        let Some(running) = self.running.as_ref() else { return };
-        let progress = running.progress_if_started();
-        let state = running.tile_state(window, snapshot);
-        let fresh = running.refresh.is_fresh(window, snapshot.taken);
-        match should_swap_mid_flight(state, settled, fresh, progress) {
-            // An unsettled capture of a held window can be its unpainted surface.
-            SwapDecision::Claim => {
-                if settled {
-                    self.claim_reveal(window, snapshot);
-                }
-            }
-            SwapDecision::Admit => {
-                self.admit_entrance(window, snapshot);
-            }
-            SwapDecision::Swap(reason) => {
-                debug!(
-                    pid = window.pid,
-                    idx = window.idx.get(),
-                    reason,
-                    progress = progress.unwrap_or(0.0),
-                    "picture swapped mid-flight"
-                );
-                if let Some(running) = self.running.as_mut()
-                    && matches!(state, TileState::MovingRefreshTarget { .. })
-                {
-                    running.refresh.cut(window, snapshot.taken);
-                }
-                let remaining = self.remaining_flight();
+    fn carry_out(&mut self, command: Command, now: Instant) {
+        match command {
+            Command::Hold => self.pictures.hold(Hold::Transition),
+            Command::Settle => self.pictures.hold(Hold::Settling),
+            Command::Release => self.pictures.hold(Hold::Released),
+            Command::AskFrameZero { generation, strip, background, behind } => self
+                .pictures
+                .ask_on_screen(on_screen(self.tag(generation), Moment::FrameZero, &strip, &background, &behind)),
+            Command::Show => {
                 if let Some(overlay) = self.overlay.as_mut() {
-                    overlay.set_tile_picture(window, snapshot, remaining);
+                    overlay.show();
                 }
             }
-            SwapDecision::CacheOnly => {}
+            Command::Write(frames) => self.request_frames(frames),
+            Command::Holes(ends) => {
+                if let (Some(overlay), Some((display, _))) = (self.overlay.as_mut(), self.display) {
+                    let ends: Vec<CGRect> = ends.iter().map(|end| to_overlay_space(*end, display)).collect();
+                    overlay.set_holes(&ends);
+                }
+            }
+            Command::Watch(end) => self.watches.watch(&self.pictures, self.client, &end),
+            Command::StopWatches => self.watches.stop(&self.pictures),
+            Command::StartMoving => self.start_moving(now),
+            Command::AskFinal { generation, windows, behind } => self
+                .pictures
+                .ask_on_screen(on_screen(self.tag(generation), Moment::Final, &windows, &[], &behind)),
+            Command::Swap { generation, window } => self.swap(generation, window, now),
+            Command::Snap { window, frame } => {
+                if let (Some(overlay), Some((display, _))) = (self.overlay.as_mut(), self.display) {
+                    overlay.snap_tile(window, to_overlay_space(frame, display));
+                }
+            }
+            Command::KeepFocusedLook { generation, window } => {
+                self.pictures.keep_focused(self.tag(generation), window)
+            }
+            Command::HandOverFocus { to, from } => {
+                if let Some(running) = self.running.as_mut() {
+                    running.hand_over_focus(to, from);
+                }
+                if let Some(overlay) = self.overlay.as_mut() {
+                    overlay.set_tile_focused(to, true);
+                    if let Some(from) = from {
+                        overlay.set_tile_focused(from, false);
+                    }
+                }
+            }
+            Command::Lift { generation } => self.lift(generation),
+            Command::Warm(windows) => {
+                if !windows.is_empty() {
+                    self.pictures.ask(Ask {
+                        priority: Priority::Warm,
+                        targets: sized_targets(windows),
+                    });
+                }
+            }
+            Command::Refresh(windows) => self.pictures.ask(refresh(windows)),
+            Command::ReportUp => self.report(true),
+            Command::ReportSettled => self.report(false),
+        }
+    }
+
+    fn tag(&self, generation: Generation) -> Tag {
+        Tag {
+            client: self.client,
+            generation: generation.0,
+        }
+    }
+
+    fn report(&self, flying: bool) {
+        if let Some(on_flight) = &self.on_flight {
+            on_flight(flying);
+        }
+    }
+
+    /// What the pictures service landed: the deliveries under this engine's tag go to the
+    /// coordinator, frame zero's onto their tiles first. Any other capture is the cache's alone.
+    fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
+        match landed {
+            crate::pictures::event::Event::Taken { .. } => {}
+            crate::pictures::event::Event::Delivered { tag, why, pictures } => {
+                let Some(generation) = Generation::for_client(tag, self.client) else { return };
+                if why == Why::FrameZero {
+                    self.frame_zero(generation, pictures);
+                    return;
+                }
+                self.offer(generation, why, pictures);
+            }
+            crate::pictures::event::Event::Lost { tag, window } => {
+                if Generation::for_client(tag, self.client).is_some() {
+                    debug!(pid = window.pid, idx = window.idx.get(), "end window not where it ends by its deadline");
+                }
+            }
+        }
+    }
+
+    /// Each delivered picture to the coordinator, which says whether it is swapped in.
+    fn offer(&mut self, generation: Generation, why: Why, pictures: Vec<(WindowId, Picture, CGRect)>) {
+        for (window, picture, frame) in pictures {
+            self.delivered.insert(window, (generation, picture));
+            self.drive(lifecycle::Event::Picture { generation, window, frame, why });
+        }
+    }
+
+    /// Frame zero's pictures, put on their tiles while the overlay is not up yet, then the overlay can
+    /// go up; once it is up without them, each is offered to its tile as a swap, and frame zero is
+    /// never installed again under a moving flight.
+    fn frame_zero(&mut self, generation: Generation, pictures: Vec<(WindowId, Picture, CGRect)>) {
+        if self.coordinator.is_shown() {
+            self.offer(generation, Why::FrameZero, pictures);
+        } else if self.coordinator.generation() == generation
+            && self.coordinator.is_flying()
+            && let Some(running) = self.running.as_mut()
+            && running.wear(pictures.into_iter().map(|(window, picture, _)| (window, picture)).collect()) > 0
+        {
+            self.reinstall();
+        }
+        self.drive(lifecycle::Event::FrameZero(generation));
+    }
+
+    /// The picture delivered of `window` under `generation`, onto its tile; a reserved entrance's
+    /// first joins the flight with it.
+    fn swap(&mut self, generation: Generation, window: WindowId, now: Instant) {
+        if self.delivered.get(&window).is_none_or(|(delivered, _)| *delivered != generation) {
+            return;
+        }
+        let Some((_, picture)) = self.delivered.remove(&window) else { return };
+        let Some(running) = self.running.as_mut() else { return };
+        let size = match running.take_picture(window, &picture) {
+            Took::Entrance(tile) => return self.admit_entrance(tile, now),
+            Took::Tile { size } => size,
+            Took::Nothing => return,
+        };
+        debug!(pid = window.pid, idx = window.idx.get(), generation = generation.0, flown = running.flown, "picture swapped mid-flight");
+        if !running.flown {
+            self.reinstall();
+            return;
+        }
+        let remaining = self.coordinator.remaining(now);
+        let clip = corner_clip(self.pictures.knowledge(WindowServerId::from(window)), &picture, size);
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.set_tile_picture(window, &picture, remaining);
+            overlay.set_tile_corner_clip(window, clip);
+        }
+    }
+
+    /// A reserved entrance's tile, with its first picture: it joins frame zero, or the flight for what
+    /// is left of it.
+    fn admit_entrance(&mut self, tile: OverlayTile, now: Instant) {
+        let Some(running) = self.running.as_mut() else { return };
+        debug!(pid = tile.window.pid, idx = tile.window.idx.get(), flown = running.flown, "entrance admitted");
+        running.plan.entrances.push((tile.window, tile.from, tile.to));
+        if !running.flown {
+            self.reinstall();
+            return;
+        }
+        let banding = band_plan(&running.plan, &running.tiles, running.focus);
+        let left = self.coordinator.remaining(now).unwrap_or_default();
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.add_tile(&tile, plan::GroupKey::Loose, &banding, left);
         }
     }
 
     /// The overlay's geometry. The pictures of the display are the service's, told by the reactor.
-    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, picture_bar: bool, top_band: f64) {
-        self.picture_bar = picture_bar;
+    fn set_display(&mut self, id: u32, frame: CGRect, scale: f64, top_band: f64) {
         self.display = Some((frame, scale));
         self.display_id = Some(id);
         self.top_band = top_band;
@@ -819,240 +1028,33 @@ impl FlightEngine {
         self.overlay.as_mut()
     }
 
-    /// Recaptures both ends of a focus change, framed where the window is wholly on a display and by
-    /// ScreenCaptureKit where it is clipped, which a framed capture returns only a sliver of.
-    /// See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
-    fn refresh_destination_among(&mut self, tiles: &[(WindowId, WindowServerId, CGSize)]) {
-        let current = self.running.as_ref().and_then(|running| running.focus);
-        let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
-        let wanted = refresh_targets(self.last_focus, current, &windows);
-        if wanted.is_empty() {
-            return;
-        }
-        let (wanted, requests) = refresh_requests(tiles, &wanted);
-        if let Some(running) = self.running.as_mut() {
-            running.refresh.ask(wanted, Instant::now());
-        }
-        let (framed, clipped): (Vec<PictureTarget>, Vec<PictureTarget>) = requests
-            .into_iter()
-            .partition(|target| is_wholly_on_a_display(target.server_id));
-        debug!(
-            framed = framed.len(),
-            clipped = clipped.len(),
-            "destination refresh requested"
-        );
-        self.capture_framed(
-            "focus-refresh",
-            framed.iter().map(|target| target.window).collect(),
-            |window, snapshot| {
-                snapshot.is_usable().then_some(Event::PictureReady {
-                    window,
-                    snapshot,
-                    settled: true,
-                })
-            },
-        );
-        if !clipped.is_empty() {
-            self.pictures.ask(Ask {
-                priority: Priority::Focus,
-                targets: clipped,
-            });
-        }
-    }
-
-    /// Harvests hairlines for `windows`. Results come back as `DressingReady`, or as a whole
-    /// `PictureReady` when the window has a blur the capture that just landed could not contain: the
-    /// harvest is the moment a window is on screen and at rest, which is when that can be put back.
-    fn harvest_dressings(&self, windows: Vec<WindowId>) {
-        self.capture_framed("dressing-harvest", windows, |window, snapshot| {
-            if snapshot.carries_blur && snapshot.is_usable() {
-                Some(Event::PictureReady {
-                    window,
-                    snapshot,
-                    settled: true,
-                })
-            } else {
-                snapshot.dressing.map(|dressing| Event::DressingReady { window, dressing })
-            }
-        });
-    }
-
-    /// Framed captures of `windows` on a plain thread, each turned into what `event` sends back. Never
-    /// on the service's completion queue, which must not make capture calls (see `screencapturekit`).
-    fn capture_framed(
-        &self,
-        name: &str,
-        windows: Vec<WindowId>,
-        event: fn(WindowId, Picture) -> Option<Event>,
-    ) {
-        if windows.is_empty() {
-            return;
-        }
-        let tx = self.tx.clone();
-        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-        std::thread::Builder::new()
-            .name(name.to_string())
-            .spawn(move || {
-                for window in windows {
-                    let server_id = WindowServerId::from(window);
-                    let Some(snapshot) = capture_via_framed_with_dressing(server_id, scale) else {
-                        continue;
-                    };
-                    if let Some(event) = event(window, snapshot) {
-                        _ = tx.send(event);
-                    }
-                }
-            })
-            .ok();
-    }
-
-    /// Takes a finished hairline harvest: onto the cached snapshot, and onto a tile in flight.
-    fn dressing_ready(
-        &mut self,
-        window: WindowId,
-        dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
-    ) {
-        self.pictures.set_dressing(window, dressing.clone());
-        let Some(running) = self.running.as_mut() else { return };
-        running.harvested.insert(window);
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tile_dressing(window, &dressing);
-        }
-    }
-
-    /// Takes a framed recapture: a chase's reveal, or the destination refresh.
-    fn picture_ready(&mut self, window: WindowId, snapshot: Picture, settled: bool) {
-        if snapshot.dressing.is_some() {
-            if let Some(running) = self.running.as_mut() {
-                running.harvested.insert(window);
-            }
-        }
-        if self.pictures.insert(window, snapshot.clone()) {
-            self.offer_mid_flight(window, &snapshot, settled);
-        }
-    }
-
-    /// How much of the running flight is left, in wall-clock time.
-    fn remaining_flight(&self) -> Option<Duration> {
-        self.running.as_ref().map(RunningAnimation::remaining)
-    }
-
-    /// Chases the first settled picture for a holding grow or entrance, one thread per window.
-    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
-    fn chase_reveal_pictures(&self, awaiting: &[(WindowId, CGSize)]) {
-        let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
-        for (window, size) in awaiting.iter().copied() {
-            let server_id = WindowServerId::from(window);
-            let tx = self.tx.clone();
-            // The picture the tile flies from; a capture that no longer renders like it is the
-            // app's repaint. An entrance has none.
-            let pre_resize = self.pictures.get(window).as_ref().and_then(bitmap_thumbprint);
-            std::thread::Builder::new()
-                .name("reveal-chase".to_string())
-                .spawn(move || {
-                    // The frame resizes instantly; the pixels lag. Only a settled capture counts.
-                    let mut last_print: Option<Vec<u8>> = None;
-                    for _ in 0..REVEAL_CHASE_ATTEMPTS {
-                        std::thread::sleep(REVEAL_CHASE_INTERVAL);
-                        let Some(info) = crate::windows::platform::window_server::get_window(server_id) else {
-                            continue;
-                        };
-                        let frame_fits = crate::pictures::domain::coverage::fits_frame(
-                            (info.frame.size.width, info.frame.size.height),
-                            (size.width, size.height),
-                        );
-                        if !frame_fits {
-                            last_print = None;
-                            continue;
-                        }
-                        let Some(snapshot) =
-                            crate::pictures::platform::skylight::capture_via_framed_with_dressing(
-                                server_id, scale,
-                            )
-                        else {
-                            continue;
-                        };
-                        if !snapshot.is_usable() || !snapshot.fits(size) {
-                            last_print = None;
-                            continue;
-                        }
-                        let Some(print) = bitmap_thumbprint(&snapshot) else { continue };
-                        let settled =
-                            chase_settled(last_print.as_deref(), &print, pre_resize.as_deref());
-                        last_print = Some(print);
-                        if !settled {
-                            continue;
-                        }
-                        _ = tx.send(Event::PictureReady { window, snapshot, settled: true });
-                        return;
-                    }
-                    debug!(
-                        pid = window.pid,
-                        idx = window.idx.get(),
-                        "reveal chase gave up; the hold deadline will fly the stand-in"
-                    );
-                })
-                .ok();
-        }
-    }
-
-    /// Takes a landed picture for a window a holding flight is waiting on. Returns whether the
-    /// hold claimed it.
-    fn claim_reveal(&mut self, window: WindowId, snapshot: &Picture) -> bool {
-        let Some(running) = self.running.as_mut() else {
-            return false;
-        };
-        let Some(claimed) = running.claim(window, snapshot) else {
-            return false;
-        };
-        self.recompose();
-        if claimed == Claimed::Released {
-            debug!(
-                pid = window.pid,
-                idx = window.idx.get(),
-                "reveal pixels landed; starting the flight"
-            );
-            self.start_moving();
-        }
-        true
-    }
-
-    /// Frame zero again, for a flight still collecting passes: the plan is rebuilt and installed.
-    fn recompose(&mut self) {
+    /// Frame zero installed again, its plan as it is, with the pictures the tiles hold now.
+    fn reinstall(&mut self) {
         let Self { overlay, running, bounce, .. } = self;
-        let Some(running) = running.as_mut() else { return };
-        let mut rebuilt = plan::plan_from_tiles(&running.tiles);
-        // A tile only knows it resizes; the plan remembers which of those are entrances.
-        let entrances: Vec<WindowId> = running.plan.entrances.iter().map(|(w, _, _)| *w).collect();
-        rebuilt.mark_entrances(&entrances);
-        running.plan = plan::FlightPlan::from(rebuilt);
-        if let Some(overlay) = overlay.as_mut() {
-            let banding = band_plan(&running.plan, &running.tiles, running.focus);
-            overlay.install(&running.plan, &running.tiles, &banding);
-            *bounce = None;
-        }
+        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_ref()) else { return };
+        let banding = band_plan(&running.plan, &running.tiles, running.focus);
+        overlay.install(&running.plan, &running.tiles, &banding);
+        bounce.gone();
+        self.clip_corners();
     }
 
-    /// Adds the tile for a reserved entrance whose first picture landed after the flight started
-    /// moving. Returns whether the picture was taken.
-    fn admit_entrance(&mut self, window: WindowId, snapshot: &Picture) -> bool {
-        let Some(running) = self.running.as_mut() else {
-            return false;
-        };
-        let Some((tile, duration)) = running.admit(window, snapshot) else {
-            return false;
-        };
-        running.plan.entrances.push((tile.window, tile.from, tile.to));
-        let banding = band_plan(&running.plan, &running.tiles, running.focus);
+    /// Every tile whose picture is baked with the desktop behind it clipped to its corners; every
+    /// install draws a picture whole.
+    fn clip_corners(&mut self) {
+        let Some(running) = self.running.as_ref() else { return };
+        let clips: Vec<(WindowId, f64)> = running
+            .tiles
+            .iter()
+            .filter_map(|tile| {
+                let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
+                Some((tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size)?))
+            })
+            .collect();
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.add_tile(&tile, plan::GroupKey::Loose, &banding, duration);
+            for (window, radius) in clips {
+                overlay.set_tile_corner_clip(window, Some(radius));
+            }
         }
-        debug!(
-            pid = window.pid,
-            idx = window.idx.get(),
-            "window entered mid-flight"
-        );
-        true
     }
 
     /// Tiles for the border windows tracing the animated windows; each anchor is the window's real
@@ -1063,16 +1065,12 @@ impl FlightEngine {
         anchors: &[(CGRect, &OverlayTile)],
         exclude: &std::collections::HashSet<u32>,
         needs_capture: &mut Vec<PictureTarget>,
-    ) -> (Vec<OverlayTile>, Vec<PictureTarget>) {
+    ) -> Vec<OverlayTile> {
         if anchors.is_empty() {
-            return (Vec::new(), Vec::new());
+            return Vec::new();
         }
         // Every window rini manages is excluded, not only the pass's: parked windows share a frame.
-        let managed = managed_server_ids(
-            exclude,
-            self.pictures.windows().into_iter(),
-            self.after_flight.iter().flat_map(|a| a.targets.iter()).map(|t| t.window),
-        );
+        let managed = managed_server_ids(exclude, self.pictures.windows().into_iter());
         let candidates: Vec<(WindowServerId, CGRect)> =
             crate::windows::platform::window_server::visible_windows_on_display(display)
                 .into_iter()
@@ -1080,7 +1078,6 @@ impl FlightEngine {
                 .collect();
         let mut claimed: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut tiles = Vec::new();
-        let mut targets = Vec::new();
         for &(real, anchor) in anchors {
             let Some((server_id, frame)) = companion_of(real, &candidates, display) else {
                 continue;
@@ -1098,11 +1095,6 @@ impl FlightEngine {
                 ),
                 "border companion matched"
             );
-            targets.push(PictureTarget {
-                window,
-                server_id,
-                size: frame.size,
-            });
             match self.pictures.usable(window) {
                 Some(snapshot) => tiles.push(border_tile(anchor, real, (window, frame), snapshot)),
                 None => needs_capture.push(PictureTarget {
@@ -1112,13 +1104,83 @@ impl FlightEngine {
                 }),
             }
         }
-        (tiles, targets)
+        tiles
+    }
+
+    /// Opens a transition from what a request alone says, before anything is composed, so its
+    /// frame-zero pictures are asked for first. False when it could not run, and was abandoned.
+    fn begin(
+        &mut self,
+        tiles: Vec<TileSummary>,
+        final_frames: Vec<(WindowId, CGRect)>,
+        (focus, focused_before): (Option<WindowId>, Option<WindowId>),
+        key: Option<WindowId>,
+        shape: Shape,
+    ) -> bool {
+        let Some((display, _)) = self.display else { return false };
+        let stage = summary(
+            tiles,
+            final_frames,
+            focus,
+            losing_focus(focus, focused_before),
+            None,
+            key,
+            shape,
+            display,
+            &|window| self.pictures.knowledge(WindowServerId::from(window)).is_opaque(),
+        );
+        self.quiet = None;
+        let tx = self.tx.clone();
+        self.clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
+            _ = tx.send(Event::Tick);
+        });
+        self.drive(lifecycle::Event::Begin(stage));
+        if self.clock.is_none() {
+            warn!("could not start the frame clock; placing the windows directly");
+            self.abandon();
+            return false;
+        }
+        true
+    }
+
+    /// The transition could not be staged or shown: its windows are placed directly and nothing
+    /// holds the pictures service.
+    fn abandon(&mut self) {
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.hide();
+            overlay.release_tiles();
+        }
+        self.running = None;
+        self.clock = None;
+        self.bounce.gone();
+        self.delivered.clear();
+        self.drive(lifecycle::Event::Abandon);
+    }
+
+    /// What the flight composed, told to the coordinator.
+    fn stage(&self, shape: Shape) -> Option<StageSummary> {
+        let (running, (display, _)) = (self.running.as_ref()?, self.display?);
+        Some(running.stage(shape, display, &|window| {
+            self.pictures.knowledge(WindowServerId::from(window)).is_opaque()
+        }))
+    }
+
+    /// The focus a pass's tiles are drawn with, its own else the flight's, and the window they draw
+    /// focused until it hands over: the flight's, else the one focused as the pass began.
+    fn drawing_focus(
+        &self,
+        (focus, focused_before): (Option<WindowId>, Option<WindowId>),
+    ) -> (Option<WindowId>, Option<WindowId>) {
+        let focus = focus.or(self.running.as_ref().and_then(|running| running.focus));
+        let shown = self.running.as_ref().map_or(focused_before, |running| running.shown_focus);
+        (focus, losing_focus(focus, shown))
     }
 
     fn start(
         &mut self,
         windows: Vec<AnimationRequest>,
-        focus: Option<WindowId>,
+        (focus, focused_before): (Option<WindowId>, Option<WindowId>),
+        key: Option<WindowId>,
         duration: Duration,
     ) {
         if windows.is_empty() {
@@ -1136,27 +1198,46 @@ impl FlightEngine {
             .filter(|request| is_moving(request.from, request.to))
             .map(|request| (request.window, request.to))
             .collect();
+        let shape = Shape {
+            kind: Kind::LayoutPass,
+            start: Start::Coalesced,
+            duration,
+            awaiting: Vec::new(),
+            repainting: Vec::new(),
+        };
+        if !self.coordinator.is_flying() {
+            let requested = windows
+                .iter()
+                .map(|request| TileSummary {
+                    window: request.window,
+                    start: request.from,
+                    end: request.to,
+                    floating: request.floating,
+                    companion: false,
+                })
+                .collect();
+            if !self.begin(requested, final_frames.clone(), (focus, focused_before), key, shape.clone()) {
+                return;
+            }
+        }
+        let (drawing_focus, losing) = self.drawing_focus((focus, focused_before));
 
         let depths = crate::windows::platform::window_server::front_to_back_depths();
-
-        let any_resize = windows.iter().any(|request| {
-            rini_geometry::stretch::is_a_resize(
-                request.from.size,
-                request.to.size,
-            )
-        });
-        let apply_at = apply_frames_at(FlightKind::Layout, any_resize);
 
         let mut tiles = Vec::with_capacity(windows.len());
         let mut skipped = 0usize;
         let mut offscreen = 0usize;
         let mut needs_capture: Vec<PictureTarget> = Vec::new();
         let mut entrances: Vec<PendingEntrance> = Vec::new();
-        let mut awaiting: Vec<(WindowId, CGSize)> = Vec::new();
+        let mut awaiting: Vec<WindowId> = Vec::new();
+        let mut repainting: Vec<WindowId> = Vec::new();
+        let mut waits = |window, end: EndPicture| match end {
+            EndPicture::Awaited => awaiting.push(window),
+            EndPicture::Repainting => repainting.push(window),
+            EndPicture::Lands => {}
+        };
         // Newly opened windows travelling from their spawn frame.
         let mut spawn_entrances: Vec<(WindowId, CGRect, CGRect)> = Vec::new();
-        let mut chase: Vec<(WindowId, CGSize)> = Vec::new();
-        let mut entrance_frames: Vec<(WindowId, CGRect)> = Vec::new();
         let mut sync_captures = 0usize;
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
@@ -1214,8 +1295,8 @@ impl FlightEngine {
                 );
             }
             // A known window off this display with no picture flies with a stand-in instead of
-            // leaving a hole; see `stands_in`. It covers nothing, so the arm below holds for its
-            // reveal like any grow, and the real picture replaces it.
+            // leaving a hole; see `stands_in`. It covers nothing, so the flight holds for it like
+            // any grow, and its picture replaces the stand-in once it has repainted where it ends.
             let snapshot = picture_or_stand_in(
                 snapshot,
                 || {
@@ -1227,13 +1308,7 @@ impl FlightEngine {
             );
             match snapshot {
                 Some(snapshot) => {
-                    // A grow whose picture cannot cover the destination holds for the reveal.
-                    if crate::pictures::domain::coverage::outgrows(
-                        snapshot.coverage.covered,
-                        request.to.size,
-                    ) {
-                        awaiting.push((request.window, request.to.size));
-                    }
+                    waits(request.window, EndPicture::of_picture(snapshot.coverage.covered, request.to.size));
                     tiles.push(OverlayTile {
                         window: request.window,
                         from: to_overlay_space(start, display_frame),
@@ -1243,7 +1318,8 @@ impl FlightEngine {
                         server_order: depths.get(&request.server_id.as_u32()).copied(),
                         depth: 0,
                         companion: None,
-                        focused: focus == Some(request.window),
+                        focused: drawn_focused(request.window, drawing_focus, losing),
+                        radius: self.pictures.knowledge(request.server_id).radius,
                     });
                     starts.push((request.window, start));
                     resolved.push((request.window, start, end, request.floating));
@@ -1262,10 +1338,12 @@ impl FlightEngine {
                         .filter(|f| f.size.width > 0.0 && f.size.height > 0.0 && budget_left)
                         .and_then(|_| {
                             sync_captures += 1;
-                            capture_via_framed_with_dressing(request.server_id, scale)
+                            capture_via_framed(request.server_id, scale)
                         });
                     let usable = picture.as_ref().is_some_and(|p| p.is_usable());
-                    match entrance_plan(spawn, request.to, usable, budget_left) {
+                    let entrance = entrance_plan(spawn, request.to, usable, budget_left);
+                    waits(request.window, EndPicture::of_entrance(entrance));
+                    match entrance {
                         EntranceDecision::Travel { from, to } => {
                             let snapshot = picture.expect("usable implies a picture");
                             debug!(
@@ -1285,7 +1363,7 @@ impl FlightEngine {
                             self.pictures.insert(request.window, snapshot.clone());
                             let from_o = to_overlay_space(from, display_frame);
                             let to_o = to_overlay_space(to, display_frame);
-                            // Already at its slot (a cold cache, not an open): a still tile, no chase.
+                            // Already at its slot (a cold cache, not an open): a still tile.
                             let standing = from.same_as(to);
                             tiles.push(OverlayTile {
                                 window: request.window,
@@ -1300,15 +1378,15 @@ impl FlightEngine {
                                 },
                                 depth: 0,
                                 companion: None,
-                                focused: standing && focus == Some(request.window) || !standing,
+                                focused: !standing
+                                    || drawn_focused(request.window, drawing_focus, losing),
+                                radius: self.pictures.knowledge(request.server_id).radius,
                             });
                             if standing {
                                 starts.push((request.window, from));
                                 resolved.push((request.window, from, to, request.floating));
                             } else {
                                 spawn_entrances.push((request.window, from_o, to_o));
-                                chase.push((request.window, to.size));
-                                entrance_frames.push((request.window, to));
                             }
                         }
                         EntranceDecision::Reserve(reason) => {
@@ -1319,20 +1397,18 @@ impl FlightEngine {
                                 reason,
                                 "entrance reserved"
                             );
-                            let (entrance, waiting) = entrance_reservation(
-                                request.window,
-                                to_overlay_space(request.to, display_frame),
-                                request.floating,
-                            );
-                            entrances.push(entrance);
-                            awaiting.push(waiting);
+                            entrances.push(PendingEntrance {
+                                window: request.window,
+                                to: to_overlay_space(request.to, display_frame),
+                                floating: request.floating,
+                            });
                         }
                     }
                 }
             }
         }
         // Stacked here so the companions can anchor to their windows' depths.
-        restack(&mut tiles, focus);
+        restack(&mut tiles, drawing_focus);
         let anchors: Vec<(CGRect, &OverlayTile)> = starts
             .iter()
             .filter_map(|(window, start)| {
@@ -1341,7 +1417,7 @@ impl FlightEngine {
             .collect();
         let exclude: std::collections::HashSet<u32> =
             windows.iter().map(|request| request.server_id.as_u32()).collect();
-        let (companions, companion_targets) =
+        let companions =
             self.companion_tiles(display_frame, &anchors, &exclude, &mut needs_capture);
         tiles.extend(companions);
         self.ask_missing(needs_capture);
@@ -1359,22 +1435,10 @@ impl FlightEngine {
             ),
             "overlay animation composition"
         );
-        // Companions included: a border recolors when focus moves.
-        self.last_animated = windows
-            .iter()
-            .map(|request| PictureTarget {
-                window: request.window,
-                server_id: request.server_id,
-                size: request.to.size,
-            })
-            .chain(companion_targets)
-            .collect();
 
         let moving_drawable = tiles.iter().any(|tile| is_moving(tile.from, tile.to));
         if !worth_flying(moving_drawable, self.running.is_some()) {
-            self.request_frames(final_frames);
-            // Warm anyway, or the cache never fills: it only filled when an animation completed.
-            self.warm_last_animated();
+            self.abandon();
             return;
         }
 
@@ -1386,237 +1450,45 @@ impl FlightEngine {
             }
         }
 
-        self.begin_group(
+        self.begin_group(Pass {
             tiles,
             final_frames,
-            duration,
-            "per-window",
-            GroupStart::Coalesced,
-            apply_at,
+            label: "per-window",
+            shape: Shape {
+                awaiting,
+                repainting,
+                ..shape
+            },
             entrances,
-            awaiting,
-            chase,
-            entrance_frames,
-            focus,
-            None,
+            focus: (focus, focused_before),
+            key,
+            pan: None,
             plan,
-            None,
-        );
+            nudge: None,
+        });
     }
 
-    /// Runs one plan through the shared machinery: merge into a running flight (`merge_plans`),
-    /// or install a fresh one. See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
-    fn begin_group(
-        &mut self,
-        mut tiles: Vec<OverlayTile>,
-        final_frames: Vec<(WindowId, CGRect)>,
-        duration: Duration,
-        label: &'static str,
-        start: GroupStart,
-        apply_at: f64,
-        entrances: Vec<PendingEntrance>,
-        awaiting: Vec<(WindowId, CGSize)>,
-        chase: Vec<(WindowId, CGSize)>,
-        entrance_frames: Vec<(WindowId, CGRect)>,
-        focus: Option<WindowId>,
-        pan: Option<CGPoint>,
-        plan: plan::ReflowPlan,
-        nudge: Option<CGPoint>,
-    ) {
-        // Merge before the empty check: a pass with nothing drawable can still carry fresh
-        // destinations for a flight in progress.
+    /// Runs one composed pass: merged into the flight running, or installed as its frame zero.
+    /// See "The overlay engine" in `src/animation/docs/animation-smoothness.md`.
+    fn begin_group(&mut self, pass: Pass) {
         if self.running.is_some() {
-            let in_flight;
-            let hold_frames: Option<Vec<(WindowId, CGRect)>>;
-            let frames_changed;
-            let focus_before: Option<WindowId>;
-            let display = self.display.map(|(frame, _)| frame);
-            {
-                let running = self.running.as_mut().expect("checked above");
-                in_flight = running.started.is_some();
-                // A resize joining mid-flight needs the earlier apply point just as much.
-                running.apply_at = running.apply_at.min(apply_at);
-                for entrance in entrances {
-                    if !running.entrances.iter().any(|e| e.window == entrance.window) {
-                        running.entrances.push(entrance);
-                    }
-                }
-                if let Some(display) = display {
-                    retarget_entrances(&mut running.entrances, &final_frames, display);
-                }
-                // Merged before the hold reads them, so a held merge re-requests this pass's frames.
-                frames_changed = merge_final_frames(&mut running.final_frames, final_frames);
-                hold_frames = running.extend_hold(&awaiting, in_flight, Instant::now());
-                focus_before = running.focus;
-                running.merge_pass(tiles, focus);
-                if !in_flight
-                    && let Some(waiting) =
-                        nudge_waiting(nudge, duration, &self.nudge_playing, Instant::now())
-                {
-                    running.nudge = Some(waiting);
-                }
-            }
-            if in_flight {
-                // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
-                let Self {
-                    overlay,
-                    running,
-                    nudge_playing,
-                    ..
-                } = self;
-                let running = running.as_mut().expect("checked above");
-                let presented =
-                    overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
-                let focus_changed = focus.is_some() && focus != focus_before;
-                // The viewport in overlay space: what a member's destination is judged against.
-                let viewport = display
-                    .map(|d| to_overlay_space(d, d))
-                    .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)));
-                let (merged, mut delta) = plan::merge_plans(
-                    &running.plan,
-                    &plan,
-                    pan,
-                    &presented,
-                    running.focus,
-                    viewport,
-                );
-                delta.focus_changed = focus_changed;
-                running.plan = merged;
-                sync_tiles_to_plan(&mut running.tiles, &running.plan);
-                let now = Instant::now();
-                let nudge =
-                    starting_nudge(nudge.map(|nudge| (nudge, duration)), nudge_playing, now);
-                // A flight carrying the nudge is stretched, its new legs with it.
-                let duration = nudge.map_or(duration, |(_, stretched)| stretched);
-                if !delta.is_empty() {
-                    debug!(
-                        groups =
-                            running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
-                        changing = running.plan.changing.len(),
-                        entrances = running.plan.entrances.len(),
-                        reparented = delta.reparented.len(),
-                        retargeted_groups = delta.retargeted_groups.len(),
-                        joined = delta.joined_tiles.len(),
-                        "flight merged"
-                    );
-                    for (key, to) in &delta.retargeted_groups {
-                        let presented = presented.drawn.get(key).copied().unwrap_or_default();
-                        debug!(
-                            key = format!("{key:?}"),
-                            presented = format!("{:.0},{:.0}", presented.x, presented.y),
-                            to = format!("{:.0},{:.0}", to.x, to.y),
-                            "group retargeted"
-                        );
-                    }
-                    for (window, from_key, to_key) in &delta.reparented {
-                        let dest = running.plan.member(*window).map(|m| match m {
-                            plan::Member::Rigid { key, rel } => {
-                                plan::overlay_of(rel, running.plan.position_of(key))
-                            }
-                            plan::Member::Changing { to, .. }
-                            | plan::Member::Entrance { to, .. } => to,
-                            plan::Member::Floating { to, .. } => plan::overlay_of(
-                                to,
-                                running.plan.position_of(plan::GroupKey::Floating),
-                            ),
-                        });
-                        let from_to = running.plan.position_of(*from_key);
-                        debug!(
-                            pid = window.pid,
-                            idx = window.idx.get(),
-                            from = format!("{from_key:?}"),
-                            to = format!("{to_key:?}"),
-                            group_destination = format!("{:.0},{:.0}", from_to.x, from_to.y),
-                            member_destination = dest
-                                .map(|d| format!(
-                                    "{:.0},{:.0} {:.0}x{:.0}",
-                                    d.origin.x, d.origin.y, d.size.width, d.size.height
-                                ))
-                                .unwrap_or_default(),
-                            "member reparented"
-                        );
-                    }
-                }
-                let mut legs = Duration::ZERO;
-                if let Some(overlay) = overlay.as_mut() {
-                    let banding = band_plan(&running.plan, &running.tiles, running.focus);
-                    legs =
-                        overlay.retarget(&delta, &running.plan, &running.tiles, &banding, duration);
-                }
-                let changed = delta.moves_anything();
-                if changed {
-                    // The orchestration clock restarts so placement and teardown cover the new legs.
-                    running.started = Some(Instant::now());
-                    running.duration = duration.max(legs);
-                }
-                running.absorb_in_flight_change(changed, frames_changed);
-                if let (Some((nudge, stretched)), Some(overlay)) = (nudge, overlay.as_mut()) {
-                    nudge_on(overlay, running, nudge_playing, nudge, stretched);
-                }
-                // A grow joining mid-flight cannot hold; its chase lands as `Swap("reveal")`.
-                let (_, chase_set, _) = frame_zero_work(&awaiting, &chase, &[], &[]);
-                if !entrance_frames.is_empty() {
-                    self.request_frames(entrance_frames);
-                }
-                if !chase_set.is_empty() {
-                    self.chase_reveal_pictures(&chase_set);
-                }
-            } else {
-                // Still collecting behind the coalesce window: recompose frame zero statically.
-                self.recompose();
-                let reapply = self.running.as_mut().and_then(|running| {
-                    // A held merge already carries the merged frames below.
-                    if hold_frames.is_some() {
-                        return None;
-                    }
-                    reapply_set(
-                        running.frames_applied,
-                        false,
-                        frames_changed,
-                        &running.final_frames,
-                    )
-                });
-                if let Some(frames) = reapply {
-                    self.request_frames(frames);
-                }
-                // A newcomer's slot goes out now, unless a hold below sends every frame anyway.
-                if hold_frames.is_none() {
-                    if !entrance_frames.is_empty() {
-                        self.request_frames(entrance_frames);
-                    }
-                    if !chase.is_empty() {
-                        self.chase_reveal_pictures(&chase);
-                    }
-                }
-            }
-            if let Some(frames) = hold_frames {
-                self.request_frames(frames);
-                let (_, chase_set, _) = frame_zero_work(&awaiting, &chase, &[], &[]);
-                self.chase_reveal_pictures(&chase_set);
-            }
+            self.merge_group(pass);
             return;
         }
-
         // Guards the strip path: a pan with no usable picture leaves nothing to draw.
-        if tiles.is_empty() {
-            self.request_frames(final_frames);
-            // Warm anyway, or the cache never fills.
-            self.warm_last_animated();
+        if pass.tiles.is_empty() {
+            self.abandon();
             return;
         }
-
-        // A flight beginning inside the quiet period carries the owed captures to its own lift.
-        self.quiet = None;
         let backdrop_drawn = self.overlay.as_ref().is_some_and(TileOverlay::backdrop_drawn);
         let dressing = self
             .picture_display()
-            .map(|display| self.pictures.dressing(display, self.picture_bar, backdrop_drawn));
+            .map(|display| self.pictures.dressing(display, backdrop_drawn));
         let display_origin = self.display.map(|(frame, _)| frame.origin).unwrap_or_default();
         let Some(overlay) = self.ensure_overlay() else {
-            self.request_frames(final_frames);
+            self.abandon();
             return;
         };
-        restack(&mut tiles, focus);
         if let Some(dressing) = &dressing {
             let strip = dressing.strip.map(|strip| {
                 CGRect::new(
@@ -1627,98 +1499,238 @@ impl FlightEngine {
                     strip.size,
                 )
             });
-            log_dressing(label, dressing, strip);
+            log_dressing(pass.label, dressing, strip);
             overlay.set_backdrop(dressing.desktop.as_ref());
             overlay.set_bar(dressing.bar.as_ref(), strip);
         }
-        let plan = plan::FlightPlan::from(plan);
-        overlay.install(&plan, &tiles, &band_plan(&plan, &tiles, focus));
-        // Held before the overlay shows: a bar read off the framebuffer from here on has it in.
-        self.pictures.hold(Hold::Transition);
-        let Some(overlay) = self.overlay.as_mut() else { return };
-        // Shown at once, so the real windows can be placed underneath without a visible jump.
-        overlay.show();
-        let edge = self.flight_report.overlay_up();
-        self.report_flight(edge);
-
-        let tx = self.tx.clone();
-        let clock = RepeatingTimer::every(FRAME_INTERVAL, move || {
-            _ = tx.send(Event::Tick);
-        });
-        if clock.is_none() {
-            warn!("could not start the frame clock; drawing the final frame directly");
-        }
-
-        // A holding flight applies the real frames now, so the app rerenders under the overlay.
-        let (holding, chase_set, now_frames) =
-            frame_zero_work(&awaiting, &chase, &final_frames, &entrance_frames);
-        if !now_frames.is_empty() {
-            self.request_frames(now_frames);
-        }
-        if !chase_set.is_empty() {
-            self.chase_reveal_pictures(&chase_set);
-        }
-        self.running = Some(RunningAnimation {
-            tiles,
-            final_frames,
-            frames_applied: holding,
-            started: None,
-            duration,
-            apply_at,
-            entrances,
-            hold_deadline: holding.then(|| Instant::now() + HOLD_CAP),
-            awaiting,
-            refresh: FocusRefresh::default(),
-            harvested: HashSet::new(),
+        let (focus, losing) = self.drawing_focus(pass.focus);
+        let mut running = RunningAnimation {
+            tiles: pass.tiles,
+            final_frames: pass.final_frames,
+            entrances: pass.entrances,
             focus,
-            plan,
-            nudge: nudge_waiting(nudge, duration, &self.nudge_playing, Instant::now()),
-            _clock: clock,
-        });
-
-        // With no clock the animation would never advance.
-        if self.running.as_ref().is_some_and(|running| running._clock.is_none()) {
-            if let Some(running) = self.running.as_mut() {
-                running.started = Some(Instant::now());
-            }
-            self.step_to_end();
-            return;
+            shown_focus: losing.or(focus),
+            key: pass.key,
+            focused_look: None,
+            plan: plan::FlightPlan::from(pass.plan),
+            flown: false,
+            nudge: nudge_waiting(pass.nudge, pass.shape.duration, &self.nudge_playing, Instant::now()),
+            bounce: None,
+        };
+        restack(&mut running.tiles, focus);
+        self.running = Some(running);
+        let Some(mut stage) = self.stage(pass.shape) else { return };
+        if let Some(target) = stage.parked_focus()
+            && self.fly_focused_look(target)
+        {
+            stage.focused_look = Some(target);
         }
+        self.reinstall();
+        self.drive(lifecycle::Event::Merge { stage, moved: false });
+    }
 
-        match start {
-            GroupStart::Immediate => self.start_moving(),
-            GroupStart::Coalesced => {
-                let tx = self.tx.clone();
-                self.coalesce = RepeatingTimer::every(COALESCE_WINDOW, move || {
-                    _ = tx.send(Event::StartMoving);
-                });
+    /// A focus target parked off the display flies its focused look, if the service holds one that
+    /// fits: frame zero cannot picture it, and it arrives focused. Whether it does.
+    fn fly_focused_look(&mut self, target: WindowId) -> bool {
+        let look = self.pictures.focused(target);
+        self.running.as_mut().is_some_and(|running| running.fly_focused_look(target, look))
+    }
+
+    /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
+    /// a new parked target flies cut onto its tile: a retarget draws neither.
+    fn redraw_focus(&mut self, before: &[(WindowId, bool)], look: Option<WindowId>, now: Instant) {
+        let remaining = self.coordinator.remaining(now);
+        let (Some(running), Some(overlay)) = (self.running.as_ref(), self.overlay.as_mut()) else { return };
+        for tile in running.tiles.iter().filter(|t| t.companion.is_none()) {
+            let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
+            if look == Some(tile.window) {
+                let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
+                overlay.set_tile_picture(tile.window, &tile.snapshot, remaining);
+                overlay.set_tile_corner_clip(tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size));
+                overlay.set_tile_focused(tile.window, true);
+            } else if was.is_some_and(|was| was != tile.focused) {
+                overlay.set_tile_focused(tile.window, tile.focused);
             }
+        }
+    }
+
+    /// One later pass folded into the flight running: retargeted on the renderer once the plan
+    /// plays, folded into frame zero and installed again before. A pass moving focus to a target
+    /// parked off the display flies its focused look, as the first pass's does.
+    fn merge_group(&mut self, pass: Pass) {
+        let now = Instant::now();
+        let display = self.display.map(|(frame, _)| frame);
+        let Self { overlay, running, nudge_playing, .. } = self;
+        let Some(running) = running.as_mut() else { return };
+        for entrance in pass.entrances {
+            if !running.entrances.iter().any(|e| e.window == entrance.window) {
+                running.entrances.push(entrance);
+            }
+        }
+        if let Some(display) = display {
+            retarget_entrances(&mut running.entrances, &pass.final_frames, display);
+        }
+        extend_latest(&mut running.final_frames, pass.final_frames.into_iter());
+        let focus_before = running.focus;
+        let drawn_focused_before: Vec<(WindowId, bool)> =
+            running.tiles.iter().map(|t| (t.window, t.focused)).collect();
+        let (pass_focus, _) = pass.focus;
+        running.merge_pass(pass.tiles, pass_focus);
+        let mut shape = pass.shape;
+        let mut moved = false;
+        let mut nudge = None;
+        // The viewport in overlay space: what a member's destination is judged against.
+        let viewport = display
+            .map(|d| to_overlay_space(d, d))
+            .unwrap_or(CGRect::new(CGPoint::new(-1e9, -1e9), CGSize::new(2e9, 2e9)));
+        if !running.flown {
+            if let Some(waiting) = nudge_waiting(pass.nudge, shape.duration, nudge_playing, now) {
+                running.nudge = Some(waiting);
+            }
+            running.fold_before_moving(&pass.plan, pass.pan, viewport);
+        } else {
+            // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
+            let presented = overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
+            let focus_changed = pass_focus.is_some() && pass_focus != focus_before;
+            let (merged, mut delta) = plan::merge_plans(
+                &running.plan,
+                &pass.plan,
+                pass.pan,
+                &presented,
+                running.focus,
+                viewport,
+            );
+            delta.focus_changed = focus_changed;
+            running.plan = merged;
+            sync_tiles_to_plan(&mut running.tiles, &running.plan);
+            nudge = starting_nudge(pass.nudge.map(|nudge| (nudge, shape.duration)), nudge_playing, now);
+            // A flight carrying the nudge is stretched, its new legs with it.
+            let duration = nudge.map_or(shape.duration, |(_, stretched)| stretched);
+            if !delta.is_empty() {
+                debug!(
+                    groups = running.plan.groups.iter().filter(|g| !g.members.is_empty()).count(),
+                    changing = running.plan.changing.len(),
+                    entrances = running.plan.entrances.len(),
+                    reparented = delta.reparented.len(),
+                    retargeted_groups = delta.retargeted_groups.len(),
+                    joined = delta.joined_tiles.len(),
+                    "flight merged"
+                );
+                for (key, to) in &delta.retargeted_groups {
+                    let presented = presented.drawn.get(key).copied().unwrap_or_default();
+                    debug!(
+                        key = format!("{key:?}"),
+                        presented = format!("{:.0},{:.0}", presented.x, presented.y),
+                        to = format!("{:.0},{:.0}", to.x, to.y),
+                        "group retargeted"
+                    );
+                }
+                for (window, from_key, to_key) in &delta.reparented {
+                    let dest = running.plan.member(*window).map(|m| match m {
+                        plan::Member::Rigid { key, rel } => {
+                            plan::overlay_of(rel, running.plan.position_of(key))
+                        }
+                        plan::Member::Changing { to, .. }
+                        | plan::Member::Entrance { to, .. } => to,
+                        plan::Member::Floating { to, .. } => plan::overlay_of(
+                            to,
+                            running.plan.position_of(plan::GroupKey::Floating),
+                        ),
+                    });
+                    let from_to = running.plan.position_of(*from_key);
+                    debug!(
+                        pid = window.pid,
+                        idx = window.idx.get(),
+                        from = format!("{from_key:?}"),
+                        to = format!("{to_key:?}"),
+                        group_destination = format!("{:.0},{:.0}", from_to.x, from_to.y),
+                        member_destination = dest
+                            .map(|d| format!(
+                                "{:.0},{:.0} {:.0}x{:.0}",
+                                d.origin.x, d.origin.y, d.size.width, d.size.height
+                            ))
+                            .unwrap_or_default(),
+                        "member reparented"
+                    );
+                }
+            }
+            let mut legs = Duration::ZERO;
+            if let Some(overlay) = overlay.as_mut() {
+                let banding = band_plan(&running.plan, &running.tiles, running.focus);
+                legs = overlay.retarget(&delta, &running.plan, &running.tiles, &banding, duration);
+            }
+            moved = delta.moves_anything();
+            // A merge that moves anything restarts the clock, over the newest legs.
+            shape.duration = duration.max(legs);
+        }
+        let flown = running.flown;
+        let focus_moved = running.focus != focus_before;
+        let look = if focus_moved
+            && let Some(target) = self.stage(shape.clone()).and_then(|stage| stage.parked_focus())
+            && self.fly_focused_look(target)
+        {
+            Some(target)
+        } else {
+            None
+        };
+        if flown {
+            self.redraw_focus(&drawn_focused_before, look, now);
+        } else {
+            self.reinstall();
+        }
+        let Some(stage) = self.stage(shape) else { return };
+        self.drive(lifecycle::Event::Merge { stage, moved });
+        if let Some((offset, stretched)) = nudge {
+            self.nudge_on(offset, stretched);
         }
     }
 
     /// Animates the whole strip surface as one rigid group, one container and one position
     /// animation, with a container of its own for each column a move swapped that crosses it, and a
-    /// move's `nudge` stepping every strip container. See "The move flight, staged" in
-    /// `src/transitions/docs/coordination.md`.
+    /// move's `nudge` stepping every strip container. A bounce from rest is one with no travel. See
+    /// "The move flight, staged" in `src/transitions/docs/coordination.md`.
     fn start_surface(
         &mut self,
         windows: Vec<SurfaceWindow>,
         from_offset: CGPoint,
         to_offset: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
-        focus: Option<WindowId>,
+        focus: (Option<WindowId>, Option<WindowId>),
+        key: Option<WindowId>,
         duration: Duration,
         nudge: Option<CGPoint>,
+        kind: Option<Kind>,
     ) {
-        // Remembered before anything can fail, so a window with no picture is still warmed.
-        self.last_animated = windows
-            .iter()
-            .map(|w| PictureTarget {
-                window: w.window,
-                server_id: w.server_id,
-                size: w.frame.size,
-            })
-            .collect();
+        let Some((display, _)) = self.display else {
+            debug!("no display geometry yet; skipping animation");
+            return;
+        };
+        let shape = Shape {
+            kind: kind.unwrap_or_else(|| Kind::of_surface(&windows, from_offset, to_offset)),
+            start: Start::Immediate,
+            duration,
+            awaiting: Vec::new(),
+            repainting: Vec::new(),
+        };
+        if !self.coordinator.is_flying() {
+            let requested = windows
+                .iter()
+                .map(|w| {
+                    let (from, to) = w.travel(from_offset, to_offset);
+                    TileSummary {
+                        window: w.window,
+                        start: from_overlay_space(from, display),
+                        end: from_overlay_space(to, display),
+                        floating: w.floating,
+                        companion: false,
+                    }
+                })
+                .collect();
+            if !self.begin(requested, final_frames.clone(), focus, key, shape.clone()) {
+                return;
+            }
+        }
+        let (drawing_focus, losing) = self.drawing_focus(focus);
 
         let depths = crate::windows::platform::window_server::front_to_back_depths();
         // One query for every window, not one each: a round trip per window stalled this thread
@@ -1736,29 +1748,23 @@ impl FlightEngine {
         let mut stand_ins = 0usize;
         let mut needs_capture: Vec<PictureTarget> = Vec::new();
         let mut starts: Vec<(WindowId, CGRect)> = Vec::new();
-        let display_frame = self.display.map(|(frame, _)| frame);
         let scale = self.display.map(|(_, scale)| scale).unwrap_or(2.0);
         for window in &windows {
             let (from, to) = window.travel(from_offset, to_offset);
             let cached = self.pictures.usable(window.window);
             // A known window parked off this display with no picture flies as the stand-in, as on
             // the per-window path; see `stands_in`.
-            let snapshot = match display_frame {
-                Some(display) => picture_or_stand_in(
-                    cached,
-                    || real_frames.get(&window.server_id).copied(),
-                    display,
-                    || self.pictures.stand_in(window.frame.size, scale),
-                ),
-                None => cached,
-            };
+            let snapshot = picture_or_stand_in(
+                cached,
+                || real_frames.get(&window.server_id).copied(),
+                display,
+                || self.pictures.stand_in(window.frame.size, scale),
+            );
             match snapshot {
                 Some(snapshot) => {
                     // A wrong-shaped picture is stretched rather than dropped. See "A window that
                     // was resized keeps a usable picture" in `src/pictures/docs/capture-research.md`.
-                    if snapshot.source
-                        == crate::pictures::platform::picture::Route::StandIn
-                    {
+                    if snapshot.source == Route::StandIn {
                         stand_ins += 1;
                     } else if !snapshot.fits(window.frame.size) {
                         misshapen += 1;
@@ -1775,17 +1781,15 @@ impl FlightEngine {
                         server_order: depths.get(&window.server_id.as_u32()).copied(),
                         depth: 0,
                         companion: None,
-                        focused: focus == Some(window.window),
+                        focused: drawn_focused(window.window, drawing_focus, losing),
+                        radius: self.pictures.knowledge(window.server_id).radius,
                     });
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
                 None => missing += 1,
             }
         }
-        restack(&mut tiles, focus);
-        let chase = display_frame
-            .map(|display| stand_in_chase(&tiles, &final_frames, display))
-            .unwrap_or_default();
+        restack(&mut tiles, drawing_focus);
         let anchors: Vec<(CGRect, &OverlayTile)> = starts
             .iter()
             .filter_map(|(window, real)| {
@@ -1794,14 +1798,8 @@ impl FlightEngine {
             .collect();
         let exclude: std::collections::HashSet<u32> =
             windows.iter().map(|window| window.server_id.as_u32()).collect();
-        let (companions, companion_targets) = match self.display {
-            Some((display_frame, _)) => {
-                self.companion_tiles(display_frame, &anchors, &exclude, &mut needs_capture)
-            }
-            None => (Vec::new(), Vec::new()),
-        };
+        let companions = self.companion_tiles(display, &anchors, &exclude, &mut needs_capture);
         tiles.extend(companions);
-        self.last_animated.extend(companion_targets);
         self.ask_missing(needs_capture);
         debug!(
             requested = windows.len(),
@@ -1830,27 +1828,25 @@ impl FlightEngine {
             }
         }
 
-        // A strip movement never resizes, never carries a brand-new window and never holds.
-        self.begin_group(
+        // A strip movement never resizes, never carries a brand-new window and never holds: a stand-in
+        // whose window comes on screen is pictured once it lands there.
+        self.begin_group(Pass {
             tiles,
             final_frames,
-            duration,
-            "surface",
-            GroupStart::Immediate,
-            apply_frames_at(FlightKind::Pan, false),
-            Vec::new(),
-            Vec::new(),
-            chase,
-            Vec::new(),
+            label: "surface",
+            shape,
+            entrances: Vec::new(),
             focus,
-            Some(pan_travel(from_offset, to_offset)),
+            key,
+            pan: Some(pan_travel(from_offset, to_offset)),
             plan,
             nudge,
-        );
+        });
     }
 
-    /// Pushes the strip surface out by `overshoot` and back, additively on a running flight or as
-    /// the only motion of a no-travel one. Every push shows: one arriving while a bounce plays
+    /// Pushes the strip surface out by `overshoot` and back, additively on a flight that moves, as
+    /// the only motion of a no-travel one when none runs, and as the flight starts on one that does
+    /// not move yet. Every push that reaches a moving flight shows: one arriving while a bounce plays
     /// starts the next from where that one is drawn. See "Edge bounce" in
     /// `src/transitions/docs/coordination.md`.
     fn start_bounce(
@@ -1861,72 +1857,62 @@ impl FlightEngine {
         focus: Option<WindowId>,
         duration: Duration,
     ) {
-        let now = Instant::now();
-        if self.running.is_none() {
+        if !self.coordinator.is_flying() {
             let at_rest = CGPoint::new(0.0, 0.0);
-            self.start_surface(windows, at_rest, at_rest, final_frames, focus, duration, None);
+            // A push against an end moves no focus.
+            self.start_surface(
+                windows,
+                at_rest,
+                at_rest,
+                final_frames,
+                (focus, None),
+                None,
+                duration,
+                None,
+                Some(Kind::Bounce),
+            );
         }
-        let Self { overlay, running, bounce, .. } = self;
-        let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_mut()) else {
-            return;
-        };
-        let before = bounce.map(|(_, playing)| playing.overshoot);
-        let next = next_bounce(*bounce, now, overshoot, duration);
-        *bounce = Some((now, next));
-        running.duration = clock_for_bounce(running.started, running.duration, next.duration);
+        let Some(running) = self.running.as_mut() else { return };
+        if let Some((overshoot, duration)) = running.push_bounce(overshoot, duration) {
+            self.play_bounce(overshoot, duration, Instant::now());
+        }
+    }
+
+    /// The bounce a push plays from now, on the containers, with the clock run on for it to come home.
+    fn play_bounce(&mut self, overshoot: CGPoint, duration: Duration, now: Instant) {
+        let Some(overlay) = self.overlay.as_mut() else { return };
+        let (next, before) = self.bounce.push(now, overshoot, duration);
         overlay.bounce(&next, before);
         debug!(
             overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
             from = format!("{:.1},{:.1}", next.from.x, next.from.y),
-            joined = running.started.is_some(),
             "edge bounce"
         );
+        self.drive(lifecycle::Event::Extend(next.duration));
     }
 
-    /// Starts an animation that is on screen but not yet moving: hands the plan to Core Animation
-    /// in one transaction and starts the clock.
-    fn start_moving(&mut self) {
-        // Dropping the timer stops it repeating.
-        self.coalesce = None;
-        // A hold waits for its reveal pixels or the deadline; the timer re-fires at the deadline.
-        let now = Instant::now();
-        if let Some(running) = self.running.as_ref()
-            && running.started.is_none()
-            && !running.awaiting.is_empty()
-        {
-            if let Some(wait) = hold_wait(running.hold_deadline, now) {
-                let tx = self.tx.clone();
-                self.coalesce = RepeatingTimer::every(wait, move || {
-                    _ = tx.send(Event::StartMoving);
-                });
-                return;
-            }
-            let running = self.running.as_mut().expect("checked above");
-            warn!(
-                still_waiting = running.awaiting.len(),
-                "reveal pixels did not arrive in time; flying with the stand-in"
-            );
-            running.awaiting.clear();
-        }
+    /// Steps the whole strip out by `offset` and back over `duration`, with the clock run on for it to
+    /// come home. See "The move flight" in `src/animation/docs/animation-smoothness.md`.
+    fn nudge_on(&mut self, offset: CGPoint, duration: Duration) {
+        let Some(overlay) = self.overlay.as_mut() else { return };
+        self.nudge_playing.start(Instant::now(), duration);
+        overlay.nudge(offset, duration);
+        debug!(offset = format!("{:.0},{:.0}", offset.x, offset.y), "move nudge");
+        self.drive(lifecycle::Event::Extend(duration));
+    }
+
+    /// The motion starts: the plan goes to Core Animation in one transaction, with a nudge or a
+    /// bounce waiting for it.
+    fn start_moving(&mut self, now: Instant) {
+        let duration = self.coordinator.remaining(now).unwrap_or_default();
         let Some(running) = self.running.as_mut() else { return };
-        if running.started.is_some() {
-            return;
-        }
-        debug!(
-            windows = running.tiles.len(),
-            "starting the animation after coalescing"
-        );
-        let now = Instant::now();
-        running.started = Some(now);
+        running.flown = true;
         let nudge = starting_nudge(running.nudge.take(), &self.nudge_playing, now);
         // A flight carrying the nudge is stretched, and crosses on the curve that keeps the column
         // the move passed in the side the step opens.
-        if let Some((_, stretched)) = nudge {
-            running.duration = running.duration.max(stretched);
-        }
+        let duration = nudge.map_or(duration, |(_, stretched)| duration.max(stretched));
         let curve = flight_curve(nudge.is_some());
-        let tiles = std::mem::take(&mut running.tiles);
-        let duration = running.duration;
+        let bounce = running.bounce.take();
         // The acceptance greps count this line against "overlay lifted".
         let flight = &running.plan;
         debug!(
@@ -1939,73 +1925,51 @@ impl FlightEngine {
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.fly(flight, duration, curve);
         }
-        if let Some(running) = self.running.as_mut() {
-            running.tiles = tiles;
+        if let Some((offset, stretched)) = nudge {
+            self.nudge_on(offset, stretched);
         }
-        if let Some((nudge, stretched)) = nudge
-            && let (Some(overlay), Some(running)) = (self.overlay.as_mut(), self.running.as_mut())
-        {
-            nudge_on(overlay, running, &mut self.nudge_playing, nudge, stretched);
+        if let Some((overshoot, duration)) = bounce {
+            self.play_bounce(overshoot, duration, now);
         }
     }
 
-    fn step(&mut self) {
+    /// One frame of the clock: where the tiles are drawn and where the windows are, read only once
+    /// the clock is done.
+    fn tick(&mut self) {
         self.trace_presented();
-        let (done, place_now, refresh_now) = {
-            let Some(running) = self.running.as_mut() else { return };
-            let progress = running.progress();
-            // Nothing is drawn here; the tick only paces the mid-flight work.
-            let place_now = running.frames_due(progress);
-            let refresh_now = running.take_refresh(progress);
-            (running.is_done(), place_now, refresh_now)
-        };
-        // The render server runs a frame or so behind the actor's clock; lifting on the clock
-        // alone shows the real windows one frame ahead of their tiles.
-        let clock_done = done;
-        let mut done = false;
-        if clock_done {
+        if !self.coordinator.is_flying() {
+            return;
+        }
+        let (settled, landed) = if self.coordinator.wants_landing(Instant::now()) {
             let settled = self.overlay.as_ref().is_none_or(TileOverlay::settled);
-            let handover = self.handover();
-            let landed = handover.as_ref().is_none_or(|report| report.count_over == 0);
-            let overdue = self.running.as_ref().is_some_and(RunningAnimation::overdue);
-            done = lift_now(clock_done, settled, landed, overdue);
-            if done && let Some(running) = self.running.as_ref() {
-                // `landed=false` or `settled=false` means the grace ran out.
-                let late_ms = running
-                    .started
-                    .map(|s| s.elapsed().saturating_sub(running.duration).as_millis() as u64)
-                    .unwrap_or(0);
-                let worst_pt = handover.as_ref().map_or(0.0, |r| r.worst_visible_pt);
-                debug!(
-                    settled,
-                    landed,
-                    late_ms,
-                    worst_pt = format!("{worst_pt:.2}"),
-                    "flight landed"
-                );
-            }
+            let landed = self.handover().as_ref().is_none_or(|report| report.count_over == 0);
+            (settled, landed)
+        } else {
+            (false, false)
+        };
+        self.drive(lifecycle::Event::Tick { settled, landed });
+    }
+
+    /// Overlay down, over the real windows where they end; the quiet after it begins.
+    fn lift(&mut self, generation: Generation) {
+        self.report_handover_error();
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.hide();
+            // The acceptance greps pair "placing real windows" with this line.
+            let windows = self.running.as_ref().map_or(0, |running| running.tiles.len());
+            debug!(windows, "overlay lifted");
+            overlay.release_tiles();
         }
-        if refresh_now {
-            let tiles: Vec<(WindowId, WindowServerId, CGSize)> = self
-                .running
-                .as_ref()
-                .map(|running| {
-                    running
-                        .tiles
-                        .iter()
-                        // Companions never take the one mid-flight recapture.
-                        .filter(|tile| tile.companion.is_none())
-                        .map(|tile| (tile.window, WindowServerId::from(tile.window), tile.to.size))
-                        .collect()
-                })
-                .unwrap_or_default();
-            self.refresh_destination_among(&tiles);
-        }
-        if let Some(frames) = place_now {
-            self.request_frames(frames);
-        }
-        if done {
-            self.finish();
+        self.running = None;
+        self.clock = None;
+        self.bounce.gone();
+        self.delivered.clear();
+        let tx = self.tx.clone();
+        match RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
+            _ = tx.send(Event::Quiet(generation));
+        }) {
+            Some(timer) => self.quiet = Some((generation, timer)),
+            None => self.tx.send(Event::Quiet(generation)),
         }
     }
 
@@ -2073,33 +2037,17 @@ impl FlightEngine {
         ))
     }
 
-    /// Asks the pictures service for the windows a pass has no picture of: at frame zero if they can
-    /// still serve this flight, else as warms for the next.
+    /// Asks the pictures service for the windows a pass has no picture of, for the next flight: it
+    /// holds the ask until the quiet, and frame zero pictures what is on screen for this one.
     fn ask_missing(&self, targets: Vec<PictureTarget>) {
         if targets.is_empty() {
             return;
         }
-        let priority = self
-            .running
-            .as_ref()
-            .map_or(Priority::FrameZero, RunningAnimation::missing_pictures);
-        debug!(
-            count = targets.len(),
-            ?priority,
-            "asking for pictures the flight has none of"
-        );
-        self.pictures.ask(Ask { priority, targets });
-    }
-
-    /// Warms the windows of the pass just composed, which is not flying.
-    fn warm_last_animated(&mut self) {
-        let targets = std::mem::take(&mut self.last_animated);
-        if !targets.is_empty() {
-            self.pictures.ask(Ask {
-                priority: Priority::Warm,
-                targets,
-            });
-        }
+        debug!(count = targets.len(), "asking for pictures the flight has none of");
+        self.pictures.ask(Ask {
+            priority: Priority::Warm,
+            targets,
+        });
     }
 
     /// Asks the reactor to place windows at their final frames.
@@ -2113,97 +2061,6 @@ impl FlightEngine {
         };
         debug!(count = frames.len(), "placing real windows behind the overlay");
         place(frames);
-    }
-
-    /// Jumps to the end and tears down, for the case where no frame clock could be created.
-    fn step_to_end(&mut self) {
-        {
-            let Self { overlay, running, .. } = self;
-            if let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_ref()) {
-                overlay.fly(&running.plan, Duration::ZERO, flight_curve(false));
-            }
-        }
-        self.finish();
-    }
-
-    fn finish(&mut self) {
-        // Whatever is still owed (a clockless flight's held entrance slots) goes out before lift.
-        if let Some(frames) = self.running.as_mut().and_then(|running| running.frames_due(1.0)) {
-            self.request_frames(frames);
-        }
-        self.report_handover_error();
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.hide();
-            // The acceptance greps pair "placing real windows" with this line.
-            let windows = self.running.as_ref().map_or(0, |running| running.tiles.len());
-            debug!(windows, "overlay lifted");
-            overlay.release_tiles();
-        }
-        self.pictures.hold(Hold::Settling);
-        let (harvested, focus) = self
-            .running
-            .take()
-            .map(|running| (running.harvested, running.focus))
-            .unwrap_or_default();
-        if focus.is_some() {
-            self.last_focus = focus;
-        }
-        self.bounce = None;
-        self.coalesce = None;
-
-        // The owed captures run after `SETTLE_BEFORE_CAPTURES`; a flight beginning first carries them over.
-        let targets = std::mem::take(&mut self.last_animated);
-        let after = self.after_flight.get_or_insert_with(AfterFlight::default);
-        for target in targets {
-            if !after.targets.iter().any(|t| t.window == target.window) {
-                after.targets.push(target);
-            }
-        }
-        after.harvested.extend(harvested);
-        let tx = self.tx.clone();
-        self.quiet = RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
-            _ = tx.send(Event::Quiet);
-        });
-        if self.quiet.is_none() {
-            self.after_flight_captures();
-        }
-    }
-
-    /// The capture work the last flights left, once per quiet period.
-    fn after_flight_captures(&mut self) {
-        self.quiet = None;
-        if self.running.is_some() {
-            return;
-        }
-        let edge = self.flight_report.settled();
-        self.report_flight(edge);
-        self.pictures.hold(Hold::Released);
-        let Some(after) = self.after_flight.take() else { return };
-        let animated: Vec<WindowId> = after.targets.iter().map(|target| target.window).collect();
-        // The windows the warm captures are harvested when their capture lands.
-        let requested: Vec<WindowId> = after
-            .targets
-            .iter()
-            .filter(|target| self.pictures.wants_warm(target))
-            .map(|target| target.window)
-            .collect();
-        if !after.targets.is_empty() {
-            self.pictures.ask(Ask {
-                priority: Priority::Warm,
-                targets: after.targets,
-            });
-        }
-        let dressed: HashSet<WindowId> = animated
-            .iter()
-            .copied()
-            .filter(|window| self.pictures.get(*window).is_some_and(|s| s.dressing.is_some()))
-            .collect();
-        self.harvest_dressings(finish_harvest_set(
-            &animated,
-            &after.harvested,
-            &requested,
-            &dressed,
-        ));
     }
 
     /// Slides every window on screen in from an offset; touches no real window.
@@ -2233,13 +2090,12 @@ impl FlightEngine {
             })
             .collect();
         debug!(count = requests.len(), dx, dy, "running debug slide");
-        self.start(requests, None, duration);
+        self.start(requests, (None, None), None, duration);
     }
 }
 
-/// Where a window really is right now, from the window server: the reactor's `from` can be the
-/// previous pass's destination rather than where the window sits.
-/// The frame the window server reports for a window, if it reports a real one.
+/// The frame the window server reports for a window, if it reports a real one: the reactor's
+/// `from` can be the previous pass's destination rather than where the window sits.
 ///
 /// A zero-sized frame is macOS saying it has not laid the window out yet, which is not a position to
 /// animate from. The geometry decision is `travel::tile_path`; this is the read it needs.
@@ -2290,24 +2146,20 @@ mod tests {
         WindowId::new(7, idx)
     }
 
-    /// A 300ms layout flight with nothing in it: at frame zero, or moving since `started`.
-    fn flight(started: Option<Instant>) -> RunningAnimation {
+    /// A flight with nothing in it, composed and not yet moving.
+    fn flight() -> RunningAnimation {
         RunningAnimation {
             tiles: Vec::new(),
             final_frames: Vec::new(),
-            frames_applied: false,
-            started,
-            duration: Duration::from_millis(300),
-            apply_at: APPLY_FRAMES_AT,
             entrances: Vec::new(),
-            awaiting: Vec::new(),
-            hold_deadline: None,
-            refresh: FocusRefresh::default(),
-            harvested: HashSet::new(),
             focus: None,
+            shown_focus: None,
+            key: None,
+            focused_look: None,
             plan: plan::FlightPlan::empty(),
+            flown: false,
             nudge: None,
-            _clock: None,
+            bounce: None,
         }
     }
 
@@ -2329,17 +2181,8 @@ mod tests {
             depth: 0,
             companion: None,
             focused: false,
+            radius: None,
         }
-    }
-
-    /// A flight holding for one entrance at `to`, composed the way `start` does it.
-    fn holding_for(window: WindowId, to: CGRect, floating: bool) -> RunningAnimation {
-        let mut flight = flight(None);
-        let (entrance, waiting) = entrance_reservation(window, to, floating);
-        flight.entrances.push(entrance);
-        flight.awaiting.push(waiting);
-        flight.frames_applied = true;
-        flight
     }
 
     /// A SkyLight sliver: 40pt of an `size`-wide window, which `is_usable` rejects.
@@ -2349,218 +2192,384 @@ mod tests {
         snapshot
     }
 
-    /// The flight's clock: how far it is, and what is left of it.
-    mod clock {
-        use super::*;
-
-        #[test]
-        fn progress_is_complete_for_a_zero_length_animation() {
-            // Zero durations resolve at once, and the division is guarded.
-            let mut running = flight(Some(Instant::now()));
-            running.duration = Duration::ZERO;
-            assert_eq!(running.progress(), 1.0);
-            assert!(running.is_done());
-        }
-
-        #[test]
-        fn progress_starts_near_zero_and_is_clamped_to_one() {
-            let mut running = flight(Some(Instant::now()));
-            running.duration = Duration::from_millis(180);
-            assert!(running.progress() < 0.2, "just started");
-
-            let mut finished = flight(Some(Instant::now() - Duration::from_secs(5)));
-            finished.duration = Duration::from_millis(180);
-            // Clamped, or the easing overshoots when a frame arrives late.
-            assert_eq!(finished.progress(), 1.0);
-            assert!(finished.is_done());
-        }
-
-        #[test]
-        fn a_late_entrance_ends_no_later_than_the_flight() {
-            let duration = Duration::from_millis(300);
-            let running = flight(Some(Instant::now() - duration.mul_f64(0.6)));
-            // Read before `progress`: the clock only moves forward between the two reads.
-            let remaining = running.remaining();
-            let progress = running.progress();
-            assert!(progress >= 0.6 && progress < 0.7, "clock sanity: {progress}");
-
-            let entrance = late_join_duration(running.duration, progress);
-            assert!(
-                entrance <= remaining,
-                "entrance travels {entrance:?} but the overlay lifts in {remaining:?}"
-            );
+    fn layout(awaiting: Vec<WindowId>) -> Shape {
+        Shape {
+            kind: Kind::LayoutPass,
+            start: Start::Coalesced,
+            duration: Duration::from_millis(300),
+            awaiting,
+            repainting: Vec::new(),
         }
     }
 
-    /// The frames a flight owes the reactor: at frame zero when it holds, at the apply point
-    /// otherwise, and again when a merge leaves them stale.
-    mod frames {
+    /// What the engine tells the coordinator and asks of the pictures service, carried out over
+    /// plain values.
+    mod translation {
         use super::*;
-        use crate::animation::domain::motion::surface::surface_travel;
-        use crate::pictures::domain::coverage::needs_capture;
+        use crate::pictures::platform::service::Command as Asked;
 
-        fn column(i: f64) -> CGRect {
-            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
-        }
-
-        /// A holding flight sends every frame at frame zero, the newcomer's slot included, so
-        /// nothing is owed at the apply point.
-        #[test]
-        fn an_entrances_frame_goes_out_at_frame_zero_so_its_picture_fits() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let neighbour = (wid(1), rect(4.0, 32.0, 859.0, 1081.0));
-            let newcomer = wid(51462);
-            let final_frames = vec![neighbour, (newcomer, slot)];
-
-            // The held merge, as `begin_group` runs it: every frame, once.
-            let mut running = flight(None);
-            running.final_frames = final_frames.clone();
-            let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
-            running.entrances.push(entrance);
-            let awaiting: Vec<(WindowId, CGSize)> = vec![waiting];
-            let now = Instant::now();
-            let requested = running.extend_hold(&awaiting, false, now);
-            assert_eq!(
-                requested,
-                Some(final_frames.clone()),
-                "the slot went out with the rest"
-            );
-            assert!(running.frames_applied);
-            running.started = Some(now);
-            assert_eq!(
-                running.frames_due(running.apply_at),
-                None,
-                "nothing left to send"
-            );
-
-            // Nothing placed yet: everything goes at the apply point, once.
-            let mut running = flight(Some(Instant::now()));
-            running.final_frames = final_frames.clone();
-            assert_eq!(running.frames_due(running.apply_at - 0.01), None);
-            assert_eq!(running.frames_due(running.apply_at), Some(final_frames.clone()));
-            assert!(running.frames_applied);
-            assert_eq!(running.frames_due(1.0), None, "sent once");
-        }
-
-        #[test]
-        fn a_held_merge_re_requests_the_flights_frames() {
-            let mut rng = Gen(36);
-            let mut checked = 0;
-            for _ in 0..RUNS {
-                let count = rng.below(3) as u32 + 1;
-                let frames: Vec<(WindowId, CGRect)> =
-                    (1..=count).map(|i| (wid(i), rng.on_screen())).collect();
-                let mut flight = flight(None);
-                flight.final_frames = frames.clone();
-                if rng.coin() {
-                    flight.awaiting.push((wid(1), CGSize::new(100.0, 100.0)));
-                }
-                let mut incoming: Vec<(WindowId, CGSize)> = Vec::new();
-                for i in 1..=count {
-                    if rng.coin() {
-                        incoming.push((wid(i), CGSize::new(rng.pt(200.0, 1720.0), 1081.0)));
-                    }
-                }
-                if incoming.is_empty() {
-                    continue;
-                }
-                checked += 1;
-                let now = Instant::now();
-                let requested = flight.extend_hold(&incoming, false, now);
-                assert_eq!(requested, Some(frames.clone()));
-                assert!(flight.frames_applied);
-                assert_eq!(flight.hold_deadline, Some(now + HOLD_CAP));
-                for (window, size) in &incoming {
-                    let held: Vec<_> =
-                        flight.awaiting.iter().filter(|(w, _)| w == window).collect();
-                    assert_eq!(held.len(), 1, "one hold per window");
-                    assert_eq!(held[0].1, *size, "latest size wins");
-                }
+        fn asked(commands: &mut channel::Receiver<Asked>) -> Vec<Asked> {
+            let mut out = Vec::new();
+            while let Ok((_, command)) = commands.try_recv() {
+                out.push(command);
             }
-            assert!(
-                checked > RUNS / 2,
-                "generator sanity: {checked} of {RUNS} in scope"
-            );
+            out
+        }
+
+        fn end(generation: u64, now: Instant) -> EndWatch {
+            EndWatch {
+                generation: Generation(generation),
+                landing: vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))],
+                awaiting: vec![(wid(2), rect(867.0, 32.0, 859.0, 1081.0))],
+                landing_until: now + Duration::from_millis(150),
+                awaiting_until: now + HOLD_CAP,
+                focus: Some((wid(1), rect(4.0, 32.0, 859.0, 1081.0))),
+                background: vec![(wid(9), rect(224.0, 95.0, 600.0, 400.0))],
+                background_initial: Some(now + Duration::from_millis(30)),
+                behind: vec![wid(9)],
+            }
         }
 
         #[test]
-        fn a_hold_never_stops_a_flight_in_motion() {
+        fn the_end_state_is_watched_one_slot_a_kind_and_retargeted_from_one_generation_to_the_next() {
+            let (pictures, mut commands) = Pictures::detached();
+            let client = Client(1);
             let now = Instant::now();
-            let mut flight = flight(None);
-            flight.final_frames = vec![(wid(1), rect(4.0, 32.0, 859.0, 1081.0))];
-            flight.started = Some(now);
-            let grow = [(wid(1), CGSize::new(1720.0, 1081.0))];
-            assert_eq!(flight.extend_hold(&grow, true, now), None);
-            assert!(!flight.frames_applied);
-            assert!(flight.awaiting.is_empty());
-            assert!(flight.hold_deadline.is_none());
-            flight.started = None;
-            assert_eq!(flight.extend_hold(&[], false, now), None);
-            assert!(!flight.frames_applied);
-        }
+            let mut watches = EndWatches::default();
+            watches.watch(&pictures, client, &end(3, now));
+            let tag = Tag { client, generation: 3 };
+            let first = asked(&mut commands);
+            assert_eq!(first.len(), 4, "{first:?}");
+            match &first[0] {
+                Asked::Watch(id, Watch::Landing { tag: under, windows, behind, slack, settle, until }) => {
+                    assert_eq!(Some(*id), watches.landing);
+                    assert_eq!(*under, tag);
+                    let target = &windows[0].0;
+                    assert_eq!((target.window, target.server_id), (wid(1), WindowServerId::new(1)));
+                    assert_eq!(*behind, vec![WindowServerId::new(9)], "the strip is captured over them");
+                    assert_eq!((*slack, *settle, *until), (END_SLACK, Settle::AsSoonAsThere, now + Duration::from_millis(150)));
+                }
+                other => panic!("{other:?}"),
+            }
+            match &first[1] {
+                Asked::Watch(id, Watch::Landing { windows, settle, until, .. }) => {
+                    assert_eq!(Some(*id), watches.awaiting);
+                    assert_eq!(windows[0].0.window, wid(2));
+                    assert_eq!((*settle, *until), (Settle::Repainted, now + HOLD_CAP), "watched as long as it is held for");
+                }
+                other => panic!("{other:?}"),
+            }
+            match &first[2] {
+                Asked::Watch(id, Watch::Change { window, every, tries, .. }) => {
+                    assert_eq!(Some(*id), watches.change);
+                    assert_eq!(window.window, wid(1));
+                    assert_eq!((*every, *tries), (CHANGE_EVERY, CHANGE_TRIES));
+                }
+                other => panic!("{other:?}"),
+            }
+            match &first[3] {
+                Asked::Watch(_, Watch::Live { windows, every, after, initial, .. }) => {
+                    assert_eq!(windows[0].window, wid(9));
+                    assert_eq!(*every, LIVE_EVERY);
+                    assert_eq!(*after, watches.change, "kept fresh once the focus target's look is in");
+                    assert_eq!(*initial, Some(now + Duration::from_millis(30)));
+                }
+                other => panic!("{other:?}"),
+            }
 
-        #[test]
-        fn a_grow_still_enters_awaiting() {
-            use crate::pictures::domain::coverage::outgrows;
-            let a = column(0.0);
-            let grown = rect(a.origin.x, a.origin.y, a.size.width + 600.0, a.size.height);
-            let snapshot = test_picture(a.size);
-            assert!(outgrows(snapshot.coverage.covered, grown.size));
-            let mut running = flight(None);
-            running.final_frames = vec![(wid(1), grown)];
-            running.duration = Duration::from_millis(350);
-            running.apply_at = 0.0;
-            let frames = running.extend_hold(&[(wid(1), grown.size)], false, Instant::now());
-            assert_eq!(running.awaiting, vec![(wid(1), grown.size)]);
-            assert!(running.hold_deadline.is_some());
-            assert_eq!(
-                frames,
-                Some(vec![(wid(1), grown)]),
-                "the held frames go out under the overlay"
+            // The next generation: everything has landed but what repaints, and the focus is in.
+            let mut next = end(4, now);
+            next.landing.clear();
+            next.focus = None;
+            let (awaiting, live) = (watches.awaiting, watches.live);
+            watches.watch(&pictures, client, &next);
+            let second = asked(&mut commands);
+            assert!(
+                matches!(&second[..], [
+                    Asked::Stop(_),
+                    Asked::Retarget(_, Watch::Landing { settle: Settle::Repainted, .. }),
+                    Asked::Stop(_),
+                    Asked::Retarget(_, Watch::Live { after: None, .. }),
+                ]),
+                "{second:?}"
             );
+            assert_eq!((watches.awaiting, watches.live), (awaiting, live), "retargeted, not watched afresh");
+            assert_eq!((watches.landing, watches.change), (None, None));
+
+            watches.stop(&pictures);
+            assert!(matches!(&asked(&mut commands)[..], [Asked::Stop(_), Asked::Stop(_)]));
+            assert_eq!(watches, EndWatches::default());
         }
 
         #[test]
-        fn an_untiled_frame_change_in_flight_clears_frames_applied() {
+        fn an_ask_of_windows_on_screen_carries_the_engines_tag_and_each_window_where_it_is_expected() {
+            let client = Client(1);
+            let tag = Tag { client, generation: 5 };
+            let at = rect(4.0, 32.0, 859.0, 1081.0);
+            let floating = rect(224.0, 95.0, 600.0, 400.0);
+            let ask = on_screen(tag, Moment::FrameZero, &[(wid(1), at)], &[(wid(9), floating)], &[wid(9)]);
+            assert_eq!((ask.tag, ask.moment), (tag, Moment::FrameZero));
+            let target = PictureTarget { window: wid(1), server_id: WindowServerId::new(1), size: at.size };
+            assert_eq!(ask.strip, vec![(target, at)]);
+            assert_eq!(ask.background.len(), 1);
+            assert_eq!(ask.behind, vec![WindowServerId::new(9)]);
+            assert_eq!(sized_targets(vec![(wid(1), at)]), vec![target], "warmed at the size it ended");
+        }
+
+        /// A turned look keeps the size it had, so a warm would drop it; asked at focus priority, it
+        /// would start ScreenCaptureKit through the hold of a flight the same click begins.
+        #[test]
+        fn a_turned_look_is_asked_at_background_priority_at_the_size_it_is_at() {
+            let at = rect(4.0, 32.0, 859.0, 1081.0);
+            let ask = refresh(vec![(wid(1), at)]);
+            assert_eq!(ask.priority, Priority::Background);
+            assert_eq!(ask.targets, sized_targets(vec![(wid(1), at)]));
+        }
+
+        #[test]
+        fn the_coordinator_hears_every_tile_and_reserved_entrance_in_screen_points() {
+            let display = rect(1728.0, 0.0, 1728.0, 1117.0);
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            let park_a = rect(1727.0, 1116.0, 859.0, 1081.0);
-            let park_b = rect(-858.0, 1116.0, 859.0, 1081.0);
-            let mut running = flight(Some(Instant::now()));
-            running.tiles.push(stacked(wid(1), rect(867.0, 32.0, 859.0, 1081.0), slot, None, false));
-            running.final_frames = vec![(wid(1), slot), (wid(2), park_a)];
-            running.frames_applied = true;
+            let next = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(1), next, slot, Some(0), false));
+            let mut border = stacked(wid(8), slot, slot, None, false);
+            border.companion = Some(wid(1));
+            running.tiles.push(border);
+            running.entrances.push(PendingEntrance { window: wid(2), to: next, floating: true });
+            running.final_frames = vec![(wid(1), from_overlay_space(slot, display))];
+            running.focus = Some(wid(2));
+            running.shown_focus = Some(wid(1));
+            let stage = running.stage(layout(vec![wid(2)]), display, &|window| window == wid(1));
+            assert_eq!(
+                stage.tiles[0],
+                TileSummary {
+                    window: wid(1),
+                    start: rect(2595.0, 32.0, 859.0, 1081.0),
+                    end: rect(1732.0, 32.0, 859.0, 1081.0),
+                    floating: false,
+                    companion: false,
+                }
+            );
+            assert!(stage.tiles[1].companion);
+            assert_eq!(
+                stage.tiles[2],
+                TileSummary {
+                    window: wid(2),
+                    start: from_overlay_space(entrance_from(next), display),
+                    end: rect(2595.0, 32.0, 859.0, 1081.0),
+                    floating: true,
+                    companion: false,
+                },
+                "a reserved entrance, drawn once its picture is swapped in"
+            );
+            assert_eq!(stage.final_frames, running.final_frames);
+            assert_eq!(stage.losing_focus, Some(wid(1)), "drawn focused until focus hands over");
+            assert_eq!(stage.opaque, vec![wid(1)]);
+            assert_eq!((stage.awaiting, stage.display), (vec![wid(2)], display));
+            running.shown_focus = Some(wid(2));
+            assert_eq!(running.stage(layout(Vec::new()), display, &|_| false).losing_focus, None, "handed over");
+        }
+    }
 
-            // The same tile again, the untiled window to the other park.
-            let frames_changed = merge_final_frames(
-                &mut running.final_frames,
-                vec![(wid(1), slot), (wid(2), park_b)],
-            );
-            let outcomes = running.merge_pass(vec![stacked(wid(1), slot, slot, None, false)], None);
-            let changed = outcomes.iter().any(|(_, o)| *o != Admitted::Redundant);
-            assert!(
-                frames_changed && !changed,
-                "the pass changes only the untiled frame"
-            );
-            running.absorb_in_flight_change(changed, frames_changed);
-            assert!(
-                !running.frames_applied,
-                "an untiled change left frames_applied set"
-            );
+    /// What the flight composed, as the coordinator's commands change it.
+    mod composed {
+        use super::*;
+        use crate::pictures::domain::knowledge::CORNER_RADIUS;
 
-            // Nothing changes: the applied frames stand.
-            running.frames_applied = true;
-            let frames_changed = merge_final_frames(
-                &mut running.final_frames,
-                vec![(wid(1), slot), (wid(2), park_b)],
-            );
-            let outcomes = running.merge_pass(vec![stacked(wid(1), slot, slot, None, false)], None);
-            let changed = outcomes.iter().any(|(_, o)| *o != Admitted::Redundant);
-            running.absorb_in_flight_change(changed, frames_changed);
-            assert!(running.frames_applied, "a redundant pass cleared frames_applied");
+        #[test]
+        fn frame_zeros_pictures_are_worn_by_their_tiles_and_never_by_a_border() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
+            let mut border = stacked(wid(8), slot, slot, None, false);
+            border.companion = Some(wid(1));
+            running.tiles.push(border);
+            let fresh = test_picture(CGSize::new(859.0, 1000.0));
+            let worn = running.wear(vec![(wid(1), fresh.clone()), (wid(8), fresh.clone()), (wid(5), fresh.clone())]);
+            assert_eq!(worn, 1, "a window with no tile is the cache's alone");
+            assert_eq!(running.tiles[0].snapshot.coverage, fresh.coverage);
+            assert_ne!(running.tiles[1].snapshot.coverage, fresh.coverage);
+        }
+
+        #[test]
+        fn a_reserved_entrance_joins_with_its_first_picture_once_frontmost_and_focused() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let neighbour = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
+            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
+            running.focus = Some(wid(2));
+            let tile = running.admit(wid(2), &test_picture(slot.size)).expect("admitted");
+            assert_eq!((tile.from, tile.to), (entrance_from(slot), slot), "zero width at its left edge");
+            assert!(tile.focused);
+            assert_eq!(tile.depth, 0, "the entrance leads: raised on open");
+            assert!(running.entrances.is_empty());
+            let other = running.tiles.iter().find(|t| t.window == wid(1)).unwrap();
+            assert_eq!(other.depth, 2, "its neighbour keeps the server's order, within the band");
+            assert!(running.admit(wid(2), &test_picture(slot.size)).is_none(), "taken once");
+            assert!(running.admit(wid(1), &test_picture(slot.size)).is_none(), "not an entrance");
+            assert_eq!(running.tiles.len(), 2, "no second tile");
+        }
+
+        /// A stand-in covers nothing, so its window is awaited like a grow; its real picture, once
+        /// swapped in, goes onto the same tile, which moves on as it was.
+        #[test]
+        fn a_stand_in_takes_its_real_picture_on_the_same_tile() {
+            use crate::pictures::platform::picture::{stand_in_image, stand_in_picture};
+            let park = rect(1727.0, 32.0, 859.0, 1081.0);
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let (image, _) = stand_in_image(2.0).expect("drawn");
+            let stand_in = stand_in_picture(slot.size, image);
+            assert_eq!(EndPicture::of_picture(stand_in.coverage.covered, slot.size), EndPicture::Awaited);
+            let mut running = flight();
+            let mut tile = stacked(wid(1), park, slot, Some(0), false);
+            tile.snapshot = stand_in;
+            running.tiles.push(tile);
+            let real = test_picture(slot.size);
+            assert!(matches!(running.take_picture(wid(1), &real), Took::Tile { size } if size == slot.size));
+            assert_eq!(running.tiles.len(), 1, "one tile, never a newcomer's entrance");
+            let tile = &running.tiles[0];
+            assert_eq!((tile.from, tile.to), (park, slot), "travels as it did");
+            assert_ne!(tile.snapshot.source, Route::StandIn);
+            assert!(running.entrances.is_empty());
+        }
+
+        /// A reserved entrance joins with its picture; a window with a tile takes it in place, and
+        /// stops flying a focused look; a window nothing draws takes nothing.
+        #[test]
+        fn a_swapped_in_picture_admits_an_entrance_or_goes_onto_its_windows_tile() {
+            let slot = rect(867.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(1), slot, slot, Some(0), false));
+            running.entrances.push(PendingEntrance { window: wid(2), to: slot, floating: false });
+            running.focused_look = Some(wid(1));
+            let picture = test_picture(slot.size);
+            assert!(matches!(running.take_picture(wid(2), &picture), Took::Entrance(tile) if tile.from == entrance_from(slot)));
+            assert!(matches!(running.take_picture(wid(1), &picture), Took::Tile { .. }));
+            assert_eq!(running.focused_look, None);
+            assert!(matches!(running.take_picture(wid(3), &picture), Took::Nothing));
+            assert_eq!(running.tiles.len(), 2);
+        }
+
+        /// A bounce from rest plays as the motion starts, never behind an overlay still waiting for
+        /// frame zero; one pushed into a flight that moves plays at once.
+        #[test]
+        fn a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once() {
+            let plays = Duration::from_millis(350);
+            let mut running = flight();
+            assert_eq!(running.push_bounce(CGPoint::new(-72.0, 0.0), plays), None);
+            assert_eq!(running.push_bounce(CGPoint::new(72.0, 0.0), plays), None);
+            assert_eq!(running.bounce, Some((CGPoint::new(72.0, 0.0), plays)), "the latest push");
+            running.flown = true;
+            assert_eq!(running.push_bounce(CGPoint::new(0.0, 72.0), plays), Some((CGPoint::new(0.0, 72.0), plays)));
+            assert_eq!(running.bounce, Some((CGPoint::new(72.0, 0.0), plays)), "kept for the start only");
+        }
+
+        #[test]
+        fn focus_handing_over_draws_the_target_focused_and_the_window_left_not() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles = vec![
+                stacked(wid(1), slot, slot, Some(0), false),
+                stacked(wid(2), slot, slot, Some(1), false),
+                stacked(wid(3), slot, slot, Some(2), false),
+            ];
+            running.tiles[0].focused = true;
+            running.focus = Some(wid(2));
+            running.shown_focus = Some(wid(1));
+            running.hand_over_focus(wid(2), Some(wid(1)));
+            let focused: Vec<bool> = running.tiles.iter().map(|t| t.focused).collect();
+            assert_eq!(focused, vec![false, true, false]);
+            assert_eq!(losing_focus(running.focus, running.shown_focus), None, "a later merge moves none");
+        }
+
+        #[test]
+        fn a_skylight_picture_baked_with_the_desktop_is_clipped_to_its_corners_and_no_other_is() {
+            let size = CGSize::new(859.0, 1081.0);
+            let mut skylight = test_picture(size);
+            skylight.source = Route::SkyLight;
+            let baked = Knowledge { translucent: Some(false), material: Some(true), radius: Some(12.0) };
+            assert_eq!(corner_clip(baked, &skylight, size), Some(12.0));
+            let unmeasured = Knowledge { translucent: Some(false), material: None, radius: None };
+            assert_eq!(corner_clip(unmeasured, &skylight, size), Some(CORNER_RADIUS), "baked, its radius not measured");
+            let translucent = Knowledge { translucent: Some(true), ..baked };
+            assert_eq!(corner_clip(translucent, &skylight, size), None, "captured alone, its corners clear");
+            let plain = Knowledge { material: Some(false), ..baked };
+            assert_eq!(corner_clip(plain, &skylight, size), None);
+            assert_eq!(corner_clip(baked, &test_picture(size), size), None, "ScreenCaptureKit leaves the corners clear");
+        }
+
+        #[test]
+        fn a_parked_focus_target_flies_its_focused_look_only_where_it_fits() {
+            let park = rect(-860.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(2), park, rect(4.0, 32.0, 859.0, 1081.0), Some(0), false));
+            assert!(!running.fly_focused_look(wid(2), Some(test_picture(CGSize::new(600.0, 1081.0)))), "drawn squashed");
+            assert!(!running.fly_focused_look(wid(2), None));
+            assert!(!running.fly_focused_look(wid(3), Some(test_picture(park.size))), "no tile");
+            assert_eq!((running.focused_look, running.tiles[0].focused), (None, false));
+            let mut look = test_picture(park.size);
+            look.coverage.covered.1 -= 1.0;
+            assert!(running.fly_focused_look(wid(2), Some(look.clone())));
+            assert_eq!(running.tiles[0].snapshot.coverage, look.coverage);
+            assert!(running.tiles[0].focused);
+            assert_eq!(running.focused_look, Some(wid(2)));
+        }
+
+        /// A pass is composed from the cache. A tile it retargets keeps the picture the flight gave it
+        /// and how focus is drawn on it: its focused look, frame zero's or a swapped-in end picture.
+        #[test]
+        fn a_retargeted_tile_keeps_its_picture_and_its_focus_while_the_cache_holds_another() {
+            let park = rect(-860.0, 32.0, 859.0, 1081.0);
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles.push(stacked(wid(1), slot, slot, Some(1), false));
+            running.tiles.push(stacked(wid(2), park, slot, Some(0), false));
+            running.focus = Some(wid(2));
+            running.shown_focus = Some(wid(1));
+            running.tiles[0].focused = true;
+            let mut look = test_picture(park.size);
+            look.coverage.covered.1 -= 1.0;
+            assert!(running.fly_focused_look(wid(2), Some(look.clone())));
+            let next = rect(867.0, 32.0, 859.0, 1081.0);
+            let outcomes = running.merge_pass(vec![stacked(wid(2), park, next, Some(0), false)], None);
+            assert_eq!(outcomes, vec![(wid(2), Admitted::Retargeted)]);
+            let tile = running.tiles.iter().find(|t| t.window == wid(2)).unwrap();
+            assert_eq!(tile.to, next);
+            assert_eq!(tile.snapshot.coverage, look.coverage, "not the cache's");
+            assert!(tile.focused);
+            assert_eq!(running.focused_look, Some(wid(2)));
+            running.merge_pass(vec![stacked(wid(2), park, slot, Some(0), false)], Some(wid(2)));
+            assert_eq!(running.focused_look, Some(wid(2)), "a pass naming the same focus moves none");
+        }
+
+        /// A pass moving focus on: the window focused as the flight began is still drawn focused
+        /// until focus hands over, the target before it no longer is, and nothing flies a focused look
+        /// until the new target is given its own.
+        #[test]
+        fn a_pass_moving_focus_on_redraws_which_tiles_are_drawn_focused() {
+            let slot = rect(4.0, 32.0, 859.0, 1081.0);
+            let park = rect(-860.0, 32.0, 859.0, 1081.0);
+            let mut running = flight();
+            running.tiles = vec![
+                stacked(wid(1), slot, slot, Some(0), false),
+                stacked(wid(2), park, slot, Some(1), false),
+            ];
+            running.tiles[0].focused = true;
+            running.focus = Some(wid(2));
+            running.shown_focus = Some(wid(1));
+            assert!(running.fly_focused_look(wid(2), Some(test_picture(park.size))));
+            running.merge_pass(vec![stacked(wid(3), park, slot, Some(2), false)], Some(wid(3)));
+            let focused: Vec<(WindowId, bool)> = running.tiles.iter().map(|t| (t.window, t.focused)).collect();
+            assert_eq!(focused, vec![(wid(1), true), (wid(2), false), (wid(3), false)]);
+            assert_eq!(running.focused_look, None);
         }
 
         #[test]
         fn a_strip_window_on_this_display_with_no_usable_picture_is_placed_but_not_drawn() {
+            use crate::animation::domain::motion::surface::surface_travel;
+            use crate::pictures::domain::coverage::needs_capture;
             let mut rng = Gen(95);
             for _ in 0..RUNS {
                 let slot = rng.on_screen();
@@ -2575,7 +2584,7 @@ mod tests {
 
                 let (from, to) =
                     surface_travel(slot, CGPoint::new(0.0, 0.0), CGPoint::new(861.0, 0.0), false);
-                let mut running = flight(None);
+                let mut running = flight();
                 running.tiles.push(stacked(wid(3), from, to, Some(0), false));
                 running.final_frames = vec![(wid(1), to), (wid(2), to), (wid(3), to)];
                 let tiled: Vec<WindowId> = running.tiles.iter().map(|t| t.window).collect();
@@ -2598,769 +2607,122 @@ mod tests {
         }
     }
 
-    /// A flight holding at frame zero takes the pictures it waits for, and only ones that fit.
-    mod claims {
-        use super::*;
-        use crate::animation::domain::motion::surface::surface_travel;
-        use crate::pictures::domain::coverage::outgrows;
-
-        #[test]
-        fn an_entrance_needs_the_fit_like_a_grow() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let newcomer = wid(51462);
-            let mut running = flight(None);
-            let (entrance, waiting) = entrance_reservation(newcomer, slot, false);
-            running.entrances.push(entrance);
-            running.awaiting.push(waiting);
-            let spawn = test_picture(CGSize::new(572.0, 540.0));
-            assert_eq!(
-                running.claim(newcomer, &spawn),
-                None,
-                "a spawn-size picture is refused"
-            );
-            assert_eq!(running.entrances.len(), 1);
-            assert_eq!(running.awaiting.len(), 1);
-            assert_eq!(
-                running.claim(newcomer, &test_picture(slot.size)),
-                Some(Claimed::Released),
-                "a slot-size picture is the entrance"
-            );
-            assert!(running.entrances.is_empty() && running.awaiting.is_empty());
-            let tile = running.tiles.iter().find(|t| t.window == newcomer).expect("tile");
-            assert_eq!((tile.from, tile.to), (entrance_from(slot), slot));
-        }
-
-        #[test]
-        fn a_grow_holds_bounded_and_flies_a_placeholder_at_the_deadline() {
-            let mut rng = Gen(91);
-            for _ in 0..RUNS {
-                let small = rng.on_screen();
-                let to = rect(
-                    small.origin.x,
-                    32.0,
-                    small.size.width + rng.pt(20.0, 800.0),
-                    small.size.height,
-                );
-                let snapshot = test_picture(small.size);
-                assert!(outgrows(snapshot.coverage.covered, to.size), "seed 91: a grow");
-                // `start`: the outgrown picture puts the window in `awaiting` at its destination size.
-                let awaiting = vec![(wid(1), to.size)];
-                let (holding, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
-                assert!(holding, "seed 91");
-                assert_eq!(chase, awaiting, "seed 91");
-
-                let limit = HOLD_CAP;
-                let now = Instant::now();
-                let mut running = flight(None);
-                let mut tile = stacked(wid(1), small, to, Some(0), false);
-                tile.snapshot = snapshot.clone();
-                running.tiles.push(tile);
-                running.awaiting = awaiting.clone();
-                running.frames_applied = holding;
-                running.hold_deadline = Some(now + limit);
-                assert!(
-                    running.started.is_none() && !running.awaiting.is_empty(),
-                    "seed 91: holding"
-                );
-                assert_eq!(
-                    hold_wait(running.hold_deadline, now),
-                    Some(limit.max(Duration::from_millis(10))),
-                    "seed 91: waits out the hold"
-                );
-                assert_eq!(
-                    hold_wait(running.hold_deadline, now + limit),
-                    None,
-                    "seed 91: at the deadline the stand-in flies"
-                );
-                assert_eq!(
-                    running.claim(wid(1), &snapshot),
-                    None,
-                    "seed 91: too small to claim"
-                );
-                assert_eq!(running.awaiting, awaiting, "seed 91: the hold stands");
-                assert_eq!(
-                    running.claim(wid(1), &test_picture(to.size)),
-                    Some(Claimed::Released),
-                    "seed 91: the reveal is claimed"
-                );
-                assert!(
-                    running.tiles[0].snapshot.fits(to.size),
-                    "seed 91: drawn from the reveal"
-                );
-                assert!(
-                    running.started.is_none() && running.awaiting.is_empty(),
-                    "seed 91: released, not moving"
-                );
-            }
-            assert_eq!(hold_wait(None, Instant::now()), None, "no deadline, no wait");
-        }
-
-        #[test]
-        fn a_pan_holds_for_nothing() {
-            assert_eq!(
-                frame_zero_work(&[], &[], &[], &[]),
-                (false, Vec::new(), Vec::new())
-            );
-            let mut rng = Gen(96);
-            for _ in 0..RUNS {
-                let count = rng.below(4) as u32 + 1;
-                let travel = CGPoint::new(rng.pt(-1720.0, 1720.0), 0.0);
-                let mut running = flight(None);
-                running.apply_at = apply_frames_at(FlightKind::Pan, false);
-                for i in 1..=count {
-                    let frame = rng.on_screen();
-                    let (from, to) = surface_travel(frame, CGPoint::new(0.0, 0.0), travel, false);
-                    running.tiles.push(stacked(wid(i), from, to, Some(i as usize), false));
-                    running.final_frames.push((wid(i), to));
-                }
-                assert!(
-                    running.awaiting.is_empty() && running.entrances.is_empty(),
-                    "seed 96"
-                );
-                assert!(
-                    running.started.is_none() && running.awaiting.is_empty(),
-                    "seed 96: at frame zero"
-                );
-                assert!(!running.frames_applied, "seed 96: nothing applied at frame zero");
-                assert_eq!(hold_wait(running.hold_deadline, Instant::now()), None, "seed 96");
-                assert_eq!(
-                    running.claim(wid(1), &test_picture(CGSize::new(859.0, 1081.0))),
-                    None
-                );
-            }
-        }
-
-        /// A parked window with no picture flies as a stand-in tile — no hole — held for like a grow,
-        /// and its real picture replaces the stand-in on the SAME tile when it lands at frame zero.
-        #[test]
-        fn a_stand_in_takes_its_real_picture_on_the_same_tile() {
-            use crate::pictures::platform::picture::{stand_in_picture, test_bitmap};
-            let parked = rect(-1720.0, 32.0, 859.0, 1081.0);
-            let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            let mut flight = flight(None);
-            let mut tile = stacked(wid(3), parked, slot, Some(2), false);
-            tile.snapshot = stand_in_picture(slot.size, test_bitmap());
-            flight.tiles.push(tile);
-            flight.awaiting.push((wid(3), slot.size));
-
-            assert!(
-                matches!(
-                    flight.tile_state(wid(3), &test_picture(slot.size)),
-                    TileState::Reveal { fits: true }
-                ),
-                "held for like a grow"
-            );
-            let claimed = flight.claim(wid(3), &test_picture(slot.size));
-
-            assert_eq!(claimed, Some(Claimed::Released));
-            let tile = flight.tiles.iter().find(|t| t.window == wid(3)).expect("still one tile");
-            assert_ne!(
-                tile.snapshot.source,
-                crate::pictures::platform::picture::Route::StandIn,
-                "the stand-in is gone"
-            );
-            assert_eq!((tile.from, tile.to), (parked, slot), "and it travels as it did");
-            assert!(
-                flight.entrances.is_empty(),
-                "never a newcomer's zero-width entrance"
-            );
-        }
-
-        #[test]
-        fn a_claimed_entrance_joins_the_frame_zero_composition() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let neighbour = rect(4.0, 32.0, 859.0, 1081.0);
-            let mut flight = holding_for(wid(2), slot, false);
-            flight.tiles.push(stacked(wid(1), neighbour, neighbour, Some(1), false));
-            flight.awaiting.push((wid(1), neighbour.size));
-            flight.focus = Some(wid(2));
-
-            let claimed = flight.claim(wid(2), &test_picture(slot.size));
-
-            assert_eq!(claimed, Some(Claimed::Held), "the grow's hold remains");
-            assert!(flight.started.is_none(), "still at frame zero");
-            assert_eq!(flight.awaiting, vec![(wid(1), neighbour.size)]);
-            assert!(flight.entrances.is_empty(), "the reservation is consumed");
-            let tile = flight.tiles.iter().find(|t| t.window == wid(2)).expect("tile composed");
-            assert_eq!(tile.from, entrance_from(slot), "zero width at its left edge");
-            assert_eq!(tile.to, slot);
-            assert!(tile.focused);
-            assert_eq!(tile.depth, 0, "the entrance leads: raised on open");
-            let other = flight.tiles.iter().find(|t| t.window == wid(1)).unwrap();
-            assert_eq!(
-                other.depth, 2,
-                "its neighbour keeps the server's order, within the band"
-            );
-        }
-
-        #[test]
-        fn the_last_claim_releases_the_flight_and_a_repeat_is_not_a_hold() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let mut flight = holding_for(wid(2), slot, true);
-            assert_eq!(
-                flight.claim(wid(2), &test_picture(slot.size)),
-                Some(Claimed::Released)
-            );
-            assert!(flight.awaiting.is_empty());
-            assert_eq!(flight.tiles.len(), 1);
-            assert_eq!(
-                flight.claim(wid(2), &test_picture(slot.size)),
-                Some(Claimed::Refreshed),
-                "a repeat refreshes the composed tile's picture and releases nothing"
-            );
-            assert_eq!(flight.tiles.len(), 1, "no second tile");
-        }
-
-        #[test]
-        fn a_small_picture_is_not_claimed_nor_is_a_moving_flight() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let mut flight = holding_for(wid(2), slot, false);
-            assert_eq!(
-                flight.claim(wid(2), &test_picture(CGSize::new(200.0, 200.0))),
-                None
-            );
-            assert_eq!(flight.awaiting.len(), 1, "the hold goes on");
-            assert_eq!(flight.entrances.len(), 1);
-            assert!(
-                flight.tiles.is_empty(),
-                "nothing composed from the small picture"
-            );
-
-            let mut flight = holding_for(wid(2), slot, false);
-            flight.started = Some(Instant::now());
-            assert_eq!(flight.claim(wid(2), &test_picture(slot.size)), None);
-            assert!(flight.tiles.is_empty());
-        }
-
-        /// A grow's reveal picture lands on its own tile.
-        #[test]
-        fn a_grows_reveal_picture_replaces_its_tiles_snapshot() {
-            let small = rect(4.0, 32.0, 400.0, 1081.0);
-            let big = rect(4.0, 32.0, 1720.0, 1081.0);
-            let mut flight = flight(None);
-            let mut tile = stacked(wid(1), small, big, Some(0), false);
-            tile.snapshot = test_picture(small.size);
-            flight.tiles.push(tile);
-            flight.awaiting.push((wid(1), big.size));
-            assert_eq!(
-                flight.claim(wid(1), &test_picture(big.size)),
-                Some(Claimed::Released)
-            );
-            assert!(flight.tiles[0].snapshot.fits(big.size));
-            assert_eq!(flight.tiles.len(), 1);
-        }
-
-        #[test]
-        fn a_spawn_entrances_early_chase_picture_is_taken_without_a_release() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let spawn = rect(300.0, 200.0, 400.0, 300.0);
-            let mut running = flight(None);
-            running.tiles = vec![stacked(wid(9), spawn, slot, Some(0), false)];
-            running.final_frames = vec![(wid(9), slot)];
-            running.duration = Duration::from_millis(350);
-            running.apply_at = 0.0;
-            running.tiles[0].snapshot = test_picture(spawn.size);
-            assert_eq!(
-                running.claim(wid(9), &test_picture(spawn.size)),
-                None,
-                "still spawn-sized"
-            );
-            assert_eq!(
-                running.claim(wid(9), &test_picture(slot.size)),
-                Some(Claimed::Refreshed)
-            );
-            assert!(running.tiles[0].snapshot.fits(slot.size));
-            assert_eq!(
-                running.claim(wid(77), &test_picture(slot.size)),
-                None,
-                "no such tile"
-            );
-        }
-    }
-
-    /// An entrance whose picture lands once the flight moves joins it for what is left.
-    mod late_entrances {
+    /// Presses folded into a flight before it moves, each built as the reactor builds it, from the
+    /// layout where the press before left it.
+    mod folded {
         use super::*;
 
-        /// Before the flight starts, `admit` does nothing and leaves the reservation to `claim`.
-        #[test]
-        fn a_late_entrance_travels_for_the_remaining_flight() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let mut flight = holding_for(wid(2), slot, false);
-            assert!(
-                flight.admit(wid(2), &test_picture(slot.size)).is_none(),
-                "still holding"
-            );
-            assert_eq!(flight.entrances.len(), 1);
+        const PITCH: f64 = 1117.0;
 
-            // The deadline passed: `start_moving` flew with the stand-in and cleared the hold.
-            flight.awaiting.clear();
-            flight.started = Some(Instant::now() - flight.duration.mul_f64(0.6));
-            let remaining = flight.remaining();
-            let (tile, travel) = flight.admit(wid(2), &test_picture(slot.size)).expect("admitted");
-            assert_eq!(tile.from, entrance_from(slot));
-            assert_eq!(tile.to, slot);
-            assert!(travel <= remaining, "{travel:?} outlives {remaining:?}");
-            assert!(
-                travel < flight.duration.mul_f64(0.5),
-                "not the full duration: {travel:?}"
-            );
-            assert!(flight.entrances.is_empty());
-            assert!(
-                flight.admit(wid(2), &test_picture(slot.size)).is_none(),
-                "taken once"
-            );
-        }
-
-        #[test]
-        fn a_late_joiner_never_outlives_the_flight() {
-            let mut rng = Gen(62);
-            for _ in 0..RUNS {
-                let duration = Duration::from_millis(rng.pt(100.0, 600.0) as u64);
-                let progress = rng.below(1000) as f64 / 1000.0;
-                let travel = late_join_duration(duration, progress);
-                let remaining = duration.mul_f64(1.0 - progress);
-                assert!(
-                    travel <= remaining + Duration::from_nanos(1),
-                    "seed 62: {travel:?} > {remaining:?} at {progress}"
-                );
-                let mut flight = flight(Some(Instant::now() - duration.mul_f64(progress)));
-                flight.duration = duration;
-                flight.entrances.push(PendingEntrance {
-                    window: wid(2),
-                    to: rng.on_screen(),
-                    floating: false,
-                });
-                let to = flight.entrances[0].to;
-                let (_, admitted) = flight.admit(wid(2), &test_picture(to.size)).unwrap();
-                assert!(admitted <= flight.duration, "seed 62: {admitted:?}");
-            }
-            assert_eq!(
-                late_join_duration(Duration::from_millis(300), 1.0),
-                Duration::ZERO
-            );
-            assert_eq!(
-                late_join_duration(Duration::from_millis(300), 1.5),
-                Duration::ZERO
-            );
-        }
-    }
-
-    /// What a tile is doing when a picture of its window lands, and what that picture may change.
-    mod landings {
-        use super::*;
-        use crate::animation::domain::motion::plan::{FlightPlan, Member, ReflowPlan};
-        use crate::pictures::domain::coverage::should_replace;
-
-
-        fn any_state(rng: &mut Gen) -> TileState {
-            match rng.below(4) {
-                0 => TileState::NotTiled,
-                1 => TileState::Awaiting,
-                2 => TileState::Moving {
-                    fits: rng.coin(),
-                    resizing: rng.coin(),
-                },
-                _ => TileState::MovingRefreshTarget {
-                    fits: rng.coin(),
-                    resizing: rng.coin(),
-                },
+        fn on_surface(window: WindowId, frame: CGRect, floating: bool) -> SurfaceWindow {
+            SurfaceWindow {
+                window,
+                server_id: WindowServerId::new(window.idx.get()),
+                frame,
+                pinned: false,
+                floating,
+                from: None,
             }
         }
 
-        #[test]
-        fn tile_state_ranks_hold_over_refresh_over_tile() {
-            let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            let parked = rect(-1720.0, 32.0, 859.0, 1081.0);
-            let grown = rect(4.0, 32.0, 1147.0, 1081.0);
-            let picture = test_picture(slot.size);
-            let mut running = flight(None);
-            running.tiles.push(stacked(wid(1), parked, slot, None, false));
-            running.tiles.push(stacked(wid(2), slot, grown, None, false));
-            running.tiles.push(stacked(wid(3), parked, slot, None, false));
-            running.awaiting.push((wid(2), grown.size));
-            running.refresh.ask(vec![wid(3)], Instant::now());
-            let (entrance, waiting) = entrance_reservation(wid(4), slot, false);
-            running.entrances.push(entrance);
-            running.awaiting.push(waiting);
-
-            assert_eq!(
-                running.tile_state(wid(1), &picture),
-                TileState::Moving { fits: true, resizing: false }
-            );
-            assert_eq!(
-                running.tile_state(wid(2), &picture),
-                TileState::Reveal { fits: false },
-                "a grow's hold"
-            );
-            assert_eq!(
-                running.tile_state(wid(2), &test_picture(grown.size)),
-                TileState::Reveal { fits: true },
-                "a grow's hold, its reveal landing"
-            );
-            assert_eq!(
-                running.tile_state(wid(3), &picture),
-                TileState::MovingRefreshTarget { fits: true, resizing: false }
-            );
-            assert_eq!(
-                running.tile_state(wid(4), &picture),
-                TileState::Awaiting,
-                "an entrance"
-            );
-            assert_eq!(running.tile_state(wid(5), &picture), TileState::NotTiled);
-
-            // Once claimed, the grow is an ordinary resizing tile: a smaller picture no longer fits.
-            running.awaiting.retain(|(w, _)| *w != wid(2));
-            assert_eq!(
-                running.tile_state(wid(2), &picture),
-                TileState::Moving { fits: false, resizing: true }
-            );
-            // A refresh target in flight but past its hold is still only the refresh target.
-            running.refresh.ask(vec![wid(3), wid(2)], Instant::now());
-            assert_eq!(
-                running.tile_state(wid(2), &test_picture(grown.size)),
-                TileState::MovingRefreshTarget { fits: true, resizing: true }
-            );
-        }
-
-        /// A stand-in tile is a reveal in waiting after a hold timeout and after a mid-flight join.
-        #[test]
-        fn a_stand_in_tile_takes_its_reveal_early() {
-            let small = rect(4.0, 32.0, 859.0, 1081.0);
-            let grown = rect(4.0, 32.0, 1147.0, 1081.0);
-            let mut running = flight(Some(Instant::now()));
-            let mut stand_in = stacked(wid(1), small, grown, None, false);
-            stand_in.snapshot = test_picture(small.size);
-            running.tiles.push(stand_in);
-            assert!(running.awaiting.is_empty(), "the deadline cleared the hold");
-
-            let reveal = test_picture(grown.size);
-            assert_eq!(
-                running.tile_state(wid(1), &reveal),
-                TileState::Reveal { fits: true }
-            );
-            assert_eq!(
-                running.tile_state(wid(1), &test_picture(small.size)),
-                TileState::Reveal { fits: false },
-                "a background picture at the old size is not the reveal"
-            );
-            let state = running.tile_state(wid(1), &reveal);
-            assert_eq!(
-                should_swap_mid_flight(state, true, false, Some(0.3)),
-                SwapDecision::Swap("reveal"),
-                "the chase's framed picture is the truth for a grow, refresh or not"
-            );
-            assert_eq!(
-                should_swap_mid_flight(state, false, true, Some(0.3)),
-                SwapDecision::CacheOnly,
-                "an unsettled capture can be the unpainted surface"
-            );
-            assert_eq!(
-                should_swap_mid_flight(state, true, true, Some(0.6)),
-                SwapDecision::CacheOnly,
-                "too late: a cut this close to lift reads as flicker"
-            );
-            // Once the reveal is worn, the tile is an ordinary resizing tile again.
-            running.tiles[0].snapshot = reveal.clone();
-            assert_eq!(
-                running.tile_state(wid(1), &reveal),
-                TileState::Moving { fits: true, resizing: true }
-            );
-        }
-
-        #[test]
-        fn an_awaited_picture_is_claimed_before_start_and_admitted_after() {
-            let mut rng = Gen(92);
-            for _ in 0..RUNS {
-                let settled = rng.coin();
-                let fresh = rng.coin();
-                let progress = rng.below(1001) as f64 / 1000.0;
-                assert_eq!(
-                    should_swap_mid_flight(TileState::Awaiting, settled, fresh, None),
-                    SwapDecision::Claim,
-                    "seed 92: settled={settled} fresh={fresh}"
-                );
-                assert_eq!(
-                    should_swap_mid_flight(TileState::Awaiting, settled, fresh, Some(progress)),
-                    SwapDecision::Admit,
-                    "seed 92: settled={settled} fresh={fresh} progress={progress}"
-                );
-            }
-            let mut flight = flight(None);
-            assert_eq!(flight.progress_if_started(), None, "holding: the claim path");
-            flight.started = Some(Instant::now());
-            assert!(flight.progress_if_started().is_some(), "moving: the admit path");
-        }
-
-        #[test]
-        fn every_landed_picture_reaches_the_cache_and_never_downgrades() {
-            let mut rng = Gen(93);
-            let mut refused = 0usize;
-            let mut decisions: Vec<SwapDecision> = Vec::new();
-            for _ in 0..RUNS {
-                let mut cache: crate::pictures::domain::cache::PictureCache<Picture> =
-                crate::pictures::domain::cache::PictureCache::new();
-                let size = rng.on_screen().size;
-                for _ in 0..rng.below(4) + 1 {
-                    let incoming = if rng.coin() {
-                        test_picture(size)
-                    } else {
-                        clipped(size)
-                    };
-                    let before = cache.get(wid(1)).map(|s| s.coverage);
-                    let progress = rng.coin().then(|| rng.below(1001) as f64 / 1000.0);
-                    let decision = should_swap_mid_flight(
-                        any_state(&mut rng),
-                        rng.coin(),
-                        rng.coin(),
-                        progress,
-                    );
-                    decisions.push(decision);
-                    let stored = cache.insert(wid(1), incoming.clone());
-                    let held = cache.get(wid(1)).expect("seed 93: every landing leaves an entry");
-                    assert_eq!(
-                        stored,
-                        should_replace(before, incoming.coverage),
-                        "seed 93: insert reports what it did"
-                    );
-                    if should_replace(before, incoming.coverage) {
-                        assert_eq!(held.coverage, incoming.coverage, "seed 93: taken");
-                    } else {
-                        refused += 1;
-                        assert_eq!(held.coverage, before.unwrap(), "seed 93: kept");
-                    }
-                    if before.is_some_and(|c| c.is_usable()) {
-                        assert!(held.is_usable(), "seed 93: a usable picture was downgraded");
-                    }
-                }
-            }
-            assert!(
-                refused > RUNS / 8,
-                "generator sanity: {refused} downgrades refused"
-            );
-            let seen = |wanted: fn(&SwapDecision) -> bool| decisions.iter().any(wanted);
-            assert!(seen(|d| *d == SwapDecision::Claim), "generator sanity: no Claim");
-            assert!(seen(|d| *d == SwapDecision::Admit), "generator sanity: no Admit");
-            assert!(
-                seen(|d| matches!(d, SwapDecision::Swap(_))),
-                "generator sanity: no Swap"
-            );
-            assert!(
-                seen(|d| *d == SwapDecision::CacheOnly),
-                "generator sanity: no CacheOnly"
-            );
-        }
-
-        /// Once the flight is moving without the picture, a stand-in still counts as a picture waiting
-        /// for its reveal, so a settled capture landing early enough replaces it rather than waiting
-        /// for the next flight.
-        #[test]
-        fn a_stand_in_mid_flight_is_swapped_for_its_picture() {
-            use crate::pictures::platform::picture::{stand_in_picture, test_bitmap};
-            let slot = rect(4.0, 32.0, 859.0, 1081.0);
-            let mut flight = flight(Some(Instant::now()));
-            let mut tile = stacked(wid(3), slot, slot, Some(2), false);
-            tile.snapshot = stand_in_picture(slot.size, test_bitmap());
-            flight.tiles.push(tile);
-
-            let state = flight.tile_state(wid(3), &test_picture(slot.size));
-            assert_eq!(state, TileState::Reveal { fits: true });
-            assert_eq!(
-                should_swap_mid_flight(state, true, false, Some(0.3)),
-                SwapDecision::Swap("reveal")
-            );
-        }
-
-        #[test]
-        fn a_spawn_entrance_flies_without_a_hold_and_is_a_reveal_in_waiting() {
-            let slot = rect(867.0, 32.0, 859.0, 1081.0);
-            let spawn = rect(300.0, 200.0, 400.0, 300.0);
-            let EntranceDecision::Travel { from, to } =
-                entrance_plan(Some(spawn), slot, true, true)
-            else {
-                panic!("travels");
-            };
-            let tile = OverlayTile {
-                window: wid(9),
-                from,
-                to,
-                snapshot: test_picture(spawn.size),
-                floating: false,
-                server_order: Some(0),
-                depth: 0,
-                companion: None,
-                focused: true,
-            };
-            let awaiting: Vec<(WindowId, CGSize)> = Vec::new();
-            let (holding, chase_set, now) = frame_zero_work(
-                &awaiting,
-                &[(wid(9), slot.size)],
-                &[(wid(9), slot)],
-                &[(wid(9), slot)],
-            );
-            assert!(!holding);
-            assert_eq!(now, vec![(wid(9), slot)]);
-            let mut running = flight(None);
-            running.tiles = vec![tile];
-            running.final_frames = vec![(wid(9), slot)];
-            running.frames_applied = holding;
-            running.duration = Duration::from_millis(350);
-            running.apply_at = 0.0;
-            running.awaiting = awaiting.clone();
-            running.hold_deadline = holding.then(|| Instant::now() + HOLD_CAP);
-            running.focus = Some(wid(9));
-            assert!(running.awaiting.is_empty());
-            assert!(!chase_set.is_empty());
-            assert_eq!(running.hold_deadline, None);
-            assert!(running.started.is_none() && running.awaiting.is_empty());
-            assert_eq!(
-                running.tile_state(wid(9), &test_picture(spawn.size)),
-                TileState::Reveal { fits: false },
-                "the spawn picture does not cover the slot"
-            );
-            assert_eq!(
-                running.tile_state(wid(9), &test_picture(slot.size)),
-                TileState::Reveal { fits: true }
-            );
-            // The plan calls it an entrance; the tile is a loose resize from spawn to slot.
-            let mut plan = ReflowPlan::empty();
-            plan.entrances.push((wid(9), from, to));
-            assert_eq!(plan.member(wid(9)), Some(Member::Entrance { from, to }));
-            let targets =
-                crate::animation::domain::motion::plan::animation_targets(&FlightPlan::from(plan));
-            assert_eq!(targets.len(), 1);
-        }
-    }
-
-    /// The focus refresh and the pictures a flight asks for.
-    mod refresh {
-        use super::*;
-
-        #[test]
-        fn a_strip_pan_with_unchanged_focus_requests_no_refresh() {
-            let size = CGSize::new(859.0, 1081.0);
-            let tiles = [
-                (wid(1), WindowServerId::new(10), size),
-                (wid(2), WindowServerId::new(20), size),
-                (wid(3), WindowServerId::new(30), size),
-            ];
-            let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
-
-            let pan = refresh_targets(Some(wid(2)), Some(wid(2)), &windows);
-            assert!(pan.is_empty());
-            assert!(
-                refresh_requests(&tiles, &pan).1.is_empty(),
-                "nothing is captured"
-            );
-
-            let change = refresh_targets(Some(wid(2)), Some(wid(3)), &windows);
-            let (covered, requests) = refresh_requests(&tiles, &change);
-            assert_eq!(covered, vec![wid(3), wid(2)]);
-            let asked: Vec<u32> = requests.iter().map(|t| t.server_id.as_u32()).collect();
-            assert_eq!(asked, vec![30, 20], "exactly the two ends");
-        }
-
-        #[test]
-        fn the_refresh_asks_once_for_each_wanted_window_with_a_tile() {
-            let size = CGSize::new(859.0, 1081.0);
-            let tiles = vec![
-                (wid(1), WindowServerId::new(10), size),
-                (wid(2), WindowServerId::new(20), size),
-                (wid(3), WindowServerId::new(30), size),
-            ];
-            let (covered, requests) = refresh_requests(&tiles, &[wid(2), wid(1), wid(9)]);
-            assert_eq!(
-                covered,
-                vec![wid(2), wid(1)],
-                "an unknown window is not a target"
-            );
-            let asked: Vec<(WindowId, u32)> =
-                requests.iter().map(|t| (t.window, t.server_id.as_u32())).collect();
-            assert_eq!(asked, vec![(wid(2), 20), (wid(1), 10)], "one request per window");
-            assert!(requests.iter().all(|t| t.size == size));
-            assert!(refresh_requests(&tiles, &[]).1.is_empty());
-        }
-
-        #[test]
-        fn two_refresh_passes_per_flight_and_none_at_frame_zero() {
-            let mut holding = flight(None);
-            holding.awaiting.push((wid(1), CGSize::new(859.0, 1081.0)));
-            assert!(!holding.take_refresh(0.0), "a hold does not refresh");
-            assert!(
-                !holding.take_refresh(0.6),
-                "nor does it take a pass it cannot use"
-            );
-
-            let mut running = flight(Some(Instant::now()));
-            let fired: Vec<f64> = (0..=100)
-                .map(|i| i as f64 / 100.0)
-                .filter(|&progress| running.take_refresh(progress))
+        /// A strip movement as `start_surface` composes it: every tile travels the viewport's travel,
+        /// and the plan is the surface's.
+        fn movement(windows: &[SurfaceWindow], from: CGPoint, to: CGPoint) -> (Vec<OverlayTile>, plan::ReflowPlan) {
+            let tiles = windows
+                .iter()
+                .map(|w| {
+                    let (start, end) = w.travel(from, to);
+                    stacked(w.window, start, end, Some(0), w.floating)
+                })
                 .collect();
-            assert_eq!(fired, vec![0.25, 0.55], "refresh passes taken: {fired:?}");
-            assert!(
-                !(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)),
-                "spent"
-            );
-            assert_eq!(REFRESH_PASSES_AT, [0.25, 0.55]);
-            assert_eq!(REFRESH_APPLY_BEFORE, 0.9);
-            assert_eq!(REVEAL_APPLY_BEFORE, 0.6);
+            (tiles, plan::surface_plan(windows, from, to))
         }
 
-        /// A first tick late in the flight takes one pass, not every pass it slept through.
-        #[test]
-        fn a_late_first_look_takes_one_pass() {
-            let mut running = flight(Some(Instant::now()));
-            assert!(running.take_refresh(0.7));
-            assert!(
-                !running.take_refresh(0.71),
-                "the overslept pass is not taken after it"
-            );
+        fn composed((tiles, pieces): (Vec<OverlayTile>, plan::ReflowPlan), focus: WindowId) -> RunningAnimation {
+            let mut running = flight();
+            running.tiles = tiles;
+            running.plan = plan::FlightPlan::from(pieces);
+            running.focus = Some(focus);
+            running
         }
 
-        /// The refresh never fires at frame zero, and its passes are few.
-        #[test]
-        fn the_focus_refresh_fires_mid_flight_only() {
-            let mut running = flight(Some(Instant::now()));
-            let fired: Vec<f64> = (0..=100)
-                .map(|i| i as f64 / 100.0)
-                .filter(|&progress| running.take_refresh(progress))
-                .collect();
-            assert!(
-                fired.iter().all(|p| *p > 0.0),
-                "a refresh at frame zero: {fired:?}"
-            );
-            assert!(fired.len() <= 2, "more than the schedule allows: {fired:?}");
-            assert!(
-                refresh_targets(Some(wid(1)), Some(wid(2)), &[wid(1), wid(2), wid(3)]).len() <= 2
-            );
-            assert!(!fired.is_empty(), "a moving flight refreshes");
-            // A second sweep on the same flight fires nothing: the slots are spent.
-            assert!(!(0..=100).any(|i| running.take_refresh(i as f64 / 100.0)));
+        /// A second press, folded in as `merge_group` folds one into a flight not yet moving.
+        fn press(running: &mut RunningAnimation, windows: &[SurfaceWindow], from: CGPoint, to: CGPoint, focus: WindowId) {
+            let (tiles, pieces) = movement(windows, from, to);
+            running.merge_pass(tiles, Some(focus));
+            running.fold_before_moving(&pieces, Some(pan_travel(from, to)), DISPLAY);
         }
 
-        /// A flight at frame zero asks for its missing pictures at frame zero; holding or
-        /// moving, they are warms for the next flight, which the pictures service holds until the
-        /// quiet after the lift.
-        #[test]
-        fn missing_pictures_serve_the_flight_only_at_frame_zero() {
-            let mut running = flight(None);
-            assert_eq!(running.missing_pictures(), Priority::FrameZero);
-            running.awaiting.push((wid(1), CGSize::new(859.0, 1081.0)));
-            assert_eq!(running.missing_pictures(), Priority::Warm, "holding");
-            running.started = Some(Instant::now());
-            assert_eq!(running.missing_pictures(), Priority::Warm, "moving");
-            running.awaiting.clear();
-            assert_eq!(running.missing_pictures(), Priority::Warm, "moving");
+        fn path(running: &RunningAnimation, window: WindowId) -> (CGRect, CGRect) {
+            let tile = running.tiles.iter().find(|t| t.window == window).expect("drawn");
+            (tile.from, tile.to)
         }
 
+        fn piece(running: &RunningAnimation, window: WindowId) -> Option<(plan::GroupKey, CGPoint)> {
+            let group = running.plan.groups.iter().find(|g| g.members.iter().any(|m| m.window == window))?;
+            Some((group.key, group.travel))
+        }
+
+        /// Kai, 2026-10-03: "rapid press navigation messes things up, i periodically see missing
+        /// tiles". A switch pressed again before the first moves travels the whole stack as one
+        /// surface: the floating window rides its container both rows, and the row the second press
+        /// brings starts below the one the first brought, where the stack has it, not on top of it.
         #[test]
-        fn a_flight_starts_with_nothing_harvested() {
-            let running = flight(None);
-            assert!(running.harvested.is_empty());
-            assert!(
-                !harvests_landing(true, true),
-                "a flight in the air harvests nothing"
+        fn a_second_switch_before_the_flight_moves_carries_the_floating_window_with_the_surface() {
+            let (a, b, floater, c) = (wid(1), wid(2), wid(3), wid(4));
+            let column = |row: f64| rect(4.0, 32.0 + row * PITCH, 1720.0, 1081.0);
+            let floating = |row: f64| rect(224.0, 95.0 + row * PITCH, 600.0, 400.0);
+            let (rest, down) = (CGPoint::new(0.0, 0.0), CGPoint::new(0.0, PITCH));
+            let first = [
+                on_surface(a, column(0.0), false),
+                on_surface(b, column(1.0), false),
+                on_surface(floater, floating(1.0), true),
+            ];
+            let second = [
+                on_surface(b, column(0.0), false),
+                on_surface(floater, floating(0.0), true),
+                on_surface(c, column(1.0), false),
+            ];
+            let mut running = composed(movement(&first, rest, down), b);
+            press(&mut running, &second, rest, down, c);
+
+            let both = CGPoint::new(0.0, -2.0 * PITCH);
+            assert_eq!(running.plan.floating_travel, both, "the floating container travels both rows");
+            assert_eq!(
+                running.plan.member(floater),
+                Some(plan::Member::Floating { from: floating(1.0), to: floating(1.0) }),
+                "riding it, with no motion of its own"
             );
+            let strip = piece(&running, a);
+            assert_eq!(strip.map(|(_, travel)| travel), Some(both));
+            assert_eq!(piece(&running, b), strip);
+            assert_eq!(piece(&running, c), strip);
+            assert_eq!(path(&running, c), (column(2.0), column(0.0)), "below B, where the stack has it");
+            assert_eq!(path(&running, a).1, column(-2.0));
+            assert_eq!(path(&running, floater).1, floating(-1.0));
+        }
+
+        /// A second step along the strip before the first moves: one piece travels both steps, and
+        /// the column the second brings in starts beside the one the first brought.
+        #[test]
+        fn a_second_pan_before_the_flight_moves_keeps_the_strip_one_piece() {
+            let step = 864.0;
+            let column = |x: f64| rect(x, 32.0, 860.0, 1081.0);
+            let columns = [wid(1), wid(2), wid(3), wid(4)];
+            let at = |i: usize, scrolled: f64| on_surface(columns[i], column(4.0 + (i as f64 - scrolled) * step), false);
+            let first: Vec<SurfaceWindow> = (0..3).map(|i| at(i, 1.0)).collect();
+            let second: Vec<SurfaceWindow> = (1..4).map(|i| at(i, 2.0)).collect();
+            let (away, rest) = (CGPoint::new(-step, 0.0), CGPoint::new(0.0, 0.0));
+            let mut running = composed(movement(&first, away, rest), columns[2]);
+            press(&mut running, &second, away, rest, columns[3]);
+
+            let strip = piece(&running, columns[0]);
+            assert_eq!(strip.map(|(_, travel)| travel), Some(CGPoint::new(-2.0 * step, 0.0)));
+            for window in &columns[1..] {
+                assert_eq!(piece(&running, *window), strip, "{window:?} rides the strip");
+            }
+            assert_eq!(path(&running, columns[3]), (column(4.0 + 3.0 * step), column(4.0 + step)), "beside the third");
+            assert_eq!(path(&running, columns[0]).1, column(4.0 - 2.0 * step));
         }
     }
 
@@ -3377,6 +2739,15 @@ mod tests {
 
         fn column(i: f64) -> CGRect {
             rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
+        }
+
+        /// The plan of `tiles` alone, each adopted as a pass adopts a tile it did not derive.
+        fn plan_of(tiles: &[OverlayTile]) -> FlightPlan {
+            let mut pieces = ReflowPlan::empty();
+            for tile in tiles {
+                pieces.adopt(tile);
+            }
+            FlightPlan::from(pieces)
         }
 
         fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
@@ -3404,7 +2775,7 @@ mod tests {
                 stacked(s2, slot_c, slot_b, Some(2), false),
                 stacked(f, zoom, zoom, Some(0), true),
             ];
-            let mut flight = flight(None);
+            let mut flight = flight();
             for (_, outcome) in flight.merge_pass(pass1, None) {
                 assert_eq!(outcome, Admitted::Joined);
             }
@@ -3514,7 +2885,7 @@ mod tests {
             let slot_b = rect(867.0, 32.0, 859.0, 1081.0);
             let slot_c = rect(1730.0, 32.0, 859.0, 1081.0);
             let zoom = rect(224.0, 95.0, 1280.0, 960.0);
-            let mut flight = flight(None);
+            let mut flight = flight();
 
             flight.merge_pass(
                 vec![
@@ -3559,7 +2930,7 @@ mod tests {
         fn a_pass_without_a_focus_keeps_the_flights_focus() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let zoom = rect(224.0, 95.0, 1280.0, 960.0);
-            let mut flight = flight(None);
+            let mut flight = flight();
             flight.merge_pass(
                 vec![
                     stacked(wid(1), slot, slot, Some(1), false),
@@ -3583,7 +2954,7 @@ mod tests {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let slot_b = rect(867.0, 32.0, 859.0, 1081.0);
             let zoom = rect(224.0, 95.0, 1280.0, 960.0);
-            let mut flight = flight(None);
+            let mut flight = flight();
             flight.merge_pass(
                 vec![
                     stacked(wid(1), slot, slot, Some(0), false),
@@ -3617,7 +2988,7 @@ mod tests {
         fn an_entrance_tile_leads_its_own_band() {
             let slot = rect(4.0, 32.0, 859.0, 1081.0);
             let zoom = rect(224.0, 95.0, 1280.0, 960.0);
-            let mut flight = flight(None);
+            let mut flight = flight();
             flight.merge_pass(
                 vec![
                     stacked(wid(1), slot, slot, Some(3), false),
@@ -3654,7 +3025,7 @@ mod tests {
             let mut rng = Gen(33);
             for _ in 0..RUNS {
                 let count = rng.below(6) as u32 + 1;
-                let mut flight = flight(None);
+                let mut flight = flight();
                 let passes = rng.below(3) + 1;
                 let mut focus = None;
                 for _ in 0..passes {
@@ -3723,7 +3094,7 @@ mod tests {
             companion.companion = Some(wid(90));
             tiles.push(companion);
             restack(&mut tiles, Some(wid(90)));
-            let plan = FlightPlan::from(plan_from_tiles(&tiles));
+            let plan = plan_of(&tiles);
             let still = plan.groups[0].key;
             let moving = plan.groups[1].key;
 
@@ -3784,7 +3155,7 @@ mod tests {
                 stacked(controls, bar, bar, Some(4), true),
             ];
             restack(&mut tiles, Some(onepassword));
-            let plan = FlightPlan::from(plan_from_tiles(&tiles));
+            let plan = plan_of(&tiles);
             let banding = band_plan(&plan, &tiles, Some(onepassword));
             assert_eq!(banding.lifted, vec![onepassword], "zoom is not lifted with it");
 
@@ -3826,7 +3197,7 @@ mod tests {
                     None
                 };
                 restack(&mut tiles, focus);
-                let plan = FlightPlan::from(plan_from_tiles(&tiles));
+                let plan = plan_of(&tiles);
                 let banding = band_plan(&plan, &tiles, focus);
                 let tag = format!("seed 163 run {run}");
                 let placements = stack(&stacked_windows(&tiles), focus);
@@ -4156,47 +3527,6 @@ mod tests {
                 "where W is drawn, step and all"
             );
             assert!(dest(&merged, wid(20)).unwrap().same_as(border.to));
-        }
-    }
-
-    /// A strip movement never holds, so a stand-in's real picture is chased where it will show.
-    mod stand_in_chase {
-        use super::*;
-        use super::wid;
-        use crate::transitions::domain::strip_move::tests::staging::*;
-
-        /// A strip movement starts at once and never holds, so a stand-in's real picture is chased
-        /// instead: for the column a move at the edge brings in from its park, not for one parked
-        /// at both ends, and never for a window drawn from its own picture. Where the window lands
-        /// is its real frame: a column a full-width move holds on the strip is drawn going beneath
-        /// the moved window while its real window parks, so it is not chased.
-        #[test]
-        fn a_stand_in_coming_on_screen_is_chased_and_one_staying_parked_is_not() {
-            use crate::pictures::platform::picture::{stand_in_picture, test_bitmap};
-            let slot = rect(868.0, 32.0, 860.0, 1081.0);
-            let park = rect(1732.0, 32.0, 860.0, 1081.0);
-            let stand_in = |window, from: CGRect, to: CGRect| {
-                let mut tile = stacked(window, from, to, Some(1), false);
-                tile.snapshot = stand_in_picture(to.size, test_bitmap());
-                tile
-            };
-            let held = at(4.0, WIDTH);
-            let tiles = [
-                stand_in(wid(1), park, slot),
-                stand_in(wid(2), at(4.0 - 3.0 * STEP, WIDTH), at(4.0 - 2.0 * STEP, WIDTH)),
-                stacked(wid(3), park, slot, Some(2), false),
-                stand_in(wid(4), at(4.0 + STEP, WIDTH), held),
-            ];
-            let final_frames = [(wid(1), slot), (wid(4), at(4.0 - 2.0 * STEP, WIDTH))];
-            assert_eq!(
-                stand_in_chase(&tiles, &final_frames, DISPLAY),
-                vec![(wid(1), slot.size)]
-            );
-            assert_eq!(
-                stand_in_chase(&tiles, &[], DISPLAY),
-                vec![(wid(1), slot.size), (wid(4), held.size)],
-                "with no frame to apply, a window lands where its tile does"
-            );
         }
     }
 }

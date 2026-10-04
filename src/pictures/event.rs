@@ -12,9 +12,6 @@ use crate::pictures::platform::picture::Picture;
 pub enum Event {
     /// The cache took this picture of `window`. The only kind a client may draw.
     Taken { window: WindowId, picture: Picture },
-    /// A capture that covered `window`, refused for the picture the cache holds of it: one that
-    /// carries the window's blur.
-    Refused { window: WindowId },
     /// Pictures `tag` asked for or watched, each with the server frame it was taken at; all of them
     /// pictures the cache took. A frame-zero delivery comes even with none.
     Delivered {
