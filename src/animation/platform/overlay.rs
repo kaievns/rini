@@ -19,7 +19,7 @@ use objc2_quartz_core::{
     CAMediaTimingFunction, CATransaction, kCAMediaTimingFunctionLinear,
 };
 
-use crate::animation::domain::motion::bounce::Bounce;
+use crate::animation::domain::motion::bounce::{Bounce, container_bounce};
 use crate::animation::domain::motion::easing::{CubicBezier, MOTION_CURVE};
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
 use crate::animation::domain::motion::hairline::{
@@ -303,21 +303,6 @@ fn curve_function(curve: Curve) -> Retained<CAMediaTimingFunction> {
             CAMediaTimingFunction::functionWithName(unsafe { kCAMediaTimingFunctionLinear })
         }
     }
-}
-
-/// The bounce the container `key` plays when `bounce` replaces one of overshoot `before`: none if it
-/// does not carry this one, from rest if it did not carry that one.
-fn container_bounce(key: GroupKey, bounce: &Bounce, before: Option<CGPoint>) -> Option<Bounce> {
-    if !carries_out_and_back(key, bounce.overshoot) {
-        return None;
-    }
-    if before.is_some_and(|before| carries_out_and_back(key, before)) {
-        return Some(*bounce);
-    }
-    Some(Bounce {
-        from: CGPoint::new(0.0, 0.0),
-        ..*bounce
-    })
 }
 
 /// One key for a move's nudge, apart from the bounce's so neither stops the other.
@@ -2170,36 +2155,6 @@ mod tests {
             control_points(&curve_function(Curve::Bezier(EASE_IN_OUT))),
             bezier_points(Curve::Bezier(EASE_IN_OUT))
         );
-    }
-
-    /// A push replaces the bounce on every container that carries it. One that carried the bounce
-    /// before goes on from where that is drawn; one that did not, the floating windows under a
-    /// sideways bounce, is at rest and starts there; one that does not carry this one plays none.
-    #[test]
-    fn a_container_that_did_not_carry_the_last_bounce_starts_from_rest() {
-        let plays = Duration::from_millis(350);
-        let (up, left) = (CGPoint::new(0.0, -72.0), CGPoint::new(-72.0, 0.0));
-        let pushed_up = Bounce::from_rest(up, plays).pushed(Duration::from_millis(90), up, plays);
-        let strip = GroupKey::STILL;
-        assert_eq!(container_bounce(strip, &pushed_up, Some(up)), Some(pushed_up));
-        assert_eq!(container_bounce(strip, &pushed_up, Some(left)), Some(pushed_up));
-        assert_eq!(
-            container_bounce(GroupKey::Floating, &pushed_up, Some(up)),
-            Some(pushed_up)
-        );
-        let from_rest = container_bounce(GroupKey::Floating, &pushed_up, Some(left)).unwrap();
-        assert_eq!(from_rest.from, CGPoint::new(0.0, 0.0));
-        assert_eq!(
-            (from_rest.overshoot, from_rest.turn, from_rest.duration),
-            (pushed_up.overshoot, pushed_up.turn, pushed_up.duration),
-            "on the same clock as the rest"
-        );
-        assert_eq!(
-            container_bounce(GroupKey::Floating, &pushed_up, None).map(|b| b.from),
-            Some(CGPoint::new(0.0, 0.0))
-        );
-        let sideways = Bounce::from_rest(left, plays);
-        assert_eq!(container_bounce(GroupKey::Floating, &sideways, Some(left)), None);
     }
 
     fn animation_keys(layer: &CALayer) -> Vec<String> {

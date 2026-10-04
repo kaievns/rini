@@ -8,13 +8,14 @@
 //! nothing of Core Animation in it. When the pictures service makes the captures a flight asks for is
 //! `crate::pictures::domain::schedule`. Design in `src/transitions/docs/coordination.md`.
 
-use objc2_core_foundation::CGRect;
+use objc2_core_foundation::{CGRect, CGSize};
 use std::collections::HashMap;
 use std::time::Instant;
 
 use rini_core::ids::{WindowId, WindowServerId};
 
 use crate::pictures::domain::schedule::Priority;
+use crate::pictures::domain::target::PictureTarget;
 
 use super::timing::{
     COMPANION_CENTER_SLACK, COMPANION_EXPANSION, HANDOVER_THRESHOLD_PT, REFRESH_APPLY_BEFORE,
@@ -37,6 +38,20 @@ pub(in crate::transitions) fn refresh_targets(
         .flatten()
         .filter(|window| tiles.contains(window))
         .collect()
+}
+
+/// The focus refresh's capture targets, one per wanted window that has a tile, and the windows covered.
+pub(in crate::transitions) fn refresh_requests(
+    tiles: &[(WindowId, WindowServerId, CGSize)],
+    wanted: &[WindowId],
+) -> (Vec<WindowId>, Vec<PictureTarget>) {
+    let requests: Vec<PictureTarget> = wanted
+        .iter()
+        .filter_map(|window| tiles.iter().find(|(w, _, _)| w == window))
+        .map(|&(window, server_id, size)| PictureTarget { window, server_id, size })
+        .collect();
+    let covered = requests.iter().map(|t| t.window).collect();
+    (covered, requests)
 }
 
 /// A flight's recapture of the two ends of its focus change, in the passes at `REFRESH_PASSES_AT`.
@@ -454,6 +469,51 @@ mod tests {
         assert_eq!(refresh_targets(None, Some(window(3)), &tiles), vec![window(3)]);
         // Neither end tiled: nothing, whatever else is flying.
         assert!(refresh_targets(Some(window(8)), Some(window(9)), &tiles).is_empty());
+    }
+
+    #[test]
+    fn a_strip_pan_with_unchanged_focus_requests_no_refresh() {
+        let size = CGSize::new(859.0, 1081.0);
+        let tiles = [
+            (window(1), WindowServerId::new(10), size),
+            (window(2), WindowServerId::new(20), size),
+            (window(3), WindowServerId::new(30), size),
+        ];
+        let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
+
+        let pan = refresh_targets(Some(window(2)), Some(window(2)), &windows);
+        assert!(pan.is_empty());
+        assert!(
+            refresh_requests(&tiles, &pan).1.is_empty(),
+            "nothing is captured"
+        );
+
+        let change = refresh_targets(Some(window(2)), Some(window(3)), &windows);
+        let (covered, requests) = refresh_requests(&tiles, &change);
+        assert_eq!(covered, vec![window(3), window(2)]);
+        let asked: Vec<u32> = requests.iter().map(|t| t.server_id.as_u32()).collect();
+        assert_eq!(asked, vec![30, 20], "exactly the two ends");
+    }
+
+    #[test]
+    fn the_refresh_asks_once_for_each_wanted_window_with_a_tile() {
+        let size = CGSize::new(859.0, 1081.0);
+        let tiles = vec![
+            (window(1), WindowServerId::new(10), size),
+            (window(2), WindowServerId::new(20), size),
+            (window(3), WindowServerId::new(30), size),
+        ];
+        let (covered, requests) = refresh_requests(&tiles, &[window(2), window(1), window(9)]);
+        assert_eq!(
+            covered,
+            vec![window(2), window(1)],
+            "an unknown window is not a target"
+        );
+        let asked: Vec<(WindowId, u32)> =
+            requests.iter().map(|t| (t.window, t.server_id.as_u32())).collect();
+        assert_eq!(asked, vec![(window(2), 20), (window(1), 10)], "one request per window");
+        assert!(requests.iter().all(|t| t.size == size));
+        assert!(refresh_requests(&tiles, &[]).1.is_empty());
     }
 
     #[test]

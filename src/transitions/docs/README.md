@@ -71,8 +71,7 @@ pass extends its hold or merges into its tiles, what a held flight claims, how a
 what a landing picture may change, how tiles band, a border's tile and which stand-ins are chased are
 methods on `RunningAnimation` and functions over `OverlayTile`, and both carry a platform `Picture`.
 They and their tests (`platform/engine.rs`, grouped by unit) move to `domain/` once a tile holds a
-picture handle instead. `refresh_requests`, the focus refresh's capture targets, carries no `Picture`;
-it stays because step 4 deletes the refresh.
+picture handle instead.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
 `start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's

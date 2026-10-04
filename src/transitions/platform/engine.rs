@@ -120,20 +120,6 @@ pub type OnFlight = Box<dyn Fn(bool)>;
 pub type Sender = channel::Sender<Event>;
 pub type Receiver = channel::Receiver<Event>;
 
-/// The focus refresh's capture targets, one per wanted window that has a tile, and the windows covered.
-fn refresh_requests(
-    tiles: &[(WindowId, WindowServerId, CGSize)],
-    wanted: &[WindowId],
-) -> (Vec<WindowId>, Vec<PictureTarget>) {
-    let requests: Vec<PictureTarget> = wanted
-        .iter()
-        .filter_map(|window| tiles.iter().find(|(w, _, _)| w == window))
-        .map(|&(window, server_id, size)| PictureTarget { window, server_id, size })
-        .collect();
-    let covered = requests.iter().map(|t| t.window).collect();
-    (covered, requests)
-}
-
 struct RunningAnimation {
     tiles: Vec<OverlayTile>,
     /// Where each window must end up, in display coordinates. Sent once the overlay covers them.
@@ -3160,51 +3146,6 @@ mod tests {
     /// The focus refresh and the pictures a flight asks for.
     mod refresh {
         use super::*;
-
-        #[test]
-        fn a_strip_pan_with_unchanged_focus_requests_no_refresh() {
-            let size = CGSize::new(859.0, 1081.0);
-            let tiles = [
-                (wid(1), WindowServerId::new(10), size),
-                (wid(2), WindowServerId::new(20), size),
-                (wid(3), WindowServerId::new(30), size),
-            ];
-            let windows: Vec<WindowId> = tiles.iter().map(|(w, _, _)| *w).collect();
-
-            let pan = refresh_targets(Some(wid(2)), Some(wid(2)), &windows);
-            assert!(pan.is_empty());
-            assert!(
-                refresh_requests(&tiles, &pan).1.is_empty(),
-                "nothing is captured"
-            );
-
-            let change = refresh_targets(Some(wid(2)), Some(wid(3)), &windows);
-            let (covered, requests) = refresh_requests(&tiles, &change);
-            assert_eq!(covered, vec![wid(3), wid(2)]);
-            let asked: Vec<u32> = requests.iter().map(|t| t.server_id.as_u32()).collect();
-            assert_eq!(asked, vec![30, 20], "exactly the two ends");
-        }
-
-        #[test]
-        fn the_refresh_asks_once_for_each_wanted_window_with_a_tile() {
-            let size = CGSize::new(859.0, 1081.0);
-            let tiles = vec![
-                (wid(1), WindowServerId::new(10), size),
-                (wid(2), WindowServerId::new(20), size),
-                (wid(3), WindowServerId::new(30), size),
-            ];
-            let (covered, requests) = refresh_requests(&tiles, &[wid(2), wid(1), wid(9)]);
-            assert_eq!(
-                covered,
-                vec![wid(2), wid(1)],
-                "an unknown window is not a target"
-            );
-            let asked: Vec<(WindowId, u32)> =
-                requests.iter().map(|t| (t.window, t.server_id.as_u32())).collect();
-            assert_eq!(asked, vec![(wid(2), 20), (wid(1), 10)], "one request per window");
-            assert!(requests.iter().all(|t| t.size == size));
-            assert!(refresh_requests(&tiles, &[]).1.is_empty());
-        }
 
         #[test]
         fn two_refresh_passes_per_flight_and_none_at_frame_zero() {

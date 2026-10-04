@@ -15,7 +15,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/glide.rs` | `Leg`: a container's movement over time, so a retarget carries on from where it is and as fast as it is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
 | `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, evaluating to what Core Animation draws |
-| `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving mid-bounce, and its track |
+| `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving mid-bounce, the bounce each container plays, and its track |
 | `domain/motion/nudge.rs` | A move's nudge: the step's share and stretch, its keyframes and track, and the curve a stepping flight flies on |
 | `domain/motion/accents.rs` | Which accent may start: one nudge at a time, a nudge waiting for its flight to move, and the bounce never held off |
 | `domain/motion/holes.rs` | Where the overlay is holed over a window that ends on screen, so the window keeps painting |
