@@ -19,7 +19,7 @@ pub const MOTION_CURVE: CubicBezier = CubicBezier {
 
 /// CSS `ease-in-out`: at rest at both ends, fastest at half time. The strip crosses on it while a
 /// move steps it, so the column the move passed is still in the side the step opens
-/// (`strip_move::flight_curve`).
+/// (`nudge::flight_curve`).
 pub const EASE_IN_OUT: CubicBezier = CubicBezier {
     x1: 0.42,
     y1: 0.0,

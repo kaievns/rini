@@ -6,12 +6,14 @@
 //! those it does, and it means nothing here can be exercised without a reactor.
 //!
 //! Two borrows say it exactly. `src/animation/docs/animation-smoothness.md` calls this the
-//! `present(motion)` boundary under "Structural findings".
+//! `present(motion)` boundary under "Structural findings". `instant_requests` is what a pass that
+//! does not fly sends one application.
 
-use objc2_core_foundation::CGRect;
+use objc2_core_foundation::{CGPoint, CGRect};
 
 #[cfg(test)]
 use crate::windows::domain::transaction::WindowTxStore;
+use crate::windows::domain::request::Request;
 use crate::windows::domain::transaction::{TransactionId, TransactionManager};
 use crate::workspaces::WindowStore;
 use rini_core::ids::{WindowId, WindowServerId};
@@ -84,6 +86,39 @@ impl<'a> Present<'a> {
     }
 }
 
+/// The requests that place one app's share of an instant pass. Position-only passes (a workspace
+/// switch) send origins for the windows whose size is unchanged, so the app skips the resize.
+pub(crate) fn instant_requests(
+    frames: Vec<(WindowId, CGRect, bool)>,
+    txid: TransactionId,
+    position_only: bool,
+) -> Vec<Request> {
+    if !position_only {
+        return vec![Request::SetBatchWindowFrame(
+            frames.into_iter().map(|(wid, frame, _)| (wid, frame)).collect(),
+            txid,
+            true,
+        )];
+    }
+    let mut positions: Vec<(WindowId, CGPoint)> = Vec::new();
+    let mut full_frames: Vec<(WindowId, CGRect)> = Vec::new();
+    for (wid, frame, size_unchanged) in frames {
+        if size_unchanged {
+            positions.push((wid, frame.origin));
+        } else {
+            full_frames.push((wid, frame));
+        }
+    }
+    let mut requests = Vec::with_capacity(2);
+    if !positions.is_empty() {
+        requests.push(Request::SetWorkspaceSwitchPositions(positions, txid, true));
+    }
+    if !full_frames.is_empty() {
+        requests.push(Request::SetBatchWindowFrame(full_frames, txid, true));
+    }
+    requests
+}
+
 #[cfg(test)]
 mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
@@ -91,6 +126,10 @@ mod tests {
     use super::*;
     use crate::windows::domain::info::WindowInfo;
     use crate::windows::domain::state::WindowState;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
 
     fn frame(x: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, 0.0), CGSize::new(100.0, 100.0))
@@ -226,5 +265,25 @@ mod tests {
         let transactions = TransactionManager::new(WindowTxStore::new());
         let mut present = Present::new(&mut store, &transactions);
         assert_eq!(present.commit_app_batch(&[]), TransactionId::default());
+    }
+
+    #[test]
+    fn position_only_requests_split_moves_from_resizes() {
+        let txid = TransactionId::default();
+        let w = |i| WindowId::new(1, i);
+        let frames = vec![
+            (w(1), rect(0.0, 0.0, 10.0, 10.0), true),
+            (w(2), rect(5.0, 0.0, 20.0, 10.0), false),
+        ];
+        let requests = instant_requests(frames.clone(), txid, true);
+        assert!(
+            matches!(&requests[0], Request::SetWorkspaceSwitchPositions(p, _, true) if p == &vec![(w(1), CGPoint::new(0.0, 0.0))])
+        );
+        assert!(
+            matches!(&requests[1], Request::SetBatchWindowFrame(f, _, true) if f.len() == 1 && f[0].0 == w(2))
+        );
+        let full = instant_requests(frames, txid, false);
+        assert_eq!(full.len(), 1);
+        assert!(matches!(&full[0], Request::SetBatchWindowFrame(f, _, true) if f.len() == 2));
     }
 }

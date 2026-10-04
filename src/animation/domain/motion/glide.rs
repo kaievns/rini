@@ -392,7 +392,7 @@ mod tests {
     /// as fast as it was going.
     #[test]
     fn a_leg_on_the_ease_in_out_bends_without_a_kick() {
-        let seconds = DURATION * crate::animation::domain::motion::strip_move::NUDGE_STRETCH;
+        let seconds = DURATION * crate::animation::domain::motion::nudge::NUDGE_STRETCH;
         let crossing = Leg::Curve {
             from: CGPoint::new(0.0, 0.0),
             to: CGPoint::new(-862.0, 0.0),

@@ -1,29 +1,26 @@
-# `animation` — movement on screen
+# `animation` — how things move on screen
 
-One engine. Every animated movement is a flight of a Core Animation overlay: window
-bitmaps composited in one opaque window, the real windows placed once behind it. Layout
-passes, strip pans, moves along the strip, workspace switches, resizes, entrances and the
-edge bounce are all flights of the same thing.
+Every animated movement is played on one Core Animation overlay: window pictures composited in one
+opaque window, the real windows placed once behind it. This feature is how things move there: rigid
+pieces and how a pass merges into them, the curves, the depth bands, the accents riding them, and the
+renderer that plays all of it. When each step happens is `transitions`' (`src/transitions/docs/README.md`),
+and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 
 ## What it owns
 
 | | |
 |---|---|
-| `domain/motion/plan.rs` | `FlightPlan`, rigid groups, and `merge_plans` for a pass arriving mid-flight |
-| `domain/motion/travel.rs`, `surface.rs` | How far each tile goes, and what a pinned one does |
+| `domain/motion/plan.rs` | `FlightPlan`, rigid groups, `reflow_plan` and `surface_plan`, `merge_plans` for a pass arriving mid-flight, the containers an edge bounce or a nudge carries, and an entrance's shape |
+| `domain/motion/surface.rs` | How a strip movement carries a surface: `surface_travel`, `pan_travel`, and what a window on the surface and a tile have to say (`SurfaceGeometry`, `TileGeometry`) |
+| `domain/motion/glide.rs` | `Leg`: a container's movement over time, so a retarget carries on from where it is and as fast as it is going |
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
 | `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, evaluating to what Core Animation draws |
 | `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving mid-bounce, and its track |
+| `domain/motion/nudge.rs` | A move's nudge: the step's share and stretch, its keyframes and track, and the curve a stepping flight flies on |
+| `domain/motion/accents.rs` | Which accent may start: one bounce and one nudge at a time, and a nudge waiting for its flight to move |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
-| `domain/motion/strip_stack.rs` | The stacked-workspace geometry a switch moves through |
-| `domain/motion/strip_move.rs` | A window moved along the strip: where the two columns changing places start, which moves step the whole strip, and the column such a move holds on it |
-| `domain/timing.rs`, `flight.rs`, `admission.rs` | When work happens, what a flight is, and how a mid-flight request is admitted |
-| `domain/pass.rs` | Sorting a layout pass into moves, unmoved windows and warm targets |
-| `platform/engine.rs` | `FlightEngine`: the actor. The overlay, the timer, and the captures a flight takes in the air; a client of the pictures service for the rest |
-| `platform/overlay.rs` | `TileOverlay`: the `CALayer` tree and the one `CATransaction` per flight |
-
-Capturing the pictures a flight draws, judging them, keeping them, and holding background capture
-off while a flight runs are `pictures`' (`src/pictures/docs/README.md`).
+| `domain/motion/tile.rs` | How a tile fits its picture to its frame: stretch or crop, the crop pieces, the stand-in's mode |
+| `platform/overlay.rs` | `TileOverlay`, the renderer: the `CALayer` tree and the one `CATransaction` per flight |
 
 ## The shape that matters
 
@@ -46,8 +43,8 @@ skipped its first frames.
 
 ## Reading order
 
-`domain/motion/plan.rs` → `domain/pass.rs` → `platform/overlay.rs` →
-`platform/engine.rs` last, which is the actor and the largest file.
+`domain/motion/plan.rs` → `domain/motion/glide.rs` → `domain/motion/z_group.rs` →
+`platform/overlay.rs`. The actor that drives the overlay is `src/transitions/platform/engine.rs`.
 
 ## Detail
 
@@ -55,3 +52,10 @@ skipped its first frames.
   each earlier model cost, and what is still open
 - [`capture-overlay-research.md`](capture-overlay-research.md) — the capture
   measurements everything above rests on
+
+## Known debt
+
+**The overlay builds its own animations.** A `Score` evaluates to what Core Animation plays, but
+nothing plays one yet: `TileOverlay` installs the keyframes of `Leg::track`, `nudge_track` and
+`Bounce::track` itself, and a pass merging mid-flight reads the presentation layer back
+(`plan::Presented`). Step 5 of `docs/pictures-motion-transitions.md` has the overlay play a score.

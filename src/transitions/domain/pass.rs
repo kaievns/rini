@@ -1,14 +1,12 @@
 //! One layout pass sorted into what moves, what stays, and what the overlay has to know. The
 //! application gathers a [`PassWindow`] per window from its stores and applies the plan; nothing
 //! here reads a store or sends a request.
-use crate::windows::domain::request::Request;
-use crate::windows::domain::transaction::TransactionId;
-use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_core_foundation::CGRect;
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::{Round, SameAs};
 
-use crate::animation::domain::request::AnimationRequest;
 use crate::pictures::domain::target::PictureTarget;
+use crate::transitions::domain::request::AnimationRequest;
 
 /// A window as the layout pass sees it.
 #[derive(Debug, Clone, PartialEq)]
@@ -122,42 +120,9 @@ pub fn plan(windows: impl IntoIterator<Item = PassWindow>) -> PassPlan {
     out
 }
 
-/// The requests that place one app's share of an instant pass. Position-only passes (a workspace
-/// switch) send origins for the windows whose size is unchanged, so the app skips the resize.
-pub fn instant_requests(
-    frames: Vec<(WindowId, CGRect, bool)>,
-    txid: TransactionId,
-    position_only: bool,
-) -> Vec<Request> {
-    if !position_only {
-        return vec![Request::SetBatchWindowFrame(
-            frames.into_iter().map(|(wid, frame, _)| (wid, frame)).collect(),
-            txid,
-            true,
-        )];
-    }
-    let mut positions: Vec<(WindowId, CGPoint)> = Vec::new();
-    let mut full_frames: Vec<(WindowId, CGRect)> = Vec::new();
-    for (wid, frame, size_unchanged) in frames {
-        if size_unchanged {
-            positions.push((wid, frame.origin));
-        } else {
-            full_frames.push((wid, frame));
-        }
-    }
-    let mut requests = Vec::with_capacity(2);
-    if !positions.is_empty() {
-        requests.push(Request::SetWorkspaceSwitchPositions(positions, txid, true));
-    }
-    if !full_frames.is_empty() {
-        requests.push(Request::SetBatchWindowFrame(full_frames, txid, true));
-    }
-    requests
-}
-
 #[cfg(test)]
 mod tests {
-    use objc2_core_foundation::CGSize;
+    use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
 
@@ -246,25 +211,5 @@ mod tests {
         assert_eq!(overlay.len(), 2);
         assert_eq!(overlay[0].window, WindowId::new(1, 1));
         assert!(overlay[1].floating);
-    }
-
-    #[test]
-    fn position_only_requests_split_moves_from_resizes() {
-        let txid = TransactionId::default();
-        let w = |i| WindowId::new(1, i);
-        let frames = vec![
-            (w(1), rect(0.0, 0.0, 10.0, 10.0), true),
-            (w(2), rect(5.0, 0.0, 20.0, 10.0), false),
-        ];
-        let requests = instant_requests(frames.clone(), txid, true);
-        assert!(
-            matches!(&requests[0], Request::SetWorkspaceSwitchPositions(p, _, true) if p == &vec![(w(1), CGPoint::new(0.0, 0.0))])
-        );
-        assert!(
-            matches!(&requests[1], Request::SetBatchWindowFrame(f, _, true) if f.len() == 1 && f[0].0 == w(2))
-        );
-        let full = instant_requests(frames, txid, false);
-        assert_eq!(full.len(), 1);
-        assert!(matches!(&full[0], Request::SetBatchWindowFrame(f, _, true) if f.len() == 2));
     }
 }

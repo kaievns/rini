@@ -19,22 +19,21 @@ use objc2_quartz_core::{
     CATransaction, kCAMediaTimingFunctionEaseInEaseOut,
 };
 
-pub use crate::animation::domain::motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE, ease};
+use crate::animation::domain::motion::easing::{BOUNCE_TURN, CubicBezier, MOTION_CURVE};
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
-pub(crate) use crate::animation::domain::motion::plan::{
+use crate::animation::domain::motion::plan::{
     AnimationTarget, animation_targets, carries_out_and_back,
 };
 use crate::animation::domain::motion::plan::{
     Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented, group_relative,
     stale_overlay_layers,
 };
-use crate::animation::domain::motion::strip_move::nudge_samples;
-pub use crate::animation::domain::motion::tile::{
-    ContentMode, CropPiece, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
-    lerp_rect, stand_in_mode, resize_in_flight,
+use crate::animation::domain::motion::nudge::nudge_samples;
+use crate::animation::domain::motion::tile::{
+    ContentMode, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed, resize_in_flight,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
-use crate::animation::domain::timing::OutAndBack;
+use crate::animation::domain::motion::accents::OutAndBack;
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::platform::edge_dressing::{boundary_layout, tile_corner_radius};
@@ -886,7 +885,7 @@ impl TileOverlay {
     /// top of any movement in flight, under a key of the kind's own: the edge bounce's shape or the
     /// nudge's. See "Edge bounce" and "The move flight" in
     /// `src/animation/docs/animation-smoothness.md`.
-    pub(in crate::animation) fn out_and_back(
+    pub fn out_and_back(
         &mut self,
         kind: OutAndBack,
         offset: CGPoint,
@@ -1652,6 +1651,7 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::domain::motion::easing::ease;
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the

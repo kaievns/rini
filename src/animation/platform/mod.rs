@@ -1,4 +1,3 @@
-//! The Core Animation tile overlay and the flight engine.
+//! The renderer: the Core Animation tile overlay.
 
-pub mod engine;
 pub mod overlay;

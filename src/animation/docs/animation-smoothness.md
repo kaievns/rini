@@ -8,14 +8,15 @@ the capture measurements this builds on.
 ## One engine
 
 Every animated movement runs through the overlay engine
-(`src/animation/platform/`: `engine.rs` + `overlay.rs`, geometry in `src/animation/domain/motion/`): window
+(the actor `src/transitions/platform/engine.rs`, its decisions in `src/transitions/domain/`; the
+renderer `src/animation/platform/overlay.rs`, the motion in `src/animation/domain/motion/`): window
 bitmaps composited in one opaque overlay window, the real windows placed once
 behind it (see "The apply point"). Layout passes, strip pans, moves along
 the strip, workspace switches, resizes, entrances and the edge bounce are all
 flights of it.
 `AnimationManager` (`src/app/reactor/animation.rs`) is the layout side: it
 gathers a `PassWindow` per window from the stores, sorts the pass with
-`crate::animation::domain::pass::plan` (moves, unmoved windows the overlay must still
+`crate::transitions::domain::pass::plan` (moves, unmoved windows the overlay must still
 draw, warm targets), decides whether the overlay flies (no `animations › off` in the
 config, not low power, not a drag, something visibly travels) and places the real windows
 directly when it does not.
@@ -101,7 +102,7 @@ The two entry points feed the same `begin_group`:
   (`worth_flying`).
 - **Strip movements** (`Event::AnimateSurface` — workspace switches, strip
   pans and moves along the strip; the wire event the reactor builds from the
-  stacked-workspace geometry in `animation/domain/motion/strip_stack.rs`, carrying
+  stacked-workspace geometry in `src/transitions/domain/strip_stack.rs`, carrying
   `SurfaceWindow`s) start `Immediate`: they arrive once per keystroke and
   latency is the enemy. `surface_plan` puts every window on the surface in
   ONE group travelling by the viewport's travel (`surface_travel`,
@@ -502,7 +503,7 @@ presses the reactor reached late kept bouncing after the pressing had stopped.
 A move's nudge (below) is the other out-and-back, on the same containers by
 the same rule, under its own key and held off only by a nudge still playing
 (`OutAndBacks` in
-`src/animation/domain/timing.rs`, one clock per kind), so neither holds the
+`src/animation/domain/motion/accents.rs`, one clock per kind), so neither holds the
 other off; pinned by `a_bounce_and_a_nudge_never_hold_each_other_off` and
 `the_nudge_and_the_bounce_ride_under_keys_of_their_own`.
 
@@ -523,7 +524,7 @@ vertical move, not a move onto another display). The reactor routes it to
 `start_strip_pan` with the strip movement, zero when the strip did not move on
 screen, and the surface is built exactly as a pan's, every window at its NEW
 frame. The moved column and the column it passed also get a start (`swap_starts` in
-`src/animation/domain/motion/strip_move.rs`): the two fill the span they fill
+`src/transitions/domain/strip_move.rs`): the two fill the span they fill
 now, in the order they had before. For W of width a and N of width b with gap
 g, moving right, W started at N's new x and N at N's new x + a + g; moving
 left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
@@ -1062,7 +1063,7 @@ two part only where a track outlasts it.
 ## Structural findings
 
 1. **`animate_layout` is the real strategy point.** The per-window half is
-   now `crate::animation::domain::pass::plan`, a pure step over `PassWindow`s producing
+   now `crate::transitions::domain::pass::plan`, a pure step over `PassWindow`s producing
    a `PassPlan` (moves, unmoved windows, warm targets), tested on its own. The
    frame-writing half is `app::reactor::present::Present`: two borrows — the window
    store and the transaction table — instead of `&mut Reactor`, which said nothing

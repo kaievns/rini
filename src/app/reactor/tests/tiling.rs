@@ -8,6 +8,7 @@ use rini_geometry::SameAs;
 use test_log::test;
 
 use super::fixtures::*;
+use crate::animation::domain::motion::surface::SurfaceGeometry;
 use crate::app::reactor::testing::*;
 use crate::app::reactor::*;
 use crate::windows::domain::info::WindowInfo;
@@ -1160,7 +1161,7 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     // Two windows moving by opposite vectors, so this is not a strip pan and goes to the per-window
     // path. The third keeps the frame it already has.
@@ -1185,15 +1186,15 @@ fn a_pass_that_moves_two_windows_still_hands_over_the_one_it_leaves_alone() {
         None,
     );
 
-    let mut animated: Vec<crate::animation::domain::request::AnimationRequest> = Vec::new();
+    let mut animated: Vec<crate::transitions::domain::request::AnimationRequest> = Vec::new();
     while let Ok((_, event)) = animation_rx.try_recv() {
         match event {
-            crate::animation::platform::engine::Event::Animate { windows, .. } => {
+            crate::transitions::platform::engine::Event::Animate { windows, .. } => {
                 animated = windows
             }
             // Opposite vectors are not a pan, so this must not reach the strip path: that path takes
             // its windows from the layout and so never had this bug to begin with.
-            crate::animation::platform::engine::Event::AnimateSurface { .. } => {
+            crate::transitions::platform::engine::Event::AnimateSurface { .. } => {
                 panic!("a layout that is not a pan must go to the per-window path")
             }
             _ => {}
@@ -1228,7 +1229,7 @@ fn a_one_point_move_is_placed_rather_than_animated() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     let mut layout = Vec::new();
     for idx in 1..=2u32 {
@@ -1254,8 +1255,8 @@ fn a_one_point_move_is_placed_rather_than_animated() {
         assert!(
             !matches!(
                 event,
-                crate::animation::platform::engine::Event::Animate { .. }
-                    | crate::animation::platform::engine::Event::AnimateSurface { .. }
+                crate::transitions::platform::engine::Event::Animate { .. }
+                    | crate::transitions::platform::engine::Event::AnimateSurface { .. }
             ),
             "a one-point move must not run an animation: {event:?}"
         );
@@ -1283,7 +1284,7 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     let wid = WindowId::new(1, 1);
     reactor.handle_event(Event::WindowDestroyed(wid));
@@ -1292,8 +1293,8 @@ fn a_destroyed_window_does_not_exit_when_animations_are_off() {
         assert!(
             !matches!(
                 event,
-                crate::animation::platform::engine::Event::Animate { .. }
-                    | crate::animation::platform::engine::Event::AnimateSurface { .. }
+                crate::transitions::platform::engine::Event::Animate { .. }
+                    | crate::transitions::platform::engine::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );
@@ -1318,7 +1319,7 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     let mut layout = Vec::new();
     for idx in 1..=3u32 {
@@ -1344,8 +1345,8 @@ fn a_layout_pass_does_not_fly_when_animations_are_off() {
         assert!(
             !matches!(
                 event,
-                crate::animation::platform::engine::Event::Animate { .. }
-                    | crate::animation::platform::engine::Event::AnimateSurface { .. }
+                crate::transitions::platform::engine::Event::Animate { .. }
+                    | crate::transitions::platform::engine::Event::AnimateSurface { .. }
             ),
             "nothing flies with animations off: {event:?}"
         );
@@ -1801,7 +1802,7 @@ fn moving_strip(
 ) -> (
     Apps,
     Reactor,
-    crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+    crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
 ) {
     moving_strip_with(ratio, count, |_| {})
 }
@@ -1814,7 +1815,7 @@ fn moving_strip_with(
 ) -> (
     Apps,
     Reactor,
-    crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+    crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
 ) {
     let mut layout = crate::app::config::LayoutSettings::default();
     layout.scrolling.column_width_ratio = ratio;
@@ -1833,13 +1834,13 @@ fn moving_strip_with(
     apps.simulate_until_quiet(&mut reactor);
     reactor.config.settings.animate = true;
     let (animation_tx, animation_rx) = crate::app::channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     (apps, reactor, animation_rx)
 }
 
 /// One strip movement the reactor sent.
 struct SurfaceFlight {
-    windows: Vec<crate::animation::platform::engine::SurfaceWindow>,
+    windows: Vec<crate::transitions::domain::request::SurfaceWindow>,
     from_offset: CGPoint,
     final_frames: Vec<(WindowId, CGRect)>,
     nudge: Option<CGPoint>,
@@ -1848,11 +1849,11 @@ struct SurfaceFlight {
 
 /// Every strip movement the reactor sent since the last look.
 fn strip_movements(
-    rx: &mut crate::app::channels::Receiver<crate::animation::platform::engine::Event>,
+    rx: &mut crate::app::channels::Receiver<crate::transitions::platform::engine::Event>,
 ) -> Vec<SurfaceFlight> {
     let mut out = Vec::new();
     while let Ok((_, event)) = rx.try_recv() {
-        if let crate::animation::platform::engine::Event::AnimateSurface {
+        if let crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             final_frames,

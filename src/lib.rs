@@ -12,7 +12,7 @@
 //! src/workspaces/   virtual workspaces and their persistence
 //! src/input/        keys, bindings, gestures, drags
 //! src/pictures/     pictures of windows, the desktop and the bar
-//! src/animation/    movement on screen
+//! src/animation/    how things move on screen
 //! src/transitions/  when things happen in a transition
 //! src/switcher/     the window switcher popup
 //! src/bar/          the menu bar across the top of every display

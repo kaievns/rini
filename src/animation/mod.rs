@@ -1,9 +1,10 @@
-//! Movement on screen.
+//! How things move on screen.
 //!
-//! `domain::motion` plans a flight as pure geometry and `domain::pass` sorts a layout pass into what
-//! moves, what stays and what warms. `platform` draws pictures of windows, which `crate::pictures`
-//! takes, as Core Animation tiles, and flies the tiles while the real windows move underneath. Knows
-//! windows and frames, not workspaces or strips.
+//! `domain::motion` is a transition's movement as pure geometry: rigid pieces and how a pass merges
+//! into them, the curves, the depth bands, and the accents riding them, the edge bounce and a move's
+//! nudge. `platform` is the renderer: it draws pictures of windows, which `crate::pictures` takes, as
+//! Core Animation tiles and plays the movement while the real windows move underneath. When each step
+//! happens is `crate::transitions`'. Knows windows and frames, not workspaces or strips.
 //!
 //! See `docs/architecture.md` and `src/animation/docs/animation-smoothness.md`.
 

@@ -526,7 +526,7 @@ fn focus_that_does_not_move_asks_for_the_window_alone() {
 #[test]
 fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
-    use crate::animation::platform::engine::Event as Anim;
+    use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -539,7 +539,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {
@@ -583,7 +583,7 @@ fn pushing_past_an_end_bounces_the_strip_and_keeps_focus() {
 #[test]
 fn moving_a_window_past_an_end_bounces_the_view_too() {
     use crate::animation::domain::motion::plan::EDGE_BOUNCE_OVERSHOOT;
-    use crate::animation::platform::engine::Event as Anim;
+    use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -596,7 +596,7 @@ fn moving_a_window_past_an_end_bounces_the_view_too() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let bounces = |rx: &mut channels::Receiver<Anim>| {
         let mut out = Vec::new();
         while let Ok((_, event)) = rx.try_recv() {

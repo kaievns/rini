@@ -244,7 +244,7 @@ fn main() {
     let window_tx_store = WindowTxStore::new();
     let (gesture_tap_tx, gesture_tap_rx) = rini::app::channels::channel();
     let (cursor_warp_tx, cursor_warp_rx) = rini::app::channels::channel();
-    let (workspace_animation_tx, workspace_animation_rx) = rini::app::channels::channel();
+    let (transitions_tx, transitions_rx) = rini::app::channels::channel();
     let (switcher_tx, switcher_rx) = rini::app::channels::channel();
     let (bar_tx, bar_rx) = rini::app::channels::channel();
     let (spaces_tx, spaces_rx) = rini::app::channels::channel();
@@ -253,9 +253,9 @@ fn main() {
     // so the service names neither the flight engine nor the switcher.
     let pictures = rini::pictures::platform::service::Pictures::start(vec![
         Box::new({
-            let workspace_animation_tx = workspace_animation_tx.clone();
+            let transitions_tx = transitions_tx.clone();
             move |landed| {
-                workspace_animation_tx.send(rini::animation::platform::engine::Event::Pictures(landed))
+                transitions_tx.send(rini::transitions::platform::engine::Event::Pictures(landed))
             }
         }),
         Box::new({
@@ -276,7 +276,7 @@ fn main() {
         event_tap_tx.clone(),
         broadcast_tx.clone(),
         Some(cursor_warp_tx.clone()),
-        Some(workspace_animation_tx.clone()),
+        Some(transitions_tx.clone()),
         Some(pictures.clone()),
         Some(switcher_tx.clone()),
         Some(bar_tx.clone()),
@@ -421,11 +421,11 @@ fn main() {
         cursor_warp_rx,
     );
 
-    // The animation overlay lives on the main thread because Core Animation requires it. It stays
-    // idle until the reactor sends it display geometry and something to animate.
-    let mut flight_engine = rini::animation::platform::engine::FlightEngine::new(
-        workspace_animation_rx,
-        workspace_animation_tx.clone(),
+    // The flight engine and the overlay it drives live on the main thread because Core Animation
+    // requires it. They stay idle until the reactor sends display geometry and something to animate.
+    let mut flight_engine = rini::transitions::platform::engine::FlightEngine::new(
+        transitions_rx,
+        transitions_tx.clone(),
         mtm,
         pictures.clone(),
     );

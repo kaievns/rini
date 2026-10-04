@@ -308,7 +308,7 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let mut pictures = reactor.connect_test_pictures();
 
     let wid = WindowId::new(1, 1);
@@ -321,7 +321,7 @@ fn a_destroyed_window_is_forgotten_once_and_flies_nothing_of_its_own() {
         })
         .count();
     while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::Animate { windows, .. } = event {
+        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
             assert!(
                 windows.iter().all(|request| request.window != wid),
                 "the closed window is not composed"
@@ -350,7 +350,7 @@ fn a_window_server_promoted_close_is_forgotten_once() {
     apps.requests();
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let mut pictures = reactor.connect_test_pictures();
 
     let wid = WindowId::new(1, 1);
@@ -373,7 +373,7 @@ fn a_window_server_promoted_close_is_forgotten_once() {
         })
         .count();
     while let Ok((_, event)) = animation_rx.try_recv() {
-        if let crate::animation::platform::engine::Event::Animate { windows, .. } = event {
+        if let crate::transitions::platform::engine::Event::Animate { windows, .. } = event {
             assert!(
                 windows.iter().all(|request| request.window != wid),
                 "the closed window is not composed"

@@ -11,22 +11,18 @@ use std::time::{Duration, Instant};
 use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowId;
 
+use super::timing::{COALESCE_WINDOW, LIFT_GRACE};
+
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
 pub const FRAME_ZERO_PATIENCE: Duration = Duration::from_millis(80);
 /// How long a flight with new or growing windows waits, overlay up, for their first pictures.
 pub const HOLD_PATIENCE: Duration = Duration::from_millis(300);
-/// How long a layout pass waits, overlay up, for the passes the reactor sends right after it.
-pub const COALESCE_WINDOW: Duration = Duration::from_millis(25);
 /// How long the end windows are watched to land after their frames are written.
 pub const LANDING_PATIENCE: Duration = Duration::from_millis(150);
 /// The last end-state capture starts this long before the clock ends, so a slow capture still lands.
 pub const FINAL_BEFORE_END: Duration = Duration::from_millis(110);
 /// ... and never sooner than this after the motion starts.
 pub const FINAL_NOT_BEFORE: Duration = Duration::from_millis(40);
-/// Past the clock's end, the lift no longer waits for the tiles or the windows.
-pub const LIFT_GRACE: Duration = Duration::from_millis(350);
-/// After the lift, capture work owed by the flight waits this long for the next press.
-pub const SETTLE_BEFORE_CAPTURES: Duration = Duration::from_millis(400);
 /// A picture is drawn on its tile only if the frame it was taken at is this close to the tile's end.
 pub const FIT_SLACK: f64 = 20.0;
 /// A tile is moved onto its window's real frame when it ends between these two distances off it.
@@ -611,6 +607,7 @@ mod tests {
     use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
+    use crate::transitions::domain::timing::SETTLE_BEFORE_CAPTURES;
 
     fn w(idx: u32) -> WindowId {
         WindowId { pid: 1, idx: NonZeroU32::new(idx).unwrap() }

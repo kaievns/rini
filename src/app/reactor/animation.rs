@@ -1,12 +1,12 @@
 use objc2_core_foundation::{CGPoint, CGRect};
 use tracing::{debug, trace};
 
-use crate::animation::domain::motion::travel::travels_visibly;
-use crate::animation::domain::pass::{self, Move, PassPlan, PassWindow};
+use crate::transitions::domain::travel::travels_visibly;
+use crate::transitions::domain::pass::{self, Move, PassPlan, PassWindow};
 use crate::app::power;
 use rini_geometry::stretch::is_a_resize;
 use crate::app::reactor::Reactor;
-use crate::app::reactor::present::Present;
+use crate::app::reactor::present::{Present, instant_requests};
 use crate::windows::domain::request::Request;
 use rini_core::ids::SpaceId;
 use rini_core::ids::{WindowId, pid_t};
@@ -14,7 +14,7 @@ use rustc_hash::FxHashMap as HashMap;
 
 /// The layout side of animation: decides per pass whether the overlay flies it, and places
 /// the real windows when it does not. A namespace; it holds no state. The sorting of a pass is
-/// `crate::animation::domain::pass`; this applies the plan to the stores and the apps.
+/// `crate::transitions::domain::pass`; this applies the plan to the stores and the apps.
 pub struct AnimationManager;
 
 impl AnimationManager {
@@ -191,7 +191,7 @@ impl AnimationManager {
             .any(|request| is_a_resize(request.from.size, request.to.size));
         let use_overlay = !skip_anim
             && !overlay_requests.is_empty()
-            && reactor.communication_manager.workspace_animation_tx.is_some();
+            && reactor.communication_manager.transitions_tx.is_some();
 
         // A pass that resizes a window is neither a pan nor a move: the strip surface draws final
         // sizes, which would snap the resize. A move along the strip is a strip movement whether or
@@ -213,12 +213,12 @@ impl AnimationManager {
             // The strip movement owns it, including placing the real windows once it covers them.
         } else if use_overlay {
             reactor.publish_animation_display_for(Some(space));
-            if let Some(tx) = &reactor.communication_manager.workspace_animation_tx {
+            if let Some(tx) = &reactor.communication_manager.transitions_tx {
                 let duration = std::time::Duration::from_secs_f64(
                     reactor.config.settings.animation_duration.max(0.0),
                 );
                 let count = overlay_requests.len();
-                _ = tx.send(crate::animation::platform::engine::Event::Animate {
+                _ = tx.send(crate::transitions::platform::engine::Event::Animate {
                     windows: overlay_requests,
                     focus: reactor.layout_manager.layout_engine.focused_window(),
                     duration,
@@ -317,7 +317,7 @@ impl AnimationManager {
                 frames.iter().map(|&(wid, to, _)| (wid, to)).collect();
             let txid = Present::new(&mut reactor.state.windows, &reactor.transaction_manager)
                 .commit_app_batch(&destinations);
-            for request in pass::instant_requests(frames, txid, position_only) {
+            for request in instant_requests(frames, txid, position_only) {
                 if let Err(e) = handle.send(request) {
                     debug!(
                         ?pid,

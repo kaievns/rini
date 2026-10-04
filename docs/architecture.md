@@ -13,7 +13,7 @@ src/layout/       the scrolling strip
 src/workspaces/   virtual workspaces and their persistence
 src/input/        keys, bindings, gestures, drags
 src/pictures/     pictures of windows, the desktop and the bar
-src/animation/    movement on screen
+src/animation/    how things move on screen
 src/transitions/  when things happen in a transition
 src/switcher/     the window switcher popup
 src/bar/          the menu bar across the top of every display
@@ -50,8 +50,8 @@ touches nothing outside itself.
 | `workspaces` | virtual workspaces | assignment of windows to workspaces, activation, stacked-workspace geometry, `WindowStore`; `layout.ron` save/restore in `engine/persistence/`, launch memory, floating positions; workspace settings |
 | `input` | what the user asked for | `Modifiers`, `KeyCode` and `Hotkey`, the token and spec parsing that needs no keyboard, what a bind names (`domain::binding`, the config's actions and their knus decoding), the binding table, gesture and drag-swap recognition, and the rules the taps apply (`domain::gesture`, `domain::hotkey`). `platform/`: CGEventTap adapters, the layout-dependent `FromStr` impls (`platform::keyboard`), Carbon hotkeys, the haptic engine, the cursor. Emits `input::event::Event`: a bind fires its `Action`, which the application lowers to the `rini-ipc` command a CLI call would send (`app/hotkeys/lower`), so the reactor cannot tell a hotkey from a CLI call; a gesture emits its command. Hands every left press to a callback the application wires (`OnLeftPress`) |
 | `pictures` | pictures of windows, the desktop and the bar | whether a capture covers its window and fits the frame it is drawn into (`domain::coverage`), the picture cache and its rules (`domain::cache`), the blur merge (`domain::translucency`), when a chase has settled (`domain::settle`), which window flies the stand-in (`domain::stand_in`), the desktop and bar levels (`domain::backdrop`), the `PictureTarget` port, and the capture schedule: which call comes next, held off while a transition runs (`domain::schedule`). `platform/`: the pictures service, its thread, the cache and the `Pictures` handle every client holds (`platform::service`), the `Picture` type and its stand-in, every SkyLight and `CGWindowList` capture but the bar's own menu extras and ground (`bar/platform/menu_extras.rs`), the ScreenCaptureKit listing, capture and desktop render, the window-server listings of the desktop and the bar, the hairline harvest, bitmaps, and handing a picture to a layer. Emits `pictures::event::Event` to the sinks the application wires |
-| `animation` | movement on screen | flight plans, easing, z-bands, the workspace strip stack, the sorting of a layout pass (`domain::pass`), which final frame writes go out, the `AnimationRequest` port, and the flight engine's own decisions: when work happens (`domain::timing`), what a flight is (`domain::flight`), and how a request arriving mid-flight is admitted (`domain::admission`). `platform/`: the Core Animation tile overlay and the flight engine |
-| `transitions` | when things happen in a transition | the lifecycle every transition runs through, as a pure state machine (`domain::lifecycle`), not yet wired |
+| `animation` | how things move on screen | rigid pieces and how a pass arriving mid-flight merges into them (`domain::motion::plan`), what a strip movement carries (`domain::motion::surface`), legs, easing, the score, the z-bands, the edge bounce's and a move's nudge's shapes and which of them may start (`domain::motion::accents`), and how a tile fits its picture (`domain::motion::tile`). `platform/`: the renderer, the Core Animation tile overlay |
+| `transitions` | when things happen in a transition | the `AnimationRequest` and `SurfaceWindow` port (`domain::request`), the sorting of a layout pass (`domain::pass`), where each tile starts and ends (`domain::travel`), a move along the strip staged (`domain::strip_move`), the workspace strip stack (`domain::strip_stack`), how a request arriving mid-flight is admitted (`domain::admission`), what a flight is (`domain::flight`), when work happens (`domain::timing`), which final frame writes go out (`domain::frame_writes`), and the lifecycle every transition runs through as a pure state machine, not yet wired (`domain::lifecycle`). `platform/`: the flight engine, the main-thread actor that runs every flight on `animation`'s renderer. Driven by the reactor; answers through the `PlaceFrames` and `OnFlight` callbacks the application wires |
 | `switcher` | the window switcher: every window, by application or one by one, in the order you last used them | who a switch offers and in what order (`domain::candidates`), what a switch steps between, a window or an application's stack (`domain::entries`), the cursor over the list (`domain::selection`), each switcher's session keys (`domain::trigger`), where the rows and a stack's cards go and the hit test (`domain::layout`), how the ring moves (`domain::motion`), when the popup appears (`domain::reveal`); switcher settings. `platform/`: the popup `NSPanel` and its layer tree, and the main-thread actor that draws it. Focus order is `windows`' and is read here |
 | `bar` | the menu bar across the top of every display | what each display's bar shows (`domain::model`: `BarInput` in, `BarModel` out, `Action` back), where each piece goes by its ink and the hit test (`domain::layout`), how each piece is set (`domain::style`, `domain::palette`), which menu extras are drawn (`domain::extras`), the words (`domain::format`, `domain::glyphs`); bar settings. `platform/`: the main-thread actor that owns every display's bar window, and the thread that pictures the menu extras. Sent its model by the reactor, never asks |
 
@@ -87,7 +87,7 @@ permission, builds every actor and joins them.
    the domain needs and an adapter fills is a port: it is declared in `domain/`
    and `platform/` imports it. `windows/domain/info.rs` and
    `windows/domain/request.rs` are those ports for `windows`;
-   `pictures/domain/target.rs` for `pictures`; `animation/domain/request.rs` for `animation`.
+   `pictures/domain/target.rs` for `pictures`; `transitions/domain/request.rs` for `transitions`.
    `objc2_core_foundation`'s `CGRect`/`CGPoint`/`CGSize` are exempt — they are
    the arithmetic every layout decision is in. So are the window server's plain
    value types (`SpaceId`, `WindowServerId`, `DisplayReconfigFlags`), which are
@@ -97,10 +97,13 @@ permission, builds every actor and joins them.
    "which windows are on this space" is a window-server query over window ids.
    `layout` and `workspaces` sit above both; `input` and `animation` beside them,
    reaching only for ids and frames. `pictures` reads the window server through
-   `windows` and is upstream of `animation`, `switcher` and `bar`: a flight's
-   plans and tiles ask it whether their pictures still fit, the flight engine and
-   the switcher hold its service's handle, and all three draw with its layer and
-   bitmap helpers. `switcher` and `bar` are the most
+   `windows` and is upstream of `animation`, `transitions`, `switcher` and `bar`:
+   a tile asks it whether its picture still fits, the flight engine and the
+   switcher hold its service's handle, and the renderer, the switcher and the bar
+   draw with its layer and bitmap helpers. `transitions` sits above `pictures` and
+   `animation`: its engine plays each flight on `animation`'s renderer with
+   `pictures`' pictures, and the reactor drives it; neither of the two names it.
+   `switcher` and `bar` are the most
    downstream: they draw what the reactor sends them, reading `windows`,
    `displays`, `workspaces` and `input` where they need to. `switcher` takes its colours from
    `bar::domain::palette`, and no other feature depends on either.
@@ -163,8 +166,7 @@ a dependency of it.
 | where | what | why it waits |
 |---|---|---|
 | `src/displays/screen.rs` | `ScreenCache` and the reads that fill it. The model left for `domain::screen` (`ScreenInfo`, `CoordinateConverter`, `menu_bar_inset`, `usable_frame`, the space ordering) | the `System` trait the cache is generic over is not a complete port: the generic `refresh_snapshot` calls `CGSManagedDisplayGetCurrentSpace` itself, and `ScreenCache.uuids` holds `CFRetained<CFString>`. Finishing it means widening the port to cover the space lookup and holding UUIDs as `String`, which changes the caching path rather than moving code. Named in `tests/architecture.rs` so nothing joins it |
-| `src/animation/` | motion and the coordination of a transition in one feature | being split into `pictures`, `animation` and `transitions`; capture and the picture cache have left for `pictures`. The plan and its progress are `docs/pictures-motion-transitions.md` |
-| `src/animation/platform/engine.rs` | 2.0k code lines, 1.4k of them one `impl FlightEngine`, plus 4.8k code lines of tests | the decisions have left (`domain/timing.rs`, `domain/flight.rs`, `domain/admission.rs`); what remains is the actor: the overlay, the timer, the captures it takes in flight, and the main-thread work they need. Its tests are still grouped by investigation episode (`exploration`, `render_stability_fix`, `still_passes`) rather than by unit, so they did not move with the decisions they cover |
+| `src/transitions/platform/engine.rs` | 2.0k code lines, 1.4k of them one `impl FlightEngine`, plus 4.8k code lines of tests | the decisions are in `transitions/domain/`; what remains is the actor: the overlay it drives, the timer, the captures it takes in flight, and the main-thread work they need. Its lifecycle is still its own fields; step 4 of `docs/pictures-motion-transitions.md` replaces them with `domain/lifecycle.rs`. Its tests are still grouped by investigation episode (`exploration`, `render_stability_fix`, `still_passes`) rather than by unit, so they did not move with the decisions they cover |
 | `src/app/config/` | one `Settings` struct that every feature's fields hang off, filled from one file | it depends on every feature and nothing depends on it, so it is a hub at the edge, which is the tolerable kind. The file's sections are niri's, not the features', and `config/kdl/apply.rs` is the one place that maps one onto the other |
 | `src/workspaces/broadcast.rs` | `LayoutEngine` sends IPC events itself | belongs to `app/api/`, driven by `EventResponse`; needs the reactor to own the broadcast channel |
 | `src/workspaces/engine.rs` | 3.3k code lines orchestrating workspaces, floating, persistence and display affinity. Its three dispatchers went from 908 lines to 482; what left them is named (`on_windows_on_screen_updated`, `move_window_to_workspace`, the three toggles) | the seam to `layout` is clean (`ScrollingLayoutSystem`). The largest remaining methods are `handle_command` (287), `calculate_layout_with_virtual_workspaces` (207), `move_window_to_workspace` (176) and `on_windows_on_screen_updated` (155). The first is 20 small arms and reads; the other three are single jobs that would need splitting on their own logic rather than on a dispatch boundary |

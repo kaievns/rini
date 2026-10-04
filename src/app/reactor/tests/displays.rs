@@ -2238,11 +2238,11 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
     });
 
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
 
     reactor.publish_animation_display_for(Some(built_in_space));
     let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::animation::platform::engine::Event::SetDisplay { id, .. } = published else {
+    let crate::transitions::platform::engine::Event::SetDisplay { id, .. } = published else {
         panic!("expected SetDisplay, got {published:?}");
     };
     assert_eq!(
@@ -2252,7 +2252,7 @@ fn the_animation_overlay_follows_the_space_being_animated_not_the_active_display
 
     reactor.publish_animation_display();
     let (_, published) = animation_rx.try_recv().expect("a display should be published");
-    let crate::animation::platform::engine::Event::SetDisplay { id, .. } = published else {
+    let crate::transitions::platform::engine::Event::SetDisplay { id, .. } = published else {
         panic!("expected SetDisplay, got {published:?}");
     };
     assert_eq!(
@@ -2277,13 +2277,13 @@ fn the_animation_overlay_takes_the_scale_of_its_display() {
     screens[1].scale = 1.0;
     reactor.handle_event(space_state_event_from_screens(screens));
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let mut pictures = reactor.connect_test_pictures();
 
     let mut scale_for = |reactor: &mut Reactor, space: u64| {
         reactor.publish_animation_display_for(Some(SpaceId::new(space)));
         let overlay = match animation_rx.try_recv().expect("a display should be published").1 {
-            crate::animation::platform::engine::Event::SetDisplay { scale, .. } => scale,
+            crate::transitions::platform::engine::Event::SetDisplay { scale, .. } => scale,
             other => panic!("expected SetDisplay, got {other:?}"),
         };
         match pictures_asked(&mut pictures).as_slice() {
@@ -2309,7 +2309,7 @@ fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
         vec![Some(SpaceId::new(1))],
     ));
     let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.workspace_animation_tx = Some(animation_tx);
+    reactor.communication_manager.transitions_tx = Some(animation_tx);
     let mut pictures = reactor.connect_test_pictures();
 
     let mut picture_bar = |reactor: &mut Reactor| {
@@ -2321,7 +2321,7 @@ fn the_overlay_pictures_a_bar_only_when_rini_draws_none() {
             other => panic!("expected the display, got {other:?}"),
         };
         match animation_rx.try_recv().expect("a display should be published").1 {
-            crate::animation::platform::engine::Event::SetDisplay { picture_bar, .. } => {
+            crate::transitions::platform::engine::Event::SetDisplay { picture_bar, .. } => {
                 assert_eq!(picture_bar, pictured, "the overlay draws what is pictured");
                 picture_bar
             }

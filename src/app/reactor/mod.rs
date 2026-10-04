@@ -177,7 +177,7 @@ impl std::ops::Deref for ReactorHandle {
 pub enum Event {
     /// Place these windows at these frames now, with no animation.
     ///
-    /// Sent by the overlay animation actor once its animation is far enough along that the real
+    /// Sent by the flight engine once its flight is far enough along that the real
     /// windows are safely hidden behind it. Applying them any earlier let the windows visibly jump
     /// into place BEFORE the overlay appeared, so a switch read as a flicker followed by a slide.
     #[serde(skip)]
@@ -555,7 +555,7 @@ impl Reactor {
         event_tap_tx: event_tap::Sender,
         broadcast_tx: BroadcastSender,
         cursor_warp_tx: Option<crate::displays::platform::cursor_warp::Sender>,
-        workspace_animation_tx: Option<crate::animation::platform::engine::Sender>,
+        transitions_tx: Option<crate::transitions::platform::engine::Sender>,
         pictures: Option<crate::pictures::platform::service::Pictures>,
         switcher_tx: Option<crate::switcher::platform::actor::Sender>,
         bar_tx: Option<crate::bar::platform::actor::Sender>,
@@ -576,7 +576,7 @@ impl Reactor {
         );
         reactor.communication_manager.event_tap_tx = Some(event_tap_tx);
         reactor.communication_manager.cursor_warp_tx = cursor_warp_tx;
-        reactor.communication_manager.workspace_animation_tx = workspace_animation_tx;
+        reactor.communication_manager.transitions_tx = transitions_tx;
         reactor.communication_manager.pictures = pictures;
         reactor.switcher_tx = switcher_tx;
         reactor.bar.tx = bar_tx;
@@ -652,7 +652,7 @@ impl Reactor {
                 event_tap_tx: None,
                 gesture_tap_tx: None,
                 cursor_warp_tx: None,
-                workspace_animation_tx: None,
+                transitions_tx: None,
                 pictures: None,
                 raise_manager_tx,
                 event_broadcaster: broadcast_tx,
@@ -3571,7 +3571,7 @@ impl Reactor {
             .into_iter()
             .map(|info| (info.id, info.frame))
             .collect();
-        let (writes, skipped) = crate::animation::domain::motion::frame_writes::writes_to_send(
+        let (writes, skipped) = crate::transitions::domain::frame_writes::writes_to_send(
             frames,
             display,
             |wid| {
@@ -3713,7 +3713,7 @@ impl Reactor {
         delta: CGPoint,
         moved: Option<(WindowId, Direction)>,
     ) -> bool {
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return false;
         };
         let Some(screen) = self
@@ -3764,7 +3764,7 @@ impl Reactor {
         let from_offset = CGPoint::new(delta.x, delta.y);
         let to_offset = CGPoint::new(0.0, 0.0);
         let nudge = moved.and_then(|(window, direction)| {
-            crate::animation::domain::motion::strip_move::stage_move(
+            crate::transitions::domain::strip_move::stage_move(
                 &mut windows,
                 window,
                 direction,
@@ -3778,7 +3778,7 @@ impl Reactor {
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::animation::platform::engine::Event::AnimateSurface {
+        _ = tx.send(crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -3799,7 +3799,7 @@ impl Reactor {
         layout: &[(WindowId, CGRect)],
         display_bounds: CGRect,
         pin_floating: bool,
-    ) -> Vec<crate::animation::platform::engine::SurfaceWindow> {
+    ) -> Vec<crate::transitions::domain::request::SurfaceWindow> {
         let mut windows = Vec::with_capacity(layout.len());
         for (wid, frame) in layout {
             let Some(window) = self.state.windows.window(*wid) else {
@@ -3807,7 +3807,7 @@ impl Reactor {
             };
             let Some(server_id) = window.info.sys_id else { continue };
             let floating = self.layout_manager.layout_engine.is_window_floating(*wid);
-            windows.push(crate::animation::platform::engine::SurfaceWindow {
+            windows.push(crate::transitions::domain::request::SurfaceWindow {
                 window: *wid,
                 server_id,
                 frame: CGRect::new(
@@ -3835,7 +3835,7 @@ impl Reactor {
         {
             return;
         }
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return;
         };
         let Some(screen) = self
@@ -3877,7 +3877,7 @@ impl Reactor {
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
         tracing::debug!(?direction, windows = windows.len(), "edge bounce");
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::animation::platform::engine::Event::Bounce {
+        _ = tx.send(crate::transitions::platform::engine::Event::Bounce {
             windows,
             overshoot,
             final_frames: layout,
@@ -3889,7 +3889,7 @@ impl Reactor {
     /// Builds and starts a strip-surface animation for a workspace switch, if one is warranted.
     ///
     /// Returns true when the strip surface took over, in which case the caller must not touch the real
-    /// windows: the animation actor asks for them once it is covering them.
+    /// windows: the flight engine asks for them once it is covering them.
     ///
     /// Every workspace between the two is laid out and stacked below the one above it, so a jump from
     /// 1 to 4 scrolls past 2 and 3. Without that, a four-workspace jump looks exactly like a
@@ -3906,7 +3906,7 @@ impl Reactor {
             return false;
         }
         tracing::debug!(from_index, to_index, "strip switch requested");
-        let Some(tx) = self.communication_manager.workspace_animation_tx.clone() else {
+        let Some(tx) = self.communication_manager.transitions_tx.clone() else {
             return false;
         };
         let Some(screen) = self
@@ -3950,7 +3950,7 @@ impl Reactor {
         let row_pitch = screen.frame.size.height;
         let height = row_pitch;
 
-        let mut windows: Vec<crate::animation::platform::engine::SurfaceWindow> = Vec::new();
+        let mut windows: Vec<crate::transitions::domain::request::SurfaceWindow> = Vec::new();
         let mut final_frames: Vec<(WindowId, CGRect)> = Vec::new();
         for index in low..=high {
             let Some((workspace_id, _)) = workspaces.get(index) else {
@@ -3966,16 +3966,16 @@ impl Reactor {
             // Stacked below the workspace above it, separated by the menu bar inset, and expressed
             // relative to the display's own origin so the overlay's space needs no further translation.
             let row =
-                crate::animation::domain::motion::strip_stack::row_of(index, from_index, to_index);
+                crate::transitions::domain::strip_stack::row_of(index, from_index, to_index);
             for (wid, frame) in layout {
                 let Some(window) = self.state.windows.window(wid) else {
                     continue;
                 };
                 let Some(server_id) = window.info.sys_id else { continue };
-                windows.push(crate::animation::platform::engine::SurfaceWindow {
+                windows.push(crate::transitions::domain::request::SurfaceWindow {
                     window: wid,
                     server_id,
-                    frame: crate::animation::domain::motion::strip_stack::strip_frame(
+                    frame: crate::transitions::domain::strip_stack::strip_frame(
                         frame,
                         display_bounds.origin,
                         row,
@@ -4012,7 +4012,7 @@ impl Reactor {
         }
 
         let travel =
-            crate::animation::domain::motion::strip_stack::travel(from_index, to_index, height);
+            crate::transitions::domain::strip_stack::travel(from_index, to_index, height);
         let (from_offset, to_offset) = (travel.from, travel.to);
         let duration = std::time::Duration::from_secs_f64(
             (self.config.settings.animation_duration.max(0.0)) * travel.duration_stretch,
@@ -4033,7 +4033,7 @@ impl Reactor {
         // than an animation one, and it is silent, so say so.
         if let Some(target) = self.layout_manager.layout_engine.focused_window()
             && let Some(placed) = windows.iter().find(|window| window.window == target)
-            && !crate::animation::domain::motion::strip_stack::lands_in_view(
+            && !crate::transitions::domain::strip_stack::lands_in_view(
                 placed.frame,
                 display_bounds.size.width,
             )
@@ -4047,7 +4047,7 @@ impl Reactor {
         }
 
         self.publish_animation_display_for(Some(space));
-        _ = tx.send(crate::animation::platform::engine::Event::AnimateSurface {
+        _ = tx.send(crate::transitions::platform::engine::Event::AnimateSurface {
             windows,
             from_offset,
             to_offset,
@@ -4057,7 +4057,7 @@ impl Reactor {
             nudge: None,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:
-        // the animation actor defers it until the flight lifts (`src/animation/docs/animation-smoothness.md`).
+        // the pictures service holds a warm until the quiet after the flight (`src/animation/docs/animation-smoothness.md`).
         self.warm_all_workspaces(space);
         true
     }
@@ -4157,8 +4157,8 @@ impl Reactor {
         };
         let frame = objc2_core_graphics::CGDisplayBounds(screen.id.as_u32());
         let picture_bar = !self.config.settings.bar.enabled;
-        if let Some(tx) = &self.communication_manager.workspace_animation_tx {
-            _ = tx.send(crate::animation::platform::engine::Event::SetDisplay {
+        if let Some(tx) = &self.communication_manager.transitions_tx {
+            _ = tx.send(crate::transitions::platform::engine::Event::SetDisplay {
                 id: screen.id.as_u32(),
                 frame,
                 scale: screen.scale,

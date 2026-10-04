@@ -263,9 +263,12 @@ destination for a window already moving.
 
 ## Where it lives
 
-`src/animation/domain/motion/` is the planning, `src/animation/domain/motion/strip_move.rs` the move
-along the strip, `src/animation/domain/admission.rs` the mid-flight rules,
-`src/animation/platform/engine.rs` and `overlay.rs` the Core Animation side. The pictures a flight
+`src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
+depth bands, the edge bounce and the nudge. `src/animation/platform/overlay.rs` plays it on Core
+Animation. When each step happens is `src/transitions/`: `src/transitions/domain/strip_move.rs` stages
+the move along the strip, `src/transitions/domain/admission.rs` and `src/transitions/domain/flight.rs`
+hold the mid-flight rules, and `src/transitions/platform/engine.rs` is the actor that runs every
+flight. The pictures a flight
 draws are `src/pictures/`: whether one covers and fits its window, the stand-in, the blur, and the
 schedule that holds background capture off while a flight runs in `src/pictures/domain/`; the
 captures in `src/pictures/platform/` (`src/pictures/platform/skylight.rs` for the framed capture with

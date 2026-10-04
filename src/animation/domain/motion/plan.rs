@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use objc2_core_foundation::{CGPoint, CGRect};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use rini_geometry::stretch::is_a_resize;
-use crate::animation::domain::motion::surface::{SurfaceWindow, TileGeometry, pan_travel};
+use crate::animation::domain::motion::surface::{SurfaceGeometry, TileGeometry, pan_travel};
 use rini_geometry::to_overlay_space;
 use rini_core::ids::WindowId;
 use rini_geometry::SameAs;
@@ -68,9 +68,9 @@ pub struct GroupMember {
 pub enum Member {
     /// Rigid: rides its container. No per-tile animation.
     Rigid { key: GroupKey, rel: CGRect },
-    /// Its size changes: own layer under `StripLoose`, animated as a resize from `from` to `to`.
+    /// Its size changes: own layer in `GroupKey::Loose`, animated as a resize from `from` to `to`.
     Changing { from: CGRect, to: CGRect },
-    /// New window: own layer under `StripLoose`, from spawn frame to slot, stretched until reveal.
+    /// New window: own layer in `GroupKey::Loose`, from spawn frame to slot, stretched until reveal.
     Entrance { from: CGRect, to: CGRect },
     /// In the floating container; animated per tile only when `from != to`.
     Floating { from: CGRect, to: CGRect },
@@ -96,7 +96,12 @@ impl Member {
     }
 }
 
-/// A pass, described as rigid pieces. Pure output of [`reflow_plan`] / [`strip_plan`].
+/// Where an entering window grows in from: zero width at its own left edge, full height.
+pub fn entrance_from(to: CGRect) -> CGRect {
+    CGRect::new(to.origin, CGSize::new(0.0, to.size.height))
+}
+
+/// A pass, described as rigid pieces. Pure output of [`reflow_plan`] / [`surface_plan`].
 /// Every rect is in overlay space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReflowPlan {
@@ -832,8 +837,8 @@ pub fn plan_from_tiles<T: TileGeometry>(tiles: &[T]) -> ReflowPlan {
 /// crosses it is a piece of its own, grouped by the vector it travels. The surface is already
 /// overlay space. Pinned windows stand in the floating container; unpinned floating windows ride
 /// it by the strip's travel.
-pub fn surface_plan(
-    windows: &[SurfaceWindow],
+pub fn surface_plan<W: SurfaceGeometry>(
+    windows: &[W],
     from_offset: CGPoint,
     to_offset: CGPoint,
 ) -> ReflowPlan {
@@ -841,22 +846,23 @@ pub fn surface_plan(
     let mut plan = ReflowPlan::empty();
     // A pan pins its floating windows; a switch pins none. Both in one pass would need the floating
     // container to move some tiles and not others, so that case falls back to per-tile floating moves.
-    let mixed = windows.iter().any(|w| w.pinned) && windows.iter().any(|w| w.floating && !w.pinned);
+    let mixed =
+        windows.iter().any(|w| w.pinned()) && windows.iter().any(|w| w.floating() && !w.pinned());
     for window in windows {
         let (from, to) = window.travel(from_offset, to_offset);
-        if window.pinned {
-            plan.floating.push((window.window, from, from));
-        } else if window.floating {
+        if window.pinned() {
+            plan.floating.push((window.window(), from, from));
+        } else if window.floating() {
             if mixed {
-                plan.floating.push((window.window, from, to));
+                plan.floating.push((window.window(), from, to));
             } else {
-                plan.floating.push((window.window, from, from));
+                plan.floating.push((window.window(), from, from));
                 plan.floating_travel = travel;
             }
-        } else if window.from.is_some() {
-            plan.place(window.window, from, vector_of(from, to));
+        } else if window.from().is_some() {
+            plan.place(window.window(), from, vector_of(from, to));
         } else {
-            plan.place(window.window, from, travel);
+            plan.place(window.window(), from, travel);
         }
     }
     plan
@@ -1129,21 +1135,19 @@ mod tests {
     fn the_floating_container_bounces_only_vertically_and_never_steps() {
         let sideways = CGPoint::new(-EDGE_BOUNCE_OVERSHOOT, 0.0);
         let upward = CGPoint::new(0.0, -EDGE_BOUNCE_OVERSHOOT);
-        let steps = [
-            crate::animation::domain::motion::strip_move::nudge(1728.0, Direction::Right),
-            crate::animation::domain::motion::strip_move::nudge(1728.0, Direction::Left),
-        ];
+        let share = 1728.0 * crate::animation::domain::motion::nudge::NUDGE_SHARE;
+        let steps = [CGPoint::new(-share, 0.0), CGPoint::new(share, 0.0)];
         for key in [GroupKey::Rigid(0), GroupKey::Rigid(3), GroupKey::Loose] {
             assert!(carries_out_and_back(key, sideways), "{key:?}");
             assert!(carries_out_and_back(key, upward), "{key:?}");
             for step in steps {
-                assert!(carries_out_and_back(key, step.unwrap()), "{key:?}");
+                assert!(carries_out_and_back(key, step), "{key:?}");
             }
         }
         assert!(!carries_out_and_back(GroupKey::Floating, sideways));
         assert!(carries_out_and_back(GroupKey::Floating, upward));
         for step in steps {
-            assert!(!carries_out_and_back(GroupKey::Floating, step.unwrap()));
+            assert!(!carries_out_and_back(GroupKey::Floating, step));
         }
     }
 
@@ -1238,5 +1242,16 @@ mod tests {
             assert_eq!(member.start_frame(), from, "{member:?}");
             assert_ne!(member.start_frame(), to);
         }
+    }
+
+    /// An entering window grows from zero width at its own left edge, so it unfurls rightward from
+    /// where it will sit rather than sliding in from somewhere else.
+    #[test]
+    fn an_entrance_grows_from_no_width_at_its_own_left_edge() {
+        let to = rect(300., 50., 400., 600.);
+        let from = entrance_from(to);
+        assert_eq!(from.origin, to.origin);
+        assert_eq!(from.size.width, 0.0);
+        assert_eq!(from.size.height, to.size.height, "full height from the start");
     }
 }

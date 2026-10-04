@@ -1,8 +1,3 @@
-//! Flight plans, easing, z-bands, and the decisions the flight engine makes. Pure geometry.
+//! How things move, as pure geometry over ids and rects.
 
-pub mod admission;
-pub mod flight;
 pub mod motion;
-pub mod pass;
-pub mod request;
-pub mod timing;

@@ -1,25 +1,32 @@
-//! Drives the capture-based animation overlay: owns the overlay, and is a client of the pictures
-//! service (`crate::pictures::platform::service`) for what it draws.
-//! Runs on the main thread because Core Animation requires it.
+//! The flight engine: the actor that runs every transition. It owns the renderer
+//! (`crate::animation::platform::overlay`) and is a client of the pictures service
+//! (`crate::pictures::platform::service`) for what it draws. Runs on the main thread because Core
+//! Animation requires it.
 //!
 //! Design in `src/animation/docs/animation-smoothness.md`; measurements in `src/animation/docs/capture-overlay-research.md`.
 
-use crate::animation::domain::admission::*;
-use crate::animation::domain::flight::*;
-use crate::animation::domain::request::AnimationRequest;
-use crate::animation::domain::timing::*;
-use crate::pictures::domain::schedule::{
-    Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority, REVEAL_CHASE_ATTEMPTS,
-    REVEAL_CHASE_INTERVAL,
-};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::MainThreadMarker;
+use rini_core::ids::{WindowId, WindowServerId};
+use rini_geometry::{SameAs, to_overlay_space};
+use rini_runloop::channel;
+use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
+use crate::animation::domain::motion::accents::{
+    NudgeAdmission, OutAndBack, OutAndBacks, nudge_admission,
+};
+use crate::animation::domain::motion::nudge::{NUDGE_STRETCH, flight_curve};
+use crate::animation::domain::motion::plan::{self, entrance_from};
+use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
 use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
+use crate::pictures::domain::schedule::{
+    Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority, REVEAL_CHASE_ATTEMPTS,
+    REVEAL_CHASE_INTERVAL,
+};
 use crate::pictures::domain::settle::chase_settled;
 use crate::pictures::domain::stand_in::picture_or_stand_in;
 use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
@@ -28,18 +35,11 @@ use crate::pictures::platform::service::Pictures;
 use crate::pictures::platform::skylight::{
     capture_via_framed_with_dressing, is_wholly_on_a_display,
 };
-use rini_core::ids::WindowId;
-use rini_core::ids::WindowServerId;
-use rini_geometry::SameAs;
-use rini_runloop::channel;
-use rini_runloop::run_loop::RepeatingTimer;
-
-pub(crate) use crate::animation::domain::motion::plan;
-use crate::animation::domain::motion::strip_move::{NUDGE_STRETCH, flight_curve};
-pub use crate::animation::domain::motion::surface::SurfaceWindow;
-pub(crate) use crate::animation::domain::motion::surface::pan_travel;
-use rini_geometry::to_overlay_space;
-use crate::animation::domain::motion::travel::{TilePath, is_moving, tile_path};
+use crate::transitions::domain::admission::*;
+use crate::transitions::domain::flight::*;
+use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
+use crate::transitions::domain::timing::*;
+use crate::transitions::domain::travel::{TilePath, is_moving, tile_path};
 
 /// One window's part in an animation, as the caller describes it.
 #[derive(Debug)]
@@ -2328,7 +2328,7 @@ fn log_dressing(
 mod tests {
     use super::*;
     use crate::animation::domain::motion::surface::surface_travel;
-    use crate::animation::domain::motion::travel::{
+    use crate::transitions::domain::travel::{
         neighbour_travel, resolve_end, resolve_start, travel_subject, worth_animating,
     };
 
@@ -5174,7 +5174,7 @@ mod tests {
         use super::preservation::{DISPLAY, Gen, RUNS};
         use super::rigid_groups::random_requests;
         use super::*;
-        use crate::animation::platform::engine::plan::*;
+        use crate::transitions::platform::engine::plan::*;
 
         fn wid(idx: u32) -> WindowId {
             WindowId {
@@ -5827,7 +5827,7 @@ mod tests {
     mod rigid_groups {
         use super::preservation::{DISPLAY, Gen, RUNS, stacked};
         use super::*;
-        use crate::animation::platform::engine::plan::*;
+        use crate::transitions::platform::engine::plan::*;
         use rini_geometry::stretch::is_a_resize;
 
         fn wid(idx: u32) -> WindowId {
@@ -6397,7 +6397,7 @@ mod tests {
                 vec![(wid(1), settings, shifted(settings, 40.0, 20.0))]
             );
             let flight = FlightPlan::from(plan);
-            let targets = crate::animation::platform::overlay::animation_targets(&flight);
+            let targets = crate::animation::domain::motion::plan::animation_targets(&flight);
             assert_eq!(targets.len(), 1, "the floating tile flies on its own");
         }
 
@@ -6565,7 +6565,7 @@ mod tests {
             plan.entrances.push((wid(9), from, to));
             assert_eq!(plan.member(wid(9)), Some(Member::Entrance { from, to }));
             let targets =
-                crate::animation::platform::overlay::animation_targets(&FlightPlan::from(plan));
+                crate::animation::domain::motion::plan::animation_targets(&FlightPlan::from(plan));
             assert_eq!(targets.len(), 1);
         }
 
@@ -6850,7 +6850,7 @@ mod tests {
         /// and nothing else.
         #[test]
         fn animation_targets_name_every_moving_piece_once_and_no_rigid_member() {
-            use crate::animation::platform::overlay::{AnimationTarget, animation_targets};
+            use crate::animation::domain::motion::plan::{AnimationTarget, animation_targets};
             let mut rng = Gen(137);
             for run in 0..RUNS {
                 let requests = random_requests(&mut rng);
@@ -6937,8 +6937,8 @@ mod tests {
         use super::*;
         use crate::animation::domain::motion::easing::{EASE_IN_OUT, MOTION_CURVE};
         use crate::animation::domain::motion::glide::Leg;
-        use crate::animation::domain::motion::strip_move::stage_move;
-        use crate::animation::platform::engine::plan::*;
+        use crate::transitions::domain::strip_move::stage_move;
+        use crate::transitions::platform::engine::plan::*;
         use crate::pictures::platform::picture::test_picture;
         use rini_ipc::protocol::Direction;
 

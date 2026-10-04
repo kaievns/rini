@@ -4,34 +4,23 @@
 //! different destination for a window already moving, or with a window the first pass had not placed.
 //! Admitting one into the other without a visible jump is what these decisions are for.
 
-use std::time::Instant;
-
 use objc2_core_foundation::{CGRect, CGSize};
-
 use rini_core::ids::WindowId;
-use rini_geometry::SameAs;
-
-use rini_geometry::to_overlay_space;
-use crate::animation::domain::timing::{OutAndBack, OutAndBacks};
+use rini_geometry::{SameAs, to_overlay_space};
 
 /// A window that joins the animation as soon as it has a picture. The flight holds at frame zero
 /// for it. See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
 #[derive(Debug, Clone)]
-pub(in crate::animation) struct PendingEntrance {
-    pub(in crate::animation) window: WindowId,
+pub(in crate::transitions) struct PendingEntrance {
+    pub(in crate::transitions) window: WindowId,
     /// Destination, in the overlay's coordinate space.
-    pub(in crate::animation) to: CGRect,
-    pub(in crate::animation) floating: bool,
-}
-
-/// Where an entering window grows in from: zero width at its own left edge, full height.
-pub(in crate::animation) fn entrance_from(to: CGRect) -> CGRect {
-    CGRect::new(to.origin, CGSize::new(0.0, to.size.height))
+    pub(in crate::transitions) to: CGRect,
+    pub(in crate::transitions) floating: bool,
 }
 
 /// What became of a tile offered to an animation in flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::animation) enum Admitted {
+pub(in crate::transitions) enum Admitted {
     /// Same window, same destination: a redundant pass. Nothing restarts, so rapid presses
     /// neither restart nor extend the flight.
     Redundant,
@@ -42,7 +31,7 @@ pub(in crate::animation) enum Admitted {
 }
 
 /// The merge decision for one tile.
-pub(in crate::animation) fn merge_action(
+pub(in crate::transitions) fn merge_action(
     current_to: Option<CGRect>,
     incoming_to: CGRect,
 ) -> Admitted {
@@ -54,7 +43,7 @@ pub(in crate::animation) fn merge_action(
 }
 
 /// Folds a later pass's destinations into the flight's; latest frame per window wins.
-pub(in crate::animation) fn merge_final_frames(
+pub(in crate::transitions) fn merge_final_frames(
     existing: &mut Vec<(WindowId, CGRect)>,
     incoming: Vec<(WindowId, CGRect)>,
 ) -> bool {
@@ -75,7 +64,7 @@ pub(in crate::animation) fn merge_final_frames(
 
 /// Points a flight's reserved entrances at a later pass's destinations; an entrance has no tile
 /// for `merge_pass` to retarget. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn retarget_entrances(
+pub(in crate::transitions) fn retarget_entrances(
     entrances: &mut [PendingEntrance],
     final_frames: &[(WindowId, CGRect)],
     display: CGRect,
@@ -97,7 +86,7 @@ pub(in crate::animation) fn retarget_entrances(
 
 /// The frames a coalescing merge must send again: `step` will not place frame-zero frames twice.
 /// See "The reservation fallback" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn reapply_set(
+pub(in crate::transitions) fn reapply_set(
     frames_applied: bool,
     in_flight: bool,
     changed: bool,
@@ -107,7 +96,7 @@ pub(in crate::animation) fn reapply_set(
 }
 
 /// A newly opened window's reservation, and the hold entry it adds to `awaiting`.
-pub(in crate::animation) fn entrance_reservation(
+pub(in crate::transitions) fn entrance_reservation(
     window: WindowId,
     to: CGRect,
     floating: bool,
@@ -118,42 +107,13 @@ pub(in crate::animation) fn entrance_reservation(
 /// Whether a flight that does not hold chases the real picture of a window flying as the stand-in:
 /// when the window lands on this display, where a framed capture sees it once its frame is applied.
 /// One parked at both ends has nothing on screen to capture.
-pub(in crate::animation) fn chases_stand_in(destination: CGRect, display: CGRect) -> bool {
+pub(in crate::transitions) fn chases_stand_in(destination: CGRect, display: CGRect) -> bool {
     !rini_geometry::is_off_screen(display, destination)
-}
-
-/// What becomes of a move's nudge. See "The move flight" in
-/// `src/animation/docs/animation-smoothness.md`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(in crate::animation) enum NudgeAdmission {
-    /// It steps the strip from now, and the flight is stretched to carry it.
-    Start,
-    /// The flight is still collecting passes, which recomposes its containers and would drop it:
-    /// it starts when the flight does.
-    Wait,
-    /// One is still playing: not in this flight, which keeps its plain duration.
-    Skip,
-}
-
-/// The nudge's admission from what is playing and whether the flight moves yet. An edge bounce
-/// playing never holds it off.
-pub(in crate::animation) fn nudge_admission(
-    playing: &OutAndBacks,
-    now: Instant,
-    moving: bool,
-) -> NudgeAdmission {
-    if !playing.admits(OutAndBack::Nudge, now) {
-        NudgeAdmission::Skip
-    } else if !moving {
-        NudgeAdmission::Wait
-    } else {
-        NudgeAdmission::Start
-    }
 }
 
 /// How a newly opened window enters a flight.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(in crate::animation) enum EntranceDecision {
+pub(in crate::transitions) enum EntranceDecision {
     /// Its tile travels from the frame macOS showed it at to its slot.
     Travel { from: CGRect, to: CGRect },
     /// No usable picture at spawn: a reservation held for the first picture, with the reason.
@@ -161,7 +121,7 @@ pub(in crate::animation) enum EntranceDecision {
 }
 
 /// `Travel` iff the server reports a sized frame, the spawn capture is usable and budget remains.
-pub(in crate::animation) fn entrance_plan(
+pub(in crate::transitions) fn entrance_plan(
     spawn: Option<CGRect>,
     slot: CGRect,
     picture_usable: bool,
@@ -184,7 +144,7 @@ pub(in crate::animation) fn entrance_plan(
 
 /// What a fresh flight does at frame zero: whether it holds, which windows the chase follows, and
 /// which frames go out now (all when holding, else the newcomers' slots so the chase can capture).
-pub(in crate::animation) fn frame_zero_work(
+pub(in crate::transitions) fn frame_zero_work(
     awaiting: &[(WindowId, CGSize)],
     chase: &[(WindowId, CGSize)],
     final_frames: &[(WindowId, CGRect)],
@@ -339,17 +299,6 @@ mod tests {
             retarget_entrances(&mut entrances, &[(window(1), frame)], display),
             0
         );
-    }
-
-    /// An entering window grows from zero width at its own left edge, so it unfurls rightward from
-    /// where it will sit rather than sliding in from somewhere else.
-    #[test]
-    fn an_entrance_grows_from_no_width_at_its_own_left_edge() {
-        let to = rect(300., 50., 400., 600.);
-        let from = entrance_from(to);
-        assert_eq!(from.origin, to.origin);
-        assert_eq!(from.size.width, 0.0);
-        assert_eq!(from.size.height, to.size.height, "full height from the start");
     }
 
     /// The reapply set exists for one case: a coalescing merge after frame zero has already gone out.
@@ -527,42 +476,5 @@ mod tests {
         );
         assert!(!chases_stand_in(rect(1727.0, 1085.0, 1720.0, 1081.0), display));
         assert!(!chases_stand_in(rect(-3446.0, 32.0, 1720.0, 1081.0), display));
-    }
-
-    fn nudging_since(now: Instant) -> OutAndBacks {
-        let mut playing = OutAndBacks::default();
-        playing.start(OutAndBack::Nudge, now, std::time::Duration::from_millis(455));
-        playing
-    }
-
-    /// Every combination the engine meets: one playing holds a nudge off whatever else holds, and a
-    /// flight still collecting makes it wait.
-    #[test]
-    fn a_nudge_is_admitted_once_per_burst_and_waits_for_its_flight_to_move() {
-        use std::time::Duration;
-        let now = Instant::now();
-        let soon = now + Duration::from_millis(100);
-        let idle = OutAndBacks::default();
-        assert_eq!(nudge_admission(&idle, now, true), NudgeAdmission::Start);
-        assert_eq!(nudge_admission(&idle, now, false), NudgeAdmission::Wait);
-        for moving in [true, false] {
-            assert_eq!(
-                nudge_admission(&nudging_since(now), soon, moving),
-                NudgeAdmission::Skip,
-                "a press while the step plays starts no other"
-            );
-        }
-        let mut bouncing = OutAndBacks::default();
-        bouncing.start(OutAndBack::Bounce, now, Duration::from_millis(350));
-        assert_eq!(
-            nudge_admission(&bouncing, soon, true),
-            NudgeAdmission::Start,
-            "a bounce at the end never holds the step off"
-        );
-        assert_eq!(
-            nudge_admission(&nudging_since(now), now + Duration::from_millis(455), true),
-            NudgeAdmission::Start,
-            "once it is home the next press steps again"
-        );
     }
 }

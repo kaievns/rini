@@ -21,7 +21,7 @@ use super::timing::{
 
 /// Which of `tiles` to recapture mid-flight: the two ends of a focus change, and nothing else.
 /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn refresh_targets(
+pub(in crate::transitions) fn refresh_targets(
     previous: Option<WindowId>,
     current: Option<WindowId>,
     tiles: &[WindowId],
@@ -40,7 +40,7 @@ pub(in crate::animation) fn refresh_targets(
 /// A flight's recapture of the two ends of its focus change, in the passes at `REFRESH_PASSES_AT`.
 /// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 #[derive(Debug, Default)]
-pub(in crate::animation) struct FocusRefresh {
+pub(in crate::transitions) struct FocusRefresh {
     /// How many of the passes have been taken.
     passes: usize,
     /// When the first pass asked for its pictures.
@@ -54,7 +54,7 @@ pub(in crate::animation) struct FocusRefresh {
 impl FocusRefresh {
     /// Whether a pass is due at `progress`; takes it when it is. A first look that comes late skips
     /// the passes it overslept rather than taking them back to back.
-    pub(in crate::animation) fn take_pass(&mut self, progress: f64, allowed: bool) -> bool {
+    pub(in crate::transitions) fn take_pass(&mut self, progress: f64, allowed: bool) -> bool {
         let due = REFRESH_PASSES_AT.iter().filter(|&&at| progress >= at).count();
         if !allowed || due <= self.passes {
             return false;
@@ -64,12 +64,12 @@ impl FocusRefresh {
     }
 
     /// A pass asked for pictures of `targets` at `now`.
-    pub(in crate::animation) fn ask(&mut self, targets: Vec<WindowId>, now: Instant) {
+    pub(in crate::transitions) fn ask(&mut self, targets: Vec<WindowId>, now: Instant) {
         self.targets = targets;
         self.asked.get_or_insert(now);
     }
 
-    pub(in crate::animation) fn is_target(&self, window: WindowId) -> bool {
+    pub(in crate::transitions) fn is_target(&self, window: WindowId) -> bool {
         self.targets.contains(&window)
     }
 
@@ -80,13 +80,13 @@ impl FocusRefresh {
     /// refresh asked, shows the focus as it was; landing after the refresh's own, it would cut the tile
     /// back. Both are older than the ask: a capture's `taken` is never earlier than the capture began,
     /// on either route.
-    pub(in crate::animation) fn is_fresh(&self, window: WindowId, taken: Instant) -> bool {
+    pub(in crate::transitions) fn is_fresh(&self, window: WindowId, taken: Instant) -> bool {
         let shown = self.shown.iter().find(|(w, _)| *w == window).map(|(_, at)| *at);
         self.asked.is_some_and(|asked| taken >= asked) && shown.is_none_or(|shown| taken > shown)
     }
 
     /// The refresh cut a picture of `window` taken at `taken` onto its tile.
-    pub(in crate::animation) fn cut(&mut self, window: WindowId, taken: Instant) {
+    pub(in crate::transitions) fn cut(&mut self, window: WindowId, taken: Instant) {
         match self.shown.iter_mut().find(|(w, _)| *w == window) {
             Some(entry) => entry.1 = taken,
             None => self.shown.push((window, taken)),
@@ -95,7 +95,7 @@ impl FocusRefresh {
 }
 
 /// How a fresh group of tiles begins moving.
-pub(in crate::animation) enum GroupStart {
+pub(in crate::transitions) enum GroupStart {
     /// Wait one `COALESCE_WINDOW` for the reactor's layout passes to settle. For layout changes.
     Coalesced,
     /// Move now. For strip movements, which arrive once per keystroke.
@@ -104,7 +104,7 @@ pub(in crate::animation) enum GroupStart {
 
 /// The unmanaged window tracing `frame` as its border, if any. A parked window never traces and is
 /// never traced. See "Window borders during animations" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn companion_of(
+pub(in crate::transitions) fn companion_of(
     frame: CGRect,
     candidates: &[(WindowServerId, CGRect)],
     display: CGRect,
@@ -131,7 +131,7 @@ pub(in crate::animation) fn companion_of(
 
 /// What a tile is doing when a picture of its window lands mid-flight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::animation) enum TileState {
+pub(in crate::transitions) enum TileState {
     /// No tile for this window in the flight.
     NotTiled,
     /// The flight holds for this window's first picture: an entrance reservation.
@@ -148,7 +148,7 @@ pub(in crate::animation) enum TileState {
 
 /// What to do with a picture that landed while a flight is running, after it is cached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::animation) enum SwapDecision {
+pub(in crate::transitions) enum SwapDecision {
     /// A held flight takes it at frame zero (`claim_reveal`).
     Claim,
     /// A moving flight adds the entrance late (`admit_entrance`).
@@ -161,7 +161,7 @@ pub(in crate::animation) enum SwapDecision {
 
 /// Whether a picture landing mid-flight may change what a tile draws. `progress` is `None`
 /// before the flight starts moving. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn should_swap_mid_flight(
+pub(in crate::transitions) fn should_swap_mid_flight(
     state: TileState,
     settled: bool,
     fresh: bool,
@@ -194,7 +194,7 @@ pub(in crate::animation) fn should_swap_mid_flight(
 /// What a pass asks for the windows it has no picture of. Frame zero while its flight has not yet
 /// begun holding or moving, since a capture landing then can still serve it; otherwise a warm, which
 /// waits out the flight for the next one.
-pub(in crate::animation) fn missing_pictures_priority(started: bool, holding: bool) -> Priority {
+pub(in crate::transitions) fn missing_pictures_priority(started: bool, holding: bool) -> Priority {
     if started || holding {
         Priority::Warm
     } else {
@@ -204,12 +204,12 @@ pub(in crate::animation) fn missing_pictures_priority(started: bool, holding: bo
 
 /// Whether a background capture landing now has its window's hairline harvested: only at rest, since
 /// in flight the quiet after the lift harvests instead, and only for a capture that covered its window.
-pub(in crate::animation) fn harvests_landing(flying: bool, covered: bool) -> bool {
+pub(in crate::transitions) fn harvests_landing(flying: bool, covered: bool) -> bool {
     !flying && covered
 }
 
 /// Which animated windows `finish` harvests a hairline for: each at most once per flight.
-pub(in crate::animation) fn finish_harvest_set(
+pub(in crate::transitions) fn finish_harvest_set(
     animated: &[WindowId],
     harvested: &HashSet<WindowId>,
     requested: &[WindowId],
@@ -230,7 +230,7 @@ pub(in crate::animation) fn finish_harvest_set(
 
 /// Whether an in-flight merge leaves the already-applied frames stale. A parked window has no
 /// tile, so `frames_changed` counts too. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn mark_stale_on_untiled_change(
+pub(in crate::transitions) fn mark_stale_on_untiled_change(
     changed: bool,
     frames_changed: bool,
 ) -> bool {
@@ -239,19 +239,19 @@ pub(in crate::animation) fn mark_stale_on_untiled_change(
 
 /// How far the real windows were from their tiles at lift. See `report_handover_error`.
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::animation) struct HandoverReport {
+pub(in crate::transitions) struct HandoverReport {
     /// Windows measured: tiled, answered by the server, intended on screen.
-    pub(in crate::animation) total: usize,
+    pub(in crate::transitions) total: usize,
     /// Windows more than `HANDOVER_THRESHOLD_PT` off.
-    pub(in crate::animation) count_over: usize,
+    pub(in crate::transitions) count_over: usize,
     /// The largest error among the windows the report counts.
-    pub(in crate::animation) worst_visible_pt: f64,
-    pub(in crate::animation) worst_wsid: u32,
+    pub(in crate::transitions) worst_visible_pt: f64,
+    pub(in crate::transitions) worst_wsid: u32,
 }
 
 /// Measures every tiled window's real frame against its intended one. Parks are excluded: macOS
 /// clamps them. See "Real windows land before lift" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn handover_report(
+pub(in crate::transitions) fn handover_report(
     final_frames: &[(WindowId, CGRect)],
     tiled: &[WindowId],
     real: &HashMap<WindowId, CGRect>,
@@ -288,7 +288,7 @@ pub(in crate::animation) fn handover_report(
 
 /// What a settled picture did for a flight holding at frame zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::animation) enum Claimed {
+pub(in crate::transitions) enum Claimed {
     /// Taken; other holds remain.
     Held,
     /// Taken, and it was the last hold: the flight may start moving.
@@ -299,13 +299,13 @@ pub(in crate::animation) enum Claimed {
 
 /// Whether a composed pass is worth an overlay flight.
 /// See "Layout changes" in `src/animation/docs/animation-smoothness.md`.
-pub(in crate::animation) fn worth_flying(moving_drawable: bool, running: bool) -> bool {
+pub(in crate::transitions) fn worth_flying(moving_drawable: bool, running: bool) -> bool {
     moving_drawable || running
 }
 
 /// The window server ids a border companion may never be: everything rini manages. Synthetic
 /// (companion) ids carry pid 0 and are left out, or a border seen once could never match again.
-pub(in crate::animation) fn managed_server_ids(
+pub(in crate::transitions) fn managed_server_ids(
     pass: &std::collections::HashSet<u32>,
     cached: impl Iterator<Item = WindowId>,
     owed: impl Iterator<Item = WindowId>,
@@ -320,18 +320,18 @@ pub(in crate::animation) fn managed_server_ids(
 /// burst of flights reads as one: a flight beginning inside the quiet period says nothing, and the
 /// `false` waits for its own settle.
 #[derive(Debug, Default)]
-pub(in crate::animation) struct FlightReport {
+pub(in crate::transitions) struct FlightReport {
     flying: bool,
 }
 
 impl FlightReport {
     /// An overlay went up. `Some(true)` unless a flight is already reported.
-    pub(in crate::animation) fn overlay_up(&mut self) -> Option<bool> {
+    pub(in crate::transitions) fn overlay_up(&mut self) -> Option<bool> {
         (!std::mem::replace(&mut self.flying, true)).then_some(true)
     }
 
     /// The quiet period after the last lift ran out. `Some(false)` unless no flight was reported.
-    pub(in crate::animation) fn settled(&mut self) -> Option<bool> {
+    pub(in crate::transitions) fn settled(&mut self) -> Option<bool> {
         std::mem::replace(&mut self.flying, false).then_some(false)
     }
 }

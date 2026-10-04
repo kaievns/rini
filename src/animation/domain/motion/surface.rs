@@ -4,31 +4,28 @@
 //! Nothing here knows what the surface holds.
 
 use objc2_core_foundation::{CGPoint, CGRect};
-use rini_core::ids::{WindowId, WindowServerId};
+use rini_core::ids::WindowId;
 
-/// One window's place on a surface. `frame` is where it lands; the viewport moves, and only a window
-/// with a `from` also moves across the surface.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SurfaceWindow {
-    pub window: WindowId,
-    pub server_id: WindowServerId,
-    pub frame: CGRect,
+/// One window's place on a surface, as a strip movement stages it. `frame` is where it lands; the
+/// viewport moves, and only a window with a `from` also moves across the surface. What the reactor
+/// builds is `crate::transitions::domain::request::SurfaceWindow`.
+pub trait SurfaceGeometry {
+    fn window(&self) -> WindowId;
+    fn frame(&self) -> CGRect;
     /// Held still while the surface moves under it.
-    pub pinned: bool,
+    fn pinned(&self) -> bool;
     /// Drawn in the other z-band; see `z_group`.
-    pub floating: bool,
+    fn floating(&self) -> bool;
     /// Where on the surface the window starts, when not at `frame`: a column a move swapped starts
     /// in the slot it held before the move.
-    pub from: Option<CGRect>,
-}
+    fn from(&self) -> Option<CGRect>;
 
-impl SurfaceWindow {
     /// Where the window's tile starts and ends on screen: `surface_travel` of its frame, starting
     /// from `from` when it has one.
-    pub fn travel(&self, from_offset: CGPoint, to_offset: CGPoint) -> (CGRect, CGRect) {
-        let (start, end) = surface_travel(self.frame, from_offset, to_offset, self.pinned);
-        match self.from {
-            Some(from) if !self.pinned => {
+    fn travel(&self, from_offset: CGPoint, to_offset: CGPoint) -> (CGRect, CGRect) {
+        let (start, end) = surface_travel(self.frame(), from_offset, to_offset, self.pinned());
+        match self.from() {
+            Some(from) if !self.pinned() => {
                 (surface_travel(from, from_offset, to_offset, false).0, end)
             }
             _ => (start, end),
@@ -80,11 +77,11 @@ mod tests {
     use objc2_core_foundation::CGSize;
 
     use super::*;
+    use crate::animation::domain::motion::testing::OnSurface;
 
-    fn window(frame: CGRect, from: Option<CGRect>, pinned: bool) -> SurfaceWindow {
-        SurfaceWindow {
+    fn window(frame: CGRect, from: Option<CGRect>, pinned: bool) -> OnSurface {
+        OnSurface {
             window: WindowId::new(1, 1),
-            server_id: WindowServerId::new(1),
             frame,
             pinned,
             floating: pinned,
