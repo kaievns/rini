@@ -10,11 +10,11 @@ use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_io_surface::IOSurfaceRef;
 
-use crate::pictures::domain::cache::{CarriesOver, HasCoverage, dressing_after_insert, keeps_blur};
+use crate::pictures::domain::cache::{CarriesOver, HasCoverage, keeps_blur};
 use crate::pictures::domain::coverage::{Coverage, fits_frame};
+use crate::pictures::domain::knowledge::CORNER_RADIUS;
 use crate::pictures::domain::region::{WHOLE, unit_rect};
 use crate::pictures::platform::bitmap::{rgba_bitmap_context, standalone_copy};
-use crate::pictures::platform::edge_dressing::{CORNER_RADIUS, EdgeDressing};
 
 /// A window's pixels, whichever API produced them. Core Animation accepts each form.
 #[derive(Clone, Debug)]
@@ -67,10 +67,6 @@ pub struct Picture {
     pub image: Pixels,
     pub coverage: Coverage,
     pub source: Route,
-    /// The hairline this window wore when last seen composited; carried across cache refreshes by
-    /// [`crate::pictures::domain::cache::PictureCache::insert`]. See
-    /// [`crate::pictures::platform::edge_dressing`].
-    pub dressing: Option<EdgeDressing>,
     /// When the pixels were captured; staleness is a reason to re-warm.
     pub taken: std::time::Instant,
     /// Whether this picture carries a blur its window's own surface lacks: taken as a composite with
@@ -133,7 +129,6 @@ pub fn stand_in_picture(window: CGSize, image: CFRetained<CGImage>) -> Picture {
             window: (window.width, window.height),
         },
         source: Route::StandIn,
-        dressing: None,
         taken: std::time::Instant::now(),
         carries_blur: false,
     }
@@ -170,14 +165,6 @@ impl HasCoverage for Picture {
 }
 
 impl CarriesOver for Picture {
-    fn inherit(&mut self, previous: &Self) {
-        self.dressing = dressing_after_insert(previous.dressing.clone(), self.dressing.take());
-    }
-
-    fn absorb(&mut self, refused: Self) {
-        self.dressing = dressing_after_insert(self.dressing.take(), refused.dressing);
-    }
-
     /// A picture carrying its window's blur is kept over a capture of the window on its own at the
     /// same size, which would be flat grey exactly where the blur is. A different size means the
     /// window was resized and the old picture no longer fits it, so the new one is taken after all.
@@ -256,7 +243,6 @@ pub(crate) fn test_picture(size: CGSize) -> Picture {
             window: (size.width, size.height),
         },
         source: Route::ScreenCaptureKit,
-        dressing: None,
         taken: std::time::Instant::now(),
         carries_blur: false,
     }

@@ -7,7 +7,7 @@
 //! `src/animation/docs/animation-smoothness.md`; measurements in `src/pictures/docs/capture-research.md` and
 //! `src/animation/docs/capture-overlay-research.md`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
@@ -33,9 +33,7 @@ use crate::pictures::domain::stand_in::picture_or_stand_in;
 use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
 use crate::pictures::platform::picture::Picture;
 use crate::pictures::platform::service::Pictures;
-use crate::pictures::platform::skylight::{
-    capture_via_framed_with_dressing, is_wholly_on_a_display,
-};
+use crate::pictures::platform::skylight::{capture_via_framed, is_wholly_on_a_display};
 use crate::transitions::domain::admission::*;
 use crate::transitions::domain::flight::*;
 use crate::transitions::domain::request::{AnimationRequest, SurfaceWindow};
@@ -110,12 +108,6 @@ pub enum Event {
         snapshot: Picture,
         settled: bool,
     },
-    /// A hairline harvest finished. Harvested off ScreenCaptureKit's completion queue, which the
-    /// framed capture behind it would deadlock (see `screencapturekit`).
-    DressingReady {
-        window: WindowId,
-        dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
-    },
 }
 
 /// Called with real-window frames to apply while the overlay covers them.
@@ -161,9 +153,6 @@ struct RunningAnimation {
     hold_deadline: Option<Instant>,
     /// The recapture of the focus change's two ends. See `refresh_destination_among`.
     refresh: FocusRefresh,
-    /// Windows whose hairline landed this flight, so `after_flight_captures` harvests nothing
-    /// twice.
-    harvested: HashSet<WindowId>,
     /// The window gaining focus, from the latest pass that named one; its group is banded in front.
     focus: Option<WindowId>,
     /// The flight as rigid pieces: what `install` composed and `fly` animates.
@@ -227,6 +216,7 @@ fn border_tile(
         depth: anchor.depth,
         companion: Some(anchor.window),
         focused: false,
+        radius: None,
     }
 }
 
@@ -275,7 +265,6 @@ fn nudge_on(
 #[derive(Default)]
 struct AfterFlight {
     targets: Vec<PictureTarget>,
-    harvested: HashSet<WindowId>,
 }
 
 /// The tile for a reserved entrance whose picture has landed: frontmost and focused, since a
@@ -291,6 +280,7 @@ fn entrance_tile(entrance: &PendingEntrance, snapshot: &Picture) -> OverlayTile 
         depth: 0,
         companion: None,
         focused: true,
+        radius: None,
     }
 }
 
@@ -722,27 +712,21 @@ impl FlightEngine {
             Event::PictureReady { window, snapshot, settled } => {
                 self.picture_ready(window, snapshot, settled)
             }
-            Event::DressingReady { window, dressing } => self.dressing_ready(window, dressing),
         }
     }
 
-    /// Takes a background capture the pictures service landed: at rest its window's hairline is
-    /// harvested, and a picture the cache took is offered to the running flight.
+    /// Takes a background capture the pictures service landed: a picture the cache took is offered
+    /// to the running flight.
     fn pictures_landed(&mut self, landed: crate::pictures::event::Event) {
-        let (window, taken) = match landed {
-            crate::pictures::event::Event::Taken { window, picture } => (window, Some(picture)),
-            crate::pictures::event::Event::Refused { window } => (window, None),
+        let (window, picture) = match landed {
+            crate::pictures::event::Event::Taken { window, picture } => (window, picture),
             // Asked for by watches and asks of windows on screen, which the engine makes none of.
             crate::pictures::event::Event::Delivered { .. } | crate::pictures::event::Event::Lost { .. } => {
                 return;
             }
         };
-        let covered = taken.as_ref().is_none_or(Picture::is_usable);
-        if harvests_landing(self.running.is_some(), covered) {
-            self.harvest_dressings(vec![window]);
-        }
         // Background captures are never settled: the service knows sizes, not paint states.
-        if let Some(picture) = taken.filter(Picture::is_usable) {
+        if picture.is_usable() {
             self.offer_mid_flight(window, &picture, false);
         }
     }
@@ -860,23 +844,6 @@ impl FlightEngine {
         }
     }
 
-    /// Harvests hairlines for `windows`. Results come back as `DressingReady`, or as a whole
-    /// `PictureReady` when the window has a blur the capture that just landed could not contain: the
-    /// harvest is the moment a window is on screen and at rest, which is when that can be put back.
-    fn harvest_dressings(&self, windows: Vec<WindowId>) {
-        self.capture_framed("dressing-harvest", windows, |window, snapshot| {
-            if snapshot.carries_blur && snapshot.is_usable() {
-                Some(Event::PictureReady {
-                    window,
-                    snapshot,
-                    settled: true,
-                })
-            } else {
-                snapshot.dressing.map(|dressing| Event::DressingReady { window, dressing })
-            }
-        });
-    }
-
     /// Framed captures of `windows` on a plain thread, each turned into what `event` sends back. Never
     /// on the service's completion queue, which must not make capture calls (see `screencapturekit`).
     fn capture_framed(
@@ -895,7 +862,7 @@ impl FlightEngine {
             .spawn(move || {
                 for window in windows {
                     let server_id = WindowServerId::from(window);
-                    let Some(snapshot) = capture_via_framed_with_dressing(server_id, scale) else {
+                    let Some(snapshot) = capture_via_framed(server_id, scale) else {
                         continue;
                     };
                     if let Some(event) = event(window, snapshot) {
@@ -906,27 +873,8 @@ impl FlightEngine {
             .ok();
     }
 
-    /// Takes a finished hairline harvest: onto the cached snapshot, and onto a tile in flight.
-    fn dressing_ready(
-        &mut self,
-        window: WindowId,
-        dressing: crate::pictures::platform::edge_dressing::EdgeDressing,
-    ) {
-        self.pictures.set_dressing(window, dressing.clone());
-        let Some(running) = self.running.as_mut() else { return };
-        running.harvested.insert(window);
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tile_dressing(window, &dressing);
-        }
-    }
-
     /// Takes a framed recapture: a chase's reveal, or the destination refresh.
     fn picture_ready(&mut self, window: WindowId, snapshot: Picture, settled: bool) {
-        if snapshot.dressing.is_some() {
-            if let Some(running) = self.running.as_mut() {
-                running.harvested.insert(window);
-            }
-        }
         if self.pictures.insert(window, snapshot.clone()) {
             self.offer_mid_flight(window, &snapshot, settled);
         }
@@ -966,9 +914,7 @@ impl FlightEngine {
                             continue;
                         }
                         let Some(snapshot) =
-                            crate::pictures::platform::skylight::capture_via_framed_with_dressing(
-                                server_id, scale,
-                            )
+                            crate::pictures::platform::skylight::capture_via_framed(server_id, scale)
                         else {
                             continue;
                         };
@@ -1244,6 +1190,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: focus == Some(request.window),
+                        radius: self.pictures.knowledge(request.server_id).radius,
                     });
                     starts.push((request.window, start));
                     resolved.push((request.window, start, end, request.floating));
@@ -1262,7 +1209,7 @@ impl FlightEngine {
                         .filter(|f| f.size.width > 0.0 && f.size.height > 0.0 && budget_left)
                         .and_then(|_| {
                             sync_captures += 1;
-                            capture_via_framed_with_dressing(request.server_id, scale)
+                            capture_via_framed(request.server_id, scale)
                         });
                     let usable = picture.as_ref().is_some_and(|p| p.is_usable());
                     match entrance_plan(spawn, request.to, usable, budget_left) {
@@ -1301,6 +1248,7 @@ impl FlightEngine {
                                 depth: 0,
                                 companion: None,
                                 focused: standing && focus == Some(request.window) || !standing,
+                                radius: self.pictures.knowledge(request.server_id).radius,
                             });
                             if standing {
                                 starts.push((request.window, from));
@@ -1669,7 +1617,6 @@ impl FlightEngine {
             hold_deadline: holding.then(|| Instant::now() + HOLD_CAP),
             awaiting,
             refresh: FocusRefresh::default(),
-            harvested: HashSet::new(),
             focus,
             plan,
             nudge: nudge_waiting(nudge, duration, &self.nudge_playing, Instant::now()),
@@ -1776,6 +1723,7 @@ impl FlightEngine {
                         depth: 0,
                         companion: None,
                         focused: focus == Some(window.window),
+                        radius: self.pictures.knowledge(window.server_id).radius,
                     });
                 }
                 // Still placed by `final_frames`, and warmed once the movement settles.
@@ -2140,11 +2088,7 @@ impl FlightEngine {
             overlay.release_tiles();
         }
         self.pictures.hold(Hold::Settling);
-        let (harvested, focus) = self
-            .running
-            .take()
-            .map(|running| (running.harvested, running.focus))
-            .unwrap_or_default();
+        let focus = self.running.take().and_then(|running| running.focus);
         if focus.is_some() {
             self.last_focus = focus;
         }
@@ -2159,7 +2103,6 @@ impl FlightEngine {
                 after.targets.push(target);
             }
         }
-        after.harvested.extend(harvested);
         let tx = self.tx.clone();
         self.quiet = RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
             _ = tx.send(Event::Quiet);
@@ -2179,31 +2122,12 @@ impl FlightEngine {
         self.report_flight(edge);
         self.pictures.hold(Hold::Released);
         let Some(after) = self.after_flight.take() else { return };
-        let animated: Vec<WindowId> = after.targets.iter().map(|target| target.window).collect();
-        // The windows the warm captures are harvested when their capture lands.
-        let requested: Vec<WindowId> = after
-            .targets
-            .iter()
-            .filter(|target| self.pictures.wants_warm(target))
-            .map(|target| target.window)
-            .collect();
         if !after.targets.is_empty() {
             self.pictures.ask(Ask {
                 priority: Priority::Warm,
                 targets: after.targets,
             });
         }
-        let dressed: HashSet<WindowId> = animated
-            .iter()
-            .copied()
-            .filter(|window| self.pictures.get(*window).is_some_and(|s| s.dressing.is_some()))
-            .collect();
-        self.harvest_dressings(finish_harvest_set(
-            &animated,
-            &after.harvested,
-            &requested,
-            &dressed,
-        ));
     }
 
     /// Slides every window on screen in from an offset; touches no real window.
@@ -2303,7 +2227,6 @@ mod tests {
             awaiting: Vec::new(),
             hold_deadline: None,
             refresh: FocusRefresh::default(),
-            harvested: HashSet::new(),
             focus: None,
             plan: plan::FlightPlan::empty(),
             nudge: None,
@@ -2329,6 +2252,7 @@ mod tests {
             depth: 0,
             companion: None,
             focused: false,
+            radius: None,
         }
     }
 
@@ -3190,6 +3114,7 @@ mod tests {
                 depth: 0,
                 companion: None,
                 focused: true,
+                radius: None,
             };
             let awaiting: Vec<(WindowId, CGSize)> = Vec::new();
             let (holding, chase_set, now) = frame_zero_work(
@@ -3351,16 +3276,6 @@ mod tests {
             assert_eq!(running.missing_pictures(), Priority::Warm, "moving");
             running.awaiting.clear();
             assert_eq!(running.missing_pictures(), Priority::Warm, "moving");
-        }
-
-        #[test]
-        fn a_flight_starts_with_nothing_harvested() {
-            let running = flight(None);
-            assert!(running.harvested.is_empty());
-            assert!(
-                !harvests_landing(true, true),
-                "a flight in the air harvests nothing"
-            );
         }
     }
 

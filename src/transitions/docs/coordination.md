@@ -169,7 +169,7 @@ time: asked at 0.53, its pictures landed at 0.82 to 1.16 (debug log
 it had then. The window being left kept its focused rendering to the lift
 and changed at rest, which is the flicker reported that day. A pass
 captures a window wholly on a display framed, on a plain thread
-(`capture_framed`), with its blur and its hairline. A window clipped by the
+(`capture_framed`), with its blur. A window clipped by the
 display edge goes to the pictures service instead, at focus priority, which
 starts through the flight's hold, because a framed capture returns only the
 visible sliver ("A clipped destination needs ScreenCaptureKit, not
@@ -218,8 +218,7 @@ for starts: its frame-zero pictures and a clipped end of the focus refresh.
 The chases and the framed refresh are the engine's own and never ask. The
 rest waits and starts at the release, most urgent first. The reactor's
 `warm_all_workspaces` (about 15 captures per switch, queued 0.3ms after the
-start) waits; so does the desktop render; hairline harvests for landed
-pictures go to `finish_harvest_set`, harvested at the quiet, once per window per flight. A warm
+start) waits; so does the desktop render. A warm
 also settles `SETTLE_BEFORE_LISTING` (50ms) before it is listed: a pass's
 warm is sent just after the flight it starts, and reaches the service before
 that flight's hold. Under the old load the refresh took 203ms median (p90
@@ -412,7 +411,7 @@ is "The move flight" in `src/animation/docs/animation-smoothness.md`.
 window at its own frame about 40ms before rini's first pass (AX
 `WindowCreated` latency plus the coalesce window); that time is accepted.
 `start` reads that frame from the window server and takes ONE framed
-capture there (`capture_via_framed_with_dressing`, 16-24ms), at most
+capture there (`capture_via_framed`, 16-24ms), at most
 `MAX_SYNC_ENTRANCE_CAPTURES` (4) per pass. The tile is a loose
 `Member::Entrance` from the spawn frame to the slot, stretched
 (`stand_in_mode`) until the reveal chase lands the slot-size picture,
@@ -494,9 +493,8 @@ behind a still frame. A chase thread polls the real frame every 8ms
 (`REVEAL_CHASE_INTERVAL`, 125 attempts, about a second in all), a cheap
 window-server read; SkyLight-capture polling measured 170-300ms per attempt
 behind queued ScreenCaptureKit captures and lost the race. Once the size is there it takes ONE framed
-capture per attempt (`capture_via_framed_with_dressing`): the window plus
-one ring, hairline included, the picture cropped back out of the same
-pixels. The frame resizes instantly while the app's pixels lag behind, and
+capture per attempt (`capture_via_framed`) of the window's own rect. The frame resizes instantly
+while the app's pixels lag behind, and
 a capture taken between the two is a half-painted surface: delivering one
 flew the whole reveal with garbage. So a capture counts only when settled
 (`chase_settled`): it matches the previous print (`renderings_match` on
@@ -546,7 +544,7 @@ lift measured 90ms median, p90 156, and 0.75 of a 300ms switch leaves 75ms;
 ## Border companions
 
 Companion tiles for a border tool's windows were the second attempt at the border that flickers at
-the handover ("The hairline harvest" in `src/pictures/docs/capture-research.md`). They stay
+the handover ("The hairline" in `src/pictures/docs/capture-research.md`). They stay
 (`companion_of` / `companion_tiles`): they are the right answer for anyone whose border tool IS
 running, carrying real border windows as tiles:
 
@@ -590,9 +588,8 @@ running, carrying real border windows as tiles:
   instead: freshness guards the cut (`FocusRefresh::is_fresh`), and one route
   per window per pass is at most one refresh cut per pass.
 - Companions are excluded from the mid-flight destination recapture, which
-  exists for the window the eye is on. They wear no harvested hairline
-  either: a border window's ring is transparent almost everywhere, so the
-  harvest's alpha check rejects it without a special case.
+  exists for the window the eye is on. They wear no hairline either: the
+  window a companion traces wears its own.
 
 No configuration: the companions reproduce whatever a border tool draws, or nothing, and the
 outline is the platform's.

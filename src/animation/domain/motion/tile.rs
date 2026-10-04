@@ -1,8 +1,6 @@
 //! How one tile fits its picture to the frame it is drawn in, and how its frame interpolates.
 //! Sizes and rects only; the layers that realise these live in the overlay.
 
-use std::time::Instant;
-
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
 use rini_geometry::stretch::is_a_resize;
@@ -43,34 +41,6 @@ pub fn stand_in_mode(covered: (f64, f64), to: CGSize) -> ContentMode {
     } else {
         ContentMode::Crop
     }
-}
-
-/// What a fresh hairline does to the layers a tile already wears.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DressingAction {
-    /// Same piece set: new pixels into the existing layers, riding any installed animation.
-    SwapInPlace,
-    /// Different piece set: drop the ring and build it at the model size.
-    Rebuild,
-    /// Different piece set while a resize is animating: leave the worn ring alone.
-    Defer,
-}
-
-/// Whether a harvest may rebuild a tile's ring now. See "A fresh picture or hairline swaps in
-/// place" in `src/animation/docs/animation-smoothness.md`.
-pub fn dressing_rebuild_allowed(resize_in_flight: bool, worn_matches: bool) -> DressingAction {
-    if worn_matches {
-        DressingAction::SwapInPlace
-    } else if resize_in_flight {
-        DressingAction::Defer
-    } else {
-        DressingAction::Rebuild
-    }
-}
-
-/// Whether a tile's resize animation, ending at `resize_until`, is still riding at `now`.
-pub fn resize_in_flight(resize_until: Option<Instant>, now: Instant) -> bool {
-    resize_until.is_some_and(|until| now < until)
 }
 
 /// The trailing band preserved intact when a tile draws cropped, in points.
@@ -188,99 +158,11 @@ pub fn lerp_rect(from: CGRect, to: CGRect, t: f64) -> CGRect {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
     use crate::pictures::domain::region::within;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-    }
-
-    /// T9 (1.5) of `.kiro/specs/flight-render-stability/bugfix.md`. A harvest with a different
-    /// piece set lands while the tile's resize is animating: rebuilding puts the ring at the
-    /// destination size over a picture still travelling. Asserts the fixed `Defer`; unfixed
-    /// rebuilds.
-    #[test]
-    fn a_mismatched_dressing_is_deferred_while_a_resize_is_in_flight() {
-        let action = dressing_rebuild_allowed(true, false);
-        assert_eq!(
-            action,
-            DressingAction::Defer,
-            "hairline rebuilt mid-resize: {action:?}"
-        );
-    }
-
-    #[test]
-    fn dressing_rebuild_allowed_full_table() {
-        assert_eq!(
-            dressing_rebuild_allowed(false, true),
-            DressingAction::SwapInPlace
-        );
-        assert_eq!(dressing_rebuild_allowed(true, true), DressingAction::SwapInPlace);
-        assert_eq!(dressing_rebuild_allowed(false, false), DressingAction::Rebuild);
-        assert_eq!(dressing_rebuild_allowed(true, false), DressingAction::Defer);
-    }
-
-    #[test]
-    fn a_resize_is_in_flight_until_its_end_instant() {
-        let now = Instant::now();
-        assert!(resize_in_flight(Some(now + Duration::from_millis(100)), now));
-        assert!(!resize_in_flight(Some(now - Duration::from_millis(1)), now));
-        assert!(
-            !resize_in_flight(Some(now), now),
-            "the end instant itself is over"
-        );
-        assert!(!resize_in_flight(None, now));
-    }
-
-    /// Exhaustive over worn × available 8-bit piece sets and both resize flags, matched the way
-    /// `apply_edge_dressing` matches them: a rebuild never lands while a resize is in flight.
-    #[test]
-    fn a_resize_in_flight_never_rebuilds_the_hairline() {
-        for worn_bits in 0u32..256 {
-            for available_bits in 0u32..256 {
-                let worn: Vec<usize> = (0..8).filter(|i| worn_bits & (1 << i) != 0).collect();
-                let available: Vec<usize> =
-                    (0..8).filter(|i| available_bits & (1 << i) != 0).collect();
-                let worn_matches = !worn.is_empty() && worn == available;
-                for resize_in_flight in [false, true] {
-                    let action = dressing_rebuild_allowed(resize_in_flight, worn_matches);
-                    if resize_in_flight {
-                        assert_ne!(
-                            action,
-                            DressingAction::Rebuild,
-                            "worn {worn:?} available {available:?}"
-                        );
-                    }
-                    if worn_matches {
-                        assert_eq!(action, DressingAction::SwapInPlace);
-                    } else if !resize_in_flight {
-                        assert_eq!(action, DressingAction::Rebuild);
-                    }
-                }
-            }
-        }
-    }
-
-    /// P-3.7 of `.kiro/specs/flight-render-stability/bugfix.md`. Observed: a harvest whose piece
-    /// set matches the worn set swaps pixels in place whether or not a resize is in flight, over
-    /// every non-empty piece set, matched the way `apply_edge_dressing` matches them.
-    #[test]
-    fn a_matching_piece_set_swaps_in_place_in_or_out_of_a_resize() {
-        for bits in 1u32..256 {
-            let worn: Vec<usize> = (0..8).filter(|i| bits & (1 << i) != 0).collect();
-            let available = worn.clone();
-            let worn_matches = !worn.is_empty() && worn == available;
-            assert!(worn_matches, "pieces {worn:?}");
-            for resize_in_flight in [false, true] {
-                assert_eq!(
-                    dressing_rebuild_allowed(resize_in_flight, worn_matches),
-                    DressingAction::SwapInPlace,
-                    "pieces {worn:?} resize_in_flight={resize_in_flight}"
-                );
-            }
-        }
     }
 
     #[test]

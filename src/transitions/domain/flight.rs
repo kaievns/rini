@@ -9,7 +9,7 @@
 //! `crate::pictures::domain::schedule`. Design in `src/transitions/docs/coordination.md`.
 
 use objc2_core_foundation::CGRect;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Instant;
 
 use rini_core::ids::{WindowId, WindowServerId};
@@ -204,33 +204,6 @@ pub(in crate::transitions) fn missing_pictures_priority(started: bool, holding: 
     }
 }
 
-/// Whether a background capture landing now has its window's hairline harvested: only at rest, since
-/// in flight the quiet after the lift harvests instead, and only for a capture that covered its window.
-pub(in crate::transitions) fn harvests_landing(flying: bool, covered: bool) -> bool {
-    !flying && covered
-}
-
-/// Which animated windows `after_flight_captures` harvests a hairline for: each at most once per
-/// flight.
-pub(in crate::transitions) fn finish_harvest_set(
-    animated: &[WindowId],
-    harvested: &HashSet<WindowId>,
-    requested: &[WindowId],
-    dressed: &HashSet<WindowId>,
-) -> Vec<WindowId> {
-    let mut seen = HashSet::new();
-    animated
-        .iter()
-        .copied()
-        .filter(|w| {
-            !harvested.contains(w)
-                && !requested.contains(w)
-                && !dressed.contains(w)
-                && seen.insert(*w)
-        })
-        .collect()
-}
-
 /// Whether an in-flight merge leaves the already-applied frames stale. A parked window has no
 /// tile, so `frames_changed` counts too. See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
 pub(in crate::transitions) fn mark_stale_on_untiled_change(
@@ -422,13 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn a_landing_is_harvested_only_at_rest_and_only_if_it_covered_its_window() {
-        assert!(harvests_landing(false, true));
-        assert!(!harvests_landing(true, true), "in flight");
-        assert!(!harvests_landing(false, false), "a sliver");
-    }
-
-    #[test]
     fn the_passes_are_taken_once_each_and_only_when_allowed() {
         let mut refresh = FocusRefresh::default();
         assert!(!refresh.take_pass(0.1, true), "before the first");
@@ -495,27 +461,6 @@ mod tests {
         assert!(
             mark_stale_on_untiled_change(false, true),
             "frames_applied stays true after an untiled frame change"
-        );
-    }
-
-    #[test]
-    fn finish_harvests_each_animated_window_at_most_once() {
-        let animated = [window(1), window(2), window(3), window(4), window(2)];
-        let mut harvested = HashSet::new();
-        assert!(harvested.insert(window(1)), "the chase's dressing");
-        assert!(
-            !harvested.insert(window(1)),
-            "a second harvest for the same window is skipped"
-        );
-        let requested = [window(3)];
-        let dressed: HashSet<WindowId> = [window(4)].into_iter().collect();
-        assert_eq!(
-            finish_harvest_set(&animated, &harvested, &requested, &dressed),
-            vec![window(2)]
-        );
-        assert!(
-            finish_harvest_set(&[], &harvested, &requested, &dressed).is_empty(),
-            "nothing animated, nothing harvested"
         );
     }
 

@@ -23,15 +23,12 @@ use crate::pictures::domain::coverage::{is_backdrop_worth_drawing, spans_display
 use crate::pictures::domain::knowledge::{Knowledge, Learned};
 use crate::pictures::domain::print::bodies_differ;
 use crate::pictures::domain::region::apart;
-use crate::pictures::domain::schedule::{
-    Ask, Display, Held, Hold, Next, Priority, Schedule, wants_warm,
-};
+use crate::pictures::domain::schedule::{Ask, Display, Held, Hold, Next, Priority, Schedule};
 use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
 use crate::pictures::domain::watch::{Hint, OnScreen, Outcome, Prints, Seen, Set, Tag, Watch, WatchId, Why};
 use crate::pictures::event::Event;
 use crate::pictures::platform::bitmap::thumbprint;
 use crate::pictures::platform::desktop::{BarStrip, DesktopBackdrop, bar_strip, desktop_backdrop_windows};
-use crate::pictures::platform::edge_dressing::EdgeDressing;
 use crate::pictures::platform::measure::{band_print, body_samples};
 use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
@@ -173,8 +170,8 @@ fn land_desktop<P>(
 
 /// What a background capture that came back tells the clients, once the cache has had it: `Taken`
 /// when its pixels are now the ones held, and then to each client owed it as a focus change, a
-/// delivery; `Refused` when it covered the window and the cache kept the blurred one it holds; nothing
-/// for a sliver, an empty capture, or a window forgotten meanwhile (`kept` is `None`).
+/// delivery; nothing when the cache kept what it holds, or for an empty capture or a window forgotten
+/// meanwhile (`kept` is `None`).
 fn landing(
     cache: &mut PictureCache<Picture>,
     delivered: &mut Delivered<Picture>,
@@ -185,9 +182,8 @@ fn landing(
     let (Some(owed), Some(picture)) = (kept, picture) else {
         return Vec::new();
     };
-    let usable = picture.is_usable();
     if !cache.insert(window, picture.clone()) {
-        return usable.then_some(Event::Refused { window }).into_iter().collect();
+        return Vec::new();
     }
     let mut events = vec![Event::Taken {
         window,
@@ -371,11 +367,6 @@ impl Pictures {
         windows
     }
 
-    /// Whether a warm of `target` would capture it now; see [`wants_warm`].
-    pub fn wants_warm(&self, target: &PictureTarget) -> bool {
-        wants_warm(held(&self.lock().cache, target.window), target.size, Instant::now())
-    }
-
     /// A stand-in for a window of `size` at `scale`, never cached. `None` only if its pixels cannot be
     /// drawn.
     pub fn stand_in(&self, size: CGSize, scale: f64) -> Option<Picture> {
@@ -390,13 +381,6 @@ impl Pictures {
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.
     pub fn insert(&self, window: WindowId, picture: Picture) -> bool {
         self.lock().cache.insert(window, picture)
-    }
-
-    /// Puts a freshly harvested hairline on the picture held of `window`.
-    pub fn set_dressing(&self, window: WindowId, dressing: EdgeDressing) {
-        if let Some(picture) = self.lock().cache.get_mut(window) {
-            picture.dressing = Some(dressing);
-        }
     }
 
     /// The desktop and the bar to dress a transition on `display` with: what the service holds of that
@@ -893,10 +877,10 @@ mod tests {
 
     fn strip() -> CGRect { CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(1728.0, 32.0)) }
 
-    /// What every client hears of a background capture: the switcher redraws on `Taken`, the engine
-    /// harvests on `Refused`, and a closed window's capture is never put back in the cache.
+    /// What every client hears of a background capture: the switcher redraws on `Taken`, a capture
+    /// the cache refused is no news, and a closed window's capture is never put back in the cache.
     #[test]
-    fn a_capture_the_cache_took_is_taken_and_one_it_refused_for_a_blur_is_refused() {
+    fn a_capture_the_cache_took_is_taken_and_one_it_refused_is_no_news() {
         let mut cache = PictureCache::new();
         let mut delivered = Delivered::default();
         let kept = || Some(Vec::new());
@@ -912,10 +896,10 @@ mod tests {
         let mut blurred = sized(859.0, 1081.0);
         blurred.carries_blur = true;
         landing(&mut cache, &mut delivered, wid(2), kept(), Some(blurred));
-        assert!(matches!(
-            landing(&mut cache, &mut delivered, wid(2), kept(), Some(sized(859.0, 1081.0))).as_slice(),
-            [Event::Refused { window }] if *window == wid(2)
-        ));
+        assert!(
+            landing(&mut cache, &mut delivered, wid(2), kept(), Some(sized(859.0, 1081.0))).is_empty(),
+            "refused for the blur it holds"
+        );
         assert!(
             landing(&mut cache, &mut delivered, wid(2), kept(), Some(sliver())).is_empty(),
             "a sliver refused is no news"
@@ -948,7 +932,8 @@ mod tests {
         blurred.carries_blur = true;
         cache.insert(wid(2), blurred);
         let events = landing(&mut cache, &mut delivered, wid(2), Some(vec![(tag(3), frame())]), Some(sized(859.0, 1081.0)));
-        assert!(matches!(&events[..], [Event::Refused { .. }]));
+        assert!(events.is_empty());
+        assert!(delivered.under(tag(3), wid(2)).is_none());
     }
 
     fn delivery(generation: u64, why: Why, windows: &[u32]) -> crate::pictures::domain::watch::Delivery {
