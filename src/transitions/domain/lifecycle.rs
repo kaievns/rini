@@ -1243,6 +1243,26 @@ mod tests {
         assert!(matches!(out.as_slice(), [Command::Release, Command::Warm(_), Command::ReportSettled]), "{out:?}");
     }
 
+    /// A press inside the quiet holds the service again before anything is composed; the quiet of
+    /// the lift before it releases nothing, and only its own quiet does.
+    #[test]
+    fn a_press_inside_the_quiet_holds_again_and_only_its_own_quiet_releases() {
+        let now = Instant::now();
+        let lift = |out: &[Command]| {
+            out.iter().find_map(|c| if let Command::Lift { generation } = c { Some(*generation) } else { None })
+        };
+        let mut c = running(pan(), now);
+        let first = lift(&c.on(Event::Tick { settled: true, landed: true }, now + PLAYS)).unwrap();
+        let pressed = now + PLAYS + Duration::from_millis(100);
+        assert_eq!(c.on(Event::Begin(pan()), pressed).first(), Some(&Command::Hold));
+        assert!(c.on(Event::Quiet(first), now + PLAYS + SETTLE_BEFORE_CAPTURES).is_empty(), "the lift before's");
+        c.on(Event::FrameZero(c.generation()), pressed);
+        let second = lift(&c.on(Event::Tick { settled: true, landed: true }, pressed + PLAYS)).unwrap();
+        assert_ne!(first, second);
+        let out = c.on(Event::Quiet(second), pressed + PLAYS + SETTLE_BEFORE_CAPTURES);
+        assert!(matches!(out.as_slice(), [Command::Release, Command::Warm(_), Command::ReportSettled]), "{out:?}");
+    }
+
     #[test]
     fn the_quiet_warms_every_window_the_flight_drew_where_it_last_ended() {
         let now = Instant::now();
