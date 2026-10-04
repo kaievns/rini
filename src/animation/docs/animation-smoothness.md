@@ -318,7 +318,7 @@ Mechanics worth remembering:
   the window server places windows on whole points, so a tile drawn at the fraction was resampled
   and popped by the fraction at the lift. A member a merge moves to another container starts at its
   plan frame and keeps the rounding its tile sat at; placed from the plan frame alone it jumped by up
-  to a point, origin and width (`a_bent_flight_is_drawn_without_a_jump`).
+  to a point, origin and width (`every_look_bends_a_flight_without_a_jump`).
 
 Found on the first live run of the per-tile strip path: **floating tiles
 were drawn behind the desktop backdrop.** The band behind the strip sits

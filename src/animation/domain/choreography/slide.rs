@@ -423,8 +423,7 @@ impl Choreography for Slide {
             making.move_tile(window, from, to.round(), now, seconds);
         }
 
-        let tiles: Vec<(WindowId, Option<GroupKey>)> =
-            making.score.tiles().map(|(window, key)| (window, Some(key))).collect();
+        let tiles: Vec<(WindowId, GroupKey)> = making.score.tiles().collect();
         let containers: Vec<GroupKey> = making.score.containers().collect();
         let (stale, empty) = stale_overlay_layers(&tiles, pass.drawn, &containers);
         for window in stale {
@@ -483,7 +482,7 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::easing::EASE_IN_OUT;
     use crate::animation::domain::motion::nudge::nudge_track;
-    use crate::animation::domain::motion::plan::{Banding, entrance_from, reflow_plan};
+    use crate::animation::domain::motion::plan::{entrance_from, reflow_plan};
     use crate::animation::domain::motion::testing::{DISPLAY, rect};
 
     const PLAIN: f64 = 0.35;
@@ -1184,7 +1183,6 @@ mod tests {
             "one rounding for the strip"
         );
         assert_eq!(frame(wid(1)).size, CGSize::new(859.0, 1081.0));
-        let _ = Banding::default();
     }
 
     /// The live display, 1728pt with 3pt outer gaps: only a column the tiling area's 1722pt wide

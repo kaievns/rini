@@ -385,6 +385,7 @@ impl Score {
 
     /// Where `window`'s tile is drawn at `at` in the overlay's space: its frame in its container,
     /// moved by where the container is drawn.
+    #[cfg(test)]
     pub fn drawn(&self, window: WindowId, at: f64) -> Option<CGRect> {
         let key = self.parent(window)?;
         match (

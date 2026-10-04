@@ -70,7 +70,7 @@ impl FlightScore {
         edits
     }
 
-    /// A later pass bending the flight that moves, at `now`, from where the score draws it.
+    /// A later pass bending the flight that moves, at `now`, from where the score has its movement.
     pub fn merge(&mut self, plan: &FlightPlan, pass: &Pass, now: f64) -> Retarget {
         let retarget = self.choreography.retarget(&self.score, plan, pass, now);
         self.fold_in(&retarget.edits);

@@ -976,15 +976,16 @@ pub fn animation_targets(plan: &FlightPlan) -> Vec<AnimationTarget> {
     out
 }
 
-/// What an overlay pass should stop drawing: the tiles no longer in the plan, and the containers
-/// left with nothing in them.
+/// What a flight stops drawing once a pass is in: the tiles of windows it no longer draws (`keep`
+/// names the rest), and the containers left with nothing in them. `tiles` is every tile drawn, with
+/// the container it rides.
 ///
 /// Two stages, and the order between them is the point. A container is judged empty by the tiles
 /// that REMAIN, so the tiles have to go first. Judging containers against the original set keeps a
 /// container whose only tile just left, and an empty container is a layer the compositor keeps
 /// compositing.
 pub fn stale_overlay_layers<K: Copy + PartialEq>(
-    tiles: &[(WindowId, Option<K>)],
+    tiles: &[(WindowId, K)],
     keep: &[WindowId],
     containers: &[K],
 ) -> (Vec<WindowId>, Vec<K>) {
@@ -996,7 +997,7 @@ pub fn stale_overlay_layers<K: Copy + PartialEq>(
     let occupied: Vec<K> = tiles
         .iter()
         .filter(|(window, _)| !stale_tiles.contains(window))
-        .filter_map(|(_, key)| *key)
+        .map(|(_, key)| *key)
         .collect();
     let empty: Vec<K> = containers.iter().copied().filter(|key| !occupied.contains(key)).collect();
     (stale_tiles, empty)
@@ -1194,8 +1195,8 @@ mod tests {
     #[test]
     fn a_tile_the_plan_still_names_is_kept() {
         let tiles = [
-            (WindowId::new(1, 1), Some(7u8)),
-            (WindowId::new(1, 2), Some(7)),
+            (WindowId::new(1, 1), 7u8),
+            (WindowId::new(1, 2), 7),
         ];
         let keep = [WindowId::new(1, 1), WindowId::new(1, 2)];
         let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
@@ -1206,8 +1207,8 @@ mod tests {
     #[test]
     fn a_tile_the_plan_dropped_is_stale() {
         let tiles = [
-            (WindowId::new(1, 1), Some(7u8)),
-            (WindowId::new(1, 2), Some(7)),
+            (WindowId::new(1, 1), 7u8),
+            (WindowId::new(1, 2), 7),
         ];
         let keep = [WindowId::new(1, 1)];
         let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
@@ -1221,8 +1222,8 @@ mod tests {
     #[test]
     fn a_container_whose_last_tile_left_is_empty() {
         let tiles = [
-            (WindowId::new(1, 1), Some(7u8)),
-            (WindowId::new(1, 2), Some(8)),
+            (WindowId::new(1, 1), 7u8),
+            (WindowId::new(1, 2), 8),
         ];
         let keep = [WindowId::new(1, 1)];
         let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7, 8]);
@@ -1232,20 +1233,10 @@ mod tests {
 
     #[test]
     fn a_container_no_tile_ever_claimed_is_empty() {
-        let tiles = [(WindowId::new(1, 1), Some(7u8))];
+        let tiles = [(WindowId::new(1, 1), 7u8)];
         let keep = [WindowId::new(1, 1)];
         let (_, empty) = stale_overlay_layers(&tiles, &keep, &[7, 9]);
         assert_eq!(empty, [9]);
-    }
-
-    /// A tile with no container of its own keeps none alive.
-    #[test]
-    fn a_tile_outside_every_container_holds_nothing_open() {
-        let tiles = [(WindowId::new(1, 1), None::<u8>)];
-        let keep = [WindowId::new(1, 1)];
-        let (stale, empty) = stale_overlay_layers(&tiles, &keep, &[7]);
-        assert!(stale.is_empty());
-        assert_eq!(empty, [7]);
     }
 
     /// A rigid member rides its container, so it is not moving on its own and `rel` is both its

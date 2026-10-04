@@ -509,8 +509,6 @@ struct Tile {
     /// crop pieces' contents are composed with: all of it unless the picture is a region of a
     /// composite.
     region: CGRect,
-    /// The container the layers hang under; layer frames are in its space.
-    key: Option<GroupKey>,
     companion: bool,
 }
 
@@ -985,7 +983,6 @@ impl Tree {
             let entry = self.tile_layers.entry(window).or_insert_with(|| new_tile(&parent));
             dress(entry, tile, scale);
             entry.reparent(&parent);
-            entry.key = Some(key);
             entry.remove_animations();
             if let Some(Value::Rect(frame)) = score.model(Node::Tile(window)) {
                 self.place_tile(window, frame);
@@ -1073,7 +1070,6 @@ impl Tree {
             return;
         };
         entry.reparent(&parent);
-        entry.key = Some(key);
     }
 
     /// Puts `window`'s tile at `frame` in its container, at the depth the replica's banding gives it.
@@ -1192,7 +1188,7 @@ impl Tree {
             lifted.setZPosition(container_z(Band::Lifted, off_strip));
         }
         for (window, tile) in &self.tile_layers {
-            if tile.key == Some(GroupKey::Floating) {
+            if self.replica.parent(*window) == Some(GroupKey::Floating) {
                 tile.reparent(&self.parent_layer(*window, GroupKey::Floating));
             }
             let Some(&within) = banding.within.get(window) else {
@@ -1208,13 +1204,12 @@ impl Tree {
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
         };
-        let size = match self.replica.model(node) {
-            Some(Value::Rect(frame)) => frame.size,
-            _ => entry.picture.bounds().size,
+        let Some(Value::Rect(frame)) = self.replica.model(node) else {
+            return;
         };
         let playing =
             self.replica.track(node, Channel::Base).filter(|track| track.at(at).is_some());
-        swap_onto(entry, picture, size, playing);
+        swap_onto(entry, picture, frame.size, playing);
     }
 
     fn release(&mut self) {
@@ -1335,7 +1330,6 @@ fn new_tile(container: &CALayer) -> Tile {
         crop_grid: None,
         crop_of: None,
         region: WHOLE,
-        key: None,
         companion: false,
     }
 }
@@ -2693,7 +2687,6 @@ mod tests {
             assert_eq!(tree.tile_layers.len(), replica.tiles().count());
             for (window, key) in replica.tiles() {
                 let entry = &tree.tile_layers[&window];
-                assert_eq!(entry.key, Some(key));
                 let parent = entry.picture.superlayer().expect("hung under its container");
                 assert!(
                     std::ptr::eq(&*parent, &*tree.containers[&key]),

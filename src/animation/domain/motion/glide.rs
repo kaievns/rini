@@ -324,8 +324,8 @@ mod tests {
 
     /// A still container a nudge is riding is drawn a third of the display out; the model says where
     /// it is. A leg begun from the drawn position would add the nudge to it a second time. A moving
-    /// one bends from where the score draws it, which on a spring's polyline is up to 10.8pt off the
-    /// leg's own `position_at`.
+    /// one bends from where the score has its movement, which on a spring's polyline is up to 10.8pt
+    /// off the leg's own `position_at`.
     #[test]
     fn a_container_with_no_leg_leaves_from_its_model_at_rest() {
         let omega = spring_omega(DURATION);
