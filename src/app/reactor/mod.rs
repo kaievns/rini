@@ -511,6 +511,10 @@ pub struct Reactor {
     live_spaces: space_affinity::LiveSpaces,
     /// Windows a layout pass has asked a picture of. See `animate_layout`.
     pictured_windows: HashSet<WindowId>,
+    /// The layout's focus as the event being handled began: the window still drawn focused on screen
+    /// when a pass the event asks for flies, which the flight engine draws focused until focus hands
+    /// over. A focus report reaches the reactor before the pass it causes.
+    focused_as_event_began: Option<WindowId>,
     /// The strip windows the current event's regroup already raised, so the post-layout judgment does
     /// not raise them a second time. See `regroup_after_layout`.
     regroup_raised: Vec<WindowId>,
@@ -630,6 +634,7 @@ impl Reactor {
             raise_echo: crate::windows::domain::focus::RaiseEcho::default(),
             live_spaces: space_affinity::LiveSpaces::default(),
             pictured_windows: HashSet::default(),
+            focused_as_event_began: None,
             regroup_raised: Vec::new(),
             drag_manager: managers::DragManager {
                 drag_state: DragState::Inactive,
@@ -1259,6 +1264,8 @@ impl Reactor {
     #[instrument(name = "reactor::handle_event", skip(self), fields(event=?event))]
     fn handle_event(&mut self, event: Event) {
         let previously_focused_window = self.main_window();
+        let began = self.layout_manager.layout_engine.focused_window();
+        let outer = std::mem::replace(&mut self.focused_as_event_began, began);
         match self.dispatch_workflow(event) {
             Ok(mut outcome) => {
                 let focused_window = self.main_window();
@@ -1271,6 +1278,7 @@ impl Reactor {
             }
             Err(error) => warn!(%error, "reactor workflow failed"),
         }
+        self.focused_as_event_began = outer;
     }
 
     /// A focus report naming a window rini knows and does not manage is a panel's; see
@@ -3784,6 +3792,7 @@ impl Reactor {
             to_offset,
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
+            focused_before: self.focused_as_event_began,
             duration,
             nudge,
         });
@@ -4053,6 +4062,7 @@ impl Reactor {
             to_offset,
             final_frames,
             focus: self.layout_manager.layout_engine.focused_window(),
+            focused_before: self.focused_as_event_began,
             duration,
             nudge: None,
         });

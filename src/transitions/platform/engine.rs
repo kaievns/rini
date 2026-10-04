@@ -55,6 +55,8 @@ pub enum Event {
     Animate {
         windows: Vec<AnimationRequest>,
         focus: Option<WindowId>,
+        /// The window focused as the pass began: what frame zero pictures focused.
+        focused_before: Option<WindowId>,
         duration: Duration,
     },
     /// Display geometry for the overlay: the display's whole bounds. Whether a bar under the
@@ -85,6 +87,8 @@ pub enum Event {
         final_frames: Vec<(WindowId, CGRect)>,
         /// The window that will hold focus once this settles, drawn in front of the rest.
         focus: Option<WindowId>,
+        /// The window focused as the movement began: what frame zero pictures focused.
+        focused_before: Option<WindowId>,
         duration: Duration,
         /// The whole strip's step away from where a moved window went and back; drawn only.
         nudge: Option<CGPoint>,
@@ -98,8 +102,6 @@ pub enum Event {
         focus: Option<WindowId>,
         duration: Duration,
     },
-    /// The window server reported `window` focused: the window frame zero pictures focused.
-    Focused(WindowId),
     /// One frame of the clock that runs from a transition's begin to its lift. Posted by its timer.
     Tick,
     /// The quiet after the lift of `Generation` ran out. Posted by the quiet timer.
@@ -314,7 +316,8 @@ struct Pass {
     label: &'static str,
     shape: Shape,
     entrances: Vec<PendingEntrance>,
-    focus: Option<WindowId>,
+    /// The focus it names, and the window focused as it began.
+    focus: (Option<WindowId>, Option<WindowId>),
     pan: Option<CGPoint>,
     plan: plan::ReflowPlan,
     nudge: Option<CGPoint>,
@@ -662,8 +665,6 @@ pub struct FlightEngine {
     clock: Option<RepeatingTimer>,
     /// The quiet after the lift of a generation.
     quiet: Option<(Generation, RepeatingTimer)>,
-    /// The window the window server last reported focused.
-    focused: Option<WindowId>,
     /// Places the real windows once the overlay covers them. Supplied by the owner.
     place_frames: Option<PlaceFrames>,
     on_flight: Option<OnFlight>,
@@ -700,7 +701,6 @@ impl FlightEngine {
             watches: EndWatches::default(),
             clock: None,
             quiet: None,
-            focused: None,
             place_frames: None,
             on_flight: None,
             nudge_playing: NudgePlaying::default(),
@@ -731,13 +731,16 @@ impl FlightEngine {
                 scale,
                 top_band,
             } => self.set_display(id, frame, scale, top_band),
-            Event::Animate { windows, focus, duration } => self.start(windows, focus, duration),
+            Event::Animate { windows, focus, focused_before, duration } => {
+                self.start(windows, focus, focused_before, duration)
+            }
             Event::AnimateSurface {
                 windows,
                 from_offset,
                 to_offset,
                 final_frames,
                 focus,
+                focused_before,
                 duration,
                 nudge,
             } => self.start_surface(
@@ -745,7 +748,7 @@ impl FlightEngine {
                 from_offset,
                 to_offset,
                 final_frames,
-                focus,
+                (focus, focused_before),
                 duration,
                 nudge,
                 None,
@@ -758,7 +761,6 @@ impl FlightEngine {
                 duration,
             } => self.start_bounce(windows, overshoot, final_frames, focus, duration),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
-            Event::Focused(window) => self.focused = Some(window),
             Event::Tick => self.tick(),
             Event::Quiet(generation) => {
                 if self.quiet.as_ref().is_some_and(|(armed, _)| *armed == generation) {
@@ -1074,7 +1076,7 @@ impl FlightEngine {
         &mut self,
         tiles: Vec<TileSummary>,
         final_frames: Vec<(WindowId, CGRect)>,
-        focus: Option<WindowId>,
+        (focus, focused_before): (Option<WindowId>, Option<WindowId>),
         shape: Shape,
     ) -> bool {
         let Some((display, _)) = self.display else { return false };
@@ -1082,7 +1084,7 @@ impl FlightEngine {
             tiles,
             final_frames,
             focus,
-            losing_focus(focus, self.focused),
+            losing_focus(focus, focused_before),
             None,
             shape,
             display,
@@ -1124,10 +1126,14 @@ impl FlightEngine {
         }))
     }
 
-    /// The focus a pass's tiles are drawn with: its own, else the flight's.
-    fn drawing_focus(&self, focus: Option<WindowId>) -> (Option<WindowId>, Option<WindowId>) {
+    /// The focus a pass's tiles are drawn with, its own else the flight's, and the window they draw
+    /// focused until it hands over: the flight's, else the one focused as the pass began.
+    fn drawing_focus(
+        &self,
+        (focus, focused_before): (Option<WindowId>, Option<WindowId>),
+    ) -> (Option<WindowId>, Option<WindowId>) {
         let focus = focus.or(self.running.as_ref().and_then(|running| running.focus));
-        let shown = self.running.as_ref().map_or(self.focused, |running| running.shown_focus);
+        let shown = self.running.as_ref().map_or(focused_before, |running| running.shown_focus);
         (focus, losing_focus(focus, shown))
     }
 
@@ -1135,6 +1141,7 @@ impl FlightEngine {
         &mut self,
         windows: Vec<AnimationRequest>,
         focus: Option<WindowId>,
+        focused_before: Option<WindowId>,
         duration: Duration,
     ) {
         if windows.is_empty() {
@@ -1170,11 +1177,11 @@ impl FlightEngine {
                     companion: false,
                 })
                 .collect();
-            if !self.begin(requested, final_frames.clone(), focus, shape.clone()) {
+            if !self.begin(requested, final_frames.clone(), (focus, focused_before), shape.clone()) {
                 return;
             }
         }
-        let (drawing_focus, losing) = self.drawing_focus(focus);
+        let (drawing_focus, losing) = self.drawing_focus((focus, focused_before));
 
         let depths = crate::windows::platform::window_server::front_to_back_depths();
 
@@ -1415,7 +1422,7 @@ impl FlightEngine {
                 ..shape
             },
             entrances,
-            focus,
+            focus: (focus, focused_before),
             pan: None,
             plan,
             nudge: None,
@@ -1527,7 +1534,8 @@ impl FlightEngine {
         let focus_before = running.focus;
         let drawn_focused_before: Vec<(WindowId, bool)> =
             running.tiles.iter().map(|t| (t.window, t.focused)).collect();
-        running.merge_pass(pass.tiles, pass.focus);
+        let (pass_focus, _) = pass.focus;
+        running.merge_pass(pass.tiles, pass_focus);
         let mut shape = pass.shape;
         let mut moved = false;
         let mut nudge = None;
@@ -1538,7 +1546,7 @@ impl FlightEngine {
         } else {
             // See "Mid-flight passes" in `src/transitions/docs/coordination.md`.
             let presented = overlay.as_ref().map(|o| o.presented_positions()).unwrap_or_default();
-            let focus_changed = pass.focus.is_some() && pass.focus != focus_before;
+            let focus_changed = pass_focus.is_some() && pass_focus != focus_before;
             // The viewport in overlay space: what a member's destination is judged against.
             let viewport = display
                 .map(|d| to_overlay_space(d, d))
@@ -1646,7 +1654,7 @@ impl FlightEngine {
         from_offset: CGPoint,
         to_offset: CGPoint,
         final_frames: Vec<(WindowId, CGRect)>,
-        focus: Option<WindowId>,
+        focus: (Option<WindowId>, Option<WindowId>),
         duration: Duration,
         nudge: Option<CGPoint>,
         kind: Option<Kind>,
@@ -1808,12 +1816,13 @@ impl FlightEngine {
     ) {
         if !self.coordinator.is_flying() {
             let at_rest = CGPoint::new(0.0, 0.0);
+            // A push against an end moves no focus.
             self.start_surface(
                 windows,
                 at_rest,
                 at_rest,
                 final_frames,
-                focus,
+                (focus, None),
                 duration,
                 None,
                 Some(Kind::Bounce),
@@ -2039,7 +2048,7 @@ impl FlightEngine {
             })
             .collect();
         debug!(count = requests.len(), dx, dy, "running debug slide");
-        self.start(requests, None, duration);
+        self.start(requests, None, None, duration);
     }
 }
 

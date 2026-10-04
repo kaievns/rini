@@ -198,9 +198,12 @@ neighbours. Every cut logs "picture swapped mid-flight".
 
 **Focus changing during a flight.** Focus changes a window's rendering without changing its size
 (measured on a 1pt window border: 65 of 255 focused against 42 unfocused). The reactor passes every
-focus report the window server sends, rini's own raise's included, to the pictures service as a hint and
-to the engine, which takes the window last reported focused as the one focus leaves. Frame zero pictures
-that window focused, and its tile is drawn focused; the focus target's tile is drawn unfocused, unless
+focus report the window server sends, rini's own raise's included, to the pictures service as a hint,
+and every request names the window the layout had focused as the event asking for it began
+(`focused_before`): the one focus leaves. A click, a cmd-` or an app activation is reported before the
+pass it causes, so the window last reported focused is the target by then; taken as the one focus
+leaves, it had focus move nowhere, and nothing watched the target's look. Frame zero pictures that
+window focused, and its tile is drawn focused; the focus target's tile is drawn unfocused, unless
 it flies its focused look (below). The target's `Change` watch, armed by its report (one remembered for
 a second arms a watch started after it), captures it where it ends every 15ms, six times at most, until
 its band print differs from what the engine was delivered of it as the watch started, frame zero's for

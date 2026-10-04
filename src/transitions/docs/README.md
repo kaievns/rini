@@ -30,8 +30,8 @@ while a flight runs merges into it instead of starting another, which is how a b
 as one movement.
 
 **The reactor asks, and hears two things back.** It sends a layout pass (`Event::Animate`), a strip
-movement (`Event::AnimateSurface`), a bounce, the display the overlay flies on, and each window the
-window server reports focused; the pictures service's sink, wired in `src/main.rs`, tells the engine
+movement (`Event::AnimateSurface`), each naming the window focused as it began, a bounce, and the
+display the overlay flies on; the pictures service's sink, wired in `src/main.rs`, tells the engine
 what it delivered under the engine's tag. The engine answers through
 the callbacks `src/main.rs` installs: the frames to write (`PlaceFrames`, back to the reactor) and
 whether a flight is up (`OnFlight`, to the bar). The reactor never learns more of a flight than that.

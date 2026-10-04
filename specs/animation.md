@@ -271,7 +271,9 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   still moves. Until then the window losing focus MUST be drawn focused, as it was on screen when the
   flight began, and after it unfocused; it MUST be pictured again before the lift if its look has
   changed.
-- A focus report that arrives before the flight watches for it MUST still count.
+- A focus report that arrives before the flight watches for it MUST still count, and so MUST one that
+  arrives before the request it causes, as a click's or an app activation's does: the window focused
+  before it is the one the flight begins drawn focused.
 - A window gaining focus that starts off the display, where nothing can picture it, MUST fly the last
   picture taken of it focused, drawn focused from the first frame of the press giving it focus, a press
   merged into a flight included, unless that picture no longer fits it or a later picture shows its

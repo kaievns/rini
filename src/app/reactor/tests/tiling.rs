@@ -1843,6 +1843,8 @@ struct SurfaceFlight {
     windows: Vec<crate::transitions::domain::request::SurfaceWindow>,
     from_offset: CGPoint,
     final_frames: Vec<(WindowId, CGRect)>,
+    focus: Option<WindowId>,
+    focused_before: Option<WindowId>,
     nudge: Option<CGPoint>,
     duration: std::time::Duration,
 }
@@ -1857,6 +1859,8 @@ fn strip_movements(
             windows,
             from_offset,
             final_frames,
+            focus,
+            focused_before,
             nudge,
             duration,
             ..
@@ -1866,12 +1870,36 @@ fn strip_movements(
                 windows,
                 from_offset,
                 final_frames,
+                focus,
+                focused_before,
                 nudge,
                 duration,
             });
         }
     }
     out
+}
+
+/// A click or an app activation reaches the reactor as a focus report before the pass it causes, and a
+/// key press as a command before rini's raise is reported: either way the strip movement names the
+/// window focused as the event began, which is still drawn focused on screen at frame zero.
+#[test]
+fn a_strip_movement_names_the_window_focused_as_its_event_began() {
+    let (_apps, mut reactor, mut rx) = moving_strip(0.5, 4);
+    let space = SpaceId::new(1);
+    let (first, second, third) = (WindowId::new(1, 1), WindowId::new(1, 2), WindowId::new(1, 3));
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    strip_movements(&mut rx);
+    reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Right));
+    let pressed = strip_movements(&mut rx);
+    let flight = pressed.last().expect("the press scrolls the strip");
+    assert_eq!((flight.focus, flight.focused_before), (Some(third), Some(second)));
+
+    // cmd-` onto the column scrolled off: macOS makes it key, and reports it, before the layout moves.
+    reactor.handle_event(Event::WindowServerFocusChanged(first, space));
+    let reported = strip_movements(&mut rx);
+    let flight = reported.last().expect("the report scrolls the strip");
+    assert_eq!((flight.focus, flight.focused_before), (Some(first), Some(third)));
 }
 
 /// Reported 2026-09-30: only the 50/50 pair at the start of a strip showed a move; everywhere else

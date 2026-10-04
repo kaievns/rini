@@ -447,12 +447,9 @@ impl Reactor {
         reported_space: SpaceId,
     ) -> anyhow::Result<EventOutcome> {
         // Every report, rini's own raise's included: it arms the pictures service's watch on a
-        // focus target's look, and tells the flight engine which window frame zero pictures focused.
+        // focus target's look.
         if let Some(pictures) = &self.communication_manager.pictures {
             pictures.hint(crate::pictures::domain::watch::Hint::Focused(window));
-        }
-        if let Some(tx) = &self.communication_manager.transitions_tx {
-            tx.send(crate::transitions::platform::engine::Event::Focused(window));
         }
         if self.layout_manager.layout_engine.focused_window() == Some(window) {
             if let Some(event_tap_tx) = &self.communication_manager.event_tap_tx {

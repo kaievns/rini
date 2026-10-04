@@ -460,14 +460,13 @@ fn strip_navigation_stops_at_the_edge_rather_than_focusing_a_floating_window() {
     }
 }
 
-/// Every focus report reaches the pictures service as a hint and the flight engine as the window focus
-/// is on, rini's own raise's included: the hint arms the watch on the focus target's look, which is
-/// how a flight draws focus handing over, and nothing is captured through ScreenCaptureKit for it.
+/// Every focus report reaches the pictures service as a hint, rini's own raise's included: the hint
+/// arms the watch on the focus target's look, which is how a flight draws focus handing over, and
+/// nothing is captured through ScreenCaptureKit for it.
 #[test]
-fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine() {
+fn every_focus_report_hints_the_pictures_service() {
     use crate::pictures::domain::watch::Hint;
     use crate::pictures::platform::service::Command as Asked;
-    use crate::transitions::platform::engine::Event as Anim;
     let (mut apps, mut reactor) = test_context();
     let screen = CGRect::new(CGPoint::new(0., 0.), CGSize::new(1728., 1117.));
     let space = SpaceId::new(1);
@@ -479,13 +478,6 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine() {
     reactor.send_layout_event(LayoutEvent::WindowFocused(space, leaving));
 
     let mut pictures = reactor.connect_test_pictures();
-    let (animation_tx, mut animation_rx) = channels::channel();
-    reactor.communication_manager.transitions_tx = Some(animation_tx);
-    let focused = |rx: &mut channels::Receiver<Anim>| {
-        std::iter::from_fn(|| rx.try_recv().ok())
-            .filter_map(|(_, event)| if let Anim::Focused(window) = event { Some(window) } else { None })
-            .collect::<Vec<_>>()
-    };
 
     // A click elsewhere, and rini's own raise coming back.
     for window in [arriving, leaving] {
@@ -507,7 +499,6 @@ fn every_focus_report_hints_the_pictures_service_and_tells_the_flight_engine() {
         asked_at(&asked, crate::pictures::domain::schedule::Priority::Focus).is_empty(),
         "no ScreenCaptureKit capture of either end"
     );
-    assert_eq!(focused(&mut animation_rx), [arriving, leaving, arriving]);
 }
 
 /// Pushing past an end bounces the view instead of doing nothing: focus right at the last column

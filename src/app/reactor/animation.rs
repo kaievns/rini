@@ -221,6 +221,7 @@ impl AnimationManager {
                 _ = tx.send(crate::transitions::platform::engine::Event::Animate {
                     windows: overlay_requests,
                     focus: reactor.layout_manager.layout_engine.focused_window(),
+                    focused_before: reactor.focused_as_event_began,
                     duration,
                 });
                 trace!(count, "handed the layout to the overlay animation engine");
