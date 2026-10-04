@@ -401,9 +401,9 @@ mod tests {
 
     #[test]
     fn from_overlay_space_undoes_to_overlay_space() {
-        let display = screen(1728.0, 0.0, 1728.0, 1117.0);
+        let display = screen(1728.0, -300.0, 3008.0, 1692.0);
         let tile = overlay(-860.0, 32.0, 859.0, 1081.0);
-        assert_eq!(from_overlay_space(tile, display), screen(868.0, 32.0, 859.0, 1081.0));
+        assert_eq!(from_overlay_space(tile, display), screen(868.0, -268.0, 859.0, 1081.0));
         assert_eq!(to_overlay_space(from_overlay_space(tile, display), display), tile);
     }
 
