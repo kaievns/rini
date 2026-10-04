@@ -481,8 +481,8 @@ impl Coordinator {
         matches!(&self.state, State::Flying(f) if f.clock.is_some())
     }
 
-    /// What is left of the motion's clock at `now`: what a tile joining it travels for, and what a
-    /// picture swapped onto a resizing tile is re-keyed over. `None` before it starts.
+    /// What is left of the motion's clock at `now`: what a tile joining it travels for. `None` before
+    /// it starts.
     pub fn remaining(&self, now: Instant) -> Option<Duration> {
         let State::Flying(f) = &self.state else { return None };
         let (started, duration) = f.clock?;

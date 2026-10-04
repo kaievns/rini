@@ -25,7 +25,7 @@ use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::nudge::flight_curve;
 use crate::animation::domain::motion::plan::{self, entrance_from};
 use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
-use crate::animation::platform::overlay::{OverlayTile, TileOverlay};
+use crate::animation::platform::overlay::{OverlayTile, TileOverlay, media_now};
 use crate::pictures::domain::knowledge::{Call, Knowledge};
 use crate::pictures::domain::schedule::{Ask, Display, Hold, MAX_SYNC_ENTRANCE_CAPTURES, Priority};
 use crate::pictures::domain::stand_in::picture_or_stand_in;
@@ -721,9 +721,6 @@ pub struct FlightEngine {
     on_flight: Option<OnFlight>,
     /// When the move nudge playing now comes home.
     nudge_playing: NudgePlaying,
-    /// The edge bounce drawn on the containers now and when it began, gone at the lift and when
-    /// frame zero is installed again.
-    bounce: BounceRecord,
 }
 
 impl FlightEngine {
@@ -755,7 +752,6 @@ impl FlightEngine {
             place_frames: None,
             on_flight: None,
             nudge_playing: NudgePlaying::default(),
-            bounce: BounceRecord::default(),
         }
     }
 
@@ -971,10 +967,9 @@ impl FlightEngine {
             self.reinstall();
             return;
         }
-        let remaining = self.coordinator.remaining(now);
         let clip = corner_clip(self.pictures.knowledge(WindowServerId::from(window)), &picture, size);
         if let Some(overlay) = self.overlay.as_mut() {
-            overlay.set_tile_picture(window, &picture, remaining);
+            overlay.set_tile_picture(window, &picture);
             overlay.set_tile_corner_clip(window, clip);
         }
     }
@@ -1030,11 +1025,10 @@ impl FlightEngine {
 
     /// Frame zero installed again, its plan as it is, with the pictures the tiles hold now.
     fn reinstall(&mut self) {
-        let Self { overlay, running, bounce, .. } = self;
+        let Self { overlay, running, .. } = self;
         let (Some(overlay), Some(running)) = (overlay.as_mut(), running.as_ref()) else { return };
         let banding = band_plan(&running.plan, &running.tiles, running.focus);
         overlay.install(&running.plan, &running.tiles, &banding);
-        bounce.gone();
         self.clip_corners();
     }
 
@@ -1152,7 +1146,6 @@ impl FlightEngine {
         }
         self.running = None;
         self.clock = None;
-        self.bounce.gone();
         self.delivered.clear();
         self.drive(lifecycle::Event::Abandon);
     }
@@ -1538,14 +1531,13 @@ impl FlightEngine {
 
     /// On a flight that moves, the tiles a merge turned focused or not drawn so, and the focused look
     /// a new parked target flies cut onto its tile: a retarget draws neither.
-    fn redraw_focus(&mut self, before: &[(WindowId, bool)], look: Option<WindowId>, now: Instant) {
-        let remaining = self.coordinator.remaining(now);
+    fn redraw_focus(&mut self, before: &[(WindowId, bool)], look: Option<WindowId>) {
         let (Some(running), Some(overlay)) = (self.running.as_ref(), self.overlay.as_mut()) else { return };
         for tile in running.tiles.iter().filter(|t| t.companion.is_none()) {
             let was = before.iter().find(|(w, _)| *w == tile.window).map(|(_, focused)| *focused);
             if look == Some(tile.window) {
                 let knowledge = self.pictures.knowledge(WindowServerId::from(tile.window));
-                overlay.set_tile_picture(tile.window, &tile.snapshot, remaining);
+                overlay.set_tile_picture(tile.window, &tile.snapshot);
                 overlay.set_tile_corner_clip(tile.window, corner_clip(knowledge, &tile.snapshot, tile.to.size));
                 overlay.set_tile_focused(tile.window, true);
             } else if was.is_some_and(|was| was != tile.focused) {
@@ -1674,7 +1666,7 @@ impl FlightEngine {
             None
         };
         if flown {
-            self.redraw_focus(&drawn_focused_before, look, now);
+            self.redraw_focus(&drawn_focused_before, look);
         } else {
             self.reinstall();
         }
@@ -1847,7 +1839,7 @@ impl FlightEngine {
     /// Pushes the strip surface out by `overshoot` and back, additively on a flight that moves, as
     /// the only motion of a no-travel one when none runs, and as the flight starts on one that does
     /// not move yet. Every push that reaches a moving flight shows: one arriving while a bounce plays
-    /// starts the next from where that one is drawn. See "Edge bounce" in
+    /// starts each container's next from where its own is drawn. See "Edge bounce" in
     /// `src/transitions/docs/coordination.md`.
     fn start_bounce(
         &mut self,
@@ -1874,21 +1866,20 @@ impl FlightEngine {
         }
         let Some(running) = self.running.as_mut() else { return };
         if let Some((overshoot, duration)) = running.push_bounce(overshoot, duration) {
-            self.play_bounce(overshoot, duration, Instant::now());
+            self.play_bounce(overshoot, duration);
         }
     }
 
     /// The bounce a push plays from now, on the containers, with the clock run on for it to come home.
-    fn play_bounce(&mut self, overshoot: CGPoint, duration: Duration, now: Instant) {
+    fn play_bounce(&mut self, overshoot: CGPoint, duration: Duration) {
         let Some(overlay) = self.overlay.as_mut() else { return };
-        let (next, before) = self.bounce.push(now, overshoot, duration);
-        overlay.bounce(&next, before);
+        let seconds = overlay.push(overshoot, duration.as_secs_f64());
         debug!(
             overshoot = format!("{:.0},{:.0}", overshoot.x, overshoot.y),
-            from = format!("{:.1},{:.1}", next.from.x, next.from.y),
+            seconds = format!("{seconds:.3}"),
             "edge bounce"
         );
-        self.drive(lifecycle::Event::Extend(next.duration));
+        self.drive(lifecycle::Event::Extend(Duration::from_secs_f64(seconds)));
     }
 
     /// Steps the whole strip out by `offset` and back over `duration`, with the clock run on for it to
@@ -1929,14 +1920,16 @@ impl FlightEngine {
             self.nudge_on(offset, stretched);
         }
         if let Some((overshoot, duration)) = bounce {
-            self.play_bounce(overshoot, duration, now);
+            self.play_bounce(overshoot, duration);
         }
     }
 
     /// One frame of the clock: where the tiles are drawn and where the windows are, read only once
     /// the clock is done.
     fn tick(&mut self) {
-        self.trace_presented();
+        if let Some(overlay) = self.overlay.as_ref() {
+            overlay.trace(media_now());
+        }
         if !self.coordinator.is_flying() {
             return;
         }
@@ -1962,7 +1955,6 @@ impl FlightEngine {
         }
         self.running = None;
         self.clock = None;
-        self.bounce.gone();
         self.delivered.clear();
         let tx = self.tx.clone();
         match RepeatingTimer::every(SETTLE_BEFORE_CAPTURES, move || {
@@ -1970,25 +1962,6 @@ impl FlightEngine {
         }) {
             Some(timer) => self.quiet = Some((generation, timer)),
             None => self.tx.send(Event::Quiet(generation)),
-        }
-    }
-
-    /// Where each container is drawn, every tick, under `rini::animation::trace` at trace level: the
-    /// measurement behind "One flight however many presses" in
-    /// `src/animation/docs/animation-smoothness.md`. Off, it reads nothing.
-    fn trace_presented(&self) {
-        if !tracing::enabled!(target: "rini::animation::trace", tracing::Level::TRACE) {
-            return;
-        }
-        let Some(overlay) = self.overlay.as_ref() else { return };
-        for (key, at) in overlay.presented_positions().drawn {
-            tracing::trace!(
-                target: "rini::animation::trace",
-                key = format!("{key:?}"),
-                x = format!("{:.1}", at.x),
-                y = format!("{:.1}", at.y),
-                "presented"
-            );
         }
     }
 

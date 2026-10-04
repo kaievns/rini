@@ -306,12 +306,13 @@ pub struct Banding {
     pub group_order: Vec<GroupKey>,
 }
 
-/// Where each container of a flight is at the moment of a merge, read by the overlay just before.
+/// Where each container of a flight is at the moment of a merge, evaluated from the score the
+/// overlay installed just before (`Score::presented`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Presented {
     /// Where it is drawn, any bounce or nudge riding it included: where a member leaving it starts.
     pub drawn: HashMap<GroupKey, CGPoint>,
-    /// Where its own leg has it, with nothing riding it: what remaining travel and a newcomer's
+    /// Where its movement has it, with nothing riding it: what remaining travel and a newcomer's
     /// frame are judged against, since every destination and every frame a pass carries is one of
     /// these.
     pub along: HashMap<GroupKey, CGPoint>,
@@ -474,8 +475,9 @@ fn is_zero(p: CGPoint) -> bool {
 
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at the frames they are drawn at, a pan adds its travel to every group and the
-/// columns a move swapped still vote under it. `presented` is where each container is, read by the
-/// overlay just before. See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
+/// columns a move swapped still vote under it. `presented` is where each container is, from the
+/// score the overlay installed just before. See "Mid-flight passes" in
+/// `src/animation/docs/animation-smoothness.md`.
 pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,

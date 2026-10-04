@@ -8,7 +8,10 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_core::ids::WindowId;
 
 use super::easing::CubicBezier;
-use super::plan::GroupKey;
+use super::plan::{GroupKey, Presented};
+
+/// How far apart a spring leg's and a nudge's samples are: one 120Hz frame.
+pub const SAMPLE_STEP: f64 = 1.0 / 120.0;
 
 /// What a track moves: a container's position, or a tile's frame inside its container.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -89,12 +92,25 @@ impl Channel {
     }
 }
 
+/// Which constructor made a track, and so which Core Animation class plays it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Form {
+    /// `from` to `to` on one curve: a `CABasicAnimation`.
+    Between,
+    /// Evenly spaced and linear between: a `CAKeyframeAnimation` with values only.
+    Samples,
+    /// Key times and a curve per segment: a `CAKeyframeAnimation` with `keyTimes` and
+    /// `timingFunctions`.
+    Keyframes,
+}
+
 /// Keyframes on one node and channel, from `begin` on the media clock for `seconds`, at unit key
 /// times with one curve per segment.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Track {
     node: Node,
     channel: Channel,
+    form: Form,
     begin: f64,
     seconds: f64,
     keys: Vec<(f64, Value)>,
@@ -113,7 +129,7 @@ impl Track {
         curve: Curve,
     ) -> Track {
         let keys = vec![(0.0, from), (1.0, to)];
-        Track::keyframes(node, channel, keys, vec![curve], begin, seconds)
+        Track::made(Form::Between, node, channel, keys, vec![curve], begin, seconds)
     }
 
     /// Evenly spaced and linear between: a `CAKeyframeAnimation` with neither `keyTimes` nor
@@ -129,12 +145,24 @@ impl Track {
         let last = values.len().saturating_sub(1).max(1) as f64;
         let curves = vec![Curve::Linear; values.len().saturating_sub(1)];
         let keys = values.into_iter().enumerate().map(|(k, v)| (k as f64 / last, v)).collect();
-        Track::keyframes(node, channel, keys, curves, begin, seconds)
+        Track::made(Form::Samples, node, channel, keys, curves, begin, seconds)
     }
 
     /// Panics unless there are two keys or more, in order from 0 to 1, one curve per segment, every
     /// value of the kind the node holds, and `seconds` is not negative.
     pub fn keyframes(
+        node: Node,
+        channel: Channel,
+        keys: Vec<(f64, Value)>,
+        curves: Vec<Curve>,
+        begin: f64,
+        seconds: f64,
+    ) -> Track {
+        Track::made(Form::Keyframes, node, channel, keys, curves, begin, seconds)
+    }
+
+    fn made(
+        form: Form,
         node: Node,
         channel: Channel,
         keys: Vec<(f64, Value)>,
@@ -158,6 +186,7 @@ impl Track {
         Track {
             node,
             channel,
+            form,
             begin,
             seconds,
             keys,
@@ -171,6 +200,21 @@ impl Track {
 
     pub fn channel(&self) -> Channel {
         self.channel
+    }
+
+    pub fn form(&self) -> Form {
+        self.form
+    }
+
+    /// The same track, its timing, curves and every other key kept, ending at `to`. Panics if `to`
+    /// is not the kind its node holds.
+    pub fn ending_at(&self, to: Value) -> Track {
+        assert!(self.node.holds(to), "{:?} cannot hold {to:?}", self.node);
+        let mut track = self.clone();
+        if let Some((_, last)) = track.keys.last_mut() {
+            *last = to;
+        }
+        track
     }
 
     pub fn begin(&self) -> f64 {
@@ -241,6 +285,25 @@ impl Score {
         self.tracks.get(&(node, channel))
     }
 
+    /// Takes `node`'s track off `channel`, and returns it.
+    pub fn cut(&mut self, node: Node, channel: Channel) -> Option<Track> {
+        self.tracks.remove(&(node, channel))
+    }
+
+    /// Takes `node` out, its model and every track on it.
+    pub fn remove(&mut self, node: Node) {
+        self.models.remove(&node);
+        self.tracks.retain(|(on, _), _| *on != node);
+    }
+
+    /// Every container placed.
+    pub fn containers(&self) -> impl Iterator<Item = GroupKey> + '_ {
+        self.models.keys().filter_map(|node| match node {
+            Node::Container(key) => Some(*key),
+            Node::Tile(_) => None,
+        })
+    }
+
     /// `node`'s tracks in the order Core Animation must draw them. It composes a layer's
     /// animations in order of their begin times, ties in the order added, a non-additive one
     /// replacing whatever came before it: a renderer that replaces a `Base` track begins the node's
@@ -267,6 +330,21 @@ impl Score {
         let model = self.model(node)?;
         let base = self.track(node, Channel::Base).and_then(|track| track.at(at));
         Some(base.unwrap_or(model))
+    }
+
+    /// Every container at `at`: where it is drawn, and where its movement has it.
+    pub fn presented(&self, at: f64) -> Presented {
+        let mut presented = Presented::default();
+        for key in self.containers() {
+            let node = Node::Container(key);
+            if let (Some(Value::Point(drawn)), Some(Value::Point(along))) =
+                (self.sample(node, at), self.along(node, at))
+            {
+                presented.drawn.insert(key, drawn);
+                presented.along.insert(key, along);
+            }
+        }
+        presented
     }
 
     /// When the last of `node`'s tracks ends; none with no tracks.
@@ -693,6 +771,138 @@ mod tests {
         }
         assert!(score.settled(1.0));
         assert_eq!(score.remaining(1.0), 0.0);
+    }
+
+    /// `presented` is every container's `sample` and `along`: drawn with the accents riding it,
+    /// and where its movement has it without them.
+    #[test]
+    fn presented_draws_accents_and_along_does_not() {
+        let mut score = moving(0.0, -861.0, 0.0, 0.35, Curve::Bezier(MOTION_CURVE));
+        score.add(Track::samples(
+            strip(),
+            Channel::Nudge,
+            [point(0.0, 0.0), point(287.0, 0.0), point(0.0, 0.0)],
+            0.0,
+            0.455,
+        ));
+        let still = GroupKey::Floating;
+        score.place(Node::Container(still), point(0.0, 40.0));
+        score.place(tile(), rect(0.0, 0.0, 10.0, 10.0));
+        let at = 0.2;
+        let presented = score.presented(at);
+        let key = GroupKey::Rigid(1);
+        let (Some(Value::Point(drawn)), Some(Value::Point(along))) =
+            (score.sample(strip(), at), score.along(strip(), at))
+        else {
+            panic!("the strip is placed")
+        };
+        assert_eq!(presented.drawn[&key], drawn);
+        assert_eq!(presented.along[&key], along);
+        assert!(drawn.x - along.x > 200.0, "the nudge rides what is drawn only");
+        assert_eq!(presented.drawn[&still], CGPoint::new(0.0, 40.0));
+        assert_eq!(presented.along[&still], CGPoint::new(0.0, 40.0));
+        assert_eq!(presented.drawn.len(), 2, "containers only");
+    }
+
+    /// `ending_at` moves the last key and nothing else: the begin, the length, the curves and
+    /// every key before it stay, so a snap lands where the movement was going to on its own clock.
+    #[test]
+    fn ending_at_keeps_a_tracks_timing_and_moves_its_end() {
+        let from = rect(1726.0, 32.0, 861.0, 1081.0);
+        let to = rect(865.0, 32.0, 861.0, 1081.0);
+        let real = rect(866.0, 32.0, 860.0, 1081.0);
+        let track = Track::between(
+            tile(),
+            Channel::Base,
+            from,
+            to,
+            100.0,
+            0.35,
+            Curve::Bezier(MOTION_CURVE),
+        );
+        let snapped = track.ending_at(real);
+        assert_eq!(snapped.keys(), [(0.0, from), (1.0, real)]);
+        assert_eq!(
+            (snapped.node(), snapped.channel(), snapped.form()),
+            (track.node(), track.channel(), track.form())
+        );
+        assert_eq!((snapped.begin(), snapped.seconds()), (100.0, 0.35));
+        assert_eq!(snapped.curves(), track.curves());
+
+        let samples = Track::samples(
+            strip(),
+            Channel::Base,
+            [point(0.0, 0.0), point(5.0, 0.0), point(9.0, 0.0)],
+            1.0,
+            0.5,
+        );
+        let moved = samples.ending_at(point(10.0, 0.0));
+        assert_eq!(&moved.keys()[..2], &samples.keys()[..2]);
+        assert_eq!(moved.keys()[2], (1.0, point(10.0, 0.0)));
+        assert_eq!(moved.form(), Form::Samples);
+    }
+
+    /// The form is the constructor's, never read off the keys: evenly spaced keys made as
+    /// keyframes stay keyframes, and two samples stay samples.
+    #[test]
+    fn every_track_keeps_the_form_it_was_made_with() {
+        let between = base(0.0, 1.0, 0.0, 1.0, Curve::Linear);
+        assert_eq!(between.form(), Form::Between);
+        let samples = Track::samples(
+            strip(),
+            Channel::Base,
+            [point(0.0, 0.0), point(1.0, 0.0)],
+            0.0,
+            1.0,
+        );
+        assert_eq!(samples.form(), Form::Samples);
+        assert_eq!(samples.keys(), between.keys());
+        let keyframes = Track::keyframes(
+            strip(),
+            Channel::Base,
+            vec![(0.0, point(0.0, 0.0)), (1.0, point(1.0, 0.0))],
+            vec![Curve::Linear],
+            0.0,
+            1.0,
+        );
+        assert_eq!(keyframes.form(), Form::Keyframes);
+        assert_ne!(keyframes, between, "same keys, another class");
+        assert_eq!(keyframes.ending_at(point(2.0, 0.0)).form(), Form::Keyframes);
+    }
+
+    /// A cut takes one channel off a node and leaves the rest; a removal takes the node, its model
+    /// and every track, and `containers` names what is left.
+    #[test]
+    fn a_cut_takes_one_channel_and_a_removal_the_whole_node() {
+        let mut score = moving(0.0, 100.0, 0.0, 1.0, Curve::Linear);
+        let bounce = Track::samples(
+            strip(),
+            Channel::Bounce,
+            [point(0.0, 0.0), point(0.0, 9.0), point(0.0, 0.0)],
+            0.0,
+            1.0,
+        );
+        score.add(bounce.clone());
+        let floating = Node::Container(GroupKey::Floating);
+        score.place(floating, point(0.0, 0.0));
+        score.place(tile(), rect(0.0, 0.0, 10.0, 10.0));
+
+        assert_eq!(score.cut(strip(), Channel::Bounce), Some(bounce));
+        assert_eq!(score.cut(strip(), Channel::Bounce), None);
+        assert!(
+            score.track(strip(), Channel::Base).is_some(),
+            "the movement stays"
+        );
+
+        let mut keys: Vec<GroupKey> = score.containers().collect();
+        keys.sort_by_key(|key| format!("{key:?}"));
+        assert_eq!(keys, [GroupKey::Floating, GroupKey::Rigid(1)]);
+        score.remove(strip());
+        assert_eq!(score.model(strip()), None);
+        assert_eq!(score.tracks(strip()).count(), 0);
+        assert_eq!(score.containers().collect::<Vec<_>>(), [GroupKey::Floating]);
+        assert!(score.settled(0.5), "nothing is left playing");
+        assert!(score.model(tile()).is_some(), "the tile stays");
     }
 
     #[test]

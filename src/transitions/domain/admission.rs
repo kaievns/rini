@@ -3,8 +3,7 @@
 //! The layout does not wait for an animation to land, so a second pass can arrive mid-flight with a
 //! different destination for a window already moving, or with a window the first pass had not placed.
 //! Admitting one into the other without a visible jump is what these decisions are for. A move's
-//! nudge and a push against an end arrive the same way: the nudge waits for its flight to move, and a
-//! push while a bounce plays starts the next from where that one is drawn, as long as it is drawn.
+//! nudge arrives the same way, and waits for its flight to move.
 
 use std::time::{Duration, Instant};
 
@@ -14,7 +13,6 @@ use rini_geometry::{SameAs, to_overlay_space};
 use tracing::debug;
 
 use crate::animation::domain::motion::accents::{NudgeAdmission, NudgePlaying, nudge_admission};
-use crate::animation::domain::motion::bounce::Bounce;
 use crate::animation::domain::motion::nudge::NUDGE_STRETCH;
 use crate::pictures::domain::coverage::outgrows;
 
@@ -165,39 +163,6 @@ pub(in crate::transitions) fn starting_nudge(
     } else {
         debug!("move nudge skipped: one is still playing");
         None
-    }
-}
-
-/// The edge bounce the containers draw, and when it began: what a push arriving while it plays
-/// starts the next from. Core Animation drops the bounce at the lift and whenever frame zero is
-/// installed again, and the record goes with it.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(in crate::transitions) struct BounceRecord(Option<(Instant, Bounce)>);
-
-impl BounceRecord {
-    /// The bounce a push at `now` plays, from rest with none drawn, else from where the one drawn is;
-    /// and the overshoot of the one it replaces, which a container that did not carry starts from
-    /// rest.
-    pub(in crate::transitions) fn push(
-        &mut self,
-        now: Instant,
-        overshoot: CGPoint,
-        duration: Duration,
-    ) -> (Bounce, Option<CGPoint>) {
-        let next = match self.0 {
-            Some((began, bounce)) => {
-                bounce.pushed(now.saturating_duration_since(began), overshoot, duration)
-            }
-            None => Bounce::from_rest(overshoot, duration),
-        };
-        let before = self.0.map(|(_, drawn)| drawn.overshoot);
-        self.0 = Some((now, next));
-        (next, before)
-    }
-
-    /// The containers no longer draw it: the overlay lifted, or frame zero was installed again.
-    pub(in crate::transitions) fn gone(&mut self) {
-        self.0 = None;
     }
 }
 
@@ -553,44 +518,6 @@ mod tests {
             assert_eq!(nudge_waiting(Some(step), plain, &playing, soon), None);
             assert_eq!(starting_nudge(Some((step, plain)), &playing, soon), None);
             assert_eq!(nudge_waiting(None, plain, &idle, now), None);
-        }
-    }
-
-    /// The edge bounce: every push against an end shows, re-kicked from where the last is drawn.
-    mod bounce {
-        use super::*;
-
-        const PLAYS: Duration = Duration::from_millis(350);
-        const WALL: CGPoint = CGPoint { x: -72.0, y: 0.0 };
-
-        /// A push while a bounce plays is not dropped: it starts a bounce from where the last is
-        /// drawn. One after it came home, or with none playing, starts from rest.
-        #[test]
-        fn every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn() {
-            let began = Instant::now();
-            let mut record = BounceRecord::default();
-            let (first, before) = record.push(began, WALL, PLAYS);
-            assert_eq!((first, before), (Bounce::from_rest(WALL, PLAYS), None));
-            let later = began + Duration::from_millis(60);
-            let (second, before) = record.push(later, WALL, PLAYS);
-            assert_eq!(second.from, first.at(Duration::from_millis(60)));
-            assert_ne!(second.from, CGPoint::new(0.0, 0.0), "not over from rest");
-            assert_eq!(before, Some(WALL), "it replaces the one drawn");
-            let home = later + second.duration;
-            assert_eq!(record.push(home, WALL, PLAYS).0, Bounce::from_rest(WALL, PLAYS));
-        }
-
-        /// The lift and a frame zero installed again remove the bounce's animations, so a push
-        /// while the one gone would still have played starts from rest, replacing nothing: from
-        /// where the record says it was, the surface would jump.
-        #[test]
-        fn a_push_after_the_bounce_is_gone_starts_from_rest() {
-            let began = Instant::now();
-            let mut record = BounceRecord::default();
-            record.push(began, WALL, PLAYS);
-            record.gone();
-            let (next, before) = record.push(began + Duration::from_millis(60), WALL, PLAYS);
-            assert_eq!((next, before), (Bounce::from_rest(WALL, PLAYS), None));
         }
     }
 }

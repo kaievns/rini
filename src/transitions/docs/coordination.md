@@ -354,9 +354,12 @@ flights and masked every smaller error. The lift logs "overlay lifted", so
 the placing-to-lift gap can be read from the log. The lift itself waits for
 the render server and the real windows (the coordinator's tick, `TileOverlay::settled`,
 `handover_report`): the clock has
-to run out AND every container and picture has to be presented at its model
-position within half a point AND every window has to be within 2pt of where it was written, or
-`LIFT_GRACE` (350ms) past the clock. The
+to run out AND every animation the overlay installed has to have ended (its replica's
+`Score::settled`) AND every window has to be within 2pt of where it was written, or
+`LIFT_GRACE` (350ms) past the clock. The overlay used to ask the presentation instead, every container
+and picture within half a point of its model, which a 1722pt curve reaches at 87% of its length: the
+tracks ending says yes no earlier, so where a track outlasts the clock the lift waits as long or longer.
+*Not measured on the live build*: "flight landed" `late_ms` and the handover metric are the check. The
 render server runs a frame or so behind the coordinator's clock, and lifting on
 the clock alone showed the real windows one frame ahead of their tiles: a
 small jerk at the end of every flight. Every kind writes its frames as the overlay goes up. Written
@@ -404,15 +407,14 @@ notice — 2% of a 1720pt viewport; 72 is 4%, still far short of a column. The a
 the bounce kind when none is running: every tile at rest, nothing written and nothing watched, the
 bounce played as the motion starts, once frame zero is up. On a flight that moves it adds the bounce at
 once, and on one that does not move yet as it starts; either way the coordinator's clock runs on to cover
-the return (`Event::Extend`). Every push that reaches a moving flight shows: the
-actor keeps the bounce playing and when it began (`BounceRecord`), and a push while it plays starts
-the next from where that one is drawn (pinned by
-`every_push_at_an_end_starts_a_bounce_from_where_the_last_is_drawn`), the clock extended to the new
-one's return. The record goes at the lift and whenever frame zero is installed again, which removes
-the animations it describes, so the next push starts from rest
-(`a_push_after_the_bounce_is_gone_starts_from_rest`); kept, it would push from where nothing is drawn
-and the surface would jump. How the bounce is drawn, and how a push re-kicks it, is "Edge bounce" in
-`src/animation/docs/animation-smoothness.md`.
+the return (`Event::Extend`, for as long as the longest bounce the push started runs). Every push that
+reaches a moving flight shows: each container's bounce is a track the overlay keeps in its replica, and a
+push while it plays starts that container's next from where it is drawn, the clock extended to the new
+ones' return. A container's bounce goes with its tracks whenever frame zero is installed again and at
+the lift, which remove its animations, so the next push starts it from rest; an engine's record of the
+bounce kept past either pushed from where nothing was drawn and the surface jumped. Both are pinned by
+`a_push_starts_each_carrier_from_where_its_bounce_is_drawn`. How the bounce is drawn, and how a push
+re-kicks it, is "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
 
 ## The move flight, staged
 
@@ -602,12 +604,12 @@ top-left crop that stopped the grid at the picture's edge and showed the
 backdrop in the growth was tried and read as a hole (3:28:10), the same
 hole recorded above for `contentsRect` past the edge. If the repainted
 picture lands once the motion has started after all, it is hard-cut onto the tile and
-`set_tile_picture` re-installs the resize leg on
-the SAME `Timing` (begin on the media clock plus duration, kept per tile
-in `leg`, which a plain move keeps too, so a crop-drawn tile on a move
-re-keys the same way): the frame keeps its curve and only the pixels cut.
-Re-keying from the presented frame over the remaining duration restarted
-the ease-out and the tile lurched at every swap.
+`set_tile_picture` re-installs the tile's own track from the overlay's replica,
+the SAME begin, length and curve, while it plays (a plain move's track too, so a
+crop-drawn tile on a move re-keys the same way): the frame keeps its curve and only
+the pixels cut (`a_swap_re_keys_a_crop_grid_on_its_tiles_track`). A tile with no track
+of its own rides its container and has nothing to re-key. Re-keying from the presented
+frame over the remaining duration restarted the ease-out and the tile lurched at every swap.
 
 ## Border companions
 

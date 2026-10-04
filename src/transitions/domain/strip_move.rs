@@ -853,7 +853,7 @@ pub(crate) mod tests {
 
             let omega = crate::animation::domain::motion::glide::spring_omega(seconds);
             let to = merged.position_of(key);
-            let leg = Leg::leaving(legs.get(&strip), opened.install, to, now, omega);
+            let leg = Leg::toward(legs.get(&strip), opened.install, to, now, omega);
             let before = drawn(&current, &along, b);
             let after = drawn(&merged, &[(key, leg.position_at(now))].into_iter().collect(), b);
             assert!(after.same_as(before), "no jump: {before:?} then {after:?}");

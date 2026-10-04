@@ -1,13 +1,13 @@
-//! The edge bounce: the surface pushed out toward the wall it hit and eased home. `pushed` is a
+//! The edge bounce: the surface pushed out toward the wall it hit and eased home. `from_drawn` is a
 //! push arriving mid-bounce, a new one from wherever the last is drawn, so a burst at the wall
-//! shows every press and none starts over from rest. See "Edge bounce" in
-//! `src/animation/docs/animation-smoothness.md`.
+//! shows every press and none starts over from rest. Where each container's is drawn is
+//! `accents::push_tracks`'. See "Edge bounce" in `src/animation/docs/animation-smoothness.md`.
 use std::time::Duration;
 
 use objc2_core_foundation::CGPoint;
 
 use super::easing::{BOUNCE_TURN, EASE_IN_OUT, MOTION_CURVE};
-use super::plan::{GroupKey, carries_out_and_back};
+use super::plan::GroupKey;
 use super::score::{Channel, Curve, Node, Track, Value};
 
 /// The shortest way out a push is given, as a fraction of a full one. A push that finds the
@@ -56,20 +56,15 @@ impl Bounce {
         }
     }
 
-    pub fn is_home(&self, elapsed: Duration) -> bool {
-        elapsed >= self.duration
-    }
-
-    /// A push arriving `elapsed` into this bounce: out again from where it is drawn, the way out
-    /// shortened by how much of it is already covered, the way home a full one. One of no length
-    /// is a cut, drawn at rest.
-    pub fn pushed(&self, elapsed: Duration, overshoot: CGPoint, duration: Duration) -> Self {
-        if self.is_home(elapsed) || duration.is_zero() {
+    /// A push arriving where a bounce is drawn `drawn` out: out again from there, the way out
+    /// shortened by how much of it is already covered, the way home a full one. From rest, or of no
+    /// length, it is exactly `from_rest`; one of no length is a cut, drawn at rest.
+    pub fn from_drawn(drawn: CGPoint, overshoot: CGPoint, duration: Duration) -> Self {
+        if duration.is_zero() || (drawn.x == 0.0 && drawn.y == 0.0) {
             return Bounce::from_rest(overshoot, duration);
         }
-        let from = self.at(elapsed);
         let reach = (overshoot.x * overshoot.x + overshoot.y * overshoot.y).sqrt();
-        let (dx, dy) = (overshoot.x - from.x, overshoot.y - from.y);
+        let (dx, dy) = (overshoot.x - drawn.x, overshoot.y - drawn.y);
         let left = if reach > 0.0 {
             ((dx * dx + dy * dy).sqrt() / reach).clamp(0.0, 1.0)
         } else {
@@ -79,7 +74,7 @@ impl Bounce {
         let home = duration.mul_f64(1.0 - BOUNCE_TURN);
         let total = out + home;
         Bounce {
-            from,
+            from: drawn,
             overshoot,
             turn: out.as_secs_f64() / total.as_secs_f64(),
             duration: total,
@@ -103,21 +98,6 @@ impl Bounce {
             self.duration.as_secs_f64(),
         )
     }
-}
-
-/// The bounce the container `key` plays when `bounce` replaces one of overshoot `before`: none if it
-/// does not carry this one, from rest if it did not carry that one.
-pub fn container_bounce(key: GroupKey, bounce: &Bounce, before: Option<CGPoint>) -> Option<Bounce> {
-    if !carries_out_and_back(key, bounce.overshoot) {
-        return None;
-    }
-    if before.is_some_and(|before| carries_out_and_back(key, before)) {
-        return Some(*bounce);
-    }
-    Some(Bounce {
-        from: CGPoint::new(0.0, 0.0),
-        ..*bounce
-    })
 }
 
 #[cfg(test)]
@@ -162,7 +142,7 @@ mod tests {
     fn a_push_starts_where_the_last_is_drawn() {
         let first = Bounce::from_rest(WALL, PLAYS);
         for at in [5, 40, 90, 122, 160, 240, 349] {
-            let next = first.pushed(ms(at), WALL, PLAYS);
+            let next = Bounce::from_drawn(first.at(ms(at)), WALL, PLAYS);
             assert!(close(next.at(Duration::ZERO), first.at(ms(at))), "{at}ms");
             assert!(
                 close(next.at(next.duration.mul_f64(next.turn)), WALL),
@@ -184,7 +164,7 @@ mod tests {
         let mut now = Duration::ZERO;
         for _ in 0..6 {
             now += ms(70);
-            b = b.pushed(now - began, WALL, PLAYS);
+            b = Bounce::from_drawn(b.at(now - began), WALL, PLAYS);
             began = now;
         }
         for k in 0..=60 {
@@ -201,21 +181,47 @@ mod tests {
     #[test]
     fn a_push_on_the_way_home_turns_it_back_out() {
         let first = Bounce::from_rest(WALL, PLAYS);
-        let next = first.pushed(ms(250), WALL, PLAYS);
+        let next = Bounce::from_drawn(first.at(ms(250)), WALL, PLAYS);
         assert!(-next.at(ms(20)).x > -first.at(ms(250)).x, "going out again");
     }
 
     #[test]
     fn a_push_after_it_came_home_starts_from_rest() {
         let first = Bounce::from_rest(WALL, PLAYS);
-        assert_eq!(first.pushed(PLAYS, WALL, PLAYS), Bounce::from_rest(WALL, PLAYS));
+        assert_eq!(
+            Bounce::from_drawn(first.at(PLAYS), WALL, PLAYS),
+            Bounce::from_rest(WALL, PLAYS)
+        );
+    }
+
+    /// A push with nothing drawn is exactly the first push, bit for bit: re-deriving the turn from
+    /// the durations would round it, and a carrier at rest would start on a slightly other clock.
+    #[test]
+    fn from_rest_is_from_drawn_at_rest_exactly() {
+        let rest = CGPoint::new(0.0, 0.0);
+        for (overshoot, plays) in [
+            (WALL, PLAYS),
+            (CGPoint::new(0.0, -72.0), Duration::from_millis(455)),
+            (CGPoint::new(72.0, 0.0), Duration::from_nanos(349_999_999)),
+        ] {
+            assert_eq!(
+                Bounce::from_drawn(rest, overshoot, plays),
+                Bounce::from_rest(overshoot, plays)
+            );
+        }
+        assert_eq!(
+            Bounce::from_drawn(CGPoint::new(-0.0, 0.0), WALL, PLAYS),
+            Bounce::from_rest(WALL, PLAYS),
+            "home, as `at` draws it at the end"
+        );
     }
 
     /// A zero bounce duration is a configuration, not an error: a push of no length mid-bounce is
     /// drawn at rest and makes a track Core Animation is handed nothing for.
     #[test]
     fn a_push_of_no_length_is_a_cut() {
-        let cut = Bounce::from_rest(WALL, PLAYS).pushed(ms(100), WALL, Duration::ZERO);
+        let drawn = Bounce::from_rest(WALL, PLAYS).at(ms(100));
+        let cut = Bounce::from_drawn(drawn, WALL, Duration::ZERO);
         assert!(cut.turn.is_finite(), "{cut:?}");
         assert_eq!(cut.duration, Duration::ZERO);
         assert!(close(cut.at(Duration::ZERO), CGPoint::new(0.0, 0.0)));
@@ -227,7 +233,7 @@ mod tests {
     fn a_push_the_other_way_starts_from_where_it_is() {
         let first = Bounce::from_rest(WALL, PLAYS);
         let back = CGPoint::new(72.0, 0.0);
-        let next = first.pushed(ms(100), back, PLAYS);
+        let next = Bounce::from_drawn(first.at(ms(100)), back, PLAYS);
         assert!(close(next.at(Duration::ZERO), first.at(ms(100))));
         assert!(close(next.at(next.duration.mul_f64(next.turn)), back));
         assert!(
@@ -273,9 +279,9 @@ mod tests {
         let first = Bounce::from_rest(WALL, PLAYS);
         let bounces = [
             first,
-            first.pushed(ms(90), WALL, PLAYS),
-            first.pushed(ms(250), WALL, PLAYS),
-            first.pushed(ms(100), CGPoint::new(72.0, 0.0), PLAYS),
+            Bounce::from_drawn(first.at(ms(90)), WALL, PLAYS),
+            Bounce::from_drawn(first.at(ms(250)), WALL, PLAYS),
+            Bounce::from_drawn(first.at(ms(100)), CGPoint::new(72.0, 0.0), PLAYS),
             Bounce::from_rest(CGPoint::new(0.0, 72.0), PLAYS),
         ];
         let model = CGPoint::new(-861.0, 32.0);
@@ -291,35 +297,5 @@ mod tests {
                 "bounce {k} is home"
             );
         }
-    }
-
-    /// A push replaces the bounce on every container that carries it. One that carried the bounce
-    /// before goes on from where that is drawn; one that did not, the floating windows under a
-    /// sideways bounce, is at rest and starts there; one that does not carry this one plays none.
-    #[test]
-    fn a_container_that_did_not_carry_the_last_bounce_starts_from_rest() {
-        let plays = Duration::from_millis(350);
-        let (up, left) = (CGPoint::new(0.0, -72.0), CGPoint::new(-72.0, 0.0));
-        let pushed_up = Bounce::from_rest(up, plays).pushed(Duration::from_millis(90), up, plays);
-        let strip = GroupKey::STILL;
-        assert_eq!(container_bounce(strip, &pushed_up, Some(up)), Some(pushed_up));
-        assert_eq!(container_bounce(strip, &pushed_up, Some(left)), Some(pushed_up));
-        assert_eq!(
-            container_bounce(GroupKey::Floating, &pushed_up, Some(up)),
-            Some(pushed_up)
-        );
-        let from_rest = container_bounce(GroupKey::Floating, &pushed_up, Some(left)).unwrap();
-        assert_eq!(from_rest.from, CGPoint::new(0.0, 0.0));
-        assert_eq!(
-            (from_rest.overshoot, from_rest.turn, from_rest.duration),
-            (pushed_up.overshoot, pushed_up.turn, pushed_up.duration),
-            "on the same clock as the rest"
-        );
-        assert_eq!(
-            container_bounce(GroupKey::Floating, &pushed_up, None).map(|b| b.from),
-            Some(CGPoint::new(0.0, 0.0))
-        );
-        let sideways = Bounce::from_rest(left, plays);
-        assert_eq!(container_bounce(GroupKey::Floating, &sideways, Some(left)), None);
     }
 }
