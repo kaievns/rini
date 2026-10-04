@@ -21,7 +21,8 @@ use objc2_quartz_core::{
 };
 use rini_core::ids::{WindowId, WindowServerId};
 use rini_geometry::space::{
-    ContentsRect, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenRect, TileSize, ToCg,
+    ContentsRect, FromCg, GroupRect, OverlayPoint, OverlayRect, Respace, ScreenPoint, ScreenRect, TileSize,
+    ToCg,
 };
 
 use crate::animation::domain::motion::easing::CubicBezier;
@@ -585,6 +586,11 @@ fn window_rect(frame: CGRect, top_band: f64) -> CGRect {
     )
 }
 
+/// Where the overlay window's top-left is on screen, as `window_rect` places it.
+fn window_origin(frame: CGRect, top_band: f64) -> ScreenPoint {
+    ScreenPoint::from_cg(window_rect(frame, top_band).origin)
+}
+
 /// Where the content layer sits inside the window: the full display, lifted so the reserved band is
 /// above the window's top edge and clipped away. The view is flipped, so its layer's y grows
 /// downward and a negative origin lifts the content.
@@ -870,6 +876,9 @@ impl TileOverlay {
 
     /// The overlay's window as the window server numbers it, which a handover check pictures alone.
     pub fn server_id(&self) -> Option<WindowServerId> { numbered(self.window.windowNumber()) }
+
+    /// Where the overlay's window starts on screen, which a picture of it alone starts at.
+    pub fn origin(&self) -> ScreenPoint { window_origin(self.frame, self.top_band) }
 
     /// Shows the overlay; only an alpha change.
     pub fn show(&mut self) {
@@ -1622,6 +1631,15 @@ mod tests {
 
         assert_eq!(window_rect(display, 0.0), display);
         assert_eq!(canvas_rect(display, 0.0).origin, CGPoint::new(0.0, 0.0));
+    }
+
+    /// A picture of the overlay alone starts where its window does: the display's top-left, a band
+    /// down.
+    #[test]
+    fn the_window_starts_a_band_below_the_displays_top_left() {
+        let display = CGRect::new(CGPoint::new(-670.0, -1692.0), CGSize::new(3008.0, 1692.0));
+        assert_eq!(window_origin(display, 32.0), ScreenPoint::new(-670.0, -1660.0));
+        assert_eq!(window_origin(display, 0.0), ScreenPoint::new(-670.0, -1692.0));
     }
 
     /// A handover check pictures the overlay by its number, which AppKit gives as 0 or less until the

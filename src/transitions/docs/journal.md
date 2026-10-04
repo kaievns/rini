@@ -184,9 +184,9 @@ It is off unless asked for, and `off` turns it off with the writing.
   its own picture is measured; on a request or the patience the overlay may be gone from the picture,
   and its measure, if one comes, is dropped.
 - **The pictures service.** The overlay window alone is its next SkyLight call, ahead of any other
-  (`TileOverlay::server_id` names it), and it tells the engine `OverlayTaken` at once. `AFTER_LIFT`
-  (45ms) after that picture, as the research waited after its hide, it takes the screen through
-  `CGWindowListCreateImage` on its own thread. The research hid as its picture returned; here the hide
+  (`TileOverlay::server_id` names it, and `TileOverlay::origin` says where it starts on screen), and
+  it tells the engine `OverlayTaken` at once. `AFTER_LIFT` (45ms) after that picture, as the research
+  waited after its hide, it takes the screen through `CGWindowListCreateImage` on its own thread. The research hid as its picture returned; here the hide
   waits for the hop to the main thread, so the screen comes that much less after it. A thread of the
   check's own, `handover`, draws the two whole and compares them over each window
   (`src/pictures/domain/handover.rs`: the research's sampling and thresholds), and the service tells

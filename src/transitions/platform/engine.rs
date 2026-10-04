@@ -2143,12 +2143,12 @@ impl FlightEngine {
         if !self.journal.is_some_and(|journal| journal.measure_handover) || windows.is_empty() {
             return None;
         }
-        let overlay = self.overlay.as_ref()?.server_id()?;
+        let overlay = self.overlay.as_ref()?;
         let (display, scale) = self.display?;
         Some(HandoverCheck {
             tag: self.tag(generation),
-            overlay,
-            overlay_origin: display.origin + ScreenVector::new(0.0, self.top_band),
+            overlay: overlay.server_id()?,
+            overlay_origin: overlay.origin(),
             display,
             scale,
             windows,

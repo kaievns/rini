@@ -32,7 +32,7 @@ const CORNER: f64 = 16.0;
 pub struct HandoverCheck {
     pub tag: Tag,
     pub overlay: WindowServerId,
-    /// The overlay window's top-left: the display's, `top_band` down.
+    /// Where the overlay window's top-left is on screen, as the overlay places it.
     pub overlay_origin: ScreenPoint,
     pub display: ScreenRect,
     pub scale: f64,
