@@ -119,7 +119,7 @@ pub fn stage_move(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use objc2_core_foundation::CGSize;
 
     use super::*;
@@ -576,5 +576,323 @@ mod tests {
         let alone = Flight::fly(&windows, from_offset, step, flight_curve(true), w_alone);
         let desktop = (1..=9).any(|i| alone.open(&[N, C], i as f64 / 10.0) > GAP + 1.0);
         assert!(desktop, "W stepping alone opens the desktop");
+    }
+
+    /// Moves as `start_strip_pan` stages them, and bursts of them merging mid-flight. The engine's
+    /// tests stage with these too.
+    pub(crate) mod staging {
+        use std::collections::HashMap;
+
+        use objc2_core_foundation::{CGPoint, CGRect};
+        use rini_core::ids::{WindowId, WindowServerId};
+        use rini_geometry::SameAs;
+        use rini_ipc::protocol::Direction;
+
+        use crate::animation::domain::motion::easing::MOTION_CURVE;
+        use crate::animation::domain::motion::glide::Leg;
+        use crate::animation::domain::motion::plan::*;
+        use crate::animation::domain::motion::surface::{SurfaceGeometry, pan_travel};
+        use crate::animation::domain::motion::testing::{DISPLAY, rect};
+        use crate::transitions::domain::request::SurfaceWindow;
+        use crate::transitions::domain::strip_move::stage_move;
+
+        /// A full-width column and the gap after it.
+        pub(crate) const WIDTH: f64 = 1720.0;
+
+        pub(crate) const STEP: f64 = 1723.0;
+
+        /// A half-width column, which is seen moving and never steps.
+        pub(crate) const HALF: f64 = 858.0;
+
+        /// The outer gaps either side of a full-width column.
+        pub(crate) const OUTER: f64 = 4.0;
+
+        /// The viewport's travel of one full-width move the camera follows.
+        pub(crate) const OFFSET: CGPoint = CGPoint { x: -STEP, y: 0.0 };
+
+        pub(crate) const REST: CGPoint = CGPoint { x: 0.0, y: 0.0 };
+
+        pub(crate) fn wid(idx: u32) -> WindowId {
+            WindowId {
+                pid: 7,
+                idx: std::num::NonZeroU32::new(idx).unwrap(),
+            }
+        }
+
+        pub(crate) fn at(x: f64, width: f64) -> CGRect {
+            rect(x, 32.0, width, 1081.0)
+        }
+
+        /// The surface of one move as `start_strip_pan` builds it: every window at its new frame,
+        /// the pair staged by `stage_move`, and the step the move takes.
+        pub(crate) fn staged(
+            frames: &[(WindowId, CGRect)],
+            moved: WindowId,
+            direction: Direction,
+        ) -> (Vec<SurfaceWindow>, Option<CGPoint>) {
+            let mut windows: Vec<SurfaceWindow> = frames
+                .iter()
+                .map(|&(window, frame)| SurfaceWindow {
+                    window,
+                    server_id: WindowServerId::new(window.idx.get()),
+                    frame,
+                    pinned: false,
+                    floating: false,
+                    from: None,
+                })
+                .collect();
+            let step = stage_move(&mut windows, moved, direction, DISPLAY.size.width, OUTER, OUTER);
+            (windows, step)
+        }
+
+        pub(crate) fn surface(
+            frames: &[(WindowId, CGRect)],
+            moved: WindowId,
+            direction: Direction,
+        ) -> Vec<SurfaceWindow> {
+            staged(frames, moved, direction).0
+        }
+
+        pub(crate) fn dest(plan: &FlightPlan, window: WindowId) -> Option<CGRect> {
+            match plan.member(window)? {
+                Member::Rigid { key, rel } => Some(overlay_of(rel, plan.position_of(key))),
+                _ => None,
+            }
+        }
+
+        pub(crate) fn key_of(plan: &FlightPlan, window: WindowId) -> Option<GroupKey> {
+            match plan.member(window)? {
+                Member::Rigid { key, .. } => Some(key),
+                _ => None,
+            }
+        }
+
+        /// Columns 0 A W B C (`wid(1)` to `wid(5)`), `width` wide, W moved right twice in a row
+        /// with the camera following it: the flight of the first press, the frames and plan of the
+        /// second, and the viewport's travel of each.
+        pub(crate) fn two_presses(width: f64) -> (FlightPlan, [(WindowId, CGRect); 5], ReflowPlan, CGPoint) {
+            let step = width + 3.0;
+            let offset = CGPoint::new(-step, 0.0);
+            let (zero, a, w, b, c) = (wid(1), wid(2), wid(3), wid(4), wid(5));
+            let first = [
+                (zero, at(4.0 - 2.0 * step, width)),
+                (a, at(4.0 - step, width)),
+                (w, at(4.0, width)),
+                (b, at(4.0 + step, width)),
+                (c, at(4.0 + 2.0 * step, width)),
+            ];
+            let current =
+                FlightPlan::from(surface_plan(&surface(&first, w, Direction::Right), offset, REST));
+            let second = [
+                (zero, at(4.0 - 3.0 * step, width)),
+                (a, at(4.0 - 2.0 * step, width)),
+                (b, at(4.0 - step, width)),
+                (w, at(4.0, width)),
+                (c, at(4.0 + step, width)),
+            ];
+            let incoming = surface_plan(&surface(&second, w, Direction::Right), offset, REST);
+            (current, second, incoming, offset)
+        }
+
+        /// Every container of `plan` half-way along its travel.
+        pub(crate) fn halfway(plan: &FlightPlan) -> HashMap<GroupKey, CGPoint> {
+            plan.groups
+                .iter()
+                .map(|g| (g.key, CGPoint::new(g.travel.x / 2.0, g.travel.y / 2.0)))
+                .collect()
+        }
+
+        /// The frame `window` is drawn at, its container at `presented`.
+        pub(crate) fn drawn(
+            plan: &FlightPlan,
+            presented: &HashMap<GroupKey, CGPoint>,
+            window: WindowId,
+        ) -> CGRect {
+            match plan.member(window) {
+                Some(Member::Rigid { key, rel }) => overlay_of(rel, presented[&key]),
+                other => panic!("{window:?} is {other:?}"),
+            }
+        }
+
+        /// Half-width columns, W at the right edge moving right past B, the strip scrolling one column
+        /// with it. B is two windows stacked. W stands still on screen, B crosses it, the rest pans.
+        #[test]
+        fn the_moved_column_and_the_one_it_passed_are_pieces_of_their_own() {
+            let top = rect(4.0, 32.0, 860.0, 539.0);
+            let bottom = rect(4.0, 574.0, 860.0, 539.0);
+            let frames = [
+                (wid(1), at(4.0 - 864.0, 860.0)),
+                (wid(2), top),
+                (wid(3), bottom),
+                (wid(4), at(868.0, 860.0)),
+                (wid(5), at(1732.0, 860.0)),
+            ];
+            let (windows, step) = staged(&frames, wid(4), Direction::Right);
+            assert_eq!(step, None, "a half-width move does not step");
+            let (from_offset, to_offset) = (CGPoint::new(-864.0, 0.0), CGPoint::new(0.0, 0.0));
+            let plan = surface_plan(&windows, from_offset, to_offset);
+            let group = |window| plan.group_of(window).expect("rigid").clone();
+
+            assert_eq!(group(wid(4)).key, GroupKey::STILL, "the camera followed it");
+            assert_eq!(group(wid(4)).members.len(), 1);
+            let passed = group(wid(2));
+            assert_eq!(passed.key, group(wid(3)).key, "a stacked column is one piece");
+            assert_eq!(passed.travel, CGPoint::new(-1728.0, 0.0));
+            let rest = group(wid(1));
+            assert_eq!(rest.key, group(wid(5)).key, "the rest of the strip is one piece");
+            assert_eq!(rest.travel, pan_travel(from_offset, to_offset));
+            assert_eq!(plan.groups.iter().filter(|g| !g.members.is_empty()).count(), 3);
+            for window in &windows {
+                let (from, to) = window.travel(from_offset, to_offset);
+                let member = group(window.window);
+                let rel = member.members.iter().find(|m| m.window == window.window).unwrap().rel;
+                assert_eq!(rel, from, "installs where it was on screen");
+                assert_eq!(overlay_of(rel, member.travel), to, "lands at its new frame");
+            }
+        }
+
+        /// Full-width columns: the second press passes B while the first press's step plays. B is
+        /// held on the strip as A was, so nothing leaves the strip's piece and no container opens:
+        /// the step riding every container carries on over all of them. W keeps its container, B
+        /// lands beneath W where it was, A pans on from beneath W with the strip, and the rest
+        /// lands at its frames.
+        #[test]
+        fn a_second_full_width_move_mid_flight_holds_its_column_on_the_strip() {
+            let (zero, a, w, b, c) = (wid(1), wid(2), wid(3), wid(4), wid(5));
+            let (current, second, incoming, offset) = two_presses(WIDTH);
+            let strip = key_of(&current, zero).unwrap();
+            assert_eq!(key_of(&current, a), Some(strip), "the first press held A");
+            let (merged, delta) = merge_plans(
+                &current,
+                &incoming,
+                Some(pan_travel(offset, REST)),
+                &halfway(&current).into(),
+                Some(w),
+                DISPLAY,
+            );
+
+            assert!(delta.new_groups.is_empty(), "{:?}", delta.new_groups);
+            assert!(delta.reparented.is_empty(), "{:?}", delta.reparented);
+            let w_key = key_of(&current, w).unwrap();
+            assert_eq!(key_of(&merged, w), Some(w_key), "W keeps its container");
+            for window in [zero, a, b, c] {
+                assert_eq!(
+                    key_of(&merged, window),
+                    Some(strip),
+                    "{window:?} rides the strip"
+                );
+            }
+            let frame_of = |window| second.iter().find(|(w, _)| *w == window).unwrap().1;
+            for window in [zero, w, c] {
+                assert!(
+                    dest(&merged, window).unwrap().same_as(frame_of(window)),
+                    "{window:?}"
+                );
+            }
+            let under_w = frame_of(w);
+            let lands = dest(&merged, b).unwrap();
+            assert!(
+                lands.origin.x >= under_w.origin.x && lands.max().x <= under_w.max().x,
+                "B lands beneath W: {lands:?}"
+            );
+            let pan = pan_travel(offset, REST);
+            let a_lands = dest(&merged, a).unwrap();
+            assert!(
+                a_lands.same_as(overlay_of(under_w, pan)),
+                "A was held beneath W and pans on with the strip: {a_lands:?}"
+            );
+        }
+
+        /// Half-width columns: the column the second press passes leaves the strip's container for
+        /// one of its own, from where it is drawn and exactly as fast as the strip was going. A
+        /// curve from rest there launched it at many times the speed it had a frame before.
+        #[test]
+        fn the_column_a_second_move_passes_keeps_its_speed() {
+            let (w, b) = (wid(3), wid(4));
+            let (current, _, incoming, offset) = two_presses(HALF);
+            let seconds = 0.35;
+            let legs: HashMap<GroupKey, Leg> = current
+                .groups
+                .iter()
+                .filter(|g| !g.is_still())
+                .map(|g| {
+                    let leg = Leg::Curve {
+                        from: CGPoint::new(0.0, 0.0),
+                        to: g.travel,
+                        begin: 0.0,
+                        seconds,
+                        curve: MOTION_CURVE,
+                    };
+                    (g.key, leg)
+                })
+                .collect();
+            let now = 0.12;
+            let along: HashMap<GroupKey, CGPoint> = current
+                .groups
+                .iter()
+                .map(|g| {
+                    (
+                        g.key,
+                        legs.get(&g.key).map_or(g.travel, |leg| leg.position_at(now)),
+                    )
+                })
+                .collect();
+            let (merged, delta) = merge_plans(
+                &current,
+                &incoming,
+                Some(pan_travel(offset, REST)),
+                &along.clone().into(),
+                Some(w),
+                DISPLAY,
+            );
+            let strip = key_of(&current, b).unwrap();
+            let key = key_of(&merged, b).unwrap();
+            let opened =
+                delta.new_groups.iter().find(|g| g.key == key).expect("a container of its own");
+            assert_eq!(opened.leaving, Some(strip));
+
+            let omega = crate::animation::domain::motion::glide::spring_omega(seconds);
+            let to = merged.position_of(key);
+            let leg = Leg::leaving(legs.get(&strip), opened.install, to, now, omega);
+            let before = drawn(&current, &along, b);
+            let after = drawn(&merged, &[(key, leg.position_at(now))].into_iter().collect(), b);
+            assert!(after.same_as(before), "no jump: {before:?} then {after:?}");
+            let speed = legs[&strip].velocity_at(now).x;
+            assert!(speed.abs() > 500.0, "the strip was moving: {speed}");
+            assert!((leg.velocity_at(now).x - speed).abs() < 1e-6, "no kick");
+            assert!(
+                (leg.position_at(now + leg.seconds()).x - to.x).abs() <= 0.5,
+                "and it lands"
+            );
+
+            let from_rest = Leg::Curve {
+                from: opened.install,
+                to,
+                begin: now,
+                seconds,
+                curve: MOTION_CURVE,
+            };
+            assert!(
+                from_rest.velocity_at(now).x / speed > 5.0,
+                "what it replaced kicked"
+            );
+        }
+
+        /// The whole strip steps, so a still window joining mid-step takes the still piece and
+        /// steps with the strip, as it would had it been there when the step began.
+        #[test]
+        fn a_still_window_joining_mid_step_steps_with_the_strip() {
+            let w = wid(3);
+            let (current, _, _, _) = two_presses(WIDTH);
+            let key = key_of(&current, w).unwrap();
+            let stands = rect(900.0, 200.0, 400.0, 300.0);
+            let pass = reflow_plan(&[(wid(40), stands, stands, false)], DISPLAY);
+            let presented = Presented::from(halfway(&current));
+
+            let (merged, _) = merge_plans(&current, &pass, None, &presented, None, DISPLAY);
+            assert_eq!(key_of(&merged, wid(40)), Some(key), "it shares the still piece");
+            assert!(carries_out_and_back(key, CGPoint::new(-576.0, 0.0)));
+            assert!(dest(&merged, wid(40)).unwrap().same_as(stands));
+        }
     }
 }

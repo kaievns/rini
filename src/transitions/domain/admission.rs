@@ -170,6 +170,7 @@ mod tests {
     use objc2_core_foundation::CGPoint;
 
     use super::*;
+    use crate::animation::domain::motion::testing::{Gen, RUNS};
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
@@ -476,5 +477,338 @@ mod tests {
         );
         assert!(!chases_stand_in(rect(1727.0, 1085.0, 1720.0, 1081.0), display));
         assert!(!chases_stand_in(rect(-3446.0, 32.0, 1720.0, 1081.0), display));
+    }
+
+    /// The 0.1pt tolerance is `same_as`'s: the layout recomputes destinations bit-for-bit only most
+    /// of the time.
+    #[test]
+    fn a_pass_confirming_the_destination_is_redundant() {
+        let to = rect(4.0, 32.0, 859.0, 1081.0);
+        let confirming = rect(4.05, 32.0, 859.0, 1081.0);
+        assert_eq!(merge_action(Some(to), confirming), Admitted::Redundant);
+    }
+
+    #[test]
+    fn a_new_destination_retargets_and_a_new_window_joins() {
+        let to = rect(4.0, 32.0, 859.0, 1081.0);
+        assert_eq!(
+            merge_action(Some(to), rect(865.0, 32.0, 859.0, 1081.0)),
+            Admitted::Retargeted
+        );
+        assert_eq!(merge_action(None, to), Admitted::Joined);
+    }
+
+    #[test]
+    fn a_coalescing_merge_re_requests_frames_it_already_applied() {
+        let moved = window(1);
+        let a = rect(1727.0, 1116.0, 859.0, 1081.0);
+        let b = rect(867.0, 32.0, 859.0, 1081.0);
+        let mut final_frames = vec![(moved, a)];
+
+        let changed = merge_final_frames(&mut final_frames, vec![(moved, b)]);
+        let reapply = reapply_set(true, false, changed, &final_frames);
+
+        assert!(changed, "B differs from A");
+        assert_eq!(final_frames, vec![(moved, b)], "latest frame wins");
+        assert_eq!(
+            reapply,
+            Some(vec![(moved, b)]),
+            "frames applied early and then merged must be re-requested; got {reapply:?}"
+        );
+    }
+
+    #[test]
+    fn a_merge_before_frames_were_applied_re_requests_nothing() {
+        let mut rng = Gen(35);
+        for _ in 0..RUNS {
+            let current = rng.on_screen();
+            let mut final_frames = vec![(window(1), current)];
+            let incoming = if rng.coin() { rng.on_screen() } else { current };
+            let action = merge_action(Some(current), incoming);
+            let expected = if current.same_as(incoming) {
+                Admitted::Redundant
+            } else {
+                Admitted::Retargeted
+            };
+            assert_eq!(action, expected);
+            let changed =
+                merge_final_frames(&mut final_frames, vec![(window(1), incoming)]);
+            assert_eq!(changed, action == Admitted::Retargeted);
+            assert_eq!(
+                final_frames,
+                vec![(window(1), incoming)],
+                "latest frame wins"
+            );
+            for in_flight in [false, true] {
+                assert_eq!(
+                    reapply_set(false, in_flight, changed, &final_frames),
+                    None
+                );
+            }
+        }
+        assert_eq!(
+            merge_action(None, rect(4.0, 32.0, 859.0, 1081.0)),
+            Admitted::Joined
+        );
+    }
+
+    #[test]
+    fn a_coalescing_merge_re_requests_exactly_the_merged_frames() {
+        let mut rng = Gen(63);
+        let mut re_requested = 0;
+        for _ in 0..RUNS {
+            let count = rng.below(4) as u32 + 1;
+            let mut final_frames: Vec<(WindowId, CGRect)> =
+                (1..=count).map(|i| (window(i), rng.on_screen())).collect();
+            let passes = rng.below(3) + 1;
+            let mut expected: Vec<(WindowId, CGRect)> = final_frames.clone();
+            for _ in 0..passes {
+                let mut incoming: Vec<(WindowId, CGRect)> = Vec::new();
+                for i in 1..=count + 1 {
+                    match rng.below(3) {
+                        0 => continue,
+                        1 => incoming.push((window(i), rng.on_screen())),
+                        _ => {
+                            if let Some(&(_, current)) =
+                                expected.iter().find(|(w, _)| *w == window(i))
+                            {
+                                incoming.push((window(i), current));
+                            }
+                        }
+                    }
+                }
+                let mut expected_changed = false;
+                for (window, frame) in &incoming {
+                    match expected.iter_mut().find(|(w, _)| w == window) {
+                        Some(current) => {
+                            expected_changed |= !current.1.same_as(*frame);
+                            current.1 = *frame;
+                        }
+                        None => {
+                            expected.push((*window, *frame));
+                            expected_changed = true;
+                        }
+                    }
+                }
+                let changed = merge_final_frames(&mut final_frames, incoming);
+                assert_eq!(changed, expected_changed, "seed 63");
+                let reapply = reapply_set(true, false, changed, &final_frames);
+                if changed {
+                    re_requested += 1;
+                    assert_eq!(
+                        reapply,
+                        Some(expected.clone()),
+                        "seed 63: merged set, latest wins"
+                    );
+                } else {
+                    assert_eq!(reapply, None, "seed 63: nothing changed, nothing re-requested");
+                }
+            }
+        }
+        assert!(
+            re_requested > RUNS / 2,
+            "generator sanity: {re_requested} re-requests"
+        );
+    }
+
+    #[test]
+    fn reapply_set_truth_table() {
+        let frames = vec![(window(1), rect(4.0, 32.0, 859.0, 1081.0))];
+        for frames_applied in [false, true] {
+            for in_flight in [false, true] {
+                for changed in [false, true] {
+                    let expected =
+                        (frames_applied && !in_flight && changed).then(|| frames.clone());
+                    assert_eq!(
+                        reapply_set(frames_applied, in_flight, changed, &frames),
+                        expected,
+                        "frames_applied={frames_applied} in_flight={in_flight} changed={changed}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The reservation always brings a hold entry of the destination's size.
+    #[test]
+    fn an_entrance_always_holds_at_its_destination_size() {
+        let mut rng = Gen(61);
+        for _ in 0..RUNS {
+            let to = rng.on_screen();
+            let floating = rng.coin();
+            let (entrance, waiting) = entrance_reservation(window(2), to, floating);
+            assert_eq!(waiting, (window(2), to.size), "seed 61: {to:?}");
+            assert_eq!(entrance.to, to);
+            assert_eq!(entrance.floating, floating);
+        }
+    }
+
+    #[test]
+    fn a_fresh_flight_with_an_entrance_applies_and_chases_at_frame_zero() {
+        let mut rng = Gen(311);
+        for _ in 0..RUNS {
+            let to = rng.on_screen();
+            let (entrance, waiting) = entrance_reservation(window(3), to, false);
+            assert_eq!(entrance.window, window(3));
+            assert_eq!(entrance.to, to);
+            let awaiting: Vec<(WindowId, CGSize)> = vec![waiting];
+            let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
+            assert!(apply_now);
+            assert!(
+                chase.contains(&(window(3), to.size)),
+                "the entrance is chased: {chase:?}"
+            );
+
+            let awaiting = vec![(window(1), rng.on_screen().size)];
+            let (apply_now, chase, _) = frame_zero_work(&awaiting, &[], &[], &[]);
+            assert!(apply_now);
+            assert_eq!(chase, awaiting);
+        }
+        assert_eq!(
+            frame_zero_work(&[], &[], &[], &[]),
+            (false, Vec::new(), Vec::new())
+        );
+    }
+
+    #[test]
+    fn entrance_plan_travels_from_spawn_or_reserves_with_a_reason() {
+        let slot = rect(867.0, 32.0, 859.0, 1081.0);
+        let spawn = rect(300.0, 200.0, 640.0, 480.0);
+        assert_eq!(
+            entrance_plan(Some(spawn), slot, true, true),
+            EntranceDecision::Travel { from: spawn, to: slot }
+        );
+        assert_eq!(
+            entrance_plan(None, slot, true, true),
+            EntranceDecision::Reserve("no server frame")
+        );
+        assert_eq!(
+            entrance_plan(Some(rect(300.0, 200.0, 0.0, 0.0)), slot, true, true),
+            EntranceDecision::Reserve("zero server frame")
+        );
+        assert_eq!(
+            entrance_plan(Some(spawn), slot, false, true),
+            EntranceDecision::Reserve("capture unusable")
+        );
+        assert_eq!(
+            entrance_plan(Some(spawn), slot, true, false),
+            EntranceDecision::Reserve("capture budget")
+        );
+    }
+
+    #[test]
+    fn frame_zero_work_sends_all_frames_when_holding_and_only_slots_otherwise() {
+        let slot = rect(867.0, 32.0, 859.0, 1081.0);
+        let grown = rect(4.0, 32.0, 1200.0, 1081.0);
+        let final_frames = vec![(window(1), grown), (window(2), slot)];
+        let (holding, chase_set, now) = frame_zero_work(
+            &[(window(1), grown.size)],
+            &[(window(2), slot.size)],
+            &final_frames,
+            &[(window(2), slot)],
+        );
+        assert!(holding);
+        assert_eq!(
+            now, final_frames,
+            "holding: every frame goes out under the overlay"
+        );
+        assert_eq!(chase_set, vec![(window(1), grown.size), (window(2), slot.size)]);
+
+        let (holding, chase_set, now) =
+            frame_zero_work(&[], &[(window(2), slot.size)], &final_frames, &[(window(2), slot)]);
+        assert!(!holding);
+        assert_eq!(
+            now,
+            vec![(window(2), slot)],
+            "not holding: the newcomer's slot alone"
+        );
+        assert_eq!(chase_set, vec![(window(2), slot.size)]);
+
+        let (holding, chase_set, now) = frame_zero_work(&[], &[], &final_frames, &[]);
+        assert!(!holding && chase_set.is_empty() && now.is_empty());
+    }
+
+    #[test]
+    fn entrance_plan_travels_exactly_when_it_can() {
+        let mut rng = Gen(157);
+        for run in 0..RUNS {
+            let slot = rng.on_screen();
+            let spawn = match rng.below(4) {
+                0 => None,
+                1 => Some(rect(
+                    rng.pt(0.0, 1000.0),
+                    rng.pt(0.0, 800.0),
+                    0.0,
+                    rng.pt(0.0, 500.0),
+                )),
+                _ => Some(rng.on_screen()),
+            };
+            let usable = rng.coin();
+            let budget = rng.coin();
+            let decision = entrance_plan(spawn, slot, usable, budget);
+            let can = spawn.is_some_and(|f| f.size.width > 0.0 && f.size.height > 0.0)
+                && usable
+                && budget;
+            match decision {
+                EntranceDecision::Travel { from, to } => {
+                    assert!(can, "seed 157 run {run}");
+                    assert_eq!(Some(from), spawn, "seed 157 run {run}");
+                    assert_eq!(to, slot, "seed 157 run {run}");
+                    assert!(from.size.width > 0.0, "seed 157 run {run}");
+                }
+                EntranceDecision::Reserve(_) => assert!(!can, "seed 157 run {run}"),
+            }
+        }
+    }
+
+    mod on_another_display {
+        use objc2_core_foundation::CGPoint;
+
+        use super::*;
+
+        /// An external display at a non-zero origin, so a retarget that forgot the conversion shows.
+        const EXTERNAL: CGRect = CGRect {
+            origin: CGPoint { x: 1728.0, y: -300.0 },
+            size: CGSize { width: 3008.0, height: 1692.0 },
+        };
+
+        fn shifted(frame: CGRect, delta: CGPoint) -> CGRect {
+            CGRect::new(
+                CGPoint::new(frame.origin.x + delta.x, frame.origin.y + delta.y),
+                frame.size,
+            )
+        }
+
+        #[test]
+        fn a_later_pass_retargets_a_reserved_entrance() {
+            let slot = rect(
+                EXTERNAL.origin.x + 867.0,
+                EXTERNAL.origin.y + 32.0,
+                859.0,
+                1081.0,
+            );
+            let pan = CGPoint::new(-574.0, 0.0);
+            let (newcomer, _) =
+                entrance_reservation(window(51462), to_overlay_space(slot, EXTERNAL), false);
+            let (untouched, _) = entrance_reservation(
+                window(51463),
+                to_overlay_space(rect(2000.0, 32.0, 400.0, 1081.0), EXTERNAL),
+                false,
+            );
+            let mut entrances = vec![newcomer, untouched.clone()];
+            let frames = vec![
+                (window(1), rect(4.0, 32.0, 859.0, 1081.0)),
+                (window(51462), shifted(slot, pan)),
+            ];
+
+            assert_eq!(retarget_entrances(&mut entrances, &frames, EXTERNAL), 1);
+            assert_eq!(entrances[0].to, to_overlay_space(shifted(slot, pan), EXTERNAL));
+            assert_eq!(entrances[1].to, untouched.to, "no frame for it: left alone");
+            assert_eq!(
+                retarget_entrances(&mut entrances, &frames, EXTERNAL),
+                0,
+                "already there"
+            );
+        }
     }
 }

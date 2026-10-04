@@ -51,4 +51,21 @@ mod tests {
         assert!(!renderings_match(&[1, 2, 3], &[1, 2]));
         assert!(!renderings_match(&[], &[]));
     }
+
+    #[test]
+    fn chase_settled_on_a_match_or_a_repaint() {
+        let p = vec![10u8; 64];
+        let q = vec![200u8; 64];
+        assert!(!chase_settled(None, &p, None), "nothing to compare against");
+        assert!(chase_settled(Some(&p), &p, None), "two consecutive match");
+        assert!(
+            chase_settled(None, &p, Some(&q)),
+            "differs from the pre-resize picture"
+        );
+        assert!(!chase_settled(None, &p, Some(&p)), "still the old rendering");
+        assert!(
+            chase_settled(Some(&q), &p, Some(&q)),
+            "a repaint settles even after a change"
+        );
+    }
 }

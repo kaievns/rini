@@ -77,7 +77,7 @@ mod tests {
     use objc2_core_foundation::CGSize;
 
     use super::*;
-    use crate::animation::domain::motion::testing::OnSurface;
+    use crate::animation::domain::motion::testing::{DISPLAY, Gen, OnSurface, RUNS};
 
     fn window(frame: CGRect, from: Option<CGRect>, pinned: bool) -> OnSurface {
         OnSurface {
@@ -108,5 +108,26 @@ mod tests {
             (frame, frame),
             "a pinned window stands still"
         );
+    }
+
+    #[test]
+    fn a_pan_translates_a_parked_window_without_remapping_it() {
+        let mut rng = Gen(33);
+        for _ in 0..RUNS {
+            let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
+            let frame = rng.park(size);
+            let from_offset = CGPoint::new(rng.pt(-4000.0, 4000.0), 0.0);
+            let to_offset = CGPoint::new(rng.pt(-4000.0, 4000.0), 0.0);
+            let (from, to) = surface_travel(frame, from_offset, to_offset, false);
+            assert_eq!(from.origin.x, frame.origin.x - from_offset.x);
+            assert_eq!(to.origin.x, frame.origin.x - to_offset.x);
+            assert_eq!(from.size, frame.size);
+            assert_eq!(to.origin.x - from.origin.x, from_offset.x - to_offset.x);
+            assert_eq!(from.origin.y, frame.origin.y, "a pan keeps the park's row");
+            let entry = rini_geometry::park_entry_frame(frame, to, DISPLAY);
+            if from_offset.x.abs() != 1.0 {
+                assert_ne!(from, entry, "the pan path does not consult the park remap");
+            }
+        }
     }
 }

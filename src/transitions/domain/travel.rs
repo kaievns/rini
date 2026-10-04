@@ -267,56 +267,9 @@ mod tests {
     use objc2_core_foundation::CGSize;
 
     use super::*;
-
-    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
-        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
-    }
-
-    const DISPLAY: CGRect = CGRect {
-        origin: CGPoint { x: 0.0, y: 0.0 },
-        size: CGSize { width: 1728.0, height: 1117.0 },
-    };
-    const RUNS: usize = 200;
-
-    /// A small deterministic generator, so a failure names its seed and replays.
-    struct Gen(u64);
-
-    impl Gen {
-        fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            self.0 >> 11
-        }
-
-        fn below(&mut self, n: u64) -> u64 {
-            self.next() % n
-        }
-
-        fn pt(&mut self, lo: f64, hi: f64) -> f64 {
-            lo + self.below((hi - lo) as u64 + 1) as f64
-        }
-
-        fn coin(&mut self) -> bool {
-            self.below(2) == 0
-        }
-
-        /// A window frame with a real share of the display showing: a column on the strip.
-        fn on_screen(&mut self) -> CGRect {
-            let w = self.pt(400.0, 1720.0);
-            let h = self.pt(600.0, 1081.0);
-            let x = self.pt(-w / 4.0, DISPLAY.size.width - w * 0.75);
-            rect(x, 32.0, w, h)
-        }
-
-        /// The layout's park for a scrolled-off window: 1pt showing in a bottom corner.
-        fn park(&mut self, size: CGSize) -> CGRect {
-            let x = if self.coin() {
-                DISPLAY.size.width - 1.0
-            } else {
-                DISPLAY.origin.x - size.width + 1.0
-            };
-            rect(x, DISPLAY.size.height - 1.0, size.width, size.height)
-        }
-    }
+    use crate::animation::domain::motion::plan::entrance_from;
+    use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, rect};
+    use crate::transitions::domain::timing::{APPLY_FRAMES_AT, FlightKind, apply_frames_at};
 
     /// The rigidity property the old canvas layer guaranteed structurally: every unpinned window
     /// of a strip movement translates by exactly the same vector, so tiles animated per-tile from
@@ -1026,5 +979,202 @@ mod tests {
             first.is_some() || second.is_some(),
             "at least one is worth drawing"
         );
+    }
+
+    /// Parks clamped past 40pt (Kiro 41pt, Finder 52pt) and one the server reports at
+    /// its slot.
+    #[test]
+    fn a_clamped_park_enters_from_the_display_edge() {
+        let display = rect(0.0, 0.0, 1728.0, 1117.0);
+        let slot = rect(4.0, 32.0, 1720.0, 1081.0);
+        let park = rect(1727.0, 1116.0, 1720.0, 1081.0);
+        let kiro_real = rect(1727.0, 1076.0, 1720.0, 1081.0);
+        let finder_real = rect(1727.0, 1065.0, 859.0, 1081.0);
+        let finder_slot = rect(867.0, 32.0, 859.0, 1081.0);
+        let finder_park = rect(1727.0, 1116.0, 859.0, 1081.0);
+
+        let cases = [
+            ("41pt Kiro park", Some(kiro_real), park, slot),
+            ("52pt Finder park", Some(finder_real), finder_park, finder_slot),
+            (
+                "park the server already reports at its slot",
+                Some(slot),
+                park,
+                slot,
+            ),
+        ];
+        let wrong: Vec<String> = cases
+            .iter()
+            .filter_map(|(name, real, from, to)| {
+                let expected = rini_geometry::park_entry_frame(*from, *to, display);
+                let got = resolve_start(*real, *from, *to, display, None);
+                (got != expected).then(|| {
+                    format!(
+                        "{name}: started at {:.0},{:.0}, wanted {:.0},{:.0}",
+                        got.origin.x, got.origin.y, expected.origin.x, expected.origin.y
+                    )
+                })
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "parks not remapped to the edge:\n{}",
+            wrong.join("\n")
+        );
+    }
+
+    #[test]
+    fn a_plain_move_starts_from_the_window_servers_frame() {
+        let mut rng = Gen(31);
+        let mut checked = 0;
+        for _ in 0..RUNS {
+            let from = rng.on_screen();
+            let to = rect(rng.pt(0.0, 900.0), 32.0, from.size.width, from.size.height);
+            let real = rect(
+                from.origin.x + rng.pt(20.0, 300.0),
+                32.0,
+                from.size.width,
+                from.size.height,
+            );
+            if real.same_as(to) || rini_geometry::is_off_screen(DISPLAY, real) {
+                continue;
+            }
+            checked += 1;
+            assert_eq!(
+                resolve_start(Some(real), from, to, DISPLAY, None),
+                real,
+                "seed 31: {from:?} -> {to:?}"
+            );
+        }
+        assert!(
+            checked > RUNS / 2,
+            "generator sanity: {checked} of {RUNS} in scope"
+        );
+        assert_eq!(apply_frames_at(FlightKind::Layout, false), APPLY_FRAMES_AT);
+    }
+
+    #[test]
+    fn a_missing_or_synthetic_start_falls_back_to_the_request() {
+        let from = rect(4.0, 32.0, 859.0, 1081.0);
+        let to = rect(867.0, 32.0, 859.0, 1081.0);
+        assert_eq!(resolve_start(None, from, to, DISPLAY, None), from);
+        assert_eq!(resolve_start(Some(to), from, to, DISPLAY, None), from);
+    }
+
+    #[test]
+    fn a_parked_or_scrolled_off_close_is_not_worth_animating() {
+        let mut rng = Gen(39);
+        for _ in 0..RUNS {
+            let size = CGSize::new(rng.pt(400.0, 1720.0), 1081.0);
+            let park = rng.park(size);
+            assert!(
+                !worth_animating(park, entrance_from(park), DISPLAY),
+                "park {park:?}"
+            );
+            let off = rect(
+                DISPLAY.size.width + rng.pt(1.0, 9000.0),
+                32.0,
+                size.width,
+                size.height,
+            );
+            assert!(
+                !worth_animating(off, entrance_from(off), DISPLAY),
+                "off strip {off:?}"
+            );
+            let on = rng.on_screen();
+            assert!(
+                worth_animating(on, entrance_from(on), DISPLAY),
+                "on screen {on:?}"
+            );
+        }
+        let slot = rect(4.0, 32.0, 859.0, 1081.0);
+        assert!(
+            !worth_animating(rect(4.0, 32.0, 0.0, 0.0), slot, DISPLAY),
+            "zero area"
+        );
+        // Entering from a park is still worth it: the path crosses the display.
+        assert!(worth_animating(
+            rect(1727.0, 1116.0, 859.0, 1081.0),
+            slot,
+            DISPLAY
+        ));
+    }
+
+    /// Where a park's tile ends decides which rigid piece it rides.
+    mod park_groups {
+        use super::*;
+        use crate::animation::domain::motion::plan::{GroupKey, ReflowPlan, RigidGroup, reflow_plan};
+
+        fn window(idx: u32) -> WindowId {
+            WindowId::new(7, idx)
+        }
+
+        fn shifted(frame: CGRect, dx: f64, dy: f64) -> CGRect {
+            CGRect::new(
+                CGPoint::new(frame.origin.x + dx, frame.origin.y + dy),
+                frame.size,
+            )
+        }
+
+        fn column(i: f64) -> CGRect {
+            rect(4.0 + i * 863.0, 32.0, 859.0, 1081.0)
+        }
+
+        fn moving(plan: &ReflowPlan) -> Vec<&RigidGroup> {
+            plan.groups
+                .iter()
+                .filter(|g| !g.members.is_empty() && g.key != GroupKey::STILL)
+                .collect()
+        }
+
+        fn members(group: &RigidGroup) -> Vec<WindowId> {
+            group.members.iter().map(|m| m.window).collect()
+        }
+
+        #[test]
+        fn a_window_leaving_for_a_park_rides_its_moving_neighbours_group() {
+            let a = column(0.0);
+            let b = column(1.0);
+            let park = Gen(5).park(a.size);
+            assert!(rini_geometry::is_off_screen(DISPLAY, park));
+            let b_to = shifted(b, -863.0, 0.0);
+            let others = [(b, b_to, false)];
+            let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &others, DISPLAY);
+            assert_eq!(travel, Some(CGPoint::new(-863.0, 0.0)));
+            let a_end = resolve_end(a, park, DISPLAY, travel);
+            assert_eq!(a_end, shifted(a, -863.0, 0.0));
+
+            let plan = reflow_plan(&[(window(1), a, a_end, false), (window(2), b, b_to, false)], DISPLAY);
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(members(groups[0]), vec![window(1), window(2)]);
+            assert_eq!(groups[0].travel, CGPoint::new(-863.0, 0.0));
+        }
+
+        #[test]
+        fn a_window_leaving_for_a_park_alone_is_a_group_of_one() {
+            let a = column(1.0);
+            let park = rect(
+                DISPLAY.size.width - 1.0,
+                DISPLAY.size.height - 1.0,
+                a.size.width,
+                a.size.height,
+            );
+            let travel = neighbour_travel(travel_subject(a, park, DISPLAY), &[], DISPLAY);
+            assert_eq!(travel, None);
+            let a_end = resolve_end(a, park, DISPLAY, travel);
+            assert_eq!(a_end, rini_geometry::park_entry_frame(park, a, DISPLAY));
+            let still = column(0.0);
+
+            let plan = reflow_plan(
+                &[(window(1), a, a_end, false), (window(2), still, still, false)],
+                DISPLAY,
+            );
+            let groups = moving(&plan);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(members(groups[0]), vec![window(1)]);
+            assert_eq!(groups[0].travel, CGPoint::new(a_end.origin.x - a.origin.x, 0.0));
+            assert_eq!(members(&plan.groups[0]), vec![window(2)]);
+        }
     }
 }

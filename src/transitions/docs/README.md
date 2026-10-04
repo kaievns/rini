@@ -64,9 +64,10 @@ old timer posted acts on whichever flight is current. Step 4 replaces them with 
 **Two names for the reveal hold.** `timing::HOLD_CAP` is the engine's, `lifecycle::HOLD_PATIENCE` the
 coordinator's; both are 300ms. One goes when step 4 wires the coordinator.
 
-**The engine's tests are larger than its code.** Most of them cover pure decisions through a
-`RunningAnimation` or an `OverlayTile`, which carry a platform `Picture`, so they cannot sit in
-`domain/` beside what they test.
+**Some pure rules are still the engine's.** What a held flight claims, what a landing picture may
+change and how tiles band are methods on `RunningAnimation` and functions over `OverlayTile`, and both
+carry a platform `Picture`. They and their tests (`platform/engine.rs`, grouped by unit) move to
+`domain/` once a tile holds a picture handle instead.
 
 **The kinds' builders live in the reactor.** `start_strip_pan`, `start_strip_switch`,
 `start_edge_bounce` and `animate_layout` (`src/app/reactor/`) stage each kind with this feature's

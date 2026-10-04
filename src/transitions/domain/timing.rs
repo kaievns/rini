@@ -112,3 +112,145 @@ pub(in crate::transitions) fn lift_now(
 ) -> bool {
     clock_done && ((settled && landed) || overdue)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pictures::domain::schedule::{REVEAL_CHASE_ATTEMPTS, REVEAL_CHASE_INTERVAL};
+    use crate::pictures::domain::settle::chase_settled;
+
+    /// The layout pass's apply points as they were before strip movements moved theirs to frame zero.
+    fn apply_frames_at_old(any_resize: bool) -> f64 {
+        if any_resize {
+            APPLY_FRAMES_AT_RESIZE
+        } else {
+            APPLY_FRAMES_AT
+        }
+    }
+
+    #[test]
+    fn a_resize_places_the_real_windows_earlier() {
+        assert!(
+            apply_frames_at(FlightKind::Layout, true) < apply_frames_at(FlightKind::Layout, false)
+        );
+        assert_eq!(apply_frames_at(FlightKind::Layout, false), APPLY_FRAMES_AT);
+        assert_eq!(apply_frames_at(FlightKind::Layout, true), APPLY_FRAMES_AT_RESIZE);
+    }
+
+    #[test]
+    fn apply_points_by_flight_kind() {
+        assert_eq!(apply_frames_at(FlightKind::Layout, false), 0.75);
+        assert_eq!(apply_frames_at(FlightKind::Layout, true), 0.5);
+        assert_eq!(apply_frames_at(FlightKind::Pan, false), APPLY_FRAMES_AT_PAN);
+        assert_eq!(
+            APPLY_FRAMES_AT_PAN, 0.0,
+            "a strip movement places its windows at frame zero"
+        );
+        assert_eq!(apply_frames_at(FlightKind::Pan, true), 0.5);
+    }
+
+    #[test]
+    fn a_strip_movement_applies_frames_by_the_midpoint() {
+        let at = apply_frames_at(FlightKind::Pan, false);
+        assert!(at <= 0.5, "strip apply point is {at}, leaving too little runway");
+    }
+
+    #[test]
+    fn layout_apply_points_are_unchanged() {
+        for any_resize in [false, true] {
+            assert_eq!(
+                apply_frames_at(FlightKind::Layout, any_resize),
+                apply_frames_at_old(any_resize),
+                "any_resize={any_resize}"
+            );
+        }
+        assert_eq!(apply_frames_at_old(false), 0.75);
+        assert_eq!(apply_frames_at_old(true), 0.5);
+    }
+
+    #[test]
+    fn a_bounce_extends_the_clock_to_cover_its_return() {
+        let bounce = Duration::from_millis(350);
+        assert_eq!(
+            clock_for_bounce(None, Duration::from_millis(100), bounce),
+            bounce
+        );
+        assert_eq!(
+            clock_for_bounce(None, Duration::from_millis(900), bounce),
+            Duration::from_millis(900)
+        );
+        let started = Instant::now() - Duration::from_millis(300);
+        let extended = clock_for_bounce(Some(started), Duration::from_millis(350), bounce);
+        assert!(extended >= Duration::from_millis(650), "{extended:?}");
+        let long = clock_for_bounce(Some(started), Duration::from_secs(5), bounce);
+        assert_eq!(long, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_overlay_lifts_when_the_clock_is_done_and_the_tiles_are_presented_there() {
+        assert!(!lift_now(false, true, true, false), "the clock has not run out");
+        assert!(
+            !lift_now(false, true, true, true),
+            "overdue is meaningless before the clock is done"
+        );
+        assert!(
+            !lift_now(true, false, true, false),
+            "clock done, render server a frame behind: wait"
+        );
+        assert!(
+            !lift_now(true, true, false, false),
+            "clock done, a real window still travelling: wait"
+        );
+        assert!(lift_now(true, true, true, false));
+        assert!(
+            lift_now(true, false, false, true),
+            "the grace ran out: lift anyway"
+        );
+        assert!(
+            LIFT_GRACE < Duration::from_millis(500),
+            "a stall is a hold, not a hang"
+        );
+    }
+
+    /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+    #[test]
+    fn the_hold_is_capped_at_a_blink() {
+        assert_eq!(HOLD_CAP, Duration::from_millis(300));
+        assert_eq!(REVEAL_CHASE_INTERVAL, Duration::from_millis(8));
+        assert_eq!(
+            REVEAL_CHASE_INTERVAL * REVEAL_CHASE_ATTEMPTS as u32,
+            Duration::from_secs(1)
+        );
+    }
+
+    /// See "A grow holds, then reveals" in `src/animation/docs/animation-smoothness.md`.
+    #[test]
+    fn a_hold_is_short_and_settles_on_the_first_repaint() {
+        let p = vec![10u8; 64];
+        let q = vec![200u8; 64];
+        let settled = chase_settled(None, &p, Some(&q));
+        let wrong: Vec<String> = [
+            (
+                HOLD_CAP <= Duration::from_millis(300),
+                format!("HOLD_CAP = {HOLD_CAP:?}"),
+            ),
+            (
+                REVEAL_CHASE_INTERVAL == Duration::from_millis(8),
+                format!("REVEAL_CHASE_INTERVAL = {REVEAL_CHASE_INTERVAL:?}"),
+            ),
+            (
+                settled,
+                format!("chase_settled(None, p, Some(q != p)) = {settled}"),
+            ),
+        ]
+        .into_iter()
+        .filter(|(ok, _)| !ok)
+        .map(|(_, why)| why)
+        .collect();
+        assert!(
+            wrong.is_empty(),
+            "hold is not bounded and cheap:\n{}",
+            wrong.join("\n")
+        );
+    }
+}

@@ -243,4 +243,17 @@ mod tests {
         );
         assert!(cache.get(window).unwrap().carries_blur, "the blur stays");
     }
+
+    #[test]
+    fn forgetting_a_window_empties_the_cache_even_while_a_clone_is_held() {
+        let window = WindowId::new(1, 1);
+        let mut cache: PictureCache<Picture> = PictureCache::new();
+        let size = CGSize::new(859.0, 1081.0);
+        cache.insert(window, test_picture(size));
+        let held = cache.usable(window).cloned().expect("inserted");
+        cache.forget(window);
+        assert!(cache.usable(window).is_none());
+        assert!(held.is_usable());
+        assert!(held.fits(size));
+    }
 }
