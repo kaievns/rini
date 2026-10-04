@@ -5,6 +5,7 @@ use objc2_core_foundation::CFType;
 use objc2_quartz_core::CALayer;
 use rini_geometry::space::{ContentsRect, Point, Size, ToCg};
 
+use crate::pictures::domain::region::WHOLE;
 use crate::pictures::platform::picture::{Picture, Pixels, Route};
 
 /// Hands a captured picture to a layer, whichever kind of pixels it holds: a region as its whole
@@ -31,16 +32,15 @@ pub fn set_contents(layer: &CALayer, picture: &CFType) {
 /// The part of a layer's contents that stretches, for `contentsCenter`. All of it for a picture; for
 /// the stand-in only its middle, so the rounded corners keep the window's radius at any size.
 pub fn stretch_region(picture: &Picture) -> ContentsRect {
-    let whole = ContentsRect::new(Point::new(0.0, 0.0), Size::new(1.0, 1.0));
     let Pixels::Bitmap(image) = &picture.image else {
-        return whole;
+        return WHOLE;
     };
     if picture.source != Route::StandIn {
-        return whole;
+        return WHOLE;
     }
     let side = objc2_core_graphics::CGImage::width(Some(image)) as f64;
     if side < 3.0 {
-        return whole;
+        return WHOLE;
     }
     // The stand-in is a square of two corners and a two-pixel middle; see `stand_in_image`.
     let corner = (side - 2.0) / 2.0;
@@ -230,7 +230,7 @@ mod tests {
             CGRect::new(CGPoint::new(0.5, 0.0), CGSize::new(0.5, 0.5))
         );
         set_layer_contents(&layer, &test_picture(ScreenSize::new(1.0, 1.0)));
-        assert_eq!(layer.contentsRect(), crate::pictures::domain::region::WHOLE.to_cg());
+        assert_eq!(layer.contentsRect(), WHOLE.to_cg());
     }
 
     /// A stand-in stretches only its two-pixel middle, so its corners keep the window's radius; a real
@@ -245,6 +245,6 @@ mod tests {
         assert!((region.size.width - 2.0 / 42.0).abs() < 1e-9);
 
         let whole = stretch_region(&test_picture(ScreenSize::new(859.0, 1081.0)));
-        assert_eq!(whole, ContentsRect::new(Point::new(0.0, 0.0), Size::new(1.0, 1.0)));
+        assert_eq!(whole, WHOLE);
     }
 }
