@@ -146,6 +146,12 @@ it returns: the window with its framing ("The hairline is composited outside eve
 capture") and the window with what is below it ("A composite of the window and what is
 below it carries the blur").
 
+It must never be called inside a ScreenCaptureKit completion. On modern macOS it is
+proxied through the same capture machinery, so a call from the delivery queue deadlocks
+its own reply until a ~20s timeout, and every capture in the process serialises behind it
+(measured as half-minute window switches). The engine's framed captures run on a plain
+thread (`capture_framed` in the flight engine).
+
 The system tool inherited this. `screencapture -l <windowid>` fails with "could
 not create image from window" even for a fully visible window.
 
@@ -829,7 +835,7 @@ the start of a flight: at 14ms a window that would delay the flight.
 
 **And it is only kept if the window is still where it was once the capture
 returns.** The composite is the window and whatever is below it in a RECT. Found
-on the first live run: a workspace switch that raced a harvest parked Messages
+on the first live run: a workspace switch that raced a framed capture parked Messages
 between reading its frame and taking the composite, so the rect held the VS Code
 window that had just moved back under it, and the merge replaced every opaque
 pixel of Messages with VS Code. Far worse than grey. The frame is read again
@@ -838,23 +844,22 @@ thrown away (`stayed_wholly_on_a_display`).
 
 **The window's own framed capture needs the same check.** The window server
 returns the full requested rect whatever is on screen, with the part off every
-display transparent (a parked window's hairline reads alpha 0, "The hairline
-harvest" below), so the image's size says nothing about how much of the window it
+display transparent (a parked window reads alpha 0, "The hairline is composited
+outside every capture" below), so the image's size says nothing about how much of the window it
 holds. Found on the first live run of the mid-flight focus refresh: a strip pan
 moves the real windows while the flight flies, and a window read as wholly on
 screen was captured half past the edge, or already parked, then cut onto its
 tile as a half or fully missing window. A framed capture now covers the window
 only if it stayed wholly on one display through both captures
-(`framed_coverage`). Otherwise it holds a hairline to harvest and nothing to
+(`framed_coverage`). Otherwise it holds nothing to
 draw. The resize chase and the capture of a new window had the same exposure,
 for a window partly off the display.
 
-One exposure is left as it was: the harvest names a window by the server id
-folded into its `WindowId`. For the rare window Accessibility reports without a
-server id, rini falls back to a counter there, which could name another window.
-The hairline harvest before this had the same exposure. It runs in
-the framed capture (`capture_via_framed_with_dressing`), which the harvest after
-a flight, the resize reveal and the capture of a new window all use. The picture
+One exposure is left as it was: the engine's framed captures name a window by the
+server id folded into its `WindowId`. For the rare window Accessibility reports
+without a server id, rini falls back to a counter there, which could name another
+window. The composite runs in the framed capture (`capture_via_framed`), which the
+resize reveal, the focus refresh and the capture of a new window all use. The picture
 bakes in whatever was behind the window at that moment, which differs from the
 live blur only once the window has moved over something else.
 
@@ -927,8 +932,7 @@ from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
   1pt sliver at the display edge) returns a fully transparent image of the
   right size. A window with only a couple of points visible has been seen to
   return full content WITH the hairline, so visibility is necessary but the
-  exact threshold is the compositor's business; the harvest validates alpha
-  instead of guessing geometry.
+  exact threshold is the compositor's business.
 - The hairline rides INSIDE the window bounds: the capture's outermost pixel
   pair at 2x is the hairline over the app's own edge pixel, which is exactly
   what the screen shows at rest.
@@ -936,9 +940,10 @@ from the SDK in 15.0 — the crate still binds it). Behaviour, measured:
   outline (measured rgb 0,0,0 at alpha 0.95 in the shadow margin of a null-rect
   capture), and only past it does the soft shadow begin. A tile wearing only
   the inner hairline had the caster's shadow bleeding straight against it, so
-  the border read darker mid-flight and snapped at the handover; the dressing
-  band therefore straddles the boundary, one point in and one point out
-  (`boundary_layout`), harvested from a capture rect inset by minus one ring.
+  the border read darker mid-flight and snapped at the handover. The renderer
+  therefore draws the outline too, 0.5pt of black at 0.9 (the handover
+  prototype's value) in the half point outside the window ("The hairline" in
+  `src/animation/docs/animation-smoothness.md`).
 
 ### The outline is captured, but it can be the wrong one
 
@@ -1089,7 +1094,7 @@ movement.
 A framed recapture of a window wholly on a display carries its blur too; see
 "A composite of the window and what is below it carries the blur".
 
-## The hairline harvest
+## The hairline
 
 The long-standing "windows go flat and flicker" complaint took three attempts
 because the border's identity was misdiagnosed twice:
@@ -1108,39 +1113,15 @@ because the border's identity was misdiagnosed twice:
 
 A fourth attempt drew it as a constant (a 1pt white stroke at 0.25 alpha focused, 0.16 unfocused,
 fitted from single screenshots): pixel-exact on opaque windows, wrong by 2x on translucent ones.
-Refitted as a blend over each window's own edge pixel instead, a constant does match: white at 20%
-focused and 18% unfocused, within 0.3 levels rms over 27 edges in 11 apps, the translucent terminal
-included ("The hairline is composited outside every capture" above;
-dark mode only). The handover prototype draws that ring and a 0.5pt outline as layers; until it lands
-here, the harvest below is what draws the hairline.
-
-So the real composited pixels are harvested instead (`edge_dressing`):
-`CGWindowListCreateImage` is the one capture API that composites framing
-into its output, and a rect-bounded call returns exactly the asked rect
-with the framing composited, at 16-24ms. The framing is two lines — the
-light hairline on the window's outermost point and a near-black outline
-just outside the bounds, which is what separates border from shadow — so
-the harvested band straddles the boundary, one point in and one out. Four
-straight runs plus four corner boxes clipped to the outline's arc, ~200KB
-against the 28MB framed capture they are cropped from, cached on the
-snapshot and worn by the tile as sublayers. It only renders windows
-actually composited, so a parked window harvests transparent pixels and is
-rejected by an alpha check, keeping the ring from when it was last seen:
-the picture cache's own staleness model. The check believes a ring when the
-straight runs' mean alpha is at least 0.5 (`MIN_MEAN_ALPHA`): a parked
-window reads 0, the most translucent real edge measured (a see-through
-terminal) 244 of 255, and a border tool's overlay window fails it without a
-special case. Corner boxes are legitimately transparent outside the arc, so
-only the four runs are judged. The ring is 1pt (`RING_PT`), two device
-pixels at 2x. The harvest runs on a plain thread (`capture_framed` in the flight engine), never
-inside a ScreenCaptureKit completion: on modern macOS
-`CGWindowListCreateImage` is proxied through the same capture machinery, so
-a call from the delivery queue deadlocks its own reply until a ~20s
-timeout and every capture in the process serialises behind it (measured as
-half-minute window switches). The focused ring lands with the
-post-flight harvest of the animated set (`after_flight_captures`, at the quiet after the lift), or
-with the focus refresh's framed capture of a window wholly on a display, which carries its hairline
-and counts as that window's harvest ("Mid-flight passes" in `src/transitions/docs/coordination.md`).
+So the real composited pixels were cut out of a framed capture instead, the one capture that
+composites the framing, as a band one point either side of the window's edge that the tile wore.
+It only had a ring for a window composited when it ran, so a tile had no outline until a capture
+after a flight had run: the 53-level tail at the handover ("The handover, measured" in
+`src/animation/docs/capture-overlay-research.md`). Refitted as a blend over each window's own edge
+pixel instead, a constant does match: white at 20% focused and 18% unfocused, within 0.3 levels rms
+over 27 edges in 11 apps, the translucent terminal included ("The hairline is composited outside
+every capture" above; dark mode only). The renderer draws that ring and the outline outside it on
+every tile ("The hairline" in `src/animation/docs/animation-smoothness.md`).
 
 ## Snapshot staleness
 
@@ -1177,7 +1158,7 @@ Options, in order of expected value:
    done; it would break the "nothing polls" principle deliberately.
 4. **Widen the mid-flight refresh.** Ruled out by measurement. The refresh
    runs on its own thread, but the window server does not: with warms, the
-   desktop render and harvests queued behind it, the framed refresh took
+   desktop render and other framed captures queued behind it, the framed refresh took
    203ms median against 16-24ms at idle (see "Capture work in flight" in
    `src/transitions/docs/coordination.md`).
    Two windows at 0.5 is the cap; more capture work in flight, not less, is

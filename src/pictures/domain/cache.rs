@@ -1,6 +1,6 @@
-//! The picture cache and its rules: what an incoming capture replaces, what survives of the one it
-//! replaces, each window's focused look, and what each client was last delivered. Generic over what it
-//! holds, so the rules are tested on plain sizes.
+//! The picture cache and its rules: what an incoming capture replaces, each window's focused look,
+//! and what each client was last delivered. Generic over what it holds, so the rules are tested on
+//! plain sizes.
 
 use std::collections::HashMap;
 
@@ -14,13 +14,9 @@ pub trait HasCoverage {
     fn coverage(&self) -> Coverage;
 }
 
-/// State a cache payload keeps alive across captures, independently of the pixel replacement rule.
-/// The dressing comes from the screen composite, not the capture buffer, so it replaces on its own.
-pub trait CarriesOver: Sized {
-    /// Called on an incoming payload that is about to replace `previous`.
-    fn inherit(&mut self, _previous: &Self) {}
-    /// Called on the kept payload when `refused` lost to the replacement rule.
-    fn absorb(&mut self, _refused: Self) {}
+/// What a cache payload adds to the coverage rule: whether the one held carries over a capture that
+/// would replace it, and whether it may be cached at all.
+pub trait CarriesOver {
     /// Whether this payload is worth more than `incoming` even though the coverage rule would replace
     /// it.
     fn keeps_over(&self, _incoming: &Self) -> bool { false }
@@ -37,12 +33,6 @@ pub fn keeps_blur(
     incoming_coverage: Coverage,
 ) -> bool {
     held && !incoming && held_coverage.window == incoming_coverage.window
-}
-
-/// Which dressing the cache holds after a capture lands: a fresh harvest wins, otherwise the
-/// window keeps what it last wore, whether or not the capture's pixels were accepted.
-pub fn dressing_after_insert<D>(worn: Option<D>, harvested: Option<D>) -> Option<D> {
-    harvested.or(worn)
 }
 
 impl HasCoverage for Coverage {
@@ -71,28 +61,23 @@ impl<T: HasCoverage> Default for PictureCache<T> {
 impl<T: HasCoverage + CarriesOver> PictureCache<T> {
     pub fn new() -> Self { Self::default() }
 
-    /// Stores a picture, subject to [`should_replace`] for its pixels, with [`CarriesOver`]
-    /// deciding what survives of the rest either way. True when its pixels are now the ones held.
-    pub fn insert(&mut self, window: WindowId, mut picture: T) -> bool {
+    /// Stores a picture, subject to [`should_replace`] and to what the one held keeps over it
+    /// ([`CarriesOver`]). True when its pixels are now the ones held.
+    pub fn insert(&mut self, window: WindowId, picture: T) -> bool {
         if !picture.cacheable() {
             return false;
         }
-        if let Some(existing) = self.entries.get_mut(&window) {
-            if !should_replace(Some(existing.coverage()), picture.coverage())
-                || existing.keeps_over(&picture)
-            {
-                existing.absorb(picture);
-                return false;
-            }
-            picture.inherit(existing);
+        if let Some(existing) = self.entries.get(&window)
+            && (!should_replace(Some(existing.coverage()), picture.coverage())
+                || existing.keeps_over(&picture))
+        {
+            return false;
         }
         self.entries.insert(window, picture);
         true
     }
 
     pub fn get(&self, window: WindowId) -> Option<&T> { self.entries.get(&window) }
-
-    pub fn get_mut(&mut self, window: WindowId) -> Option<&mut T> { self.entries.get_mut(&window) }
 
     /// The picture to actually draw, or `None` if what we hold is not worth drawing.
     pub fn usable(&self, window: WindowId) -> Option<&T> {
@@ -214,17 +199,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn a_fresh_harvest_replaces_what_the_window_wore() {
-        assert_eq!(dressing_after_insert(Some(1), Some(2)), Some(2));
-    }
-
-    #[test]
-    fn a_failed_harvest_keeps_the_last_known_dressing() {
-        assert_eq!(dressing_after_insert(Some(1), None), Some(1));
-        assert_eq!(dressing_after_insert::<u32>(None, None), None);
-    }
-
     fn wid(idx: u32) -> WindowId {
         WindowId {
             pid: 1,
@@ -235,66 +209,6 @@ mod tests {
     fn coverage(covered: (f64, f64), window: (f64, f64)) -> Coverage { Coverage { covered, window } }
 
     fn cache() -> PictureCache<Coverage> { PictureCache::new() }
-
-    /// Stands in for a picture and its dressing without needing a bitmap.
-    #[derive(Clone, Copy)]
-    struct Dressed {
-        coverage: Coverage,
-        dressing: Option<u32>,
-    }
-
-    impl HasCoverage for Dressed {
-        fn coverage(&self) -> Coverage { self.coverage }
-    }
-
-    impl CarriesOver for Dressed {
-        fn inherit(&mut self, previous: &Self) {
-            self.dressing = dressing_after_insert(previous.dressing, self.dressing);
-        }
-
-        fn absorb(&mut self, refused: Self) {
-            self.dressing = dressing_after_insert(self.dressing, refused.dressing);
-        }
-    }
-
-    #[test]
-    fn a_refused_capture_still_delivers_its_dressing() {
-        let mut cache: PictureCache<Dressed> = PictureCache::new();
-        let good = coverage((859.0, 1081.0), (859.0, 1081.0));
-        let sliver = coverage((40.0, 1081.0), (859.0, 1081.0));
-        cache.insert(
-            wid(1),
-            Dressed {
-                coverage: good,
-                dressing: Some(1),
-            },
-        );
-        cache.insert(
-            wid(1),
-            Dressed {
-                coverage: sliver,
-                dressing: Some(2),
-            },
-        );
-        let held = cache.get(wid(1)).unwrap();
-        assert_eq!(held.coverage.covered.0, 859.0, "the pixels were refused");
-        assert_eq!(held.dressing, Some(2), "but the fresher ring was kept");
-    }
-
-    #[test]
-    fn an_accepted_capture_without_a_harvest_inherits_the_worn_dressing() {
-        let mut cache: PictureCache<Dressed> = PictureCache::new();
-        let good = coverage((859.0, 1081.0), (859.0, 1081.0));
-        cache.insert(
-            wid(1),
-            Dressed {
-                coverage: good,
-                dressing: Some(1),
-            },
-        );
-        cache.insert(wid(1), Dressed { coverage: good, dressing: None });
-        assert_eq!(cache.get(wid(1)).unwrap().dressing, Some(1));
-    }
 
     #[test]
     fn cache_applies_the_no_downgrade_rule() {
