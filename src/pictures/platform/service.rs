@@ -465,6 +465,15 @@ impl Pictures {
         Some(stand_in_picture(size, shared.stand_in.as_ref()?.image.clone()))
     }
 
+    /// `display` held as the overlay's, with `desktop` as its desktop, as a render landed for it.
+    #[cfg(test)]
+    pub fn hold_desktop(&self, display: Display, desktop: Picture) {
+        let mut shared = self.lock();
+        let Shared { schedule, display: held, .. } = &mut *shared;
+        set_display(schedule, held, display, false, Instant::now());
+        held.desktop = Some(desktop);
+    }
+
     /// Hands the cache a picture taken outside the service. True when its pixels are now the ones held.
     pub fn insert(&self, window: WindowId, picture: Picture) -> bool {
         self.lock().cache.insert(window, picture)

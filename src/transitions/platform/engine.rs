@@ -3987,6 +3987,8 @@ mod tests {
             now: Arc<Mutex<Instant>>,
             /// What writing the real frames costs on the clock: nothing unless a test says.
             placing: Arc<Mutex<Duration>>,
+            /// How far the clock moves each time the engine reads it: not at all unless a test says.
+            per_read: Arc<Mutex<Duration>>,
             media: MediaClock,
         }
 
@@ -3999,6 +4001,7 @@ mod tests {
                 let begun = Instant::now();
                 let now = Arc::new(Mutex::new(begun));
                 let placing = Arc::new(Mutex::new(Duration::ZERO));
+                let per_read = Arc::new(Mutex::new(Duration::ZERO));
                 let media = MediaClock::anchored(begun, 5_000.0);
                 let (tx, rx) = channel::channel();
                 let engine = FlightEngine::new(Parts {
@@ -4017,11 +4020,15 @@ mod tests {
                     on_flight: Box::new(sink(&outbox, Sent::Flying)),
                     media,
                     clock: Box::new({
-                        let now = now.clone();
-                        move || *now.lock().unwrap()
+                        let (now, per_read) = (now.clone(), per_read.clone());
+                        move || {
+                            let mut now = now.lock().unwrap();
+                            *now += *per_read.lock().unwrap();
+                            *now
+                        }
                     }),
                 });
-                let mut harness = Harness { engine, outbox, now, placing, media };
+                let mut harness = Harness { engine, outbox, now, placing, per_read, media };
                 let display = harness.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
                 let committed = harness.committed(only_batch(&display).seq, None);
                 harness.step(committed);
@@ -4377,6 +4384,53 @@ mod tests {
             let bounced = begins(&h.step(bounce));
             assert!(!bounced.is_empty());
             assert!(bounced.iter().all(|begin| *begin == h.media.at(pushed)), "{bounced:?}: a push at its press's");
+        }
+
+        /// One reading an event would mark the compose and frame zero's wait for its show as taking
+        /// no time: each is two drives in one handler.
+        #[test]
+        fn each_drive_reads_the_clock_as_it_is_driven() {
+            let mut h = Harness::new();
+            let bursts = h.writing();
+            *h.per_read.lock().unwrap() = Duration::from_micros(10);
+            let (_, shown) = h.shown();
+            h.commit(shown);
+            h.advance(Duration::from_millis(400));
+            let lift = lift_batch(&h.step(Event::Tick)).expect("lifted").seq;
+            h.commit(lift);
+            h.step(Event::Quiet(Generation(h.generation())));
+            let burst = bursts.try_recv().expect("the settled burst");
+            let at = |wanted: fn(&Mark) -> bool| {
+                burst.marks.iter().find(|stamped| wanted(&stamped.mark)).map(|stamped| stamped.at).expect("marked")
+            };
+            let begin = at(|mark| matches!(mark, Mark::Begin { .. }));
+            let composed = at(|mark| matches!(mark, Mark::Merge { moved: false, .. }));
+            assert!(begin < composed, "the compose takes its time");
+            let delivered = at(|mark| matches!(mark, Mark::Delivery { why: Why::FrameZero, .. }));
+            let show = at(|mark| matches!(mark, Mark::Show));
+            assert!(delivered < show, "frame zero's wait for its show takes its time");
+        }
+
+        #[test]
+        fn the_desktop_dressed_counts_until_the_layout_changes_or_nothing_was_drawn() {
+            let mut h = Harness::new();
+            let display = Display { id: 1, frame: DISPLAY, scale: 2.0 };
+            h.engine.pictures.hold_desktop(display, test_picture(DISPLAY.size));
+            let pan = h.pan();
+            let sent = h.step(pan);
+            let dressed = only_batch(&sent).commands.iter().any(|command| matches!(command, Render::Dress { desktop: Some(_), .. }));
+            assert!(dressed && h.engine.dressed, "dressed with the display's desktop");
+            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: BAND });
+            assert!(h.engine.dressed, "laid out as it was");
+            h.step(Event::Rendered(Unavailable { seq: only_batch(&sent).seq }));
+            assert!(!h.engine.dressed, "nothing was drawn");
+
+            h.engine.dressed = true;
+            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 2.0, top_band: 0.0 });
+            assert!(!h.engine.dressed, "the band changed");
+            h.engine.dressed = true;
+            h.step(Event::SetDisplay { id: 1, frame: DISPLAY, scale: 1.0, top_band: 0.0 });
+            assert!(!h.engine.dressed, "the scale changed");
         }
 
         #[test]

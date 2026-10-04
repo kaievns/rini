@@ -58,8 +58,8 @@ frames.
 **The decisions are pure and the actor is not.** What `domain/` decides is tested over plain rects
 and instants; the engine reads the window server and the clock it is handed, and holds what each
 flight composed between events. Its messages are tested as sent (`protocol` in `platform/engine.rs`):
-over a pictures service with nothing behind it, a clock the test advances, and the renderer's
-answers given by the test.
+over a pictures service with nothing behind it, a clock the test advances, by hand or at every read,
+and the renderer's answers given by the test.
 
 **The journal observes, and nothing reads it back.** Every command the coordinator gives and every
 event it takes is a mark pushed by `Journalled::drive`, but a picture and frame zero, which their
