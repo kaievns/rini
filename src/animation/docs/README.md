@@ -22,8 +22,8 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/tile.rs` | How a tile fits its picture to its frame: stretch or crop, the crop pieces, the stand-in's mode; when it snaps onto its window's real frame (`snap_to`), and the snap as the score's edits (`snap`) |
 | `domain/motion/hairline.rs` | The hairline every tile wears: the ring's width and white by focus, the outline's rect and stroke, the corner radius |
-| `domain/choreography.rs` | What a look composes a flight from (`Stage`), what bends one that moves (`Pass`), and what a bend gives back (`Retarget`) |
-| `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points |
+| `domain/choreography.rs` | The looks: `Look`, every look by name (`ALL`), its `Choreography` for a flight (the plan, frame zero posed, the motion composed, a press before it folded and one after it bent) and its staging of a press on the strip (`stage`, over a `Cue`, a `Strip` and its `PairStart`s, giving a `Staging`); what a look composes from (`Stage`), bends with (`Pass`) and gives back (`Retarget`); and the tests every look passes |
+| `domain/choreography/slide.rs` | `Slide`, the default look: frame zero posed, the motion composed on one curve with the accents that waited, a press before the motion folded and one after it bent from the score at its legs' speed, everything on whole points; a move whose column fills the viewport held and stepped, any other crossing |
 | `platform/overlay.rs` | `TileOverlay`, the renderer: it poses frame zero and plays a score's edits, one `CATransaction` each, every animation installed from a track; its `Tree` (the `CALayer` tree and the replica it reads only to install) hangs off any root layer, so it is tested without a window |
 
 ## The shape that matters

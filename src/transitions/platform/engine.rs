@@ -21,7 +21,7 @@ use rini_runloop::channel;
 use rini_runloop::run_loop::RepeatingTimer;
 use tracing::{debug, warn};
 
-use crate::animation::domain::choreography::{Pass, Stage};
+use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
 use crate::animation::domain::motion::accents::Accent;
 use crate::animation::domain::motion::hairline::corner_radius;
 use crate::animation::domain::motion::plan::{self, entrance_from};
@@ -64,6 +64,8 @@ pub enum Event {
         /// pictures `focused_before` drawn focused.
         key: Option<WindowId>,
         duration: Duration,
+        /// How the flight moves, if this pass begins one.
+        look: Look,
     },
     /// Display geometry for the overlay: the display's whole bounds. Whether a bar under the
     /// overlay is drawn over flights is the pictures service's, which the reactor tells.
@@ -98,8 +100,12 @@ pub enum Event {
         /// The key window as the movement went out, as for `Animate`.
         key: Option<WindowId>,
         duration: Duration,
-        /// What rides the movement: a move's step, the whole strip away from where the moved window
-        /// went and back, drawn only.
+        /// How the flight moves, if this movement begins one.
+        look: Look,
+        /// The press, for the look.
+        cue: Cue,
+        /// What rides the movement, as the look staged it: a move's step, the whole strip away from
+        /// where the moved window went and back, drawn only.
         accent: Option<Accent>,
     },
     /// Nudge the strip surface by `overshoot` and bring it back; real windows stay put. Rides an
@@ -110,6 +116,10 @@ pub enum Event {
         final_frames: Vec<(WindowId, CGRect)>,
         focus: Option<WindowId>,
         duration: Duration,
+        /// How the flight moves, if this push begins one.
+        look: Look,
+        /// The press, for the look.
+        cue: Cue,
     },
     /// One frame of the clock that runs from a transition's begin to its lift. Posted by its timer.
     Tick,
@@ -157,6 +167,8 @@ struct RunningAnimation {
     flown: bool,
     /// Everything the flight draws, and the accents waiting for its motion.
     score: FlightScore,
+    /// The press frame zero shows: the latest folded into it.
+    cue: Cue,
 }
 
 /// What a swapped-in picture became.
@@ -342,6 +354,9 @@ struct Composed {
     key: Option<WindowId>,
     pan: Option<CGPoint>,
     plan: plan::ReflowPlan,
+    /// How a flight it begins moves; a pass merged into one is moved by that flight's.
+    look: Look,
+    cue: Cue,
     accent: Option<Accent>,
 }
 
@@ -501,9 +516,11 @@ impl RunningAnimation {
     }
 
     /// A later pass folded into a flight not yet moving, by its look (`FlightScore::fold`): a burst
-    /// composes as one movement from frame zero, and each tile starts where its container installs it.
+    /// composes as one movement from frame zero, which shows the pass's press, and each tile starts
+    /// where its container installs it.
     fn fold_before_moving(&mut self, pass: &Pass) {
         self.plan = self.score.fold(&self.plan, pass);
+        self.cue = pass.cue;
         for tile in self.tiles.iter_mut() {
             if let Some(member) = self.plan.member(tile.window) {
                 tile.from = member.start_frame();
@@ -760,8 +777,8 @@ impl FlightEngine {
                 scale,
                 top_band,
             } => self.set_display(id, frame, scale, top_band),
-            Event::Animate { windows, focus, focused_before, key, duration } => {
-                self.start(windows, (focus, focused_before), key, duration)
+            Event::Animate { windows, focus, focused_before, key, duration, look } => {
+                self.start(windows, (focus, focused_before), key, duration, look)
             }
             Event::AnimateSurface {
                 windows,
@@ -772,6 +789,8 @@ impl FlightEngine {
                 focused_before,
                 key,
                 duration,
+                look,
+                cue,
                 accent,
             } => self.start_surface(
                 windows,
@@ -781,7 +800,7 @@ impl FlightEngine {
                 (focus, focused_before),
                 key,
                 duration,
-                accent,
+                (look, cue, accent),
                 None,
             ),
             Event::Bounce {
@@ -790,7 +809,9 @@ impl FlightEngine {
                 final_frames,
                 focus,
                 duration,
-            } => self.start_bounce(windows, overshoot, final_frames, focus, duration),
+                look,
+                cue,
+            } => self.start_bounce(windows, overshoot, final_frames, focus, duration, (look, cue)),
             Event::DebugSlide { dx, dy, duration } => self.debug_slide(dx, dy, duration),
             Event::Tick => self.tick(),
             Event::Quiet(generation) => {
@@ -992,6 +1013,7 @@ impl FlightEngine {
             viewport,
             drawn: &drawn,
             seconds: left.as_secs_f64(),
+            cue: Cue::Plain,
             accent: None,
         };
         let merged = running.score.merge(&running.plan, &pass, media_now());
@@ -1056,6 +1078,7 @@ impl FlightEngine {
             plan: &running.plan,
             drawn: &drawn,
             seconds: 0.0,
+            cue: running.cue,
             accents: &[],
         };
         overlay.pose(running.score.pose(&stage, banding), &running.tiles);
@@ -1205,6 +1228,7 @@ impl FlightEngine {
         (focus, focused_before): (Option<WindowId>, Option<WindowId>),
         key: Option<WindowId>,
         duration: Duration,
+        look: Look,
     ) {
         if windows.is_empty() {
             return;
@@ -1487,6 +1511,8 @@ impl FlightEngine {
             key,
             pan: None,
             plan,
+            look,
+            cue: Cue::Plain,
             accent: None,
         });
     }
@@ -1527,6 +1553,7 @@ impl FlightEngine {
             overlay.set_bar(dressing.bar.as_ref(), strip);
         }
         let (focus, losing) = self.drawing_focus(pass.focus);
+        let score = FlightScore::new(pass.look);
         let mut running = RunningAnimation {
             tiles: pass.tiles,
             final_frames: pass.final_frames,
@@ -1535,9 +1562,10 @@ impl FlightEngine {
             shown_focus: losing.or(focus),
             key: pass.key,
             focused_look: None,
-            plan: plan::FlightPlan::from(pass.plan),
+            plan: score.plan(pass.plan, &pass.cue),
             flown: false,
-            score: FlightScore::default(),
+            score,
+            cue: pass.cue,
         };
         if let Some(accent) = pass.accent {
             running.score.wait(accent);
@@ -1610,6 +1638,7 @@ impl FlightEngine {
             viewport,
             drawn: &drawn,
             seconds: shape.duration.as_secs_f64(),
+            cue: pass.cue,
             accent: pass.accent,
         };
         let mut moved = false;
@@ -1723,7 +1752,7 @@ impl FlightEngine {
         focus: (Option<WindowId>, Option<WindowId>),
         key: Option<WindowId>,
         duration: Duration,
-        accent: Option<Accent>,
+        (look, cue, accent): (Look, Cue, Option<Accent>),
         kind: Option<Kind>,
     ) {
         let Some((display, _)) = self.display else {
@@ -1865,6 +1894,8 @@ impl FlightEngine {
             key,
             pan: Some(pan_travel(from_offset, to_offset)),
             plan,
+            look,
+            cue,
             accent,
         });
     }
@@ -1881,6 +1912,7 @@ impl FlightEngine {
         final_frames: Vec<(WindowId, CGRect)>,
         focus: Option<WindowId>,
         duration: Duration,
+        (look, cue): (Look, Cue),
     ) {
         if !self.coordinator.is_flying() {
             let at_rest = CGPoint::new(0.0, 0.0);
@@ -1893,7 +1925,7 @@ impl FlightEngine {
                 (focus, None),
                 None,
                 duration,
-                None,
+                (look, cue, None),
                 Some(Kind::Bounce),
             );
         }
@@ -1905,7 +1937,7 @@ impl FlightEngine {
             return;
         }
         let at = media_now();
-        let edits = running.score.push(overshoot, seconds, at);
+        let edits = running.score.push(&cue, overshoot, seconds, at);
         if let Some(overlay) = overlay.as_mut() {
             overlay.play(&edits, &running.tiles);
         }
@@ -1939,6 +1971,7 @@ impl FlightEngine {
             plan: &running.plan,
             drawn: &drawn,
             seconds: duration.as_secs_f64(),
+            cue: running.cue,
             accents: &[],
         };
         let edits = running.score.start_moving(&stage, at);
@@ -2089,7 +2122,7 @@ impl FlightEngine {
             })
             .collect();
         debug!(count = requests.len(), dx, dy, "running debug slide");
-        self.start(requests, (None, None), None, duration);
+        self.start(requests, (None, None), None, duration, Look::default());
     }
 }
 
@@ -2157,7 +2190,8 @@ mod tests {
             focused_look: None,
             plan: plan::FlightPlan::empty(),
             flown: false,
-            score: FlightScore::default(),
+            score: FlightScore::new(Look::default()),
+            cue: Cue::Plain,
         }
     }
 
@@ -2625,13 +2659,13 @@ mod tests {
         fn composed((tiles, pieces): (Vec<OverlayTile>, plan::ReflowPlan), focus: WindowId) -> RunningAnimation {
             let mut running = flight();
             running.tiles = tiles;
-            running.plan = plan::FlightPlan::from(pieces);
+            running.plan = running.score.plan(pieces, &Cue::Plain);
             running.focus = Some(focus);
             running
         }
 
         /// A second press, folded in as `merge_group` folds one into a flight not yet moving.
-        fn press(running: &mut RunningAnimation, windows: &[SurfaceWindow], from: CGPoint, to: CGPoint, focus: WindowId) {
+        fn press(running: &mut RunningAnimation, windows: &[SurfaceWindow], (from, to): (CGPoint, CGPoint), focus: WindowId, cue: Cue) {
             let (tiles, pieces) = movement(windows, from, to);
             running.merge_pass(tiles, Some(focus));
             let drawn = running.drawn();
@@ -2642,6 +2676,7 @@ mod tests {
                 viewport: DISPLAY,
                 drawn: &drawn,
                 seconds: 0.35,
+                cue,
                 accent: None,
             };
             running.fold_before_moving(&pass);
@@ -2678,7 +2713,7 @@ mod tests {
                 on_surface(c, column(1.0), false),
             ];
             let mut running = composed(movement(&first, rest, down), b);
-            press(&mut running, &second, rest, down, c);
+            press(&mut running, &second, (rest, down), c, Cue::Plain);
 
             let both = CGPoint::new(0.0, -2.0 * PITCH);
             assert_eq!(running.plan.floating_travel, both, "the floating container travels both rows");
@@ -2708,7 +2743,7 @@ mod tests {
             let second: Vec<SurfaceWindow> = (1..4).map(|i| at(i, 2.0)).collect();
             let (away, rest) = (CGPoint::new(-step, 0.0), CGPoint::new(0.0, 0.0));
             let mut running = composed(movement(&first, away, rest), columns[2]);
-            press(&mut running, &second, away, rest, columns[3]);
+            press(&mut running, &second, (away, rest), columns[3], Cue::Plain);
 
             let strip = piece(&running, columns[0]);
             assert_eq!(strip.map(|(_, travel)| travel), Some(CGPoint::new(-2.0 * step, 0.0)));
@@ -2717,6 +2752,25 @@ mod tests {
             }
             assert_eq!(path(&running, columns[3]), (column(4.0 + 3.0 * step), column(4.0 + step)), "beside the third");
             assert_eq!(path(&running, columns[0]).1, column(4.0 - 2.0 * step));
+        }
+
+        /// Frame zero shows the latest press folded into it, so the look poses and composes the burst
+        /// with that press's cue: a move folded into a plain pass is a move.
+        #[test]
+        fn a_fold_before_the_flight_moves_shows_the_latest_press() {
+            let step = 864.0;
+            let column = |x: f64| rect(x, 32.0, 860.0, 1081.0);
+            let (a, w) = (wid(1), wid(2));
+            let first = [on_surface(a, column(4.0), false), on_surface(w, column(4.0 + step), false)];
+            let second = [on_surface(w, column(4.0), false), on_surface(a, column(4.0 + step), false)];
+            let rest = CGPoint::new(0.0, 0.0);
+            let mut running = composed(movement(&first, rest, rest), a);
+            assert_eq!(running.cue, Cue::Plain);
+            let moved = Cue::Move { window: w, direction: rini_ipc::protocol::Direction::Left };
+            press(&mut running, &second, (rest, rest), w, moved);
+            assert_eq!(running.cue, moved);
+            press(&mut running, &second, (rest, rest), w, Cue::Plain);
+            assert_eq!(running.cue, Cue::Plain, "the latest, plain or not");
         }
     }
 

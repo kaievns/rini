@@ -14,7 +14,7 @@ feature is part of is `docs/pictures-motion-transitions.md`.
 | **The port** | `domain/request.rs` — `AnimationRequest`, one window of a layout pass, and `SurfaceWindow`, one window of a strip movement; what the reactor builds and the engine carries out |
 | **A layout pass, sorted** | `domain/pass.rs` — `plan`: which windows move, which stay and are still drawn, which are warmed |
 | **Where a tile starts and ends** | `domain/travel.rs` — the window server's frame against the request's, a park's way in and out by its neighbours' travel, what is worth flying |
-| **A move along the strip, staged** | `domain/strip_move.rs` — where the two columns changing places start, whether the move steps the whole strip, and the column such a move holds on it |
+| **A move along the strip, staged** | `domain/strip_move.rs` — where the two columns changing places start (`swap_starts`), and the look's staging of the press put on the strip surface (`stage_move`); which column is held and whether the strip steps are the look's |
 | **A switch's stack** | `domain/strip_stack.rs` — the stacked workspace strips a vertical switch scrolls through |
 | **Arriving mid-flight** | `domain/admission.rs` — a pass merging into a running flight, reserved entrances, how an opened window enters, and how each window's picture where it ends is waited for (`EndPicture`) |
 | **A flight's score** | `domain/flight_score.rs` — `FlightScore`: the score the flight's look composes and bends, every edit it hands the renderer folded into it first, the accents waiting for the motion, and the clock and the lift's settle read from it |
@@ -33,7 +33,9 @@ as one movement.
 **The reactor asks, and hears two things back.** It sends a layout pass (`Event::Animate`), a strip
 movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as
 it went out, a bounce, the windows whose look each change of the key window turned
-(`Event::LooksTurned`), and the display the overlay flies on; the pictures service's sink, wired in
+(`Event::LooksTurned`), and the display the overlay flies on. A pass, a movement and a bounce each name
+the `Look` a flight they begin moves by, and a movement and a bounce the press (`Cue`): the engine
+hands both to the look and matches on neither. The pictures service's sink, wired in
 `src/main.rs`, tells the engine what it delivered under the engine's tag. The engine answers through
 the callbacks `src/main.rs` installs: the frames to write (`PlaceFrames`, back to the reactor) and
 whether a flight is up (`OnFlight`, to the bar). The reactor never learns more of a flight than that.

@@ -224,6 +224,7 @@ impl AnimationManager {
                     focused_before: reactor.focused_as_event_began,
                     key: reactor.main_window_tracker.key_window(),
                     duration,
+                    look: crate::animation::domain::choreography::Look::default(),
                 });
                 trace!(count, "handed the layout to the overlay animation engine");
             }

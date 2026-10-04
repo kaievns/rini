@@ -13,7 +13,8 @@ landed; anything marked *estimated* has not been measured yet. When each step of
 
 Every overlay flight is a `FlightPlan` (`crate::animation::domain::motion::plan`): a
 set of rigid groups (`RigidGroup`, keyed `GroupKey::Rigid`), a loose set (resizes and entrances), and the
-floating windows. A look composes it into the flight's score, which the flight keeps
+floating windows. The flight's look, chosen as it begins (`Look` in
+`src/animation/domain/choreography.rs`), composes it into the flight's score, which the flight keeps
 (`src/transitions/domain/flight_score.rs`) and the overlay plays: Slide, the default look
 (`src/animation/domain/choreography/slide.rs`). Frame zero is its pose, every group with a drawn
 member a container at the origin, which the overlay builds its tree from (`TileOverlay::pose` in
@@ -517,7 +518,8 @@ added or cut, a ride, a drop, a bank; `a_score_is_the_fold_of_its_edits`).
 `Score::sample` is what Core Animation draws at a media time, so a merge bends a
 flight from the score instead of reading the presentation layer back (step 5 of
 `docs/pictures-motion-transitions.md`). A look composes the score and bends it
-(`src/animation/domain/choreography/slide.rs`), the flight keeps it
+(`src/animation/domain/choreography.rs`; Slide, the default, in
+`src/animation/domain/choreography/slide.rs`), the flight keeps it
 (`src/transitions/domain/flight_score.rs`), and the overlay plays the same edits,
 folding each into a replica it reads only to install: an accent begun again, a
 crop grid re-keyed (`the_overlay_plays_exactly_its_score`). The overlay installs

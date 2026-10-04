@@ -15,7 +15,7 @@ This section goes when the last row is done.
 | 2 | The pictures service: the capture schedule and its thread, the cache and the ScreenCaptureKit captures moved in; the engine, the reactor and the switcher its clients | done |
 | 3 | `transitions`: the coordinator's decisions out of `animation`; the lifecycle as a pure state machine | done |
 | 4 | The prototype's sequencing: frame zero, end-state watches, generations, holes, constant hairline, focused looks, live background; region pictures, batched SkyLight with per-window knowledge; the mid-flight refresh and the harvest deleted | done |
-| 5 | `animation` plays a `Score`; choreographies and accents produce one | in progress: the pure `Score` and its tracks; the bounce drawn from its track and re-kicked by every push; accents kept through a retarget; the overlay installs every animation from a track and reads where things are from its replica, each carrier's bounce re-kicked from its own; Slide composes and bends each flight's score, which the flight keeps (`FlightScore`) and the overlay plays as edits |
+| 5 | `animation` plays a `Score`; choreographies and accents produce one | done |
 | 6 | Typed coordinate spaces in `rini-geometry` for the three features' interfaces | |
 | 7 | The coordinator on its own thread; the main thread renders only | |
 | 8 | The transitions journal | |
@@ -85,11 +85,17 @@ its edits, and evaluates at any instant to what Core Animation plays: a spring l
 its samples, the bounce's way home on the `(0.42, 0, 0.58, 1)` Bezier. A picture swap is not a score
 edit: it changes what a tile shows, never where it is.
 
-A `Choreography` composes a score from a stage and retargets a playing one from wherever it is drawn.
-An `Accent` adds an additive track (the bounce re-kicks from where it is drawn). The renderer plays a
-score's edits, the snap of a tile onto its window's frame among them, swaps pictures, cuts holes over
-windows that end on screen, draws the constant hairline, and lifts. A new look, such as the zoom-out spike, is another
-choreography; capture, swaps and handover never see what a score contains.
+A `Look` is how a flight moves, chosen as the flight begins; `Look::ALL` holds every look, and each
+passes the same tests. Its `Choreography` makes the flight's plan, composes a score from a stage,
+folds a press before the motion and retargets a playing score from wherever it is drawn. Before a
+strip movement is asked for, the look stages its press (`Look::stage`): the reactor names the press as
+a `Cue`, `transitions` finds where a moved pair starts and passes look and cue through without
+matching on either, and the look says which windows cross, which are held and which accent rides the
+movement. An `Accent` adds an additive track (the bounce re-kicks from where it is drawn). The
+renderer plays a score's edits, the snap of a tile onto its window's frame among them, swaps
+pictures, cuts holes over windows that end on screen, draws the constant hairline, and lifts. A new
+look, such as the zoom-out spike, is another `Look`, its choreography and its staging, in `animation`
+and the reactor's choice of it; capture, swaps and handover never see what a score contains.
 
 ## `transitions`
 

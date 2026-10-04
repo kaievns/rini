@@ -380,10 +380,15 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
 ## Where it lives
 
 `src/animation/domain/motion/` is how things move: the rigid pieces and their merge, the curves, the
-depth bands, the edge bounce and the nudge, and the hairline every tile wears. `src/animation/platform/overlay.rs` plays it on Core
-Animation. When each step happens is `src/transitions/`: `src/transitions/domain/strip_move.rs` stages
-the move along the strip, `src/transitions/domain/lifecycle.rs` decides when every step of a flight
-happens, `src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
+depth bands, the edge bounce and the nudge, and the hairline every tile wears. The looks
+(`src/animation/domain/choreography.rs`, Slide the default in
+`src/animation/domain/choreography/slide.rs`) compose a flight's score, fold a press before its motion
+into it and bend it at a press after, and stage a press on the strip. `src/animation/platform/overlay.rs`
+plays the score on Core Animation. When each step happens is `src/transitions/`:
+`src/transitions/domain/flight_score.rs` keeps a flight's score, `src/transitions/domain/strip_move.rs`
+finds where a moved pair starts and puts the look's staging of it on the strip,
+`src/transitions/domain/lifecycle.rs` decides when every step of a flight happens,
+`src/transitions/domain/admission.rs` how a pass arriving mid-flight is admitted, and
 `src/transitions/platform/engine.rs` is the actor that carries them out. The pictures a flight
 draws are `src/pictures/`: whether one covers and fits its window, the stand-in, the blur, and the
 schedule that holds background capture off while a flight runs in `src/pictures/domain/`; the

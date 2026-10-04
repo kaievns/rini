@@ -1846,6 +1846,7 @@ struct SurfaceFlight {
     focus: Option<WindowId>,
     focused_before: Option<WindowId>,
     key: Option<WindowId>,
+    cue: crate::animation::domain::choreography::Cue,
     accent: Option<crate::animation::domain::motion::accents::Accent>,
     duration: std::time::Duration,
 }
@@ -1863,6 +1864,7 @@ fn strip_movements(
             focus,
             focused_before,
             key,
+            cue,
             accent,
             duration,
             ..
@@ -1875,6 +1877,7 @@ fn strip_movements(
                 focus,
                 focused_before,
                 key,
+                cue,
                 accent,
                 duration,
             });
@@ -1978,6 +1981,7 @@ fn a_move_that_scrolls_the_strip_starts_the_pair_from_each_others_slots() {
     reactor.handle_test_layout_command(LayoutCommand::MoveFocus(Direction::Left));
     for flight in strip_movements(&mut rx) {
         assert!(flight.windows.iter().all(|w| w.from.is_none()));
+        assert_eq!(flight.cue, crate::animation::domain::choreography::Cue::Plain);
         assert_eq!(flight.accent, None);
     }
 }
@@ -2004,6 +2008,14 @@ fn a_full_width_move_steps_the_strip_away_and_holds_the_column_it_passes() {
         let flights = strip_movements(&mut rx);
         assert_eq!(flights.len(), 1, "{direction:?}");
         let flight = &flights[0];
+        assert_eq!(
+            flight.cue,
+            crate::animation::domain::choreography::Cue::Move {
+                window: moved,
+                direction
+            },
+            "the look is told the press"
+        );
         assert!(
             flight.from_offset.x.abs() >= 1.0,
             "{direction:?}: the strip scrolled to follow it"

@@ -1,31 +1,44 @@
 //! A flight's score: everything it draws, as the score its look composes and bends, and the accents
-//! waiting for its motion to start. Every method folds what it returns into the score before
-//! returning it, so the edits handed to the renderer and the score here are one stream. See "The
-//! score" in `src/animation/docs/animation-smoothness.md`, and "Mid-flight passes" and "Edge bounce"
-//! in `src/transitions/docs/coordination.md` for when each happens.
+//! waiting for its motion to start. The look is the flight's, chosen as it begins. Every method folds
+//! what it returns into the score before returning it, so the edits handed to the renderer and the
+//! score here are one stream. See "The score" in `src/animation/docs/animation-smoothness.md`, and
+//! "Mid-flight passes" and "Edge bounce" in `src/transitions/docs/coordination.md` for when each
+//! happens.
 
 use std::time::Duration;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
 
-use crate::animation::domain::choreography::slide::Slide;
-use crate::animation::domain::choreography::{Pass, Retarget, Stage};
+use crate::animation::domain::choreography::{Choreography, Cue, Look, Pass, Retarget, Stage};
 use crate::animation::domain::motion::accents::Accent;
-use crate::animation::domain::motion::plan::{Banding, FlightPlan};
+use crate::animation::domain::motion::plan::{Banding, FlightPlan, ReflowPlan};
 use crate::animation::domain::motion::score::{Edit, Score};
 use crate::animation::domain::motion::tile;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FlightScore {
-    choreography: Slide,
+    choreography: Box<dyn Choreography>,
     score: Score,
     /// At most one of each kind, until the motion starts.
     waiting: Vec<Accent>,
 }
 
 impl FlightScore {
+    pub fn new(look: Look) -> FlightScore {
+        FlightScore {
+            choreography: look.choreography(),
+            score: Score::default(),
+            waiting: Vec::new(),
+        }
+    }
+
     pub fn score(&self) -> &Score { &self.score }
+
+    /// The flight's plan from its first pass, as its look makes it.
+    pub fn plan(&self, pass: ReflowPlan, cue: &Cue) -> FlightPlan {
+        self.choreography.plan(pass, cue)
+    }
 
     /// Frame zero, posed again whenever it is installed again before the motion: nothing playing,
     /// banded by `banding`. The accents waiting keep waiting.
@@ -65,8 +78,8 @@ impl FlightScore {
     }
 
     /// A push against `wall` reaching the flight that moves, at `now`.
-    pub fn push(&mut self, wall: CGPoint, seconds: f64, now: f64) -> Vec<Edit> {
-        let edits = self.choreography.push(&self.score, wall, seconds, now);
+    pub fn push(&mut self, cue: &Cue, wall: CGPoint, seconds: f64, now: f64) -> Vec<Edit> {
+        let edits = self.choreography.push(&self.score, cue, wall, seconds, now);
         self.fold_in(&edits);
         edits
     }
@@ -149,9 +162,9 @@ mod tests {
 
     impl Flight {
         fn posed(requests: &[(WindowId, CGRect, CGRect, bool)]) -> Flight {
-            let plan = FlightPlan::from(reflow_plan(requests, DISPLAY));
+            let mut score = FlightScore::new(Look::default());
+            let plan = score.plan(reflow_plan(requests, DISPLAY), &Cue::Plain);
             let drawn = plan.windows();
-            let mut score = FlightScore::default();
             let replica = score.pose(&stage(&plan, &drawn), Banding::default()).clone();
             Flight { score, plan, drawn, replica }
         }
@@ -182,6 +195,7 @@ mod tests {
                 viewport: DISPLAY,
                 drawn: &self.drawn,
                 seconds,
+                cue: Cue::Plain,
                 accent: None,
             };
             let mut retarget = self.score.merge(&self.plan, &pass, now);
@@ -200,6 +214,7 @@ mod tests {
             plan,
             drawn,
             seconds: PLAIN,
+            cue: Cue::Plain,
             accents: &[],
         }
     }
@@ -321,7 +336,7 @@ mod tests {
         let mut flight = Flight::posed(&strip(1, 2, 1.0, -863.0));
         flight.start();
         let pushed = BEGIN + 0.3;
-        let edits = flight.score.push(CGPoint::new(-72.0, 0.0), PLAIN, pushed);
+        let edits = flight.score.push(&Cue::Plain, CGPoint::new(-72.0, 0.0), PLAIN, pushed);
         flight.played(&edits);
         let home = pushed + PLAIN;
         let now = BEGIN + 0.31;
@@ -331,7 +346,7 @@ mod tests {
         assert!(clock.as_secs_f64() >= home - now - 1e-9, "{clock:?}");
         assert_eq!(clock, flight.score.remaining(now));
         assert!(!flight.score.settled(home - 1e-6));
-        let quick = FlightScore::default();
+        let quick = FlightScore::new(Look::default());
         assert_eq!(
             quick.clock(Duration::from_millis(350), now),
             Duration::from_millis(350),
@@ -370,7 +385,7 @@ mod tests {
         assert!(accents.iter().any(|t| t.channel() == Channel::Nudge && t.begin() == BEGIN));
 
         let now = BEGIN + 0.1;
-        let pushed = flight.score.push(left, PLAIN, now);
+        let pushed = flight.score.push(&Cue::Plain, left, PLAIN, now);
         assert!(!pushed.is_empty(), "once it moves, at once");
         assert!(pushed.iter().all(|e| matches!(e, Edit::Add(t) if t.begin() == now)));
     }

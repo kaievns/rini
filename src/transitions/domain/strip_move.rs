@@ -1,20 +1,18 @@
-//! A window moved along the strip, staged: where the two columns that change places start, which of
-//! them is held on the strip, and whether the move steps the whole strip. The step's shape is
-//! `crate::animation::domain::motion::nudge`. See "The move flight, staged" in
-//! `src/transitions/docs/coordination.md`.
+//! A press on the strip, staged: where the two columns a move swaps start (`swap_starts`), and the
+//! look's staging of it put on the strip surface (`stage_move`). Which column is held and whether the
+//! strip steps are the look's (`crate::animation::domain::choreography::Look::stage`). See "The move
+//! flight, staged" in `src/transitions/docs/coordination.md`.
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
 use rini_ipc::protocol::Direction;
 
-use crate::animation::domain::motion::nudge::NUDGE_SHARE;
+use crate::animation::domain::choreography::{Area, Cue, Look, PairStart, Strip};
+use crate::animation::domain::motion::accents::Accent;
 use crate::transitions::domain::request::SurfaceWindow;
 
 /// Frames this close in x are one column.
 const COLUMN_TOLERANCE: f64 = 0.5;
-
-/// A column this close to the tiling area's width fills the viewport.
-const FILLS_TOLERANCE: f64 = 1.0;
 
 /// Where the moved window's column and the column it passed started, in the strip's coordinates.
 ///
@@ -25,7 +23,7 @@ pub fn swap_starts(
     strip: &[(WindowId, CGRect)],
     moved: WindowId,
     direction: Direction,
-) -> Vec<(WindowId, CGRect)> {
+) -> Vec<PairStart> {
     let Some(&(_, at)) = strip.iter().find(|(window, _)| *window == moved) else {
         return Vec::new();
     };
@@ -55,67 +53,57 @@ pub fn swap_starts(
     strip
         .iter()
         .filter_map(|&(window, frame)| {
-            let x = if in_column(&frame, moved_x) {
-                moved_start
+            let (x, passed) = if in_column(&frame, moved_x) {
+                (moved_start, false)
             } else if in_column(&frame, passed_x) {
-                passed_start
+                (passed_start, true)
             } else {
                 return None;
             };
-            Some((window, CGRect::new(CGPoint::new(x, frame.origin.y), frame.size)))
+            Some(PairStart {
+                window,
+                start: CGRect::new(CGPoint::new(x, frame.origin.y), frame.size),
+                passed,
+            })
         })
         .collect()
 }
 
-/// Whether a column `width` wide fills the viewport: it is the tiling area's width, the display's
-/// usable width less both outer gaps, within a point. The camera follows such a column, so nothing
-/// on screen says it moved; a narrower one is seen moving.
-pub fn fills_viewport(width: f64, screen_width: f64, outer_left: f64, outer_right: f64) -> bool {
-    (width - (screen_width - outer_left - outer_right)).abs() <= FILLS_TOLERANCE
-}
-
-/// The step of a move: a share of the viewport away from where the moved window went, so the side
-/// it opens is the side the column it passed comes from.
-pub fn nudge(viewport_width: f64, direction: Direction) -> Option<CGPoint> {
-    let step = viewport_width * NUDGE_SHARE;
-    match direction {
-        Direction::Right => Some(CGPoint::new(-step, 0.0)),
-        Direction::Left => Some(CGPoint::new(step, 0.0)),
-        Direction::Up | Direction::Down => None,
-    }
-}
-
-/// Puts a move's pair on the strip surface, every window of which is at its new frame, and returns
-/// the step the move takes. The moved column starts from its old slot. The column it passed starts
-/// from its own and crosses, unless the moved column fills the viewport: then the whole strip
-/// steps, and the passed column is drawn held at its old slot on the strip, riding the strip
-/// beneath the moved window. Its real window still goes to its layout frame.
+/// Puts `cue`'s press on the strip surface, every window of which is at its new frame, as `look`
+/// stages it, and returns the accent the look asks to ride the movement. A window the look starts
+/// elsewhere crosses from there; one it holds is drawn at that frame on the strip, riding the strip,
+/// while its real window still goes to its layout frame. `area` is the screen in the overlay's
+/// space, and `travel` the viewport's.
 pub fn stage_move(
     windows: &mut [SurfaceWindow],
-    moved: WindowId,
-    direction: Direction,
-    screen_width: f64,
-    outer_left: f64,
-    outer_right: f64,
-) -> Option<CGPoint> {
+    cue: &Cue,
+    area: Area,
+    travel: CGPoint,
+    look: Look,
+) -> Option<Accent> {
     let strip: Vec<(WindowId, CGRect)> =
         windows.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
-    let at = strip.iter().find(|(window, _)| *window == moved)?.1;
-    let starts = swap_starts(&strip, moved, direction);
-    let steps =
-        !starts.is_empty() && fills_viewport(at.size.width, screen_width, outer_left, outer_right);
-    for (window, start) in starts {
-        let Some(surface) = windows.iter_mut().find(|w| w.window == window) else {
-            continue;
-        };
-        let passed = (surface.frame.origin.x - at.origin.x).abs() > COLUMN_TOLERANCE;
-        if steps && passed {
-            surface.frame = start;
-        } else {
+    let pair = cue
+        .moved()
+        .map(|(window, direction)| swap_starts(&strip, window, direction))
+        .unwrap_or_default();
+    let staging = look.stage(cue, &Strip {
+        windows: &strip,
+        pair: &pair,
+        area,
+        travel,
+    });
+    for (window, start) in staging.from {
+        if let Some(surface) = windows.iter_mut().find(|w| w.window == window) {
             surface.from = Some(start);
         }
     }
-    steps.then(|| nudge(screen_width, direction)).flatten()
+    for (window, frame) in staging.held {
+        if let Some(surface) = windows.iter_mut().find(|w| w.window == window) {
+            surface.frame = frame;
+        }
+    }
+    staging.accent
 }
 
 #[cfg(test)]
@@ -137,8 +125,29 @@ pub(crate) mod tests {
         CGRect::new(CGPoint::new(x, 32.0), CGSize::new(width, HEIGHT))
     }
 
-    fn start_of(starts: &[(WindowId, CGRect)], window: WindowId) -> Option<f64> {
-        starts.iter().find(|(w, _)| *w == window).map(|(_, frame)| frame.origin.x)
+    fn start_of(starts: &[PairStart], window: WindowId) -> Option<f64> {
+        starts.iter().find(|p| p.window == window).map(|p| p.start.origin.x)
+    }
+
+    /// A move of `moved` staged by Slide on the live display, 1728pt with 3pt outer gaps, the
+    /// viewport travelling `travel`: the step it takes.
+    fn slid(
+        windows: &mut [SurfaceWindow],
+        moved: WindowId,
+        direction: Direction,
+        travel: CGPoint,
+    ) -> Option<CGPoint> {
+        let cue = Cue::Move { window: moved, direction };
+        let area = Area {
+            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(V, 1117.0)),
+            outer_left: GAP,
+            outer_right: GAP,
+        };
+        match stage_move(windows, &cue, area, travel, Look::Slide) {
+            Some(Accent::Step { offset }) => Some(offset),
+            Some(Accent::Push { .. }) => panic!("a move pushes nothing"),
+            None => None,
+        }
     }
 
     /// A B W, just after W moved right past B: W started where B is now, B where W's right edge
@@ -153,6 +162,12 @@ pub(crate) mod tests {
         let starts = swap_starts(&strip, wid(3), Direction::Right);
         assert_eq!(start_of(&starts, wid(3)), Some(864.0));
         assert_eq!(start_of(&starts, wid(2)), Some(1728.0));
+        let passed: Vec<(WindowId, bool)> = starts.iter().map(|p| (p.window, p.passed)).collect();
+        assert_eq!(
+            passed,
+            [(wid(2), true), (wid(3), false)],
+            "B is the column passed"
+        );
         assert_eq!(
             start_of(&starts, wid(1)),
             None,
@@ -204,9 +219,10 @@ pub(crate) mod tests {
         let starts = swap_starts(&strip, wid(3), Direction::Right);
         assert_eq!(starts.len(), 3);
         for (window, row) in [(wid(1), top), (wid(2), bottom)] {
-            let (_, start) = starts.iter().find(|(w, _)| *w == window).copied().expect("moved");
-            assert_eq!(start.origin, CGPoint::new(864.0, row.origin.y));
-            assert_eq!(start.size, row.size);
+            let start = starts.iter().find(|p| p.window == window).expect("moved");
+            assert!(start.passed);
+            assert_eq!(start.start.origin, CGPoint::new(864.0, row.origin.y));
+            assert_eq!(start.start.size, row.size);
         }
         assert_eq!(start_of(&starts, wid(3)), Some(0.0));
         assert_eq!(start_of(&starts, wid(4)), None);
@@ -224,30 +240,6 @@ pub(crate) mod tests {
             swap_starts(&strip, wid(9), Direction::Right).is_empty(),
             "not on the strip"
         );
-    }
-
-    /// The live display, 1728pt with 3pt outer gaps: only a column the tiling area's 1722pt wide
-    /// fills it, whether the full-width toggle or a width preset made it so. Half, two-thirds and
-    /// anything off by more than a point do not.
-    #[test]
-    fn only_a_column_as_wide_as_the_tiling_area_fills_the_viewport() {
-        assert!(fills_viewport(1722.0, 1728.0, GAP, GAP));
-        assert!(fills_viewport(1722.8, 1728.0, GAP, GAP), "within a point");
-        for width in [860.0, 1148.0, 1151.0, 1720.5, 1728.0] {
-            assert!(!fills_viewport(width, 1728.0, GAP, GAP), "{width}");
-        }
-        assert!(fills_viewport(1728.0, 1728.0, 0.0, 0.0), "no gaps");
-        assert!(fills_viewport(1719.0, 1728.0, 4.0, 5.0), "uneven gaps");
-    }
-
-    /// The step goes away from where the moved window went: a move right steps the strip left and
-    /// opens the right side, where the column it passed was.
-    #[test]
-    fn the_step_goes_away_from_where_the_window_went() {
-        assert_eq!(nudge(1728.0, Direction::Right), Some(CGPoint::new(-576.0, 0.0)));
-        assert_eq!(nudge(1728.0, Direction::Left), Some(CGPoint::new(576.0, 0.0)));
-        assert_eq!(nudge(1728.0, Direction::Up), None);
-        assert_eq!(nudge(1728.0, Direction::Down), None);
     }
 
     use crate::animation::domain::motion::glide::Leg;
@@ -421,7 +413,7 @@ pub(crate) mod tests {
     /// strip, the strip on `flight_curve`, the step on every container the engine steps.
     fn staged(direction: Direction, stepping: bool) -> Flight {
         let (mut windows, from_offset) = full_width_move(direction);
-        let step = stage_move(&mut windows, wid(W), direction, V, GAP, GAP).expect("it steps");
+        let step = slid(&mut windows, wid(W), direction, from_offset).expect("it steps");
         Flight::fly(
             &windows,
             from_offset,
@@ -439,12 +431,17 @@ pub(crate) mod tests {
         for direction in [Direction::Right, Direction::Left] {
             let (mut windows, from_offset) = full_width_move(direction);
             let before = windows.clone();
-            let step = stage_move(&mut windows, wid(W), direction, V, GAP, GAP);
-            assert_eq!(step, nudge(V, direction), "{direction:?}");
+            let step = slid(&mut windows, wid(W), direction, from_offset);
+            let away = if direction == Direction::Right {
+                -V / 3.0
+            } else {
+                V / 3.0
+            };
+            assert_eq!(step, Some(CGPoint::new(away, 0.0)), "{direction:?}");
             let strip: Vec<(WindowId, CGRect)> =
                 before.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
             let starts = swap_starts(&strip, wid(W), direction);
-            let start = |window| starts.iter().find(|(w, _)| *w == window).map(|(_, f)| *f);
+            let start = |window| starts.iter().find(|p| p.window == window).map(|p| p.start);
             let get = |list: &[SurfaceWindow], window: u32| {
                 *list.iter().find(|s| s.window == wid(window)).unwrap()
             };
@@ -477,7 +474,7 @@ pub(crate) mod tests {
             let mut windows: Vec<SurfaceWindow> =
                 strip.iter().map(|&(w, f)| surface_window(w, f, false)).collect();
             assert_eq!(
-                stage_move(&mut windows, wid(W), Direction::Right, V, GAP, GAP),
+                slid(&mut windows, wid(W), Direction::Right, CGPoint::new(0.0, 0.0)),
                 None
             );
             let starts = swap_starts(&strip, wid(W), Direction::Right);
@@ -487,10 +484,72 @@ pub(crate) mod tests {
                 assert_eq!(window.frame, *frame, "{width}: every window at its new frame");
                 assert_eq!(
                     window.from,
-                    starts.iter().find(|(w, _)| *w == window.window).map(|(_, f)| *f),
+                    starts.iter().find(|p| p.window == window.window).map(|p| p.start),
                     "{width}"
                 );
             }
+        }
+    }
+
+    /// What the look staged is what lands on the surface: a window it starts elsewhere crosses from
+    /// there, one it holds is drawn at that frame with no start of its own, every other window stays at
+    /// its new frame, and the accent is the look's. A plain press stages nothing.
+    #[test]
+    fn stage_move_applies_what_the_look_staged() {
+        let area = Area {
+            frame: CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(V, 1117.0)),
+            outer_left: GAP,
+            outer_right: GAP,
+        };
+        let narrower = vec![
+            surface_window(wid(N), column(3.0, 860.0), false),
+            surface_window(wid(W), column(866.0, 1148.0), false),
+        ];
+        let cases = [
+            (full_width_move(Direction::Right), Direction::Right),
+            (full_width_move(Direction::Left), Direction::Left),
+            (full_width_move(Direction::Right), Direction::Up),
+            ((narrower, CGPoint::new(0.0, 0.0)), Direction::Right),
+        ];
+        for look in Look::ALL {
+            let (mut held, mut crossed) = (0, 0);
+            for ((before, travel), direction) in cases.clone() {
+                let cue = Cue::Move { window: wid(W), direction };
+                let strip: Vec<(WindowId, CGRect)> =
+                    before.iter().filter(|w| !w.floating).map(|w| (w.window, w.frame)).collect();
+                let pair = swap_starts(&strip, wid(W), direction);
+                let staging = look.stage(&cue, &Strip {
+                    windows: &strip,
+                    pair: &pair,
+                    area,
+                    travel,
+                });
+                let mut windows = before.clone();
+                let accent = stage_move(&mut windows, &cue, area, travel, look);
+                assert_eq!(accent, staging.accent, "{look:?} {direction:?}");
+                for (was, is) in before.iter().zip(&windows) {
+                    let staged = |list: &[(WindowId, CGRect)]| {
+                        list.iter().find(|(w, _)| *w == was.window).map(|(_, f)| *f)
+                    };
+                    let expected = SurfaceWindow {
+                        from: staged(&staging.from).or(was.from),
+                        frame: staged(&staging.held).unwrap_or(was.frame),
+                        ..*was
+                    };
+                    assert_eq!(*is, expected, "{look:?} {direction:?}");
+                }
+                held += staging.held.len();
+                crossed += staging.from.len();
+            }
+            assert!(
+                held > 0 && crossed > 0,
+                "{look:?}: {held} held, {crossed} crossed"
+            );
+
+            let (before, travel) = full_width_move(Direction::Right);
+            let mut windows = before.clone();
+            assert_eq!(stage_move(&mut windows, &Cue::Plain, area, travel, look), None);
+            assert_eq!(windows, before, "{look:?}: a plain press");
         }
     }
 
@@ -568,7 +627,7 @@ pub(crate) mod tests {
         assert!((by_n - 103.0).abs() <= 1.0, "N covers {by_n:.1} of 377 at t=0.3");
 
         let (mut windows, from_offset) = full_width_move(Direction::Right);
-        let step = stage_move(&mut windows, wid(W), Direction::Right, V, GAP, GAP).unwrap();
+        let step = slid(&mut windows, wid(W), Direction::Right, from_offset).unwrap();
         let w_alone = |plan: &FlightPlan, key| match plan.member(wid(W)) {
             Some(Member::Rigid { key: moved, .. }) => moved == key,
             _ => false,
@@ -588,6 +647,8 @@ pub(crate) mod tests {
         use rini_geometry::SameAs;
         use rini_ipc::protocol::Direction;
 
+        use crate::animation::domain::choreography::{Area, Cue, Look};
+        use crate::animation::domain::motion::accents::Accent;
         use crate::animation::domain::motion::easing::MOTION_CURVE;
         use crate::animation::domain::motion::glide::Leg;
         use crate::animation::domain::motion::plan::*;
@@ -641,7 +702,16 @@ pub(crate) mod tests {
                     from: None,
                 })
                 .collect();
-            let step = stage_move(&mut windows, moved, direction, DISPLAY.size.width, OUTER, OUTER);
+            let cue = Cue::Move { window: moved, direction };
+            let area = Area {
+                frame: DISPLAY,
+                outer_left: OUTER,
+                outer_right: OUTER,
+            };
+            let step = match stage_move(&mut windows, &cue, area, OFFSET, Look::Slide) {
+                Some(Accent::Step { offset }) => Some(offset),
+                _ => None,
+            };
             (windows, step)
         }
 

@@ -177,7 +177,8 @@ window, is folded into frame zero instead, and frame zero posed again (`fold_bef
 folded by the flight's look (`FlightScore::fold`; Slide's is `merge_plans`, as a pass in flight is),
 with every container where frame zero installs it and taken to be where the last pass sends it: the
 reactor builds a pass from the layout where the press before left it, so its frames are places on the
-strip there. A burst of presses then composes as one movement from frame zero. Rebuilt
+strip there. A burst of presses then composes as one movement from frame zero, which the look is
+told shows the latest press (its `Cue`, plain or a move). Rebuilt
 from the merged tiles, as it was, each window rode its own path from where frame zero drew it to where
 the last press sends it. On two steps along the strip, the column the second brought started under
 the one the first brought, and the column the second left behind was outrun and covered by its
@@ -441,10 +442,14 @@ frame. The moved column and the column it passed also get a start (`swap_starts`
 now, in the order they had before. For W of width a and N of width b with gap
 g, moving right, W started at N's new x and N at N's new x + a + g; moving
 left, W at W's new x + b + g and N at W's new x. Every window of a stacked N
-shifts by one amount. `stage_move` puts the pair on the surface: W crosses from
-its start, and N crosses from its own unless the move steps, when it is held
-(below). `surface_plan` groups by travel vector, so the strip is one container
-and each crossing column has its own; the moved window holds focus, so its
+shifts by one amount. What is done with the pair is the look's: the reactor
+names the press (`Cue::Move`), and `stage_move` hands the strip and the pair to
+the look (`Look::stage`, `src/animation/domain/choreography.rs`) and puts what
+it staged on the surface. Slide, the default look
+(`src/animation/domain/choreography/slide.rs`), has W cross from its start, and
+N cross from its own unless the move steps, when it is held; the three rules
+below are Slide's. `surface_plan` groups by travel vector, so the strip is one
+container and each crossing column has its own; the moved window holds focus, so its
 container is drawn first (`band_plan`) and N slides beneath it.
 
 **Which moves step.** Only a moved column that fills the viewport steps
@@ -461,9 +466,9 @@ window went, and back (`nudge`): a move right steps the strip left and opens
 the right side, where N was. It went toward where the window went, opening the
 side N was heading for.
 
-**The column passed is held.** For a move that steps, `stage_move` gives N its
-old slot as its surface frame and no start of its own, so it rides the strip's
-container: its tile starts where N was on screen and moves only as the strip
+**The column passed is held.** For a move that steps, Slide holds N:
+`stage_move` gives N its old slot as its surface frame and no start of its own,
+so it rides the strip's container: its tile starts where N was on screen and moves only as the strip
 does, W slides over it, and it finishes beneath W, covered. Only the drawing is
 held. N's real window goes to its layout frame, off screen, as for any move:
 `final_frames` are unchanged, the handover compares real windows with them, and

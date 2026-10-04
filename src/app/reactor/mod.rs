@@ -3727,10 +3727,11 @@ impl Reactor {
     ///
     /// `delta` is how far the strip moved, zero when it did not. The strip surface holds the whole
     /// active workspace at its final positions, and the viewport starts shifted back by `delta` so
-    /// the strip appears to arrive from where it was, then settles. A `moved` window's column and the
-    /// column it passed start from the slots they held before the move, so the two are seen changing
-    /// places. A moved column that fills the viewport steps the whole strip instead, the column it
-    /// passed held on the strip beneath it (`strip_move::stage_move`). See "The move flight, staged" in
+    /// the strip appears to arrive from where it was, then settles. A `moved` window is the press's
+    /// cue, and the look stages it (`strip_move::stage_move`): Slide starts the moved column and the
+    /// column it passed from the slots they held before the move, so the two are seen changing
+    /// places, unless the moved column fills the viewport, when the whole strip steps and the column
+    /// it passed is held on the strip beneath it. See "The move flight, staged" in
     /// `src/transitions/docs/coordination.md`.
     ///
     /// `final_frames` are the pass's windows on this workspace whose frames changed: the real windows
@@ -3794,18 +3795,27 @@ impl Reactor {
         // compounded the error on every press, which is what made rapid next/prev jerk back and forth.
         let from_offset = CGPoint::new(delta.x, delta.y);
         let to_offset = CGPoint::new(0.0, 0.0);
-        let accent = moved
-            .and_then(|(window, direction)| {
-                crate::transitions::domain::strip_move::stage_move(
-                    &mut windows,
-                    window,
-                    direction,
-                    screen.frame.size.width,
-                    gaps.outer.left,
-                    gaps.outer.right,
-                )
-            })
-            .map(|offset| crate::animation::domain::motion::accents::Accent::Step { offset });
+        use crate::animation::domain::choreography::{Area, Cue, Look};
+        let look = Look::default();
+        let cue = moved.map_or(Cue::Plain, |(window, direction)| Cue::Move { window, direction });
+        let area = Area {
+            frame: CGRect::new(
+                CGPoint::new(
+                    screen.frame.origin.x - display_bounds.origin.x,
+                    screen.frame.origin.y - display_bounds.origin.y,
+                ),
+                screen.frame.size,
+            ),
+            outer_left: gaps.outer.left,
+            outer_right: gaps.outer.right,
+        };
+        let accent = crate::transitions::domain::strip_move::stage_move(
+            &mut windows,
+            &cue,
+            area,
+            crate::animation::domain::motion::surface::pan_travel(from_offset, to_offset),
+            look,
+        );
         // The plain duration: the look stretches the flight only when it takes the step.
         let duration =
             std::time::Duration::from_secs_f64(self.config.settings.animation_duration.max(0.0));
@@ -3820,6 +3830,8 @@ impl Reactor {
             focused_before: self.focused_as_event_began,
             key: self.main_window_tracker.key_window(),
             duration,
+            look,
+            cue,
             accent,
         });
         true
@@ -3918,6 +3930,8 @@ impl Reactor {
             final_frames: layout,
             focus: self.layout_manager.layout_engine.focused_window(),
             duration,
+            look: crate::animation::domain::choreography::Look::default(),
+            cue: crate::animation::domain::choreography::Cue::Plain,
         });
     }
 
@@ -4091,6 +4105,8 @@ impl Reactor {
             focused_before: self.focused_as_event_began,
             key: self.main_window_tracker.key_window(),
             duration,
+            look: crate::animation::domain::choreography::Look::default(),
+            cue: crate::animation::domain::choreography::Cue::Plain,
             accent: None,
         });
         // Every workspace, so the next switch in any direction has both strips drawn. Stays here:

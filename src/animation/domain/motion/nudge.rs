@@ -1,6 +1,6 @@
 //! A move's nudge: the whole strip stepping a share of the viewport away from where a moved window
-//! went and back, and the curve a flight carrying one flies on. When a move steps is
-//! `crate::transitions::domain::strip_move`. See "The move flight" in
+//! went and back, and the curve a flight carrying one flies on. When a move steps is the look's
+//! (`crate::animation::domain::choreography::slide::stage`). See "The move flight" in
 //! `src/animation/docs/animation-smoothness.md`.
 
 use objc2_core_foundation::CGPoint;

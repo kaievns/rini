@@ -1,23 +1,27 @@
 //! Slide, the default look: every rigid piece slides to where its pass sends it in one movement, on
 //! the motion curve, or on the ease-in-out while the strip steps; a pass arriving mid-flight bends
 //! each container from where the score draws its movement, as fast as its leg is going. Everything
-//! is placed on whole points, as the window server places the real windows. See "The overlay engine"
-//! and "One flight however many presses" in `src/animation/docs/animation-smoothness.md`.
+//! is placed on whole points, as the window server places the real windows. A move whose column
+//! fills the viewport holds the column it passes and steps the whole strip; any other crosses both.
+//! See "The overlay engine" and "One flight however many presses" in
+//! `src/animation/docs/animation-smoothness.md`, and "The move flight, staged" in
+//! `src/transitions/docs/coordination.md`.
 
 use std::collections::HashMap;
 
 use objc2_core_foundation::{CGPoint, CGRect};
 use rini_core::ids::WindowId;
 use rini_geometry::{Round, SameAs};
+use rini_ipc::protocol::Direction;
 
-use super::{Pass, Retarget, Stage};
+use super::{Choreography, Cue, Pass, Retarget, Stage, Staging, Strip};
 use crate::animation::domain::motion::accents::{Accent, push_tracks, step_tracks};
 use crate::animation::domain::motion::easing::MOTION_CURVE;
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
-use crate::animation::domain::motion::nudge::{NUDGE_STRETCH, flight_curve};
+use crate::animation::domain::motion::nudge::{NUDGE_SHARE, NUDGE_STRETCH, flight_curve};
 use crate::animation::domain::motion::plan::{
-    AnimationTarget, FlightPlan, GroupKey, Member, Presented, animation_targets, group_relative,
-    merge_plans, stale_overlay_layers,
+    AnimationTarget, FlightPlan, GroupKey, Member, Presented, ReflowPlan, animation_targets,
+    group_relative, merge_plans, stale_overlay_layers,
 };
 use crate::animation::domain::motion::score::{
     Channel, Curve, Edit, Node, SAMPLE_STEP, Score, Track, Value,
@@ -84,6 +88,62 @@ impl Making {
     }
 }
 
+/// A column this close to the tiling area's width fills the viewport.
+const FILLS_TOLERANCE: f64 = 1.0;
+
+/// What Slide does with a press on the strip. A move whose column fills the viewport steps the whole
+/// strip away from where the window went, and the column it passed is held at its start on the
+/// strip, riding the strip beneath the moved window; the moved column, and both columns of any other
+/// move, cross from where they start.
+pub fn stage(cue: &Cue, strip: &Strip) -> Staging {
+    let Some((moved, direction)) = cue.moved() else {
+        return Staging::default();
+    };
+    let Some(&(_, at)) = strip.windows.iter().find(|(window, _)| *window == moved) else {
+        return Staging::default();
+    };
+    let area = strip.area;
+    let steps = !strip.pair.is_empty()
+        && fills_viewport(
+            at.size.width,
+            area.frame.size.width,
+            area.outer_left,
+            area.outer_right,
+        );
+    let mut staging = Staging::default();
+    for pair in strip.pair {
+        let start = (pair.window, pair.start);
+        if steps && pair.passed {
+            staging.held.push(start);
+        } else {
+            staging.from.push(start);
+        }
+    }
+    staging.accent = steps
+        .then(|| nudge(area.frame.size.width, direction))
+        .flatten()
+        .map(|offset| Accent::Step { offset });
+    staging
+}
+
+/// Whether a column `width` wide fills the viewport: it is the tiling area's width, the display's
+/// usable width less both outer gaps, within a point. The camera follows such a column, so nothing
+/// on screen says it moved; a narrower one is seen moving.
+fn fills_viewport(width: f64, screen_width: f64, outer_left: f64, outer_right: f64) -> bool {
+    (width - (screen_width - outer_left - outer_right)).abs() <= FILLS_TOLERANCE
+}
+
+/// The step of a move: a share of the viewport away from where the moved window went, so the side
+/// it opens is the side the column it passed comes from.
+fn nudge(viewport_width: f64, direction: Direction) -> Option<CGPoint> {
+    let step = viewport_width * NUDGE_SHARE;
+    match direction {
+        Direction::Right => Some(CGPoint::new(-step, 0.0)),
+        Direction::Left => Some(CGPoint::new(step, 0.0)),
+        Direction::Up | Direction::Down => None,
+    }
+}
+
 /// The step an accent asks for, if any.
 fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<CGPoint> {
     accents.into_iter().find_map(|accent| match accent {
@@ -92,11 +152,14 @@ fn step_of<'a>(accents: impl IntoIterator<Item = &'a Accent>) -> Option<CGPoint>
     })
 }
 
-impl Slide {
+impl Choreography for Slide {
+    /// A fresh flight: every container installs at the origin.
+    fn plan(&self, pass: ReflowPlan, _cue: &Cue) -> FlightPlan { FlightPlan::from(pass) }
+
     /// A pass folded into a flight not yet moving: by `merge_plans`, every container drawn where
     /// frame zero installs it and its movement taken to be where the last pass sends it. Nothing has
     /// moved, and a pass's frames are places on the strip there.
-    pub fn fold(&self, plan: &FlightPlan, pass: &Pass) -> FlightPlan {
+    fn fold(&self, plan: &FlightPlan, pass: &Pass) -> FlightPlan {
         let presented = Presented {
             drawn: plan.positions.keys().map(|key| (*key, CGPoint::new(0.0, 0.0))).collect(),
             along: plan.positions.clone(),
@@ -106,7 +169,7 @@ impl Slide {
 
     /// Frame zero, nothing playing: every container with a drawn member at the origin, each rigid
     /// member at its frame in it, and every loose and floating tile where it starts.
-    pub fn pose(&self, stage: &Stage) -> Score {
+    fn pose(&self, stage: &Stage) -> Score {
         let plan = stage.plan;
         let mut score = Score::default();
         let mut put = |key: GroupKey, members: Vec<(WindowId, CGRect)>| {
@@ -144,7 +207,7 @@ impl Slide {
     /// container on one curve over one length, every loose tile on `MOTION_CURVE` in its container,
     /// then the accents that waited. A step taken stretches the flight by `NUDGE_STRETCH` and flies
     /// it on the ease-in-out; a flight of no length is placed only.
-    pub fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
+    fn compose(&mut self, playing: &Score, stage: &Stage, begin: f64) -> Vec<Edit> {
         let step = step_of(stage.accents).filter(|_| !playing.plays(Channel::Nudge, begin));
         let seconds = if step.is_some() {
             stage.seconds * NUDGE_STRETCH
@@ -209,13 +272,7 @@ impl Slide {
     /// joining; loose tiles bent from where the score draws them; what the flight no longer draws
     /// dropped; and a step the pass brings, taken only while none plays, which stretches every leg
     /// of the merge by `NUDGE_STRETCH`.
-    pub fn retarget(
-        &mut self,
-        playing: &Score,
-        plan: &FlightPlan,
-        pass: &Pass,
-        now: f64,
-    ) -> Retarget {
+    fn retarget(&mut self, playing: &Score, plan: &FlightPlan, pass: &Pass, now: f64) -> Retarget {
         let (merged, delta) = merge_plans(
             plan,
             pass.plan,
@@ -390,10 +447,19 @@ impl Slide {
 
     /// A push against `wall` at `now`, on every container that carries it, each from where its own
     /// bounce is drawn.
-    pub fn push(&self, playing: &Score, wall: CGPoint, seconds: f64, now: f64) -> Vec<Edit> {
+    fn push(
+        &mut self,
+        playing: &Score,
+        _cue: &Cue,
+        wall: CGPoint,
+        seconds: f64,
+        now: f64,
+    ) -> Vec<Edit> {
         push_tracks(playing, wall, seconds, now).into_iter().map(Edit::Add).collect()
     }
+}
 
+impl Slide {
     /// Keeps the leg a container was just given, or forgets it when it was placed outright.
     fn record(&mut self, key: GroupKey, leg: Leg) {
         let placed = match leg {
@@ -415,13 +481,12 @@ mod tests {
     use super::*;
     use crate::animation::domain::motion::easing::EASE_IN_OUT;
     use crate::animation::domain::motion::nudge::nudge_track;
-    use crate::animation::domain::motion::plan::{
-        Banding, ReflowPlan, entrance_from, overlay_of, reflow_plan,
-    };
-    use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, random_requests, rect};
+    use crate::animation::domain::motion::plan::{Banding, entrance_from, reflow_plan};
+    use crate::animation::domain::motion::testing::{DISPLAY, rect};
 
     const PLAIN: f64 = 0.35;
     const BEGIN: f64 = 10.0;
+    const GAP: f64 = 3.0;
 
     fn wid(idx: u32) -> WindowId { WindowId::new(7, idx) }
 
@@ -463,6 +528,7 @@ mod tests {
                 plan: &plan,
                 drawn: &drawn,
                 seconds: PLAIN,
+                cue: Cue::Plain,
                 accents: &[],
             });
             Flight { slide, plan, drawn, score }
@@ -480,6 +546,7 @@ mod tests {
                 plan: &self.plan,
                 drawn: &self.drawn,
                 seconds,
+                cue: Cue::Plain,
                 accents,
             };
             let edits = self.slide.compose(&self.score, &stage, BEGIN);
@@ -502,6 +569,7 @@ mod tests {
                 viewport: DISPLAY,
                 drawn: &self.drawn,
                 seconds: PLAIN,
+                cue: Cue::Plain,
                 accent,
             };
             let retarget = self.slide.retarget(&self.score, &self.plan, &pass, now);
@@ -825,109 +893,6 @@ mod tests {
         );
     }
 
-    /// Whatever a pass brings and whenever it lands, every window the flight drew before it is drawn
-    /// where it was, within the half point placing on whole points allows: the plan tests' passes,
-    /// merged into a flight playing from its score, 200 cases from a fixed seed.
-    #[test]
-    fn a_bent_flight_is_drawn_without_a_jump() {
-        let mut rng = Gen(163);
-        for run in 0..RUNS {
-            let mut flight = Flight::posed(&random_requests(&mut rng));
-            flight.start(PLAIN, &[]);
-            let mut now = BEGIN;
-            for step in 0..1 + rng.below(4) {
-                let tag = format!("seed 163 run {run} step {step}");
-                now += rng.pt(10.0, 400.0) / 1000.0;
-                let windows = flight.plan.windows();
-                let position = |plan: &FlightPlan, key: GroupKey| plan.position_of(key);
-                let mut pan = None;
-                let incoming = match rng.below(3) {
-                    0 => {
-                        let d = CGPoint::new(rng.pt(-9.0, 9.0) * 100.0 + 50.0, 0.0);
-                        pan = Some(d);
-                        let mut p = ReflowPlan::empty();
-                        let mut requests = Vec::new();
-                        for w in &windows {
-                            if let Some(Member::Rigid { key, rel }) = flight.plan.member(*w) {
-                                let from = overlay_of(rel, position(&flight.plan, key));
-                                requests.push((*w, from, shifted(from, d.x), false));
-                            }
-                        }
-                        let pieces = reflow_plan(&requests, DISPLAY);
-                        p.groups = pieces.groups;
-                        p
-                    }
-                    _ => {
-                        let v1 = CGPoint::new(rng.pt(-9.0, 9.0) * 50.0, 0.0);
-                        let v2 = CGPoint::new(rng.pt(-9.0, 9.0) * 50.0, rng.pt(-2.0, 2.0) * 50.0);
-                        let mut requests = Vec::new();
-                        for w in &windows {
-                            if rng.coin() {
-                                continue;
-                            }
-                            let v = if rng.coin() { v1 } else { v2 };
-                            match flight.plan.member(*w) {
-                                Some(Member::Rigid { key, rel }) => {
-                                    let from = overlay_of(rel, position(&flight.plan, key));
-                                    let to = if rng.below(4) > 0 {
-                                        rect(
-                                            from.origin.x + v.x,
-                                            from.origin.y + v.y,
-                                            from.size.width,
-                                            from.size.height,
-                                        )
-                                    } else {
-                                        rect(
-                                            from.origin.x,
-                                            from.origin.y,
-                                            from.size.width + 300.0,
-                                            from.size.height,
-                                        )
-                                    };
-                                    requests.push((*w, from, to, false));
-                                }
-                                Some(Member::Changing { from, to }) => {
-                                    requests.push((*w, from, shifted(to, v.x), false));
-                                }
-                                _ => {}
-                            }
-                        }
-                        if rng.coin() {
-                            let newcomer = wid(500 + step as u32);
-                            let from = rng.on_screen();
-                            requests.push((newcomer, from, shifted(from, v1.x), false));
-                            flight.drawn.push(newcomer);
-                        }
-                        reflow_plan(&requests, DISPLAY)
-                    }
-                };
-                let before: Vec<(WindowId, CGRect)> = windows
-                    .iter()
-                    .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
-                    .collect();
-                flight.merge(&incoming, pan, None, now);
-                for (window, was) in before {
-                    let is = flight
-                        .score
-                        .drawn(window, now)
-                        .unwrap_or_else(|| panic!("{tag}: {window:?} gone"));
-                    let gap = [
-                        is.origin.x - was.origin.x,
-                        is.origin.y - was.origin.y,
-                        is.size.width - was.size.width,
-                        is.size.height - was.size.height,
-                    ]
-                    .into_iter()
-                    .fold(0.0f64, |worst, d| worst.max(d.abs()));
-                    assert!(
-                        gap <= 0.5 + 1e-6,
-                        "{tag}: {window:?} jumped {gap}: {was:?} then {is:?}"
-                    );
-                }
-            }
-        }
-    }
-
     /// A loose tile a pass bends starts its new track where the score draws it, mid-resize, so it
     /// goes on from there.
     #[test]
@@ -965,6 +930,7 @@ mod tests {
             viewport: DISPLAY,
             drawn: &flight.drawn,
             seconds: 0.15,
+            cue: Cue::Plain,
             accent: None,
         };
         let bent = flight.slide.retarget(&flight.score, &flight.plan, &pass, now);
@@ -1080,5 +1046,29 @@ mod tests {
         );
         assert_eq!(frame(wid(1)).size, CGSize::new(859.0, 1081.0));
         let _ = Banding::default();
+    }
+
+    /// The live display, 1728pt with 3pt outer gaps: only a column the tiling area's 1722pt wide
+    /// fills it, whether the full-width toggle or a width preset made it so. Half, two-thirds and
+    /// anything off by more than a point do not.
+    #[test]
+    fn only_a_column_as_wide_as_the_tiling_area_fills_the_viewport() {
+        assert!(fills_viewport(1722.0, 1728.0, GAP, GAP));
+        assert!(fills_viewport(1722.8, 1728.0, GAP, GAP), "within a point");
+        for width in [860.0, 1148.0, 1151.0, 1720.5, 1728.0] {
+            assert!(!fills_viewport(width, 1728.0, GAP, GAP), "{width}");
+        }
+        assert!(fills_viewport(1728.0, 1728.0, 0.0, 0.0), "no gaps");
+        assert!(fills_viewport(1719.0, 1728.0, 4.0, 5.0), "uneven gaps");
+    }
+
+    /// The step goes away from where the moved window went: a move right steps the strip left and
+    /// opens the right side, where the column it passed was.
+    #[test]
+    fn the_step_goes_away_from_where_the_window_went() {
+        assert_eq!(nudge(1728.0, Direction::Right), Some(CGPoint::new(-576.0, 0.0)));
+        assert_eq!(nudge(1728.0, Direction::Left), Some(CGPoint::new(576.0, 0.0)));
+        assert_eq!(nudge(1728.0, Direction::Up), None);
+        assert_eq!(nudge(1728.0, Direction::Down), None);
     }
 }

@@ -2621,8 +2621,7 @@ mod tests {
 
     mod tree {
         use super::*;
-        use crate::animation::domain::choreography::slide::Slide;
-        use crate::animation::domain::choreography::{Pass, Stage};
+        use crate::animation::domain::choreography::{Cue, Look, Pass, Stage};
         use crate::animation::domain::motion::accents::Accent;
         use crate::animation::domain::motion::plan::{Banding, FlightPlan, reflow_plan};
         use crate::animation::domain::motion::testing::DISPLAY;
@@ -2782,11 +2781,12 @@ mod tests {
             let plan = FlightPlan::from(reflow_plan(&requests, DISPLAY));
             let windows: Vec<WindowId> = tiles.iter().map(|t| t.window).collect();
 
-            let mut slide = Slide::default();
+            let mut slide = Look::Slide.choreography();
             let mut score = slide.pose(&Stage {
                 plan: &plan,
                 drawn: &windows,
                 seconds: 0.35,
+                cue: Cue::Plain,
                 accents: &[],
             });
             score.apply(&Edit::Bank(banding(&windows, &plan)));
@@ -2802,6 +2802,7 @@ mod tests {
                 plan: &plan,
                 drawn: &windows,
                 seconds: 0.35,
+                cue: Cue::Plain,
                 accents: &steps,
             };
             let started = slide.compose(&score, &stage, 100.0);
@@ -2846,6 +2847,7 @@ mod tests {
                 viewport: DISPLAY,
                 drawn: &drawn,
                 seconds: 0.35,
+                cue: Cue::Plain,
                 accent: None,
             };
             let mut bent = slide.retarget(&score, &plan, &pass, 100.1);
