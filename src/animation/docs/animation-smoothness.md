@@ -74,8 +74,9 @@ zig-zag; log 1:07:36, "member reparented" to (1727,1065) and (-1719,1076)).
 A member of a still container has no motion to ride and leaves on its own
 vector. A rigid member the pass now resizes goes loose (`GroupKey::Loose`) at
 its presented frame. A newcomer
-joins a group with a matching remaining travel or opens one; joins are
-resolved after the votes, because the votes change the remaining travel. A
+joins a group travelling as it does in this pass or opens one; joins are
+resolved after the votes, because the votes change how far each group
+travels. A
 pan adds its travel to every group and every loose strip tile and changes
 no membership; members the pan does not compose (no usable picture) ride
 their group all the same. A move under a pan is the one exception: the
@@ -88,11 +89,22 @@ any bounce or nudge riding it included, and where its movement has it. A member
 leaving a container for one of its own starts from the first, so it stays where
 it is drawn and still lands on its destination; pinned by
 `a_member_leaving_a_nudged_container_leaves_from_where_it_is_drawn`. Remaining
-travel and a newcomer's frame are judged against the second, because every
-destination and every frame a pass carries is a place on the strip: judged
-against the drawn position, a border landing mid-nudge matched no container and
-was left a third of the display from its window; pinned by
-`a_border_arriving_mid_nudge_rides_with_the_moved_window`. A move's step rides
+travel of a member leaving its container is judged against the second. A newcomer is judged
+against neither, but against where the last pass sent each container (the plan's model positions):
+every frame a pass carries is a place on the strip as the last pass left it, which the reactor builds
+from where that pass sends every window. A newcomer rides a group whose travel from there matches its
+own, placed in it where that pass left it, so it starts beside the windows it sits beside wherever
+they are drawn, and an accent riding the group carries it too; of several such groups it takes the
+one holding the window nearest it, a border the one holding the window it traces. Judged against
+where the leg has it, a column a second pan brought mid-leg matched no group's remaining
+travel, opened its own and started where the first pan sends the strip, short of the strip by the
+travel left: of two 863pt pans, the second merged 7ms into the first started its column 759pt short,
+20ms in 591pt (measured in the test below against that rule; not seen on screen); pinned
+by `a_column_a_pan_brings_in_mid_flight_starts_beside_the_strip` and, for every look, by
+`every_look_bends_a_flight_without_a_jump`. Judged against the drawn position, a border landing
+mid-nudge matched no container and was left a third of the display from its window; pinned by
+`a_border_arriving_mid_nudge_rides_with_the_moved_window`. A floating window a switch brings is
+placed in the floating container where the last pass left it, the same way. A move's step rides
 every strip container, so a still window joining mid-step takes the still
 piece and steps with the strip; pinned by
 `a_still_window_joining_mid_step_steps_with_the_strip`. Before the flight moves, a pass is folded in

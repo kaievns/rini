@@ -306,15 +306,14 @@ pub struct Banding {
     pub group_order: Vec<GroupKey>,
 }
 
-/// Where each container of a flight is at the moment of a merge, evaluated from the score the
-/// overlay installed just before (`Score::presented`).
+/// Where each container of a flight is at the moment of a merge. See "Mid-flight passes" in
+/// `src/animation/docs/animation-smoothness.md` for where a look takes it from.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Presented {
     /// Where it is drawn, any bounce or nudge riding it included: where a member leaving it starts.
     pub drawn: HashMap<GroupKey, CGPoint>,
-    /// Where its movement has it, with nothing riding it: what remaining travel and a newcomer's
-    /// frame are judged against, since every destination and every frame a pass carries is one of
-    /// these.
+    /// Where its movement has it, with nothing riding it: what a member leaving it still has to
+    /// travel is judged against.
     pub along: HashMap<GroupKey, CGPoint>,
 }
 
@@ -475,9 +474,9 @@ fn is_zero(p: CGPoint) -> bool {
 
 /// Folds a later pass into a flight in progress: containers are retargeted, membership changes
 /// are reparented at the frames they are drawn at, a pan adds its travel to every group and the
-/// columns a move swapped still vote under it. `presented` is where each container is, from the
-/// score the overlay installed just before. See "Mid-flight passes" in
-/// `src/animation/docs/animation-smoothness.md`.
+/// columns a move swapped still vote under it, and a window the pass brings rides beside the windows
+/// it sits beside as the last pass left them. `presented` is where each container is at the merge.
+/// See "Mid-flight passes" in `src/animation/docs/animation-smoothness.md`.
 pub fn merge_plans(
     current: &FlightPlan,
     incoming: &ReflowPlan,
@@ -496,6 +495,9 @@ pub fn merge_plans(
     let position_in = |positions: &HashMap<GroupKey, CGPoint>, key: GroupKey| {
         positions.get(&key).copied().unwrap_or(CGPoint::new(0.0, 0.0))
     };
+    // Where the last pass sent each container: every frame a pass carries is a place on the strip
+    // as that pass left it, so a window the pass brings is placed against these.
+    let mut sent = current.positions.clone();
 
     // 1. A strip pan: every group and every loose strip tile moves by `d`; nothing changes hands.
     let pan = pan.filter(|d| !is_zero(*d));
@@ -525,7 +527,7 @@ pub fn merge_plans(
     }
 
     // 2. Rigid members of the pass: votes for their group's new position, or a join. Joins wait
-    // for step 3: a joiner picks its container by remaining travel, which the votes may change.
+    // for step 3: a joiner picks its container by how far it travels, which the votes may change.
     let mut votes: Vec<(GroupKey, WindowId, CGPoint)> = Vec::new();
     let mut joins: Vec<(GroupMember, CGPoint)> = Vec::new();
     for group in &incoming.groups {
@@ -626,14 +628,18 @@ pub fn merge_plans(
                         next.group_mut(to_key).members.push(GroupMember { rel, ..member });
                         to_key
                     }
-                    None => next.open_group(
-                        from_drawn,
-                        p,
-                        member,
-                        Some(key),
-                        &mut presented,
-                        &mut delta,
-                    ),
+                    None => {
+                        let opened = next.open_group(
+                            from_drawn,
+                            p,
+                            member,
+                            Some(key),
+                            &mut presented,
+                            &mut delta,
+                        );
+                        sent.insert(opened, position_in(&current.positions, key));
+                        opened
+                    }
                 };
                 delta.reparented.push((window, key, to_key));
             }
@@ -641,7 +647,7 @@ pub fn merge_plans(
     }
 
     for (member, vector) in joins {
-        join(&mut next, member, vector, &mut presented, &mut delta);
+        join(&mut next, member, vector, &mut sent, &mut presented, &mut delta);
     }
 
     // 4. Loose members of the pass.
@@ -689,8 +695,7 @@ pub fn merge_plans(
             Located::Changing(i) => retarget_loose(&mut next.changing, i, to, &mut delta),
             Located::Entrance(i) => retarget_loose(&mut next.entrances, i, to, &mut delta),
             Located::Absent => {
-                let from_rel =
-                    group_relative(from, position_in(&presented.along, GroupKey::Floating));
+                let from_rel = group_relative(from, floating_before);
                 next.floating.push((window, from_rel, to_rel));
                 delta.joined_tiles.push((window, GroupKey::Floating));
             }
@@ -729,8 +734,7 @@ fn retarget_loose(
 }
 
 /// The group whose remaining travel (destination less where its leg has it, `along`) matches
-/// `remaining`, for a member arriving from elsewhere; a border prefers the group of the window it
-/// traces.
+/// `remaining`, for a member leaving another; a border prefers the group of the window it traces.
 fn landing_for(
     next: &FlightPlan,
     along: &HashMap<GroupKey, CGPoint>,
@@ -738,40 +742,79 @@ fn landing_for(
     exclude: Option<GroupKey>,
     companion: Option<WindowId>,
 ) -> Option<GroupKey> {
-    let holds = |g: &RigidGroup, window: WindowId| g.members.iter().any(|m| m.window == window);
-    let fits = |g: &&RigidGroup| {
-        let p = along.get(&g.key).copied().unwrap_or(next.position(g.key));
-        Some(g.key) != exclude && same_vector(sub(next.position(g.key), p), remaining)
-    };
-    let traced = next
-        .groups
-        .iter()
-        .filter(fits)
-        .find(|g| companion.is_some_and(|anchor| holds(g, anchor)));
-    traced.or_else(|| next.groups.iter().find(fits)).map(|g| g.key)
+    let fitting = travelling(next, along, remaining, exclude);
+    traced(fitting.clone(), companion)
+        .or_else(|| fitting.clone().next())
+        .map(|g| g.key)
 }
 
-/// A rigid newcomer: rides a group whose remaining travel matches its vector, else opens one. Its
-/// frame is a place on the strip, as the group's leg is, so it is taken against that and not where
-/// the group is drawn: a bounce or nudge riding the group carries the newcomer with it.
+/// The groups other than `exclude` whose travel from `start` to where the merge sends them matches
+/// `travel`.
+fn travelling<'a>(
+    next: &'a FlightPlan,
+    start: &'a HashMap<GroupKey, CGPoint>,
+    travel: CGPoint,
+    exclude: Option<GroupKey>,
+) -> impl Iterator<Item = &'a RigidGroup> + Clone {
+    next.groups.iter().filter(move |g| {
+        let p = start.get(&g.key).copied().unwrap_or(next.position(g.key));
+        Some(g.key) != exclude && same_vector(sub(next.position(g.key), p), travel)
+    })
+}
+
+/// Of `groups`, the one holding the window a border traces.
+fn traced<'a>(
+    mut groups: impl Iterator<Item = &'a RigidGroup>,
+    companion: Option<WindowId>,
+) -> Option<&'a RigidGroup> {
+    let anchor = companion?;
+    groups.find(|g| g.members.iter().any(|m| m.window == anchor))
+}
+
+/// A rigid newcomer. Its frame is a place on the strip as the last pass left it (`sent`), so it rides
+/// a group that travels as it does from there, placed in it where that pass left it: it starts
+/// beside the windows it sits beside, wherever they are drawn, and a bounce or nudge riding the
+/// group carries it too. Of several, a border takes the group of the window it traces, and any other
+/// the group holding the window nearest it. A newcomer travelling as no group does opens one, from its
+/// frame.
 fn join(
     next: &mut FlightPlan,
     member: GroupMember,
     vector: CGPoint,
+    sent: &mut HashMap<GroupKey, CGPoint>,
     presented: &mut Presented,
     delta: &mut PlanDelta,
 ) {
-    match landing_for(next, &presented.along, vector, None, member.companion) {
+    let fitting = travelling(next, sent, vector, None);
+    let apart = |g: &RigidGroup| {
+        let at = sent.get(&g.key).copied().unwrap_or(next.position(g.key));
+        g.members
+            .iter()
+            .map(|m| distance(overlay_of(m.rel, at), member.rel))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let nearest = fitting.clone().min_by(|a, b| apart(a).total_cmp(&apart(b)));
+    let chosen = traced(fitting, member.companion).or(nearest).map(|g| g.key);
+    match chosen {
         Some(key) => {
-            let p = presented.along.get(&key).copied().unwrap_or(next.position(key));
+            let p = sent.get(&key).copied().unwrap_or(next.position(key));
             let rel = group_relative(member.rel, p);
             next.group_mut(key).members.push(GroupMember { rel, ..member });
             delta.joined_tiles.push((member.window, key));
         }
         None => {
-            next.open_group(CGPoint::new(0.0, 0.0), vector, member, None, presented, delta);
+            let origin = CGPoint::new(0.0, 0.0);
+            let key = next.open_group(origin, vector, member, None, presented, delta);
+            sent.insert(key, origin);
         }
     }
+}
+
+/// How far apart two frames' nearest edges are: 0 where they touch or overlap.
+fn distance(a: CGRect, b: CGRect) -> f64 {
+    let dx = (a.min().x - b.max().x).max(b.min().x - a.max().x).max(0.0);
+    let dy = (a.min().y - b.max().y).max(b.min().y - a.max().y).max(0.0);
+    dx.hypot(dy)
 }
 
 /// Two translation vectors within `GROUP_TOLERANCE` on both axes.
@@ -1520,26 +1563,76 @@ mod tests {
             assert_eq!(key_of(&merged, wid(1)), Some(group));
         }
 
-        /// `rel` is taken from the container's presented position.
+        /// A newcomer travelling as a group does from where the last pass sent it rides that group,
+        /// placed in it where that pass left it, wherever the group's leg has it: beside the window
+        /// it sits beside in the layout. Against where the leg has it, it matched no group mid-leg
+        /// and started out of place by the travel left.
         #[test]
-        fn a_join_matching_a_groups_remaining_travel_joins_it() {
+        fn a_join_travelling_as_a_group_does_rides_it_where_the_last_pass_left_it() {
             let (a, b) = (column(0.0), column(1.0));
             let v = CGPoint::new(-400.0, 0.0);
             let current = flight_of(&[(wid(1), a, shifted(a, v), false)]);
-            let group = current.groups[1].key;
-            let presented = midway(&current);
-            let remaining = CGPoint::new(v.x - presented[&group].x, 0.0);
-            let pass = reflow_plan(&[(wid(2), b, shifted(b, remaining), false)], DISPLAY);
+            let group = key_of(&current, wid(1)).unwrap();
+            let further = CGPoint::new(-300.0, 0.0);
+            let (one, beside) = (shifted(a, v), shifted(b, v));
+            let pass = reflow_plan(
+                &[
+                    (wid(1), one, shifted(one, further), false),
+                    (wid(2), beside, shifted(beside, further), false),
+                ],
+                DISPLAY,
+            );
             let (merged, delta) =
-                merge_plans(&current, &pass, None, &presented.clone().into(), None, DISPLAY);
+                merge_plans(&current, &pass, None, &midway(&current).into(), None, DISPLAY);
             assert_eq!(delta.joined_tiles, vec![(wid(2), group)]);
             assert!(delta.new_groups.is_empty());
-            let Some(Member::Rigid { key, rel }) = merged.member(wid(2)) else {
-                panic!("rigid")
+            let rel = |window| match merged.member(window) {
+                Some(Member::Rigid { key, rel }) if key == group => rel,
+                other => panic!("{window:?} is {other:?}"),
             };
-            assert_eq!(key, group);
-            assert_eq!(rel, group_relative(b, presented[&group]));
-            assert!(dest(&merged, wid(2)).unwrap().same_as(shifted(b, remaining)));
+            assert_eq!(rel(wid(2)), group_relative(beside, current.position_of(group)));
+            assert_eq!(rel(wid(2)).origin.x - rel(wid(1)).origin.x, 863.0, "beside 1");
+            assert!(dest(&merged, wid(2)).unwrap().same_as(shifted(beside, further)));
+        }
+
+        /// Of several groups travelling as a newcomer does, it rides the one holding the window
+        /// nearest it as the last pass left them.
+        #[test]
+        fn a_newcomer_rides_the_group_of_the_window_nearest_it() {
+            let (a, b) = (column(0.0), column(1.0));
+            let current = flight_of(&[
+                (wid(1), a, shifted(a, CGPoint::new(-400.0, 0.0)), false),
+                (wid(2), b, shifted(b, CGPoint::new(200.0, 0.0)), false),
+            ]);
+            let second = key_of(&current, wid(2)).unwrap();
+            assert_ne!(key_of(&current, wid(1)), Some(second));
+            let beside = shifted(dest(&current, wid(2)).unwrap(), CGPoint::new(863.0, 0.0));
+            let pass = reflow_plan(&[(wid(3), beside, beside, false)], DISPLAY);
+            let (merged, delta) =
+                merge_plans(&current, &pass, None, &midway(&current).into(), None, DISPLAY);
+            assert_eq!(delta.joined_tiles, vec![(wid(3), second)]);
+            assert!(dest(&merged, wid(3)).unwrap().same_as(beside));
+        }
+
+        /// A floating window a switch brings is placed in the floating container where the last pass
+        /// left that container, as the floating windows already in it are.
+        #[test]
+        fn a_floating_newcomer_starts_where_the_last_pass_left_the_floating_container() {
+            let up = CGPoint::new(0.0, -DISPLAY.size.height);
+            let settings = rect(500.0, 300.0, 700.0, 500.0);
+            let mut current = flight_of(&[(wid(1), settings, settings, true)]);
+            current.floating_travel = up;
+            current.positions.insert(GroupKey::Floating, up);
+            let panel = rect(1300.0, 300.0, 400.0, 300.0);
+            let mut pass = reflow_plan(&[(wid(2), panel, panel, true)], DISPLAY);
+            pass.floating_travel = up;
+            let (merged, delta) =
+                merge_plans(&current, &pass, None, &midway(&current).into(), None, DISPLAY);
+            assert_eq!(delta.joined_tiles, vec![(wid(2), GroupKey::Floating)]);
+            let Some(Member::Floating { from, .. }) = merged.member(wid(2)) else {
+                panic!("floating")
+            };
+            assert_eq!(from, group_relative(to_overlay_space(panel, DISPLAY), up));
         }
 
         #[test]

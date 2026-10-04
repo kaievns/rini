@@ -912,6 +912,41 @@ mod tests {
         assert_eq!(flight.score.sample(node, now), Some(drawn));
     }
 
+    /// A column a second pan brings mid-leg starts beside the column it sits beside in the layout,
+    /// wherever the strip is drawn, and lands beside it: the pass places it where the first pan sends
+    /// the strip, which the strip is still short of by the travel left.
+    #[test]
+    fn a_column_a_pan_brings_in_mid_flight_starts_beside_the_strip() {
+        let d = -863.0;
+        let mut flight = Flight::posed(&strip(1, 3, d));
+        flight.start(PLAIN, &[]);
+        let now = BEGIN + 0.02;
+        let sent = |i: u32| shifted(column(i as f64, 859.0), d);
+        let left = flight.score.drawn(wid(3), now).unwrap().origin.x - sent(2).origin.x;
+        assert!(left > 100.0, "the strip has {left}pt to go");
+        let requests: Vec<(WindowId, CGRect, CGRect, bool)> =
+            (0..4).map(|i| (wid(1 + i), sent(i), shifted(sent(i), d), false)).collect();
+        flight.drawn.push(wid(4));
+        flight.merge(
+            &reflow_plan(&requests, DISPLAY),
+            Some(CGPoint::new(d, 0.0)),
+            None,
+            now,
+        );
+        let apart = |at: f64| {
+            let drawn = |window| flight.score.drawn(window, at).expect("drawn");
+            drawn(wid(4)).origin.x - drawn(wid(3)).origin.x
+        };
+        assert!((apart(now) - 863.0).abs() <= 0.5, "starts {} from 3", apart(now));
+        let end = now + flight.score.remaining(now);
+        assert!((apart(end) - 863.0).abs() <= 0.5, "lands {} from 3", apart(end));
+        let lands = flight.score.drawn(wid(4), end).unwrap();
+        assert!(
+            (lands.origin.x - shifted(sent(3), d).origin.x).abs() <= 0.5,
+            "{lands:?}"
+        );
+    }
+
     /// A window entering once the motion runs joins the loose container on a track of its own,
     /// growing from no width over what is left of the flight, and nothing else moves.
     #[test]

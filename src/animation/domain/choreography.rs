@@ -175,6 +175,7 @@ pub trait Choreography: Debug {
 mod tests {
     use super::*;
     use crate::animation::domain::motion::plan::{GroupKey, Member, overlay_of, reflow_plan};
+    use crate::animation::domain::motion::score::{Node, Value};
     use crate::animation::domain::motion::testing::{DISPLAY, Gen, RUNS, random_requests, rect};
 
     const PLAIN: f64 = 0.35;
@@ -360,12 +361,16 @@ mod tests {
     }
 
     /// Whatever a pass brings and whenever it lands, every window the flight drew before it is drawn
-    /// where it was, within the half point placing on whole points allows: the plan tests' passes,
-    /// merged into a flight playing from its score, 200 cases from a fixed seed.
+    /// where it was, and a window it brings rides beside the windows it sits beside in the layout:
+    /// drawn where the pass has it, moved by as far as the container it rides is drawn from where the
+    /// last pass sent it. Each within the half point placing on whole points allows: passes built as
+    /// the reactor builds them, from where the last pass sends every window, merged into a flight
+    /// playing from its score, 200 cases from a fixed seed.
     #[test]
     fn every_look_bends_a_flight_without_a_jump() {
         for look in Look::ALL {
             let mut rng = Gen(163);
+            let mut brought = 0;
             for run in 0..RUNS {
                 let mut flight = Flight::posed(look, &random_requests(&mut rng), |_| true);
                 flight.start(&[]);
@@ -375,6 +380,7 @@ mod tests {
                     now += rng.pt(10.0, 400.0) / 1000.0;
                     let windows = flight.plan.windows();
                     let position = |plan: &FlightPlan, key: GroupKey| plan.position_of(key);
+                    let newcomer = wid(500 + step as u32);
                     let mut pan = None;
                     let incoming = match rng.below(3) {
                         0 => {
@@ -387,6 +393,10 @@ mod tests {
                                     let from = overlay_of(rel, position(&flight.plan, key));
                                     requests.push((*w, from, shifted(from, d.x), false));
                                 }
+                            }
+                            if rng.coin() {
+                                bring(&mut requests, newcomer, &mut rng);
+                                flight.drawn.push(newcomer);
                             }
                             let pieces = reflow_plan(&requests, DISPLAY);
                             p.groups = pieces.groups;
@@ -429,9 +439,12 @@ mod tests {
                                 }
                             }
                             if rng.coin() {
-                                let newcomer = wid(500 + step as u32);
-                                let from = rng.on_screen();
-                                requests.push((newcomer, from, shifted(from, v1.x), false));
+                                if requests.is_empty() {
+                                    let from = rng.on_screen();
+                                    requests.push((newcomer, from, shifted(from, v1.x), false));
+                                } else {
+                                    bring(&mut requests, newcomer, &mut rng);
+                                }
                                 flight.drawn.push(newcomer);
                             }
                             reflow_plan(&requests, DISPLAY)
@@ -441,7 +454,35 @@ mod tests {
                         .iter()
                         .filter_map(|w| Some((*w, flight.score.drawn(*w, now)?)))
                         .collect();
+                    let sent = flight.plan.clone();
                     flight.merge(&incoming, pan, now);
+                    if let Some(Member::Rigid { key, .. }) = flight.plan.member(newcomer)
+                        && let Some(start) = sent.positions.get(&key)
+                    {
+                        let from = incoming.groups.iter().find_map(|g| {
+                            g.members.iter().find(|m| m.window == newcomer).map(|m| m.rel)
+                        });
+                        let from = from.expect("the pass brings it");
+                        let Some(Value::Point(container)) =
+                            flight.score.sample(Node::Container(key), now)
+                        else {
+                            panic!("{tag}: {key:?} is not drawn");
+                        };
+                        let want = CGRect::new(
+                            CGPoint::new(
+                                from.origin.x + container.x - start.x,
+                                from.origin.y + container.y - start.y,
+                            ),
+                            from.size,
+                        );
+                        let is = flight.score.drawn(newcomer, now).expect("drawn");
+                        let gap = gap(is, want);
+                        assert!(
+                            gap <= 0.5 + 1e-6,
+                            "{tag}: {newcomer:?} starts {gap} from beside the strip: {is:?}, wants {want:?}"
+                        );
+                        brought += 1;
+                    }
                     for (window, was) in before {
                         let is = flight
                             .score
@@ -455,7 +496,33 @@ mod tests {
                     }
                 }
             }
+            assert!(brought > 0, "{look:?} brought no window beside the strip");
         }
+    }
+
+    /// A window brought beside the last rigid one of `requests` as the last pass left it, three
+    /// points to its right, travelling as it does.
+    fn bring(
+        requests: &mut Vec<(WindowId, CGRect, CGRect, bool)>,
+        newcomer: WindowId,
+        rng: &mut Gen,
+    ) {
+        let Some(&(_, from, to, _)) =
+            requests.iter().rev().find(|(_, from, to, _)| from.size == to.size)
+        else {
+            let from = rng.on_screen();
+            requests.push((newcomer, from, from, false));
+            return;
+        };
+        let beside = shifted(from, from.size.width + 3.0);
+        let lands = CGRect::new(
+            CGPoint::new(
+                beside.origin.x + to.origin.x - from.origin.x,
+                beside.origin.y + to.origin.y - from.origin.y,
+            ),
+            beside.size,
+        );
+        requests.push((newcomer, beside, lands, false));
     }
 
     /// Whatever the press and the strip, a look stages no window but those of the pair it is given,
