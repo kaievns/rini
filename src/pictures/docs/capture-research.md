@@ -333,14 +333,21 @@ Bundling is not a factor. A signed `.app` bundle with
 
 ## Consequences for the design
 
-**Warm cache, refreshed in the background.** At switch time rini must capture
-nothing. It composites bitmaps it already holds. This matches the original
-instinct that only on-screen and incoming windows need fresh pixels, and the
-rest can be refreshed occasionally.
+**Warm cache, refreshed in the background.** At switch time the main thread
+captures nothing. It composites bitmaps the cache holds, but for the windows on
+screen at the press, which one batched SkyLight call on the pictures service's
+thread pictures while the overlay waits for it at most 80ms ("Nothing is captured
+on the main thread on the way in" below). This matches the original instinct that
+only on-screen and incoming windows need fresh pixels, and the rest can be
+refreshed occasionally.
 
-**Staleness is acceptable.** The bitmap is on screen for the duration of one
-animation and is replaced by the real window at the end. A slightly stale moving
-image is not perceptible.
+**Staleness is acceptable for a window that was off screen.** The bitmap is on
+screen for the duration of one animation and is replaced by the real window at the
+end. A slightly stale moving image of a window that comes in from a park is not
+perceptible. One on screen is: seen through a translucent window, its content
+changes while the flight runs, which is why the windows on screen are pictured at
+the press and kept live behind the strip (Kai, 2026-10-03, "The pictures a flight
+starts with" in `specs/animation.md`).
 
 **rini needs the Screen Recording grant.** It did not have it when this was
 written. (The rift-inherited overview overlay that first carried a
@@ -584,10 +591,10 @@ is a great deal better than 350ms of a hole. After both:
 canvas animation, requested=20, tiles=20, missing=0, misshapen=0
 ```
 
-## Nothing may be captured on the way in
+## Nothing is captured on the main thread on the way in
 
-The design said it from the start: at switch time rini captures nothing, it
-composites bitmaps it already holds. The code had drifted, because a stale or
+The design said it from the start: at switch time the main thread captures nothing,
+it composites bitmaps it already holds. The code had drifted, because a stale or
 unfocused picture looks wrong and the cheapest fix was to grab a fresh one first.
 Measured cost of that, per press:
 
@@ -603,11 +610,9 @@ nothing for about a tenth of a second, which reads as software that is thinking
 rather than responding, and on a redirection mid-flight it stalls the animation
 already running.
 
-Both are gone from the main thread. The windows on screen are captured at the press on the
-pictures service's thread, while the overlay waits for them at most 80ms, and again as they
-land behind it, each arriving as an event that swaps a tile's contents without touching its
-geometry. The desktop is held and refreshed in
-the background. Measured after, command to first frame:
+Both are gone from the main thread. The desktop is held and refreshed in the
+background. Measured once they had gone, before any press waited for a capture,
+command to first frame:
 
 ```
 1:04:44.994967  cmd=MoveFocus(Right)
@@ -617,10 +622,20 @@ the background. Measured after, command to first frame:
 2ms, against 56ms to 459ms before, with every tile present because the cache is
 warmed after each animation instead of during the next one.
 
-The trade is honest and worth stating: the destination now animates with whatever
-the cache holds, which for an app that dims when unfocused means it can slide in
-dim and correct itself as the off-thread capture lands. That capture measured 280ms
-on one occasion, which is most of a flight. Snappiness was the explicit preference.
+A press now waits for one capture on purpose, off the main thread: the windows on
+screen at the press are captured in one batched SkyLight call on the pictures
+service's thread, and the overlay waits for them at most 80ms, then again as they
+land behind it, each arriving as an event that swaps a tile's contents without
+touching its geometry. The overlay is up, frames sent, 53.4ms after the press at
+the median and 71.9 at p90 ("Where a moving focus change spends its time" in
+`src/animation/docs/capture-overlay-research.md`).
+
+The trade: a window not on screen at the press, the destination of a switch or a
+column coming in from its park, flies what the cache holds, its focused look when
+it gains focus, until its landing capture is swapped in. For an app that dims when
+unfocused, a cached picture taken unfocused slides in dim. The off-thread capture
+that once corrected it measured 280ms on one occasion, most of a flight; the
+end-state watches take each window as it lands.
 
 ## A capture can be usable and still be the wrong shape
 
@@ -748,7 +763,7 @@ content from whenever the workspace was last entered.
 Recapturing the windows on screen through SkyLight at switch time, frontmost first
 and capped at three, fixed it for a while: one window, 32ms to 35ms once warm, against
 the roughly 400ms that capturing all eighteen used to cost. It held every press back
-by 59ms to 71ms and went ("Nothing may be captured on the way in"). The cache is now
+by 59ms to 71ms and went ("Nothing is captured on the main thread on the way in"). The cache is now
 refreshed at the quiet after each flight, a flight pictures its windows on screen at the
 press and as they land and its focus target once its focus changes, and a warm recaptures a
 picture older than `PICTURE_STALE_AFTER` ("Snapshot staleness").
@@ -1120,11 +1135,10 @@ into an IOSurface this process owns, one copy per capture, off the main thread.
 ## Recapturing the destination once it is on screen
 
 The window being switched INTO cannot be recaptured when a movement starts,
-because the destination workspace's windows are not on screen yet. Its picture
-is therefore whatever it last had, and if that was taken while the app was
-unfocused the tile slides in dimmed and snaps to focused at the handover.
-Ghostty greys out noticeably, so this was the most visible flicker left after
-the sizing fixes.
+because the destination workspace's windows are not on screen yet: what its tile
+flies is "Unfocused rendering" above. Ghostty greys out noticeably, so a dimmed
+destination snapping to focused at the handover was the most visible flicker left
+after the sizing fixes.
 
 Fixed by recapturing it mid-flight, by which point the reactor has shown the
 workspace and moved focus, so SkyLight returns the focused rendering: once its focus is
@@ -1141,8 +1155,10 @@ which yabai relies on as well, capturing on a pthread per window at
 and replaces contents only, never geometry, so a late arrival cannot disturb the
 movement.
 
-A framed recapture of a window wholly on a display carries its blur too; see
-"A composite of the window and what is below it carries the blur".
+The watches' batched capture (`capture_on_screen`) carries a material window's
+blur too, composited over the windows behind it and the desktop; see "A batched
+call composites in the order given, front-most first, and carries the blur of
+whatever it composites behind a window".
 
 ## The hairline
 
@@ -1175,11 +1191,12 @@ every tile ("The hairline" in `src/animation/docs/animation-smoothness.md`).
 
 ## Snapshot staleness
 
-Staleness is accepted by construction ("a slightly stale moving image is not
-perceptible", "Consequences for the design" above) and the worst case — the
-destination's focus appearance — is patched mid-flight (the focus target's change watch, and its
-focused look when it starts parked). What that
-does not cover: content that changed while parked. Terminal output, chat,
+For a window that was off screen, staleness is accepted by construction
+("Consequences for the design" above), and the worst case, the destination's focus
+appearance, is patched mid-flight (the focus target's change watch, and its focused
+look when it starts parked). A window on screen is pictured at the press and as it
+lands, and one behind the strip is kept live ("The pictures a flight starts with" in
+`specs/animation.md`). What that does not cover: content that changed while parked. Terminal output, chat,
 anything live — warmed only at the quiet after a flight and at layout
 passes, and pictured at a press only while it is on screen, so a window that
 repainted itself while hidden is stale until the next switch touches it. Capturing at switch time instead is ruled out by
@@ -1206,9 +1223,14 @@ Options, in order of expected value:
    (`wants_warm`) re-captures anything older than `PICTURE_STALE_AFTER`; the
    engine warms every window it flew at the quiet after the lift. A sweep of nearby workspaces on a slow idle timer is not
    done; it would break the "nothing polls" principle deliberately.
-4. **Recapture more windows mid-flight.** Ruled out by measurement. A recapture
-   runs on its own thread, but the window server does not: with warms, the
-   desktop render and other framed captures queued behind it, the old framed focus refresh took
-   203ms median against 16-24ms at idle (see "Capture work in flight" in
-   `src/transitions/docs/coordination.md`). More capture work in flight, not less, is
-   what slowed it; the watches capture only what lands, one SkyLight call at a time.
+4. **Recapture more windows mid-flight.** Done for the windows on screen, through
+   SkyLight alone, while the pictures service holds the rest of its work off: the
+   landing watch takes each end window as it lands, the change watch the focus
+   target, the live watch the floating windows behind the strip every 16ms, and the
+   final ask every end window 110ms before the end ("The watches" in
+   `src/pictures/docs/README.md`). What stays ruled out is ScreenCaptureKit and
+   framed capture work in flight: with warms, the desktop render and other framed
+   captures queued behind it, the old framed focus refresh took 203ms median
+   against 16-24ms at idle ("Capture work in flight" in
+   `src/transitions/docs/coordination.md`). A window parked off screen has nothing
+   on screen to capture, which is what options 1 to 3 are for.
