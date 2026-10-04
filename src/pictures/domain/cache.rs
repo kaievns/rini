@@ -284,8 +284,9 @@ mod tests {
         }
     }
 
-    /// A client names a delivered picture by its tag: only the last one delivered under that exact
-    /// tag answers, so a look named for an older generation is never kept.
+    /// A client names a delivered picture by the tag it came under: only the window's last delivery
+    /// answers, and only under that exact tag, so a look named for a picture since superseded is
+    /// never kept.
     #[test]
     fn a_delivered_picture_is_found_under_its_own_tag_only() {
         let mut delivered = Delivered::default();

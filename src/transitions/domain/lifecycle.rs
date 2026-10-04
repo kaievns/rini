@@ -27,7 +27,7 @@ pub const FINAL_BEFORE_END: Duration = Duration::from_millis(110);
 pub const FINAL_NOT_BEFORE: Duration = Duration::from_millis(40);
 
 /// One press, or one burst merged in flight. Every picture asked for carries it, so one taken for an
-/// earlier end state is never drawn.
+/// end its tile no longer has is never drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Generation(pub u64);
 
@@ -314,6 +314,10 @@ struct Flight {
     snapped: HashSet<WindowId>,
     /// Where each window was last pictured at its end this generation: what its tile snaps onto.
     landed: Vec<(WindowId, CGRect)>,
+    /// The generation since which each tile has ended where it ends: a picture delivered under an
+    /// earlier one was taken for another end, and one under it or later still holds, whatever merged
+    /// since it was taken.
+    end_since: Vec<(WindowId, Generation)>,
     /// Every window a pass of this flight opened or grew: watched until it repaints.
     awaiting: Vec<WindowId>,
     /// Of `awaiting`, the windows flying from where macOS showed them, which nothing holds for.
@@ -493,6 +497,7 @@ impl Coordinator {
         extend_latest(&mut animated, stage.ends());
         let mut awaiting = stage.awaiting.clone();
         extend_unique(&mut awaiting, stage.repainting.iter().copied());
+        let end_since = ended_since(&[], None, &stage, generation);
         self.state = State::Flying(Box::new(Flight {
             generation,
             awaiting,
@@ -505,6 +510,7 @@ impl Coordinator {
             final_asked: false,
             snapped: HashSet::new(),
             landed: Vec::new(),
+            end_since,
             held: Vec::new(),
             animated,
         }));
@@ -524,13 +530,15 @@ impl Coordinator {
         let changed = changed_frames(&f.stage.final_frames, &stage.final_frames);
         let focus_moved = f.stage.focus != stage.focus;
         let newcomers = stage.awaiting.clone();
-        f.stage = stage;
+        let before = std::mem::replace(&mut f.stage, stage);
         if matches!(f.phase, Phase::Preparing { .. }) {
             // Nothing is shown or written yet: the show takes the merged stage as it is.
+            f.end_since = ended_since(&f.end_since, Some(&before), &f.stage, f.generation);
             return;
         }
         self.generation.0 += 1;
         f.generation = self.generation;
+        f.end_since = ended_since(&f.end_since, Some(&before), &f.stage, f.generation);
         f.snapped.clear();
         f.final_asked = false;
         if focus_moved {
@@ -558,7 +566,7 @@ impl Coordinator {
 
     fn picture(&mut self, generation: Generation, window: WindowId, frame: CGRect, why: Why, now: Instant, out: &mut Vec<Command>) {
         let State::Flying(f) = &mut self.state else { return };
-        if generation != f.generation {
+        if f.end_since.iter().find(|(w, _)| *w == window).is_none_or(|(_, since)| generation < *since) {
             return;
         }
         let Some(tile) = f.stage.tile(window) else { return };
@@ -702,6 +710,27 @@ fn final_at(started: Instant, duration: Duration) -> Instant {
 fn holes(f: &Flight) -> Vec<CGRect> {
     let (awaited, landing) = f.end_windows();
     awaited.into_iter().chain(landing).map(|(_, frame)| frame).collect()
+}
+
+/// Each tile of `after` with the generation since which it has ended where it ends: what `since` says
+/// for one ending where it ended in `before`, else `generation`.
+fn ended_since(
+    since: &[(WindowId, Generation)],
+    before: Option<&StageSummary>,
+    after: &StageSummary,
+    generation: Generation,
+) -> Vec<(WindowId, Generation)> {
+    after
+        .tiles
+        .iter()
+        .map(|t| {
+            let kept = before
+                .and_then(|b| b.tile(t.window))
+                .filter(|b| near(b.end, t.end, 0.5))
+                .and_then(|_| since.iter().find(|(w, _)| *w == t.window).map(|(_, g)| *g));
+            (t.window, kept.unwrap_or(generation))
+        })
+        .collect()
 }
 
 fn changed_frames(before: &[(WindowId, CGRect)], after: &[(WindowId, CGRect)]) -> Vec<(WindowId, CGRect)> {
@@ -1034,21 +1063,45 @@ mod tests {
         assert_eq!(c.remaining(now + Duration::from_millis(100)), Some(PLAYS), "a merge that moves restarts the clock");
     }
 
+    /// The service decides a delivery under the generation it was asked for, and a pass merged while
+    /// it is on its way bumps the generation: the picture still shows the window where its tile ends,
+    /// and the service will not deliver it again.
     #[test]
-    fn a_picture_from_an_older_generation_or_another_frame_is_never_drawn() {
+    fn a_picture_taken_before_a_merge_that_kept_its_end_is_still_drawn_and_hands_focus_over() {
         let now = Instant::now();
         let mut c = running(pan(), now);
         let old = c.generation();
         let end = pan().tiles[1].end;
         c.on(Event::Merge { stage: pan(), moved: false }, now);
-        assert!(c.on(Event::Picture { generation: old, window: w(2), frame: end, why: Why::Landed }, now).is_empty());
+        assert_ne!(c.generation(), old);
+        let out = c.on(Event::Picture { generation: old, window: w(2), frame: end, why: Why::FocusChanged }, now);
+        assert!(has(&out, |c| *c == Command::Swap { generation: old, window: w(2) }), "{out:?}");
+        assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: old, window: w(2) }), "named as it was delivered");
+        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+    }
+
+    #[test]
+    fn a_picture_taken_for_an_end_its_tile_no_longer_has_or_of_another_frame_is_never_drawn() {
+        let now = Instant::now();
+        let mut c = running(pan(), now);
+        let old = c.generation();
+        let end = pan().tiles[1].end;
+        let mut moved = pan();
+        moved.tiles[1].end.origin.x += 400.0;
+        moved.final_frames[1].1.origin.x += 400.0;
+        c.on(Event::Merge { stage: moved.clone(), moved: true }, now);
+        assert!(c.on(Event::Picture { generation: old, window: w(2), frame: moved.tiles[1].end, why: Why::Landed }, now).is_empty(),
+            "taken for the end before, whatever frame it carries");
+        assert!(has(&c.on(Event::Picture { generation: old, window: w(1), frame: pan().tiles[0].end, why: Why::Landed }, now),
+            |c| matches!(c, Command::Swap { .. })), "the window whose end the merge kept");
         let g = c.generation();
-        let mut far = end;
+        assert!(c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now).is_empty());
+        let mut far = moved.tiles[1].end;
         far.size.width -= 21.0;
         assert!(c.on(Event::Picture { generation: g, window: w(2), frame: far, why: Why::Landed }, now).is_empty(),
             "a picture of the window at another size would be drawn squashed or zoomed");
-        let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
-        assert_eq!(out, vec![Command::Swap { generation: g, window: w(2) }]);
+        let out = c.on(Event::Picture { generation: g, window: w(2), frame: moved.tiles[1].end, why: Why::Landed }, now);
+        assert!(has(&out, |c| *c == Command::Swap { generation: g, window: w(2) }), "{out:?}");
     }
 
     #[test]

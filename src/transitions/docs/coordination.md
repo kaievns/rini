@@ -59,11 +59,16 @@ engine): every end window, captured as soon as it is where it ends (`Settle::AsS
 there (`Settle::Repainted`); the focus target, from its focus report until its look changes (`Change`);
 and the floating windows behind the strip, kept fresh once that change is in (`Live`). One more capture
 of every end window is asked 110ms before the clock ends and never in its first 40ms (`AskFinal`). A
-delivered picture is swapped onto its tile only if its generation is current and its window was within
-20pt of the tile's end in x, y, width and height when it was taken (`END_SLACK`); the tile then snaps onto
+press merged in flight starts the next generation and retargets every watch and the holes. A delivered
+picture is swapped onto its tile only if it was taken for the end the tile has now, under a generation
+no older than the one since which the tile has ended there (`end_since`), and its window was within
+20pt of that end in x, y, width and height when it was taken (`END_SLACK`); the tile then snaps onto
 the window's real frame when that is 0.25-20pt off, once per window per generation, once the motion has
-started. A press merged in flight starts the next generation and retargets every watch and the holes,
-and a picture of an older generation is never drawn.
+started. A picture the service decided under the generation before is still drawn when the merge kept
+its window's end: the service runs on its own thread, so a delivery is often on its way while a pass is
+composed, and it is never delivered again, since a retarget keeps a window landed where it still ends
+and a change already seen. A window the merge sends somewhere new starts its print afresh in the
+service, so its landing there is delivered whatever it looks like.
 
 The lift waits for the clock, the tiles presented where they end and the real windows where they were
 written, or for `LIFT_GRACE` past the clock ("Real windows land before lift"). What follows it is

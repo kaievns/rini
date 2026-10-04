@@ -362,7 +362,9 @@ impl Watches {
     }
 
     /// Replaces what `id` watches, keeping what it already knows: a window that landed where it still
-    /// ends stays landed, a focus already seen stays seen, and the background keeps its pace.
+    /// ends stays landed, a focus already seen stays seen, and the background keeps its pace. A window
+    /// watched to land somewhere new starts its print afresh: what the client was delivered of it was
+    /// taken for the end before, which the client no longer draws.
     pub fn retarget(
         &mut self,
         id: WatchId,
@@ -378,6 +380,9 @@ impl Watches {
         match (&mut self.watches[at].1, old) {
             (Watching::Landing(new), Watching::Landing(old)) => {
                 for lands in &mut new.windows {
+                    if old.windows.iter().any(|o| o.target.window == lands.target.window && o.end != lands.end) {
+                        self.prints.remove(&(new.tag.client, lands.target.window));
+                    }
                     if let Some(kept) = old.windows.iter().find(|o| {
                         o.target.window == lands.target.window
                             && o.end == lands.end
@@ -1769,6 +1774,39 @@ mod tests {
             watches.next(start + ms(2000)).is_none(),
             "another window: not armed"
         );
+    }
+
+    /// A window's landing delivered at one end, and its watch retargeted to another: the client draws
+    /// nothing taken for the end before, so the window is delivered where it lands now, looking the
+    /// same or not. One still ending where it landed is not delivered again.
+    #[test]
+    fn a_window_watched_to_land_somewhere_new_is_delivered_there_whatever_it_looks_like() {
+        let start = Instant::now();
+        let mut watches = Watches::default();
+        watches.watch(
+            WatchId(1),
+            landing(&[(1, LEFT), (2, RIGHT)], Settle::AsSoonAsThere, start + ms(150)),
+            start,
+            &none,
+        );
+        let at = |w: WindowId| Some(if w == wid(1) { LEFT } else { RIGHT });
+        round(&mut watches, start, at, |_| Some(1)).unwrap();
+        let moved = rect(1000.0, 32.0, 700.0, 1081.0);
+        watches.retarget(
+            WatchId(1),
+            landing_of(
+                tag(2),
+                vec![WindowServerId::new(9)],
+                &[(1, moved), (2, RIGHT)],
+                Settle::AsSoonAsThere,
+                start + ms(300),
+            ),
+            start + ms(50),
+            &none,
+        );
+        let (sets, outcome) = round(&mut watches, start + ms(50), |_| Some(moved), |_| Some(1)).unwrap();
+        assert_eq!(looked(&sets), vec![vec![wid(1)]]);
+        assert_eq!(delivered(&outcome), vec![(Why::Landed, vec![wid(1)])]);
     }
 
     /// Deliveries carry the tag of the watch as it is now, so a client tells its generations apart.

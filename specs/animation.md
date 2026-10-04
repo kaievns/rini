@@ -138,13 +138,15 @@ destination for a window already moving.
 > 890pt/s to 15,375pt/s in one frame at a typical interval between presses.
 - A window the flight has not seen MUST be able to join it.
 - A merged press MUST NOT show a stale, transparent, stretched or zoomed tile. A picture taken for an
-  earlier press, or of a window more than 20pt from where its tile ends, never reaches a tile: drawn,
-  it is a stale tile, or one stretched or zoomed to the other size.
+  end its tile no longer has, or of a window more than 20pt from where its tile ends, never reaches a
+  tile: drawn, it is a stale tile, or one stretched or zoomed to the other size.
+- A merged press MUST NOT lose a picture taken for an end its tile still has. Pictures are taken on
+  their own thread and arrive while a press is merged, and none is taken twice.
 
 > **Reported 2026-10-03.** "rapid press navigation messes things up, i periodically see missing tiles
 > (or they're just transparrent), occasionally i see tiles that are zoomed in." Each picture is now
-> pinned to the press it was taken for and to the frame its tile ends at; which picture each of those
-> tiles drew was not measured.
+> pinned to the end its tile had when it was taken and to the frame its tile ends at; which picture
+> each of those tiles drew was not measured.
 
 ## A window that has just opened
 
