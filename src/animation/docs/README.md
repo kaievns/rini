@@ -42,8 +42,9 @@ animations were tried and reverted: each tile bent from its own presented positi
 its own clock, and a pass merging mid-flight sent tiles of one strip off on different
 legs, which the user saw as a teleport.
 
-**One `CATransaction`, one timebase, one curve per flight.** Model layers jump to their
-destinations; the animations carry the presentation.
+**One timebase, one curve per flight.** Its motion is installed in the one transaction of the drain
+that carries it (below). Model layers jump to their destinations; the animations carry the
+presentation.
 
 **One transaction a drain, flushed.** The renderer plays every batch queued when it wakes together,
 one drain, in one `CATransaction` and flushes it, so its answer means the render server has it: an explicit commit

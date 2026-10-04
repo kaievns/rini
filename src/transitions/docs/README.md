@@ -40,7 +40,7 @@ the coordinator's holes and snaps in `Overlay`. The reactor converts at the door
 while a flight runs merges into it instead of starting another, which is how a burst of presses reads
 as one movement.
 
-**The reactor asks, and hears two things back.** It sends a layout pass (`Event::Animate`), a strip
+**The reactor asks, and hears back only the frames.** It sends a layout pass (`Event::Animate`), a strip
 movement (`Event::AnimateSurface`), each naming the window focused as it began and the key window as
 it went out, a bounce, each of the three carrying its press (`Cause`: when the reactor took the event
 it answers, and what that was), the windows whose look each change of the key window turned

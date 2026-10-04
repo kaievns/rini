@@ -453,13 +453,15 @@ flights and masked every smaller error. The lift logs "overlay lifted", so
 the placing-to-lift gap can be read from the log; with the handover measured, the overlay comes down
 up to 60ms after it. The lift itself waits for
 the render server and the real windows (the coordinator's tick, `FlightScore::settled`,
-`handover_report`): the clock has
+`Drawn::caught_up`, `handover_report`): the clock has
 to run out AND every track of the flight's score has to have ended (`Score::settled`, which the
-overlay plays exactly) AND every window has to be within 2pt of where it was written, or
-`LIFT_GRACE` (350ms) past the clock. The overlay used to ask the presentation instead, every container
-and picture within half a point of its model, which a 1722pt curve reaches at 87% of its length: the
+overlay plays exactly) AND every batch the engine sent has to be committed, since until then its
+tiles may not be drawn where they end ("Threads") AND every window has to be within 2pt of where it
+was written, or `LIFT_GRACE` (350ms) past the clock. The overlay used to ask the presentation
+instead, every container and picture within half a point of its model, which a 1722pt curve reaches at 87% of its length: the
 tracks ending says yes no earlier, so where a track outlasts the clock the lift waits as long or longer.
-*Not measured on the live build*: "flight landed" `late_ms` and the handover metric are the check. The
+*Not measured on the live build*: the journal's `lift` is the check, its `at_rest` and `landed`
+saying whether the lift waited for the tracks and the windows or ran out of grace (`journal.md`). The
 render server runs a frame or so behind the coordinator's clock, and lifting on
 the clock alone showed the real windows one frame ahead of their tiles: a
 small jerk at the end of every flight. Every kind writes its frames as the overlay goes up. Written

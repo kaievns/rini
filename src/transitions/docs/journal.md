@@ -293,7 +293,8 @@ Then each drain drawn, every `drawn` mark of the flights: `queued_us`, `applied_
 
 The counts, per flight: merges (the generations after its first), swaps, snaps, stale deliveries
 (`of != g`), `lost` marks, overdue lifts (a `lift` with `at_rest` or `landed` false) and frame-zero
-timeouts. `--csv` writes all of it, one row a flight.
+timeouts. `--csv` writes the split, the rows and the counts, one row a flight; the drains are only
+printed.
 
 `probe` joins each line a probe wrote to the first `press` within 250ms after the probe's `t0_ns`,
 its key post, and groups the trials by the probe's `label`. A trial whose press joined a flight
