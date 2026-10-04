@@ -14,6 +14,7 @@ edge bounce are all flights of the same thing.
 | `domain/motion/easing.rs` | `MOTION_CURVE`, and the ease-in-out a stepping move's strip crosses on |
 | `domain/motion/score.rs` | `Score`: a transition's movement as tracks on containers and tiles, evaluating to what Core Animation draws |
 | `domain/motion/bounce.rs` | `Bounce`: the edge bounce's shape, a push arriving mid-bounce, and its track |
+| `domain/motion/holes.rs` | Where the overlay is holed over a window that ends on screen, so the window keeps painting |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/strip_stack.rs` | The stacked-workspace geometry a switch moves through |
 | `domain/motion/strip_move.rs` | A window moved along the strip: where the two columns changing places start, which moves step the whole strip, and the column such a move holds on it |

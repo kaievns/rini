@@ -4,6 +4,7 @@ pub mod bounce;
 pub mod easing;
 pub mod frame_writes;
 pub mod glide;
+pub mod holes;
 pub mod plan;
 pub mod score;
 pub mod strip_move;

@@ -395,6 +395,22 @@ the overlay): layout offsets are fractional (4592.67) and the window server
 places windows on whole points, so a tile drawn at the fraction was resampled
 and popped by the fraction at the lift.
 
+**Holes.** A window wholly under the overlay is not composited, so a window
+that repaints for focus under it shows the change only at the lift ("The
+handover, measured" in `capture-overlay-research.md`). `TileOverlay::set_holes`
+punches a 1pt hole over each window the caller names, a point in from its left
+edge and halfway down its final frame (`hole_in` in
+`src/animation/domain/motion/holes.rs`): one even-odd `CAShapeLayer` mask on
+the content view's layer, the view's bounds and every hole, with the window's
+background clear while it is up. Each call replaces the holes; `clear_holes`,
+which `hide` and a new display frame call, removes the mask and puts the black
+back. Pinned by `the_hole_is_inside_the_window_and_off_its_corners` and
+`the_mask_leaves_out_exactly_the_holes`. The mask is in the view layer's
+coordinates, flipped as the canvas is; where a hole lands on screen was not
+measured on a window shorter than the display. Nothing calls it yet: which
+windows get holes, and when, is the coordinator's (step 4 of
+`docs/pictures-motion-transitions.md`).
+
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an

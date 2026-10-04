@@ -22,6 +22,7 @@ use objc2_quartz_core::{
 use crate::animation::domain::motion::bounce::Bounce;
 use crate::animation::domain::motion::easing::{CubicBezier, MOTION_CURVE};
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
+use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::plan::{
     AnimationTarget, Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented,
     animation_targets, carries_out_and_back, group_relative, stale_overlay_layers,
@@ -548,6 +549,31 @@ fn canvas_rect(frame: CGRect, top_band: f64) -> CGRect {
     CGRect::new(CGPoint::new(0.0, -top_band), frame.size)
 }
 
+/// A rect in the overlay's coordinates, the full display, in the view's: the canvas sits a band
+/// above the view's top edge.
+fn in_view(rect: CGRect, top_band: f64) -> CGRect {
+    CGRect::new(CGPoint::new(rect.origin.x, rect.origin.y - top_band), rect.size)
+}
+
+/// A mask covering `bounds` but for `holes`: one rect and the holes, filled even-odd, so each hole
+/// is left out.
+fn holes_mask(bounds: CGRect, holes: &[CGRect]) -> Retained<objc2_quartz_core::CAShapeLayer> {
+    let path = objc2_core_graphics::CGMutablePath::new();
+    // SAFETY: a null transform means the rects are taken as given.
+    unsafe {
+        objc2_core_graphics::CGMutablePath::add_rect(Some(&path), std::ptr::null(), bounds);
+        for hole in holes {
+            objc2_core_graphics::CGMutablePath::add_rect(Some(&path), std::ptr::null(), *hole);
+        }
+    }
+    let mask = objc2_quartz_core::CAShapeLayer::layer();
+    mask.setFrame(bounds);
+    mask.setPath(Some(&path));
+    // SAFETY: Core Animation's own fill-rule constant.
+    mask.setFillRule(unsafe { objc2_quartz_core::kCAFillRuleEvenOdd });
+    mask
+}
+
 impl TileOverlay {
     /// Creates the overlay once, ordered in but fully transparent. `frame` must be the display's
     /// full bounds in CoreGraphics coordinates, and `top_band` the points the bar reserves at the
@@ -705,6 +731,7 @@ impl TileOverlay {
         {
             return;
         }
+        self.clear_holes();
         self.frame = frame;
         self.top_band = top_band;
         self.scale = scale;
@@ -1433,11 +1460,50 @@ impl TileOverlay {
 
     /// Hides the overlay, revealing the real windows already sitting at their final frames.
     pub fn hide(&mut self) {
+        self.clear_holes();
         if !self.visible {
             return;
         }
         self.window.setAlphaValue(0.0);
         self.visible = false;
+    }
+
+    /// Punches a hole through the overlay over each window ending at one of `ends`, in the
+    /// overlay's coordinates, replacing the holes there were, and clears the window's background so
+    /// the holes show what is below. The caller names the windows that end wholly on screen. See
+    /// "Holes" in `src/animation/docs/animation-smoothness.md`.
+    pub fn set_holes(&mut self, ends: &[CGRect]) {
+        if ends.is_empty() {
+            self.clear_holes();
+            return;
+        }
+        let Some(clip) = self.window.contentView().and_then(|view| view.layer()) else {
+            return;
+        };
+        let holes: Vec<CGRect> =
+            ends.iter().map(|end| in_view(hole_in(*end), self.top_band)).collect();
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        // SAFETY: a shape layer we just made, as the mask of the view's own layer.
+        unsafe { clip.setMask(Some(&holes_mask(clip.bounds(), &holes))) };
+        commit_now();
+        self.window.setBackgroundColor(Some(&NSColor::clearColor()));
+    }
+
+    /// Fills the holes in again and puts the window's black background back.
+    pub fn clear_holes(&mut self) {
+        let Some(clip) = self.window.contentView().and_then(|view| view.layer()) else {
+            return;
+        };
+        if clip.mask().is_none() {
+            return;
+        }
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        // SAFETY: removing the mask this overlay set.
+        unsafe { clip.setMask(None) };
+        commit_now();
+        self.window.setBackgroundColor(Some(&NSColor::blackColor()));
     }
 
     /// Frees the tile contents without destroying the overlay.
@@ -2274,5 +2340,54 @@ mod tests {
             ],
             "added last, sorted between"
         );
+    }
+
+    /// The canvas starts a band above the view, so a hole moves up by the band into the view's
+    /// coordinates.
+    #[test]
+    fn a_hole_moves_into_the_view_by_the_band() {
+        assert_eq!(
+            in_view(rect(869.0, 572.5, 1.0, 1.0), 32.0),
+            rect(869.0, 540.5, 1.0, 1.0)
+        );
+        assert_eq!(
+            in_view(rect(869.0, 572.5, 1.0, 1.0), 0.0),
+            rect(869.0, 572.5, 1.0, 1.0)
+        );
+    }
+
+    /// The mask covers the whole view but for each hole: filled even-odd, a point in a hole is left
+    /// out and every other point is kept.
+    #[test]
+    fn the_mask_leaves_out_exactly_the_holes() {
+        let bounds = rect(0.0, 0.0, 1728.0, 1085.0);
+        let ends = [
+            rect(868.0, 32.0, 856.0, 1081.0),
+            rect(4.0, 32.0, 856.0, 1081.0),
+        ];
+        let holes: Vec<CGRect> = ends.iter().map(|end| in_view(hole_in(*end), 32.0)).collect();
+        let mask = holes_mask(bounds, &holes);
+        // SAFETY: Core Animation's own fill-rule constant.
+        assert_eq!(*mask.fillRule(), *unsafe {
+            objc2_quartz_core::kCAFillRuleEvenOdd
+        });
+        assert_eq!(mask.frame(), bounds);
+        let path = mask.path().expect("a path");
+        // SAFETY: a null transform means the point is taken as given.
+        let kept = |x: f64, y: f64| unsafe {
+            objc2_core_graphics::CGPath::contains_point(
+                Some(&path),
+                std::ptr::null(),
+                CGPoint::new(x, y),
+                true,
+            )
+        };
+        for hole in &holes {
+            assert!(!kept(hole.origin.x + 0.5, hole.origin.y + 0.5), "{hole:?}");
+            assert!(kept(hole.origin.x + 2.0, hole.origin.y + 0.5), "beside {hole:?}");
+            assert!(kept(hole.origin.x + 0.5, hole.origin.y - 1.0), "above {hole:?}");
+        }
+        assert!(kept(10.0, 10.0));
+        assert!(kept(1700.0, 1080.0));
     }
 }
