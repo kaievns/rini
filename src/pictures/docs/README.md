@@ -11,9 +11,9 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | | |
 |---|---|
 | **Coverage and fit** | `domain/coverage.rs` — `Coverage`, whether a capture is usable, whether it fits a frame, whether a grow outgrows it, whether a warm must recapture, whether a desktop picture spans its display, when a picture is stale |
-| **The cache's rules** | `domain/cache.rs` — `PictureCache`: never downgrade a usable picture, keep a blurred one over a grey one of the same size, carry the hairline over, put a copy back only over the picture it was made of |
+| **The cache's rules** | `domain/cache.rs` — `PictureCache`: never downgrade a usable picture, keep a blurred one over a grey one of the same size, put a copy back only over the picture it was made of |
 | **Regions** | `domain/region.rs` — where a window lies in a batched composite: its pixel rect, whether the composite holds it, whether the composite is the shape of what it was asked for, its unit rect, and a crop piece's rect within a region |
-| **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, its corner radius; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
+| **What is known of each window** | `domain/knowledge.rs` — per window server id, whether it is translucent, whether it has a material, its corner radius, and the radius a window is drawn with until its own is measured; which SkyLight call each window goes in; the measurements that learn them, over plain bytes |
 | **Prints** | `domain/print.rs` — whether two pictures of one window show the same thing: their band prints, where a focus change shows, and their bodies, where content does |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
 | **Settled** | `domain/settle.rs` — when a chase's capture is the window's settled rendering, by thumbprint |
@@ -23,13 +23,12 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, watches, hints, holds and display changes in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The watches** | `domain/watch.rs` — windows on screen captured through SkyLight: the frame-zero and final asks, the `Landing`, `Change` and `Live` watches, the focus and placement hints, and the band prints each client was last delivered, which decide what is news |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule and makes every SkyLight call, the cache, each window's focused look and knowledge, the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
-| **What it tells clients** | `event.rs` — a picture the cache took, a covering capture it refused for the blurred one it holds, the pictures a client asked for or watched under its tag, and a window that never landed |
+| **What it tells clients** | `event.rs` — a picture the cache took, the pictures a client asked for or watched under its tag, and a window that never landed |
 | **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
-| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, and the framed capture of one window with its hairline and, wholly on a display, its blur |
+| **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), the batched capture of the windows on screen as regions of the calls it makes, and the framed capture of one window with, wholly on a display, its blur |
 | **Measurement** | `platform/measure.rs` — a picture read small: its band print and its body samples, what a window's first picture says of its translucency and corner, and whether its baked picture shows a material |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from, and the rect each set covers |
-| **The hairline** | `platform/edge_dressing.rs` — the window's hairline, cut out of a framed capture, and where on a tile it is worn |
 | **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
 | **Layers** | `platform/layer.rs` — handing a picture to a layer, a region through `contentsRect`, and the stand-in's nine-slice region |
 
@@ -48,8 +47,8 @@ with a sink per client; the flight engine, the reactor and the switcher each hol
 | watches | `watch` windows landing, changing or live, `retarget` a watch, `stop` it; `hint` that a window was focused or placed |
 | keeps | `keep_focused` the picture delivered under a tag as the window's focused look |
 | holds | `hold` at a transition's compose, `Settling` at its lift, `Released` at its quiet |
-| reads | `usable`, `usable_many`, `get`, `focused`, `knowledge`, `windows`, `wants_warm`, `stand_in`, `dressing`, from any thread under one lock |
-| hands over | `insert` and `set_dressing`, for what the flight engine's own captures take in flight |
+| reads | `usable`, `usable_many`, `get`, `focused`, `knowledge`, `windows`, `stand_in`, `dressing`, from any thread under one lock |
+| hands over | `insert`, for what the flight engine's own captures take in flight |
 
 Asks, watches, hints, holds and forgets are messages, applied in order on the thread, every one already
 queued before the next call is made, so the newest wins. Reads are not: they lock the shared state and
@@ -105,8 +104,8 @@ until a time, or nothing.
 The costs are measured in [`capture-research.md`](capture-research.md): "Capture cost", and the
 listing against a kept filter in "What a capture costs in a press".
 
-The flight engine's own captures in flight, the reveal chase, the focus refresh's framed captures, the
-spawn capture and the hairline harvest, are not scheduled here. It takes them on its own threads and
+The flight engine's own captures in flight, the reveal chase, the focus refresh's framed captures and
+the spawn capture, are not scheduled here. It takes them on its own threads and
 hands the pictures over through the handle. The focus refresh asks for a clipped end at focus priority.
 
 ## The watches
@@ -203,16 +202,16 @@ only where the cache still holds the picture it was made of.
 ## Detail
 
 - [`capture-research.md`](capture-research.md) — every capture route measured: cost, what each
-  returns, and why the desktop and the bar are pictured on their own; the hairline harvest; how
-  stale a picture may be
+  returns, and why the desktop and the bar are pictured on their own; the hairline no capture
+  carries; how stale a picture may be
 - [`src/transitions/docs/coordination.md`](../../transitions/docs/coordination.md) — the capture
   work a flight does, and when
 
 ## Known debt
 
-**The flight engine still takes its in-flight pictures itself.** The reveal chase, the focus refresh,
-the spawn capture and the hairline harvest run on the engine's own threads or on the main thread, and
-hand their pictures over through the handle. Step 4 of the plan replaces them with the end-state
+**The flight engine still takes its in-flight pictures itself.** The reveal chase, the focus refresh
+and the spawn capture run on the engine's own threads or on the main thread, and hand their pictures
+over through the handle. Step 4 of the plan replaces them with the end-state
 captures the coordinator asks the service for.
 
 **Nothing asks for windows on screen or watches them yet.** The frame-zero and final asks, the
@@ -233,12 +232,6 @@ set belongs to the reactor's world; it comes from there once the coordinator com
 **A transition on a display before its first render lands composites on the main thread.** `dressing`
 takes the desktop, and the first time the bar, synchronously while the service holds none of that
 display. Step 4's coordinator waits for frame-zero pictures instead.
-
-**The hairline harvest lives here until it is deleted.** `platform/edge_dressing.rs`, the ring the
-framed capture takes for it, and the dressing a `Picture` carries go when step 4 replaces the harvest
-with a constant ring the renderer draws; `boundary_layout`, `RING_PT` and the corner radius move to
-`animation` then. They are here rather than in `animation` because the framed capture harvests the
-ring and `Picture` carries it, and either would have had `pictures` name `animation`.
 
 **The bar still captures on its own.** Its menu extras and its ground are pictured on the bar's own
 thread (`src/bar/platform/menu_extras.rs`), with its own pacing and its own pause for flights.

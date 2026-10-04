@@ -111,6 +111,11 @@ pub fn is_translucent(rgba: &[u8], stride: usize) -> bool {
     clear * 5 > samples
 }
 
+/// The corner radius a window is drawn with until its own is measured, in points: a macOS window's,
+/// measured. See "The hairline is composited outside every capture" in
+/// `src/pictures/docs/capture-research.md`.
+pub const CORNER_RADIUS: f64 = 10.0;
+
 /// The side, in points, of the window's top-left corner its radius is measured from.
 pub const CORNER_SIDE_PT: f64 = 48.0;
 /// Rows of the corner measured, and how far into each the first opaque pixel is looked for, in pixels.

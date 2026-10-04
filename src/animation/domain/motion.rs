@@ -5,6 +5,7 @@ pub mod accents;
 pub mod bounce;
 pub mod easing;
 pub mod glide;
+pub mod hairline;
 pub mod holes;
 pub mod nudge;
 pub mod plan;

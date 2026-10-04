@@ -4,7 +4,7 @@
 //! the overlay's own measurements in `src/animation/docs/capture-overlay-research.md`.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
@@ -22,6 +22,9 @@ use objc2_quartz_core::{
 use crate::animation::domain::motion::bounce::Bounce;
 use crate::animation::domain::motion::easing::{CubicBezier, MOTION_CURVE};
 use crate::animation::domain::motion::glide::{Leg, spring_omega};
+use crate::animation::domain::motion::hairline::{
+    OUTLINE_ALPHA, OUTLINE_PT, RING_PT, corner_radius, outline, ring_alpha,
+};
 use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::plan::{
     AnimationTarget, Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented,
@@ -29,16 +32,12 @@ use crate::animation::domain::motion::plan::{
 };
 use crate::animation::domain::motion::nudge::nudge_samples;
 use crate::animation::domain::motion::score::{Curve, Value};
-use crate::animation::domain::motion::tile::{
-    ContentMode, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
-    resize_in_flight,
-};
+use crate::animation::domain::motion::tile::{ContentMode, content_mode, crop_pieces};
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::displays::domain::screen::CoordinateConverter;
 use crate::displays::screen::primary_display_height;
 use crate::pictures::domain::region::{WHOLE, within};
-use crate::pictures::platform::edge_dressing::{boundary_layout, tile_corner_radius};
-use crate::pictures::platform::layer::{set_contents, set_layer_contents, stretch_region};
+use crate::pictures::platform::layer::{set_layer_contents, stretch_region};
 use crate::pictures::platform::picture::Picture;
 use rini_core::ids::WindowId;
 use rini_geometry::{Round, SameAs};
@@ -81,8 +80,11 @@ pub struct OverlayTile {
     /// For a border window riding the window it traces, that window: a quarter step in front of it,
     /// no shadow.
     pub companion: Option<WindowId>,
-    /// Whether this window holds (or is about to hold) focus, which deepens its shadow.
+    /// Whether this window holds (or is about to hold) focus, which deepens its shadow and
+    /// brightens its ring.
     pub focused: bool,
+    /// The window's corner radius in points, as `pictures` measured it; `None` until it is.
+    pub radius: Option<f64>,
 }
 
 impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
@@ -105,11 +107,14 @@ impl crate::animation::domain::motion::surface::TileGeometry for OverlayTile {
 
 impl OverlayTile {
     /// The zPosition this tile draws at; a companion's quarter step stays clear of the half step
-    /// the shadow casters sit behind.
+    /// the shadow casters sit behind and of the eighth its ring sits in front (`RING_Z`).
     pub(crate) fn z(&self) -> f64 {
         -(self.depth as f64) + if self.companion.is_some() { 0.25 } else { 0.0 }
     }
 }
+
+/// How far in front of its picture a tile's ring is drawn: over the picture, under a companion.
+const RING_Z: f64 = 0.125;
 
 /// The shadow a real window casts, which no capture API includes. Fitted to measured falloffs;
 /// see "Shadows are never in the surface" in `src/animation/docs/capture-overlay-research.md`.
@@ -213,12 +218,6 @@ impl Timing {
     /// Whether the leg is still playing at `now` on the media clock.
     fn plays_at(&self, now: f64) -> bool {
         self.begin <= now && now < self.begin + self.seconds
-    }
-
-    /// When the leg ends, on the wall clock.
-    fn ends_at(&self) -> Instant {
-        let left = self.begin + self.seconds - objc2_quartz_core::CACurrentMediaTime();
-        Instant::now() + Duration::from_secs_f64(left.max(0.0))
     }
 }
 
@@ -427,6 +426,23 @@ fn rect_animation(
     animation
 }
 
+/// An animation between two number-valued endpoints of `key_path` ("cornerRadius").
+fn number_animation(
+    key_path: &str,
+    from: f64,
+    to: f64,
+    timing: Timing,
+) -> Retained<CABasicAnimation> {
+    let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(key_path)));
+    // SAFETY: an NSNumber is the value type Core Animation expects for a scalar key path.
+    unsafe {
+        animation.setFromValue(Some(&NSNumber::numberWithDouble(from)));
+        animation.setToValue(Some(&NSNumber::numberWithDouble(to)));
+    }
+    timing.apply(&animation);
+    animation
+}
+
 /// An animation between two path-valued endpoints ("shadowPath", "path"). Core Animation only
 /// interpolates paths with matching element structure; both endpoints must use one constructor.
 fn path_animation(
@@ -475,16 +491,22 @@ fn animate_layer_frame(
     }
 }
 
-/// One window's picture, and a caster behind it carrying only the shadow, masked to a ring outside
-/// the tile. See "A layer shadow covers the whole layer" in `src/animation/docs/capture-overlay-research.md`.
+/// One window's picture, a caster behind it carrying only the shadow, masked to a ring outside
+/// the tile, and the window's hairline in front of it. See "A layer shadow covers the whole layer"
+/// in `src/animation/docs/capture-overlay-research.md` and "The hairline" in
+/// `src/animation/docs/animation-smoothness.md`.
 struct Tile {
     picture: Retained<CALayer>,
     shadow: Retained<CALayer>,
     /// Persistent, so a resize can animate its path; a swapped-in mask cannot be animated.
     shadow_mask: Retained<objc2_quartz_core::CAShapeLayer>,
-    /// Hairline sublayers with their index in [`crate::pictures::platform::edge_dressing::DressingLayout`] order
-    /// (strips 0-3, corners 4-7).
-    dressing: Vec<(usize, Retained<CALayer>)>,
+    /// The hairline's light ring, a border at the tile's frame. Beside the picture rather than in
+    /// it, so a corner clip (`clip_corners`) leaves the outline outside the window whole.
+    ring: Retained<CALayer>,
+    /// The hairline's dark outline, a stroke just outside the ring, as the ring's child.
+    outline: Retained<objc2_quartz_core::CAShapeLayer>,
+    /// The window's measured corner radius, which the ring and outline round to.
+    radius: Option<f64>,
     /// The four crop pieces, created on first crop-drawn animation and pooled with the tile.
     crop_grid: Option<CropGrid>,
     /// Size in points of the picture the crop pieces show; `None` when stretching.
@@ -493,8 +515,6 @@ struct Tile {
     /// crop pieces' contents are composed with: all of it unless the picture is a region of a
     /// composite.
     region: CGRect,
-    /// When the installed resize animation ends; a mismatched hairline is deferred until then.
-    resize_until: Option<Instant>,
     /// The leg the tile was last given, a move or a resize, so a picture swap or a snap
     /// re-installs it on the same timing.
     leg: Option<(CGRect, CGRect, Timing)>,
@@ -766,7 +786,6 @@ impl TileOverlay {
         snapshot: &Picture,
         remaining: Option<Duration>,
     ) {
-        let scale = self.scale;
         let Some(entry) = self.tile_layers.get_mut(&window) else {
             return;
         };
@@ -806,11 +825,6 @@ impl TileOverlay {
             // "Border companions" in `src/transitions/docs/coordination.md`.
             set_layer_contents(&entry.picture, snapshot);
         }
-        if snapshot.dressing.is_some() {
-            let size = entry.picture.bounds().size;
-            let resizing = resize_in_flight(entry.resize_until, Instant::now());
-            apply_edge_dressing(entry, snapshot.dressing.as_ref(), size, scale, true, resizing);
-        }
         if let Some((from, to, timing)) = rekey {
             animate_tile_resize(entry, from, to, timing);
         }
@@ -830,21 +844,15 @@ impl TileOverlay {
         commit_now();
     }
 
-    /// Swaps one in-flight tile's hairline, for a harvest that landed after its picture did.
-    pub fn set_tile_dressing(
-        &mut self,
-        window: WindowId,
-        dressing: &crate::pictures::platform::edge_dressing::EdgeDressing,
-    ) {
-        let scale = self.scale;
-        let Some(entry) = self.tile_layers.get_mut(&window) else {
+    /// Draws a tile focused or not, a hard cut: its ring's white and its shadow's depth. For focus
+    /// handing over mid-flight; every install draws what its tile says.
+    pub fn set_tile_focused(&mut self, window: WindowId, focused: bool) {
+        let Some(entry) = self.tile_layers.get(&window) else {
             return;
         };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        let size = entry.picture.bounds().size;
-        let resizing = resize_in_flight(entry.resize_until, Instant::now());
-        apply_edge_dressing(entry, Some(dressing), size, scale, true, resizing);
+        show_focus(entry, focused);
         commit_now();
     }
 
@@ -918,8 +926,7 @@ impl TileOverlay {
                 } else {
                     behind
                 };
-                reparent(&tile.picture, parent);
-                reparent(&tile.shadow, parent);
+                tile.reparent(parent);
             }
         }
         for (window, tile) in &self.tile_layers {
@@ -927,8 +934,7 @@ impl TileOverlay {
                 continue;
             };
             let z = -(within as f64) + if tile.companion { 0.25 } else { 0.0 };
-            tile.picture.setZPosition(z);
-            tile.shadow.setZPosition(z - 0.5);
+            tile.stack(z);
         }
     }
 
@@ -965,8 +971,7 @@ impl TileOverlay {
 
         for window in stale_tiles {
             if let Some(entry) = self.tile_layers.remove(&window) {
-                entry.picture.removeFromSuperlayer();
-                entry.shadow.removeFromSuperlayer();
+                entry.remove();
             }
         }
         for key in empty_containers {
@@ -1097,33 +1102,23 @@ impl TileOverlay {
             None => self.root.clone(),
         };
         let entry = self.tile_layers.entry(tile.window).or_insert_with(|| new_tile(&parent));
-        reparent(&entry.picture, &parent);
-        reparent(&entry.shadow, &parent);
+        entry.reparent(&parent);
         entry.key = key;
         entry.companion = tile.companion.is_some();
+        entry.radius = tile.radius;
         entry.picture.setContentsScale(self.scale);
+        entry.outline.setContentsScale(self.scale);
         clip_corners(&entry.picture, None);
-        entry.resize_until = None;
         entry.leg = None;
         let covered = tile.snapshot.coverage.covered;
         let mode = content_mode(covered, tile.from.size, tile.to.size);
         set_tile_content(entry, &tile.snapshot, mode, tile.from.size, self.scale);
-        apply_edge_dressing(
-            entry,
-            tile.snapshot.dressing.as_ref(),
-            tile.from.size,
-            self.scale,
-            false,
-            false,
-        );
         // Tile layers are pooled, so every per-window property is written on each install.
-        let style = tile_shadow_style(tile.focused);
-        entry.shadow.setShadowOpacity(style.opacity);
-        entry.shadow.setShadowRadius(style.radius);
-        entry.shadow.setShadowOffset(CGSize::new(0.0, style.offset_y));
+        show_focus(entry, tile.focused);
         place_tile(entry, whole(at), tile.z());
         entry.picture.setHidden(false);
         entry.shadow.setHidden(tile.companion.is_some());
+        entry.ring.setHidden(tile.companion.is_some());
     }
 
     /// Adds one loose tile to a flight in progress under `key`, flying `tile.from` to `tile.to`
@@ -1258,8 +1253,7 @@ impl TileOverlay {
             let Some(entry) = self.tile_layers.get_mut(&window) else {
                 continue;
             };
-            reparent(&entry.picture, &container);
-            reparent(&entry.shadow, &container);
+            entry.reparent(&container);
             entry.key = Some(to_key);
             let z = entry.picture.zPosition();
             place_tile(entry, whole(frame), z);
@@ -1479,8 +1473,7 @@ impl TileOverlay {
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         for (_, entry) in self.tile_layers.drain() {
-            entry.picture.removeFromSuperlayer();
-            entry.shadow.removeFromSuperlayer();
+            entry.remove();
         }
         for (_, container) in self.containers.drain() {
             container.removeFromSuperlayer();
@@ -1503,23 +1496,24 @@ fn animate_tile_leg(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timing) 
         return;
     }
     entry.leg = Some((from, to, timing));
-    // addAnimation copies, so one instance serves picture and shadow.
+    // addAnimation copies, so one instance serves every layer.
     let animation = position_animation(from.origin, to.origin, timing);
     let key = NSString::from_str(TILE_ANIMATION_KEY);
-    entry.picture.addAnimation_forKey(&animation, Some(&key));
-    entry.shadow.addAnimation_forKey(&animation, Some(&key));
+    for layer in entry.layers() {
+        layer.addAnimation_forKey(&animation, Some(&key));
+    }
 }
 
 /// The resize: every layer of the tile rides its own pair of endpoint geometries on the shared
 /// curve. See "Resizes through the overlay" in `src/animation/docs/animation-smoothness.md`.
 fn animate_tile_resize(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timing) {
-    entry.resize_until = Some(timing.ends_at());
     entry.leg = Some((from, to, timing));
 
     // Same key prefix as the plain move, or a move retargeted into a resize leaves its old
     // position animation fighting this one.
-    animate_layer_frame(&entry.picture, from, to, timing, "rini.tile");
-    animate_layer_frame(&entry.shadow, from, to, timing, "rini.tile");
+    for layer in entry.layers() {
+        animate_layer_frame(layer, from, to, timing, "rini.tile");
+    }
 
     let origin = CGPoint::new(0.0, 0.0);
     let shadow_path = path_animation(
@@ -1544,25 +1538,7 @@ fn animate_tile_resize(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timin
         .addAnimation_forKey(&mask_path, Some(&NSString::from_str("rini.tile.mask.path")));
 
     animate_crop_grid(entry, from.size, to.size, timing);
-
-    if let (Some(from_layout), Some(to_layout)) =
-        (boundary_layout(from.size), boundary_layout(to.size))
-    {
-        let rect_at = |layout: &crate::pictures::platform::edge_dressing::DressingLayout,
-                       index: usize| {
-            if index < 4 {
-                layout.strips[index]
-            } else {
-                layout.corners[index - 4]
-            }
-        };
-        for (index, layer) in &entry.dressing {
-            let a = rect_at(&from_layout, *index);
-            let b = rect_at(&to_layout, *index);
-            layer.setFrame(b);
-            animate_layer_frame(layer, a, b, timing, "rini.dressing");
-        }
-    }
+    animate_hairline(entry, from.size, to.size, timing);
 }
 
 /// Moves a tile under a container at `offset` onto `real`, both in the overlay's coordinates; on its
@@ -1581,82 +1557,10 @@ fn bar_frame(strip: CGRect, covered: CGSize) -> CGRect {
     CGRect::new(strip.origin, covered)
 }
 
-/// The harvested image for one piece, in `DressingLayout` order: four strips, then four corners.
-fn dressing_image(
-    dressing: &crate::pictures::platform::edge_dressing::EdgeDressing,
-    index: usize,
-) -> Option<&CFRetained<objc2_core_graphics::CGImage>> {
-    if index < 4 {
-        dressing.strips[index].as_ref()
-    } else {
-        dressing.corners[index - 4].as_ref()
-    }
-}
-
-/// Every harvested piece, whatever `size`, so a fresh harvest swaps in place. See "A fresh picture
-/// or hairline swaps in place" in `src/animation/docs/animation-smoothness.md`.
-fn dressing_piece_indices(
-    dressing: &crate::pictures::platform::edge_dressing::EdgeDressing,
-    size: CGSize,
-) -> Vec<usize> {
-    if boundary_layout(size).is_none() {
-        return Vec::new();
-    }
-    (0..8).filter(|index| dressing_image(dressing, *index).is_some()).collect()
-}
-
-/// Dresses a tile with its window's harvested hairline as sublayers of the picture, or strips it
-/// bare.
-fn apply_edge_dressing(
-    tile: &mut Tile,
-    dressing: Option<&crate::pictures::platform::edge_dressing::EdgeDressing>,
-    size: CGSize,
-    scale: f64,
-    swap_in_place: bool,
-    resize_in_flight: bool,
-) {
-    // A matching harvest swaps pixels into the existing layers so resize animations riding them
-    // survive; a mismatch is deferred while a resize rides. Installs always rebuild (pooled layers).
-    if swap_in_place && let Some(new) = dressing {
-        let available: Vec<usize> = (0..8).filter(|i| dressing_image(new, *i).is_some()).collect();
-        let worn: Vec<usize> = tile.dressing.iter().map(|(i, _)| *i).collect();
-        let worn_matches = !worn.is_empty() && worn == available;
-        match dressing_rebuild_allowed(resize_in_flight, worn_matches) {
-            DressingAction::SwapInPlace => {
-                for (index, layer) in &tile.dressing {
-                    let image = dressing_image(new, *index).expect("index sets match");
-                    set_contents(layer, image);
-                }
-                return;
-            }
-            DressingAction::Defer => return,
-            DressingAction::Rebuild => {}
-        }
-    }
-    for (_, layer) in tile.dressing.drain(..) {
-        layer.removeFromSuperlayer();
-    }
-    let Some(dressing) = dressing else { return };
-    let Some(layout) = boundary_layout(size) else { return };
-    let frames: Vec<CGRect> = layout.strips.into_iter().chain(layout.corners).collect();
-    for index in dressing_piece_indices(dressing, size) {
-        let image = dressing_image(dressing, index).expect("indices name harvested pieces");
-        let frame = frames[index];
-        let layer = CALayer::layer();
-        layer.setAnchorPoint(CGPoint::new(0.0, 0.0));
-        layer.setFrame(frame);
-        layer.setContentsScale(scale);
-        // Above the crop pieces, which sit at the default 0.
-        layer.setZPosition(1.0);
-        set_contents(&layer, image);
-        tile.picture.addSublayer(&layer);
-        tile.dressing.push((index, layer));
-    }
-}
-
-/// A tile: the picture, plus a caster behind it holding the shadow. No `masksToBounds` on the
-/// caster, which would clip its own shadow; the picture's contents cannot spill, and it clips only
-/// to round its corners (`clip_corners`).
+/// A tile: the picture, a caster behind it holding the shadow, and the ring in front holding the
+/// outline. No `masksToBounds` on the caster, which would clip its own shadow, or on the ring, which
+/// would clip the outline; the picture's contents cannot spill, and it clips only to round its
+/// corners (`clip_corners`).
 fn new_tile(container: &CALayer) -> Tile {
     let shadow = CALayer::layer();
     shadow.setAnchorPoint(CGPoint::new(0.0, 0.0));
@@ -1679,19 +1583,74 @@ fn new_tile(container: &CALayer) -> Tile {
     }
     container.addSublayer(&picture);
 
+    let ring = CALayer::layer();
+    ring.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    ring.setBorderWidth(RING_PT);
+    let outline = objc2_quartz_core::CAShapeLayer::layer();
+    outline.setAnchorPoint(CGPoint::new(0.0, 0.0));
+    outline.setFillColor(None);
+    outline.setStrokeColor(Some(&objc2_core_graphics::CGColor::new_generic_gray(
+        0.0,
+        OUTLINE_ALPHA,
+    )));
+    outline.setLineWidth(OUTLINE_PT);
+    ring.addSublayer(&outline);
+    container.addSublayer(&ring);
+
     Tile {
         picture,
         shadow,
         shadow_mask,
-        dressing: Vec::new(),
+        ring,
+        outline,
+        radius: None,
         crop_grid: None,
         crop_of: None,
         region: WHOLE,
-        resize_until: None,
         leg: None,
         key: None,
         companion: false,
     }
+}
+
+impl Tile {
+    /// The layers that ride the tile's frame: the picture, the caster and the ring.
+    fn layers(&self) -> [&CALayer; 3] {
+        [&self.picture, &self.shadow, &self.ring]
+    }
+
+    /// Moves the tile's layers under `container` unless they are already there.
+    fn reparent(&self, container: &CALayer) {
+        for layer in self.layers() {
+            reparent(layer, container);
+        }
+    }
+
+    fn remove(&self) {
+        for layer in self.layers() {
+            layer.removeFromSuperlayer();
+        }
+    }
+
+    /// Draws the tile at depth `z`: the caster half a step behind the picture, the ring
+    /// `RING_Z` in front of it.
+    fn stack(&self, z: f64) {
+        self.picture.setZPosition(z);
+        self.shadow.setZPosition(z - 0.5);
+        self.ring.setZPosition(z + RING_Z);
+    }
+}
+
+/// Draws a tile focused or not: the ring's white and the caster's shadow.
+fn show_focus(tile: &Tile, focused: bool) {
+    tile.ring.setBorderColor(Some(&objc2_core_graphics::CGColor::new_generic_gray(
+        1.0,
+        ring_alpha(focused),
+    )));
+    let style = tile_shadow_style(focused);
+    tile.shadow.setShadowOpacity(style.opacity);
+    tile.shadow.setShadowRadius(style.radius);
+    tile.shadow.setShadowOffset(CGSize::new(0.0, style.offset_y));
 }
 
 /// Clips `picture`, with the crop pieces under it, to a rounded rect of `radius`, or not at all.
@@ -1701,17 +1660,57 @@ fn clip_corners(picture: &CALayer, radius: Option<f64>) {
     picture.setMasksToBounds(radius.is_some());
 }
 
-/// Puts both of a tile's layers at `frame`, with the caster half a step behind the picture. The
-/// shadow's shape is rebuilt only when the size changes.
+/// Puts a tile's layers at `frame`, stacked at `z`. The shadow's shape is rebuilt only when the
+/// size changes; the hairline is laid after the frame, every time, since a pooled tile's radius can
+/// have been measured since.
 fn place_tile(tile: &Tile, frame: CGRect, z: f64) {
     let resized = tile.shadow.bounds().size != frame.size;
-    tile.picture.setFrame(frame);
-    tile.picture.setZPosition(z);
-    tile.shadow.setFrame(frame);
-    tile.shadow.setZPosition(z - 0.5);
+    for layer in tile.layers() {
+        layer.setFrame(frame);
+    }
+    tile.stack(z);
     if resized {
         set_tile_shadow(&tile.shadow, &tile.shadow_mask, frame.size);
         layout_crop_grid(tile, frame.size);
+    }
+    lay_hairline(tile, frame.size);
+}
+
+/// Rounds the ring and draws the outline for a tile of `size`, in the ring's coordinates.
+fn lay_hairline(tile: &Tile, size: CGSize) {
+    let corner = corner_radius(tile.radius, size);
+    tile.ring.setCornerRadius(corner);
+    tile.outline.setFrame(CGRect::new(CGPoint::new(0.0, 0.0), size));
+    tile.outline.setPath(Some(&outline_path(size, corner)));
+}
+
+/// Carries a tile's ring and outline between sizes on `timing`, the frame's own: the ring's
+/// bounds ride the tile's (`animate_tile_resize`), its corner and the outline's path ride here.
+fn animate_hairline(tile: &Tile, from: CGSize, to: CGSize, timing: Timing) {
+    let (from_corner, to_corner) =
+        (corner_radius(tile.radius, from), corner_radius(tile.radius, to));
+    if from_corner != to_corner {
+        let corner = number_animation("cornerRadius", from_corner, to_corner, timing);
+        tile.ring
+            .addAnimation_forKey(&corner, Some(&NSString::from_str("rini.tile.ring.corner")));
+    }
+    let path = path_animation(
+        "path",
+        &outline_path(from, from_corner),
+        &outline_path(to, to_corner),
+        timing,
+    );
+    tile.outline
+        .addAnimation_forKey(&path, Some(&NSString::from_str("rini.tile.outline.path")));
+}
+
+/// The outline's path around a window of `size` with corners of `corner`. Its radius is never zero,
+/// so it is always a rounded rect and two outline paths interpolate.
+fn outline_path(size: CGSize, corner: f64) -> CFRetained<objc2_core_graphics::CGPath> {
+    let (rect, radius) = outline(size, corner);
+    // SAFETY: a null transform means the path is taken as given.
+    unsafe {
+        objc2_core_graphics::CGPath::with_rounded_rect(rect, radius, radius, std::ptr::null())
     }
 }
 
@@ -1719,7 +1718,7 @@ fn place_tile(tile: &Tile, frame: CGRect, z: f64) {
 /// are floored above zero, or Core Graphics emits a plain rect and path animations cut.
 fn silhouette_path(size: CGSize, at: CGPoint) -> CFRetained<objc2_core_graphics::CGPath> {
     let size = CGSize::new(size.width.max(0.5), size.height.max(0.5));
-    let radius = tile_corner_radius(size).max(0.01);
+    let radius = corner_radius(None, size).max(0.01);
     // SAFETY: a null transform means the path is taken as given.
     unsafe {
         objc2_core_graphics::CGPath::with_rounded_rect(
@@ -1736,7 +1735,7 @@ fn silhouette_path(size: CGSize, at: CGPoint) -> CFRetained<objc2_core_graphics:
 fn ring_path(size: CGSize) -> CFRetained<objc2_core_graphics::CGMutablePath> {
     // Floored for the same reason as `silhouette_path`.
     let size = CGSize::new(size.width.max(0.5), size.height.max(0.5));
-    let radius = tile_corner_radius(size).max(0.01);
+    let radius = corner_radius(None, size).max(0.01);
     let mask_frame = shadow_mask_frame(size);
     let ring = objc2_core_graphics::CGMutablePath::new();
     unsafe {
@@ -2073,82 +2072,6 @@ mod tests {
         let placed = bar_frame(rect(0.0, 0.0, 1728.0, 32.0), CGSize::new(1504.0, 32.0));
         assert_eq!(placed.size.width, 1504.0);
         assert_eq!(placed.size.height, 32.0);
-    }
-
-    #[test]
-    fn the_dressing_piece_set_does_not_depend_on_the_tile_size() {
-        use crate::pictures::platform::edge_dressing::EdgeDressing;
-        use crate::pictures::platform::picture::test_bitmap;
-        let piece = || Some(test_bitmap());
-        let dressing = EdgeDressing {
-            strips: [piece(), piece(), piece(), piece()],
-            corners: [piece(), piece(), piece(), piece()],
-        };
-        let at_zero = dressing_piece_indices(&dressing, CGSize::new(0.0, 1081.0));
-        let at_full = dressing_piece_indices(&dressing, CGSize::new(859.0, 1081.0));
-        assert_eq!(
-            at_zero,
-            at_full,
-            "a tile dressed at (0, h) wears {} pieces, at (w, h) {}",
-            at_zero.len(),
-            at_full.len()
-        );
-    }
-
-    fn full_dressing() -> crate::pictures::platform::edge_dressing::EdgeDressing {
-        use crate::pictures::platform::picture::test_bitmap;
-        let piece = || Some(test_bitmap());
-        crate::pictures::platform::edge_dressing::EdgeDressing {
-            strips: [piece(), piece(), piece(), piece()],
-            corners: [piece(), piece(), piece(), piece()],
-        }
-    }
-
-    #[test]
-    fn a_full_dressing_is_worn_whole_at_zero_one_and_full_width() {
-        let dressing = full_dressing();
-        let all: Vec<usize> = (0..8).collect();
-        for w in [0.0, 1.0, 859.0] {
-            assert_eq!(
-                dressing_piece_indices(&dressing, CGSize::new(w, 1081.0)),
-                all,
-                "width {w}"
-            );
-        }
-    }
-
-    #[test]
-    fn an_unharvested_piece_still_gets_no_layer() {
-        let mut dressing = full_dressing();
-        dressing.strips[1] = None;
-        dressing.corners[3] = None;
-        assert_eq!(
-            dressing_piece_indices(&dressing, CGSize::new(0.0, 1081.0)),
-            vec![0, 2, 3, 4, 5, 6]
-        );
-    }
-
-    #[test]
-    fn the_piece_set_is_constant_over_random_sizes() {
-        let dressing = full_dressing();
-        let reference = dressing_piece_indices(&dressing, CGSize::new(859.0, 1081.0));
-        assert_eq!(reference.len(), 8);
-        // Seeded LCG.
-        let mut state: u64 = 0x5eed_d2e5_5100;
-        let mut next = move |n: u64| {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            (state >> 11) % n
-        };
-        for _ in 0..500 {
-            let w = next(1729) as f64;
-            let h = 1.0 + next(1081) as f64;
-            let size = CGSize::new(w, h);
-            assert_eq!(
-                dressing_piece_indices(&dressing, size),
-                reference,
-                "size {size:?}"
-            );
-        }
     }
 
     /// Core Animation replaces an animation added under a key already in use, so a nudge sharing
@@ -2565,6 +2488,83 @@ mod tests {
         assert!(!tile.picture.masksToBounds());
     }
 
+    /// The ring rides beside the picture, not in it, so a corner clip on the picture leaves the
+    /// outline, which lies outside the window, whole.
+    #[test]
+    fn a_corner_clip_leaves_the_hairline_whole() {
+        let container = CALayer::layer();
+        let tile = new_tile(&container);
+        clip_corners(&tile.picture, Some(12.0));
+        let parent = |layer: &CALayer| layer.superlayer().map(|parent| Retained::as_ptr(&parent));
+        assert_eq!(parent(&tile.ring), Some(&*container as *const CALayer));
+        assert!(!tile.ring.masksToBounds());
+        assert_eq!(parent(&tile.outline), Some(&*tile.ring as *const CALayer));
+    }
+
+    /// A pooled tile placed at a new size wears its hairline at that size, rounded to its window's
+    /// radius, and in front of its picture.
+    #[test]
+    fn the_hairline_is_laid_at_the_tiles_frame() {
+        let mut tile = strip_tile(rect(4.0, 32.0, 1720.0, 1081.0));
+        tile.radius = Some(16.0);
+        let frame = rect(4.0, 32.0, 859.0, 1081.0);
+        place_tile(&tile, frame, -2.0);
+        assert_eq!(tile.ring.frame(), frame);
+        assert_eq!(tile.ring.borderWidth(), RING_PT);
+        assert_eq!(tile.ring.cornerRadius(), 16.0);
+        assert_eq!(outline_bounds(&tile), rect(-0.25, -0.25, 859.5, 1081.5));
+        assert!(tile.ring.zPosition() > tile.picture.zPosition());
+        assert!(tile.ring.zPosition() < tile.picture.zPosition() + 0.25, "under a companion");
+
+        place_tile(&tile, rect(4.0, 32.0, 12.0, 400.0), -2.0);
+        assert_eq!(tile.ring.cornerRadius(), 6.0, "clamped to half the shorter side");
+    }
+
+    /// An entrance grows from no width: the ring's bounds ride the tile's leg, and its corner and
+    /// the outline's path go from the zero-width shape to the slot's on the same timing.
+    #[test]
+    fn a_resize_carries_the_hairline_on_the_tiles_timing() {
+        let timing = Timing {
+            begin: 100.0,
+            seconds: 0.35,
+            curve: MOTION_CURVE,
+        };
+        let (from, to) = (rect(4.0, 32.0, 0.0, 1081.0), rect(4.0, 32.0, 859.0, 1081.0));
+        let mut tile = strip_tile(to);
+        animate_tile_resize(&mut tile, from, to, timing);
+        let (start, end, begin) = animation_value(&tile.ring, "rini.tile.size", rect_of);
+        assert_eq!((start.size, end.size, begin), (from.size, to.size, 100.0));
+
+        let corner = basic(&tile.ring, "rini.tile.ring.corner");
+        let number = |value: Option<Retained<objc2::runtime::AnyObject>>| {
+            value.expect("a value").downcast_ref::<NSNumber>().expect("a number").doubleValue()
+        };
+        assert_eq!(
+            (number(corner.fromValue()), number(corner.toValue()), corner.beginTime()),
+            (0.0, 10.0, 100.0)
+        );
+
+        let path = basic(&tile.outline, "rini.tile.outline.path");
+        assert_eq!(path_bounds(path.fromValue()), rect(-0.25, -0.25, 0.5, 1081.5));
+        assert_eq!(path_bounds(path.toValue()), rect(-0.25, -0.25, 859.5, 1081.5));
+        assert_eq!(path.beginTime(), 100.0);
+    }
+
+    /// The ring's white is the focused window's or not, and with it the shadow's depth.
+    #[test]
+    fn the_rings_white_follows_focus() {
+        let tile = strip_tile(rect(4.0, 32.0, 859.0, 1081.0));
+        let alpha = |tile: &Tile| {
+            objc2_core_graphics::CGColor::alpha(tile.ring.borderColor().as_deref())
+        };
+        show_focus(&tile, true);
+        assert_eq!(alpha(&tile), ring_alpha(true));
+        assert_eq!(tile.shadow.shadowOpacity(), FOCUSED_SHADOW.opacity);
+        show_focus(&tile, false);
+        assert_eq!(alpha(&tile), ring_alpha(false));
+        assert_eq!(tile.shadow.shadowOpacity(), UNFOCUSED_SHADOW.opacity);
+    }
+
     /// A resize animates the shadow's silhouette and its mask's ring as paths. Handed over as
     /// pointers they failed objc2's encoding check, so a debug build panicked on the first resize.
     #[test]
@@ -2582,23 +2582,33 @@ mod tests {
             &silhouette_path(to, origin),
             timing,
         );
-        let path = |value: Option<Retained<objc2::runtime::AnyObject>>| {
-            let value = value.expect("a path");
-            // SAFETY: the value was made from a CGPath, which is what it is read back as.
-            let path: &objc2_core_graphics::CGPath =
-                unsafe { &*(Retained::as_ptr(&value) as *const objc2_core_graphics::CGPath) };
-            objc2_core_graphics::CGPath::bounding_box(Some(path)).size
-        };
-        assert_eq!(path(animation.fromValue()), from);
-        assert_eq!(path(animation.toValue()), to);
+        assert_eq!(path_bounds(animation.fromValue()).size, from);
+        assert_eq!(path_bounds(animation.toValue()).size, to);
+    }
+
+    /// The bounding box of a path an animation was given.
+    fn path_bounds(value: Option<Retained<objc2::runtime::AnyObject>>) -> CGRect {
+        let value = value.expect("a path");
+        // SAFETY: the value was made from a CGPath, which is what it is read back as.
+        let path: &objc2_core_graphics::CGPath =
+            unsafe { &*(Retained::as_ptr(&value) as *const objc2_core_graphics::CGPath) };
+        objc2_core_graphics::CGPath::bounding_box(Some(path))
+    }
+
+    fn outline_bounds(tile: &Tile) -> CGRect {
+        objc2_core_graphics::CGPath::bounding_box(tile.outline.path().as_deref())
+    }
+
+    fn basic(layer: &CALayer, key: &str) -> Retained<CABasicAnimation> {
+        // SAFETY: a read of the layer's own animation.
+        unsafe { layer.animationForKey(&NSString::from_str(key)) }
+            .expect("an animation under the key")
+            .downcast::<CABasicAnimation>()
+            .expect("a basic animation")
     }
 
     fn animation_value<T>(layer: &CALayer, key: &str, read: impl Fn(&NSValue) -> T) -> (T, T, f64) {
-        // SAFETY: a read of the layer's own animation.
-        let animation = unsafe { layer.animationForKey(&NSString::from_str(key)) }
-            .expect("an animation under the key")
-            .downcast::<CABasicAnimation>()
-            .expect("a basic animation");
+        let animation = basic(layer, key);
         let value = |v: Option<Retained<objc2::runtime::AnyObject>>| {
             read(v.expect("a value").downcast_ref::<NSValue>().expect("an NSValue"))
         };
@@ -2630,7 +2640,7 @@ mod tests {
     }
 
     /// The measured case, a tile 861 wide over a window 860 wide, riding its container: it is
-    /// moved inside the container at once, its shadow, mask and silhouette with it.
+    /// moved inside the container at once, its shadow, mask, silhouette and hairline with it.
     #[test]
     fn a_tile_riding_its_container_snaps_onto_its_window_at_once() {
         let mut tile = strip_tile(rect(865.0, 32.0, 861.0, 1081.0));
@@ -2639,6 +2649,8 @@ mod tests {
         let snapped = rect(865.0, 32.0, 860.0, 1081.0);
         assert_eq!(tile.picture.frame(), snapped);
         assert_eq!(tile.shadow.frame(), snapped);
+        assert_eq!(tile.ring.frame(), snapped);
+        assert_eq!(outline_bounds(&tile), rect(-0.25, -0.25, 860.5, 1081.5));
         assert_eq!(tile.shadow_mask.frame(), shadow_mask_frame(snapped.size));
         let silhouette = tile.shadow.shadowPath().expect("a silhouette");
         assert_eq!(
@@ -2664,7 +2676,7 @@ mod tests {
         snap_onto(&mut tile, STRIP_AT, rect(5.0, 32.0, 861.0, 1081.0), 100.2);
         let snapped = rect(866.0, 32.0, 861.0, 1081.0);
         assert_eq!(tile.picture.frame(), snapped);
-        for layer in [&tile.picture, &tile.shadow] {
+        for layer in tile.layers() {
             assert_eq!(
                 animation_value(layer, TILE_ANIMATION_KEY, point_of),
                 (from.origin, snapped.origin, 100.0)
@@ -2677,11 +2689,15 @@ mod tests {
         animate_tile_leg(&mut tile, resized_from, to, timing);
         let real = rect(4.0, 32.0, 860.0, 1081.0);
         snap_onto(&mut tile, STRIP_AT, real, 100.2);
-        let (start, end, begin) = animation_value(&tile.picture, "rini.tile.size", rect_of);
-        assert_eq!(
-            (start.size, end.size, begin),
-            (resized_from.size, real.size, 100.0)
-        );
+        for layer in tile.layers() {
+            let (start, end, begin) = animation_value(layer, "rini.tile.size", rect_of);
+            assert_eq!(
+                (start.size, end.size, begin),
+                (resized_from.size, real.size, 100.0)
+            );
+        }
+        let path = basic(&tile.outline, "rini.tile.outline.path");
+        assert_eq!(path_bounds(path.toValue()).size, CGSize::new(860.5, 1081.5));
     }
 
     /// Once its leg has played, the tile's model moves and nothing is installed again.

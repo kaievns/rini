@@ -21,6 +21,7 @@ and the pictures it draws are `pictures`' (`src/pictures/docs/README.md`).
 | `domain/motion/holes.rs` | Where the overlay is holed over a window that ends on screen, so the window keeps painting |
 | `domain/motion/z_group.rs` | `stack`, `container_z`: the three z-bands, and the application set that comes forward |
 | `domain/motion/tile.rs` | How a tile fits its picture to its frame: stretch or crop, the crop pieces, the stand-in's mode |
+| `domain/motion/hairline.rs` | The hairline every tile wears: the ring's width and white by focus, the outline's rect and stroke, the corner radius |
 | `platform/overlay.rs` | `TileOverlay`, the renderer: the `CALayer` tree and the one `CATransaction` per flight |
 
 ## The shape that matters
