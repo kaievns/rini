@@ -32,5 +32,6 @@ pub mod input;
 pub mod layout;
 pub mod pictures;
 pub mod switcher;
+pub mod transitions;
 pub mod windows;
 pub mod workspaces;
