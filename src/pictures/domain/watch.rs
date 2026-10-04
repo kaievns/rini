@@ -21,7 +21,7 @@ use crate::pictures::domain::target::PictureTarget;
 
 /// A window whose server frame is this close to where it ends, in each of x, y, width and height,
 /// has landed: the window server rounds each window on its own, and an app may settle a point or two
-/// off what it was asked. The same slack a transition draws a picture on its tile with.
+/// off what it was asked.
 pub const END_SLACK: f64 = 20.0;
 /// A window this close to where its tile starts is where frame zero expects it.
 const FRAME_ZERO_SLACK: f64 = 2.0;
@@ -190,7 +190,8 @@ fn clipped(frame: CGRect, display: CGRect) -> bool {
     frame.intersection(&display).area() > 0.0 && !wholly_on(frame, display)
 }
 
-fn near(a: CGRect, b: CGRect, slack: f64) -> bool {
+/// Whether `a` is within `slack` of `b` in each of x, y, width and height.
+pub fn near(a: CGRect, b: CGRect, slack: f64) -> bool {
     (a.origin.x - b.origin.x).abs() <= slack
         && (a.origin.y - b.origin.y).abs() <= slack
         && (a.size.width - b.size.width).abs() <= slack

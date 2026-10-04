@@ -8,6 +8,7 @@ use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use rini_geometry::stretch::is_a_resize;
 
 use crate::pictures::domain::coverage::{fits_frame, outgrows};
+use crate::pictures::domain::watch::{END_SLACK, near};
 
 /// How a tile's picture is fitted to the frame it is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -147,30 +148,16 @@ pub fn crop_pieces(picture: CGSize, frame: CGSize) -> [CropPiece; 4] {
     ]
 }
 
-/// Off by less than this, a tile and its window agree: under a quarter point nothing shows at the
-/// lift.
+/// A tile this close to its window agrees with it: under a quarter point nothing shows at the lift.
 pub const SNAP_FROM: f64 = 0.25;
 
-/// Off by more than this, the window has not landed where its tile ends: the slack a landing is
-/// judged within. See "Tiles snap to the real frame" in
-/// `src/animation/docs/animation-smoothness.md`.
-pub const SNAP_UP_TO: f64 = 20.0;
-
-/// Where a tile ending at `model` goes when its window really landed at `real`: onto `real` when
-/// an edge or a side is `SNAP_FROM` to `SNAP_UP_TO` off, nowhere otherwise. A strip pans by a
-/// fractional vector and the window server rounds each window on its own, so a tile of a rigid
-/// group can end a point from its window.
+/// Where a tile ending at `model` goes when its window really landed at `real`: onto `real` when an
+/// edge or a side is more than `SNAP_FROM` off and the window has landed (`END_SLACK`), nowhere
+/// otherwise. A strip pans by a fractional vector and the window server rounds each window on its
+/// own, so a tile of a rigid group can end a point from its window. See "Tiles snap to the real
+/// frame" in `src/animation/docs/animation-smoothness.md`.
 pub fn snap_to(model: CGRect, real: CGRect) -> Option<CGRect> {
-    let off = [
-        real.origin.x - model.origin.x,
-        real.origin.y - model.origin.y,
-        real.size.width - model.size.width,
-        real.size.height - model.size.height,
-    ]
-    .into_iter()
-    .map(f64::abs)
-    .fold(0.0, f64::max);
-    (SNAP_FROM..=SNAP_UP_TO).contains(&off).then_some(real)
+    (near(model, real, END_SLACK) && !near(model, real, SNAP_FROM)).then_some(real)
 }
 
 /// Interpolates a rect. Separated out and tested because getting this wrong produces an animation
@@ -539,13 +526,13 @@ mod tests {
     }
 
     #[test]
-    fn a_tile_snaps_only_from_a_quarter_point_to_twenty_points_off() {
+    fn a_tile_snaps_only_past_a_quarter_point_and_up_to_twenty_points_off() {
         let model = rect(4.0, 32.0, 861.0, 1081.0);
         let off = |d: f64| rect(4.0 + d, 32.0, 861.0, 1081.0);
-        for d in [0.25, -0.25, 1.0, 19.5, 20.0, -20.0] {
+        for d in [0.26, -0.26, 1.0, 19.5, 20.0, -20.0] {
             assert_eq!(snap_to(model, off(d)), Some(off(d)), "{d}");
         }
-        for d in [0.0, 0.2, -0.24, 20.5, -21.0, 400.0] {
+        for d in [0.0, 0.2, -0.24, 0.25, 20.5, -21.0, 400.0] {
             assert_eq!(snap_to(model, off(d)), None, "{d}");
         }
         assert_eq!(

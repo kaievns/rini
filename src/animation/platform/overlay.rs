@@ -25,13 +25,13 @@ use crate::animation::domain::motion::glide::{Leg, spring_omega};
 use crate::animation::domain::motion::holes::hole_in;
 use crate::animation::domain::motion::plan::{
     AnimationTarget, Banding, FlightPlan, GroupKey, Member, PlanDelta, Presented,
-    animation_targets, carries_out_and_back, group_relative, overlay_of, stale_overlay_layers,
+    animation_targets, carries_out_and_back, group_relative, stale_overlay_layers,
 };
 use crate::animation::domain::motion::nudge::nudge_samples;
 use crate::animation::domain::motion::score::{Curve, Value};
 use crate::animation::domain::motion::tile::{
     ContentMode, DressingAction, content_mode, crop_pieces, dressing_rebuild_allowed,
-    resize_in_flight, snap_to,
+    resize_in_flight,
 };
 use crate::animation::domain::motion::z_group::{Band, container_z};
 use crate::displays::domain::screen::CoordinateConverter;
@@ -1398,11 +1398,11 @@ impl TileOverlay {
         animate_tile_leg(entry, from, to, Timing::starting_now(duration));
     }
 
-    /// Moves a tile onto its window's real frame, `real` in the overlay's coordinates, when the
-    /// tile ends 0.25 to 20pt off it (`snap_to`), and says whether it moved. A tile riding a leg of
-    /// its own goes on along it, on the same timing, to the real frame; one riding its container
-    /// moves inside it at once. Shadow, mask, crop pieces and hairline follow. When to snap, once per
-    /// window per generation, is the caller's. See "Tiles snap to the real frame" in
+    /// Moves a tile onto its window's real frame, `real` in the overlay's coordinates, and says
+    /// whether the window has a tile to move. A tile riding a leg of its own goes on along it, on the
+    /// same timing, to the real frame; one riding its container moves inside it at once. Shadow,
+    /// mask, crop pieces and hairline follow. Whether to snap is the caller's, by `snap_to`, once per
+    /// window per generation, and is not checked again here. See "Tiles snap to the real frame" in
     /// `src/animation/docs/animation-smoothness.md`.
     pub fn snap_tile(&mut self, window: WindowId, real: CGRect) -> bool {
         let offset = self.tile_layers.get(&window).map(|entry| self.container_position(entry.key));
@@ -1411,9 +1411,9 @@ impl TileOverlay {
         };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
-        let snapped = snap_onto(entry, offset, real, objc2_quartz_core::CACurrentMediaTime());
+        snap_onto(entry, offset, real, objc2_quartz_core::CACurrentMediaTime());
         commit_now();
-        snapped
+        true
     }
 
     /// Shows the overlay; only an alpha change.
@@ -1565,19 +1565,14 @@ fn animate_tile_resize(entry: &mut Tile, from: CGRect, to: CGRect, timing: Timin
     }
 }
 
-/// Moves a tile under a container at `offset` onto `real`, both in the overlay's coordinates, when
-/// `snap_to` says it ends off it; on its leg's own timing while that plays at `now`. Callers hold
-/// the transaction.
-fn snap_onto(entry: &mut Tile, offset: CGPoint, real: CGRect, now: f64) -> bool {
-    let Some(real) = snap_to(overlay_of(entry.picture.frame(), offset), real) else {
-        return false;
-    };
+/// Moves a tile under a container at `offset` onto `real`, both in the overlay's coordinates; on its
+/// leg's own timing while that plays at `now`. Callers hold the transaction.
+fn snap_onto(entry: &mut Tile, offset: CGPoint, real: CGRect, now: f64) {
     let to = group_relative(real, offset);
     place_tile(entry, to, entry.picture.zPosition());
     if let Some((from, _, timing)) = entry.leg.filter(|(_, _, timing)| timing.plays_at(now)) {
         animate_tile_leg(entry, from, to, timing);
     }
-    true
 }
 
 /// The bar's picture at the strip's origin, at the size it covers, never stretched. See "The bar
@@ -2640,7 +2635,7 @@ mod tests {
     fn a_tile_riding_its_container_snaps_onto_its_window_at_once() {
         let mut tile = strip_tile(rect(865.0, 32.0, 861.0, 1081.0));
         let real = rect(4.0, 32.0, 860.0, 1081.0);
-        assert!(snap_onto(&mut tile, STRIP_AT, real, 100.0));
+        snap_onto(&mut tile, STRIP_AT, real, 100.0);
         let snapped = rect(865.0, 32.0, 860.0, 1081.0);
         assert_eq!(tile.picture.frame(), snapped);
         assert_eq!(tile.shadow.frame(), snapped);
@@ -2666,12 +2661,7 @@ mod tests {
         };
         let mut tile = strip_tile(to);
         animate_tile_leg(&mut tile, from, to, timing);
-        assert!(snap_onto(
-            &mut tile,
-            STRIP_AT,
-            rect(5.0, 32.0, 861.0, 1081.0),
-            100.2
-        ));
+        snap_onto(&mut tile, STRIP_AT, rect(5.0, 32.0, 861.0, 1081.0), 100.2);
         let snapped = rect(866.0, 32.0, 861.0, 1081.0);
         assert_eq!(tile.picture.frame(), snapped);
         for layer in [&tile.picture, &tile.shadow] {
@@ -2686,7 +2676,7 @@ mod tests {
         let mut tile = strip_tile(to);
         animate_tile_leg(&mut tile, resized_from, to, timing);
         let real = rect(4.0, 32.0, 860.0, 1081.0);
-        assert!(snap_onto(&mut tile, STRIP_AT, real, 100.2));
+        snap_onto(&mut tile, STRIP_AT, real, 100.2);
         let (start, end, begin) = animation_value(&tile.picture, "rini.tile.size", rect_of);
         assert_eq!(
             (start.size, end.size, begin),
@@ -2706,30 +2696,12 @@ mod tests {
         };
         let mut tile = strip_tile(to);
         animate_tile_leg(&mut tile, from, to, timing);
-        assert!(snap_onto(
-            &mut tile,
-            STRIP_AT,
-            rect(5.0, 32.0, 861.0, 1081.0),
-            100.5
-        ));
+        snap_onto(&mut tile, STRIP_AT, rect(5.0, 32.0, 861.0, 1081.0), 100.5);
         assert_eq!(tile.picture.frame().origin, CGPoint::new(866.0, 32.0));
         assert_eq!(
             animation_value(&tile.picture, TILE_ANIMATION_KEY, point_of).1,
             to.origin,
             "the leg that played is left as it was"
         );
-    }
-
-    #[test]
-    fn a_tile_on_its_window_or_far_from_it_does_not_snap() {
-        let frame = rect(865.0, 32.0, 861.0, 1081.0);
-        for real in [
-            rect(4.1, 32.0, 861.0, 1081.0),
-            rect(40.0, 32.0, 861.0, 1081.0),
-        ] {
-            let mut tile = strip_tile(frame);
-            assert!(!snap_onto(&mut tile, STRIP_AT, real, 100.0), "{real:?}");
-            assert_eq!(tile.picture.frame(), frame);
-        }
     }
 }

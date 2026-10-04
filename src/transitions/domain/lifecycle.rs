@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowId;
 
+use crate::animation::domain::motion::tile::snap_to;
+use crate::pictures::domain::watch::{END_SLACK, near, wholly_on};
+
 use super::timing::{COALESCE_WINDOW, HOLD_CAP, LIFT_GRACE};
 
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
@@ -21,10 +24,6 @@ pub const LANDING_PATIENCE: Duration = Duration::from_millis(150);
 pub const FINAL_BEFORE_END: Duration = Duration::from_millis(110);
 /// ... and never sooner than this after the motion starts.
 pub const FINAL_NOT_BEFORE: Duration = Duration::from_millis(40);
-/// A picture is drawn on its tile only if the frame it was taken at is this close to the tile's end.
-pub const FIT_SLACK: f64 = 20.0;
-/// A tile is moved onto its window's real frame when it ends between these two distances off it.
-pub const SNAP_FROM: f64 = 0.25;
 
 /// One press, or one burst merged in flight. Every picture asked for carries it, so one taken for an
 /// earlier end state is never drawn.
@@ -80,7 +79,7 @@ pub struct TileSummary {
 
 impl TileSummary {
     fn moves(&self) -> bool {
-        !same_frame(self.start, self.end, 0.5)
+        !near(self.start, self.end, 0.5)
     }
 }
 
@@ -129,7 +128,7 @@ impl StageSummary {
     fn background_at_frame_zero(&self) -> (Vec<(WindowId, CGRect)>, bool) {
         let strip = self.frame_zero_strip();
         let (seen, hidden): (Vec<_>, Vec<_>) = self.background().into_iter().partition(|(_, frame)| {
-            !strip.iter().any(|(w, s)| contains(*s, *frame) && self.opaque.contains(w))
+            !strip.iter().any(|(w, s)| wholly_on(*frame, *s) && self.opaque.contains(w))
         });
         (seen, !hidden.is_empty())
     }
@@ -442,12 +441,13 @@ impl Coordinator {
             return;
         }
         let Some(tile) = f.stage.tile(window) else { return };
-        if !same_frame(frame, tile.end, FIT_SLACK) {
+        if !near(frame, tile.end, END_SLACK) {
             return;
         }
         out.push(Command::Swap { generation, window });
-        let off = largest_offset(frame, tile.end);
-        if (SNAP_FROM..=FIT_SLACK).contains(&off) && f.snapped.insert(window) {
+        if let Some(frame) = snap_to(tile.end, frame)
+            && f.snapped.insert(window)
+        {
             out.push(Command::Snap { window, frame });
         }
         if why == Why::FocusChanged && f.stage.focus == Some(window) {
@@ -555,7 +555,7 @@ fn holes(stage: &StageSummary) -> Vec<CGRect> {
 fn changed_frames(before: &[(WindowId, CGRect)], after: &[(WindowId, CGRect)]) -> Vec<(WindowId, CGRect)> {
     after
         .iter()
-        .filter(|(w, f)| !before.iter().any(|(b, g)| b == w && same_frame(*f, *g, 0.5)))
+        .filter(|(w, f)| !before.iter().any(|(b, g)| b == w && near(*f, *g, 0.5)))
         .copied()
         .collect()
 }
@@ -568,34 +568,9 @@ fn extend_unique(into: &mut Vec<WindowId>, more: impl Iterator<Item = WindowId>)
     }
 }
 
-fn same_frame(a: CGRect, b: CGRect, slack: f64) -> bool {
-    largest_offset(a, b) <= slack
-}
-
-fn largest_offset(a: CGRect, b: CGRect) -> f64 {
-    [
-        a.origin.x - b.origin.x,
-        a.origin.y - b.origin.y,
-        a.size.width - b.size.width,
-        a.size.height - b.size.height,
-    ]
-    .into_iter()
-    .map(f64::abs)
-    .fold(0.0, f64::max)
-}
-
-/// Wholly on `display` within a point, and big enough to be a window rather than a sliver.
+/// Wholly on `display`, and big enough to be a window rather than a sliver.
 fn wholly_inside(frame: CGRect, display: CGRect) -> bool {
-    frame.size.width > 100.0
-        && frame.size.height > 100.0
-        && contains(display, frame)
-}
-
-fn contains(outer: CGRect, inner: CGRect) -> bool {
-    inner.origin.x >= outer.origin.x - 1.0
-        && inner.origin.y >= outer.origin.y - 1.0
-        && inner.origin.x + inner.size.width <= outer.origin.x + outer.size.width + 1.0
-        && inner.origin.y + inner.size.height <= outer.origin.y + outer.size.height + 1.0
+    frame.size.width > 100.0 && frame.size.height > 100.0 && wholly_on(frame, display)
 }
 
 #[cfg(test)]
@@ -828,12 +803,7 @@ mod tests {
         assert!(!has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })), "once");
         c.on(Event::Merge { stage: pan(), moved: false }, now);
         let g = c.generation();
-        assert!(has(&picture(&mut c, g, real), |c| matches!(c, Command::Snap { .. })), "again after a merge");
-        let mut rounding = pan().tiles[1].end;
-        rounding.origin.x += 0.2;
-        c.on(Event::Merge { stage: pan(), moved: false }, now);
-        let g = c.generation();
-        assert!(!has(&picture(&mut c, g, rounding), |c| matches!(c, Command::Snap { .. })), "not for rounding");
+        assert!(has(&picture(&mut c, g, real), |c| *c == Command::Snap { window: w(2), frame: real }), "again after a merge");
     }
 
     #[test]
