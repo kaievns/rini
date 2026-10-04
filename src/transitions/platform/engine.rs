@@ -443,6 +443,17 @@ impl RunningAnimation {
         true
     }
 
+    /// A push against an end: played now on a flight that moves, else kept, the latest push winning,
+    /// until the motion starts. Frame zero may not be on screen yet, and the bounce is drawn on the
+    /// containers frame zero installs.
+    fn push_bounce(&mut self, overshoot: CGPoint, duration: Duration) -> Option<(CGPoint, Duration)> {
+        if self.flown {
+            return Some((overshoot, duration));
+        }
+        self.bounce = Some((overshoot, duration));
+        None
+    }
+
     /// Focus handed over: `to` is drawn focused from now, `from` not.
     fn hand_over_focus(&mut self, to: WindowId, from: Option<WindowId>) {
         self.shown_focus = Some(to);
@@ -1818,10 +1829,8 @@ impl FlightEngine {
             );
         }
         let Some(running) = self.running.as_mut() else { return };
-        if running.flown {
+        if let Some((overshoot, duration)) = running.push_bounce(overshoot, duration) {
             self.play_bounce(overshoot, duration, Instant::now());
-        } else {
-            running.bounce = Some((overshoot, duration));
         }
     }
 
@@ -2386,6 +2395,20 @@ mod tests {
             assert_eq!(running.focused_look, None);
             assert!(matches!(running.take_picture(wid(3), &picture), Took::Nothing));
             assert_eq!(running.tiles.len(), 2);
+        }
+
+        /// A bounce from rest plays as the motion starts, never behind an overlay still waiting for
+        /// frame zero; one pushed into a flight that moves plays at once.
+        #[test]
+        fn a_push_before_the_flight_moves_waits_for_it_and_one_after_plays_at_once() {
+            let plays = Duration::from_millis(350);
+            let mut running = flight();
+            assert_eq!(running.push_bounce(CGPoint::new(-72.0, 0.0), plays), None);
+            assert_eq!(running.push_bounce(CGPoint::new(72.0, 0.0), plays), None);
+            assert_eq!(running.bounce, Some((CGPoint::new(72.0, 0.0), plays)), "the latest push");
+            running.flown = true;
+            assert_eq!(running.push_bounce(CGPoint::new(0.0, 72.0), plays), Some((CGPoint::new(0.0, 72.0), plays)));
+            assert_eq!(running.bounce, Some((CGPoint::new(72.0, 0.0), plays)), "kept for the start only");
         }
 
         #[test]
