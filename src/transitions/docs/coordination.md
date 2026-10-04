@@ -618,7 +618,8 @@ tile (`stand_in_mode`, `Stretch`): every mode fills the whole frame. A
 top-left crop that stopped the grid at the picture's edge and showed the
 backdrop in the growth was tried and read as a hole (3:28:10), the same
 hole recorded above for `contentsRect` past the edge. If the repainted
-picture lands once the motion has started after all, it is hard-cut onto the tile and
+picture lands once the motion has started after all, it is hard-cut onto the tile, which keeps flying
+stretched, a snap onto its window included, and
 `TileOverlay::swap` re-installs the tile's own track from the overlay's replica,
 the SAME begin, length and curve, while it plays (a plain move's track too, so a
 crop-drawn tile on a move re-keys the same way): the frame keeps its curve and only

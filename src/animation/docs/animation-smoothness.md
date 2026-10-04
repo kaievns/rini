@@ -260,8 +260,8 @@ checking again. A tile riding its container moves inside it at once, while the c
 carries it on. A tile on a track of its own is given the same track ending on
 the real frame (`Track::ending_at`), its begin, start and curve kept, so it
 lands there with its movement instead of popping at the lift
-(`a_tile_on_its_own_leg_snaps_on_the_same_timing`); once the track has played
-only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
+(`a_tile_on_its_own_leg_snaps_on_the_same_timing`), drawn stretched or cropped as it was; once the
+track has played only its model moves. Shadow, mask, crop pieces and hairline follow the tile.
 The caller is the coordinator (`src/transitions/domain/lifecycle.rs`); the
 flight engine carries its snaps out.
 
@@ -539,8 +539,12 @@ every animation from a track, through one builder (`animation` in `overlay.rs`):
 a track's `Form`, the constructor that made it, names the class
 (`every_track_is_installed_as_itself`), and a tile's track rides every layer of
 the tile, each value mapped from its key's frame
-(`a_tile_track_is_installed_on_every_layer_of_the_tile`); a tile's track judges
-its content mode again against its first and last key, set only when it changes.
+(`a_tile_track_is_installed_on_every_layer_of_the_tile`); a tile's new leg judges
+its content mode again against its first and last key, set only when it changes, and the leg it is
+on with its end moved, a snap, keeps it drawn as it was
+(`a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again`): judged again, a grow flying its
+old picture stretched turned crop-drawn when its repainted picture was cut in and it snapped a point
+short of the plan, the content jumping to 1:1 with its seam mid-resize.
 The presentation layer is read only by the trace.
 
 Measured 2026-10-04 with `tools/focuslab/playback.swift`: a layer at speed 0 in

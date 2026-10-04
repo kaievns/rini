@@ -998,7 +998,7 @@ impl Tree {
             .flat_map(|node| score.tracks(node).cloned().collect::<Vec<_>>())
             .collect();
         for track in &tracks {
-            self.install(track, tiles);
+            self.install(track, tiles, true);
         }
         self.rebank();
     }
@@ -1006,6 +1006,7 @@ impl Tree {
     /// Folds each edit into the replica and carries it out.
     fn play(&mut self, edits: &[Edit], tiles: &[OverlayTile]) {
         for edit in edits {
+            let new_leg = !matches!(edit, Edit::Add(track) if self.moves_only_the_end(track));
             self.replica.apply(edit);
             match edit {
                 Edit::Place(Node::Container(key), value) => {
@@ -1017,7 +1018,7 @@ impl Tree {
                 Edit::Place(Node::Tile(window), value) => {
                     self.place_tile(*window, as_frame(*value))
                 }
-                Edit::Add(track) => self.install(track, tiles),
+                Edit::Add(track) => self.install(track, tiles, new_leg),
                 Edit::Cut(node, channel) => self.cut(*node, *channel),
                 Edit::Ride(window, key) => self.ride(*window, *key, tiles),
                 Edit::Drop(node) => self.drop_node(*node),
@@ -1084,10 +1085,19 @@ impl Tree {
         place_tile(entry, frame, tile_z(within, entry.companion));
     }
 
+    /// Whether `track` is the replica's track on its node with only its end moved, as a snap makes it.
+    fn moves_only_the_end(&self, track: &Track) -> bool {
+        let end = track.keys()[track.keys().len() - 1].1;
+        self.replica
+            .track(track.node(), track.channel())
+            .is_some_and(|playing| playing.ending_at(end) == *track)
+    }
+
     /// Installs `track` on the layers that draw its node. A container's movement begins every accent
-    /// riding it again from the replica; a tile's first judges its content mode again against its
-    /// first and last key, and sets it only when it changes.
-    fn install(&mut self, track: &Track, tiles: &[OverlayTile]) {
+    /// riding it again from the replica; a tile's new leg first judges its content mode again against
+    /// its first and last key, and sets it only when it changes, while the leg it is on with its end
+    /// moved keeps the tile drawn as it was.
+    fn install(&mut self, track: &Track, tiles: &[OverlayTile], new_leg: bool) {
         match track.node() {
             Node::Container(key) => {
                 let riding: Vec<Track> = match track.channel() {
@@ -1106,7 +1116,7 @@ impl Tree {
                 };
                 let keys = track.keys();
                 let (first, last) = (as_frame(keys[0].1), as_frame(keys[keys.len() - 1].1));
-                if let Some(tile) = tiles.iter().find(|tile| tile.window == window) {
+                if new_leg && let Some(tile) = tiles.iter().find(|tile| tile.window == window) {
                     let mode = content_mode(tile.snapshot.coverage.covered, first.size, last.size);
                     if (mode == ContentMode::Crop) != entry.crop_of.is_some() {
                         set_tile_content(entry, &tile.snapshot, mode, last.size, scale);
@@ -2868,6 +2878,61 @@ mod tests {
                 "the twin goes with the floating container"
             );
             plays_exactly(&tree);
+        }
+
+        /// A snap moves where a tile's own leg ends and keeps how the tile is drawn: a grow flying its
+        /// old picture stretched stays stretched when its repainted picture is cut in and the tile
+        /// snaps a point short of the plan. Judged again on the snapped leg, it went 1:1 mid-resize
+        /// with its seam. A new leg is judged again: a shrink then crops the picture it has.
+        #[test]
+        fn a_snap_keeps_how_a_tile_is_drawn_and_a_new_leg_judges_it_again() {
+            use crate::animation::domain::motion::tile;
+            let window = wid(1);
+            let (from, to) = (rect(4.0, 32.0, 860.0, 1081.0), rect(4.0, 32.0, 1200.0, 1081.0));
+            let mut tiles = vec![overlay_tile(window, from, to, false)];
+            let plan = FlightPlan::from(reflow_plan(&[(window, from, to, false)], DISPLAY));
+            let mut slide = Look::Slide.choreography();
+            let stage = Stage {
+                plan: &plan,
+                drawn: &[window],
+                seconds: 0.35,
+                cue: Cue::Plain,
+                accents: &[],
+            };
+            let mut score = slide.pose(&stage);
+            let mut tree = Tree::new(CALayer::layer(), DISPLAY.size, 2.0);
+            tree.pose(&score, &tiles);
+            let started = slide.compose(&score, &stage, 100.0);
+            let mut play = |tree: &mut Tree, edits: &[Edit], tiles: &[OverlayTile]| {
+                for edit in edits {
+                    score.apply(edit);
+                }
+                tree.play(edits, tiles);
+            };
+            play(&mut tree, &started, &tiles);
+            let stretched = |tree: &Tree| tree.tile_layers[&window].crop_of.is_none();
+            assert!(stretched(&tree), "the old picture outgrows nothing");
+
+            let repainted = test_picture(CGSize::new(1199.0, 1081.0));
+            tiles[0].snapshot = repainted.clone();
+            tree.swap(window, &repainted, 100.15);
+            let real = rect(4.0, 32.0, 1199.0, 1081.0);
+            let snapped = tile::snap(&tree.replica, window, real, 100.15);
+            assert!(snapped.iter().any(|edit| matches!(edit, Edit::Add(_))), "on its leg");
+            play(&mut tree, &snapped, &tiles);
+            assert!(stretched(&tree), "drawn as it was");
+
+            let shrink = Track::between(
+                Node::Tile(window),
+                Channel::Base,
+                Value::Rect(real),
+                Value::Rect(rect(4.0, 32.0, 900.0, 1081.0)),
+                100.2,
+                0.35,
+                Curve::Bezier(MOTION_CURVE),
+            );
+            play(&mut tree, &[Edit::Add(shrink)], &tiles);
+            assert!(!stretched(&tree), "a new leg crops the picture it has");
         }
 
         /// A placed tile moves every layer of the tile at once: the picture, the caster and the ring,
