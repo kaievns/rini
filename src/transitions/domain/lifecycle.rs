@@ -111,10 +111,11 @@ pub struct StageSummary {
 }
 
 /// Whether `window`'s tile is drawn focused until focus hands over: the window focus is on as the
-/// flight begins, and the focus target only when focus is not moving to it or it flies its focused
-/// look. What frame zero pictures of either shows the same.
-pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Option<WindowId>, flies_focused_look: bool) -> bool {
-    losing_focus == Some(window) || focus == Some(window) && (losing_focus.is_none() || flies_focused_look)
+/// flight begins, and the focus target only when focus is not moving to it. What frame zero pictures
+/// of either shows the same. A focus target flying its focused look (`StageSummary::parked_focus`)
+/// is drawn focused with it.
+pub fn drawn_focused(window: WindowId, focus: Option<WindowId>, losing_focus: Option<WindowId>) -> bool {
+    losing_focus == Some(window) || focus == Some(window) && losing_focus.is_none()
 }
 
 impl StageSummary {
@@ -395,13 +396,6 @@ impl Coordinator {
     /// Whether the motion clock runs.
     pub fn is_moving(&self) -> bool {
         matches!(&self.state, State::Flying(f) if f.clock.is_some())
-    }
-
-    /// How far the motion is, 0 to 1; `None` before it starts.
-    pub fn progress(&self, now: Instant) -> Option<f64> {
-        let State::Flying(f) = &self.state else { return None };
-        let (started, duration) = f.clock?;
-        Some(if duration.is_zero() { 1.0 } else { (now - started).as_secs_f64() / duration.as_secs_f64() }.min(1.0))
     }
 
     /// What is left of the motion's clock at `now`: what a tile joining it travels for, and what a
@@ -1037,7 +1031,7 @@ mod tests {
         let watch = watch(&out).unwrap();
         assert_eq!(watch.generation, c.generation());
         assert_eq!(watch.focus.map(|(window, _)| window), Some(w(1)));
-        assert_eq!(c.progress(now + Duration::from_millis(100)), Some(0.0), "a merge that moves restarts the clock");
+        assert_eq!(c.remaining(now + Duration::from_millis(100)), Some(PLAYS), "a merge that moves restarts the clock");
     }
 
     #[test]
@@ -1166,12 +1160,11 @@ mod tests {
     #[test]
     fn the_window_focus_leaves_is_drawn_focused_and_the_target_only_once_it_has_the_look() {
         let (from, to) = (Some(w(1)), Some(w(2)));
-        assert!(drawn_focused(w(1), to, from, false), "frame zero pictures it focused");
-        assert!(!drawn_focused(w(2), to, from, false), "until focus hands over");
-        assert!(drawn_focused(w(2), to, from, true), "a parked target flies its focused look");
-        assert!(drawn_focused(w(2), to, None, false), "focus is not moving: it has it");
-        assert!(!drawn_focused(w(3), to, from, true));
-        assert!(!drawn_focused(w(3), None, None, false));
+        assert!(drawn_focused(w(1), to, from), "frame zero pictures it focused");
+        assert!(!drawn_focused(w(2), to, from), "until focus hands over");
+        assert!(drawn_focused(w(2), to, None), "focus is not moving: it has it");
+        assert!(!drawn_focused(w(3), to, from));
+        assert!(!drawn_focused(w(3), None, None));
     }
 
     #[test]

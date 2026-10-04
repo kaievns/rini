@@ -1240,7 +1240,7 @@ impl FlightEngine {
                         server_order: depths.get(&request.server_id.as_u32()).copied(),
                         depth: 0,
                         companion: None,
-                        focused: drawn_focused(request.window, drawing_focus, losing, false),
+                        focused: drawn_focused(request.window, drawing_focus, losing),
                         radius: self.pictures.knowledge(request.server_id).radius,
                     });
                     starts.push((request.window, start));
@@ -1299,7 +1299,7 @@ impl FlightEngine {
                                 depth: 0,
                                 companion: None,
                                 focused: !standing
-                                    || drawn_focused(request.window, drawing_focus, losing, false),
+                                    || drawn_focused(request.window, drawing_focus, losing),
                                 radius: self.pictures.knowledge(request.server_id).radius,
                             });
                             if standing {
@@ -1668,7 +1668,7 @@ impl FlightEngine {
                         server_order: depths.get(&window.server_id.as_u32()).copied(),
                         depth: 0,
                         companion: None,
-                        focused: drawn_focused(window.window, drawing_focus, losing, false),
+                        focused: drawn_focused(window.window, drawing_focus, losing),
                         radius: self.pictures.knowledge(window.server_id).radius,
                     });
                 }

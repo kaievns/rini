@@ -265,10 +265,10 @@ ring only at install. When focus hands over is the coordinator's
 Mechanics worth remembering:
 
 - **The curve.** One cubic Bezier, `MOTION_CURVE` `(0.16, 1, 0.3, 1)`, an
-  exponential ease-out. The actor's clock evaluates it by
+  exponential ease-out. A `Leg` and the score evaluate it by
   solving the Bezier for time (`CubicBezier::ease`, Newton then bisection)
   and Core Animation gets the same four control points (`timing_function`),
-  so the actor's motion and the drawn one agree; pinned by
+  so where a merge bends a container from and what is drawn agree; pinned by
   `the_clock_and_the_render_server_run_one_curve`. A flight that steps flies
   its containers on CSS ease-in-out (`EASE_IN_OUT`) instead, the same way:
   `Leg::Curve` carries its curve (see "The move flight"). Progress at quarter,

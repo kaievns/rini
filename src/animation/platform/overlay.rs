@@ -1872,7 +1872,7 @@ fn reparent(layer: &CALayer, container: &CALayer) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::animation::domain::motion::easing::{EASE_IN_OUT, ease};
+    use crate::animation::domain::motion::easing::EASE_IN_OUT;
 
     /// The window starts a band below the display's top and loses that much height; the canvas holds
     /// the whole display, lifted by the band so the top is clipped. With no band the two are the
@@ -1916,8 +1916,8 @@ mod tests {
         );
     }
 
-    /// `timing_function` hands Core Animation the four numbers the clock evaluates, so the clock
-    /// must solve the same Bezier: the motion curve, and the ease-in-out a stepping move's strip
+    /// `timing_function` hands Core Animation the four numbers a `Leg` and the score evaluate, so
+    /// they must solve the same Bezier: the motion curve, and the ease-in-out a stepping move's strip
     /// crosses on.
     #[test]
     fn the_clock_and_the_render_server_run_one_curve() {
@@ -1925,9 +1925,9 @@ mod tests {
             let s = step as f64 / 1000.0;
             let (x, y) = MOTION_CURVE.at(s);
             assert!(
-                (ease(x) - y).abs() < 1e-6,
+                (MOTION_CURVE.ease(x) - y).abs() < 1e-6,
                 "the curves diverge at s={s}: ease({x})={} y={y}",
-                ease(x)
+                MOTION_CURVE.ease(x)
             );
             let (x, y) = EASE_IN_OUT.at(s);
             assert!(
