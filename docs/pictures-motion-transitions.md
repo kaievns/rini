@@ -101,7 +101,8 @@ Idle ─request─▶ Preparing ─frame-zero pictures, or 80ms─▶ Playing �
 
 It owns generations: every tag carries one, a press merging in flight starts the next, and a picture
 is swapped in only if its generation is current and the frame it was taken at is within 20pt of its
-tile's end. A focus report arriving while Preparing is kept for Playing.
+tile's end. A focus report arriving while Preparing still arms the focus target's watch: the pictures
+service remembers it for a second.
 
 ## Decisions taken while Kai was away
 

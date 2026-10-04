@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowId;
+use rini_geometry::is_off_screen;
 
 use crate::animation::domain::motion::tile::snap_to;
-use crate::pictures::domain::watch::{END_SLACK, near, wholly_on};
+use crate::pictures::domain::watch::{END_SLACK, Why, near, wholly_on};
 
 use super::timing::{COALESCE_WINDOW, HOLD_CAP, LIFT_GRACE};
 
@@ -66,7 +67,8 @@ pub enum Start {
     Coalesced,
 }
 
-/// One drawn window, in screen points.
+/// One drawn window, in screen points: drawn now, or once its first picture lands (a reserved
+/// entrance).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileSummary {
     pub window: WindowId,
@@ -91,9 +93,10 @@ pub struct StageSummary {
     /// Where the real windows go: every moving window, drawn or not.
     pub final_frames: Vec<(WindowId, CGRect)>,
     pub focus: Option<WindowId>,
-    /// The window focus leaves. Its frame-zero picture still shows it focused.
+    /// The window focus leaves, when focus moves. Its frame-zero picture still shows it focused.
     pub losing_focus: Option<WindowId>,
-    /// Windows held for, overlay up, until their first picture lands: new and growing ones.
+    /// Windows this pass opens or grows, not painted at their new frames yet: watched until they
+    /// repaint, and held for, overlay up, until the motion starts.
     pub awaiting: Vec<WindowId>,
     pub start: Start,
     /// The motion's length. A merge that moves anything restarts the clock with its own.
@@ -105,6 +108,13 @@ pub struct StageSummary {
 }
 
 impl StageSummary {
+    /// The focus target when it starts off the display, where frame zero cannot picture it: it flies
+    /// its focused look, if the pictures service holds one that fits its tile.
+    pub fn parked_focus(&self) -> Option<WindowId> {
+        let window = self.focus?;
+        (!wholly_inside(self.tile(window)?.start, self.display)).then_some(window)
+    }
+
     /// Strip windows wholly on screen at their start: what frame zero must picture fresh.
     fn frame_zero_strip(&self) -> Vec<(WindowId, CGRect)> {
         self.tiles
@@ -133,6 +143,12 @@ impl StageSummary {
         (seen, !hidden.is_empty())
     }
 
+    /// The floating windows, composited behind the strip in its captures so a material in the strip
+    /// blurs them.
+    fn behind(&self) -> Vec<WindowId> {
+        self.tiles.iter().filter(|t| t.floating && !t.companion).map(|t| t.window).collect()
+    }
+
     /// Strip windows that end wholly on screen: whose landing is watched and whose tiles get holes.
     fn end_windows(&self) -> Vec<(WindowId, CGRect)> {
         self.final_frames
@@ -149,22 +165,9 @@ impl StageSummary {
         self.tiles.iter().find(|t| t.window == window)
     }
 
-    fn animated(&self) -> impl Iterator<Item = WindowId> + '_ {
-        self.tiles.iter().map(|t| t.window)
+    fn ends(&self) -> impl Iterator<Item = (WindowId, CGRect)> + '_ {
+        self.tiles.iter().map(|t| (t.window, t.end))
     }
-}
-
-/// Why the pictures service delivered a picture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Why {
-    /// The window landed where it ends.
-    Landed,
-    /// The focus target's picture changed after it was reported focused: its focused look.
-    FocusChanged,
-    /// A floating window behind the strip, refreshed.
-    Background,
-    /// The last capture before the lift.
-    Final,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -176,7 +179,7 @@ pub enum Event {
     Merge { stage: StageSummary, moved: bool },
     /// The frame-zero pictures arrived (or the service has nothing more to give).
     FrameZero(Generation),
-    /// One end-state picture, taken with the window at `frame`.
+    /// One end-state picture, taken with the window at `frame`. Frame zero's come as `FrameZero`.
     Picture { generation: Generation, window: WindowId, frame: CGRect, why: Why },
     /// An accent playing past the clock (the edge bounce) needs it to run this much longer from now.
     Extend(Duration),
@@ -192,48 +195,74 @@ pub enum Event {
 /// What the shell carries out.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
-    /// Hold off-screen capture work while the transition runs.
+    /// Hold the pictures service: the overlay is going up, and only the captures it waits for start.
     Hold,
+    /// The overlay lifted: the bar is pictured again, and the rest of the service's work still waits.
+    Settle,
+    /// The quiet after the lift ran out, or the transition was abandoned: nothing holds the service.
     Release,
-    /// Fresh pictures of the windows on screen at their start, and the background seen there.
-    AskFrameZero { generation: Generation, strip: Vec<(WindowId, CGRect)>, background: Vec<(WindowId, CGRect)> },
+    /// Fresh pictures of the windows on screen at their start, and the background seen there, with the
+    /// floating windows composited behind the strip.
+    AskFrameZero {
+        generation: Generation,
+        strip: Vec<(WindowId, CGRect)>,
+        background: Vec<(WindowId, CGRect)>,
+        behind: Vec<WindowId>,
+    },
     /// Overlay up, at frame zero.
     Show,
     Write(Vec<(WindowId, CGRect)>),
     /// A point of the overlay left clear over each window that ends on screen, so the window server
     /// counts it visible and the app keeps painting.
     Holes(Vec<CGRect>),
-    /// Watch the end state: each window in `landing` until it lands, the focus target until its
-    /// look changes, and the background, from `background_from` on, kept fresh.
+    /// Watch the end state as `EndWatch` says, in place of whatever was watched before.
     Watch(EndWatch),
     StopWatches,
     StartMoving,
     /// One more capture of every end window, before the lift.
-    AskFinal { generation: Generation, windows: Vec<(WindowId, CGRect)> },
+    AskFinal { generation: Generation, windows: Vec<(WindowId, CGRect)>, behind: Vec<WindowId> },
     /// Draw the delivered picture on its window's tile.
     Swap { generation: Generation, window: WindowId },
     /// Move the tile onto its window's real frame.
     Snap { window: WindowId, frame: CGRect },
     /// The picture just swapped in shows the window focused: keep it as its focused look.
     KeepFocusedLook { generation: Generation, window: WindowId },
+    /// Focus handed over: draw `to`'s tile focused and `from`'s not. Until then the tiles are drawn
+    /// focused where frame zero pictured focus: on `from`, and on `to` only when it flies its focused
+    /// look (`StageSummary::parked_focus`).
+    HandOverFocus { to: WindowId, from: Option<WindowId> },
     /// Overlay down. The quiet that follows ends with `Event::Quiet(generation)`.
     Lift { generation: Generation },
-    Warm(Vec<WindowId>),
+    /// Pictures for the next transition of every window the flight drew, at the frame each ended at.
+    Warm(Vec<(WindowId, CGRect)>),
     /// The overlay went up for a flight not already reported.
     ReportUp,
     ReportSettled,
 }
 
+/// The end state to watch, everything delivered under `generation`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EndWatch {
     pub generation: Generation,
+    /// End windows captured once they are where they end (`Settle::AsSoonAsThere`)...
     pub landing: Vec<(WindowId, CGRect)>,
+    /// ... and end windows a pass opened or grew, captured once they have repainted there
+    /// (`Settle::Repainted`).
+    pub awaiting: Vec<(WindowId, CGRect)>,
+    /// A window of `landing` not there by then is lost...
     pub landing_until: Instant,
-    pub focus: Option<WindowId>,
+    /// ... and one of `awaiting`, when a hold for it runs out.
+    pub awaiting_until: Instant,
+    /// The focus target and where it ends, watched until its look changes: only while focus is moving
+    /// to it and its focused look is still to come, never for a window `awaiting` watches, and never
+    /// for one ending off the display.
+    pub focus: Option<(WindowId, CGRect)>,
+    /// Floating windows that stay put, kept fresh once `focus`'s watch is done, if there is one...
     pub background: Vec<(WindowId, CGRect)>,
-    /// The background waits for the focus target's picture, except one capture this soon when it was
-    /// left out of frame zero.
+    /// ... except one capture this soon when they were left out of frame zero.
     pub background_initial: Option<Instant>,
+    /// The floating windows, composited behind the strip in its captures.
+    pub behind: Vec<WindowId>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -258,11 +287,29 @@ struct Flight {
     clock: Option<(Instant, Duration)>,
     /// The background was left out of frame zero.
     background_later: bool,
+    /// The focus target's focused look came in: focus has handed over.
     focus_in: bool,
     final_asked: bool,
     snapped: HashSet<WindowId>,
-    /// Every window this flight drew, across its merged passes: what the quiet warms.
-    animated: Vec<WindowId>,
+    /// Every window a pass of this flight opened or grew: watched until it repaints.
+    awaiting: Vec<WindowId>,
+    /// The awaited windows the overlay still holds for before the motion starts.
+    held: Vec<WindowId>,
+    /// Every window this flight drew, across its merged passes, at the frame it last ended at: what
+    /// the quiet warms.
+    animated: Vec<(WindowId, CGRect)>,
+}
+
+impl Flight {
+    /// The end windows, those awaited to repaint first and the rest second.
+    fn end_windows(&self) -> (Vec<(WindowId, CGRect)>, Vec<(WindowId, CGRect)>) {
+        self.stage.end_windows().into_iter().partition(|(w, _)| self.awaiting.contains(w))
+    }
+
+    /// The awaited windows the overlay can hold for: those a watch can see repaint.
+    fn holdable(&self) -> Vec<WindowId> {
+        self.end_windows().0.into_iter().map(|(w, _)| w).collect()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -270,7 +317,7 @@ enum State {
     #[default]
     Idle,
     Flying(Box<Flight>),
-    Settling { generation: Generation, owed: Vec<WindowId> },
+    Settling { generation: Generation, owed: Vec<(WindowId, CGRect)> },
 }
 
 /// The lifecycle. One per overlay.
@@ -351,6 +398,7 @@ impl Coordinator {
                 if let State::Settling { generation: g, owed } = &mut self.state
                     && *g == generation
                 {
+                    out.push(Command::Release);
                     out.push(Command::Warm(std::mem::take(owed)));
                     out.push(Command::ReportSettled);
                     self.state = State::Idle;
@@ -377,11 +425,17 @@ impl Coordinator {
         let generation = self.generation;
         let (background, background_later) = stage.background_at_frame_zero();
         out.push(Command::Hold);
-        out.push(Command::AskFrameZero { generation, strip: stage.frame_zero_strip(), background });
+        out.push(Command::AskFrameZero {
+            generation,
+            strip: stage.frame_zero_strip(),
+            background,
+            behind: stage.behind(),
+        });
         let mut animated = owed;
-        extend_unique(&mut animated, stage.animated());
+        extend_latest(&mut animated, stage.ends());
         self.state = State::Flying(Box::new(Flight {
             generation,
+            awaiting: stage.awaiting.clone(),
             stage,
             phase: Phase::Preparing { deadline: now + FRAME_ZERO_PATIENCE },
             clock: None,
@@ -389,6 +443,7 @@ impl Coordinator {
             focus_in: false,
             final_asked: false,
             snapped: HashSet::new(),
+            held: Vec::new(),
             animated,
         }));
         if !reported {
@@ -401,15 +456,12 @@ impl Coordinator {
             self.begin(stage, now, out);
             return;
         };
-        extend_unique(&mut f.animated, stage.animated());
+        extend_latest(&mut f.animated, stage.ends());
+        extend_unique(&mut f.awaiting, stage.awaiting.iter().copied());
         let changed = changed_frames(&f.stage.final_frames, &stage.final_frames);
         let focus_moved = f.stage.focus != stage.focus;
-        // Until the motion starts, a newcomer is held for too; once moving, it joins as it lands.
-        let mut awaiting = std::mem::take(&mut f.stage.awaiting);
-        if f.clock.is_none() {
-            extend_unique(&mut awaiting, stage.awaiting.iter().copied());
-        }
-        f.stage = StageSummary { awaiting, ..stage };
+        let newcomers = stage.awaiting.clone();
+        f.stage = stage;
         if matches!(f.phase, Phase::Preparing { .. }) {
             // Nothing is shown or written yet: the show takes the merged stage as it is.
             return;
@@ -420,6 +472,11 @@ impl Coordinator {
         f.final_asked = false;
         if focus_moved {
             f.focus_in = false;
+        }
+        // Until the motion starts, a newcomer is held for too; once moving, it joins as it lands.
+        if f.clock.is_none() {
+            let holdable = f.holdable();
+            extend_unique(&mut f.held, newcomers.into_iter().filter(|w| holdable.contains(w)));
         }
         if f.stage.kind.writes() && !changed.is_empty() {
             out.push(Command::Write(changed));
@@ -450,13 +507,18 @@ impl Coordinator {
         {
             out.push(Command::Snap { window, frame });
         }
-        if why == Why::FocusChanged && f.stage.focus == Some(window) {
+        // The focus target's look changing is the handover; one opened or grown shows it repainted.
+        let handover = why == Why::FocusChanged || f.awaiting.contains(&window);
+        if f.stage.focus == Some(window) && !f.focus_in && handover {
             f.focus_in = true;
-            out.push(Command::KeepFocusedLook { generation, window });
+            if why == Why::FocusChanged {
+                out.push(Command::KeepFocusedLook { generation, window });
+            }
+            out.push(Command::HandOverFocus { to: window, from: f.stage.losing_focus });
         }
         if let Phase::Holding { .. } = f.phase {
-            f.stage.awaiting.retain(|w| *w != window);
-            if f.stage.awaiting.is_empty() {
+            f.held.retain(|w| *w != window);
+            if f.held.is_empty() {
                 start_moving(f, now, out);
             }
         }
@@ -472,7 +534,7 @@ impl Coordinator {
             }
             Phase::Coalescing { until } => {
                 if now >= until {
-                    start_moving(f, now, out);
+                    hold_or_move(f, now, out);
                 }
             }
             Phase::Holding { deadline } => {
@@ -485,7 +547,11 @@ impl Coordinator {
                 let end = started + duration;
                 if !f.final_asked && f.stage.kind.watches_end() && now >= final_at(started, duration) {
                     f.final_asked = true;
-                    out.push(Command::AskFinal { generation: f.generation, windows: f.stage.end_windows() });
+                    out.push(Command::AskFinal {
+                        generation: f.generation,
+                        windows: f.stage.end_windows(),
+                        behind: f.stage.behind(),
+                    });
                 }
                 if now < end {
                     return;
@@ -497,7 +563,7 @@ impl Coordinator {
                     let owed = std::mem::take(&mut f.animated);
                     out.push(Command::StopWatches);
                     out.push(Command::Lift { generation });
-                    out.push(Command::Release);
+                    out.push(Command::Settle);
                     self.state = State::Settling { generation, owed };
                 }
             }
@@ -515,12 +581,20 @@ fn show(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
     if f.stage.kind.watches_end() {
         out.push(Command::Watch(end_watch(f, now)));
     }
-    if !f.stage.awaiting.is_empty() {
-        f.phase = Phase::Holding { deadline: now + HOLD_CAP };
-    } else if f.stage.start == Start::Coalesced {
+    f.held = f.holdable();
+    if f.stage.start == Start::Coalesced && f.held.is_empty() {
         f.phase = Phase::Coalescing { until: now + COALESCE_WINDOW };
     } else {
+        hold_or_move(f, now, out);
+    }
+}
+
+/// Holds for the awaited windows, up to `HOLD_CAP`, or starts the motion when there are none.
+fn hold_or_move(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
+    if f.held.is_empty() {
         start_moving(f, now, out);
+    } else {
+        f.phase = Phase::Holding { deadline: now + HOLD_CAP };
     }
 }
 
@@ -534,14 +608,26 @@ fn start_moving(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
 }
 
 fn end_watch(f: &Flight, now: Instant) -> EndWatch {
+    let (awaiting, landing) = f.end_windows();
     EndWatch {
         generation: f.generation,
-        landing: f.stage.end_windows(),
+        landing,
+        awaiting,
         landing_until: now + LANDING_PATIENCE,
-        focus: f.stage.focus,
+        awaiting_until: now + HOLD_CAP,
+        focus: watched_focus(f),
         background: f.stage.background(),
         background_initial: f.background_later.then(|| now + Duration::from_millis(30)),
+        behind: f.stage.behind(),
     }
+}
+
+/// The focus target and its end, while a focus report is coming and its focused look is not in. A
+/// watch armed by a report that never comes would hold the background back for the whole flight.
+fn watched_focus(f: &Flight) -> Option<(WindowId, CGRect)> {
+    let window = f.stage.focus.filter(|w| f.stage.losing_focus.is_some() && !f.focus_in && !f.awaiting.contains(w))?;
+    let end = f.stage.tile(window)?.end;
+    (!is_off_screen(f.stage.display, end)).then_some((window, end))
 }
 
 fn final_at(started: Instant, duration: Duration) -> Instant {
@@ -564,6 +650,16 @@ fn extend_unique(into: &mut Vec<WindowId>, more: impl Iterator<Item = WindowId>)
     for w in more {
         if !into.contains(&w) {
             into.push(w);
+        }
+    }
+}
+
+/// Adds each window with its frame, or moves one already there to its new frame.
+fn extend_latest(into: &mut Vec<(WindowId, CGRect)>, more: impl Iterator<Item = (WindowId, CGRect)>) {
+    for (window, frame) in more {
+        match into.iter_mut().find(|(held, _)| *held == window) {
+            Some(held) => held.1 = frame,
+            None => into.push((window, frame)),
         }
     }
 }
@@ -649,10 +745,11 @@ mod tests {
         let mut c = Coordinator::default();
         let out = c.on(Event::Begin(pan()), now);
         assert_eq!(out[0], Command::Hold);
-        let Command::AskFrameZero { generation, strip, background } = &out[1] else { panic!("{out:?}") };
+        let Command::AskFrameZero { generation, strip, background, behind } = &out[1] else { panic!("{out:?}") };
         assert_eq!(*generation, Generation(1));
         assert_eq!(strip, &vec![(w(1), r(3.0, 35.0, 860.0, 1079.0))], "the window parked off screen is not asked for");
         assert_eq!(background.len(), 1, "the floating window is seen through the strip's gaps");
+        assert_eq!(behind, &vec![w(9)], "and composited behind the strip, which may blur it");
         assert!(has(&out, |c| *c == Command::ReportUp));
         assert!(!has(&out, |c| matches!(c, Command::Show | Command::Write(_))), "nothing shows or moves before frame zero");
     }
@@ -727,8 +824,10 @@ mod tests {
         assert_eq!(holes.len(), 2);
         let watch = watch(&out).unwrap();
         assert_eq!(watch.landing.len(), 2);
+        assert!(watch.awaiting.is_empty());
         assert_eq!(watch.landing_until, now + LANDING_PATIENCE);
-        assert_eq!(watch.focus, Some(w(2)));
+        assert_eq!(watch.focus, Some((w(2), pan().tiles[1].end)));
+        assert_eq!(watch.behind, vec![w(9)]);
         assert!(has(&out, |c| *c == Command::StartMoving));
         assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: Generation(1), window: w(1) }),
             "the window losing focus is still drawn focused at frame zero");
@@ -757,6 +856,100 @@ mod tests {
     }
 
     #[test]
+    fn awaited_windows_are_watched_until_they_repaint_and_the_rest_as_soon_as_they_are_there() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.awaiting = vec![w(2)];
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage.clone()), now);
+        let shown = watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap();
+        assert_eq!(shown.landing, vec![(w(1), stage.tiles[0].end)]);
+        assert_eq!(shown.awaiting, vec![(w(2), stage.tiles[1].end)]);
+        assert_eq!(shown.awaiting_until, now + HOLD_CAP, "watched as long as it is held for");
+        c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now);
+        assert!(c.is_moving());
+
+        // A window grown by a pass merged in flight repaints too, and joins as it lands.
+        let mut grown = stage.clone();
+        grown.awaiting = vec![w(1)];
+        let out = c.on(Event::Merge { stage: grown, moved: false }, now + Duration::from_millis(50));
+        let merged = watch(&out).unwrap();
+        assert!(merged.landing.is_empty());
+        assert_eq!(merged.awaiting.len(), 2, "{merged:?}");
+        assert!(!has(&out, |c| *c == Command::StartMoving) && c.is_moving());
+    }
+
+    #[test]
+    fn the_overlay_holds_only_for_awaited_windows_a_watch_can_see() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.awaiting = vec![w(2)];
+        let off = r(1727.0, 35.0, 860.0, 1079.0);
+        stage.tiles[1].end = off;
+        stage.final_frames[1].1 = off;
+        let mut c = Coordinator::default();
+        c.on(Event::Begin(stage), now);
+        let out = c.on(Event::FrameZero(c.generation()), now);
+        assert!(has(&out, |c| *c == Command::StartMoving), "a window ending off the display never lands");
+        assert!(watch(&out).unwrap().awaiting.is_empty());
+    }
+
+    #[test]
+    fn a_newcomer_merged_while_the_passes_coalesce_is_held_for() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.kind = Kind::LayoutPass;
+        stage.start = Start::Coalesced;
+        let mut c = running(stage.clone(), now);
+        let mut opened = stage.clone();
+        opened.awaiting = vec![w(2)];
+        c.on(Event::Merge { stage: opened, moved: true }, now + Duration::from_millis(10));
+        assert!(c.on(Event::Tick { settled: true, landed: true }, now + COALESCE_WINDOW).is_empty());
+        assert!(!c.is_moving());
+        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: stage.tiles[1].end, why: Why::Landed }, now + COALESCE_WINDOW);
+        assert!(has(&out, |c| *c == Command::StartMoving));
+    }
+
+    #[test]
+    fn the_focus_target_is_watched_only_while_its_focused_look_is_to_come() {
+        let now = Instant::now();
+        let end = pan().tiles[1].end;
+        let mut c = running(pan(), now);
+        c.on(Event::Picture { generation: c.generation(), window: w(2), frame: end, why: Why::FocusChanged }, now);
+        let out = c.on(Event::Merge { stage: pan(), moved: false }, now);
+        assert_eq!(watch(&out).unwrap().focus, None, "its look is in");
+
+        let focus_of = |stage: StageSummary| {
+            let mut c = Coordinator::default();
+            c.on(Event::Begin(stage), now);
+            watch(&c.on(Event::FrameZero(c.generation()), now)).unwrap().focus
+        };
+        assert_eq!(focus_of(pan()), Some((w(2), end)));
+        let mut staying = pan();
+        staying.losing_focus = None;
+        assert_eq!(focus_of(staying), None, "no focus report comes to arm it");
+        let mut opened = pan();
+        opened.awaiting = vec![w(2)];
+        assert_eq!(focus_of(opened), None, "its repainted picture is watched already");
+        let mut elsewhere = pan();
+        elsewhere.tiles[1].end = r(-900.0, 35.0, 860.0, 1079.0);
+        assert_eq!(focus_of(elsewhere), None, "nothing can picture it");
+        let mut clipped = pan();
+        clipped.tiles[1].end = r(-200.0, 35.0, 860.0, 1079.0);
+        assert!(focus_of(clipped).is_some(), "a clipped end takes its one capture");
+    }
+
+    #[test]
+    fn a_focus_target_parked_off_the_display_is_the_one_that_flies_its_focused_look() {
+        let mut stage = pan();
+        assert_eq!(stage.parked_focus(), Some(w(2)));
+        stage.focus = Some(w(1));
+        assert_eq!(stage.parked_focus(), None, "frame zero pictures it");
+        stage.focus = None;
+        assert_eq!(stage.parked_focus(), None);
+    }
+
+    #[test]
     fn a_merged_press_starts_a_new_generation_and_rewrites_only_what_changed() {
         let now = Instant::now();
         let mut c = running(pan(), now);
@@ -770,7 +963,7 @@ mod tests {
         assert_eq!(writes(&out), vec![(w(2), r(20.0, 35.0, 860.0, 1079.0))]);
         let watch = watch(&out).unwrap();
         assert_eq!(watch.generation, c.generation());
-        assert_eq!(watch.focus, Some(w(1)));
+        assert_eq!(watch.focus.map(|(window, _)| window), Some(w(1)));
         assert_eq!(c.progress(now + Duration::from_millis(100)), Some(0.0), "a merge that moves restarts the clock");
     }
 
@@ -807,15 +1000,26 @@ mod tests {
     }
 
     #[test]
-    fn the_focus_targets_changed_picture_is_kept_as_its_focused_look() {
+    fn the_focus_targets_changed_picture_is_kept_as_its_focused_look_and_hands_focus_over() {
         let now = Instant::now();
         let mut c = running(pan(), now);
         let g = c.generation();
         let end = pan().tiles[1].end;
+        let out = c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
+        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. } | Command::HandOverFocus { .. })), "only the focus target's");
+        let landed = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::Landed }, now);
+        assert!(!has(&landed, |c| matches!(c, Command::HandOverFocus { .. })), "a landing is not the handover");
         let out = c.on(Event::Picture { generation: g, window: w(2), frame: end, why: Why::FocusChanged }, now);
         assert!(has(&out, |c| *c == Command::KeepFocusedLook { generation: g, window: w(2) }));
-        let out = c.on(Event::Picture { generation: g, window: w(1), frame: pan().tiles[0].end, why: Why::FocusChanged }, now);
-        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })), "only the focus target's");
+        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+
+        // A window opened or grown as the focus target hands over when it has repainted.
+        let mut opened = pan();
+        opened.awaiting = vec![w(2)];
+        let mut c = running(opened, now);
+        let out = c.on(Event::Picture { generation: c.generation(), window: w(2), frame: end, why: Why::Landed }, now);
+        assert!(has(&out, |c| *c == Command::HandOverFocus { to: w(2), from: Some(w(1)) }));
+        assert!(!has(&out, |c| matches!(c, Command::KeepFocusedLook { .. })));
     }
 
     #[test]
@@ -824,7 +1028,7 @@ mod tests {
         let mut c = running(pan(), now);
         assert!(c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(239)).is_empty());
         let out = c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(240));
-        assert!(matches!(out.as_slice(), [Command::AskFinal { windows, .. }] if windows.len() == 2));
+        assert!(matches!(out.as_slice(), [Command::AskFinal { windows, behind, .. }] if windows.len() == 2 && *behind == vec![w(9)]));
         assert!(c.on(Event::Tick { settled: false, landed: false }, now + Duration::from_millis(250)).is_empty(), "once");
         assert_eq!(final_at(now, Duration::from_millis(100)), now + FINAL_NOT_BEFORE);
     }
@@ -837,7 +1041,7 @@ mod tests {
         let out = c.on(Event::Tick { settled: true, landed: false }, end);
         assert!(!has(&out, |c| matches!(c, Command::Lift { .. })));
         let out = c.on(Event::Tick { settled: true, landed: true }, end + Duration::from_millis(16));
-        assert!(has(&out, |c| matches!(c, Command::Lift { .. })) && has(&out, |c| *c == Command::Release));
+        assert!(has(&out, |c| matches!(c, Command::Lift { .. })));
         assert!(!c.is_flying());
 
         let mut c = running(pan(), now);
@@ -846,19 +1050,36 @@ mod tests {
     }
 
     #[test]
-    fn the_quiet_warms_every_window_the_flight_drew_and_reports_it_settled() {
+    fn the_service_is_held_at_the_begin_settling_at_the_lift_and_released_at_the_quiet() {
+        let now = Instant::now();
+        let mut c = Coordinator::default();
+        assert_eq!(c.on(Event::Begin(pan()), now).first(), Some(&Command::Hold));
+        c.on(Event::FrameZero(c.generation()), now);
+        let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
+        let generation = c.generation();
+        assert!(out.ends_with(&[Command::StopWatches, Command::Lift { generation }, Command::Settle]), "{out:?}");
+        assert!(!has(&out, |c| *c == Command::Release), "the rest waits for the quiet");
+        let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
+        assert!(matches!(out.as_slice(), [Command::Release, Command::Warm(_), Command::ReportSettled]), "{out:?}");
+    }
+
+    #[test]
+    fn the_quiet_warms_every_window_the_flight_drew_where_it_last_ended() {
         let now = Instant::now();
         let mut c = running(pan(), now);
         let mut more = pan();
-        more.tiles.push(tile(w(5), r(1727.0, 35.0, 860.0, 1079.0), r(1727.0, 35.0, 860.0, 1079.0)));
+        let parked = r(1727.0, 35.0, 860.0, 1079.0);
+        more.tiles.push(tile(w(5), parked, parked));
+        more.tiles[0].end.size.width = 600.0;
         c.on(Event::Merge { stage: more, moved: false }, now);
         let out = c.on(Event::Tick { settled: true, landed: true }, now + PLAYS);
         let Some(Command::Lift { generation }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
         assert!(c.on(Event::Quiet(Generation(0)), now).is_empty(), "a stale quiet");
         let out = c.on(Event::Quiet(generation), now + PLAYS + SETTLE_BEFORE_CAPTURES);
-        let Command::Warm(windows) = &out[0] else { panic!() };
-        assert!(windows.contains(&w(5)), "a window only the merged pass drew is warmed too");
-        assert_eq!(out[1], Command::ReportSettled);
+        let Some(Command::Warm(windows)) = out.iter().find(|c| matches!(c, Command::Warm(_))) else { panic!() };
+        assert!(windows.contains(&(w(5), parked)), "a window only the merged pass drew is warmed too");
+        assert!(windows.contains(&(w(1), r(866.0, 35.0, 600.0, 1079.0))), "at the size the merge left it");
+        assert_eq!(windows.len(), 4);
     }
 
     #[test]
@@ -874,8 +1095,8 @@ mod tests {
         let out = c.on(Event::Tick { settled: true, landed: true }, now + 2 * PLAYS + Duration::from_millis(100));
         let Some(Command::Lift { generation }) = out.iter().find(|c| matches!(c, Command::Lift { .. })).cloned() else { panic!() };
         let out = c.on(Event::Quiet(generation), now + Duration::from_secs(2));
-        let Command::Warm(windows) = &out[0] else { panic!() };
-        assert!(windows.contains(&w(9)), "the first flight's windows are still owed");
+        let Some(Command::Warm(windows)) = out.iter().find(|c| matches!(c, Command::Warm(_))) else { panic!() };
+        assert!(windows.iter().any(|(window, _)| *window == w(9)), "the first flight's windows are still owed");
     }
 
     #[test]
