@@ -52,7 +52,8 @@ are written then and never before, for every kind; a 1pt hole is cut over every 
 on screen, so the window server counts it visible and its app keeps painting; and the end state is
 watched. A layout pass then waits for the reactor's follow-up passes (25ms) and for the windows it grows
 or opens to repaint (up to `HOLD_CAP`, and no longer for one whose picture the pictures service reports
-will not come, `Lost`); a strip movement moves at once.
+will not come, `Lost`, or one a merged pass sends where no watch can see it repaint); a strip movement
+moves at once.
 
 Frame zero's pictures that come after the overlay went up are swapped onto their tiles where they are
 (`Why::FrameZero`), and frame zero is never installed again, which under a flight that moves would jump
@@ -541,7 +542,8 @@ hole in the strip (recording of 2026-09-15 3:28:10). Its first picture once it
 has repainted there, taken within 20pt of the slot, admits it
 (`RunningAnimation::admit`): before the motion starts the zero-width tile
 joins the frame-zero composition (`install`), and the flight starts when the
-last awaited picture lands or is reported lost, or `HOLD_CAP` passes, so every tile flies in one
+last awaited picture lands, is reported lost or is sent off the display by a merged pass, or
+`HOLD_CAP` passes, so every tile flies in one
 `fly` transaction; after, it joins the flight in `GroupKey::Loose`
 (`add_tile`) for what is left of the clock. A picture that misses the flight
 altogether shows when the overlay lifts. SkyLight is quick only with nothing

@@ -652,9 +652,9 @@ impl Coordinator {
             f.focus_in = false;
             f.held_back = None;
         }
+        let holdable = f.holdable();
         // Until the motion starts, a newcomer is held for too; once moving, it joins as it lands.
         if f.clock.is_none() {
-            let holdable = f.holdable();
             extend_unique(&mut f.held, newcomers.into_iter().filter(|w| holdable.contains(w)));
         }
         if f.stage.kind.writes() && !changed.is_empty() {
@@ -668,6 +668,9 @@ impl Coordinator {
         out.push(Command::Holes(holes(f)));
         if f.stage.kind.watches_end() {
             out.push(Command::Watch(end_watch(f, now)));
+        }
+        for window in f.held.clone().into_iter().filter(|w| !holdable.contains(w)) {
+            hold_no_longer(f, window, now, out);
         }
         f.snap_landed(out);
     }
@@ -1321,6 +1324,24 @@ mod tests {
         assert!(c.on(Event::Lost { generation: g, window: w(2) }, now).is_empty(), "window 1 is still held for");
         let out = c.on(Event::Picture { generation: g, window: w(1), frame: stage.tiles[0].end, why: Why::Landed }, now);
         assert!(has(&out, |c| *c == Command::StartMoving));
+    }
+
+    /// A held window a merged pass sends where no watch can see it repaint, off the display, is held
+    /// for no longer: the motion starts at once rather than at the cap.
+    #[test]
+    fn a_held_window_a_merge_sends_off_the_display_is_held_for_no_longer() {
+        let now = Instant::now();
+        let mut stage = pan();
+        stage.awaiting = vec![w(2)];
+        let mut c = running(stage.clone(), now);
+        assert!(!c.is_moving());
+        let off = r(1727.0, 35.0, 860.0, 1079.0);
+        stage.tiles[1].end = off;
+        stage.final_frames[1].1 = off;
+        let out = c.on(Event::Merge { stage, moved: true }, now + Duration::from_millis(10));
+        assert!(watch(&out).unwrap().awaiting.is_empty(), "no watch sees it");
+        assert!(has(&out, |c| *c == Command::StartMoving), "{out:?}");
+        assert!(c.is_moving());
     }
 
     /// A merge's retarget watches again a window lost under the generation before, so only a loss under
