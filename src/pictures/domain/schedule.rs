@@ -1118,4 +1118,14 @@ mod tests {
         schedule.hold(Hold::Settling, now);
         assert!(matches!(schedule.next(now + BAR_REFRESH_DELAY, nothing_held), Next::Idle));
     }
+
+    /// See "A grow holds, then reveals" in `src/transitions/docs/coordination.md`.
+    #[test]
+    fn a_reveal_chase_polls_every_8ms_for_a_second() {
+        assert_eq!(REVEAL_CHASE_INTERVAL, Duration::from_millis(8));
+        assert_eq!(
+            REVEAL_CHASE_INTERVAL * REVEAL_CHASE_ATTEMPTS as u32,
+            Duration::from_secs(1)
+        );
+    }
 }

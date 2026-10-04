@@ -66,9 +66,6 @@ its instant, so a lifecycle is a test of events in and commands out. Nothing dri
 phase as `started`, `awaiting` and a quiet timer, and no flight carries a generation, so an event an
 old timer posted acts on whichever flight is current. Step 4 replaces them with the `Coordinator`.
 
-**Two names for the reveal hold.** `timing::HOLD_CAP` is the engine's, `lifecycle::HOLD_PATIENCE` the
-coordinator's; both are 300ms. One goes when step 4 wires the coordinator.
-
 **Some pure rules are still the engine's.** The flight's clock, when its frames are due, how a later
 pass extends its hold or merges into its tiles, what a held flight claims, how a late entrance joins,
 what a landing picture may change, how tiles band, a border's tile and which stand-ins are chased are

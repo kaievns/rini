@@ -11,12 +11,10 @@ use std::time::{Duration, Instant};
 use objc2_core_foundation::CGRect;
 use rini_core::ids::WindowId;
 
-use super::timing::{COALESCE_WINDOW, LIFT_GRACE};
+use super::timing::{COALESCE_WINDOW, HOLD_CAP, LIFT_GRACE};
 
 /// How long the overlay waits for its frame-zero pictures before showing what the cache holds.
 pub const FRAME_ZERO_PATIENCE: Duration = Duration::from_millis(80);
-/// How long a flight with new or growing windows waits, overlay up, for their first pictures.
-pub const HOLD_PATIENCE: Duration = Duration::from_millis(300);
 /// How long the end windows are watched to land after their frames are written.
 pub const LANDING_PATIENCE: Duration = Duration::from_millis(150);
 /// The last end-state capture starts this long before the clock ends, so a slow capture still lands.
@@ -518,7 +516,7 @@ fn show(f: &mut Flight, now: Instant, out: &mut Vec<Command>) {
         out.push(Command::Watch(end_watch(f, now)));
     }
     if !f.stage.awaiting.is_empty() {
-        f.phase = Phase::Holding { deadline: now + HOLD_PATIENCE };
+        f.phase = Phase::Holding { deadline: now + HOLD_CAP };
     } else if f.stage.start == Start::Coalesced {
         f.phase = Phase::Coalescing { until: now + COALESCE_WINDOW };
     } else {
@@ -779,7 +777,7 @@ mod tests {
         assert!(has(&out, |c| *c == Command::StartMoving), "the awaited picture releases the hold");
 
         let mut c = running(stage, now);
-        let out = c.on(Event::Tick { settled: true, landed: true }, now + HOLD_PATIENCE);
+        let out = c.on(Event::Tick { settled: true, landed: true }, now + HOLD_CAP);
         assert!(has(&out, |c| *c == Command::StartMoving), "or the hold runs out");
     }
 
