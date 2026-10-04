@@ -11,7 +11,8 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | | |
 |---|---|
 | **Coverage and fit** | `domain/coverage.rs` — `Coverage`, whether a capture is usable, whether it fits a frame, whether a grow outgrows it, whether a warm must recapture, whether a desktop picture spans its display, when a picture is stale |
-| **The cache's rules** | `domain/cache.rs` — `PictureCache`: never downgrade a usable picture, keep a blurred one over a grey one of the same size, carry the hairline over |
+| **The cache's rules** | `domain/cache.rs` — `PictureCache`: never downgrade a usable picture, keep a blurred one over a grey one of the same size, carry the hairline over, put a copy back only over the picture it was made of |
+| **Regions** | `domain/region.rs` — where a window lies in a batched composite: its pixel rect, whether the composite holds it, whether the composite is the shape of what it was asked for, its unit rect, and a crop piece's rect within a region |
 | **The blur** | `domain/translucency.rs` — putting a window's blur back into its picture, merging its own capture with a composite of what is below it |
 | **Settled** | `domain/settle.rs` — when a chase's capture is the window's settled rendering, by thumbprint |
 | **The stand-in** | `domain/stand_in.rs` — which window with no picture flies as the dark stand-in |
@@ -20,13 +21,13 @@ steps still to come, are in `docs/pictures-motion-transitions.md`.
 | **The schedule** | `domain/schedule.rs` — `Schedule`: the asks, holds and display changes in, the next call out; the warm filter, and the capture budgets and cadences |
 | **The service** | `platform/service.rs` — the `pictures` thread that runs the schedule, the cache and the pictures of the display the overlay flies on, and `Pictures`, the handle every client holds |
 | **What it tells clients** | `event.rs` — a picture the cache took, or a covering capture it refused for the blurred one it holds |
-| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap or a surface), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in |
+| **A picture** | `platform/picture.rs` — `Picture`: its `Pixels` (a bitmap, a surface, or a region of a batched composite), its `Coverage` and its `Route`; the stand-in and its nine-slice image; what the cache keeps of a picture and that it never keeps a stand-in; a region kept as a copy of its own |
 | **SkyLight** | `platform/skylight.rs` — every SkyLight and `CGWindowList` capture but the bar's own (its menu extras and ground, `src/bar/platform/menu_extras.rs`): one composite of a list of windows (the desktop backdrop, another app's bar), and the framed capture of one window with its hairline and, wholly on a display, its blur |
 | **ScreenCaptureKit** | `platform/screencapturekit.rs` — one listing of many windows, the capture of one listed window, and the desktop render; each reports back through a callback |
 | **The desktop and the bar, listed** | `platform/desktop.rs` — which windows a desktop or bar picture is composited from |
 | **The hairline** | `platform/edge_dressing.rs` — the window's hairline, cut out of a framed capture, and where on a tile it is worn |
-| **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, and an image's thumbprint |
-| **Layers** | `platform/layer.rs` — handing a picture to a layer, and the stand-in's nine-slice region |
+| **Bitmaps** | `platform/bitmap.rs` — a fresh RGBA context, an image's copy of its own, and an image's thumbprint |
+| **Layers** | `platform/layer.rs` — handing a picture to a layer, a region through `contentsRect`, and the stand-in's nine-slice region |
 
 The stretch tolerance a fit is judged by is `rini_geometry::stretch`, shared with `animation`'s "is
 this a resize" so the two agree.
@@ -117,7 +118,17 @@ background and is never waited on.
 
 **One place turns a picture into layer contents.** The flight overlay, the switcher's cards and the
 bar all go through `platform/layer.rs`, so a bitmap and a surface are handed over the one way objc2
-accepts.
+accepts, and a region as its whole composite with `contentsRect` on its part. A region's rect counts
+down from the composite's top, which is what `contentsRect` does in a flipped layer tree, and every
+client draws under a flipped `NSView`; in a tree that is not flipped it counts up from the bottom. A
+test renders both (`a_layer_shows_a_region_as_its_crop`).
+
+**A region is drawn in a transition and kept as a copy.** A picture cut from a batched composite stays a region of it while
+a transition draws it: a crop handed to Core Animation costs the main thread 2-5ms of decode per
+quarter window, and a copy of each 14ms per flight ("Where a moving focus change spends its time" in
+`src/animation/docs/capture-overlay-research.md`). A region keeps its whole composite alive, so at a
+release every region in the cache is replaced by a copy of its own, made on the service's thread, and
+only where the cache still holds the picture it was made of.
 
 ## Reading order
 

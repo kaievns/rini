@@ -25,7 +25,7 @@ use crate::pictures::domain::target::{PictureTarget, synthetic_window_id};
 use crate::pictures::event::Event;
 use crate::pictures::platform::desktop::{BarStrip, bar_strip, desktop_backdrop_windows};
 use crate::pictures::platform::edge_dressing::EdgeDressing;
-use crate::pictures::platform::picture::{Picture, stand_in_picture, stand_in_image};
+use crate::pictures::platform::picture::{Picture, Pixels, stand_in_picture, stand_in_image};
 use crate::pictures::platform::screencapturekit::{self, Prepared};
 use crate::pictures::platform::skylight::capture_list_via_skylight;
 
@@ -419,6 +419,10 @@ impl Service {
                     self.applied_transitions += 1;
                 }
                 shared.schedule.hold(hold, now);
+                if hold == Hold::Released {
+                    drop(shared);
+                    self.keep_copies();
+                }
             }
             Command::Forget(window) => {
                 shared.cache.forget(window);
@@ -439,6 +443,26 @@ impl Service {
                     None => warn!("no display geometry yet; cannot warm the snapshot cache"),
                 }
             }
+        }
+    }
+
+    /// Every region the cache holds, replaced by a copy of its own: a region keeps its whole composite
+    /// alive. Copied off the lock, and put back only over the picture it was made of. Why a transition
+    /// draws regions at all: "A region is drawn in a transition" in `src/pictures/docs/README.md`.
+    fn keep_copies(&self) {
+        let regions: Vec<(WindowId, Picture)> = {
+            let shared = self.shared.lock().unwrap();
+            shared
+                .cache
+                .iter()
+                .filter(|(_, picture)| matches!(picture.image, Pixels::Region { .. }))
+                .map(|(window, picture)| (*window, picture.clone()))
+                .collect()
+        };
+        for (window, region) in regions {
+            let Some(copy) = region.kept() else { continue };
+            let taken = region.taken;
+            self.shared.lock().unwrap().cache.replace_if(window, |held| held.taken == taken, copy);
         }
     }
 
@@ -687,6 +711,45 @@ mod tests {
         assert!(bar_read_kept(3, 3, 3), "quiet");
         assert!(!bar_read_kept(4, 3, 4), "asked, not yet applied");
         assert!(!bar_read_kept(3, 3, 4), "began during the read");
+    }
+
+    /// The thread's side of a service with no thread, ScreenCaptureKit or sink behind it.
+    fn detached_service() -> (Service, Arc<Mutex<Shared>>) {
+        let (_commands, requests) = channel::channel();
+        let (done_tx, done) = channel::channel();
+        let shared = Arc::new(Mutex::new(Shared::default()));
+        let service = Service {
+            requests,
+            done,
+            done_tx,
+            shared: shared.clone(),
+            transitions: Arc::default(),
+            applied_transitions: 0,
+            sinks: Vec::new(),
+        };
+        (service, shared)
+    }
+
+    /// No region stays in the cache past a release: each is replaced by a copy of its own, stamped as
+    /// it was, and a picture that is not a region is left as it is.
+    #[test]
+    fn a_release_keeps_every_region_as_a_copy() {
+        let (mut service, shared) = detached_service();
+        let region = crate::pictures::platform::picture::test_region();
+        let taken = region.taken;
+        shared.lock().unwrap().cache.insert(wid(1), region);
+        shared.lock().unwrap().cache.insert(wid(2), sized(859.0, 1081.0));
+        service.apply(Command::Hold(Hold::Transition));
+        assert!(matches!(
+            shared.lock().unwrap().cache.get(wid(1)).unwrap().image,
+            Pixels::Region { .. }
+        ), "held: still a region");
+        service.apply(Command::Hold(Hold::Released));
+        let shared = shared.lock().unwrap();
+        let kept = shared.cache.get(wid(1)).unwrap();
+        assert!(matches!(kept.image, Pixels::Bitmap(_)));
+        assert_eq!(kept.taken, taken);
+        assert!(matches!(shared.cache.get(wid(2)).unwrap().image, Pixels::Bitmap(_)));
     }
 
     /// The switcher draws what `usable_many` returns, in its own order, and never a sliver.

@@ -90,6 +90,18 @@ impl<T: HasCoverage + CarriesOver> PictureCache<T> {
         self.entries.get(&window).filter(|s| s.coverage().is_usable())
     }
 
+    /// Puts `with` in place of what is held of `window`, if what is held is still what `still` says:
+    /// a copy made off the lock replaces only the picture it was made of, never a newer one.
+    pub fn replace_if(&mut self, window: WindowId, still: impl FnOnce(&T) -> bool, with: T) -> bool {
+        match self.entries.get_mut(&window) {
+            Some(held) if still(held) => {
+                *held = with;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn forget(&mut self, window: WindowId) { self.entries.remove(&window); }
 
     /// Every cached entry.
@@ -230,6 +242,22 @@ mod tests {
         cache.insert(wid(1), coverage((40.0, 1081.0), (859.0, 1081.0)));
         assert!(cache.get(wid(1)).is_some(), "held");
         assert!(cache.usable(wid(1)).is_none(), "but not drawable");
+    }
+
+    /// A copy replaces only the picture it was made of: a capture that landed while it was being
+    /// made is newer, and stays.
+    #[test]
+    fn a_copy_replaces_only_the_picture_it_was_made_of() {
+        let mut cache = cache();
+        let held = coverage((859.0, 1081.0), (859.0, 1081.0));
+        cache.insert(wid(1), held);
+        let copy = coverage((859.0, 1081.0), (859.5, 1081.0));
+        assert!(!cache.replace_if(wid(1), |now| *now != held, copy), "replaced meanwhile");
+        assert_eq!(cache.get(wid(1)), Some(&held));
+        assert!(cache.replace_if(wid(1), |now| *now == held, copy));
+        assert_eq!(cache.get(wid(1)), Some(&copy));
+        assert!(!cache.replace_if(wid(2), |_| true, copy), "nothing held");
+        assert!(cache.get(wid(2)).is_none());
     }
 
     #[test]

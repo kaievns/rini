@@ -173,14 +173,9 @@ struct RunningAnimation {
     _clock: Option<RepeatingTimer>,
 }
 
-/// The thumbprint of a snapshot's bitmap; `None` for a surface, which cannot be compared.
+/// The thumbprint of a snapshot's bitmap or region; `None` for a surface, which cannot be compared.
 fn bitmap_thumbprint(snapshot: &Picture) -> Option<Vec<u8>> {
-    match &snapshot.image {
-        crate::pictures::platform::picture::Pixels::Bitmap(image) => {
-            crate::pictures::platform::bitmap::thumbprint(image)
-        }
-        _ => None,
-    }
+    crate::pictures::platform::bitmap::thumbprint(&*snapshot.image.bitmap()?)
 }
 
 /// Writes every tile's destination back from the merged plan: a member the pass did not compose
