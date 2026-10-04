@@ -557,7 +557,11 @@ joins frame zero, posed again with it, and the flight starts when the
 last awaited picture lands or `HOLD_CAP` passes, so every tile starts in the one
 transaction the motion starts in; after, it is merged in as a pass holding it alone and joins the
 flight in `GroupKey::Loose` on a track of its own for what is left of the clock
-(`a_late_entrance_joins_on_a_track_of_its_own`). A picture that misses the flight
+(`a_late_entrance_joins_on_a_track_of_its_own`). One admitted once the clock has run out, while the
+lift waits, has nothing left to travel and is placed in its slot at once
+(`a_late_entrance_with_no_flight_left_is_placed_in_its_slot`): handed to Core Animation as an
+animation of no length, it grew from no width over Core Animation's default 0.25s and the lift waited
+for it. A picture that misses the flight
 altogether shows when the overlay lifts. SkyLight is quick only with nothing
 in front of it: 27ms for one call alone, 170-300ms under load and 204ms behind
 four ScreenCaptureKit captures ("SkyLight in parallel" in

@@ -589,7 +589,9 @@ Two rows are rules for whatever plays a score:
 - **No length.** A track of no length is a cut in the score and 0.25s in Core
   Animation, so a renderer places the node, installs nothing, and takes away
   what played under the track's key, as the score's track replaces it
-  (`a_track_of_no_length_installs_nothing`).
+  (`a_track_of_no_length_installs_nothing`). Slide makes none: what it would move over no length
+  it places. A reserved entrance admitted once the clock has run out is the case that reaches it
+  ("The reservation fallback" in `src/transitions/docs/coordination.md`).
 
 `Score::settled` is every track ended, and the lift waits for the flight's
 (`FlightScore::settled`). The overlay used to compare the presentation with the model within 0.5pt,

@@ -1061,6 +1061,38 @@ mod tests {
         assert_eq!(bent.delta.joined_tiles, [(wid(9), GroupKey::Loose)]);
     }
 
+    /// A window entering once nothing is left of the flight's clock, while the lift waits, is placed
+    /// in its slot and plays nothing.
+    #[test]
+    fn a_late_entrance_with_no_flight_left_is_placed_in_its_slot() {
+        let mut flight = Flight::posed(&strip(1, 2, -863.0));
+        flight.start(PLAIN, &[]);
+        let slot = column(2.0, 859.0);
+        let mut entrance = ReflowPlan::empty();
+        entrance.entrances.push((wid(9), entrance_from(slot), slot));
+        flight.drawn.push(wid(9));
+        let now = BEGIN + PLAIN + 0.1;
+        let pass = Pass {
+            plan: &entrance,
+            pan: None,
+            focus: None,
+            viewport: DISPLAY,
+            drawn: &flight.drawn,
+            seconds: 0.0,
+            cue: Cue::Plain,
+            accent: None,
+        };
+        let bent = flight.slide.retarget(&flight.score, &flight.plan, &pass, now);
+        assert_eq!(bent.edits, [
+            Edit::Place(
+                Node::Container(GroupKey::Loose),
+                Value::Point(CGPoint::new(0.0, 0.0))
+            ),
+            Edit::Ride(wid(9), GroupKey::Loose),
+            Edit::Place(Node::Tile(wid(9)), Value::Rect(slot)),
+        ]);
+    }
+
     /// A window the flight no longer draws leaves the score with its tracks, and so does a container
     /// it leaves empty, with its leg.
     #[test]
