@@ -53,7 +53,8 @@ skipped its first frames.
   curves, depth bands, the bounce and the nudge, resizes and the score, and what each earlier model
   cost
 - [`capture-overlay-research.md`](capture-overlay-research.md) — the overlay measured: why it is
-  one opaque window, its level and coverage, its shadows, and the handover
+  one opaque window, its level and coverage, its shadows, a focus change sequenced behind it and
+  where a moving one spends its time, and the handover
 - What the pictures it draws cost and return is
   [`src/pictures/docs/capture-research.md`](../../pictures/docs/capture-research.md); when a flight
   does what is [`src/transitions/docs/coordination.md`](../../transitions/docs/coordination.md)

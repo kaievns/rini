@@ -26,14 +26,14 @@ impl Reactor {
     ///
     /// The display is published first because the actor silently declines to animate before it knows
     /// the geometry, which reads as "the debug command did nothing".
-    fn ask_animation_actor(&mut self, event: engine::Event, sent: String) -> EventOutcome {
+    fn ask_flight_engine(&mut self, event: engine::Event, sent: String) -> EventOutcome {
         self.publish_animation_display();
         let line = match &self.communication_manager.transitions_tx {
             Some(tx) => {
                 _ = tx.send(event);
                 sent
             }
-            None => "the workspace animation actor is not running".to_string(),
+            None => "the flight engine is not running".to_string(),
         };
         EventOutcome::no_change().with_stdout_line(line)
     }
@@ -44,7 +44,7 @@ impl Reactor {
         dy: i32,
         duration_ms: u64,
     ) -> anyhow::Result<EventOutcome> {
-        Ok(self.ask_animation_actor(
+        Ok(self.ask_flight_engine(
             engine::Event::DebugSlide {
                 dx: dx as f64,
                 dy: dy as f64,

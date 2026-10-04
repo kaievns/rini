@@ -15,7 +15,7 @@ knows the features and converts what they emit.
 | `reactor/space_affinity.rs` | Which space a window is on — the gathering |
 | `reactor/space_resolution.rs` | Which space a window is on — the rules, pure |
 | `reactor/query.rs` | Answers from a borrowed `StateView` |
-| `reactor/present.rs` | The frame-writing capability: record a destination, number the write |
+| `reactor/present.rs` | The frame-writing capability: record a destination, number the write; and `instant_requests`, what a pass that does not fly sends one application |
 | `reactor/bar.rs` | The bar's half here: its model built from the stores after every batch and sent only when it changed, and what a click on it asks for |
 | `reactor/managers.rs` | The handles: eight manager structs plus the layout manager |
 | `reactor/tests/` | The integration tests, one file per subject, over `reactor/tests/fixtures.rs` |
@@ -23,6 +23,7 @@ knows the features and converts what they emit.
 | `api/` | The Mach IPC backend bound to the reactor, and the shapes a query answers in |
 | `hotkeys/` | The controller: app launches and which apps get a thread (the rule is `windows::domain::app_threads`), hotkey registration, config reload. `hotkeys/lower.rs` is the translation from a bound `Action` to a `reactor::Command`, which is where the tests are |
 | `notifications.rs` | The NSWorkspace demultiplexer |
+| `power.rs` | Low Power Mode, read at start and kept current from its notification: the input tap and the reactor's flight decision read it |
 | `boot.rs` | What the flags and the config file say before anything is built: whether to restore, and the config-or-defaults fallback |
 | `launch_agent.rs`, `startup.rs`, `logging.rs`, `channels.rs` | The service plist, configured startup commands, tracing, and the span-carrying channel every actor is wired with |
 

@@ -47,7 +47,7 @@ code; reintroducing it in `trace` itself no longer compiles, since there is no e
 ## 2. `transitions/domain/admission.rs`
 
 Seven pure functions governing what happens when a layout pass arrives while windows are still
-flying, and no tests at all. Every function is `pub(in crate::animation)`, so `dead_code` could not
+flying, and no tests at all. Every function is `pub(in crate::transitions)`, so `dead_code` could not
 see them either.
 
 25 tests. Three of the rules were probed by breaking them, and each was caught:

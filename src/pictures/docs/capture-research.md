@@ -52,6 +52,51 @@ Two consequences:
    the whole budget for a 180ms animation. Captures must be warm before the
    switch key is pressed.
 
+## What a capture costs in a press
+
+### Frame zero, a kept filter and a stream
+
+Measured 2026-10-02 in the runs of "Sequencing a focus change behind the overlay"
+(`src/animation/docs/capture-overlay-research.md`, branch `scratch/perf-timing`): load average 6 to 11
+with the endpoint agents busy, so the absolute numbers are a loaded machine's; the comparisons hold.
+Times in ms, p50/p99.
+
+**Frame zero:** one batched SkyLight call of the on-screen windows, 26-33 / 55-76, against 71 / 163
+for one call per window (three windows). A crop of the batched picture is identical to the window's
+own capture (0 to 0.02% of pixels differ) unless windows overlap: a floating window under two tiled
+ones put 60% of the pixels off.
+
+**No repaint notification.** `WindowUpdated` (723), registered with every window asked for through
+`SLSRequestNotificationsForWindows`, delivered nothing in 40s across 128 windows while five windows
+changed, among them a parked VS Code seven times. Parked windows do repaint.
+
+**A ScreenCaptureKit filter can be kept.** One window list, then each window captured through its
+kept `SCContentFilter`: 22.8ms against 83 for a fresh list plus 26 for the capture, and the same
+picture in 61 of 63 windows, 62 of 63 after four strip moves; the misses were windows whose content
+was changing.
+
+**A low-rate `SCStream` costs nothing while a window is still and a lot while frames flow.** Four
+streams on still windows delivered one frame each in 15s. Sixteen streams at 2fps delivered 855
+frames with pixels in 30s, of which 90 differed from the one before, and held the WindowServer at
+43% CPU against 9.5% without them. A frame's arrival is not a change signal; comparing it is.
+SkyLight captures were not slowed by the streams.
+
+### A SkyLight capture costs what the time since the previous one says
+
+Measured 2026-10-03 on an idle machine with the `tools/focuslab/` probes (`spacing.swift`,
+`coldsize.swift`, `gpuwarm.swift`, `qos.swift`, `keepalive.swift`, `par.swift`; see
+`tools/focuslab/README.md`). It is the time since the last capture, not the picture's size:
+
+```
+gap since the last capture   0     5     10    20    35    60    120   300   800 ms
+capture, p50                 15.9  15.7  16.8  21.7  24.1  29.9  39.1  43.0  43.3 ms
+```
+
+4.9 and 7.4 Mpx cost the same cold (39-47) and warm (21-23). A 20ms CPU spin in the calling
+process before a cold capture cut it to 33; a 20ms GPU burst, the caller's QoS, a 1pt animating
+window and tiny keep-alive captures did nothing. Calls on separate `SLSNewConnection`s still run
+one at a time. The frame-zero capture is always the cold one: 27-35 in a press.
+
 ## What ScreenCaptureKit returns
 
 `SCContentFilter(desktopIndependentWindow:)` plus `SCScreenshotManager` returns
@@ -1164,8 +1209,8 @@ Options, in order of expected value:
    covering adjacent workspaces keeps the cache continuously fresh with zero
    work at switch time. Wants a budget (frontmost window of workspace n±1),
    not every window. Measured since: sixteen streams at 2fps held the window server at 43% CPU against
-   9.5% without them, and a frame's arrival is not a change signal ("Sequencing a focus change behind
-   the overlay" in `src/animation/docs/capture-overlay-research.md`).
+   9.5% without them, and a frame's arrival is not a change signal ("What a capture costs in a
+   press").
 2. **Change-signal-driven warming.** Use signals already flowing — AX title
    changes, the CGS window events `window_notify` subscribes to — as "picture
    is dirty" triggers. Misses silent repaints. The window server's own

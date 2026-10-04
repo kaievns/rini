@@ -1,10 +1,12 @@
 //! What a flight is.
 //!
-//! One pass over the layout becomes a flight: which windows move as a rigid group, which z-band each
-//! belongs to, and whether a picture that arrived mid-flight is worth swapping in. Decided over ids,
-//! frames and progress fractions, with nothing of Core Animation in it. When the pictures service makes
-//! the captures a flight asks for is `crate::pictures::domain::schedule`. Design in
-//! `src/transitions/docs/coordination.md`.
+//! One pass over the layout becomes a flight: how a fresh group begins moving, whether a picture
+//! landing in flight is swapped in and which tiles the focus refresh recaptures, what a pass asks for
+//! the windows it has no picture of and whose hairline is harvested, which unmanaged window traces a
+//! tile as its border, whether a pass is worth an overlay, how far the real windows are at the
+//! handover, and what the flight reports. Decided over ids, frames and progress fractions, with
+//! nothing of Core Animation in it. When the pictures service makes the captures a flight asks for is
+//! `crate::pictures::domain::schedule`. Design in `src/transitions/docs/coordination.md`.
 
 use objc2_core_foundation::CGRect;
 use std::collections::{HashMap, HashSet};

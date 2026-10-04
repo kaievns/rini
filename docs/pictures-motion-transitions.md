@@ -2,7 +2,8 @@
 
 How rini draws a window moving: three features, each with one job. Agreed with Kai on 2026-10-03;
 the measurements it rests on are in `src/animation/docs/capture-overlay-research.md`
-("Where a moving focus change spends its time", "The handover, measured").
+("Where a moving focus change spends its time", "The handover, measured") and
+`src/pictures/docs/capture-research.md` ("What a capture costs in a press").
 
 ## Progress
 
@@ -28,7 +29,8 @@ This section goes when the last row is done.
 | **`transitions`** | when things happen: frame zero, the overlay up, frame writes, picture swaps in flight, merged presses, the handover and the lift | how pixels are obtained, what a curve looks like |
 
 `pictures` is upstream of both: the switcher, the bar and a future exposé are its clients too.
-`animation` knows ids and geometry only. `transitions` uses both, and the reactor drives it.
+`animation` knows ids, geometry and `windows`' stacking group only. `transitions` uses both, and
+the reactor drives it.
 
 They are features, not crates: `docs/architecture.md` ("Why this shape and not one crate per
 feature") records why, and `tests/architecture.rs` holds each one's `domain/` free of macOS.

@@ -2,8 +2,10 @@
 
 Swift probes that time focus changes, window placement and SkyLight captures on one clock (mach
 absolute time), without going through rini. They are what the numbers in
-`src/animation/docs/capture-overlay-research.md` ("Where a moving focus change spends its time")
-were measured with, and the regression check for any change to how a transition is sequenced.
+`src/animation/docs/capture-overlay-research.md` ("Where a moving focus change spends its time") and
+`src/pictures/docs/capture-research.md` ("A SkyLight capture costs what the time since the previous
+one says") were measured with, and the regression check for any change to how a transition is
+sequenced.
 `playback.swift` is the exception: it reads what Core Animation draws, for "The score" in
 `src/animation/docs/animation-smoothness.md`.
 

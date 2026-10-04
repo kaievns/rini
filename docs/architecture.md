@@ -97,7 +97,8 @@ permission, builds every actor and joins them.
    upstream: it knows nothing about screens. `displays` depends on it, because
    "which windows are on this space" is a window-server query over window ids.
    `layout` and `workspaces` sit above both; `input` and `animation` beside them,
-   reaching only for ids and frames. `pictures` reads the window server through
+   reaching only for ids and frames, and for `animation` the stacking group a window is in
+   (`windows::domain::raise_order::StackGroup`). `pictures` reads the window server through
    `windows` and is upstream of `animation`, `transitions`, `switcher` and `bar`:
    a tile asks it whether its picture still fits, the flight engine and the
    switcher hold its service's handle, and the renderer, the switcher and the bar

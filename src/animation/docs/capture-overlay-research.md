@@ -1064,26 +1064,6 @@ frame-zero capture took 92-97 against 26-33, the overlay came up at 176-180 agai
 landed 100-165 later and the windows were placed 140-176 later. A capture already issued cannot be
 stopped, so the queue has to stop issuing before a focus change.
 
-**Frame zero:** one batched SkyLight call of the on-screen windows, 26-33 / 55-76, against 71 / 163
-for one call per window (three windows). A crop of the batched picture is identical to the window's
-own capture (0 to 0.02% of pixels differ) unless windows overlap: a floating window under two tiled
-ones put 60% of the pixels off.
-
-**No repaint notification.** `WindowUpdated` (723), registered with every window asked for through
-`SLSRequestNotificationsForWindows`, delivered nothing in 40s across 128 windows while five windows
-changed, among them a parked VS Code seven times. Parked windows do repaint.
-
-**A ScreenCaptureKit filter can be kept.** One window list, then each window captured through its
-kept `SCContentFilter`: 22.8ms against 83 for a fresh list plus 26 for the capture, and the same
-picture in 61 of 63 windows, 62 of 63 after four strip moves; the misses were windows whose content
-was changing.
-
-**A low-rate `SCStream` costs nothing while a window is still and a lot while frames flow.** Four
-streams on still windows delivered one frame each in 15s. Sixteen streams at 2fps delivered 855
-frames with pixels in 30s, of which 90 differed from the one before, and held the WindowServer at
-43% CPU against 9.5% without them. A frame's arrival is not a change signal; comparing it is.
-SkyLight captures were not slowed by the streams.
-
 **rini's own work before the raise is 2.4 / 4.9 / 12.6** (p50 / p90 / p99, 506 presses of normal use,
 2026-10-03): the press to the raise's dispatch. The make-key call goes out at 6.5 / 15.6 / 32.2.
 
@@ -1092,7 +1072,9 @@ SkyLight captures were not slowed by the streams.
 Measured 2026-10-03 on an idle machine with an outside probe (`tools/focuslab/focuslab.swift`,
 see `tools/focuslab/README.md`): a 1ms poller on `_SLPSGetFrontProcess`, `SLPSGetKeyFocusProcess` and
 `SLSGetWindowBounds`, and an `SCStream` of the titlebar band at 120fps timed by each frame's
-`displayTime`. Raw data in `docs/data/2026-10-03-focus/`, one JSON line per press.
+`displayTime`. Raw data in `docs/data/2026-10-03-focus/`, one JSON line per press. What each
+SkyLight capture in it costs is "What a capture costs in a press" in
+`src/pictures/docs/capture-research.md`.
 
 **A focus change with nothing moving is at the floor.** Two half-width windows side by side, the
 focused look visible on screen, ms after the input, p50 / p90:
@@ -1111,18 +1093,6 @@ captures running; the rest is the app activating and repainting.
 write took 0.4-0.8ms and `SLSGetWindowBounds` showed the new frame 0.04-0.1ms after it returned,
 `CGWindowList` about 1ms after. During a flight it is different: an app still activating applies the
 write late. Ghostty's write returned at 42-47ms and the server showed the move at 62-75ms.
-
-**A SkyLight capture costs what the time since the previous one says**, not the picture's size:
-
-```
-gap since the last capture   0     5     10    20    35    60    120   300   800 ms
-capture, p50                 15.9  15.7  16.8  21.7  24.1  29.9  39.1  43.0  43.3 ms
-```
-
-4.9 and 7.4 Mpx cost the same cold (39-47) and warm (21-23). A 20ms CPU spin in the calling
-process before a cold capture cut it to 33; a 20ms GPU burst, the caller's QoS, a 1pt animating
-window and tiny keep-alive captures did nothing. Calls on separate `SLSNewConnection`s still run
-one at a time. The frame-zero capture is always the cold one: 27-35 in a press.
 
 **The breakdown**, strip focus changes on the comms strip, VS Code to Ghostty and back, the two
 builds' flags interleaved in blocks of six in one run, 24 presses each, ms after rini takes the

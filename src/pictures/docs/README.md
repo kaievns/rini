@@ -102,9 +102,8 @@ until a time, or nothing.
 | The desktop is rendered again at a release when missing or stale | asked during a transition it would land mid-flight |
 | The bar is pictured `BAR_REFRESH_DELAY` after the overlay lifts or the display changes, never while it is up | a bar composite costs 31ms; a burst of switches pays it once, after the compositor has dropped the overlay |
 
-The costs are measured in [`capture-research.md`](capture-research.md) ("Capture cost"), and the
-listing against a kept filter in "Sequencing a focus change behind the overlay" in
-`src/animation/docs/capture-overlay-research.md`.
+The costs are measured in [`capture-research.md`](capture-research.md): "Capture cost", and the
+listing against a kept filter in "What a capture costs in a press".
 
 The flight engine's own captures in flight, the reveal chase, the focus refresh's framed captures, the
 spawn capture and the hairline harvest, are not scheduled here. It takes them on its own threads and
@@ -132,9 +131,10 @@ release: it is what a transition waits on.
 | A retarget keeps a window landed where it still ends and a focus already seen, and watches the rest from now | a merged press moves some ends and not others; a window new to the watch is watched too, which the prototype missed |
 
 The constants are measured in `src/animation/docs/capture-overlay-research.md`: "Where a moving focus
-change spends its time" (the server's frame, frame zero's cost, the focused look), "The handover,
-measured" (the 20pt landing, the final capture) and "Sequencing a focus change behind the overlay"
-(SkyLight behind ScreenCaptureKit, the kept filter).
+change spends its time" (the server's frame, the focused look), "The handover, measured" (the 20pt
+landing, the final capture) and "Sequencing a focus change behind the overlay" (SkyLight behind
+ScreenCaptureKit); and in [`capture-research.md`](capture-research.md), "What a capture costs in a
+press" (frame zero's cost, the kept filter).
 
 **Focused looks.** A client says which picture it was delivered shows a window focused
 (`keep_focused(tag, window)`): the focus target's once its change was delivered, and the frame-zero
