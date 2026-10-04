@@ -56,6 +56,7 @@ given:
 
 What each row measures is defined once, in `src/transitions/docs/journal.md` ("Reading it"). The
 tests read `testdata/journal-sample.jsonl`, which rini's own test pins to what the journal writes, and
-`testdata/probe-sample.jsonl`. Run them from the repo root with
-`python3 -m unittest discover -s tools/focuslab`; `python3 -m unittest tools/focuslab/test_journal.py`
+`testdata/probe-sample.jsonl`. `cargo test` runs them (`tests/focuslab.rs`, which skips with a word
+when there is no `python3`); by hand, from the repo root,
+`python3 -m unittest discover -s tools/focuslab`. `python3 -m unittest tools/focuslab/test_journal.py`
 cannot import the `journal.py` beside it.
