@@ -138,7 +138,8 @@ destination for a window already moving.
 > 890pt/s to 15,375pt/s in one frame at a typical interval between presses.
 - A window the flight has not seen MUST be able to join it.
 - A merged press MUST NOT show a stale, transparent, stretched or zoomed tile. A picture taken for an
-  earlier press, or of the window at another size than its tile ends at, never reaches a tile.
+  earlier press, or of a window more than 20pt from where its tile ends, never reaches a tile: drawn,
+  it is a stale tile, or one stretched or zoomed to the other size.
 
 > **Reported 2026-10-03.** "rapid press navigation messes things up, i periodically see missing tiles
 > (or they're just transparrent), occasionally i see tiles that are zoomed in." Each picture is now
@@ -268,11 +269,16 @@ capture had run: the 53-level p99 at the focused window's edge in "The handover,
   or a later picture shows its content changed.
 - A window gaining focus that ends clipped by the display's edge MUST still be recaptured. SkyLight
   returns only its visible part, so it takes ScreenCaptureKit's one capture.
-- A flight MUST NOT recapture through ScreenCaptureKit otherwise. With four of its captures out, the
-  capture the overlay waits for at the press took three times as long.
-- A flight that moves focus nowhere MUST NOT watch for a change of focus.
-- A picture taken for an earlier press, or of a window more than 20pt from where its tile ends, MUST NOT
-  reach a tile. Drawn, it is a stale tile, or one stretched or zoomed to the other size.
+- Every other ScreenCaptureKit capture, a warm or a background capture included, MUST wait from the
+  press to the quiet after the lift. With four of its captures out, the capture the overlay waits for
+  at the press took three times as long.
+- A flight that moves focus nowhere MUST NOT recapture through ScreenCaptureKit, and MUST NOT watch for
+  a change of focus: no report comes to arm the watch, and one left waiting holds the windows behind
+  the strip back for the whole flight.
+- Once the overlay is up, a tile MUST change its picture only for one the flight took: as its window
+  lands, as the window gaining focus changes its look, or just before the lift. A capture made for
+  anything else shows the window as it was, and cut in after the flight's own it would cut the tile
+  back.
 - A picture the cache refuses MUST NOT reach a tile either. The flight would draw what the next one
   will not.
 - A picture of a window that was not wholly on one display while it was captured MUST NOT be drawn,
